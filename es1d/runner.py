@@ -1,4 +1,4 @@
-import tempfile
+import tempfile, time
 from typing import Dict
 import mlflow
 import xarray as xr
@@ -13,17 +13,19 @@ from es1d import helpers
 def run(cfg: Dict):
     # get derived quantities
     cfg = helpers.get_derived_quantities(cfg)
-
     mlflow.log_params(cfg)
 
     cfg = helpers.get_array_quantities(cfg)
 
     with tempfile.TemporaryDirectory() as td:
         # run
+        t0 = time.time()
         results_and_metrics = solve_everything(cfg)
+        mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
-        # log metrics
+        t0 = time.time()
         post_process(results_and_metrics, cfg, td)
+        mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
 
         # log artifacts
         mlflow.log_artifacts(td)
