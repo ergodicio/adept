@@ -1,4 +1,3 @@
-
 import numpy as np
 from jax import numpy as jnp
 from es1d import pushers
