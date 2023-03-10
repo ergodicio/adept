@@ -1,6 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-import yaml, pytest
+import yaml
 
 import numpy as np
 from jax.config import config
@@ -9,7 +9,7 @@ config.update("jax_enable_x64", True)
 from jax import numpy as jnp
 
 from theory import electrostatic
-from es1d.runner import run
+from utils.runner import run
 
 
 def _modify_defaults_(defaults, rng):
