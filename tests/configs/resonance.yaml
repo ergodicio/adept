@@ -1,0 +1,28 @@
+grid:
+    nx: 32
+    xmax: 1000
+    tmax: 400
+
+save:
+    skip: 1
+
+physics:
+    gamma: 3
+    T0: 1.0
+    kinetic_real_wepw: False
+    landau_damping: False
+
+drivers:
+  "ex":
+    "0": {
+            "k0": 0.22,
+            "w0": 1.1,
+            "dw0": 0.0,
+            "t_c": 40,
+            "t_w": 40,
+            "t_r": 5,
+            "x_c": 40,
+            "x_w": 100000000,
+            "x_r": 5,
+            "a0": 1.e-5,
+    }
