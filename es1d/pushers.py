@@ -91,14 +91,22 @@ class VelocityStepper(eqx.Module):
     wis: jax.Array
     wr_corr: jax.Array
 
-    def __init__(self, kx, kxr):
+    def __init__(self, kx, kxr, physics):
         super().__init__()
         self.kx = kx
-        wrs, wis, klds = get_complex_frequency_table(128)
 
+        wrs, wis, klds = get_complex_frequency_table(128)
         wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=0.0, right=wrs[-1]))
-        self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=wis[-1]))
-        self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
+
+        if physics["kinetic_real_wepw"]:
+            self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
+        else:
+            self.wr_corr = jnp.ones_like(kxr)
+
+        if physics["landau_damping"]:
+            self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=wis[-1]))
+        else:
+            self.wis = jnp.zeros_like(kxr)
 
     def landau_damping_term(self, u):
         return jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))

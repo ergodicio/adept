@@ -8,3 +8,4 @@ tqdm
 xarray
 mlflow
 dm-haiku
+flatdict

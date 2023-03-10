@@ -1,73 +1,50 @@
-from scipy import signal
+
 import numpy as np
 from jax import numpy as jnp
 from es1d import pushers
-import haiku as hk
 
 
-def get_nlfs(ek, dt):
-    """
-    Calculate the shift in frequency with respect to a reference
-    This can be done by subtracting a signal at the reference frequency from the
-    given signal
-    :param ek:
-    :param dt:
-    :return:
-    """
+def get_derived_quantities(cfg_grid):
+    cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
+    cfg_grid["dt"] = 0.7 * cfg_grid["dx"] / 10
 
-    midpt = int(ek.shape[0] / 2)
+    cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
+    cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
-    window = 1
-    # Calculate hilbert transform
-    analytic_signal = signal.hilbert(window * np.real(ek))
-    # Determine envelope
-    amplitude_envelope = np.abs(analytic_signal)
-    # Phase = angle(signal)    ---- needs unwrapping because of periodicity
-    instantaneous_phase = np.unwrap(np.angle(analytic_signal))
-    # f(t) = dphase/dt
-    instantaneous_frequency = np.gradient(instantaneous_phase, dt)  ### Sampling rate!
-    # delta_f(t) = f(t) - driver_freq
-
-    # Smooth the answer
-    b, a = signal.butter(8, 0.125)
-    instantaneous_frequency_smooth = signal.filtfilt(b, a, instantaneous_frequency, padlen=midpt)
-
-    return amplitude_envelope, instantaneous_frequency_smooth
+    return cfg_grid
 
 
-def get_derived_quantities(cfg):
-    cfg["dx"] = cfg["xmax"] / cfg["nx"]
-    cfg["dt"] = 0.7 * cfg["dx"] / 10
-
-    cfg["nt"] = int(cfg["tmax"] / cfg["dt"] + 1)
-    cfg["tmax"] = cfg["dt"] * cfg["nt"]
-
-    return cfg
-
-
-def get_array_quantities(cfg):
-    cfg = {
-        **cfg,
+def get_solver_quantities(cfg_grid):
+    cfg_grid = {
+        **cfg_grid,
         **{
-            "x": jnp.linspace(cfg["dx"] / 2, cfg["xmax"] - cfg["dx"] / 2, cfg["nx"]),
-            "t": jnp.linspace(0, cfg["tmax"], cfg["nt"]),
-            "t_save": jnp.linspace(0, cfg["tmax"], cfg["nt"] // cfg["save_skip"]),
-            "kx": jnp.fft.fftfreq(cfg["nx"], d=cfg["dx"]) * 2.0 * np.pi,
-            "kxr": jnp.fft.rfftfreq(cfg["nx"], d=cfg["dx"]) * 2.0 * np.pi,
+            "x": jnp.linspace(cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]),
+            "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
+            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
+            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
         },
     }
 
-    one_over_kx = np.zeros_like(cfg["kx"])
-    one_over_kx[1:] = 1.0 / cfg["kx"][1:]
-    cfg["one_over_kx"] = jnp.array(one_over_kx)
+    one_over_kx = np.zeros_like(cfg_grid["kx"])
+    one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
+    cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
+
+    return cfg_grid
+
+
+def get_save_quantities(cfg):
+    cfg["save"] = {
+        **cfg["save"],
+        **{"t_save": jnp.linspace(0, cfg["grid"]["tmax"], cfg["grid"]["nt"] // cfg["save"]["skip"])},
+    }
 
     return cfg
 
 
 def init_state(cfg):
-    n = jnp.ones(cfg["nx"])
-    p = cfg["T0"] * jnp.ones(cfg["nx"])
-    u = jnp.zeros(cfg["nx"])
+    n = jnp.ones(cfg["grid"]["nx"])
+    p = cfg["physics"]["T0"] * jnp.ones(cfg["grid"]["nx"])
+    u = jnp.zeros(cfg["grid"]["nx"])
     # e = jnp.zeros(cfg["nx"])
 
     return {"n": n, "u": u, "p": p}  # , "e": e}
@@ -75,18 +52,18 @@ def init_state(cfg):
 
 def get_vector_field(cfg):
     def push_everything(t, y, args):
-        push_n = pushers.DensityStepper(cfg["kx"])
-        push_u = pushers.VelocityStepper(cfg["kx"], cfg["kxr"])
-        push_e = pushers.EnergyStepper(cfg["kx"], cfg["gamma"])
-        push_driver = pushers.Driver(cfg["x"])
-        poisson_solver = pushers.PoissonSolver(cfg["one_over_kx"])
+        push_n = pushers.DensityStepper(cfg["grid"]["kx"])
+        push_u = pushers.VelocityStepper(cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["physics"])
+        push_e = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"]["gamma"])
+        push_driver = pushers.Driver(cfg["grid"]["x"])
+        poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
 
         n = y["n"]
         u = y["u"]
         p = y["p"]
         # e = y["e"]
         e = poisson_solver(n)
-        ed = push_driver(cfg["pulse"], t)
+        ed = push_driver(cfg["drivers"]["ex"]["0"], t)
 
         dn = push_n(n, u)
         du = push_u(n, u, p, e + ed)
@@ -97,4 +74,3 @@ def get_vector_field(cfg):
         return {"n": dn, "u": du, "p": dp}
 
     return push_everything
-    # return hk.without_apply_rng(hk.transform(push_everything))

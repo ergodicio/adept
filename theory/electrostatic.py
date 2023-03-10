@@ -23,6 +23,37 @@
 
 import numpy as np
 import scipy
+from scipy import signal
+
+
+def get_nlfs(ek, dt):
+    """
+    Calculate the shift in frequency with respect to a reference
+    This can be done by subtracting a signal at the reference frequency from the
+    given signal
+    :param ek:
+    :param dt:
+    :return:
+    """
+
+    midpt = int(ek.shape[0] / 2)
+
+    window = 1
+    # Calculate hilbert transform
+    analytic_signal = signal.hilbert(window * np.real(ek))
+    # Determine envelope
+    amplitude_envelope = np.abs(analytic_signal)
+    # Phase = angle(signal)    ---- needs unwrapping because of periodicity
+    instantaneous_phase = np.unwrap(np.angle(analytic_signal))
+    # f(t) = dphase/dt
+    instantaneous_frequency = np.gradient(instantaneous_phase, dt)  ### Sampling rate!
+    # delta_f(t) = f(t) - driver_freq
+
+    # Smooth the answer
+    b, a = signal.butter(8, 0.125)
+    instantaneous_frequency_smooth = signal.filtfilt(b, a, instantaneous_frequency, padlen=midpt)
+
+    return amplitude_envelope, instantaneous_frequency_smooth
 
 
 def plasma_dispersion(value):
