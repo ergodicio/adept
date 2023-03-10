@@ -1,0 +1,34 @@
+nx: 128
+tmax: 400
+k0: 0.35
+gamma: 3
+T0: 1.0
+# ww: electrostatic.get_roots_to_electrostatic_dispersion(1., 1., k0)
+# w0: np.real(ww)
+# wi: np.imag(ww)
+# w0_corr: w0 / (np.sqrt(1+3*k0**2.))
+# xmax: 2*jnp.pi/k0
+# nt: int(tmax/dt + 1)
+# dt: tmax/(nt-1)
+# dx: xmax/(nx)
+
+# xax: jnp.linspace(dx/2, xmax-dx/2, nx)
+# kx: jnp.fft.fftfreq(nx, d=dx) * 2.0 * np.pi
+# one_over_kx: np.zeros_like(kx)
+# one_over_kx[1:]: 1.0 / kx[1:]
+# one_over_kx: jnp.array(one_over_kx)
+#
+# dx: xax[2]-xax[1]
+# trange: jnp.linspace(0., tmax, nt)
+pulse: {
+    "k0": k0,
+    "w0": w0,
+    "dw0": 0.0,
+    "t_c": 40,
+    "t_w": 40,
+    "t_r": 5,
+    "x_c": 0,
+    "x_w": 100000000,
+    "x_r": 5,
+    "a0": 1e-5,
+}

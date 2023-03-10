@@ -1,0 +1,9 @@
+jax
+jaxlib
+diffrax
+matplotlib
+scipy
+numpy
+tqdm
+xarray
+mlflow
