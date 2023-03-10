@@ -1,3 +1,9 @@
+mode: es-1d
+
+mlflow:
+  experiment: es-1d
+  run: resonance-test
+
 grid:
     nx: 32
     xmax: 1000

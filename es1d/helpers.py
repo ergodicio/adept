@@ -1,6 +1,28 @@
+import os
 import numpy as np
+from matplotlib import pyplot as plt
+import xarray as xr
+
 from jax import numpy as jnp
 from es1d import pushers
+
+
+def post_process(result, cfg, td):
+    os.makedirs(os.path.join(td, "binary"))
+    saved_arrays_xr = xr.Dataset(
+        data_vars={
+            k: xr.DataArray(v, coords=(("t", cfg["save"]["t_save"]), ("x", cfg["grid"]["x"])))
+            for k, v in result.ys.items()
+        }
+    )
+    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", "stored_state.nc"))
+
+    os.makedirs(os.path.join(td, "plots"))
+    for k, v in saved_arrays_xr.items():
+        fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
+        v.plot(ax=ax, cmap="gist_ncar")
+        fig.savefig(os.path.join(td, "plots", f"{k}.png"), bbox_inches="tight")
+        plt.close(fig)
 
 
 def get_derived_quantities(cfg_grid):

@@ -1,3 +1,5 @@
+mode: es-1d
+
 grid:
     nx: 2048
     xmax: 1000
