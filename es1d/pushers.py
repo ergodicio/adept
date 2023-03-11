@@ -114,11 +114,11 @@ class VelocityStepper(eqx.Module):
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
 
-    def __call__(self, n, u, p_over_m, ef):
+    def __call__(self, n, u, p_over_m, q_over_m_times_e):
         return (
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
-            + ef
+            + q_over_m_times_e
             + self.landau_damping_term(u)
         )
 
@@ -132,7 +132,11 @@ class EnergyStepper(eqx.Module):
         self.kx = kx
         self.gamma = gamma
 
-    def __call__(self, n, u, p_over_m, ef):
+    def __call__(self, n, u, p_over_m, q_over_m_times_e):
         # T = p / n
         # q = 0.0  # -2.0655 * n * jnp.sqrt(T) * gradient(T, dx)
-        return -u * gradient(p_over_m, self.kx) - self.gamma * p_over_m * gradient(u, self.kx) + 2 * n * u * ef
+        return (
+            -u * gradient(p_over_m, self.kx)
+            - self.gamma * p_over_m * gradient(u, self.kx)
+            + 2 * n * u * q_over_m_times_e
+        )

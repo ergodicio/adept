@@ -5,6 +5,7 @@ import mlflow
 import es1d
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
 from utils import logging
+from jax import jit
 
 
 def run(cfg: Dict):
@@ -25,17 +26,21 @@ def run(cfg: Dict):
         t0 = time.time()
         vector_field = helpers.get_vector_field(cfg)
         state = helpers.init_state(cfg)
-        result = diffeqsolve(
-            terms=ODETerm(vector_field),
-            solver=Tsit5(),
-            t0=0,
-            t1=cfg["grid"]["tmax"],
-            max_steps=int(1e6),
-            dt0=cfg["grid"]["dt"],
-            y0=state,
-            saveat=SaveAt(ts=cfg["save"]["t_save"]),
-        )
 
+        @jit
+        def _run_():
+            return diffeqsolve(
+                terms=ODETerm(vector_field),
+                solver=Tsit5(),
+                t0=0,
+                t1=cfg["grid"]["tmax"],
+                max_steps=int(1e6),
+                dt0=cfg["grid"]["dt"],
+                y0=state,
+                saveat=SaveAt(ts=cfg["save"]["t_save"]),
+            )
+
+        result = _run_()
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
         t0 = time.time()

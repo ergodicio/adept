@@ -95,7 +95,6 @@ def get_vector_field(cfg):
     push_driver = pushers.Driver(cfg["grid"]["x"])
     poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
 
-    @equinox.filter_jit
     def push_everything(t, y, args):
         e = poisson_solver(
             cfg["physics"]["charge"]["ion"] * y["ion"]["n"] - cfg["physics"]["charge"]["electron"] * y["electron"]["n"]
