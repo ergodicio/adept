@@ -13,8 +13,7 @@ dependencies:
   - pip:
       # works for regular pip packages
       - --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-      - jaxlib
-      - jax
+      - "jax[cuda11_cudnn82]"
       - numpy
       - scipy
       - matplotlib
