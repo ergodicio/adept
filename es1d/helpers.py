@@ -97,10 +97,9 @@ def get_vector_field(cfg):
 
     def push_everything(t, y, args):
         e = poisson_solver(
-            cfg["physics"]["charge"]["ion"] * y["ion"]["n"] - cfg["physics"]["charge"]["electron"] * y["electron"]["n"]
+            cfg["physics"]["charge"]["ion"] * y["ion"]["n"] + cfg["physics"]["charge"]["electron"] * y["electron"]["n"]
         )
         ed = push_driver(cfg["drivers"]["ex"]["0"], t)
-
         total_e = e + ed
 
         dstate_dt = {"ion": {}, "electron": {}}

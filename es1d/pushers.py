@@ -118,7 +118,7 @@ class VelocityStepper(eqx.Module):
         return (
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
-            + q_over_m_times_e
+            - q_over_m_times_e
             + self.landau_damping_term(u)
         )
 
