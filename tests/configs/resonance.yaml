@@ -1,13 +1,13 @@
 mode: es-1d
 
 mlflow:
-  experiment: es-1d
-  run: resonance-test
+  experiment: es1d-epw-test
+  run: test
 
 grid:
     nx: 32
-    xmax: 1000
-    tmax: 400
+    xmax: 20
+    tmax: 1000
 
 save:
     skip: 1
@@ -17,6 +17,15 @@ physics:
     T0: 1.0
     kinetic_real_wepw: False
     landau_damping: False
+    charge:
+      ion: 1.0
+      electron: -1.0
+    mass:
+      ion: 1836
+      electron: 1.
+    ion: False
+    electron: True
+
 
 drivers:
   "ex":
@@ -27,8 +36,8 @@ drivers:
             "t_c": 40,
             "t_w": 40,
             "t_r": 5,
-            "x_c": 40,
-            "x_w": 100000000,
-            "x_r": 5,
+            "x_c": 00,
+            "x_w": 800,
+            "x_r": 100,
             "a0": 1.e-5,
     }

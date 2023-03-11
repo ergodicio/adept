@@ -59,8 +59,8 @@ class PoissonSolver(eqx.Module):
         super().__init__()
         self.one_over_kx = one_over_kx
 
-    def __call__(self, n):
-        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(1 - n)))
+    def __call__(self, dn):
+        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(dn)))
 
 
 class StepAmpere(eqx.Module):
@@ -111,13 +111,13 @@ class VelocityStepper(eqx.Module):
     def landau_damping_term(self, u):
         return jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
 
-    def restoring_force_term(self, gradp_over_n):
-        return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_n)))
+    def restoring_force_term(self, gradp_over_nm):
+        return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
 
-    def __call__(self, n, u, p, ef):
+    def __call__(self, n, u, p_over_m, ef):
         return (
             -u * gradient(u, self.kx)
-            - self.restoring_force_term(gradient(p, self.kx) / n)
+            - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
             + ef
             + self.landau_damping_term(u)
         )
@@ -132,7 +132,7 @@ class EnergyStepper(eqx.Module):
         self.kx = kx
         self.gamma = gamma
 
-    def __call__(self, n, u, p, ef):
+    def __call__(self, n, u, p_over_m, ef):
         # T = p / n
         # q = 0.0  # -2.0655 * n * jnp.sqrt(T) * gradient(T, dx)
-        return -u * gradient(p, self.kx) - self.gamma * p * gradient(u, self.kx) + 2 * n * u * ef
+        return -u * gradient(p_over_m, self.kx) - self.gamma * p_over_m * gradient(u, self.kx) + 2 * n * u * ef

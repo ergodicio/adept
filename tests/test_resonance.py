@@ -33,13 +33,15 @@ def test_single_resonance():
     # run
     result = run(mod_defaults)
     efs = jnp.real(
-        jnp.fft.ifft(1j * mod_defaults["grid"]["one_over_kx"][None, :] * jnp.fft.fft(1 - result.ys["n"][:, :]))
+        jnp.fft.ifft(
+            1j * mod_defaults["grid"]["one_over_kx"][None, :] * jnp.fft.fft(1 - result.ys["electron"]["n"][:, :])
+        )
     )
     ek1 = np.fft.fft(efs, axis=1)[:, 1]
     env, freq = electrostatic.get_nlfs(ek1, result.ts[1] - result.ts[0])
     frslc = slice(400, -400)
     print(
-        f"Frequency check \n" 
+        f"Frequency check \n"
         f"measured: {np.round(np.mean(freq[frslc]), 5)}, "
         f"bohm-gross: {np.round(actual_resonance, 5)}, "
     )
