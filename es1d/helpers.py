@@ -40,11 +40,11 @@ def get_derived_quantities(cfg_grid):
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
-    if cfg_grid["grid"]["nt"] > 1e6:
+    if cfg_grid["nt"] > 1e6:
         cfg_grid["max_steps"] = int(1e6)
         print(r"Only running $10^6$ steps")
     else:
-        cfg_grid["max_steps"] = cfg_grid["grid"]["nt"] + 4
+        cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
     return cfg_grid
 
