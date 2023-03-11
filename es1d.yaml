@@ -10,7 +10,7 @@ grid:
     tmax: 2000
 
 save:
-    skip: 64
+    skip: 8
 
 physics:
     gamma: 3
@@ -36,8 +36,8 @@ drivers:
             "t_c": 40,
             "t_w": 40,
             "t_r": 5,
-            "x_c": 300,
-            "x_w": 200,
-            "x_r": 50,
+            "x_c": 200,
+            "x_w": 100,
+            "x_r": 80,
             "a0": 1.e-5,
     }
