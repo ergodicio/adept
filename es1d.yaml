@@ -1,9 +1,13 @@
 mode: es-1d
 
+mlflow:
+  experiment: es1d-ions
+  run: test
+
 grid:
     nx: 2048
     xmax: 1000
-    tmax: 400
+    tmax: 2000
 
 save:
     skip: 8
@@ -13,6 +17,15 @@ physics:
     T0: 1.0
     kinetic_real_wepw: False
     landau_damping: False
+    charge:
+      ion: 1.0
+      electron: -1.0
+    mass:
+      ion: 1836.0
+      electron: 1.
+    ion: True
+    electron: True
+
 
 drivers:
   "ex":
@@ -24,7 +37,7 @@ drivers:
             "t_w": 40,
             "t_r": 5,
             "x_c": 200,
-            "x_w": 300,
-            "x_r": 5,
+            "x_w": 100,
+            "x_r": 80,
             "a0": 1.e-5,
     }

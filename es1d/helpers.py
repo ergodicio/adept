@@ -1,4 +1,6 @@
 import os
+
+import equinox
 import numpy as np
 from matplotlib import pyplot as plt
 import xarray as xr
@@ -9,12 +11,19 @@ from es1d import pushers
 
 def post_process(result, cfg, td):
     os.makedirs(os.path.join(td, "binary"))
-    saved_arrays_xr = xr.Dataset(
-        data_vars={
-            k: xr.DataArray(v, coords=(("t", cfg["save"]["t_save"]), ("x", cfg["grid"]["x"])))
-            for k, v in result.ys.items()
-        }
-    )
+
+    data_vars = {
+        **{
+            f"ion-{k}": xr.DataArray(v, coords=(("t", cfg["save"]["t_save"]), ("x", cfg["grid"]["x"])))
+            for k, v in result.ys["ion"].items()
+        },
+        **{
+            f"electron-{k}": xr.DataArray(v, coords=(("t", cfg["save"]["t_save"]), ("x", cfg["grid"]["x"])))
+            for k, v in result.ys["electron"].items()
+        },
+    }
+
+    saved_arrays_xr = xr.Dataset(data_vars)
     saved_arrays_xr.to_netcdf(os.path.join(td, "binary", "stored_state.nc"))
 
     os.makedirs(os.path.join(td, "plots"))
@@ -27,10 +36,15 @@ def post_process(result, cfg, td):
 
 def get_derived_quantities(cfg_grid):
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-    cfg_grid["dt"] = 0.7 * cfg_grid["dx"] / 10
-
+    cfg_grid["dt"] = 0.5 * cfg_grid["dx"] / 10
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
+
+    if cfg_grid["nt"] > 1e6:
+        cfg_grid["max_steps"] = int(1e6)
+        print(r"Only running $10^6$ steps")
+    else:
+        cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
     return cfg_grid
 
@@ -63,35 +77,53 @@ def get_save_quantities(cfg):
 
 
 def init_state(cfg):
-    n = jnp.ones(cfg["grid"]["nx"])
-    p = cfg["physics"]["T0"] * jnp.ones(cfg["grid"]["nx"])
-    u = jnp.zeros(cfg["grid"]["nx"])
-    # e = jnp.zeros(cfg["nx"])
+    state = {}
+    for species in ["ion", "electron"]:
+        state[species] = dict(
+            n=jnp.ones(cfg["grid"]["nx"]),
+            p=cfg["physics"]["T0"] * jnp.ones(cfg["grid"]["nx"]),
+            u=jnp.zeros(cfg["grid"]["nx"]),
+        )
 
-    return {"n": n, "u": u, "p": p}  # , "e": e}
+    return state
 
 
 def get_vector_field(cfg):
+    pusher_dict = {"ion": {}, "electron": {}}
+    for species_name in ["ion", "electron"]:
+        pusher_dict[species_name]["push_n"] = pushers.DensityStepper(cfg["grid"]["kx"])
+        pusher_dict[species_name]["push_u"] = pushers.VelocityStepper(
+            cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["physics"]
+        )
+        pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"]["gamma"])
+
+    push_driver = pushers.Driver(cfg["grid"]["x"])
+    poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
+
     def push_everything(t, y, args):
-        push_n = pushers.DensityStepper(cfg["grid"]["kx"])
-        push_u = pushers.VelocityStepper(cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["physics"])
-        push_e = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"]["gamma"])
-        push_driver = pushers.Driver(cfg["grid"]["x"])
-        poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
-
-        n = y["n"]
-        u = y["u"]
-        p = y["p"]
-        # e = y["e"]
-        e = poisson_solver(n)
+        e = poisson_solver(
+            cfg["physics"]["charge"]["ion"] * y["ion"]["n"] + cfg["physics"]["charge"]["electron"] * y["electron"]["n"]
+        )
         ed = push_driver(cfg["drivers"]["ex"]["0"], t)
+        total_e = e + ed
 
-        dn = push_n(n, u)
-        du = push_u(n, u, p, e + ed)
-        dp = push_e(n, u, p, e + ed)
+        dstate_dt = {"ion": {}, "electron": {}}
+        for species_name in ["ion", "electron"]:
+            if cfg["physics"][species_name]:
+                n = y[species_name]["n"]
+                u = y[species_name]["u"]
+                p = y[species_name]["p"]
+                q_over_m = cfg["physics"]["charge"][species_name] / cfg["physics"]["mass"][species_name]
+                p_over_m = p / cfg["physics"]["mass"][species_name]
 
-        # de = pushers.step_e_ampere(n, u) + ed
+                dstate_dt[species_name]["n"] = pusher_dict[species_name]["push_n"](n, u)
+                dstate_dt[species_name]["u"] = pusher_dict[species_name]["push_u"](n, u, p_over_m, q_over_m * total_e)
+                dstate_dt[species_name]["p"] = pusher_dict[species_name]["push_e"](n, u, p_over_m, q_over_m * total_e)
+            else:
+                dstate_dt[species_name]["n"] = 0.0
+                dstate_dt[species_name]["u"] = 0.0
+                dstate_dt[species_name]["p"] = 0.0
 
-        return {"n": dn, "u": du, "p": dp}
+        return dstate_dt
 
     return push_everything
