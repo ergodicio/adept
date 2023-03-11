@@ -37,9 +37,14 @@ def post_process(result, cfg, td):
 def get_derived_quantities(cfg_grid):
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dt"] = 0.5 * cfg_grid["dx"] / 10
-
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
+
+    if cfg_grid["grid"]["nt"] > 1e6:
+        cfg_grid["max_steps"] = int(1e6)
+        print(r"Only running $10^6$ steps")
+    else:
+        cfg_grid["max_steps"] = cfg_grid["grid"]["nt"] + 4
 
     return cfg_grid
 

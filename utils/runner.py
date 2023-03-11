@@ -34,7 +34,7 @@ def run(cfg: Dict):
                 solver=Tsit5(),
                 t0=0,
                 t1=cfg["grid"]["tmax"],
-                max_steps=int(1e6),
+                max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 saveat=SaveAt(ts=cfg["save"]["t_save"]),
