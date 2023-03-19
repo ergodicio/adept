@@ -4,7 +4,7 @@ import mlflow
 
 import es1d
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import logging
+from utils import logs
 from jax import jit
 
 
@@ -16,7 +16,7 @@ def run(cfg: Dict):
 
     # get derived quantities
     cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
-    logging.log_params(cfg)
+    logs.log_params(cfg)
 
     cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
     cfg = helpers.get_save_quantities(cfg)

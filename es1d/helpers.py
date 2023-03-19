@@ -1,6 +1,4 @@
 import os
-
-import equinox
 import numpy as np
 from matplotlib import pyplot as plt
 import xarray as xr
@@ -83,6 +81,7 @@ def init_state(cfg):
             n=jnp.ones(cfg["grid"]["nx"]),
             p=cfg["physics"]["T0"] * jnp.ones(cfg["grid"]["nx"]),
             u=jnp.zeros(cfg["grid"]["nx"]),
+            delta=jnp.zeros(cfg["grid"]["nx"]),
         )
 
     return state
@@ -99,30 +98,39 @@ def get_vector_field(cfg):
 
     push_driver = pushers.Driver(cfg["grid"]["x"])
     poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
+    particle_trapper = pushers.ParticleTrapper(cfg["grid"]["kxr"], cfg["grid"]["kx"])
 
     def push_everything(t, y, args):
         e = poisson_solver(
-            cfg["physics"]["charge"]["ion"] * y["ion"]["n"] + cfg["physics"]["charge"]["electron"] * y["electron"]["n"]
+            cfg["physics"]["ion"]["charge"] * y["ion"]["n"] + cfg["physics"]["electron"]["charge"] * y["electron"]["n"]
         )
         ed = push_driver(cfg["drivers"]["ex"]["0"], t)
         total_e = e + ed
 
         dstate_dt = {"ion": {}, "electron": {}}
         for species_name in ["ion", "electron"]:
-            if cfg["physics"][species_name]:
-                n = y[species_name]["n"]
-                u = y[species_name]["u"]
-                p = y[species_name]["p"]
-                q_over_m = cfg["physics"]["charge"][species_name] / cfg["physics"]["mass"][species_name]
-                p_over_m = p / cfg["physics"]["mass"][species_name]
+            n = y[species_name]["n"]
+            u = y[species_name]["u"]
+            p = y[species_name]["p"]
+            delta = y[species_name]["delta"]
+            if cfg["physics"][species_name]["is_on"]:
+                q_over_m = cfg["physics"][species_name]["charge"] / cfg["physics"][species_name]["mass"]
+                p_over_m = p / cfg["physics"][species_name]["mass"]
 
                 dstate_dt[species_name]["n"] = pusher_dict[species_name]["push_n"](n, u)
-                dstate_dt[species_name]["u"] = pusher_dict[species_name]["push_u"](n, u, p_over_m, q_over_m * total_e)
+                dstate_dt[species_name]["u"] = pusher_dict[species_name]["push_u"](
+                    n, u, p_over_m, q_over_m * total_e, delta
+                )
                 dstate_dt[species_name]["p"] = pusher_dict[species_name]["push_e"](n, u, p_over_m, q_over_m * total_e)
             else:
                 dstate_dt[species_name]["n"] = 0.0
                 dstate_dt[species_name]["u"] = 0.0
                 dstate_dt[species_name]["p"] = 0.0
+
+            if cfg["physics"][species_name]["trapping"]:
+                dstate_dt[species_name]["delta"] = particle_trapper(e, delta)
+            else:
+                dstate_dt[species_name]["delta"] = 0.0
 
         return dstate_dt
 

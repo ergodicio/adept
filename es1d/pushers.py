@@ -9,7 +9,7 @@ from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
 def get_complex_frequency_table(num):
-    klds = np.linspace(0.08, 0.8, 128)
+    klds = np.linspace(0.2, 0.4, 128)
     wrs = np.zeros(num)
     wis = np.zeros(num)
 
@@ -114,12 +114,12 @@ class VelocityStepper(eqx.Module):
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
 
-    def __call__(self, n, u, p_over_m, q_over_m_times_e):
+    def __call__(self, n, u, p_over_m, q_over_m_times_e, delta):
         return (
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
             - q_over_m_times_e
-            + self.landau_damping_term(u)
+            + self.landau_damping_term(u) / (1.0 + delta**2)
         )
 
 
@@ -138,5 +138,27 @@ class EnergyStepper(eqx.Module):
         return (
             -u * gradient(p_over_m, self.kx)
             - self.gamma * p_over_m * gradient(u, self.kx)
-            + 2 * n * u * q_over_m_times_e
+            # + 2 * n * u * q_over_m_times_e
+        )
+
+
+class ParticleTrapper(eqx.Module):
+    kxr: jax.Array
+    # wrs: jax.Array
+    wis: jax.Array
+    kx: jax.Array
+
+    def __init__(self, kxr, kx):
+        super().__init__()
+        self.kxr = kxr
+        self.kx = kx
+        wrs, wis, klds = get_complex_frequency_table(128)
+        # self.wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1]))
+        self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=0.0))
+
+    def __call__(self, e, delta):
+        return (
+            -3.757 * gradient(delta, self.kx)
+            + 100*jnp.abs(jnp.fft.irfft(jnp.fft.rfft(e, axis=0) * self.wis))
+            - 0.001 * delta
         )
