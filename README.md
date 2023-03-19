@@ -1,2 +1,2 @@
 # jaxmhd
-A Pythonic MHD code (in development)
+A Pythonic two-fluid code (in development)
