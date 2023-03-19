@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Tuple
 
 from jax import numpy as jnp
 import equinox as eqx
@@ -8,8 +8,14 @@ import numpy as np
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
-def get_complex_frequency_table(num):
-    klds = np.linspace(0.2, 0.4, 128)
+def get_complex_frequency_table(num: int) -> Tuple[np.array, np.array, np.array]:
+    """
+    This function creates a table of the complex plasma frequency for $0.2 < k \lambda_D < 0.4$ in `num` steps
+
+    :param num:
+    :return:
+    """
+    klds = np.linspace(0.2, 0.4, num)
     wrs = np.zeros(num)
     wis = np.zeros(num)
 
@@ -159,6 +165,6 @@ class ParticleTrapper(eqx.Module):
     def __call__(self, e, delta):
         return (
             -3.757 * gradient(delta, self.kx)
-            + 100*jnp.abs(jnp.fft.irfft(jnp.fft.rfft(e, axis=0) * self.wis))
+            + 100 * jnp.abs(jnp.fft.irfft(jnp.fft.rfft(e, axis=0) * self.wis))
             - 0.001 * delta
         )

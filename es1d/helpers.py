@@ -183,3 +183,10 @@ def get_vector_field(cfg: Dict) -> Callable:
         return dstate_dt
 
     return push_everything
+
+
+def get_save_func(cfg):
+    def save_func(t, y, args):
+        return y
+
+    return save_func

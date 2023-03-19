@@ -3,12 +3,12 @@ from typing import Dict
 import mlflow
 
 import es1d
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS
 from utils import logs
 from jax import jit
 
 
-def run(cfg: Dict):
+def run(cfg: Dict) -> RESULTS:
     if cfg["mode"] == "es-1d":
         helpers = es1d.helpers
     else:
