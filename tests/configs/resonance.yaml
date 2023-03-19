@@ -17,14 +17,16 @@ physics:
     T0: 1.0
     kinetic_real_wepw: False
     landau_damping: False
-    charge:
-      ion: 1.0
-      electron: -1.0
-    mass:
-      ion: 1836
-      electron: 1.
-    ion: False
-    electron: True
+    ion:
+      is_on: False
+      mass: 1836.0
+      charge: 1.0
+      trapping: False
+    electron:
+      is_on: True
+      mass: 1.0
+      charge: -1.0
+      trapping: True
 
 
 drivers:
