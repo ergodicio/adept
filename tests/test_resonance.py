@@ -6,6 +6,8 @@ import numpy as np
 from jax.config import config
 
 config.update("jax_enable_x64", True)
+# config.update("jax_disable_jit", True)
+
 from jax import numpy as jnp
 import mlflow
 
@@ -16,9 +18,12 @@ from utils.runner import run
 def _modify_defaults_(defaults, rng):
     rand_k0 = np.round(rng.uniform(0.25, 0.4), 3)
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
-    root = np.sqrt(1.0 + 3.0 * rand_k0**2.0)  # electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0)
+    root = np.sqrt(1.0 + 3.0 * rand_k0**2.0)
+    xmax = float(2.0 * np.pi / rand_k0)
+    # electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0)
     # defaults["save"]["field"]["xmax_to_store"] = float(2.0 * np.pi / rand_k0)
-    defaults["grid"]["xmax"] = float(2.0 * np.pi / rand_k0)
+    defaults["grid"]["xmax"] = xmax
+    defaults["save"]["x"]["xmax"] = xmax
 
     return defaults, float(np.real(root))
 
@@ -37,11 +42,16 @@ def test_single_resonance():
     with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
         result = run(mod_defaults)
 
-    efs = jnp.real(
-        jnp.fft.ifft(
-            1j * mod_defaults["grid"]["one_over_kx"][None, :] * jnp.fft.fft(1 - result.ys["electron"]["n"][:, :])
+    kx = (
+        np.fft.fftfreq(
+            mod_defaults["save"]["x"]["nx"], d=mod_defaults["save"]["x"]["ax"][2] - mod_defaults["save"]["x"]["ax"][1]
         )
+        * 2.0
+        * np.pi
     )
+    one_over_kx = np.zeros_like(kx)
+    one_over_kx[1:] = 1.0 / kx[1:]
+    efs = jnp.real(jnp.fft.ifft(1j * one_over_kx[None, :] * jnp.fft.fft(1 - result.ys["x"]["electron"]["n"][:, :])))
     ek1 = np.fft.fft(efs, axis=1)[:, 1]
     env, freq = electrostatic.get_nlfs(ek1, result.ts[1] - result.ts[0])
     frslc = slice(400, -400)

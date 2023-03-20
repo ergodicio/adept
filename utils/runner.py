@@ -3,12 +3,12 @@ from typing import Dict
 import mlflow
 
 import es1d
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import logging
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS
+from utils import logs
 from jax import jit
 
 
-def run(cfg: Dict):
+def run(cfg: Dict) -> RESULTS:
     if cfg["mode"] == "es-1d":
         helpers = es1d.helpers
     else:
@@ -16,7 +16,7 @@ def run(cfg: Dict):
 
     # get derived quantities
     cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
-    logging.log_params(cfg)
+    logs.log_params(cfg)
 
     cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
     cfg = helpers.get_save_quantities(cfg)
@@ -32,12 +32,12 @@ def run(cfg: Dict):
             return diffeqsolve(
                 terms=ODETerm(vector_field),
                 solver=Tsit5(),
-                t0=0,
+                t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                saveat=SaveAt(ts=cfg["save"]["t_save"]),
+                saveat=SaveAt(ts=cfg["save"]["t_save"], fn=cfg["save"]["func"]),
             )
 
         result = _run_()

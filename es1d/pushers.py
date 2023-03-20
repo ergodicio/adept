@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Tuple
 
 from jax import numpy as jnp
 import equinox as eqx
@@ -8,14 +8,24 @@ import numpy as np
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
-def get_complex_frequency_table(num):
-    klds = np.linspace(0.08, 0.8, 128)
+def get_complex_frequency_table(num: int, kinetic_real_epw: bool) -> Tuple[np.array, np.array, np.array]:
+    """
+    This function creates a table of the complex plasma frequency for $0.2 < k \lambda_D < 0.4$ in `num` steps
+
+    :param kinetic_real_epw:
+    :param num:
+    :return:
+    """
+    klds = np.linspace(0.2, 0.4, num)
     wrs = np.zeros(num)
     wis = np.zeros(num)
 
     for i, kld in enumerate(klds):
         ww = get_roots_to_electrostatic_dispersion(1.0, 1.0, kld)
-        wrs[i] = np.real(ww)
+        if kinetic_real_epw:
+            wrs[i] = np.real(ww)
+        else:
+            wrs[i] = np.sqrt(1.0 + 3.0 * kld**2.0)
         wis[i] = np.imag(ww)
 
     return wrs, wis, klds
@@ -95,13 +105,9 @@ class VelocityStepper(eqx.Module):
         super().__init__()
         self.kx = kx
 
-        wrs, wis, klds = get_complex_frequency_table(128)
+        wrs, wis, klds = get_complex_frequency_table(128, physics["kinetic_real_wepw"])
         wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=0.0, right=wrs[-1]))
-
-        if physics["kinetic_real_wepw"]:
-            self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
-        else:
-            self.wr_corr = jnp.ones_like(kxr)
+        self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
 
         if physics["landau_damping"]:
             self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=wis[-1]))
@@ -114,12 +120,12 @@ class VelocityStepper(eqx.Module):
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
 
-    def __call__(self, n, u, p_over_m, q_over_m_times_e):
+    def __call__(self, n, u, p_over_m, q_over_m_times_e, delta):
         return (
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
             - q_over_m_times_e
-            + self.landau_damping_term(u)
+            + self.landau_damping_term(u) / (1.0 + delta**2)
         )
 
 
@@ -133,10 +139,38 @@ class EnergyStepper(eqx.Module):
         self.gamma = gamma
 
     def __call__(self, n, u, p_over_m, q_over_m_times_e):
-        # T = p / n
-        # q = 0.0  # -2.0655 * n * jnp.sqrt(T) * gradient(T, dx)
         return (
             -u * gradient(p_over_m, self.kx)
             - self.gamma * p_over_m * gradient(u, self.kx)
-            + 2 * n * u * q_over_m_times_e
+            - 2 * n * u * q_over_m_times_e
+        )
+
+
+class ParticleTrapper(eqx.Module):
+    kxr: jax.Array
+    wrs: jax.Array
+    wis: jax.Array
+    kx: jax.Array
+    vph: jax.Array
+    kld: float
+    growth_coeff: float
+    damping_coeff: float
+
+    def __init__(self, kld, kxr, kx, kinetic_real_epw):
+        super().__init__()
+        self.kxr = kxr
+        self.kx = kx
+        wrs, wis, klds = get_complex_frequency_table(128, kinetic_real_epw)
+        self.wrs = jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1])
+        self.wis = jnp.interp(kxr, klds, wis, left=0.0, right=0.0)
+        self.kld = kld
+        self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
+        self.growth_coeff = 1e2
+        self.damping_coeff = 1e-2
+
+    def __call__(self, e, delta):
+        return (
+            -self.vph * gradient(delta, self.kx)
+            + self.growth_coeff * jnp.abs(jnp.fft.irfft(jnp.fft.rfft(e, axis=0) * self.wis))
+            - self.damping_coeff * delta
         )

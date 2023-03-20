@@ -6,25 +6,46 @@ mlflow:
 
 grid:
     nx: 32
-    xmax: 20
-    tmax: 1000
+    xmin: 0.0
+    xmax: 20.94
+    tmin: 0.0
+    tmax: 400
 
 save:
-    skip: 1
+    t:
+      tmin: 0.0
+      tmax: 400.0
+      nt: 3201
+    x:
+      is_on: True
+      xmin: 0.0
+      xmax: 20.94
+      nx: 16
+    kx:
+      is_on: True
+      kxmin: 0.0
+      kxmax: 0.5
+      nkx: 6
 
 physics:
     gamma: 3
     T0: 1.0
     kinetic_real_wepw: False
     landau_damping: False
-    charge:
-      ion: 1.0
-      electron: -1.0
-    mass:
-      ion: 1836
-      electron: 1.
-    ion: False
-    electron: True
+    ion:
+      is_on: False
+      mass: 1836.0
+      charge: 1.0
+      trapping:
+        is_on: False
+        kld: 0.3
+    electron:
+      is_on: True
+      mass: 1.0
+      charge: -1.0
+      trapping:
+        is_on: False
+        kld: 0.3
 
 
 drivers:
