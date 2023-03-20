@@ -32,12 +32,12 @@ def run(cfg: Dict) -> RESULTS:
             return diffeqsolve(
                 terms=ODETerm(vector_field),
                 solver=Tsit5(),
-                t0=0,
+                t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                saveat=SaveAt(ts=cfg["save"]["t_save"]),
+                saveat=SaveAt(ts=cfg["save"]["t_save"], fn=cfg["save"]["func"]),
             )
 
         result = _run_()

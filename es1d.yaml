@@ -5,12 +5,27 @@ mlflow:
   run: test
 
 grid:
-    nx: 4096
-    xmax: 4000
+    nx: 2048
+    xmin: 0.0
+    xmax: 2000
+    tmin: 0.0
     tmax: 800
 
 save:
-    skip: 8
+    t:
+      tmin: 0.0
+      tmax: 800.0
+      nt: 1601
+    x:
+      is_on: True
+      xmin: 1.0
+      xmax: 1999.0
+      nx: 512
+    kx:
+      is_on: True
+      kxmin: 0.0
+      kxmax: 0.5
+      nkx: 6
 
 physics:
     gamma: 3
@@ -21,19 +36,23 @@ physics:
       is_on: False
       mass: 1836.0
       charge: 1.0
-      trapping: False
+      trapping:
+        is_on: False
+        kld: 0.3
     electron:
       is_on: True
       mass: 1.0
       charge: -1.0
-      trapping: True
+      trapping:
+        is_on: True
+        kld: 0.3
 
 
 drivers:
   "ex":
     "0": {
             "k0": 0.3,
-            "w0": 1.12,
+            "w0": 1.13,
             "dw0": 0.0,
             "t_c": 80,
             "t_w": 100,
