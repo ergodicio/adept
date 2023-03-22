@@ -24,8 +24,8 @@ save:
     kx:
       is_on: True
       kxmin: 0.0
-      kxmax: 0.5
-      nkx: 6
+      kxmax: 0.6
+      nkx: 3
 
 physics:
     gamma: 3
