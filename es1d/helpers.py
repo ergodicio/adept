@@ -21,13 +21,33 @@ def save_arrays(result, td, cfg, label):
 
     saved_arrays_xr = xr.Dataset(data_vars)
     saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"state_vs_{label}.nc"))
-    os.makedirs(os.path.join(td, "plots", label))
+    return saved_arrays_xr
 
-    for k, v in saved_arrays_xr.items():
+
+def plot_xrs(which, td, xrs):
+    os.makedirs(os.path.join(td, "plots", which))
+    os.makedirs(os.path.join(td, "plots", which, "hue"))
+
+    for k, v in xrs.items():
         fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
         v.plot(ax=ax, cmap="gist_ncar")
-        fig.savefig(os.path.join(td, "plots", label, f"{k}.png"), bbox_inches="tight")
+        fig.savefig(os.path.join(td, "plots", which, f"{k}.png"), bbox_inches="tight")
         plt.close(fig)
+
+        if which == "kx":
+            # only plot
+            if v.coords["kx"].size > 8:
+                hue_skip = v.coords["kx"].size // 8
+            else:
+                hue_skip = 1
+
+            for log in [True, False]:
+                fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
+                v[:, ::hue_skip].plot(ax=ax, hue="kx")
+                ax.set_yscale("log" if log else "linear")
+                ax.grid()
+                fig.savefig(os.path.join(td, "plots", which, f"hue", f"{k}-log-{log}.png"), bbox_inches="tight")
+                plt.close(fig)
 
 
 def post_process(result, cfg: Dict, td: str) -> None:
@@ -35,10 +55,12 @@ def post_process(result, cfg: Dict, td: str) -> None:
     os.makedirs(os.path.join(td, "plots"))
 
     if cfg["save"]["x"]["is_on"]:
-        save_arrays(result, td, cfg, "x")
+        xrs = save_arrays(result, td, cfg, "x")
+        plot_xrs("x", td, xrs)
 
     if cfg["save"]["kx"]["is_on"]:
-        save_arrays(result, td, cfg, "kx")
+        xrs = save_arrays(result, td, cfg, "kx")
+        plot_xrs("kx", td, xrs)
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
