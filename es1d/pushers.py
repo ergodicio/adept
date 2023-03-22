@@ -1,8 +1,9 @@
 from typing import Dict, Tuple
 
 from jax import numpy as jnp
-import equinox as eqx
-import jax
+
+# import jax
+import haiku as hk
 import numpy as np
 
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
@@ -35,8 +36,8 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 
-class Driver(eqx.Module):
-    xax: jax.Array
+class Driver(hk.Module):
+    # xax: jax.Array
 
     def __init__(self, xax):
         super().__init__()
@@ -62,8 +63,8 @@ class Driver(eqx.Module):
         )
 
 
-class PoissonSolver(eqx.Module):
-    one_over_kx: jax.Array
+class PoissonSolver(hk.Module):
+    # one_over_kx: jax.Array
 
     def __init__(self, one_over_kx):
         super().__init__()
@@ -73,7 +74,7 @@ class PoissonSolver(eqx.Module):
         return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(dn)))
 
 
-class StepAmpere(eqx.Module):
+class StepAmpere(hk.Module):
     def __init__(self):
         super().__init__()
 
@@ -85,8 +86,8 @@ def gradient(arr, kx):
     return jnp.real(jnp.fft.ifft(1j * kx * jnp.fft.fft(arr)))
 
 
-class DensityStepper(eqx.Module):
-    kx: jax.Array
+class DensityStepper(hk.Module):
+    # kx: jax.Array
 
     def __init__(self, kx):
         super().__init__()
@@ -96,10 +97,11 @@ class DensityStepper(eqx.Module):
         return -u * gradient(n, self.kx) - n * gradient(u, self.kx)
 
 
-class VelocityStepper(eqx.Module):
-    kx: jax.Array
-    wis: jax.Array
-    wr_corr: jax.Array
+class VelocityStepper(hk.Module):
+    # kx: jax.Array
+    # wis: jax.Array
+    # wr_corr: jax.Array
+    # absorption_coeff: float
 
     def __init__(self, kx, kxr, physics):
         super().__init__()
@@ -108,6 +110,7 @@ class VelocityStepper(eqx.Module):
         wrs, wis, klds = get_complex_frequency_table(128, physics["kinetic_real_wepw"])
         wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=0.0, right=wrs[-1]))
         self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
+        self.absorption_coeff = 1.0  # 0.85
 
         if physics["landau_damping"]:
             self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=wis[-1]))
@@ -124,14 +127,14 @@ class VelocityStepper(eqx.Module):
         return (
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
-            - 0.85*q_over_m_times_e
+            - self.absorption_coeff * q_over_m_times_e
             + self.landau_damping_term(u) / (1.0 + delta**2)
         )
 
 
-class EnergyStepper(eqx.Module):
-    kx: jax.Array
-    gamma: jnp.float64
+class EnergyStepper(hk.Module):
+    # kx: jax.Array
+    # gamma: jnp.float64
 
     def __init__(self, kx, gamma):
         super().__init__()
@@ -146,15 +149,15 @@ class EnergyStepper(eqx.Module):
         )
 
 
-class ParticleTrapper(eqx.Module):
-    kxr: jax.Array
-    wrs: jax.Array
-    wis: jax.Array
-    kx: jax.Array
-    vph: jax.Array
-    kld: float
-    growth_coeff: float
-    damping_coeff: float
+class ParticleTrapper(hk.Module):
+    # kxr: jax.Array
+    # wrs: jax.Array
+    # wis: jax.Array
+    # kx: jax.Array
+    # vph: jax.Array
+    # kld: float
+    # growth_coeff: float
+    # damping_coeff: float
 
     def __init__(self, kld, kxr, kx, kinetic_real_epw):
         super().__init__()

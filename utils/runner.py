@@ -1,11 +1,13 @@
 import tempfile, time
 from typing import Dict
 import mlflow
+from functools import partial
 
 import es1d
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS
 from utils import logs
 from jax import jit
+import haiku as hk
 
 
 def run(cfg: Dict) -> RESULTS:
@@ -24,13 +26,20 @@ def run(cfg: Dict) -> RESULTS:
     with tempfile.TemporaryDirectory() as td:
         # run
         t0 = time.time()
-        vector_field = helpers.get_vector_field(cfg)
+
+        def vector_field(t, y, args):
+            dummy_vf = helpers.VectorField(cfg)
+            return dummy_vf(t, y, args)
+
         state = helpers.init_state(cfg)
+
+        vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
+        vf = partial(vf_apply, None)
 
         @jit
         def _run_():
             return diffeqsolve(
-                terms=ODETerm(vector_field),
+                terms=ODETerm(vf),
                 solver=Tsit5(),
                 t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
