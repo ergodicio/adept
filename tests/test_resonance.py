@@ -54,7 +54,7 @@ def test_single_resonance():
     efs = jnp.real(jnp.fft.ifft(1j * one_over_kx[None, :] * jnp.fft.fft(1 - result.ys["x"]["electron"]["n"][:, :])))
     ek1 = np.fft.fft(efs, axis=1)[:, 1]
     env, freq = electrostatic.get_nlfs(ek1, result.ts[1] - result.ts[0])
-    frslc = slice(400, -400)
+    frslc = slice(-200, -150)
     print(
         f"Frequency check \n"
         f"measured: {np.round(np.mean(freq[frslc]), 5)}, "

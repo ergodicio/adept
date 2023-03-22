@@ -37,7 +37,7 @@ def run(cfg: Dict) -> RESULTS:
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                saveat=SaveAt(ts=cfg["save"]["t_save"], fn=cfg["save"]["func"]),
+                saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]),
             )
 
         result = _run_()

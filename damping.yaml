@@ -5,32 +5,32 @@ mlflow:
   run: test
 
 grid:
-    nx: 32
+    nx: 128
     xmin: 0.0
     xmax: 20.94
     tmin: 0.0
-    tmax: 50
+    tmax: 1200
 
 save:
     t:
-      tmin: 0.0
-      tmax: 50.0
-      nt: 401
+      tmin: 1.0
+      tmax: 1024.0
+      nt: 2048
     x:
       is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 16
+      nx: 128
     kx:
       is_on: True
       kxmin: 0.0
-      kxmax: 0.374
-      nkx: 2
+      kxmax: 0.6
+      nkx: 3
 
 physics:
     gamma: 3
     T0: 1.0
-    kinetic_real_wepw: True
+    kinetic_real_wepw: False
     landau_damping: False
     ion:
       is_on: False
@@ -54,11 +54,11 @@ drivers:
             "k0": 0.22,
             "w0": 1.1,
             "dw0": 0.0,
-            "t_c": 15.0,
-            "t_w": 10.0,
-            "t_r": 2.5,
-            "x_c": 400,
-            "x_w": 1000000,
-            "x_r": 10,
-            "a0": 1.e-6,
+            "t_c": 150.0,
+            "t_w": 50.0,
+            "t_r": 20.0,
+            "x_c": 400.0,
+            "x_w": 1000000.0,
+            "x_r": 10.0,
+            "a0": 1.e-5,
     }

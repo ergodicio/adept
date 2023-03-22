@@ -24,3 +24,4 @@ dependencies:
       - tqdm
       - xarray
       - diffrax
+      - h5netcdf

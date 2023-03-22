@@ -15,7 +15,7 @@ from es1d import pushers
 def save_arrays(result, td, cfg, label):
     flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
     data_vars = {
-        k: xr.DataArray(v, coords=(("t", cfg["save"]["t_save"]), (label, cfg["save"][label]["ax"])))
+        k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, cfg["save"][label]["ax"])))
         for k, v in flattened_dict.items()
     }
 
@@ -121,13 +121,8 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    cfg["save"] = {
-        **cfg["save"],
-        **{
-            "t_save": jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"]),
-            "func": get_save_func(cfg),
-        },
-    }
+    cfg["save"] = {**cfg["save"], **{"func": get_save_func(cfg)}}
+    cfg["save"]["t"]["ax"] = jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"])
 
     return cfg
 
