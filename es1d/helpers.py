@@ -147,7 +147,6 @@ def init_state(cfg: Dict) -> Dict:
     return state
 
 
-# def get_vector_field(cfg: Dict) -> Callable:
 class VectorField(hk.Module):
     """
     This function returns the function that defines $d_state / dt$
@@ -194,7 +193,10 @@ class VectorField(hk.Module):
             self.cfg["physics"]["ion"]["charge"] * y["ion"]["n"]
             + self.cfg["physics"]["electron"]["charge"] * y["electron"]["n"]
         )
-        ed = self.push_driver(self.cfg["drivers"]["ex"]["0"], t)
+        ed = 0.0
+
+        for p_ind, pulse in self.cfg["drivers"]["ex"].items():
+            ed += self.push_driver(pulse, t)
         total_e = e + ed
 
         dstate_dt = {"ion": {}, "electron": {}}

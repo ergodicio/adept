@@ -2,7 +2,6 @@ from typing import Dict, Tuple
 
 from jax import numpy as jnp
 
-# import jax
 import haiku as hk
 import numpy as np
 
@@ -37,8 +36,6 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
 
 
 class Driver(hk.Module):
-    # xax: jax.Array
-
     def __init__(self, xax):
         super().__init__()
         self.xax = xax
@@ -64,8 +61,6 @@ class Driver(hk.Module):
 
 
 class PoissonSolver(hk.Module):
-    # one_over_kx: jax.Array
-
     def __init__(self, one_over_kx):
         super().__init__()
         self.one_over_kx = one_over_kx
@@ -87,8 +82,6 @@ def gradient(arr, kx):
 
 
 class DensityStepper(hk.Module):
-    # kx: jax.Array
-
     def __init__(self, kx):
         super().__init__()
         self.kx = kx
@@ -98,11 +91,6 @@ class DensityStepper(hk.Module):
 
 
 class VelocityStepper(hk.Module):
-    # kx: jax.Array
-    # wis: jax.Array
-    # wr_corr: jax.Array
-    # absorption_coeff: float
-
     def __init__(self, kx, kxr, physics):
         super().__init__()
         self.kx = kx
@@ -133,9 +121,6 @@ class VelocityStepper(hk.Module):
 
 
 class EnergyStepper(hk.Module):
-    # kx: jax.Array
-    # gamma: jnp.float64
-
     def __init__(self, kx, gamma):
         super().__init__()
         self.kx = kx
@@ -150,15 +135,6 @@ class EnergyStepper(hk.Module):
 
 
 class ParticleTrapper(hk.Module):
-    # kxr: jax.Array
-    # wrs: jax.Array
-    # wis: jax.Array
-    # kx: jax.Array
-    # vph: jax.Array
-    # kld: float
-    # growth_coeff: float
-    # damping_coeff: float
-
     def __init__(self, kld, kxr, kx, kinetic_real_epw):
         super().__init__()
         self.kxr = kxr
