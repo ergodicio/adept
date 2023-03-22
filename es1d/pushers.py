@@ -115,7 +115,7 @@ class VelocityStepper(eqx.Module):
             self.wis = jnp.zeros_like(kxr)
 
     def landau_damping_term(self, u):
-        return 2*jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
+        return 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
 
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
