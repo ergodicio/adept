@@ -2,12 +2,12 @@ mode: es-1d
 
 mlflow:
   experiment: es1d-trapping
-  run: test
+  run: etching
 
 grid:
-    nx: 2048
+    nx: 4096
     xmin: 0.0
-    xmax: 2000
+    xmax: 3000
     tmin: 0.0
     tmax: 800
 
@@ -18,9 +18,9 @@ save:
       nt: 1601
     x:
       is_on: True
-      xmin: 1.0
-      xmax: 1999.0
-      nx: 512
+      xmin: 0.0
+      xmax: 3000.0
+      nx: 1024
     kx:
       is_on: True
       kxmin: 0.0
@@ -50,15 +50,26 @@ physics:
 
 drivers:
   "ex":
-    "0": {
-            "k0": 0.3,
-            "w0": 1.13,
-            "dw0": 0.0,
-            "t_c": 80,
-            "t_w": 100,
-            "t_r": 20,
-            "x_c": 600,
-            "x_w": 800,
-            "x_r": 80,
-            "a0": 1.e-2,
-    }
+    "0":
+      "k0": 0.3
+      "w0": 1.13
+      "dw0": 0.0
+      "t_c": 80
+      "t_w": 100
+      "t_r": 20
+      "x_c": 600
+      "x_w": 800
+      "x_r": 80
+      "a0": 1.e-2
+    "1":
+      "k0": 0.3
+      "w0": 1.13
+      "dw0": 0.0
+      "t_c": 80
+      "t_w": 400
+      "t_r": 20
+      "x_c": 1600
+      "x_w": 800
+      "x_r": 80
+      "a0": 0.e-2
+

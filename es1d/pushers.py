@@ -145,7 +145,7 @@ class ParticleTrapper(hk.Module):
         self.kld = kld
         self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
         self.growth_coeff = 1e2
-        self.damping_coeff = 1e-2
+        self.damping_coeff = 4e-3
 
     def __call__(self, e, delta):
         return (

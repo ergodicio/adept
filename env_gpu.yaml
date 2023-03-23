@@ -25,3 +25,4 @@ dependencies:
       - xarray
       - diffrax
       - h5netcdf
+      - dm-haiku
