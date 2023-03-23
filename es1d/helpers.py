@@ -215,14 +215,14 @@ class VectorField(hk.Module):
                 )
                 dstate_dt[species_name]["p"] = self.pusher_dict[species_name]["push_e"](n, u, p_over_m, q_over_m * e)
             else:
-                dstate_dt[species_name]["n"] = 0.0
-                dstate_dt[species_name]["u"] = 0.0
-                dstate_dt[species_name]["p"] = 0.0
+                dstate_dt[species_name]["n"] = jnp.zeros(self.cfg["grid"]["nx"])
+                dstate_dt[species_name]["u"] = jnp.zeros(self.cfg["grid"]["nx"])
+                dstate_dt[species_name]["p"] = jnp.zeros(self.cfg["grid"]["nx"])
 
             if self.cfg["physics"][species_name]["trapping"]["is_on"]:
                 dstate_dt[species_name]["delta"] = self.pusher_dict[species_name]["particle_trapper"](e, delta)
             else:
-                dstate_dt[species_name]["delta"] = 0.0
+                dstate_dt[species_name]["delta"] = jnp.zeros(self.cfg["grid"]["nx"])
 
         return dstate_dt
 

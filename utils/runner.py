@@ -4,7 +4,7 @@ import mlflow
 from functools import partial
 
 import es1d
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS, Kvaerno5, PIDController
 from utils import logs
 from jax import jit
 import haiku as hk
@@ -40,12 +40,13 @@ def run(cfg: Dict) -> RESULTS:
         def _run_():
             return diffeqsolve(
                 terms=ODETerm(vf),
-                solver=Tsit5(),
+                solver=Kvaerno5(),  # Tsit5(),
                 t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
+                stepsize_controller=PIDController(rtol=1e-8, atol=1e-8),
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]),
             )
 

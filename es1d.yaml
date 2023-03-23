@@ -5,7 +5,7 @@ mlflow:
   run: etching
 
 grid:
-    nx: 4096
+    nx: 3072
     xmin: 0.0
     xmax: 3000
     tmin: 0.0
