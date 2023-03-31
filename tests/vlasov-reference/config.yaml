@@ -1,0 +1,134 @@
+density:
+  quasineutrality: true
+  species-background:
+    T0: 1.0
+    basis: tanh
+    m: 2.0
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    space-profile:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 10.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0
+    v0: 0.0
+diagnostics:
+  dist:
+    axis_transforms:
+    - (k_x, v)
+    f_transforms:
+    - f
+    kxmax_to_store: 4.0
+    kxmin_to_store: 0.0
+    nkx: 3
+    nv: 256
+    nx: 32
+    vmax_to_store: 6.4
+    vmin_to_store: -6.4
+    xmax_to_store: 20.94
+    xmin_to_store: 0.0
+  field:
+    axis_transforms:
+    - (x)
+    - (k_x)
+    f_transforms:
+    - force
+    - n
+    kxmax_to_store: 4.0
+    kxmin_to_store: 0.0
+    nkx: 5
+    nx: 32
+    xmax_to_store: 17.550796947429014
+    xmin_to_store: 0.0
+  postprocess:
+    chie:
+      k_max: 0.4
+      k_min: 0.24
+      num_k: 9
+      num_w: 16
+      t_max: 30
+      t_min: 20
+      w_max: 1.4
+      w_min: 1.1
+    nlfs:
+      metric_tmax: 40
+      metric_tmin: 30
+      ts_tmax: 45
+      ts_tmin: 5
+  series:
+    '0':
+      name: damping-rate
+      quant_conf:
+        inv_or_not: false
+        reduce_func: ave
+        t_range: '30:45'
+        xmax: all
+        xmin: all
+      quant_func: e_dr
+grid:
+  c_light: 10
+  checkpoint_steps: 500
+  nt: 1000
+  nv: 512
+  nx: 32
+  tmax: 50.0
+  vmax: 6.4
+  xmax: 17.550796947429014
+  xmin: 0.0
+krook:
+  space-profile:
+    baseline: 1.0e-05
+    bump_or_trough: bump
+    center: 0.0
+    rise: 10.0
+    slope: 0.0
+    wall_height: 0.0
+    width: 100000.0
+  time-profile:
+    baseline: 0.0001
+    bump_or_trough: bump
+    center: 0.0
+    rise: 10.0
+    slope: 0.0
+    wall_height: 0.0
+    width: 100000.0
+machine: local
+mlflow:
+  experiment: landau_damping
+  run: test
+mode: calculator
+nu:
+  time-profile:
+    baseline: 0.0001
+    bump_or_trough: bump
+    center: 0.0
+    rise: 10.0
+    slope: 0.0
+    wall_height: 0.0
+    width: 100000.0
+pulses:
+  ex:
+    '0':
+      a0: 1.0e-06
+      dw0: 0.0
+      k0: 0.358
+      t_center: 15.0
+      t_rise: 2.5
+      t_width: 10.0
+      w0: 1.2310768180888438
+      x_center: 400.0
+      x_rise: 10.0
+      x_width: 1000000.0
+  ey: {}
+solver:
+  backend: jax
+  dfdt: leapfrog
+  edfdv: exponential
+  field: poisson
+  fp_operator: dougherty
+  num_unroll: 32
+  vdfdx: exponential

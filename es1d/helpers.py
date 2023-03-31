@@ -27,15 +27,19 @@ def save_arrays(result, td, cfg, label):
 
 def plot_xrs(which, td, xrs):
     os.makedirs(os.path.join(td, "plots", which))
-    os.makedirs(os.path.join(td, "plots", which, "hue"))
+    os.makedirs(os.path.join(td, "plots", which, "ion"))
+    os.makedirs(os.path.join(td, "plots", which, "electron"))
 
     for k, v in xrs.items():
+        fname = f"{'-'.join(k.split('-')[1:])}.png"
         fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
         v.plot(ax=ax, cmap="gist_ncar")
-        fig.savefig(os.path.join(td, "plots", which, f"{k}.png"), bbox_inches="tight")
+        fig.savefig(os.path.join(td, "plots", which, k.split("-")[0], fname), bbox_inches="tight")
         plt.close(fig)
 
         if which == "kx":
+            os.makedirs(os.path.join(td, "plots", which, "ion", "hue"), exist_ok=True)
+            os.makedirs(os.path.join(td, "plots", which, "electron", "hue"), exist_ok=True)
             # only plot
             if v.coords["kx"].size > 8:
                 hue_skip = v.coords["kx"].size // 8
@@ -47,7 +51,12 @@ def plot_xrs(which, td, xrs):
                 v[:, ::hue_skip].plot(ax=ax, hue="kx")
                 ax.set_yscale("log" if log else "linear")
                 ax.grid()
-                fig.savefig(os.path.join(td, "plots", which, f"hue", f"{k}-log-{log}.png"), bbox_inches="tight")
+                fig.savefig(
+                    os.path.join(
+                        td, "plots", which, k.split("-")[0], f"hue", f"{'-'.join(k.split('-')[1:])}-log-{log}.png"
+                    ),
+                    bbox_inches="tight",
+                )
                 plt.close(fig)
 
 
@@ -74,7 +83,7 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     :return:
     """
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-    cfg_grid["dt"] = 0.5 * cfg_grid["dx"] / 10
+    cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
@@ -172,6 +181,7 @@ class VectorField(hk.Module):
             if cfg["physics"][species_name]["trapping"]["is_on"]:
                 self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(
                     cfg["physics"][species_name]["trapping"]["kld"],
+                    cfg["physics"][species_name]["trapping"]["nuee"],
                     cfg["grid"]["kxr"],
                     cfg["grid"]["kx"],
                     cfg["physics"]["kinetic_real_wepw"],

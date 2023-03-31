@@ -9,13 +9,13 @@ grid:
     xmin: 0.0
     xmax: 3000
     tmin: 0.0
-    tmax: 800
+    tmax: 2000
 
 save:
     t:
       tmin: 0.0
-      tmax: 800.0
-      nt: 1601
+      tmax: 2000.0
+      nt: 4001
     x:
       is_on: True
       xmin: 0.0
@@ -65,11 +65,11 @@ drivers:
       "k0": 0.3
       "w0": 1.13
       "dw0": 0.0
-      "t_c": 80
-      "t_w": 400
+      "t_c": 400
+      "t_w": 100
       "t_r": 20
-      "x_c": 1600
+      "x_c": 2000
       "x_w": 800
       "x_r": 80
-      "a0": 0.e-2
+      "a0": 1.e-2
 

@@ -34,10 +34,10 @@ def run(cfg: Dict) -> RESULTS:
         state = helpers.init_state(cfg)
 
         vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
-        vf = partial(vf_apply, None)
 
         @jit
         def _run_():
+            vf = partial(vf_apply, None)
             return diffeqsolve(
                 terms=ODETerm(vf),
                 solver=Tsit5(),
@@ -62,3 +62,6 @@ def run(cfg: Dict) -> RESULTS:
     # fin
 
     return result
+
+
+

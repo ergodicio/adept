@@ -24,6 +24,7 @@ def _modify_defaults_(defaults, rng):
     # defaults["save"]["field"]["xmax_to_store"] = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
+    defaults["mlflow"]["experiment"] = "test-resonance"
 
     return defaults, float(np.real(root))
 

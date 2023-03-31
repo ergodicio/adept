@@ -26,3 +26,4 @@ dependencies:
       - diffrax
       - h5netcdf
       - dm-haiku
+      - h5netcdf

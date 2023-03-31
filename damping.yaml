@@ -39,26 +39,27 @@ physics:
       trapping:
         is_on: False
         kld: 0.3
+        nuee: 1.0e-9
     electron:
       is_on: True
       mass: 1.0
       charge: -1.0
       trapping:
-        is_on: False
+        is_on: True
         kld: 0.3
+        nuee: 1.0e-9
 
 
 drivers:
   "ex":
-    "0": {
-            "k0": 0.22,
-            "w0": 1.1,
-            "dw0": 0.0,
-            "t_c": 150.0,
-            "t_w": 50.0,
-            "t_r": 20.0,
-            "x_c": 400.0,
-            "x_w": 1000000.0,
-            "x_r": 10.0,
-            "a0": 1.e-5,
-    }
+    "0":
+      "k0": 0.22
+      "w0": 1.1
+      "dw0": 0.0
+      "t_c": 150.0
+      "t_w": 50.0
+      "t_r": 20.0
+      "x_c": 400.0
+      "x_w": 1000000.0
+      "x_r": 10.0
+      "a0": 1.e-5

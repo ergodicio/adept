@@ -1,7 +1,8 @@
 from typing import Dict, Tuple
 
+import jax.debug
 from jax import numpy as jnp
-
+from jax.nn import tanh, relu
 import haiku as hk
 import numpy as np
 
@@ -135,21 +136,28 @@ class EnergyStepper(hk.Module):
 
 
 class ParticleTrapper(hk.Module):
-    def __init__(self, kld, kxr, kx, kinetic_real_epw):
+    def __init__(self, kld, nuee, kxr, kx, kinetic_real_epw):
         super().__init__()
         self.kxr = kxr
         self.kx = kx
         wrs, wis, klds = get_complex_frequency_table(128, kinetic_real_epw)
         self.wrs = jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1])
         self.wis = jnp.interp(kxr, klds, wis, left=0.0, right=0.0)
+        self.klds = klds
         self.kld = kld
+        self.nuee = nuee
         self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
-        self.growth_coeff = 1e2
-        self.damping_coeff = 4e-3
+        self.growth_coeff = hk.Sequential([hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh])
+        self.damping_coeff = hk.Sequential([hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh])
 
     def __call__(self, e, delta):
+        ek = jnp.fft.rfft(e, axis=0)
+        aek = jnp.array([jnp.abs(ek)[1], self.kld, jnp.log10(self.nuee)])[None, :]
+        growth_coeff = 10 ** (3 * jnp.squeeze(self.growth_coeff(aek)))
+        damping_coeff = 10 ** (3 * jnp.squeeze(self.damping_coeff(aek)))
+
         return (
             -self.vph * gradient(delta, self.kx)
-            + self.growth_coeff * jnp.abs(jnp.fft.irfft(jnp.fft.rfft(e, axis=0) * self.wis))
-            - self.damping_coeff * delta
+            + growth_coeff * jnp.abs(jnp.fft.irfft(ek * self.wis))
+            - damping_coeff * delta
         )
