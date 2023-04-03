@@ -60,19 +60,19 @@ def train_loop():
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
-        for j in range(100):
+        for epoch in range(100):
             rng.shuffle(nus)
             rng.shuffle(k0s)
             rng.shuffle(a0s)
             epoch_loss = 0.0
-            for i, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
+            for sim, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
                 with open("./damping.yaml", "r") as file:
                     defaults = yaml.safe_load(file)
 
                 mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
                 locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
                 actual_nk1 = jnp.array(fks["n-(k_x)"].loc[locs].data[:, 1])
-                with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"], nested=True) as mlflow_run:
+                with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
                     mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
                     logs.log_params(mod_defaults)
 
@@ -126,7 +126,7 @@ def train_loop():
                 updates, opt_state = optimizer.update(grad, opt_state, w_and_b)
                 w_and_b = optax.apply_updates(w_and_b, updates)
                 loss_val = float(loss_val)
-                mlflow.log_metrics({"run_loss": loss_val}, step=i + j * 100)
+                mlflow.log_metrics({"run_loss": loss_val}, step=sim + epoch * 100)
                 epoch_loss = epoch_loss + loss_val
                 pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(i+1):.2e}")
 
