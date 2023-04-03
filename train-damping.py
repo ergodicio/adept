@@ -1,11 +1,13 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import yaml
+from itertools import product
 
 import numpy as np
 from jax.config import config
 
 config.update("jax_enable_x64", True)
+# config.update("jax_debug_nans", True)
 # config.update("jax_disable_jit", True)
 
 import jax
@@ -23,10 +25,10 @@ import haiku as hk
 from theory import electrostatic
 
 
-def _modify_defaults_(defaults, params):
-    k0 = params["k_0"]
-    a0 = params["a_0"]
-    nuee = params["nu_ee"]
+def _modify_defaults_(defaults, k0, a0, nuee):
+    # k0 = params["k_0"]
+    # a0 = params["a_0"]
+    # nuee = params["nu_ee"]
 
     wepw = np.sqrt(1.0 + 3.0 * k0**2.0)
     root = electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, k0)
@@ -41,6 +43,7 @@ def _modify_defaults_(defaults, params):
     # defaults["save"]["field"]["xmax_to_store"] = float(2.0 * np.pi / k0)
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
+    defaults["save"]["kx"]["kxmax"] = float(k0)
 
     return defaults  # , float(np.imag(root))
 
@@ -49,21 +52,27 @@ def train_loop():
     w_and_b = get_w_and_b()
 
     # modify config
-    params = xr.open_dataset("./params.nc")
-    ek1s = xr.open_dataset("./t_vs_e_squared.nc")["average_es"]
+    fks = xr.open_dataset("./epws.nc")
 
-    sim_index = np.arange(len(params.coords["sim_index"].data))
+    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)
+    k0s = np.copy(fks.coords["$k_0$"].data)
+    a0s = np.copy(fks.coords["$a_0$"].data)
+
     rng = np.random.default_rng(420)
-    rng.shuffle(sim_index)
+    rng.shuffle(nus)
+    rng.shuffle(k0s)
+    rng.shuffle(a0s)
 
-    for ib in sim_index:
+    for nuee, k0, a0 in product(nus, k0s, a0s):
         with open("./damping.yaml", "r") as file:
             defaults = yaml.safe_load(file)
-        these_params = {k: params[k][ib].data for k in params.keys()}
-        mod_defaults = _modify_defaults_(defaults, these_params)
+
+        mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
         mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
 
-        actual_ek1 = jnp.array(ek1s[ib].data)
+        locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
+
+        actual_nk1 = jnp.array(fks["n-(k_x)"].loc[locs].data[:, 1])
 
         with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
             mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
@@ -71,6 +80,8 @@ def train_loop():
 
             mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
             mod_defaults = helpers.get_save_quantities(mod_defaults)
+
+            pulse_dict = {"pulse": mod_defaults["drivers"]}
 
             with tempfile.TemporaryDirectory() as td:
                 # run
@@ -93,13 +104,18 @@ def train_loop():
                         max_steps=mod_defaults["grid"]["max_steps"],
                         dt0=mod_defaults["grid"]["dt"],
                         y0=state,
+                        args=pulse_dict,
                         saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
                     )
+                    # nk1 = results.ys["kx"]["electron"]["n"]["mag"][:, 1]
+                    nk1 = jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
+                    # nk1 = jnp.abs(jnp.fft.fft(results.ys["electron"]["n"], axis=1)[:, 1])
+                    # nk1 = jnp.abs(jnp.fft.fft(results.ys["electron"]["n"], axis=1)[:, 1])
+                    # interp_nk1 = jnp.interp(fks.coords["t"].data, mod_defaults["save"]["t"]["ax"], nk1)
+                    nk1 = nk1 * 2.0 / mod_defaults["grid"]["nx"]
+                    return jnp.mean(jnp.square(actual_nk1[300:400] - nk1[300:400])), results
 
-                    observed_ek1 = calc_es_v_t(mod_defaults, results, ek1s.coords["t"].data)
-                    return jnp.mean(jnp.square(actual_ek1 - observed_ek1)), observed_ek1
-
-                vg_func = jax.jit(jax.value_and_grad(loss, argnums=0, has_aux=True))
+                vg_func = jax.value_and_grad(loss, argnums=0, has_aux=True)
                 (loss, results), grad = vg_func(w_and_b)
                 mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
@@ -117,6 +133,8 @@ def get_w_and_b():
     defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
     defaults = helpers.get_save_quantities(defaults)
 
+    pulse_dict = {"pulse": defaults["drivers"]}
+
     def vector_field(t, y, args):
         dummy_vf = helpers.VectorField(defaults)
         return dummy_vf(t, y, args)
@@ -124,18 +142,9 @@ def get_w_and_b():
     state = helpers.init_state(defaults)
     vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
     dummy_t = 0.5
-    dummy_args = {}
+    dummy_args = pulse_dict  # {"kld": 0.3}
     key = jax.random.PRNGKey(420)
     return vf_init(key, dummy_t, state, dummy_args)
-
-
-def calc_es_v_t(mod_defaults, results, tax):
-    one_over_kx = mod_defaults["grid"]["one_over_kx"]
-    efs = jnp.real(jnp.fft.ifft(1j * one_over_kx[None, :] * jnp.fft.fft(1 - results.ys["x"]["electron"]["n"][:, :])))
-    ek1 = 2.0 / mod_defaults["grid"]["nx"] * jnp.abs(jnp.fft.fft(efs, axis=1)[:, 1])
-    interp_ek1 = jnp.interp(tax, mod_defaults["save"]["t"]["ax"], ek1**2.0)
-
-    return interp_ek1
 
 
 if __name__ == "__main__":

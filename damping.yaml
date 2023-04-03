@@ -9,23 +9,23 @@ grid:
     xmin: 0.0
     xmax: 20.94
     tmin: 0.0
-    tmax: 1200
+    tmax: 200.0
 
 save:
     t:
-      tmin: 1.0
-      tmax: 1024.0
-      nt: 2048
+      tmin: 0.0
+      tmax: 200.0
+      nt: 401
     x:
       is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 128
+      nx: 32
     kx:
-      is_on: True
+      is_on: False
       kxmin: 0.0
       kxmax: 0.6
-      nkx: 3
+      nkx: 2
 
 physics:
     gamma: 3
@@ -56,9 +56,9 @@ drivers:
       "k0": 0.22
       "w0": 1.1
       "dw0": 0.0
-      "t_c": 150.0
-      "t_w": 50.0
-      "t_r": 20.0
+      "t_c": 40.0
+      "t_w": 40.0
+      "t_r": 5.0
       "x_c": 400.0
       "x_w": 1000000.0
       "x_r": 10.0

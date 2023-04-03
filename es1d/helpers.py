@@ -206,7 +206,7 @@ class VectorField(hk.Module):
         ed = 0.0
 
         for p_ind, pulse in self.cfg["drivers"]["ex"].items():
-            ed += self.push_driver(pulse, t)
+            ed += self.push_driver(args["pulse"]["ex"]["0"], t)
         total_e = e + ed
 
         dstate_dt = {"ion": {}, "electron": {}}
@@ -230,7 +230,7 @@ class VectorField(hk.Module):
                 dstate_dt[species_name]["p"] = jnp.zeros(self.cfg["grid"]["nx"])
 
             if self.cfg["physics"][species_name]["trapping"]["is_on"]:
-                dstate_dt[species_name]["delta"] = self.pusher_dict[species_name]["particle_trapper"](e, delta)
+                dstate_dt[species_name]["delta"] = self.pusher_dict[species_name]["particle_trapper"](e, delta, args)
             else:
                 dstate_dt[species_name]["delta"] = jnp.zeros(self.cfg["grid"]["nx"])
 
@@ -252,15 +252,16 @@ def get_save_func(cfg):
         )
 
         def save_kx(field):
-            complex_field = 2.0 / cfg["grid"]["nx"] * jnp.fft.rfft(field, axis=0)
+            complex_field = jnp.fft.rfft(field, axis=0) * 2.0 / cfg["grid"]["nx"]
             interped_field = jnp.interp(cfg["save"]["kx"]["ax"], cfg["grid"]["kxr"], complex_field)
             return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
 
     def save_func(t, y, args):
+        # return y
+        # return {"x": jtu.tree_map(save_x, y)}  # , "kx": jtu.tree_map(save_kx, y)}
         save_dict = {}
         if cfg["save"]["x"]["is_on"]:
             save_dict["x"] = jtu.tree_map(save_x, y)
-
         if cfg["save"]["kx"]["is_on"]:
             save_dict["kx"] = jtu.tree_map(save_kx, y)
 

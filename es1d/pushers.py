@@ -147,12 +147,16 @@ class ParticleTrapper(hk.Module):
         self.kld = kld
         self.nuee = nuee
         self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
-        self.growth_coeff = hk.Sequential([hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh])
-        self.damping_coeff = hk.Sequential([hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh])
+        self.growth_coeff = hk.Sequential(
+            [hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh], name="growth_rate"
+        )
+        self.damping_coeff = hk.Sequential(
+            [hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh], name="damping_rate"
+        )
 
-    def __call__(self, e, delta):
+    def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0)
-        aek = jnp.array([jnp.abs(ek)[1], self.kld, jnp.log10(self.nuee)])[None, :]
+        aek = jnp.array([jnp.abs(ek)[1], self.kld, jnp.log10(self.nuee)])[None, :]  # ])
         growth_coeff = 10 ** (3 * jnp.squeeze(self.growth_coeff(aek)))
         damping_coeff = 10 ** (3 * jnp.squeeze(self.damping_coeff(aek)))
 
