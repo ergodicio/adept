@@ -1,0 +1,14 @@
+jax
+jaxlib
+diffrax
+matplotlib
+scipy
+numpy
+tqdm
+xarray
+mlflow
+dm-haiku
+flatdict
+h5netcdf
+optax
+boto3
