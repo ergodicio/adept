@@ -52,9 +52,9 @@ def train_loop():
     # modify config
     fks = xr.open_dataset("./epws.nc")
 
-    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)[::4]
-    k0s = np.copy(fks.coords["$k_0$"].data)[::4]
-    a0s = np.copy(fks.coords["$a_0$"].data)[::4]
+    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)  # [::4]
+    k0s = np.copy(fks.coords["$k_0$"].data)  # [::4]
+    a0s = np.copy(fks.coords["$a_0$"].data)  # [::4]
 
     rng = np.random.default_rng(420)
 
@@ -128,7 +128,7 @@ def train_loop():
                 loss_val = float(loss_val)
                 mlflow.log_metrics({"run_loss": loss_val}, step=sim + epoch * 100)
                 epoch_loss = epoch_loss + loss_val
-                pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(i+1):.2e}")
+                pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
 
             mlflow.log_metrics({"epoch_loss": epoch_loss})
 
