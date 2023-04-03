@@ -1,6 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-import yaml
+
+import yaml, os
 from itertools import product
 
 import numpy as np
@@ -18,6 +19,7 @@ import mlflow, optax
 from functools import partial
 import haiku as hk
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 from es1d import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
@@ -55,7 +57,6 @@ def train_loop():
     a0s = np.copy(fks.coords["$a_0$"].data)[::4]
 
     rng = np.random.default_rng(420)
-
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
@@ -117,6 +118,7 @@ def train_loop():
 
                         t0 = time.time()
                         helpers.post_process(results, mod_defaults, td)
+                        mva(fks, actual_nk1, mod_defaults, results, td)
                         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
                         # log artifacts
                         mlflow.log_artifacts(td)
@@ -129,6 +131,29 @@ def train_loop():
                 pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(i+1):.2e}")
 
             mlflow.log_metrics({"epoch_loss": epoch_loss})
+
+
+def mva(fks, actual_nk1, mod_defaults, results, td):
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+    ax[0].plot(fks.coords["t"].data, actual_nk1, label="Vlasov")
+    ax[0].plot(
+        mod_defaults["save"]["t"]["ax"],
+        (jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / mod_defaults["grid"]["nx"]),
+        label="NN + Fluid",
+    )
+    ax[1].semilogy(fks.coords["t"].data, actual_nk1, label="Vlasov")
+    ax[1].semilogy(
+        mod_defaults["save"]["t"]["ax"],
+        (jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / mod_defaults["grid"]["nx"]),
+        label="NN + Fluid",
+    )
+    ax[0].set_xlabel(r"t ($\omega_p^{-1}$)", fontsize=12)
+    ax[1].set_xlabel(r"t ($\omega_p^{-1}$)", fontsize=12)
+    ax[0].set_ylabel(r"$|\hat{n}|^{1}$", fontsize=12)
+    ax[0].grid()
+    ax[1].grid()
+    ax[0].legend(fontsize=14)
+    fig.savefig(os.path.join(td, "plots", "vlasov_v_fluid.png"), bbox_inches="tight")
 
 
 def get_w_and_b():
