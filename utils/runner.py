@@ -46,6 +46,7 @@ def run(cfg: Dict) -> RESULTS:
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
+                args={"pulse": cfg["drivers"]},
                 # stepsize_controller=PIDController(rtol=1e-8, atol=1e-8),
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]),
             )
@@ -62,6 +63,3 @@ def run(cfg: Dict) -> RESULTS:
     # fin
 
     return result
-
-
-

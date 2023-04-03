@@ -14,24 +14,18 @@ import jax
 from jax import numpy as jnp
 import xarray as xr
 import tempfile, time
-import mlflow
+import mlflow, optax
 from functools import partial
+import haiku as hk
+from tqdm import tqdm
 
 from es1d import helpers
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS, Kvaerno5, PIDController
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
 from utils import logs
-import haiku as hk
-
-from theory import electrostatic
 
 
 def _modify_defaults_(defaults, k0, a0, nuee):
-    # k0 = params["k_0"]
-    # a0 = params["a_0"]
-    # nuee = params["nu_ee"]
-
     wepw = np.sqrt(1.0 + 3.0 * k0**2.0)
-    root = electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, k0)
 
     defaults["physics"]["landau_damping"] = True
     defaults["physics"]["electron"]["trapping"]["nuee"] = nuee
@@ -50,6 +44,8 @@ def _modify_defaults_(defaults, k0, a0, nuee):
 
 def train_loop():
     w_and_b = get_w_and_b()
+    optimizer = optax.adam(0.1)
+    opt_state = optimizer.init(w_and_b)
 
     # modify config
     fks = xr.open_dataset("./epws.nc")
@@ -63,67 +59,75 @@ def train_loop():
     rng.shuffle(k0s)
     rng.shuffle(a0s)
 
-    for nuee, k0, a0 in product(nus, k0s, a0s):
-        with open("./damping.yaml", "r") as file:
-            defaults = yaml.safe_load(file)
+    mlflow.set_experiment("train-damping-rates-epw")
+    with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
+        for j in range(100):
+            epoch_loss = 0.0
+            for i, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus[:4], k0s[:4], a0s[:4])))):
+                with open("./damping.yaml", "r") as file:
+                    defaults = yaml.safe_load(file)
 
-        mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
-        mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
+                mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
+                locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
+                actual_nk1 = jnp.array(fks["n-(k_x)"].loc[locs].data[:, 1])
+                with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"], nested=True) as mlflow_run:
+                    mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
+                    logs.log_params(mod_defaults)
 
-        locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
+                    mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
+                    mod_defaults = helpers.get_save_quantities(mod_defaults)
 
-        actual_nk1 = jnp.array(fks["n-(k_x)"].loc[locs].data[:, 1])
+                    pulse_dict = {"pulse": mod_defaults["drivers"]}
 
-        with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-            mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
-            logs.log_params(mod_defaults)
+                    with tempfile.TemporaryDirectory() as td:
+                        # run
+                        t0 = time.time()
 
-            mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
-            mod_defaults = helpers.get_save_quantities(mod_defaults)
+                        def vector_field(t, y, args):
+                            dummy_vf = helpers.VectorField(mod_defaults)
+                            return dummy_vf(t, y, args)
 
-            pulse_dict = {"pulse": mod_defaults["drivers"]}
+                        state = helpers.init_state(mod_defaults)
+                        _, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
 
-            with tempfile.TemporaryDirectory() as td:
-                # run
-                t0 = time.time()
+                        def loss(weights_and_biases):
+                            vf = partial(vf_apply, weights_and_biases)
+                            results = diffeqsolve(
+                                terms=ODETerm(vf),
+                                solver=Tsit5(),
+                                t0=mod_defaults["grid"]["tmin"],
+                                t1=mod_defaults["grid"]["tmax"],
+                                max_steps=mod_defaults["grid"]["max_steps"],
+                                dt0=mod_defaults["grid"]["dt"],
+                                y0=state,
+                                args=pulse_dict,
+                                saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
+                            )
+                            nk1 = (
+                                jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
+                                * 2.0
+                                / mod_defaults["grid"]["nx"]
+                            )
+                            return jnp.mean(jnp.square((actual_nk1 - nk1) / np.amax(actual_nk1))), results
 
-                def vector_field(t, y, args):
-                    dummy_vf = helpers.VectorField(mod_defaults)
-                    return dummy_vf(t, y, args)
+                        vg_func = jax.value_and_grad(loss, argnums=0, has_aux=True)
+                        (loss_val, results), grad = jax.jit(vg_func)(w_and_b)
+                        mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
-                state = helpers.init_state(mod_defaults)
-                _, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
+                        t0 = time.time()
+                        helpers.post_process(results, mod_defaults, td)
+                        mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
+                        # log artifacts
+                        mlflow.log_artifacts(td)
 
-                def loss(w_and_b):
-                    vf = partial(vf_apply, w_and_b)
-                    results = diffeqsolve(
-                        terms=ODETerm(vf),
-                        solver=Tsit5(),
-                        t0=mod_defaults["grid"]["tmin"],
-                        t1=mod_defaults["grid"]["tmax"],
-                        max_steps=mod_defaults["grid"]["max_steps"],
-                        dt0=mod_defaults["grid"]["dt"],
-                        y0=state,
-                        args=pulse_dict,
-                        saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
-                    )
-                    # nk1 = results.ys["kx"]["electron"]["n"]["mag"][:, 1]
-                    nk1 = jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
-                    # nk1 = jnp.abs(jnp.fft.fft(results.ys["electron"]["n"], axis=1)[:, 1])
-                    # nk1 = jnp.abs(jnp.fft.fft(results.ys["electron"]["n"], axis=1)[:, 1])
-                    # interp_nk1 = jnp.interp(fks.coords["t"].data, mod_defaults["save"]["t"]["ax"], nk1)
-                    nk1 = nk1 * 2.0 / mod_defaults["grid"]["nx"]
-                    return jnp.mean(jnp.square(actual_nk1[300:400] - nk1[300:400])), results
+                updates, opt_state = optimizer.update(grad, opt_state, w_and_b)
+                w_and_b = optax.apply_updates(w_and_b, updates)
+                loss_val = float(loss_val[0])
+                mlflow.log_metrics({"run_loss": loss_val}, step=i + j * 100)
+                epoch_loss = epoch_loss + loss_val
+                pbar.set_description(f"{loss_val=}, {epoch_loss=}, average_loss={epoch_loss/(i+1)}")
 
-                vg_func = jax.value_and_grad(loss, argnums=0, has_aux=True)
-                (loss, results), grad = vg_func(w_and_b)
-                mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
-
-                t0 = time.time()
-                helpers.post_process(results, mod_defaults, td)
-                mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-                # log artifacts
-                mlflow.log_artifacts(td)
+            mlflow.log_metrics({"epoch_loss": epoch_loss})
 
 
 def get_w_and_b():
@@ -142,7 +146,7 @@ def get_w_and_b():
     state = helpers.init_state(defaults)
     vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
     dummy_t = 0.5
-    dummy_args = pulse_dict  # {"kld": 0.3}
+    dummy_args = pulse_dict
     key = jax.random.PRNGKey(420)
     return vf_init(key, dummy_t, state, dummy_args)
 

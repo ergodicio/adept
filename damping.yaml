@@ -5,17 +5,17 @@ mlflow:
   run: test
 
 grid:
-    nx: 128
+    nx: 32
     xmin: 0.0
     xmax: 20.94
     tmin: 0.0
-    tmax: 200.0
+    tmax: 500.0
 
 save:
     t:
-      tmin: 0.0
-      tmax: 200.0
-      nt: 401
+      tmin: 0.5
+      tmax: 500.0
+      nt: 1000
     x:
       is_on: True
       xmin: 0.0

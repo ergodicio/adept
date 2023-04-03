@@ -38,7 +38,7 @@ def _modify_defaults_(defaults, rand_k0):
     return defaults, wepw
 
 
-def train_loop():
+def test_resonance_search():
     mlflow.set_experiment("test-res-search")
     with mlflow.start_run(run_name="res-search-opt") as mlflow_run:
         with open("./tests/configs/resonance.yaml", "r") as file:
@@ -122,4 +122,4 @@ def get_loss(state, pulse_dict, mod_defaults):
 
 
 if __name__ == "__main__":
-    train_loop()
+    test_resonance_search()
