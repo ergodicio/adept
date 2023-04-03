@@ -50,9 +50,9 @@ def train_loop():
     # modify config
     fks = xr.open_dataset("./epws.nc")
 
-    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)
-    k0s = np.copy(fks.coords["$k_0$"].data)
-    a0s = np.copy(fks.coords["$a_0$"].data)
+    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)[::4]
+    k0s = np.copy(fks.coords["$k_0$"].data)[::4]
+    a0s = np.copy(fks.coords["$a_0$"].data)[::4]
 
     rng = np.random.default_rng(420)
 
@@ -60,9 +60,9 @@ def train_loop():
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
         for j in range(100):
-            rng.shuffle(nus[::4])
-            rng.shuffle(k0s[::4])
-            rng.shuffle(a0s[::4])
+            rng.shuffle(nus)
+            rng.shuffle(k0s)
+            rng.shuffle(a0s)
             epoch_loss = 0.0
             for i, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
                 with open("./damping.yaml", "r") as file:
@@ -123,10 +123,10 @@ def train_loop():
 
                 updates, opt_state = optimizer.update(grad, opt_state, w_and_b)
                 w_and_b = optax.apply_updates(w_and_b, updates)
-                loss_val = float(loss_val[0])
+                loss_val = float(loss_val)
                 mlflow.log_metrics({"run_loss": loss_val}, step=i + j * 100)
                 epoch_loss = epoch_loss + loss_val
-                pbar.set_description(f"{loss_val=}, {epoch_loss=}, average_loss={epoch_loss/(i+1)}")
+                pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(i+1):.2e}")
 
             mlflow.log_metrics({"epoch_loss": epoch_loss})
 
