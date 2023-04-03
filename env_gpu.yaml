@@ -27,3 +27,4 @@ dependencies:
       - h5netcdf
       - dm-haiku
       - h5netcdf
+      - optax
