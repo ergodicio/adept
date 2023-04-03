@@ -55,15 +55,16 @@ def train_loop():
     a0s = np.copy(fks.coords["$a_0$"].data)
 
     rng = np.random.default_rng(420)
-    rng.shuffle(nus)
-    rng.shuffle(k0s)
-    rng.shuffle(a0s)
+
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
         for j in range(100):
+            rng.shuffle(nus[::4])
+            rng.shuffle(k0s[::4])
+            rng.shuffle(a0s[::4])
             epoch_loss = 0.0
-            for i, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus[:4], k0s[:4], a0s[:4])))):
+            for i, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
                 with open("./damping.yaml", "r") as file:
                     defaults = yaml.safe_load(file)
 
