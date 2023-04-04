@@ -1,16 +1,27 @@
-import tempfile, time
 from typing import Dict
-import mlflow
 from functools import partial
+import os, pickle, time, tempfile
+
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution, Kvaerno5, PIDController
+from jax import jit, value_and_grad
+from jax import numpy as jnp
+import numpy as np
+import haiku as hk
+import mlflow
+import xarray as xr
 
 import es1d
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, RESULTS, Kvaerno5, PIDController
-from utils import logs
-from jax import jit
-import haiku as hk
+from utils import plotters, misc
 
 
-def run(cfg: Dict) -> RESULTS:
+def start_run(run_type, run_id):
+    if run_type == "forward":
+        just_forward(run_id, nested=False)
+    elif run_type == "grad":
+        remote_gradient(run_id)
+
+
+def run(cfg: Dict) -> Solution:
     if cfg["mode"] == "es-1d":
         helpers = es1d.helpers
     else:
@@ -18,7 +29,7 @@ def run(cfg: Dict) -> RESULTS:
 
     # get derived quantities
     cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
-    logs.log_params(cfg)
+    misc.log_params(cfg)
 
     cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
     cfg = helpers.get_save_quantities(cfg)
@@ -63,3 +74,62 @@ def run(cfg: Dict) -> RESULTS:
     # fin
 
     return result
+
+
+def remote_gradient(run_id):
+    with mlflow.start_run(run_id=run_id, nested=True):
+        with tempfile.TemporaryDirectory() as td:
+            mod_defaults = misc.get_cfg(artifact_uri=run.info.artifact_uri, temp_path=td)
+            w_and_b = misc.get_weights(artifact_uri=run.info.artifact_uri, temp_path=td)
+            actual_nk1 = xr.open_dataarray(
+                misc.download_file("ground_truth.nc", artifact_uri=run.info.artifact_uri, destination_path=td)
+            )
+            mod_defaults["grid"] = es1d.helpers.get_derived_quantities(mod_defaults["grid"])
+            misc.log_params(mod_defaults)
+            mod_defaults["grid"] = es1d.helpers.get_solver_quantities(mod_defaults["grid"])
+            mod_defaults = es1d.helpers.get_save_quantities(mod_defaults)
+            pulse_dict = {"pulse": mod_defaults["drivers"]}
+            t0 = time.time()
+
+            def vector_field(t, y, args):
+                dummy_vf = es1d.helpers.VectorField(mod_defaults)
+                return dummy_vf(t, y, args)
+
+            state = es1d.helpers.init_state(mod_defaults)
+            _, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
+
+            def loss(weights_and_biases):
+                vf = partial(vf_apply, weights_and_biases)
+                results = diffeqsolve(
+                    terms=ODETerm(vf),
+                    solver=Tsit5(),
+                    t0=mod_defaults["grid"]["tmin"],
+                    t1=mod_defaults["grid"]["tmax"],
+                    max_steps=mod_defaults["grid"]["max_steps"],
+                    dt0=mod_defaults["grid"]["dt"],
+                    y0=state,
+                    args=pulse_dict,
+                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
+                )
+                nk1 = (
+                    jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
+                    * 2.0
+                    / mod_defaults["grid"]["nx"]
+                )
+                return jnp.mean(jnp.square((actual_nk1 - nk1) / np.amax(actual_nk1))), results
+
+            vg_func = value_and_grad(loss, argnums=0, has_aux=True)
+            (loss_val, results), grad = jit(vg_func)(w_and_b)
+            mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
+
+            # dump gradients
+            with open(os.path.join(td, "grads.pkl"), "wb") as fi:
+                pickle.dump(grad, fi)
+
+            t0 = time.time()
+            es1d.helpers.post_process(results, mod_defaults, td)
+            plotters.mva(actual_nk1, mod_defaults, results, td)
+            mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
+            # log artifacts
+            mlflow.log_artifacts(td)
+            mlflow.set_tags({"status": "completed"})

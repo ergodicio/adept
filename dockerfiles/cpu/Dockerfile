@@ -6,7 +6,8 @@ WORKDIR /workdir
 
 # copying all files over
 COPY dockerfiles/cpu/requirements-cpu.txt .
-COPY continuum continuum
+COPY es1d es1d
+COPY utils utils
 COPY run_job.py .
 
 ENV JAX_ENABLE_X64=True

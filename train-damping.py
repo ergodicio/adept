@@ -1,7 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-import yaml, os
+import yaml, os, requests
 from itertools import product
 
 import numpy as np
@@ -19,11 +19,10 @@ import mlflow, optax
 from functools import partial
 import haiku as hk
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 
 from es1d import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import logs
+from utils import misc, plotters
 
 
 def _modify_defaults_(defaults, k0, a0, nuee):
@@ -71,10 +70,10 @@ def train_loop():
 
                 mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
                 locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
-                actual_nk1 = jnp.array(fks["n-(k_x)"].loc[locs].data[:, 1])
+                actual_nk1 = xr.DataArray(fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),))
                 with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
                     mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
-                    logs.log_params(mod_defaults)
+                    misc.log_params(mod_defaults)
 
                     mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
                     mod_defaults = helpers.get_save_quantities(mod_defaults)
@@ -110,7 +109,7 @@ def train_loop():
                                 * 2.0
                                 / mod_defaults["grid"]["nx"]
                             )
-                            return jnp.mean(jnp.square((actual_nk1 - nk1) / np.amax(actual_nk1))), results
+                            return jnp.mean(jnp.square((actual_nk1.data - nk1) / np.amax(actual_nk1.data))), results
 
                         vg_func = jax.value_and_grad(loss, argnums=0, has_aux=True)
                         (loss_val, results), grad = jax.jit(vg_func)(w_and_b)
@@ -118,7 +117,7 @@ def train_loop():
 
                         t0 = time.time()
                         helpers.post_process(results, mod_defaults, td)
-                        mva(fks, actual_nk1, mod_defaults, results, td)
+                        plotters.mva(actual_nk1, mod_defaults, results, td)
                         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
                         # log artifacts
                         mlflow.log_artifacts(td)
@@ -133,27 +132,81 @@ def train_loop():
             mlflow.log_metrics({"epoch_loss": epoch_loss})
 
 
-def mva(fks, actual_nk1, mod_defaults, results, td):
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
-    ax[0].plot(fks.coords["t"].data, actual_nk1, label="Vlasov")
-    ax[0].plot(
-        mod_defaults["save"]["t"]["ax"],
-        (jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / mod_defaults["grid"]["nx"]),
-        label="NN + Fluid",
-    )
-    ax[1].semilogy(fks.coords["t"].data, actual_nk1, label="Vlasov")
-    ax[1].semilogy(
-        mod_defaults["save"]["t"]["ax"],
-        (jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / mod_defaults["grid"]["nx"]),
-        label="NN + Fluid",
-    )
-    ax[0].set_xlabel(r"t ($\omega_p^{-1}$)", fontsize=12)
-    ax[1].set_xlabel(r"t ($\omega_p^{-1}$)", fontsize=12)
-    ax[0].set_ylabel(r"$|\hat{n}|^{1}$", fontsize=12)
-    ax[0].grid()
-    ax[1].grid()
-    ax[0].legend(fontsize=14)
-    fig.savefig(os.path.join(td, "plots", "vlasov_v_fluid.png"), bbox_inches="tight")
+def remote_train_loop():
+    w_and_b = get_w_and_b()
+    optimizer = optax.adam(0.1)
+    opt_state = optimizer.init(w_and_b)
+
+    # modify config
+    fks = xr.open_dataset("./epws.nc")
+
+    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)
+    k0s = np.copy(fks.coords["$k_0$"].data)
+    a0s = np.copy(fks.coords["$a_0$"].data)
+
+    rng = np.random.default_rng(420)
+
+    mlflow.set_experiment("train-damping-rates-epw")
+    with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
+        for epoch in range(100):
+            rng.shuffle(nus)
+            rng.shuffle(k0s)
+            rng.shuffle(a0s)
+            epoch_loss = 0.0
+            for batch, (nuee_batch, k0_batch, a0_batch) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
+                run_ids, job_done = [], []
+
+                for sim, (nuee, k0, a0) in enumerate(zip(nuee_batch, k0_batch, a0_batch)):
+                    with open("./damping.yaml", "r") as file:
+                        defaults = yaml.safe_load(file)
+
+                    mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
+                    locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
+                    actual_nk1 = xr.DataArray(
+                        fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),)
+                    )
+                    with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
+                        with tempfile.TemporaryDirectory() as td:
+                            with open(os.path.join(td, "config.yaml"), "w") as fp:
+                                yaml.dump(mod_defaults, fp)
+                            actual_nk1.to_netcdf(os.path.join(td, "ground_truth.nc"))
+                            mlflow.log_artifacts(td)
+                        requests.post(
+                            f"http://" + os.environ["API_HOSTNAME"] + "/queue-fluid-run/",
+                            json={
+                                "job_name": f"epw-train-{epoch=}-{sim=}",
+                                "run_id": run_id,
+                                "run_type": "grad",
+                                "machine": "cpu",
+                            },
+                        )
+                        mlflow.set_tags({"status": "queued"})
+                        run_ids.append(mlflow_run.info.run_id)
+                        job_done.append(False)
+
+            while not all(job_done):
+                for i, run_id in enumerate(run_ids):
+                    time.sleep(4.2 / len(run_ids))
+                    job_done[i] = misc.is_job_done(run_id)
+
+            gradients = []
+            for queued_run_id in zip(run_ids):
+                with tempfile.TemporaryDirectory() as td:
+                    gradients.append(misc.download_and_open_file_from_this_run("gradients.pkl", queued_run_id, td))
+
+            gradients = misc.all_reduce_gradients(gradients, len(run_ids))
+            updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
+            w_and_b = optax.apply_updates(w_and_b, updates)
+
+            batch_loss = np.average(
+                np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
+            )
+            batch_loss = float(batch_loss)
+            mlflow.log_metrics({"batch_loss": batch_loss}, step=batch + epoch * 100)
+            epoch_loss = epoch_loss + batch_loss
+            pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
+
+            mlflow.log_metrics({"epoch_loss": epoch_loss})
 
 
 def get_w_and_b():
