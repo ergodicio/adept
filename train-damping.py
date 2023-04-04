@@ -15,7 +15,7 @@ import jax
 from jax import numpy as jnp
 import xarray as xr
 import tempfile, time
-import mlflow, optax
+import mlflow, optax, pickle
 from functools import partial
 import haiku as hk
 from tqdm import tqdm
@@ -170,6 +170,8 @@ def remote_train_loop():
                             with open(os.path.join(td, "config.yaml"), "w") as fp:
                                 yaml.dump(mod_defaults, fp)
                             actual_nk1.to_netcdf(os.path.join(td, "ground_truth.nc"))
+                            with open(os.path.join(td, "weights.pkl"), "wb") as fi:
+                                pickle.dump(w_and_b, fi)
                             mlflow.log_artifacts(td)
                         misc.queue_sim(
                             {
