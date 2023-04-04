@@ -143,20 +143,20 @@ def remote_train_loop():
     nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)
     k0s = np.copy(fks.coords["$k_0$"].data)
     a0s = np.copy(fks.coords["$a_0$"].data)
-
+    all_sims = np.array(list(product(nus, k0s, a0s)))
     rng = np.random.default_rng(420)
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
         for epoch in range(100):
-            rng.shuffle(nus)
-            rng.shuffle(k0s)
-            rng.shuffle(a0s)
             epoch_loss = 0.0
-            for batch, (nuee_batch, k0_batch, a0_batch) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
+            rng.shuffle(all_sims)
+            all_sims = all_sims.reshape((-1, 13 * 5, 3))
+
+            for i_batch, batch in (pbar := tqdm(enumerate(all_sims))):
                 run_ids, job_done = [], []
 
-                for sim, (nuee, k0, a0) in enumerate(zip(nuee_batch, k0_batch, a0_batch)):
+                for sim, (nuee, k0, a0) in enumerate(batch):
                     with open("./damping.yaml", "r") as file:
                         defaults = yaml.safe_load(file)
 
@@ -202,7 +202,7 @@ def remote_train_loop():
                 np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
             )
             batch_loss = float(batch_loss)
-            mlflow.log_metrics({"batch_loss": batch_loss}, step=batch + epoch * 100)
+            mlflow.log_metrics({"batch_loss": batch_loss}, step=i_batch + epoch * 100)
             epoch_loss = epoch_loss + batch_loss
             pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
 
@@ -231,4 +231,4 @@ def get_w_and_b():
 
 
 if __name__ == "__main__":
-    train_loop()
+    remote_train_loop()
