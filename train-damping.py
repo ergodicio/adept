@@ -30,17 +30,16 @@ def _modify_defaults_(defaults, k0, a0, nuee):
 
     defaults["physics"]["landau_damping"] = True
     defaults["physics"]["electron"]["trapping"]["nuee"] = nuee
-    defaults["physics"]["electron"]["trapping"]["kld"] = float(k0)
-    defaults["drivers"]["ex"]["0"]["k0"] = float(k0)
-    defaults["drivers"]["ex"]["0"]["w0"] = float(wepw)
-    defaults["drivers"]["ex"]["0"]["a0"] = float(a0)
+    defaults["physics"]["electron"]["trapping"]["kld"] = k0
+    defaults["drivers"]["ex"]["0"]["k0"] = k0
+    defaults["drivers"]["ex"]["0"]["w0"] = wepw
+    defaults["drivers"]["ex"]["0"]["a0"] = a0
     xmax = float(2.0 * np.pi / k0)
-    # defaults["save"]["field"]["xmax_to_store"] = float(2.0 * np.pi / k0)
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
-    defaults["save"]["kx"]["kxmax"] = float(k0)
+    defaults["save"]["kx"]["kxmax"] = k0
 
-    return defaults  # , float(np.imag(root))
+    return defaults
 
 
 def train_loop():
@@ -68,7 +67,7 @@ def train_loop():
                 with open("./damping.yaml", "r") as file:
                     defaults = yaml.safe_load(file)
 
-                mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
+                mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
                 locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
                 actual_nk1 = xr.DataArray(fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),))
                 with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
@@ -160,7 +159,7 @@ def remote_train_loop():
                     with open("./damping.yaml", "r") as file:
                         defaults = yaml.safe_load(file)
 
-                    mod_defaults = _modify_defaults_(defaults, k0, a0, nuee)
+                    mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
                     locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
                     actual_nk1 = xr.DataArray(
                         fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),)
