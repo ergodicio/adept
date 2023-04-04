@@ -154,7 +154,6 @@ def remote_train_loop():
 
             for i_batch, batch in (pbar := tqdm(enumerate(all_sims))):
                 run_ids, job_done = [], []
-
                 for sim, (nuee, k0, a0) in enumerate(batch):
                     with open("./damping.yaml", "r") as file:
                         defaults = yaml.safe_load(file)
@@ -184,20 +183,17 @@ def remote_train_loop():
                         mlflow.set_tags({"status": "queued"})
                         run_ids.append(mlflow_run.info.run_id)
                         job_done.append(False)
-
-            while not all(job_done):
-                for i, run_id in enumerate(run_ids):
-                    time.sleep(4.2 / len(run_ids))
-                    job_done[i] = misc.is_job_done(run_id)
-
-            gradients = []
-            for queued_run_id in zip(run_ids):
-                with tempfile.TemporaryDirectory() as td:
-                    gradients.append(misc.download_and_open_file_from_this_run("gradients.pkl", queued_run_id, td))
-
-            gradients = misc.all_reduce_gradients(gradients, len(run_ids))
-            updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
-            w_and_b = optax.apply_updates(w_and_b, updates)
+                while not all(job_done):
+                    for i, run_id in enumerate(run_ids):
+                        time.sleep(4.2 / len(run_ids))
+                        job_done[i] = misc.is_job_done(run_id)
+                gradients = []
+                for queued_run_id in zip(run_ids):
+                    with tempfile.TemporaryDirectory() as td:
+                        gradients.append(misc.download_and_open_file_from_this_run("gradients.pkl", queued_run_id, td))
+                gradients = misc.all_reduce_gradients(gradients, len(run_ids))
+                updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
+                w_and_b = optax.apply_updates(w_and_b, updates)
 
             batch_loss = np.average(
                 np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
