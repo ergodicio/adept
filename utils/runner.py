@@ -77,12 +77,12 @@ def run(cfg: Dict) -> Solution:
 
 
 def remote_gradient(run_id):
-    with mlflow.start_run(run_id=run_id, nested=True):
+    with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
         with tempfile.TemporaryDirectory() as td:
-            mod_defaults = misc.get_cfg(artifact_uri=run.info.artifact_uri, temp_path=td)
-            w_and_b = misc.get_weights(artifact_uri=run.info.artifact_uri, temp_path=td)
+            mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
+            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
             actual_nk1 = xr.open_dataarray(
-                misc.download_file("ground_truth.nc", artifact_uri=run.info.artifact_uri, destination_path=td)
+                misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
             mod_defaults["grid"] = es1d.helpers.get_derived_quantities(mod_defaults["grid"])
             misc.log_params(mod_defaults)
