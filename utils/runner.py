@@ -120,7 +120,7 @@ def remote_gradient(run_id):
 
             vg_func = value_and_grad(loss, argnums=0, has_aux=True)
             (loss_val, results), grad = jit(vg_func)(w_and_b)
-            mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
+            mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "loss": float(loss_val)})
 
             # dump gradients
             with open(os.path.join(td, "grads.pkl"), "wb") as fi:
