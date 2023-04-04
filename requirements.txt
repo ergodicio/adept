@@ -11,3 +11,4 @@ dm-haiku
 flatdict
 h5netcdf
 optax
+boto3
