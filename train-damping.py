@@ -171,14 +171,13 @@ def remote_train_loop():
                                 yaml.dump(mod_defaults, fp)
                             actual_nk1.to_netcdf(os.path.join(td, "ground_truth.nc"))
                             mlflow.log_artifacts(td)
-                        requests.post(
-                            f"http://" + os.environ["API_HOSTNAME"] + "/queue-fluid-run/",
-                            json={
+                        misc.queue_sim(
+                            {
                                 "job_name": f"epw-train-{epoch=}-{sim=}",
                                 "run_id": run_id,
                                 "run_type": "grad",
                                 "machine": "cpu",
-                            },
+                            }
                         )
                         mlflow.set_tags({"status": "queued"})
                         run_ids.append(mlflow_run.info.run_id)

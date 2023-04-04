@@ -1,4 +1,4 @@
-import flatdict, mlflow, requests, os, boto3, botocore, shutil, pickle, yaml
+import flatdict, mlflow, os, boto3, botocore, shutil, pickle, yaml, operator
 from urllib.parse import urlparse
 from mlflow.tracking import MlflowClient
 import jax
@@ -89,3 +89,37 @@ def all_reduce_gradients(gradients, num):
         average_gradient = gradients[0]
 
     return average_gradient
+
+
+def get_jq(client: boto3.client, desired_machine: str):
+    queues = client.describe_job_queues()
+    for queue in queues["jobQueues"]:
+        if desired_machine == queue["jobQueueName"]:
+            return queue["jobQueueArn"]
+
+
+def get_jd(client: boto3.client, sim_type: str, desired_machine: str):
+    jobdefs = client.describe_job_definitions()
+    for jobdef in jobdefs["jobDefinitions"]:
+        if (
+            desired_machine in jobdef["jobDefinitionName"]
+            and jobdef["status"] == "ACTIVE"
+            and sim_type in jobdef["jobDefinitionName"]
+        ):
+            return jobdef["jobDefinitionArn"]
+
+
+def queue_sim(sim_request):
+    client = boto3.client("batch", region_name="us-east-1")
+
+    job_template = {
+        "jobQueue": get_jq(client, sim_request.machine),
+        "jobDefinition": get_jd(client, sim_request.sim_type, sim_request.machine),
+        "jobName": sim_request.job_name,
+        "parameters": {"run_id": sim_request.run_id, "run_type": sim_request.run_type},
+        "retryStrategy": {"attempts": 10, "evaluateOnExit": [{"action": "RETRY", "onStatusReason": "Host EC2*"}]},
+    }
+
+    submissionResult = client.submit_job(**job_template)
+
+    return submissionResult
