@@ -113,10 +113,10 @@ def queue_sim(sim_request):
     client = boto3.client("batch", region_name="us-east-1")
 
     job_template = {
-        "jobQueue": get_jq(client, sim_request.machine),
-        "jobDefinition": get_jd(client, sim_request.sim_type, sim_request.machine),
-        "jobName": sim_request.job_name,
-        "parameters": {"run_id": sim_request.run_id, "run_type": sim_request.run_type},
+        "jobQueue": get_jq(client, sim_request["machine"]),
+        "jobDefinition": get_jd(client, sim_request["sim_type"], sim_request["machine"]),
+        "jobName": sim_request["job_name"],
+        "parameters": {"run_id": sim_request["run_id"], "run_type": sim_request["run_type"]},
         "retryStrategy": {"attempts": 10, "evaluateOnExit": [{"action": "RETRY", "onStatusReason": "Host EC2*"}]},
     }
 

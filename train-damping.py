@@ -174,7 +174,8 @@ def remote_train_loop():
                         misc.queue_sim(
                             {
                                 "job_name": f"epw-train-{epoch=}-{sim=}",
-                                "run_id": run_id,
+                                "run_id": mlflow_run.info.run_id,
+                                "sim_type": "fluid",
                                 "run_type": "grad",
                                 "machine": "cpu",
                             }
