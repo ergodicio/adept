@@ -26,7 +26,7 @@ from utils import misc, plotters
 
 
 def _modify_defaults_(defaults, k0, a0, nuee):
-    wepw = np.sqrt(1.0 + 3.0 * k0**2.0)
+    wepw = float(np.sqrt(1.0 + 3.0 * k0**2.0))
 
     defaults["physics"]["landau_damping"] = True
     defaults["physics"]["electron"]["trapping"]["nuee"] = nuee
@@ -152,7 +152,7 @@ def remote_train_loop():
             rng.shuffle(all_sims)
             all_sims = all_sims.reshape((-1, 13 * 5, 3))
 
-            for i_batch, batch in (pbar := tqdm(enumerate(all_sims))):
+            for i_batch, batch in (pbar := enumerate(tqdm(all_sims))):
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
                     with open("./damping.yaml", "r") as file:
