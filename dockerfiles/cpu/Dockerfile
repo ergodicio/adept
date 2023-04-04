@@ -8,6 +8,7 @@ WORKDIR /workdir
 COPY dockerfiles/cpu/requirements-cpu.txt .
 COPY es1d es1d
 COPY utils utils
+COPY theory theory
 COPY run_job.py .
 
 ENV JAX_ENABLE_X64=True
