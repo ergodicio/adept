@@ -156,7 +156,7 @@ class ParticleTrapper(hk.Module):
 
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0)
-        aek = jnp.array([jnp.abs(ek)[1], self.kld, jnp.log10(self.nuee)])[None, :]  # ])
+        aek = jnp.array([jnp.log10(jnp.abs(ek)[1] + 1e-10), self.kld, jnp.log10(self.nuee)])[None, :]
         growth_coeff = 10 ** (3 * jnp.squeeze(self.growth_coeff(aek)))
         damping_coeff = 10 ** (3 * jnp.squeeze(self.damping_coeff(aek)))
 
