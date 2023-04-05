@@ -116,7 +116,15 @@ def remote_gradient(run_id):
                     * 2.0
                     / mod_defaults["grid"]["nx"]
                 )
-                return jnp.mean(jnp.square((actual_nk1.data - nk1) / np.amax(actual_nk1.data))), results
+                return (
+                    jnp.mean(
+                        jnp.square(
+                            (np.log10(actual_nk1.data + 1e-20) - jnp.log10(nk1 + 1e-20))
+                            / np.log10(np.amax(actual_nk1.data))
+                        )
+                    ),
+                    results,
+                )
 
             vg_func = value_and_grad(loss, argnums=0, has_aux=True)
             (loss_val, results), grad = jit(vg_func)(w_and_b)
