@@ -122,7 +122,7 @@ def remote_gradient(run_id):
                             (np.log10(actual_nk1.data + 1e-20) - jnp.log10(nk1 + 1e-20))
                             / np.log10(np.amax(actual_nk1.data))
                         )
-                        * np.exp(-2 * (1 - (mod_defaults["save"]["t"]["ax"] / mod_defaults["save"]["t"]["tmax"])))
+                        * jnp.exp(-2 * (1 - (mod_defaults["save"]["t"]["ax"] / mod_defaults["save"]["t"]["tmax"])))
                     ),
                     results,
                 )
