@@ -1,7 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-import yaml, os, requests
+import yaml, os
 from itertools import product
 
 import numpy as np
