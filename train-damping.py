@@ -149,7 +149,6 @@ def remote_train_loop():
 
     train_batches = rng.choice(np.arange(all_sims.shape[0]), int(0.8 * all_sims.shape[0]), replace=False)
     val_batches = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_batches)))
-    train_sims = all_sims[train_batches]
     val_sims = all_sims[val_batches].reshape(-1, 3)
 
     mlflow.set_experiment("train-damping-rates-epw")
@@ -157,11 +156,10 @@ def remote_train_loop():
         for epoch in range(100):
             epoch_loss = 0.0
             rng.shuffle(train_batches)
-
-            for i_batch, batch in (pbar := enumerate(tqdm(train_sims))):
+            for i_batch, batch in (pbar := tqdm(enumerate(all_sims[train_batches]))):
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
-                    run_ids, job_done = queue_batch(
+                    run_ids, job_done = queue_sim(
                         fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"
                     )
                 w_and_b = update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b)
@@ -176,29 +174,30 @@ def remote_train_loop():
 
             mlflow.log_metrics({"epoch_loss": epoch_loss}, step=epoch)
 
-            val_epoch_loss = 0.0
             # validation
-            for i_batch, batch in enumerate(tqdm(val_sims)):
-                run_ids, job_done = [], []
-                for sim, (nuee, k0, a0) in enumerate(batch):
-                    run_ids, job_done = queue_batch(
-                        fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="val"
-                    )
-                batch_loss = float(
-                    np.average(
-                        np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
-                    )
+            run_ids, job_done = [], []
+            for sim, (nuee, k0, a0) in enumerate(val_sims):
+                run_ids, job_done = queue_sim(
+                    fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, 0, sim, t_or_v="val"
                 )
-                # mlflow.log_metrics({"val_batch_loss": batch_loss}, step=i_batch + epoch * 100)
-                val_epoch_loss = val_epoch_loss + batch_loss
-            mlflow.log_metrics({"val_epoch_loss": epoch_loss}, step=epoch)
+            wait_for_jobs(job_done, run_ids)
+            val_loss = float(
+                np.average(
+                    np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
+                )
+            )
+            mlflow.log_metrics({"val_epoch_loss": val_loss}, step=epoch)
 
 
-def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
+def wait_for_jobs(job_done, run_ids):
     while not all(job_done):
         for i, run_id in enumerate(run_ids):
             time.sleep(4.2 / len(run_ids))
             job_done[i] = misc.is_job_done(run_id)
+
+
+def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
+    wait_for_jobs(job_done, run_ids)
     gradients = []
     for queued_run_id in zip(run_ids):
         with tempfile.TemporaryDirectory() as td:
@@ -210,7 +209,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
     return w_and_b
 
 
-def queue_batch(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
+def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
     with open("./damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
@@ -227,7 +226,7 @@ def queue_batch(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, s
             mlflow.log_artifacts(td)
         misc.queue_sim(
             {
-                "job_name": f"epw-train-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
+                "job_name": f"epw-{t_or_v}-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
                 "run_id": mlflow_run.info.run_id,
                 "sim_type": "fluid",
                 "run_type": t_or_v,
