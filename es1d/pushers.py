@@ -160,9 +160,9 @@ class ParticleTrapper(hk.Module):
         self.damping_coeff = hk.Sequential(damping_coeff)
 
         # Get asymptotic-preserving envelope
-        self.kld_envelope = np.interp(
-            kld, np.linspace(0.01, 0.5, 128), np.array(get_envelope(0.02, 0.02, 0.26, 0.4, np.linspace(0.01, 0.5, 128)))
-        )
+        self.kld_envelope = 1.0  # np.interp(
+        # kld, np.linspace(0.01, 0.5, 128), get_envelope(0.02, 0.02, 0.26, 0.4, np.linspace(0.01, 0.5, 128))
+        # )
 
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0)
