@@ -147,7 +147,7 @@ def remote_train_loop():
 
     rng = np.random.default_rng(420)
 
-    train_batches = rng.choice(np.arange(all_sims.shape[0]), int(0.8 * all_sims.shape[0]), replace=False)
+    train_batches = rng.choice(np.arange(all_sims.shape[0]), int(0.9 * all_sims.shape[0]), replace=False)
     val_batches = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_batches)))
     val_sims = all_sims[val_batches].reshape(-1, 3)
 
@@ -156,7 +156,7 @@ def remote_train_loop():
         for epoch in range(100):
             epoch_loss = 0.0
             rng.shuffle(train_batches)
-            for i_batch, batch in (pbar := tqdm(enumerate(all_sims[train_batches]))):
+            for i_batch, batch in (pbar := tqdm(enumerate(all_sims[train_batches]), total=len(train_batches))):
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
                     run_ids, job_done = queue_sim(
