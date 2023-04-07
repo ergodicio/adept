@@ -1,8 +1,7 @@
 from typing import Dict, Tuple
 
-import jax.debug
 from jax import numpy as jnp
-from jax.nn import tanh, relu
+from jax.nn import tanh
 import haiku as hk
 import numpy as np
 
@@ -147,11 +146,22 @@ class ParticleTrapper(hk.Module):
         self.norm_kld = (kld - 0.26) / 0.4
         self.norm_nuee = (jnp.log10(nuee) + 7.0) / -4.0
         self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
-        self.growth_coeff = hk.Sequential(
-            [hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh], name="growth_rate"
-        )
-        self.damping_coeff = hk.Sequential(
-            [hk.Linear(4), tanh, hk.Linear(4), tanh, hk.Linear(1), tanh], name="damping_rate"
+
+        # Make models
+        growth_coeff = []
+        for i in range(2):
+            growth_coeff += [hk.Linear(4, name=f"growth_coeff_linear_{i}"), tanh]
+        growth_coeff += [hk.Linear(1, name=f"growth_coeff_linear_last"), tanh]
+        self.growth_coeff = hk.Sequential(growth_coeff)
+        damping_coeff = []
+        for i in range(2):
+            damping_coeff += [hk.Linear(4, name=f"damping_coeff_linear_{i}"), tanh]
+        damping_coeff += [hk.Linear(1, name=f"damping_coeff_linear_last"), tanh]
+        self.damping_coeff = hk.Sequential(damping_coeff)
+
+        # Get asymptotic-preserving envelope
+        self.kld_envelope = np.interp(
+            self.kld, np.linspace(0.01, 0.5, 128), get_envelope(0.02, 0.02, 0.26, 0.4, np.linspace(0.01, 0.5, 128))
         )
 
     def __call__(self, e, delta, args):
@@ -161,8 +171,6 @@ class ParticleTrapper(hk.Module):
         growth_coeff = 10 ** (3 * jnp.squeeze(self.growth_coeff(aek)))
         damping_coeff = 10 ** (3 * jnp.squeeze(self.damping_coeff(aek)))
 
-        return (
-            -self.vph * gradient(delta, self.kx)
-            + growth_coeff * jnp.abs(jnp.fft.irfft(ek * self.wis))
-            - damping_coeff * delta
+        return -self.vph * gradient(delta, self.kx) + self.kld_envelope * (
+            growth_coeff * jnp.abs(jnp.fft.irfft(ek * self.wis)) / (1.0 + delta**2.0) - damping_coeff * delta
         )
