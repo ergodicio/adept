@@ -19,6 +19,10 @@ def start_run(run_type, run_id):
         just_forward(run_id, nested=False)
     elif run_type == "grad":
         remote_gradient(run_id)
+    elif run_type == "val":
+        remote_val(run_id)
+    else:
+        raise NotImplementedError
 
 
 def run(cfg: Dict) -> Solution:
