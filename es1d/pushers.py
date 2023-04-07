@@ -161,7 +161,7 @@ class ParticleTrapper(hk.Module):
 
         # Get asymptotic-preserving envelope
         self.kld_envelope = np.interp(
-            kld, np.linspace(0.01, 0.5, 128), get_envelope(0.02, 0.02, 0.26, 0.4, np.linspace(0.01, 0.5, 128))
+            kld, np.linspace(0.01, 0.5, 128), np.array(get_envelope(0.02, 0.02, 0.26, 0.4, np.linspace(0.01, 0.5, 128)))
         )
 
     def __call__(self, e, delta, args):
