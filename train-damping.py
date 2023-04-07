@@ -201,7 +201,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
     gradients = []
     for queued_run_id in run_ids:
         with tempfile.TemporaryDirectory() as td:
-            gradients.append(misc.download_and_open_file_from_this_run("gradients.pkl", queued_run_id, td))
+            gradients.append(misc.download_and_open_file_from_this_run("grads.pkl", queued_run_id, td))
     gradients = misc.all_reduce_gradients(gradients, len(run_ids))
     updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
     w_and_b = optax.apply_updates(w_and_b, updates)
