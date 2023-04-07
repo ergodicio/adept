@@ -216,7 +216,7 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
     locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
     actual_nk1 = xr.DataArray(fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),))
-    with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
+    with mlflow.start_run(run_name=f"{epoch=}-batch={i_batch}-{sim=}", nested=True) as mlflow_run:
         with tempfile.TemporaryDirectory() as td:
             with open(os.path.join(td, "config.yaml"), "w") as fp:
                 yaml.dump(mod_defaults, fp)
