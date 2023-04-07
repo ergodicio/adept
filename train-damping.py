@@ -143,67 +143,102 @@ def remote_train_loop():
     k0s = np.copy(fks.coords["$k_0$"].data)
     a0s = np.copy(fks.coords["$a_0$"].data)
     all_sims = np.array(list(product(nus, k0s, a0s)))
+    all_sims = all_sims.reshape((-1, 13 * 5, 3))
+
     rng = np.random.default_rng(420)
+
+    train_batches = rng.choice(np.arange(all_sims.shape[0]), int(0.8 * all_sims.shape[0]), replace=False)
+    val_batches = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_batches)))
+    train_sims = all_sims[train_batches]
+    val_sims = all_sims[val_batches].reshape(-1, 3)
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
         for epoch in range(100):
             epoch_loss = 0.0
-            rng.shuffle(all_sims)
-            all_sims = all_sims.reshape((-1, 13 * 5, 3))
+            rng.shuffle(train_batches)
 
-            for i_batch, batch in (pbar := enumerate(tqdm(all_sims))):
+            for i_batch, batch in (pbar := enumerate(tqdm(train_sims))):
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
-                    with open("./damping.yaml", "r") as file:
-                        defaults = yaml.safe_load(file)
-
-                    mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
-                    locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
-                    actual_nk1 = xr.DataArray(
-                        fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),)
+                    run_ids, job_done = queue_batch(
+                        fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"
                     )
-                    with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
-                        with tempfile.TemporaryDirectory() as td:
-                            with open(os.path.join(td, "config.yaml"), "w") as fp:
-                                yaml.dump(mod_defaults, fp)
-                            actual_nk1.to_netcdf(os.path.join(td, "ground_truth.nc"))
-                            with open(os.path.join(td, "weights.pkl"), "wb") as fi:
-                                pickle.dump(w_and_b, fi)
-                            mlflow.log_artifacts(td)
-                        misc.queue_sim(
-                            {
-                                "job_name": f"epw-train-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
-                                "run_id": mlflow_run.info.run_id,
-                                "sim_type": "fluid",
-                                "run_type": "grad",
-                                "machine": "cpu",
-                            }
-                        )
-                        mlflow.set_tags({"status": "queued"})
-                        run_ids.append(mlflow_run.info.run_id)
-                        job_done.append(False)
-                while not all(job_done):
-                    for i, run_id in enumerate(run_ids):
-                        time.sleep(4.2 / len(run_ids))
-                        job_done[i] = misc.is_job_done(run_id)
-                gradients = []
-                for queued_run_id in zip(run_ids):
-                    with tempfile.TemporaryDirectory() as td:
-                        gradients.append(misc.download_and_open_file_from_this_run("gradients.pkl", queued_run_id, td))
-                gradients = misc.all_reduce_gradients(gradients, len(run_ids))
-                updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
-                w_and_b = optax.apply_updates(w_and_b, updates)
+                w_and_b = update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b)
+                batch_loss = float(
+                    np.average(
+                        np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
+                    )
+                )
+                mlflow.log_metrics({"batch_loss": batch_loss}, step=i_batch + epoch * 100)
+                epoch_loss = epoch_loss + batch_loss
+                pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
 
-            batch_loss = np.average(
-                np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
-            )
-            batch_loss = float(batch_loss)
-            mlflow.log_metrics({"batch_loss": batch_loss}, step=i_batch + epoch * 100)
-            epoch_loss = epoch_loss + batch_loss
-            pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
+            mlflow.log_metrics({"epoch_loss": epoch_loss}, step=epoch)
 
-            mlflow.log_metrics({"epoch_loss": epoch_loss})
+            val_epoch_loss = 0.0
+            # validation
+            for i_batch, batch in enumerate(tqdm(val_sims)):
+                run_ids, job_done = [], []
+                for sim, (nuee, k0, a0) in enumerate(batch):
+                    run_ids, job_done = queue_batch(
+                        fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="val"
+                    )
+                batch_loss = float(
+                    np.average(
+                        np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
+                    )
+                )
+                # mlflow.log_metrics({"val_batch_loss": batch_loss}, step=i_batch + epoch * 100)
+                val_epoch_loss = val_epoch_loss + batch_loss
+            mlflow.log_metrics({"val_epoch_loss": epoch_loss}, step=epoch)
+
+
+def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
+    while not all(job_done):
+        for i, run_id in enumerate(run_ids):
+            time.sleep(4.2 / len(run_ids))
+            job_done[i] = misc.is_job_done(run_id)
+    gradients = []
+    for queued_run_id in zip(run_ids):
+        with tempfile.TemporaryDirectory() as td:
+            gradients.append(misc.download_and_open_file_from_this_run("gradients.pkl", queued_run_id, td))
+    gradients = misc.all_reduce_gradients(gradients, len(run_ids))
+    updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
+    w_and_b = optax.apply_updates(w_and_b, updates)
+
+    return w_and_b
+
+
+def queue_batch(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
+    with open("./damping.yaml", "r") as file:
+        defaults = yaml.safe_load(file)
+
+    mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
+    locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
+    actual_nk1 = xr.DataArray(fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),))
+    with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, "config.yaml"), "w") as fp:
+                yaml.dump(mod_defaults, fp)
+            actual_nk1.to_netcdf(os.path.join(td, "ground_truth.nc"))
+            with open(os.path.join(td, "weights.pkl"), "wb") as fi:
+                pickle.dump(w_and_b, fi)
+            mlflow.log_artifacts(td)
+        misc.queue_sim(
+            {
+                "job_name": f"epw-train-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
+                "run_id": mlflow_run.info.run_id,
+                "sim_type": "fluid",
+                "run_type": t_or_v,
+                "machine": "cpu",
+            }
+        )
+        mlflow.set_tags({"status": "queued"})
+        run_ids.append(mlflow_run.info.run_id)
+        job_done.append(False)
+
+    return run_ids, job_done
 
 
 def get_w_and_b():
