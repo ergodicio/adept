@@ -50,9 +50,15 @@ def run(cfg: Dict) -> Solution:
 
         vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
 
+        if "weights" in cfg:
+            with open(cfg["weights"], "rb") as fi:
+                weights = pickle.load(fi)
+        else:
+            weights = None
+
         @jit
         def _run_():
-            vf = partial(vf_apply, None)
+            vf = partial(vf_apply, weights)
             return diffeqsolve(
                 terms=ODETerm(vf),
                 solver=Tsit5(),

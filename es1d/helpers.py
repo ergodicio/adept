@@ -205,8 +205,8 @@ class VectorField(hk.Module):
         )
         ed = 0.0
 
-        for p_ind, pulse in self.cfg["drivers"]["ex"].items():
-            ed += self.push_driver(args["pulse"]["ex"]["0"], t)
+        for p_ind in self.cfg["drivers"]["ex"].keys():
+            ed += self.push_driver(args["pulse"]["ex"][p_ind], t)
         total_e = e + ed
 
         dstate_dt = {"ion": {}, "electron": {}}
@@ -257,8 +257,6 @@ def get_save_func(cfg):
             return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
 
     def save_func(t, y, args):
-        # return y
-        # return {"x": jtu.tree_map(save_x, y)}  # , "kx": jtu.tree_map(save_kx, y)}
         save_dict = {}
         if cfg["save"]["x"]["is_on"]:
             save_dict["x"] = jtu.tree_map(save_x, y)

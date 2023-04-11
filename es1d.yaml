@@ -46,13 +46,16 @@ physics:
       trapping:
         is_on: True
         kld: 0.3
+        nuee: 1.0e-5
 
+
+weights: models/delta-epw.pkl
 
 drivers:
   "ex":
     "0":
       "k0": 0.3
-      "w0": 1.13
+      "w0": 1.11
       "dw0": 0.0
       "t_c": 80
       "t_w": 100
@@ -63,7 +66,7 @@ drivers:
       "a0": 1.e-2
     "1":
       "k0": 0.3
-      "w0": 1.13
+      "w0": 1.11
       "dw0": 0.0
       "t_c": 400
       "t_w": 100
