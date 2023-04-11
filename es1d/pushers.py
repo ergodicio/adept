@@ -135,8 +135,15 @@ class EnergyStepper(hk.Module):
 
 
 class ParticleTrapper(hk.Module):
-    def __init__(self, kld, nuee, kxr, kx, kinetic_real_epw):
+    def __init__(self, cfg, species="electron"):  # kld, nuee, kxr, kx, kinetic_real_epw):
         super().__init__()
+        kld = cfg["physics"][species]["trapping"]["kld"]
+        nuee = cfg["physics"][species]["trapping"]["nuee"]
+        nn = cfg["physics"][species]["trapping"]["nn"]
+        kxr = cfg["grid"]["kxr"]
+        kx = cfg["grid"]["kx"]
+        kinetic_real_epw = cfg["physics"]["kinetic_real_wepw"]
+
         self.kxr = kxr
         self.kx = kx
         wrs, wis, klds = get_complex_frequency_table(128, kinetic_real_epw)
@@ -150,13 +157,13 @@ class ParticleTrapper(hk.Module):
 
         # Make models
         growth_coeff = []
-        for i in range(2):
-            growth_coeff += [hk.Linear(4, name=f"growth_coeff_linear_{i}"), tanh]
+        for i, width in enumerate(nn.split("|")):
+            growth_coeff += [hk.Linear(int(width), name=f"growth_coeff_linear_{i}"), tanh]
         growth_coeff += [hk.Linear(1, name=f"growth_coeff_linear_last"), tanh]
         self.growth_coeff = hk.Sequential(growth_coeff)
         damping_coeff = []
-        for i in range(2):
-            damping_coeff += [hk.Linear(4, name=f"damping_coeff_linear_{i}"), tanh]
+        for i, width in enumerate(nn.split("|")):
+            damping_coeff += [hk.Linear(int(width), name=f"damping_coeff_linear_{i}"), tanh]
         damping_coeff += [hk.Linear(1, name=f"damping_coeff_linear_last"), tanh]
         self.damping_coeff = hk.Sequential(damping_coeff)
 

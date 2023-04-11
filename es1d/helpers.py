@@ -179,13 +179,7 @@ class VectorField(hk.Module):
             )
             self.pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"]["gamma"])
             if cfg["physics"][species_name]["trapping"]["is_on"]:
-                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(
-                    cfg["physics"][species_name]["trapping"]["kld"],
-                    cfg["physics"][species_name]["trapping"]["nuee"],
-                    cfg["grid"]["kxr"],
-                    cfg["grid"]["kx"],
-                    cfg["physics"]["kinetic_real_wepw"],
-                )
+                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name)
 
         self.push_driver = pushers.Driver(cfg["grid"]["x"])
         self.poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
