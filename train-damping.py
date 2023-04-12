@@ -133,30 +133,32 @@ def train_loop():
 
 def remote_train_loop():
     w_and_b = get_w_and_b()
-    optimizer = optax.adam(0.1)
+    optimizer = optax.adam(0.01)
     opt_state = optimizer.init(w_and_b)
+    batch_size = 16
 
     # modify config
     fks = xr.open_dataset("./epws.nc")
 
-    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)
-    k0s = np.copy(fks.coords["$k_0$"].data)
-    a0s = np.copy(fks.coords["$a_0$"].data)
+    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data[::3])
+    k0s = np.copy(fks.coords["$k_0$"].data[::2])
+    a0s = np.copy(fks.coords["$a_0$"].data[::3])
     all_sims = np.array(list(product(nus, k0s, a0s)))
-    all_sims = all_sims.reshape((-1, 13 * 5, 3))
 
     rng = np.random.default_rng(420)
 
-    train_batches = rng.choice(np.arange(all_sims.shape[0]), int(0.9 * all_sims.shape[0]), replace=False)
-    val_batches = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_batches)))
-    val_sims = all_sims[val_batches].reshape(-1, 3)
+    train_sims = rng.choice(
+        np.arange(all_sims.shape[0]), int(0.8 * all_sims.shape[0] / batch_size) * batch_size, replace=False
+    )
+    val_sims = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_sims)))
 
-    mlflow.set_experiment("train-damping-rates-epw")
+    mlflow.set_experiment("damping-rates-epw-new-model")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
         for epoch in range(100):
             epoch_loss = 0.0
-            rng.shuffle(train_batches)
-            for i_batch, batch in (pbar := tqdm(enumerate(all_sims[train_batches]), total=len(train_batches))):
+            rng.shuffle(train_sims)
+            train_batches = all_sims[train_sims].reshape((-1, batch_size, 3))
+            for i_batch, batch in (pbar := tqdm(enumerate(train_batches), total=len(train_batches))):
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
                     run_ids, job_done = queue_sim(
@@ -168,7 +170,7 @@ def remote_train_loop():
                         np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
                     )
                 )
-                mlflow.log_metrics({"batch_loss": batch_loss}, step=i_batch + epoch * 100)
+                mlflow.log_metrics({"batch_loss": batch_loss}, step=i_batch + epoch * len(train_batches))
                 epoch_loss = epoch_loss + batch_loss
                 pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
 
@@ -176,7 +178,7 @@ def remote_train_loop():
 
             # validation
             run_ids, job_done = [], []
-            for sim, (nuee, k0, a0) in enumerate(val_sims):
+            for sim, (nuee, k0, a0) in enumerate(all_sims[val_sims]):
                 run_ids, job_done = queue_sim(
                     fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, 0, sim, t_or_v="val"
                 )
@@ -230,7 +232,7 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
                 "run_id": mlflow_run.info.run_id,
                 "sim_type": "fluid",
                 "run_type": t_or_v,
-                "machine": "cpu",
+                "machine": "continuum-cpu",
             }
         )
         mlflow.set_tags({"status": "queued"})
@@ -262,4 +264,4 @@ def get_w_and_b():
 
 
 if __name__ == "__main__":
-    train_loop()
+    remote_train_loop()
