@@ -54,7 +54,7 @@ def run(cfg: Dict) -> Solution:
             with open(cfg["weights"], "rb") as fi:
                 weights = pickle.load(fi)
         else:
-            weights = None
+            weights = vf_init()
 
         @jit
         def _run_():

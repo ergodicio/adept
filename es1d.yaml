@@ -48,10 +48,10 @@ physics:
         is_on: True
         kld: 0.3
         nuee: 1.0e-9
-        nn: 8|8
+        nn: 4|4
 
 
-#weights: models/delta-epw.pkl
+weights: models/delta-epw.pkl
 
 drivers:
   "ex":

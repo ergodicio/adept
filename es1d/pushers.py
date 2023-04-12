@@ -137,19 +137,19 @@ class EnergyStepper(hk.Module):
 
 
 class ParticleTrapper(hk.Module):
-    def __init__(self, cfg, species="electron"):  # kld, nuee, kxr, kx, kinetic_real_epw):
+    def __init__(self, cfg, species="electron", train=True):  # kld, nuee, kxr, kx, kinetic_real_epw):
         super().__init__()
         nuee = cfg["physics"][species]["trapping"]["nuee"]
         nn = cfg["physics"][species]["trapping"]["nn"]
-        kxr = cfg["grid"]["kxr"]
+        kxr = np.array(cfg["grid"]["kxr"])
         kx = cfg["grid"]["kx"]
         kinetic_real_epw = cfg["physics"]["kinetic_real_wepw"]
 
         self.kxr = kxr
         self.kx = kx
         table_wrs, table_wis, table_klds = get_complex_frequency_table(128, kinetic_real_epw)
-        self.model_iks = jnp.unique(
-            jnp.array([jnp.argmin(jnp.abs(kxr - this_kld)) for this_kld in jnp.linspace(0.26, 0.4, 8)])
+        self.model_iks = np.unique(
+            np.array([np.argmin(np.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 8)])
         )
         self.model_klds = kxr[self.model_iks]
         self.model_wis = jnp.interp(self.model_klds, table_klds, table_wis, left=0.0, right=table_wis[-1])
@@ -158,16 +158,23 @@ class ParticleTrapper(hk.Module):
         self.vph = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / kxr
 
         # Make models
-        nu_g_model = []
-        for i, width in enumerate(nn.split("|")):
-            nu_g_model += [hk.Linear(int(width), name=f"nu_g_model_linear_{i}"), tanh]
-        nu_g_model += [hk.Linear(1, name=f"nu_g_model_linear_last"), tanh]
-        self.nu_g_model = hk.Sequential(nu_g_model)
-        nu_d_model = []
-        for i, width in enumerate(nn.split("|")):
-            nu_d_model += [hk.Linear(int(width), name=f"nu_d_model_linear_{i}"), tanh]
-        nu_d_model += [hk.Linear(1, name=f"nu_d_model_linear_last"), tanh]
-        self.nu_d_model = hk.Sequential(nu_d_model)
+        if train:
+            nu_g_model = []
+            for i, width in enumerate(nn.split("|")):
+                nu_g_model += [hk.Linear(int(width), name=f"nu_g_model_linear_{i}"), tanh]
+            nu_g_model += [hk.Linear(1, name=f"nu_g_model_linear_last"), tanh]
+            self.nu_g_model = hk.Sequential(nu_g_model)
+        else:
+            self.nu_g_model = lambda x: jnp.full((len(self.model_klds), 1), 1e-3)
+
+        if train:
+            nu_d_model = []
+            for i, width in enumerate(nn.split("|")):
+                nu_d_model += [hk.Linear(int(width), name=f"nu_d_model_linear_{i}"), tanh]
+            nu_d_model += [hk.Linear(1, name=f"nu_d_model_linear_last"), tanh]
+            self.nu_d_model = hk.Sequential(nu_d_model)
+        else:
+            self.nu_d_model = lambda x: jnp.full((len(self.model_klds), 1), 1e-3)
 
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0) * 2.0 / self.kx.size
