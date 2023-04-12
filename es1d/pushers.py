@@ -105,10 +105,8 @@ class VelocityStepper(hk.Module):
         else:
             self.wis = jnp.zeros_like(kxr)
 
-    def landau_damping_term(self, u, delta):
-        delta_k = jnp.fft.rfft(delta) * 2 / self.kx.size
-        wi_over_delta_sq = self.wis / (1.0 + jnp.abs(delta_k) ** 2.0)
-        return 2 * jnp.real(jnp.fft.irfft(wi_over_delta_sq * jnp.fft.rfft(u)))
+    def landau_damping_term(self, u):
+        return 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
 
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
@@ -118,7 +116,7 @@ class VelocityStepper(hk.Module):
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
             - self.absorption_coeff * q_over_m_times_e
-            + self.landau_damping_term(u, delta)
+            + self.landau_damping_term(u) / (1.0 + delta**2)
         )
 
 
@@ -150,14 +148,13 @@ class ParticleTrapper(hk.Module):
         self.kxr = kxr
         self.kx = kx
         table_wrs, table_wis, table_klds = get_complex_frequency_table(128, kinetic_real_epw)
-        self.model_iks = np.unique(
-            np.array([np.argmin(np.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 15)])
-        )
-        self.model_klds = kxr[self.model_iks]
-        self.model_wis = jnp.interp(self.model_klds, table_klds, table_wis, left=0.0, right=table_wis[-1])
-        self.norm_kld = (self.model_klds - 0.26) / 0.14
-        self.norm_nuee = jnp.full(len(self.model_klds), (jnp.log10(nuee) + 7.0) / -4.0)
-        self.vph = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) * one_over_kxr
+        self.model_kld = cfg["physics"][species]["trapping"]["kld"]
+        self.wrs = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1])
+        self.wis = jnp.interp(kxr, table_klds, table_wis, left=0.0, right=0.0)
+        self.table_klds = table_klds
+        self.norm_kld = (self.model_kld - 0.26) / 0.14
+        self.norm_nuee = (jnp.log10(nuee) + 7.0) / -4.0
+        self.vph = jnp.interp(self.model_kld, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / self.model_kld
 
         # Make models
         if train:
@@ -167,7 +164,7 @@ class ParticleTrapper(hk.Module):
             nu_g_model += [hk.Linear(1, name=f"nu_g_model_linear_last"), tanh]
             self.nu_g_model = hk.Sequential(nu_g_model)
         else:
-            self.nu_g_model = lambda x: jnp.full((len(self.model_klds), 1), 1e-3)
+            self.nu_g_model = lambda x: 1e-3
 
         if train:
             nu_d_model = []
@@ -176,22 +173,17 @@ class ParticleTrapper(hk.Module):
             nu_d_model += [hk.Linear(1, name=f"nu_d_model_linear_last"), tanh]
             self.nu_d_model = hk.Sequential(nu_d_model)
         else:
-            self.nu_d_model = lambda x: jnp.full((len(self.model_klds), 1), 1e-3)
+            self.nu_d_model = lambda x: 1e-3
 
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0) * 2.0 / self.kx.size
-        norm_e = (jnp.log10(jnp.interp(self.model_klds, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
-        delta_k = jnp.fft.rfft(delta)
-        log10_wi_over_delta_sq = (
-            jnp.log10(-self.model_wis / (1.0 + jnp.abs(delta_k[self.model_iks] * 2 / self.kx.size) ** 2.0)) / 8
-        )
-        func_inputs = jnp.stack([norm_e, log10_wi_over_delta_sq, self.norm_kld, self.norm_nuee], axis=-1)
-        growth_rates = 10 ** (3 * self.nu_g_model(func_inputs))
-        damping_rates = 10 ** (3 * self.nu_d_model(func_inputs))
+        norm_e = (jnp.log10(jnp.interp(self.model_kld, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
+        func_inputs = jnp.stack([norm_e, self.norm_kld, self.norm_nuee], axis=-1)
+        growth_rates = 10 ** (3 * jnp.squeeze(self.nu_g_model(func_inputs)))
+        damping_rates = 10 ** (3 * jnp.squeeze(self.nu_d_model(func_inputs)))
 
-        growth_rates = jnp.interp(self.kxr, self.model_klds, growth_rates[:, 0], left=0.0, right=0.0)
-        damping_rates = jnp.interp(self.kxr, self.model_klds, damping_rates[:, 0], left=0.0, right=0.0)
-
-        return np.real(
-            jnp.fft.irfft(-self.vph * 1j * self.kxr * delta_k + (growth_rates - damping_rates) * jnp.abs(ek))
+        return (
+            -self.vph * gradient(delta, self.kx)
+            + growth_rates * jnp.abs(jnp.fft.irfft(ek * self.kx.size / 2.0 * self.wis)) / (1.0 + delta**2.0)
+            - damping_rates * delta
         )
