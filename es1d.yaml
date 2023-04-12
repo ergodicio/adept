@@ -22,10 +22,10 @@ save:
       xmax: 3000.0
       nx: 1024
     kx:
-      is_on: True
+      is_on: False
       kxmin: 0.0
       kxmax: 0.5
-      nkx: 6
+      nkx: 21
 
 physics:
     gamma: 3
@@ -39,6 +39,7 @@ physics:
       trapping:
         is_on: False
         kld: 0.3
+        nuee: 1.0e-9
     electron:
       is_on: True
       mass: 1.0
@@ -46,10 +47,11 @@ physics:
       trapping:
         is_on: True
         kld: 0.3
-        nuee: 1.0e-5
+        nuee: 1.0e-9
+        nn: 8|8
 
 
-weights: models/delta-epw.pkl
+#weights: models/delta-epw.pkl
 
 drivers:
   "ex":

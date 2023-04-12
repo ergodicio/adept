@@ -105,8 +105,10 @@ class VelocityStepper(hk.Module):
         else:
             self.wis = jnp.zeros_like(kxr)
 
-    def landau_damping_term(self, u):
-        return 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
+    def landau_damping_term(self, u, delta):
+        delta_k = jnp.fft.rfft(delta) * 2 / self.kx.size
+        wi_over_delta_sq = self.wis / (1.0 + jnp.abs(delta_k) ** 2.0)
+        return 2 * jnp.real(jnp.fft.irfft(wi_over_delta_sq * jnp.fft.rfft(u)))
 
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
@@ -116,7 +118,7 @@ class VelocityStepper(hk.Module):
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
             - self.absorption_coeff * q_over_m_times_e
-            + self.landau_damping_term(u) / (1.0 + delta**2)
+            + self.landau_damping_term(u, delta)
         )
 
 
@@ -137,7 +139,6 @@ class EnergyStepper(hk.Module):
 class ParticleTrapper(hk.Module):
     def __init__(self, cfg, species="electron"):  # kld, nuee, kxr, kx, kinetic_real_epw):
         super().__init__()
-        kld = cfg["physics"][species]["trapping"]["kld"]
         nuee = cfg["physics"][species]["trapping"]["nuee"]
         nn = cfg["physics"][species]["trapping"]["nn"]
         kxr = cfg["grid"]["kxr"]
@@ -146,39 +147,40 @@ class ParticleTrapper(hk.Module):
 
         self.kxr = kxr
         self.kx = kx
-        wrs, wis, klds = get_complex_frequency_table(128, kinetic_real_epw)
-        self.wrs = jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1])
-        self.wis = jnp.interp(kxr, klds, wis, left=0.0, right=0.0)
-        self.klds = klds
-        self.this_kld = kld
-        self.norm_kld = (kld - 0.26) / 0.4
-        self.norm_nuee = (jnp.log10(nuee) + 7.0) / -4.0
-        self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
+        table_wrs, table_wis, table_klds = get_complex_frequency_table(128, kinetic_real_epw)
+        self.model_iks = jnp.unique(
+            np.array([np.argmin(np.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 8)])
+        )
+        self.model_klds = kxr[self.model_iks]
+        self.model_wis = jnp.interp(self.model_klds, table_klds, table_wis, left=0.0, right=table_wis[-1])
+        self.norm_kld = (self.model_klds - 0.26) / 0.14
+        self.norm_nuee = jnp.full(len(self.model_klds), (jnp.log10(nuee) + 7.0) / -4.0)
+        self.vph = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / kxr
 
         # Make models
-        growth_coeff = []
+        nu_g_model = []
         for i, width in enumerate(nn.split("|")):
-            growth_coeff += [hk.Linear(int(width), name=f"growth_coeff_linear_{i}"), tanh]
-        growth_coeff += [hk.Linear(1, name=f"growth_coeff_linear_last"), tanh]
-        self.growth_coeff = hk.Sequential(growth_coeff)
-        damping_coeff = []
+            nu_g_model += [hk.Linear(int(width), name=f"nu_g_model_linear_{i}"), tanh]
+        nu_g_model += [hk.Linear(1, name=f"nu_g_model_linear_last"), tanh]
+        self.nu_g_model = hk.Sequential(nu_g_model)
+        nu_d_model = []
         for i, width in enumerate(nn.split("|")):
-            damping_coeff += [hk.Linear(int(width), name=f"damping_coeff_linear_{i}"), tanh]
-        damping_coeff += [hk.Linear(1, name=f"damping_coeff_linear_last"), tanh]
-        self.damping_coeff = hk.Sequential(damping_coeff)
-
-        # Get asymptotic-preserving envelope
-        self.kld_envelope = 1.0  # np.interp(
-        # kld, np.linspace(0.01, 0.5, 128), get_envelope(0.02, 0.02, 0.26, 0.4, np.linspace(0.01, 0.5, 128))
-        # )
+            nu_d_model += [hk.Linear(int(width), name=f"nu_d_model_linear_{i}"), tanh]
+        nu_d_model += [hk.Linear(1, name=f"nu_d_model_linear_last"), tanh]
+        self.nu_d_model = hk.Sequential(nu_d_model)
 
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0) * 2.0 / self.kx.size
-        norm_e = (jnp.log10(jnp.interp(self.this_kld, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
-        aek = jnp.array([norm_e, self.norm_kld, self.norm_nuee])[None, :]
-        growth_coeff = 10 ** (3 * jnp.squeeze(self.growth_coeff(aek)))
-        damping_coeff = 10 ** (3 * jnp.squeeze(self.damping_coeff(aek)))
-
-        return -self.vph * gradient(delta, self.kx) + self.kld_envelope * (
-            growth_coeff * jnp.abs(jnp.fft.irfft(ek * self.wis)) / (1.0 + delta**2.0) - damping_coeff * delta
+        norm_e = (jnp.log10(jnp.interp(self.model_klds, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
+        delta_k = jnp.fft.rfft(delta)
+        log10_wi_over_delta_sq = (
+            jnp.log10(-self.model_wis / (1.0 + jnp.abs(delta_k[self.model_iks] * 2 / self.kx.size) ** 2.0)) / 8
         )
+        func_inputs = jnp.stack([norm_e, log10_wi_over_delta_sq, self.norm_kld, self.norm_nuee], axis=-1)
+        growth_rates = 10 ** (3 * self.nu_g_model(func_inputs))
+        damping_rates = 10 ** (3 * self.nu_d_model(func_inputs))
+
+        growth_rates = jnp.interp(self.kxr, self.model_klds, growth_rates[:, 0], left=0.0, right=0.0)
+        damping_rates = jnp.interp(self.kxr, self.model_klds, damping_rates[:, 0], left=0.0, right=0.0)
+
+        return np.real(jnp.fft.irfft(-self.vph * 1j * self.kxr * delta_k + (growth_rates - damping_rates) * delta_k))
