@@ -149,7 +149,7 @@ class ParticleTrapper(hk.Module):
         self.kx = kx
         table_wrs, table_wis, table_klds = get_complex_frequency_table(128, kinetic_real_epw)
         self.model_iks = jnp.unique(
-            np.array([np.argmin(np.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 8)])
+            jnp.array([jnp.argmin(jnp.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 8)])
         )
         self.model_klds = kxr[self.model_iks]
         self.model_wis = jnp.interp(self.model_klds, table_klds, table_wis, left=0.0, right=table_wis[-1])
