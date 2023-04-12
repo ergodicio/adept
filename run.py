@@ -1,7 +1,7 @@
 from jax import config
 
 config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
+config.update("jax_disable_jit", True)
 
 import yaml, mlflow
 from utils.runner import run

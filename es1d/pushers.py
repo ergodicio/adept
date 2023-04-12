@@ -142,6 +142,8 @@ class ParticleTrapper(hk.Module):
         nuee = cfg["physics"][species]["trapping"]["nuee"]
         nn = cfg["physics"][species]["trapping"]["nn"]
         kxr = np.array(cfg["grid"]["kxr"])
+        one_over_kxr = np.zeros(kxr.size)
+        one_over_kxr[1:] = 1.0 / kxr[1:]
         kx = cfg["grid"]["kx"]
         kinetic_real_epw = cfg["physics"]["kinetic_real_wepw"]
 
@@ -149,13 +151,13 @@ class ParticleTrapper(hk.Module):
         self.kx = kx
         table_wrs, table_wis, table_klds = get_complex_frequency_table(128, kinetic_real_epw)
         self.model_iks = np.unique(
-            np.array([np.argmin(np.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 8)])
+            np.array([np.argmin(np.abs(kxr - this_kld)) for this_kld in np.linspace(0.26, 0.4, 15)])
         )
         self.model_klds = kxr[self.model_iks]
         self.model_wis = jnp.interp(self.model_klds, table_klds, table_wis, left=0.0, right=table_wis[-1])
         self.norm_kld = (self.model_klds - 0.26) / 0.14
         self.norm_nuee = jnp.full(len(self.model_klds), (jnp.log10(nuee) + 7.0) / -4.0)
-        self.vph = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / kxr
+        self.vph = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) * one_over_kxr
 
         # Make models
         if train:
@@ -190,4 +192,6 @@ class ParticleTrapper(hk.Module):
         growth_rates = jnp.interp(self.kxr, self.model_klds, growth_rates[:, 0], left=0.0, right=0.0)
         damping_rates = jnp.interp(self.kxr, self.model_klds, damping_rates[:, 0], left=0.0, right=0.0)
 
-        return np.real(jnp.fft.irfft(-self.vph * 1j * self.kxr * delta_k + (growth_rates - damping_rates) * delta_k))
+        return np.real(
+            jnp.fft.irfft(-self.vph * 1j * self.kxr * delta_k + (growth_rates - damping_rates) * jnp.abs(ek))
+        )
