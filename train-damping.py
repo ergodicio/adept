@@ -262,4 +262,4 @@ def get_w_and_b():
 
 
 if __name__ == "__main__":
-    train_loop()
+    remote_train_loop()
