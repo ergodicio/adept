@@ -1,8 +1,8 @@
 mode: es-1d
 
 mlflow:
-  experiment: es1d-trapping
-  run: etching
+  experiment: vlasov-fluid-comp
+  run: single-k=0.3-naive-ld
 
 grid:
     nx: 3072
@@ -28,9 +28,8 @@ save:
       nkx: 21
 
 physics:
-    gamma: 3
+    gamma: kinetic
     T0: 1.0
-    kinetic_real_wepw: False
     landau_damping: True
     ion:
       is_on: False
@@ -45,10 +44,10 @@ physics:
       mass: 1.0
       charge: -1.0
       trapping:
-        is_on: True
+        is_on: False
         kld: 0.3
-        nuee: 1.0e-9
-        nn: 4|4
+        nuee: 1.1e-5
+        nn: 8|8
 
 
 weights: models/delta-epw.pkl
@@ -57,7 +56,7 @@ drivers:
   "ex":
     "0":
       "k0": 0.3
-      "w0": 1.11
+      "w0": 1.126
       "dw0": 0.0
       "t_c": 80
       "t_w": 100
@@ -65,9 +64,9 @@ drivers:
       "x_c": 600
       "x_w": 800
       "x_r": 80
-      "a0": 1.e-2
+      "a0": 4.e-3
     "1":
-      "k0": 0.3
+      "k0": 0.26
       "w0": 1.11
       "dw0": 0.0
       "t_c": 400
@@ -76,5 +75,5 @@ drivers:
       "x_c": 2000
       "x_w": 800
       "x_r": 80
-      "a0": 1.e-2
+      "a0": 0.e-2
 

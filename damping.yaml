@@ -30,7 +30,6 @@ save:
 physics:
     gamma: 3
     T0: 1.0
-    kinetic_real_wepw: False
     landau_damping: False
     ion:
       is_on: False

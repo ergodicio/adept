@@ -29,8 +29,8 @@ def _modify_defaults_(defaults, rand_k0):
     defaults["physics"]["electron"]["trapping"]["kld"] = float(rand_k0)
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
     defaults["drivers"]["ex"]["0"]["w0"] = float(wepw)
+
     xmax = float(2.0 * np.pi / rand_k0)
-    # defaults["save"]["field"]["xmax_to_store"] = float(2.0 * np.pi / k0)
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
     defaults["save"]["kx"]["kxmax"] = float(rand_k0)
@@ -49,7 +49,7 @@ def test_resonance_search():
 
         defaults, actual_resonance = _modify_defaults_(defaults, rand_k0)
         defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
-        logs.log_params(defaults)
+        misc.log_params(defaults)
 
         defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
         defaults = helpers.get_save_quantities(defaults)
@@ -69,7 +69,7 @@ def test_resonance_search():
                     mod_defaults = yaml.safe_load(file)
                 mod_defaults, _ = _modify_defaults_(mod_defaults, rand_k0)
                 mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
-                logs.log_params(mod_defaults)
+                misc.log_params(mod_defaults)
 
                 mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
                 mod_defaults = helpers.get_save_quantities(mod_defaults)

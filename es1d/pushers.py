@@ -5,30 +5,7 @@ from jax.nn import tanh
 import haiku as hk
 import numpy as np
 
-from theory.electrostatic import get_roots_to_electrostatic_dispersion
-
-
-def get_complex_frequency_table(num: int, kinetic_real_epw: bool) -> Tuple[np.array, np.array, np.array]:
-    """
-    This function creates a table of the complex plasma frequency for $0.2 < k \lambda_D < 0.4$ in `num` steps
-
-    :param kinetic_real_epw:
-    :param num:
-    :return:
-    """
-    klds = np.linspace(0.2, 0.4, num)
-    wrs = np.zeros(num)
-    wis = np.zeros(num)
-
-    for i, kld in enumerate(klds):
-        ww = get_roots_to_electrostatic_dispersion(1.0, 1.0, kld)
-        if kinetic_real_epw:
-            wrs[i] = np.real(ww)
-        else:
-            wrs[i] = np.sqrt(1.0 + 3.0 * kld**2.0)
-        wis[i] = np.imag(ww)
-
-    return wrs, wis, klds
+from theory.electrostatic import get_complex_frequency_table
 
 
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):
@@ -91,14 +68,18 @@ class DensityStepper(hk.Module):
 
 
 class VelocityStepper(hk.Module):
-    def __init__(self, kx, kxr, physics):
+    def __init__(self, kx, kxr, one_over_kxr, physics):
         super().__init__()
         self.kx = kx
 
-        wrs, wis, klds = get_complex_frequency_table(128, physics["kinetic_real_wepw"])
-        wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=0.0, right=wrs[-1]))
-        self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
+        wrs, wis, klds = get_complex_frequency_table(1024, True if physics["gamma"] == "kinetic" else False)
         self.absorption_coeff = 1.0  # 0.85
+        wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1]))
+
+        if physics["gamma"] == "kinetic":
+            self.wr_corr = (jnp.square(wrs) - 1.0) * one_over_kxr**2.0
+        else:
+            self.wr_corr = 1.0
 
         if physics["landau_damping"]:
             self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=wis[-1]))
@@ -106,7 +87,7 @@ class VelocityStepper(hk.Module):
             self.wis = jnp.zeros_like(kxr)
 
     def landau_damping_term(self, u):
-        return 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
+        return 0.08 * 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
 
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
@@ -121,10 +102,13 @@ class VelocityStepper(hk.Module):
 
 
 class EnergyStepper(hk.Module):
-    def __init__(self, kx, gamma):
+    def __init__(self, kx, physics):
         super().__init__()
         self.kx = kx
-        self.gamma = gamma
+        if physics["gamma"] == "kinetic":
+            self.gamma = 1.0
+        else:
+            self.gamma = physics["gamma"]
 
     def __call__(self, n, u, p_over_m, q_over_m_times_e):
         return (
@@ -135,7 +119,7 @@ class EnergyStepper(hk.Module):
 
 
 class ParticleTrapper(hk.Module):
-    def __init__(self, cfg, species="electron", train=True):  # kld, nuee, kxr, kx, kinetic_real_epw):
+    def __init__(self, cfg, species="electron", train=False):  # kld, nuee, kxr, kx, kinetic_real_epw):
         super().__init__()
         nuee = cfg["physics"][species]["trapping"]["nuee"]
         nn = cfg["physics"][species]["trapping"]["nn"]
@@ -143,11 +127,14 @@ class ParticleTrapper(hk.Module):
         one_over_kxr = np.zeros(kxr.size)
         one_over_kxr[1:] = 1.0 / kxr[1:]
         kx = cfg["grid"]["kx"]
-        kinetic_real_epw = cfg["physics"]["kinetic_real_wepw"]
+        if cfg["physics"]["gamma"] == "kinetic":
+            kinetic_real_epw = True
+        else:
+            kinetic_real_epw = False
 
         self.kxr = kxr
         self.kx = kx
-        table_wrs, table_wis, table_klds = get_complex_frequency_table(128, kinetic_real_epw)
+        table_wrs, table_wis, table_klds = get_complex_frequency_table(1024, kinetic_real_epw)
         self.model_kld = cfg["physics"][species]["trapping"]["kld"]
         self.wrs = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1])
         self.wis = jnp.interp(kxr, table_klds, table_wis, left=0.0, right=0.0)

@@ -121,6 +121,10 @@ def get_solver_quantities(cfg_grid: Dict) -> Dict:
     one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
     cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
 
+    one_over_kxr = np.zeros_like(cfg_grid["kxr"])
+    one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
+    cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
+
     return cfg_grid
 
 
@@ -175,11 +179,13 @@ class VectorField(hk.Module):
         for species_name in ["ion", "electron"]:
             self.pusher_dict[species_name]["push_n"] = pushers.DensityStepper(cfg["grid"]["kx"])
             self.pusher_dict[species_name]["push_u"] = pushers.VelocityStepper(
-                cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["physics"]
+                cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["grid"]["one_over_kxr"], cfg["physics"]
             )
-            self.pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"]["gamma"])
+            self.pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"])
             if cfg["physics"][species_name]["trapping"]["is_on"]:
-                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name)
+                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(
+                    cfg, species_name, train=True if "weights" in cfg else False
+                )
 
         self.push_driver = pushers.Driver(cfg["grid"]["x"])
         self.poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
