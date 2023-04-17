@@ -8,6 +8,7 @@ from jax import numpy as jnp
 import numpy as np
 import haiku as hk
 import mlflow
+import equinox as eqx
 import xarray as xr
 
 import es1d
@@ -42,13 +43,7 @@ def run(cfg: Dict) -> Solution:
         # run
         t0 = time.time()
 
-        def vector_field(t, y, args):
-            dummy_vf = helpers.VectorField(cfg)
-            return dummy_vf(t, y, args)
-
         state = helpers.init_state(cfg)
-
-        vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
 
         if "weights" in cfg:
             with open(cfg["weights"], "rb") as fi:
@@ -56,9 +51,9 @@ def run(cfg: Dict) -> Solution:
         else:
             weights = None
 
-        @jit
-        def _run_():
-            vf = partial(vf_apply, weights)
+        @eqx.filter_jit
+        def _run_(weights):
+            vf = helpers.VectorField(cfg)
             return diffeqsolve(
                 terms=ODETerm(vf),
                 solver=Tsit5(),
@@ -68,8 +63,7 @@ def run(cfg: Dict) -> Solution:
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args={"pulse": cfg["drivers"]},
-                # stepsize_controller=PIDController(rtol=1e-8, atol=1e-8),
-                saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]),
+                saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
             )
 
         result = _run_()
@@ -119,7 +113,7 @@ def remote_gradient(run_id):
                     dt0=mod_defaults["grid"]["dt"],
                     y0=state,
                     args=pulse_dict,
-                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
+                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]),
                 )
                 nk1 = (
                     jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
@@ -187,7 +181,7 @@ def remote_val(run_id):
                     dt0=mod_defaults["grid"]["dt"],
                     y0=state,
                     args=pulse_dict,
-                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
+                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]),
                 )
                 nk1 = (
                     jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])

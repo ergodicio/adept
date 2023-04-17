@@ -1,9 +1,10 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Callable
 
+import jax
 from jax import numpy as jnp
 from jax.nn import tanh
-import haiku as hk
 import numpy as np
+import equinox as eqx
 
 from theory.electrostatic import get_complex_frequency_table
 
@@ -12,9 +13,10 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 
-class Driver(hk.Module):
+class Driver(eqx.Module):
+    xax: jax.Array
+
     def __init__(self, xax):
-        super().__init__()
         self.xax = xax
 
     def __call__(self, this_pulse: Dict, current_time: jnp.float64):
@@ -37,19 +39,17 @@ class Driver(hk.Module):
         )
 
 
-class PoissonSolver(hk.Module):
+class PoissonSolver(eqx.Module):
+    one_over_kx: jax.Array
+
     def __init__(self, one_over_kx):
-        super().__init__()
         self.one_over_kx = one_over_kx
 
     def __call__(self, dn):
         return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(dn)))
 
 
-class StepAmpere(hk.Module):
-    def __init__(self):
-        super().__init__()
-
+class StepAmpere(eqx.Module):
     def __call__(self, n, u):
         return n * u
 
@@ -58,22 +58,25 @@ def gradient(arr, kx):
     return jnp.real(jnp.fft.ifft(1j * kx * jnp.fft.fft(arr)))
 
 
-class DensityStepper(hk.Module):
+class DensityStepper(eqx.Module):
+    kx: jax.Array
+
     def __init__(self, kx):
-        super().__init__()
         self.kx = kx
 
     def __call__(self, n, u):
         return -u * gradient(n, self.kx) - n * gradient(u, self.kx)
 
 
-class VelocityStepper(hk.Module):
+class VelocityStepper(eqx.Module):
+    kx: jax.Array
+    wr_corr: jax.Array
+    wis: jax.Array
+
     def __init__(self, kx, kxr, one_over_kxr, physics):
-        super().__init__()
         self.kx = kx
 
         wrs, wis, klds = get_complex_frequency_table(1024, True if physics["gamma"] == "kinetic" else False)
-        self.absorption_coeff = 1.0  # 0.85
         wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1]))
 
         if physics["gamma"] == "kinetic":
@@ -87,7 +90,7 @@ class VelocityStepper(hk.Module):
             self.wis = jnp.zeros_like(kxr)
 
     def landau_damping_term(self, u):
-        return 0.08 * 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
+        return 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
 
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
@@ -96,14 +99,16 @@ class VelocityStepper(hk.Module):
         return (
             -u * gradient(u, self.kx)
             - self.restoring_force_term(gradient(p_over_m, self.kx) / n)
-            - self.absorption_coeff * q_over_m_times_e
+            - q_over_m_times_e
             + self.landau_damping_term(u) / (1.0 + delta**2)
         )
 
 
-class EnergyStepper(hk.Module):
+class EnergyStepper(eqx.Module):
+    kx: jax.Array
+    gamma: float
+
     def __init__(self, kx, physics):
-        super().__init__()
         self.kx = kx
         if physics["gamma"] == "kinetic":
             self.gamma = 1.0
@@ -118,16 +123,27 @@ class EnergyStepper(hk.Module):
         )
 
 
-class ParticleTrapper(hk.Module):
+class ParticleTrapper(eqx.Module):
+    kxr: jax.Array
+    kx: jax.Array
+    model_kld: float
+    wrs: jax.Array
+    wis: jax.Array
+    table_klds: jax.Array
+    norm_kld: jnp.float64
+    norm_nuee: jnp.float64
+    vph: jnp.float64
+    nu_g_model: Callable
+    nu_d_model: Callable
+
     def __init__(self, cfg, species="electron", train=False):  # kld, nuee, kxr, kx, kinetic_real_epw):
-        super().__init__()
         nuee = cfg["physics"][species]["trapping"]["nuee"]
         nn = cfg["physics"][species]["trapping"]["nn"]
         kxr = np.array(cfg["grid"]["kxr"])
         one_over_kxr = np.zeros(kxr.size)
         one_over_kxr[1:] = 1.0 / kxr[1:]
         kx = cfg["grid"]["kx"]
-        if cfg["physics"]["gamma"] == "kinetic":
+        if cfg["physics"][species]["gamma"] == "kinetic":
             kinetic_real_epw = True
         else:
             kinetic_real_epw = False

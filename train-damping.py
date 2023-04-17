@@ -101,7 +101,9 @@ def train_loop():
                                 dt0=mod_defaults["grid"]["dt"],
                                 y0=state,
                                 args=pulse_dict,
-                                saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]),
+                                saveat=SaveAt(
+                                    ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]
+                                ),
                             )
                             nk1 = (
                                 jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])

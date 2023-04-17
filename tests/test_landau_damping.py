@@ -20,6 +20,7 @@ def _modify_defaults_(defaults, rng):
 
     wepw = np.sqrt(1.0 + 3.0 * rand_k0**2.0)
     root = electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0)
+    print(rand_k0, wepw, root)
 
     defaults["physics"]["landau_damping"] = True
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)

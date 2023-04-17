@@ -16,7 +16,7 @@ from theory import electrostatic
 from utils.runner import run
 
 
-def _modify_defaults_(defaults, rng):
+def _modify_defaults_(defaults):
     rand_k0 = 0.358
 
     wepw = np.sqrt(1.0 + 3.0 * rand_k0**2.0)
@@ -36,12 +36,11 @@ def _modify_defaults_(defaults, rng):
 
 
 def test_single_resonance():
-    with open("./tests/configs/resonance.yaml", "r") as file:
+    with open("./tests/configs/vlasov_comparison.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     # modify config
-    rng = np.random.default_rng()
-    mod_defaults, actual_damping_rate = _modify_defaults_(defaults, rng)
+    mod_defaults, actual_damping_rate = _modify_defaults_(defaults)
 
     # run
     mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
@@ -55,7 +54,7 @@ def test_single_resonance():
     nk1_vlasov = vds["n-(k_x)"][:, 1].data
     t_fluid = result.ts
     t_vlasov = vds.coords["t"].data
-    fluid_slc = slice(300, 380)
+    fluid_slc = slice(80, 160)
     vlasov_slc = slice(700, 850)
 
     vlasov_damping_rate = np.mean(

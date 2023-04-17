@@ -5,16 +5,20 @@ import os
 import numpy as np
 from matplotlib import pyplot as plt
 import xarray as xr
-import haiku as hk
 from jax import tree_util as jtu
 from flatdict import FlatDict
+import equinox as eqx
 
 from jax import numpy as jnp
 from es1d import pushers
 
 
 def save_arrays(result, td, cfg, label):
-    flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
+    if label is None:
+        label = "x"
+        flattened_dict = dict(FlatDict(result.ys, delimiter="-"))
+    else:
+        flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
     data_vars = {
         k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, cfg["save"][label]["ax"])))
         for k, v in flattened_dict.items()
@@ -64,13 +68,17 @@ def post_process(result, cfg: Dict, td: str) -> None:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
-    if cfg["save"]["x"]["is_on"]:
-        xrs = save_arrays(result, td, cfg, "x")
-        plot_xrs("x", td, xrs)
+    if cfg["save"]["func"]["is_on"]:
+        if cfg["save"]["x"]["is_on"]:
+            xrs = save_arrays(result, td, cfg, label="x")
+            plot_xrs("x", td, xrs)
 
-    if cfg["save"]["kx"]["is_on"]:
-        xrs = save_arrays(result, td, cfg, "kx")
-        plot_xrs("kx", td, xrs)
+        if cfg["save"]["kx"]["is_on"]:
+            xrs = save_arrays(result, td, cfg, label="kx")
+            plot_xrs("kx", td, xrs)
+    else:
+        xrs = save_arrays(result, td, cfg, label=None)
+        plot_xrs("x", td, xrs)
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
@@ -135,7 +143,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    cfg["save"] = {**cfg["save"], **{"func": get_save_func(cfg)}}
+    cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
     cfg["save"]["t"]["ax"] = jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"])
 
     return cfg
@@ -152,7 +160,7 @@ def init_state(cfg: Dict) -> Dict:
     for species in ["ion", "electron"]:
         state[species] = dict(
             n=jnp.ones(cfg["grid"]["nx"]),
-            p=cfg["physics"]["T0"] * jnp.ones(cfg["grid"]["nx"]),
+            p=jnp.full(cfg["grid"]["nx"], cfg["physics"][species]["T0"]),
             u=jnp.zeros(cfg["grid"]["nx"]),
             delta=jnp.zeros(cfg["grid"]["nx"]),
         )
@@ -160,7 +168,7 @@ def init_state(cfg: Dict) -> Dict:
     return state
 
 
-class VectorField(hk.Module):
+class VectorField(eqx.Module):
     """
     This function returns the function that defines $d_state / dt$
 
@@ -172,6 +180,11 @@ class VectorField(hk.Module):
     :return:
     """
 
+    cfg: Dict
+    pusher_dict: Dict
+    push_driver: Callable
+    poisson_solver: Callable
+
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
@@ -179,9 +192,11 @@ class VectorField(hk.Module):
         for species_name in ["ion", "electron"]:
             self.pusher_dict[species_name]["push_n"] = pushers.DensityStepper(cfg["grid"]["kx"])
             self.pusher_dict[species_name]["push_u"] = pushers.VelocityStepper(
-                cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["grid"]["one_over_kxr"], cfg["physics"]
+                cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["grid"]["one_over_kxr"], cfg["physics"][species_name]
             )
-            self.pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"])
+            self.pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(
+                cfg["grid"]["kx"], cfg["physics"][species_name]
+            )
             if cfg["physics"][species_name]["trapping"]["is_on"]:
                 self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(
                     cfg, species_name, train=True if "weights" in cfg else False
@@ -238,31 +253,36 @@ class VectorField(hk.Module):
 
 
 def get_save_func(cfg):
-    if cfg["save"]["x"]["is_on"]:
-        dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
-        cfg["save"]["x"]["ax"] = jnp.linspace(
-            cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
-        )
-
-        save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
-
-    if cfg["save"]["kx"]["is_on"]:
-        cfg["save"]["kx"]["ax"] = jnp.linspace(
-            cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
-        )
-
-        def save_kx(field):
-            complex_field = jnp.fft.rfft(field, axis=0) * 2.0 / cfg["grid"]["nx"]
-            interped_field = jnp.interp(cfg["save"]["kx"]["ax"], cfg["grid"]["kxr"], complex_field)
-            return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
-
-    def save_func(t, y, args):
-        save_dict = {}
+    if cfg["save"]["func"]["is_on"]:
         if cfg["save"]["x"]["is_on"]:
-            save_dict["x"] = jtu.tree_map(save_x, y)
-        if cfg["save"]["kx"]["is_on"]:
-            save_dict["kx"] = jtu.tree_map(save_kx, y)
+            dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
+            cfg["save"]["x"]["ax"] = jnp.linspace(
+                cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
+            )
 
-        return save_dict
+            save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
+
+        if cfg["save"]["kx"]["is_on"]:
+            cfg["save"]["kx"]["ax"] = jnp.linspace(
+                cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
+            )
+
+            def save_kx(field):
+                complex_field = jnp.fft.rfft(field, axis=0) * 2.0 / cfg["grid"]["nx"]
+                interped_field = jnp.interp(cfg["save"]["kx"]["ax"], cfg["grid"]["kxr"], complex_field)
+                return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
+
+        def save_func(t, y, args):
+            save_dict = {}
+            if cfg["save"]["x"]["is_on"]:
+                save_dict["x"] = jtu.tree_map(save_x, y)
+            if cfg["save"]["kx"]["is_on"]:
+                save_dict["kx"] = jtu.tree_map(save_kx, y)
+
+            return save_dict
+
+    else:
+        cfg["save"]["x"]["ax"] = cfg["grid"]["x"]
+        save_func = None
 
     return save_func
