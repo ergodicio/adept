@@ -4,27 +4,27 @@ mlflow:
   experiment: es1d-resonance-search
   run: test
 
-adjoint: Recursive
+adjoint: Backsolve
 
 grid:
-    nx: 32
+    nx: 16
     xmin: 0.0
     xmax: 20.94
     tmin: 0.0
-    tmax: 400
+    tmax: 50
 
 save:
     func:
       is_on: False
     t:
       tmin: 0.0
-      tmax: 400.0
-      nt: 801
+      tmax: 50.0
+      nt: 101
     x:
       is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 64
+      nx: 32
     kx:
       is_on: False
       kxmin: 0.0

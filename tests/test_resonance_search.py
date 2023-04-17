@@ -22,12 +22,14 @@ from es1d import helpers
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
-def load_cfg(rand_k0, gamma):
+def load_cfg(rand_k0, gamma, adjoint):
     with open("./tests/configs/resonance_search.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
-    defaults["physics"]["gamma"] = gamma
+    defaults["physics"]["electron"]["gamma"] = gamma
+    defaults["adjoint"] = adjoint
+
     if gamma == "kinetic":
         wepw = np.real(get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0))
         defaults["mlflow"]["run"] = "kinetic"
@@ -42,13 +44,14 @@ def load_cfg(rand_k0, gamma):
     return defaults, wepw
 
 
+@pytest.mark.parametrize("adjoint", ["Recursive", "Backsolve"])
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
-def test_resonance_search(gamma):
+def test_resonance_search(gamma, adjoint):
     mlflow.set_experiment("test-res-search")
     with mlflow.start_run(run_name="res-search-opt") as mlflow_run:
-        vg_func, sim_k0, actual_w0 = get_vg_func(gamma)
+        vg_func, sim_k0, actual_w0 = get_vg_func(gamma, adjoint)
 
-        mod_defaults, _ = load_cfg(sim_k0, gamma)
+        mod_defaults, _ = load_cfg(sim_k0, gamma, adjoint)
         mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
         misc.log_params(mod_defaults)
         mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
@@ -58,12 +61,12 @@ def test_resonance_search(gamma):
 
         w0 = 1.1 + 0.05 * jax.random.normal(rng_key, [1], dtype=jnp.float64)
 
-        optimizer = optax.adam(0.1)
-        opt_state = optimizer.init(w0)
+        # optimizer = optax.adam(0.1)
+        # opt_state = optimizer.init(w0)
 
         t0 = time.time()
-        # optimizer = OptaxSolver(fun=vg_func, value_and_grad=True, has_aux=True, opt=optax.adam(learning_rate=0.1))
-        # opt_state = optimizer.init_state(w0)
+        optimizer = OptaxSolver(fun=vg_func, value_and_grad=True, has_aux=True, opt=optax.adam(learning_rate=0.1))
+        opt_state = optimizer.init_state(w0)
         mlflow.log_metrics({"init_time": round(time.time() - t0, 4)})
 
         mlflow.log_metrics({"w0": float(w0)}, step=0)
@@ -81,13 +84,13 @@ def run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state):
         mlflow.log_param("w0", w0)
         t0 = time.time()
 
-        (loss, results), grad = vg_func(w0)
-        updates, opt_state = optimizer.update(grad, opt_state, w0)
-        w0 = optax.apply_updates(w0, updates)
-        #
-        # w0, opt_state = optimizer.update(params=w0, state=opt_state)
-        # loss = opt_state.error
-        # results = opt_state.aux
+        # (loss, results), grad = vg_func(w0)
+        # updates, opt_state = optimizer.update(grad, opt_state, w0)
+        # w0 = optax.apply_updates(w0, updates)
+
+        w0, opt_state = optimizer.update(params=w0, state=opt_state)
+        loss = opt_state.error
+        results = opt_state.aux
 
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
         with tempfile.TemporaryDirectory() as td:
@@ -100,11 +103,11 @@ def run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state):
     return w0, opt_state, loss
 
 
-def get_vg_func(gamma):
-    rng = np.random.default_rng()
+def get_vg_func(gamma, adjoint):
+    rng = np.random.default_rng(420)
     sim_k0 = rng.uniform(0.26, 0.4)
 
-    defaults, actual_w0 = load_cfg(sim_k0, gamma)
+    defaults, actual_w0 = load_cfg(sim_k0, gamma, adjoint)
     defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
     misc.log_params(defaults)
 
