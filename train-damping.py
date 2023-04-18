@@ -134,14 +134,12 @@ def train_loop():
 def remote_train_loop():
     weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
     models = {
-        "nu_g": eqx.nn.MLP(3, 1, 8, 1, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
-        "nu_d": eqx.nn.MLP(3, 1, 8, 1, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
+        "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
+        "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
     }
-    # eqx.tree_serialise_leaves("some_filename.eqx", model_original)
-    # model_loaded = eqx.tree_deserialise_leaves("some_filename.eqx", model_original)
 
     optimizer = optax.adam(0.01)
-    opt_state = optimizer.init(models)
+    opt_state = optimizer.init(eqx.filter(models, eqx.is_array))
     batch_size = 16
 
     # modify config
@@ -169,9 +167,9 @@ def remote_train_loop():
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
                     run_ids, job_done = queue_sim(
-                        fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"
+                        fks, nuee, k0, a0, run_ids, job_done, models, epoch, i_batch, sim, t_or_v="grad"
                     )
-                w_and_b = update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b)
+                models = update_w_and_b(job_done, run_ids, optimizer, opt_state, models)
                 batch_loss = float(
                     np.average(
                         np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
@@ -186,9 +184,7 @@ def remote_train_loop():
             # validation
             run_ids, job_done = [], []
             for sim, (nuee, k0, a0) in enumerate(all_sims[val_sims]):
-                run_ids, job_done = queue_sim(
-                    fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, 0, sim, t_or_v="val"
-                )
+                run_ids, job_done = queue_sim(fks, nuee, k0, a0, run_ids, job_done, models, epoch, 0, sim, t_or_v="val")
             wait_for_jobs(job_done, run_ids)
             val_loss = float(
                 np.average(
@@ -208,12 +204,14 @@ def wait_for_jobs(job_done, run_ids):
 def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
     wait_for_jobs(job_done, run_ids)
     gradients = []
-    for queued_run_id in run_ids:
-        with tempfile.TemporaryDirectory() as td:
-            gradients.append(misc.download_and_open_file_from_this_run("grads.pkl", queued_run_id, td))
+    with tempfile.TemporaryDirectory() as td:
+        for queued_run_id in run_ids:
+            mlflow.artifacts.download_artifacts(run_id=queued_run_id, artifact_path="grads.eqx", dst_path=td)
+            gradients.append(eqx.tree_deserialise_leaves(os.path.join(td, "grads.eqx"), w_and_b))
+
     gradients = misc.all_reduce_gradients(gradients, len(run_ids))
     updates, opt_state = optimizer.update(gradients, opt_state, w_and_b)
-    w_and_b = optax.apply_updates(w_and_b, updates)
+    w_and_b = eqx.apply_updates(w_and_b, updates)
 
     return w_and_b
 
@@ -230,8 +228,10 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
             with open(os.path.join(td, "config.yaml"), "w") as fp:
                 yaml.dump(mod_defaults, fp)
             actual_nk1.to_netcdf(os.path.join(td, "ground_truth.nc"))
-            with open(os.path.join(td, "weights.pkl"), "wb") as fi:
-                pickle.dump(w_and_b, fi)
+            # with open(os.path.join(td, "weights.pkl"), "wb") as fi:
+            #     pickle.dump(w_and_b, fi)
+            eqx.tree_serialise_leaves(os.path.join(td, "weights.eqx"), w_and_b)
+
             mlflow.log_artifacts(td)
         misc.queue_sim(
             {
@@ -247,27 +247,6 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
         job_done.append(False)
 
     return run_ids, job_done
-
-
-# def get_w_and_b():
-#     with open("./damping.yaml", "r") as file:
-#         defaults = yaml.safe_load(file)
-#     defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
-#     defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
-#     defaults = helpers.get_save_quantities(defaults)
-
-# pulse_dict = {"pulse": defaults["drivers"]}
-#
-# def vector_field(t, y, args):
-#     dummy_vf = helpers.VectorField(defaults)
-#     return dummy_vf(t, y, args)
-
-# state = helpers.init_state(defaults)
-
-# dummy_t = 0.5
-# dummy_args = pulse_dict
-# key = jax.random.PRNGKey(420)
-# return models
 
 
 if __name__ == "__main__":

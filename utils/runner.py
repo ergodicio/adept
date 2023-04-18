@@ -6,10 +6,12 @@ from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution, Kvaerno5, PID
 from jax import jit, value_and_grad
 from jax import numpy as jnp
 import numpy as np
-import haiku as hk
+
+# import haiku as hk
 import mlflow
 import equinox as eqx
 import xarray as xr
+import jax
 
 import es1d
 from utils import plotters, misc
@@ -83,8 +85,14 @@ def run(cfg: Dict) -> Solution:
 def remote_gradient(run_id):
     with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
         with tempfile.TemporaryDirectory() as td:
+            weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
+            models = {
+                "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
+                "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
+            }
+
             mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
-            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
+            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td, models=models)
             actual_nk1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
@@ -92,18 +100,14 @@ def remote_gradient(run_id):
             misc.log_params(mod_defaults)
             mod_defaults["grid"] = es1d.helpers.get_solver_quantities(mod_defaults["grid"])
             mod_defaults = es1d.helpers.get_save_quantities(mod_defaults)
-            pulse_dict = {"pulse": mod_defaults["drivers"]}
             t0 = time.time()
 
-            def vector_field(t, y, args):
-                dummy_vf = es1d.helpers.VectorField(mod_defaults)
-                return dummy_vf(t, y, args)
-
             state = es1d.helpers.init_state(mod_defaults)
-            _, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
 
-            def loss(weights_and_biases):
-                vf = partial(vf_apply, weights_and_biases)
+            def loss(models):
+                vf = es1d.helpers.VectorField(mod_defaults, models=models)
+                args = {"driver": mod_defaults["drivers"]}
+
                 results = diffeqsolve(
                     terms=ODETerm(vf),
                     solver=Tsit5(),
@@ -112,7 +116,7 @@ def remote_gradient(run_id):
                     max_steps=mod_defaults["grid"]["max_steps"],
                     dt0=mod_defaults["grid"]["dt"],
                     y0=state,
-                    args=pulse_dict,
+                    args=args,
                     saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]),
                 )
                 nk1 = (
@@ -131,13 +135,12 @@ def remote_gradient(run_id):
                     results,
                 )
 
-            vg_func = value_and_grad(loss, argnums=0, has_aux=True)
-            (loss_val, results), grad = jit(vg_func)(w_and_b)
+            vg_func = eqx.filter_value_and_grad(loss, argnums=0, has_aux=True)
+            (loss_val, results), grad = eqx.filter_jit(vg_func)(w_and_b)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "loss": float(loss_val)})
 
             # dump gradients
-            with open(os.path.join(td, "grads.pkl"), "wb") as fi:
-                pickle.dump(grad, fi)
+            eqx.tree_serialise_leaves(os.path.join(td, "grads.eqx"), grad)
 
             t0 = time.time()
             es1d.helpers.post_process(results, mod_defaults, td)
@@ -151,8 +154,14 @@ def remote_gradient(run_id):
 def remote_val(run_id):
     with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
         with tempfile.TemporaryDirectory() as td:
+            weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
+            models = {
+                "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
+                "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
+            }
+
             mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
-            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
+            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td, models=models)
             actual_nk1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
@@ -160,18 +169,13 @@ def remote_val(run_id):
             misc.log_params(mod_defaults)
             mod_defaults["grid"] = es1d.helpers.get_solver_quantities(mod_defaults["grid"])
             mod_defaults = es1d.helpers.get_save_quantities(mod_defaults)
-            pulse_dict = {"pulse": mod_defaults["drivers"]}
             t0 = time.time()
 
-            def vector_field(t, y, args):
-                dummy_vf = es1d.helpers.VectorField(mod_defaults)
-                return dummy_vf(t, y, args)
-
             state = es1d.helpers.init_state(mod_defaults)
-            _, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
 
-            def loss(weights_and_biases):
-                vf = partial(vf_apply, weights_and_biases)
+            def loss(models):
+                vf = es1d.helpers.VectorField(mod_defaults, models=models)
+                args = {"driver": mod_defaults["drivers"]}
                 results = diffeqsolve(
                     terms=ODETerm(vf),
                     solver=Tsit5(),
@@ -180,7 +184,7 @@ def remote_val(run_id):
                     max_steps=mod_defaults["grid"]["max_steps"],
                     dt0=mod_defaults["grid"]["dt"],
                     y0=state,
-                    args=pulse_dict,
+                    args=args,
                     saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]),
                 )
                 nk1 = (
@@ -199,7 +203,7 @@ def remote_val(run_id):
                     results,
                 )
 
-            loss_val, results = jit(loss)(w_and_b)
+            loss_val, results = eqx.filter_jit(loss)(w_and_b)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "val_loss": float(loss_val)})
 
             t0 = time.time()

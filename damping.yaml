@@ -5,7 +5,7 @@ mlflow:
   run: test
 
 grid:
-    nx: 32
+    nx: 16
     xmin: 0.0
     xmax: 20.94
     tmin: 0.0
@@ -22,7 +22,7 @@ save:
       is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 32
+      nx: 16
     kx:
       is_on: False
       kxmin: 0.0

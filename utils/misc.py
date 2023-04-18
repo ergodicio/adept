@@ -2,6 +2,7 @@ import flatdict, mlflow, os, boto3, botocore, shutil, pickle, yaml, operator
 from urllib.parse import urlparse
 from mlflow.tracking import MlflowClient
 import jax
+import equinox as eqx
 
 
 def log_params(cfg):
@@ -27,12 +28,14 @@ def get_cfg(artifact_uri, temp_path):
     return cfg
 
 
-def get_weights(artifact_uri, temp_path):
-    dest_file_path = download_file("weights.pkl", artifact_uri, temp_path)
+def get_weights(artifact_uri, temp_path, models):
+    dest_file_path = download_file("weights.eqx", artifact_uri, temp_path)
     if dest_file_path is not None:
-        with open(dest_file_path, "rb") as file:
-            weights = pickle.load(file)
-        return weights
+        # with open(dest_file_path, "rb") as file:
+        #     weights = pickle.load(file)
+        # return weights
+        return eqx.tree_deserialise_leaves(dest_file_path, like=models)
+
     else:
         return None
 
