@@ -169,7 +169,7 @@ def remote_train_loop():
                     run_ids, job_done = queue_sim(
                         fks, nuee, k0, a0, run_ids, job_done, models, epoch, i_batch, sim, t_or_v="grad"
                     )
-                models = update_w_and_b(job_done, run_ids, optimizer, opt_state, models)
+                models = update_w_and_b(job_done, run_ids, optimizer, opt_state, eqx.filter(models, eqx.is_array))
                 batch_loss = float(
                     np.average(
                         np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])

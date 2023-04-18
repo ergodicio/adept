@@ -82,30 +82,29 @@ def download_and_open_file_from_this_run(fname, run_id, destination_path):
     return this_file
 
 
-def _safe_add(a1, a2):
-    if a1 is None:
-        return a2
-    else:
-        return a1 + a2
-
-
-def _safe_divide(a1, n):
-    if a1 is None:
-        return n
-    else:
-        return a1 / n
-
-
-def _is_none(x):
-    return x is None
-
-
 def all_reduce_gradients(gradients, num):
     if num > 1:
+
+        def _safe_add(a1, a2):
+            if a1 is None:
+                return a2
+            else:
+                return a1 + a2
+
+        def _is_none(x):
+            return x is None
+
+        def _safe_divide(a1):
+            if a1 is None:
+                return a1
+            else:
+                return a1 / num
+
         summed_gradients = jax.tree_map(_safe_add, gradients[0], gradients[1], is_leaf=_is_none)
         for i in range(2, num):
             summed_gradients = jax.tree_map(_safe_add, summed_gradients, gradients[i], is_leaf=_is_none)
-        average_gradient = jax.tree_map(_safe_divide, summed_gradients, num, is_leaf=_is_none)
+
+        average_gradient = jax.tree_map(_safe_divide, summed_gradients, is_leaf=_is_none)
     else:
         average_gradient = gradients[0]
 
