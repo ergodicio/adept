@@ -1,4 +1,4 @@
-name: jaxmhd
+name: adept
 channels:
   - conda-forge
   - "nvidia/label/cuda-11.7.0"
