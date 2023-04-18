@@ -82,12 +82,16 @@ def download_and_open_file_from_this_run(fname, run_id, destination_path):
     return this_file
 
 
+def _is_none(x):
+    return x is None
+
+
 def all_reduce_gradients(gradients, num):
     if num > 1:
-        summed_gradients = jax.tree_map(operator.add, gradients[0], gradients[1])
+        summed_gradients = jax.tree_map(operator.add, gradients[0], gradients[1], is_leaf=_is_none)
         for i in range(2, num):
-            summed_gradients = jax.tree_map(operator.add, summed_gradients, gradients[i])
-        average_gradient = jax.tree_map(lambda x: x / num, summed_gradients)
+            summed_gradients = jax.tree_map(operator.add, summed_gradients, gradients[i], is_leaf=_is_none)
+        average_gradient = jax.tree_map(lambda x: x / num, summed_gradients, is_leaf=_is_none)
     else:
         average_gradient = gradients[0]
 
