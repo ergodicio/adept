@@ -11,6 +11,8 @@ grid:
     tmin: 0.0
     tmax: 50
 
+models: False
+
 save:
     func:
       is_on: True

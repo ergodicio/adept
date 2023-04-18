@@ -4,6 +4,8 @@ mlflow:
   experiment: es1d-ions-test
   run: test
 
+models: False
+
 grid:
     nx: 32
     xmin: 0.0
@@ -22,7 +24,7 @@ save:
       is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 64
+      nx: 32
     kx:
       is_on: True
       kxmin: 0.0

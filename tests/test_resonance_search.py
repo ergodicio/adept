@@ -1,6 +1,8 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import yaml, pytest
+from itertools import product
+
 
 import numpy as np
 from jax.config import config
@@ -71,10 +73,13 @@ def test_resonance_search(gamma, adjoint):
 
         mlflow.log_metrics({"w0": float(w0)}, step=0)
         mlflow.log_metrics({"actual_w0": actual_w0}, step=0)
-        for i in tqdm(range(100)):
+        for i in tqdm(range(40)):
             w0, opt_state, loss = run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state)
 
             mlflow.log_metrics({"w0": float(w0), "actual_w0": actual_w0, "loss": float(loss)}, step=i + 1)
+
+        print(f"{gamma=}, {adjoint=}")
+        print(f"{actual_w0=}, {float(w0)=}")
 
         np.testing.assert_allclose(actual_w0, float(w0), rtol=0.03)
 
@@ -114,7 +119,7 @@ def get_vg_func(gamma, adjoint):
     defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
     defaults = helpers.get_save_quantities(defaults)
 
-    pulse_dict = {"pulse": defaults["drivers"]}
+    pulse_dict = {"driver": defaults["drivers"]}
     state = helpers.init_state(defaults)
     loss_fn = get_loss(state, pulse_dict, defaults)
     vg_func = eqx.filter_jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
@@ -131,8 +136,8 @@ def get_loss(state, pulse_dict, mod_defaults):
         raise NotImplementedError
 
     def loss(w0):
-        pulse_dict["pulse"]["ex"]["0"]["w0"] = w0
-        vf = helpers.VectorField(mod_defaults)
+        pulse_dict["driver"]["ex"]["0"]["w0"] = w0
+        vf = helpers.VectorField(mod_defaults, models=False)
         results = diffeqsolve(
             terms=ODETerm(vf),
             solver=Tsit5(),
@@ -152,4 +157,5 @@ def get_loss(state, pulse_dict, mod_defaults):
 
 
 if __name__ == "__main__":
-    test_resonance_search("kinetic")
+    for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
+        test_resonance_search(gamma, adjoint)

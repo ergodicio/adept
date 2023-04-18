@@ -62,7 +62,7 @@ def test_single_resonance():
     frslc = slice(-100, -50)
     measured_damping_rate = np.mean(np.gradient(ek1[frslc], (result.ts[1] - result.ts[0])) / ek1[frslc])
     print(
-        f"Frequency check \n"
+        f"Landau Damping rate check \n"
         f"measured: {np.round(measured_damping_rate, 5)}, "
         f"actual: {np.round(2*actual_damping_rate, 5)}, "
     )

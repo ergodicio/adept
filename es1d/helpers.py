@@ -1,7 +1,10 @@
+from collections import defaultdict
 from typing import Callable, Dict
 from functools import partial
 
 import os
+
+import jax.random
 import numpy as np
 from matplotlib import pyplot as plt
 import xarray as xr
@@ -295,3 +298,17 @@ def get_save_func(cfg):
         save_func = None
 
     return save_func
+
+
+def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
+    if model_config:
+        model_keys = jax.random.split(jax.random.PRNGKey(420), len(model_config.keys()))
+        model_dict = defaultdict(eqx.Module)
+        for (term, config), this_key in zip(model_config.items(), model_keys):
+            model_dict[term] = eqx.nn.MLP(**{**config, "key": this_key})
+            if config["file"]:
+                model_dict[term] = eqx.tree_deserialise_leaves(config["file"], model_dict[term])
+
+        return model_dict
+    else:
+        return False

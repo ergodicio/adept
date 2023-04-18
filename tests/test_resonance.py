@@ -18,7 +18,7 @@ from utils.runner import run
 def _modify_defaults_(defaults, rng, gamma):
     rand_k0 = np.round(rng.uniform(0.25, 0.4), 3)
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
-    defaults["physics"]["gamma"] = gamma
+    defaults["physics"]["electron"]["gamma"] = gamma
     if gamma == "kinetic":
         root = np.real(electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0))
         defaults["mlflow"]["run"] = "kinetic"
@@ -58,10 +58,16 @@ def test_single_resonance(gamma):
     )
     one_over_kx = np.zeros_like(kx)
     one_over_kx[1:] = 1.0 / kx[1:]
-    efs = jnp.real(jnp.fft.ifft(1j * one_over_kx[None, :] * jnp.fft.fft(1 - result.ys["x"]["electron"]["n"][:, :])))
+    efs = jnp.real(
+        jnp.fft.ifft(
+            1j
+            * one_over_kx[None, :]
+            * jnp.fft.fft(result.ys["x"]["ion"]["n"][:, :] - result.ys["x"]["electron"]["n"][:, :])
+        )
+    )
     ek1 = np.fft.fft(efs, axis=1)[:, 1]
     env, freq = electrostatic.get_nlfs(ek1, result.ts[1] - result.ts[0])
-    frslc = slice(-200, -150)
+    frslc = slice(-80, -10)
     print(
         f"Frequency check \n"
         f"measured: {np.round(np.mean(freq[frslc]), 5)}, "
@@ -72,4 +78,5 @@ def test_single_resonance(gamma):
 
 
 if __name__ == "__main__":
-    test_single_resonance()
+    for gamma in ["kinetic", 3.0]:
+        test_single_resonance(gamma)

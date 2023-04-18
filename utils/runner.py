@@ -7,7 +7,6 @@ from jax import jit, value_and_grad
 from jax import numpy as jnp
 import numpy as np
 
-# import haiku as hk
 import mlflow
 import equinox as eqx
 import xarray as xr
@@ -41,21 +40,16 @@ def run(cfg: Dict) -> Solution:
     cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
     cfg = helpers.get_save_quantities(cfg)
 
+    models = helpers.get_models(cfg["models"])
+    state = helpers.init_state(cfg)
+
     with tempfile.TemporaryDirectory() as td:
         # run
         t0 = time.time()
 
-        state = helpers.init_state(cfg)
-
-        if "weights" in cfg:
-            with open(cfg["weights"], "rb") as fi:
-                weights = pickle.load(fi)
-        else:
-            weights = None
-
         @eqx.filter_jit
-        def _run_(weights):
-            vf = helpers.VectorField(cfg)
+        def _run_():
+            vf = helpers.VectorField(cfg, models=models)
             return diffeqsolve(
                 terms=ODETerm(vf),
                 solver=Tsit5(),
@@ -64,7 +58,7 @@ def run(cfg: Dict) -> Solution:
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                args={"pulse": cfg["drivers"]},
+                args={"driver": cfg["drivers"]},
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
             )
 
