@@ -13,6 +13,71 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 
+class WaveSolver(eqx.Module):
+    dx: float
+    c: float
+    c_sq: float
+    dt: float
+    const: float
+    one_over_const: float
+
+    def __init__(self, c: jnp.float64, dx: jnp.float64, dt: jnp.float64):
+        self.dx = dx
+        self.c = c
+        self.c_sq = c**2.0
+        c_over_dx = c / dx
+        self.dt = dt
+        self.const = c_over_dx * dt
+        # abc_const = (const - 1.0) / (const + 1.0)
+        self.one_over_const = 1.0 / dt / c_over_dx
+
+    def apply_2nd_order_abc(self, aold, a, anew):
+        """
+        Second order absorbing boundary conditions
+
+        :param aold:
+        :param a:
+        :param anew:
+        :param dt:
+        :return:
+        """
+
+        coeff = -1.0 / (self.one_over_const + 2.0 + self.const)
+
+        # # 2nd order ABC
+        a_left = (self.one_over_const - 2.0 + self.const) * (anew[1] + aold[0])
+        a_left += 2.0 * (self.const - self.one_over_const) * (a[0] + a[2] - anew[0] - aold[1])
+        a_left -= 4.0 * (self.one_over_const + self.const) * a[1]
+        a_left *= coeff
+        a_left -= aold[2]
+        a_left = jnp.array([a_left])
+
+        a_right = (self.one_over_const - 2.0 + self.const) * (anew[-2] + aold[-1])
+        a_right += 2.0 * (self.const - self.one_over_const) * (a[-1] + a[-3] - anew[-1] - aold[-2])
+        a_right -= 4.0 * (self.one_over_const + self.const) * a[-2]
+        a_right *= coeff
+        a_right -= aold[-3]
+        a_right = jnp.array([a_right])
+
+        # commenting out first order damping
+        # a_left = jnp.array([a[1] + abc_const * (anew[0] - a[0])])
+        # a_right = jnp.array([a[-2] + abc_const * (anew[-1] - a[-1])])
+
+        return jnp.concatenate([a_left, anew, a_right])
+
+    def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_charge: jnp.ndarray):
+        if self.c > 0:
+            d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
+            anew = (
+                2.0 * a[1:-1]
+                - aold[1:-1]
+                + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array)
+            )
+            return self.apply_2nd_order_abc(aold, a, anew), a
+        else:
+            return a, aold
+
+
 class Driver(eqx.Module):
     xax: jax.Array
 
@@ -124,7 +189,7 @@ class EnergyStepper(eqx.Module):
 
 
 class ParticleTrapper(eqx.Module):
-    kxr: jax.Array
+    kxr: np.ndarray
     kx: jax.Array
     model_kld: float
     wrs: jax.Array
@@ -133,12 +198,11 @@ class ParticleTrapper(eqx.Module):
     norm_kld: jnp.float64
     norm_nuee: jnp.float64
     vph: jnp.float64
-    nu_g_model: Callable
-    nu_d_model: Callable
+    nu_g_model: eqx.Module
+    nu_d_model: eqx.Module
 
-    def __init__(self, cfg, species="electron", train=False):  # kld, nuee, kxr, kx, kinetic_real_epw):
+    def __init__(self, cfg, species="electron", models=None):
         nuee = cfg["physics"][species]["trapping"]["nuee"]
-        nn = cfg["physics"][species]["trapping"]["nn"]
         kxr = np.array(cfg["grid"]["kxr"])
         one_over_kxr = np.zeros(kxr.size)
         one_over_kxr[1:] = 1.0 / kxr[1:]
@@ -160,21 +224,13 @@ class ParticleTrapper(eqx.Module):
         self.vph = jnp.interp(self.model_kld, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / self.model_kld
 
         # Make models
-        if train:
-            nu_g_model = []
-            for i, width in enumerate(nn.split("|")):
-                nu_g_model += [hk.Linear(int(width), name=f"nu_g_model_linear_{i}"), tanh]
-            nu_g_model += [hk.Linear(1, name=f"nu_g_model_linear_last"), tanh]
-            self.nu_g_model = hk.Sequential(nu_g_model)
+        if models:
+            self.nu_g_model = models["nu_g"]
         else:
             self.nu_g_model = lambda x: 1e-3
 
-        if train:
-            nu_d_model = []
-            for i, width in enumerate(nn.split("|")):
-                nu_d_model += [hk.Linear(int(width), name=f"nu_d_model_linear_{i}"), tanh]
-            nu_d_model += [hk.Linear(1, name=f"nu_d_model_linear_last"), tanh]
-            self.nu_d_model = hk.Sequential(nu_d_model)
+        if models:
+            self.nu_d_model = models["nu_d"]
         else:
             self.nu_d_model = lambda x: 1e-3
 

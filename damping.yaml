@@ -12,6 +12,8 @@ grid:
     tmax: 500.0
 
 save:
+    func:
+      is_on: True
     t:
       tmin: 0.5
       tmax: 500.0
@@ -28,20 +30,23 @@ save:
       nkx: 2
 
 physics:
-    gamma: 3
-    T0: 1.0
-    landau_damping: False
     ion:
+      gamma: 3
+      T0: 1.0
       is_on: False
       mass: 1836.0
       charge: 1.0
+      landau_damping: False
       trapping:
         is_on: False
         kld: 0.3
         nuee: 1.0e-9
     electron:
+      gamma: kinetic
+      T0: 1.0
       is_on: True
       mass: 1.0
+      landau_damping: True
       charge: -1.0
       trapping:
         is_on: True

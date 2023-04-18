@@ -16,8 +16,7 @@ from jax import numpy as jnp
 import xarray as xr
 import tempfile, time
 import mlflow, optax, pickle
-from functools import partial
-import haiku as hk
+import equinox as eqx
 from tqdm import tqdm
 
 from es1d import helpers
@@ -43,9 +42,13 @@ def _modify_defaults_(defaults, k0, a0, nuee):
 
 
 def train_loop():
-    w_and_b = get_w_and_b()
+    weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
+    trapping_models = {
+        "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
+        "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
+    }
     optimizer = optax.adam(0.1)
-    opt_state = optimizer.init(w_and_b)
+    opt_state = optimizer.init(eqx.filter(trapping_models, eqx.is_array))
 
     # modify config
     fks = xr.open_dataset("./epws.nc")
@@ -77,21 +80,16 @@ def train_loop():
                     mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
                     mod_defaults = helpers.get_save_quantities(mod_defaults)
 
-                    pulse_dict = {"pulse": mod_defaults["drivers"]}
-
                     with tempfile.TemporaryDirectory() as td:
                         # run
                         t0 = time.time()
 
-                        def vector_field(t, y, args):
-                            dummy_vf = helpers.VectorField(mod_defaults)
-                            return dummy_vf(t, y, args)
-
                         state = helpers.init_state(mod_defaults)
-                        _, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
 
-                        def loss(weights_and_biases):
-                            vf = partial(vf_apply, weights_and_biases)
+                        def loss(models):
+                            vf = helpers.VectorField(mod_defaults, models=models)
+                            args = {"driver": mod_defaults["drivers"]}
+
                             results = diffeqsolve(
                                 terms=ODETerm(vf),
                                 solver=Tsit5(),
@@ -100,7 +98,7 @@ def train_loop():
                                 max_steps=mod_defaults["grid"]["max_steps"],
                                 dt0=mod_defaults["grid"]["dt"],
                                 y0=state,
-                                args=pulse_dict,
+                                args=args,
                                 saveat=SaveAt(
                                     ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]
                                 ),
@@ -112,8 +110,8 @@ def train_loop():
                             )
                             return jnp.mean(jnp.square((actual_nk1.data - nk1) / np.amax(actual_nk1.data))), results
 
-                        vg_func = jax.value_and_grad(loss, argnums=0, has_aux=True)
-                        (loss_val, results), grad = jax.jit(vg_func)(w_and_b)
+                        vg_func = eqx.filter_value_and_grad(loss, has_aux=True)
+                        (loss_val, results), grad = eqx.filter_jit(vg_func)(trapping_models)
                         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
                         t0 = time.time()
@@ -123,8 +121,8 @@ def train_loop():
                         # log artifacts
                         mlflow.log_artifacts(td)
 
-                updates, opt_state = optimizer.update(grad, opt_state, w_and_b)
-                w_and_b = optax.apply_updates(w_and_b, updates)
+                updates, opt_state = optimizer.update(grad, opt_state, trapping_models)
+                trapping_models = eqx.apply_updates(trapping_models, updates)
                 loss_val = float(loss_val)
                 mlflow.log_metrics({"run_loss": loss_val}, step=sim + epoch * 100)
                 epoch_loss = epoch_loss + loss_val
@@ -134,9 +132,16 @@ def train_loop():
 
 
 def remote_train_loop():
-    w_and_b = get_w_and_b()
+    weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
+    models = {
+        "nu_g": eqx.nn.MLP(3, 1, 8, 1, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
+        "nu_d": eqx.nn.MLP(3, 1, 8, 1, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
+    }
+    # eqx.tree_serialise_leaves("some_filename.eqx", model_original)
+    # model_loaded = eqx.tree_deserialise_leaves("some_filename.eqx", model_original)
+
     optimizer = optax.adam(0.01)
-    opt_state = optimizer.init(w_and_b)
+    opt_state = optimizer.init(models)
     batch_size = 16
 
     # modify config
@@ -244,26 +249,26 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
     return run_ids, job_done
 
 
-def get_w_and_b():
-    with open("./damping.yaml", "r") as file:
-        defaults = yaml.safe_load(file)
-    defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
-    defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
-    defaults = helpers.get_save_quantities(defaults)
+# def get_w_and_b():
+#     with open("./damping.yaml", "r") as file:
+#         defaults = yaml.safe_load(file)
+#     defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
+#     defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
+#     defaults = helpers.get_save_quantities(defaults)
 
-    pulse_dict = {"pulse": defaults["drivers"]}
+# pulse_dict = {"pulse": defaults["drivers"]}
+#
+# def vector_field(t, y, args):
+#     dummy_vf = helpers.VectorField(defaults)
+#     return dummy_vf(t, y, args)
 
-    def vector_field(t, y, args):
-        dummy_vf = helpers.VectorField(defaults)
-        return dummy_vf(t, y, args)
+# state = helpers.init_state(defaults)
 
-    state = helpers.init_state(defaults)
-    vf_init, vf_apply = hk.without_apply_rng(hk.transform(vector_field))
-    dummy_t = 0.5
-    dummy_args = pulse_dict
-    key = jax.random.PRNGKey(420)
-    return vf_init(key, dummy_t, state, dummy_args)
+# dummy_t = 0.5
+# dummy_args = pulse_dict
+# key = jax.random.PRNGKey(420)
+# return models
 
 
 if __name__ == "__main__":
-    remote_train_loop()
+    train_loop()

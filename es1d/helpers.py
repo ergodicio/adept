@@ -185,7 +185,7 @@ class VectorField(eqx.Module):
     push_driver: Callable
     poisson_solver: Callable
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, models):
         super().__init__()
         self.cfg = cfg
         self.pusher_dict = {"ion": {}, "electron": {}}
@@ -198,11 +198,11 @@ class VectorField(eqx.Module):
                 cfg["grid"]["kx"], cfg["physics"][species_name]
             )
             if cfg["physics"][species_name]["trapping"]["is_on"]:
-                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(
-                    cfg, species_name, train=True if "weights" in cfg else False
-                )
+                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name, models)
 
         self.push_driver = pushers.Driver(cfg["grid"]["x"])
+        # if "ey" in self.cfg["drivers"]:
+        #     self.wave_solver = pushers.WaveSolver(cfg["grid"]["c"], cfg["grid"]["dx"], cfg["grid"]["dt"])
         self.poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
 
     def __call__(self, t: float, y: Dict, args: Dict):
@@ -221,8 +221,17 @@ class VectorField(eqx.Module):
         ed = 0.0
 
         for p_ind in self.cfg["drivers"]["ex"].keys():
-            ed += self.push_driver(args["pulse"]["ex"][p_ind], t)
-        total_e = e + ed
+            ed += self.push_driver(args["driver"]["ex"][p_ind], t)
+
+        # if "ey" in self.cfg["drivers"]:
+        #     ad = 0.0
+        #     for p_ind in self.cfg["drivers"]["ey"].keys():
+        #         ad += self.push_driver(args["pulse"]["ey"][p_ind], t)
+        #     a = self.wave_solver(a, aold, djy_array, charge)
+        #     total_a = y["a"] + ad
+        #     ponderomotive_force = -0.5 * jnp.gradient(jnp.square(total_a), self.cfg["grid"]["dx"])[1:-1]
+
+        total_e = e + ed  # + ponderomotive_force
 
         dstate_dt = {"ion": {}, "electron": {}}
         for species_name in ["ion", "electron"]:
