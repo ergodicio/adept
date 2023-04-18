@@ -7,8 +7,8 @@ numpy
 tqdm
 xarray
 mlflow
-dm-haiku
 flatdict
 h5netcdf
 optax
+jaxopt
 boto3
