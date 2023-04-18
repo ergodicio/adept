@@ -129,7 +129,7 @@ def remote_gradient(run_id):
                     results,
                 )
 
-            vg_func = eqx.filter_value_and_grad(loss, argnums=0, has_aux=True)
+            vg_func = eqx.filter_value_and_grad(loss, has_aux=True)
             (loss_val, results), grad = eqx.filter_jit(vg_func)(w_and_b)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "loss": float(loss_val)})
 
