@@ -25,6 +25,6 @@ dependencies:
       - xarray
       - diffrax
       - h5netcdf
-      - dm-haiku
       - h5netcdf
       - optax
+      - jaxopt
