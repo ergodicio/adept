@@ -181,17 +181,17 @@ def remote_train_loop():
 
             mlflow.log_metrics({"epoch_loss": epoch_loss}, step=epoch)
 
-            # validation
-            run_ids, job_done = [], []
-            for sim, (nuee, k0, a0) in enumerate(all_sims[val_sims]):
-                run_ids, job_done = queue_sim(fks, nuee, k0, a0, run_ids, job_done, models, epoch, 0, sim, t_or_v="val")
-            wait_for_jobs(job_done, run_ids)
-            val_loss = float(
-                np.average(
-                    np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
-                )
+        # validation
+        run_ids, job_done = [], []
+        for sim, (nuee, k0, a0) in enumerate(all_sims[val_sims]):
+            run_ids, job_done = queue_sim(fks, nuee, k0, a0, run_ids, job_done, models, epoch, 0, sim, t_or_v="val")
+        wait_for_jobs(job_done, run_ids)
+        val_loss = float(
+            np.average(
+                np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
             )
-            mlflow.log_metrics({"val_epoch_loss": val_loss}, step=epoch)
+        )
+        mlflow.log_metrics({"val_epoch_loss": val_loss}, step=epoch)
 
 
 def wait_for_jobs(job_done, run_ids):
