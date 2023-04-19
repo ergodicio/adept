@@ -1,21 +1,29 @@
+from collections import defaultdict
 from typing import Callable, Dict
 from functools import partial
 
 import os
+
+import jax.random
 import numpy as np
 from matplotlib import pyplot as plt
 import xarray as xr
 from jax import tree_util as jtu
 from flatdict import FlatDict
+import equinox as eqx
 
 from jax import numpy as jnp
 from es1d import pushers
 
 
 def save_arrays(result, td, cfg, label):
-    flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
+    if label is None:
+        label = "x"
+        flattened_dict = dict(FlatDict(result.ys, delimiter="-"))
+    else:
+        flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
     data_vars = {
-        k: xr.DataArray(v, coords=(("t", cfg["save"]["t_save"]), (label, cfg["save"][label]["ax"])))
+        k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, cfg["save"][label]["ax"])))
         for k, v in flattened_dict.items()
     }
 
@@ -26,15 +34,19 @@ def save_arrays(result, td, cfg, label):
 
 def plot_xrs(which, td, xrs):
     os.makedirs(os.path.join(td, "plots", which))
-    os.makedirs(os.path.join(td, "plots", which, "hue"))
+    os.makedirs(os.path.join(td, "plots", which, "ion"))
+    os.makedirs(os.path.join(td, "plots", which, "electron"))
 
     for k, v in xrs.items():
+        fname = f"{'-'.join(k.split('-')[1:])}.png"
         fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
         v.plot(ax=ax, cmap="gist_ncar")
-        fig.savefig(os.path.join(td, "plots", which, f"{k}.png"), bbox_inches="tight")
+        fig.savefig(os.path.join(td, "plots", which, k.split("-")[0], fname), bbox_inches="tight")
         plt.close(fig)
 
         if which == "kx":
+            os.makedirs(os.path.join(td, "plots", which, "ion", "hue"), exist_ok=True)
+            os.makedirs(os.path.join(td, "plots", which, "electron", "hue"), exist_ok=True)
             # only plot
             if v.coords["kx"].size > 8:
                 hue_skip = v.coords["kx"].size // 8
@@ -46,7 +58,12 @@ def plot_xrs(which, td, xrs):
                 v[:, ::hue_skip].plot(ax=ax, hue="kx")
                 ax.set_yscale("log" if log else "linear")
                 ax.grid()
-                fig.savefig(os.path.join(td, "plots", which, f"hue", f"{k}-log-{log}.png"), bbox_inches="tight")
+                fig.savefig(
+                    os.path.join(
+                        td, "plots", which, k.split("-")[0], f"hue", f"{'-'.join(k.split('-')[1:])}-log-{log}.png"
+                    ),
+                    bbox_inches="tight",
+                )
                 plt.close(fig)
 
 
@@ -54,13 +71,17 @@ def post_process(result, cfg: Dict, td: str) -> None:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
-    if cfg["save"]["x"]["is_on"]:
-        xrs = save_arrays(result, td, cfg, "x")
-        plot_xrs("x", td, xrs)
+    if cfg["save"]["func"]["is_on"]:
+        if cfg["save"]["x"]["is_on"]:
+            xrs = save_arrays(result, td, cfg, label="x")
+            plot_xrs("x", td, xrs)
 
-    if cfg["save"]["kx"]["is_on"]:
-        xrs = save_arrays(result, td, cfg, "kx")
-        plot_xrs("kx", td, xrs)
+        if cfg["save"]["kx"]["is_on"]:
+            xrs = save_arrays(result, td, cfg, label="kx")
+            plot_xrs("kx", td, xrs)
+    else:
+        xrs = save_arrays(result, td, cfg, label=None)
+        plot_xrs("x", td, xrs)
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
@@ -73,7 +94,7 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     :return:
     """
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-    cfg_grid["dt"] = 0.5 * cfg_grid["dx"] / 10
+    cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
@@ -111,6 +132,10 @@ def get_solver_quantities(cfg_grid: Dict) -> Dict:
     one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
     cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
 
+    one_over_kxr = np.zeros_like(cfg_grid["kxr"])
+    one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
+    cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
+
     return cfg_grid
 
 
@@ -121,13 +146,8 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    cfg["save"] = {
-        **cfg["save"],
-        **{
-            "t_save": jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"]),
-            "func": get_save_func(cfg),
-        },
-    }
+    cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
+    cfg["save"]["t"]["ax"] = jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"])
 
     return cfg
 
@@ -143,7 +163,7 @@ def init_state(cfg: Dict) -> Dict:
     for species in ["ion", "electron"]:
         state[species] = dict(
             n=jnp.ones(cfg["grid"]["nx"]),
-            p=cfg["physics"]["T0"] * jnp.ones(cfg["grid"]["nx"]),
+            p=jnp.full(cfg["grid"]["nx"], cfg["physics"][species]["T0"]),
             u=jnp.zeros(cfg["grid"]["nx"]),
             delta=jnp.zeros(cfg["grid"]["nx"]),
         )
@@ -151,7 +171,7 @@ def init_state(cfg: Dict) -> Dict:
     return state
 
 
-def get_vector_field(cfg: Dict) -> Callable:
+class VectorField(eqx.Module):
     """
     This function returns the function that defines $d_state / dt$
 
@@ -162,25 +182,33 @@ def get_vector_field(cfg: Dict) -> Callable:
     :param cfg:
     :return:
     """
-    pusher_dict = {"ion": {}, "electron": {}}
-    for species_name in ["ion", "electron"]:
-        pusher_dict[species_name]["push_n"] = pushers.DensityStepper(cfg["grid"]["kx"])
-        pusher_dict[species_name]["push_u"] = pushers.VelocityStepper(
-            cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["physics"]
-        )
-        pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(cfg["grid"]["kx"], cfg["physics"]["gamma"])
-        if cfg["physics"][species_name]["trapping"]["is_on"]:
-            pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(
-                cfg["physics"][species_name]["trapping"]["kld"],
-                cfg["grid"]["kxr"],
-                cfg["grid"]["kx"],
-                cfg["physics"]["kinetic_real_wepw"],
+
+    cfg: Dict
+    pusher_dict: Dict
+    push_driver: Callable
+    poisson_solver: Callable
+
+    def __init__(self, cfg, models):
+        super().__init__()
+        self.cfg = cfg
+        self.pusher_dict = {"ion": {}, "electron": {}}
+        for species_name in ["ion", "electron"]:
+            self.pusher_dict[species_name]["push_n"] = pushers.DensityStepper(cfg["grid"]["kx"])
+            self.pusher_dict[species_name]["push_u"] = pushers.VelocityStepper(
+                cfg["grid"]["kx"], cfg["grid"]["kxr"], cfg["grid"]["one_over_kxr"], cfg["physics"][species_name]
             )
+            self.pusher_dict[species_name]["push_e"] = pushers.EnergyStepper(
+                cfg["grid"]["kx"], cfg["physics"][species_name]
+            )
+            if cfg["physics"][species_name]["trapping"]["is_on"]:
+                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name, models)
 
-    push_driver = pushers.Driver(cfg["grid"]["x"])
-    poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
+        self.push_driver = pushers.Driver(cfg["grid"]["x"])
+        # if "ey" in self.cfg["drivers"]:
+        #     self.wave_solver = pushers.WaveSolver(cfg["grid"]["c"], cfg["grid"]["dx"], cfg["grid"]["dt"])
+        self.poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
 
-    def push_everything(t: float, y: Dict, args: Dict):
+    def __call__(self, t: float, y: Dict, args: Dict):
         """
         This function is used by the time integrators specified in diffrax
 
@@ -189,11 +217,24 @@ def get_vector_field(cfg: Dict) -> Callable:
         :param args:
         :return:
         """
-        e = poisson_solver(
-            cfg["physics"]["ion"]["charge"] * y["ion"]["n"] + cfg["physics"]["electron"]["charge"] * y["electron"]["n"]
+        e = self.poisson_solver(
+            self.cfg["physics"]["ion"]["charge"] * y["ion"]["n"]
+            + self.cfg["physics"]["electron"]["charge"] * y["electron"]["n"]
         )
-        ed = push_driver(cfg["drivers"]["ex"]["0"], t)
-        total_e = e + ed
+        ed = 0.0
+
+        for p_ind in self.cfg["drivers"]["ex"].keys():
+            ed += self.push_driver(args["driver"]["ex"][p_ind], t)
+
+        # if "ey" in self.cfg["drivers"]:
+        #     ad = 0.0
+        #     for p_ind in self.cfg["drivers"]["ey"].keys():
+        #         ad += self.push_driver(args["pulse"]["ey"][p_ind], t)
+        #     a = self.wave_solver(a, aold, djy_array, charge)
+        #     total_a = y["a"] + ad
+        #     ponderomotive_force = -0.5 * jnp.gradient(jnp.square(total_a), self.cfg["grid"]["dx"])[1:-1]
+
+        total_e = e + ed  # + ponderomotive_force
 
         dstate_dt = {"ion": {}, "electron": {}}
         for species_name in ["ion", "electron"]:
@@ -201,57 +242,73 @@ def get_vector_field(cfg: Dict) -> Callable:
             u = y[species_name]["u"]
             p = y[species_name]["p"]
             delta = y[species_name]["delta"]
-            if cfg["physics"][species_name]["is_on"]:
-                q_over_m = cfg["physics"][species_name]["charge"] / cfg["physics"][species_name]["mass"]
-                p_over_m = p / cfg["physics"][species_name]["mass"]
+            if self.cfg["physics"][species_name]["is_on"]:
+                q_over_m = self.cfg["physics"][species_name]["charge"] / self.cfg["physics"][species_name]["mass"]
+                p_over_m = p / self.cfg["physics"][species_name]["mass"]
 
-                dstate_dt[species_name]["n"] = pusher_dict[species_name]["push_n"](n, u)
-                dstate_dt[species_name]["u"] = pusher_dict[species_name]["push_u"](
+                dstate_dt[species_name]["n"] = self.pusher_dict[species_name]["push_n"](n, u)
+                dstate_dt[species_name]["u"] = self.pusher_dict[species_name]["push_u"](
                     n, u, p_over_m, q_over_m * total_e, delta
                 )
-                dstate_dt[species_name]["p"] = pusher_dict[species_name]["push_e"](n, u, p_over_m, q_over_m * e)
+                dstate_dt[species_name]["p"] = self.pusher_dict[species_name]["push_e"](n, u, p_over_m, q_over_m * e)
             else:
-                dstate_dt[species_name]["n"] = 0.0
-                dstate_dt[species_name]["u"] = 0.0
-                dstate_dt[species_name]["p"] = 0.0
+                dstate_dt[species_name]["n"] = jnp.zeros(self.cfg["grid"]["nx"])
+                dstate_dt[species_name]["u"] = jnp.zeros(self.cfg["grid"]["nx"])
+                dstate_dt[species_name]["p"] = jnp.zeros(self.cfg["grid"]["nx"])
 
-            if cfg["physics"][species_name]["trapping"]["is_on"]:
-                dstate_dt[species_name]["delta"] = pusher_dict[species_name]["particle_trapper"](e, delta)
+            if self.cfg["physics"][species_name]["trapping"]["is_on"]:
+                dstate_dt[species_name]["delta"] = self.pusher_dict[species_name]["particle_trapper"](e, delta, args)
             else:
-                dstate_dt[species_name]["delta"] = 0.0
+                dstate_dt[species_name]["delta"] = jnp.zeros(self.cfg["grid"]["nx"])
 
         return dstate_dt
 
-    return push_everything
-
 
 def get_save_func(cfg):
-    if cfg["save"]["x"]["is_on"]:
-        dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
-        cfg["save"]["x"]["ax"] = jnp.linspace(
-            cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
-        )
-
-        save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
-
-    if cfg["save"]["kx"]["is_on"]:
-        cfg["save"]["kx"]["ax"] = jnp.linspace(
-            cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
-        )
-
-        def save_kx(field):
-            complex_field = 2.0 / cfg["grid"]["nx"] * jnp.fft.rfft(field, axis=0)
-            interped_field = jnp.interp(cfg["save"]["kx"]["ax"], cfg["grid"]["kxr"], complex_field)
-            return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
-
-    def save_func(t, y, args):
-        save_dict = {}
+    if cfg["save"]["func"]["is_on"]:
         if cfg["save"]["x"]["is_on"]:
-            save_dict["x"] = jtu.tree_map(save_x, y)
+            dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
+            cfg["save"]["x"]["ax"] = jnp.linspace(
+                cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
+            )
+
+            save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
 
         if cfg["save"]["kx"]["is_on"]:
-            save_dict["kx"] = jtu.tree_map(save_kx, y)
+            cfg["save"]["kx"]["ax"] = jnp.linspace(
+                cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
+            )
 
-        return save_dict
+            def save_kx(field):
+                complex_field = jnp.fft.rfft(field, axis=0) * 2.0 / cfg["grid"]["nx"]
+                interped_field = jnp.interp(cfg["save"]["kx"]["ax"], cfg["grid"]["kxr"], complex_field)
+                return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
+
+        def save_func(t, y, args):
+            save_dict = {}
+            if cfg["save"]["x"]["is_on"]:
+                save_dict["x"] = jtu.tree_map(save_x, y)
+            if cfg["save"]["kx"]["is_on"]:
+                save_dict["kx"] = jtu.tree_map(save_kx, y)
+
+            return save_dict
+
+    else:
+        cfg["save"]["x"]["ax"] = cfg["grid"]["x"]
+        save_func = None
 
     return save_func
+
+
+def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
+    if model_config:
+        model_keys = jax.random.split(jax.random.PRNGKey(420), len(model_config.keys()))
+        model_dict = defaultdict(eqx.Module)
+        for (term, config), this_key in zip(model_config.items(), model_keys):
+            model_dict[term] = eqx.nn.MLP(**{**config, "key": this_key})
+            if config["file"]:
+                model_dict[term] = eqx.tree_deserialise_leaves(config["file"], model_dict[term])
+
+        return model_dict
+    else:
+        return False

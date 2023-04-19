@@ -1,45 +1,87 @@
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Callable
 
-from jax import numpy as jnp
-import equinox as eqx
 import jax
+from jax import numpy as jnp
+from jax.nn import tanh
 import numpy as np
+import equinox as eqx
 
-from theory.electrostatic import get_roots_to_electrostatic_dispersion
-
-
-def get_complex_frequency_table(num: int, kinetic_real_epw: bool) -> Tuple[np.array, np.array, np.array]:
-    """
-    This function creates a table of the complex plasma frequency for $0.2 < k \lambda_D < 0.4$ in `num` steps
-
-    :param kinetic_real_epw:
-    :param num:
-    :return:
-    """
-    klds = np.linspace(0.2, 0.4, num)
-    wrs = np.zeros(num)
-    wis = np.zeros(num)
-
-    for i, kld in enumerate(klds):
-        ww = get_roots_to_electrostatic_dispersion(1.0, 1.0, kld)
-        if kinetic_real_epw:
-            wrs[i] = np.real(ww)
-        else:
-            wrs[i] = np.sqrt(1.0 + 3.0 * kld**2.0)
-        wis[i] = np.imag(ww)
-
-    return wrs, wis, klds
+from theory.electrostatic import get_complex_frequency_table
 
 
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 
+class WaveSolver(eqx.Module):
+    dx: float
+    c: float
+    c_sq: float
+    dt: float
+    const: float
+    one_over_const: float
+
+    def __init__(self, c: jnp.float64, dx: jnp.float64, dt: jnp.float64):
+        self.dx = dx
+        self.c = c
+        self.c_sq = c**2.0
+        c_over_dx = c / dx
+        self.dt = dt
+        self.const = c_over_dx * dt
+        # abc_const = (const - 1.0) / (const + 1.0)
+        self.one_over_const = 1.0 / dt / c_over_dx
+
+    def apply_2nd_order_abc(self, aold, a, anew):
+        """
+        Second order absorbing boundary conditions
+
+        :param aold:
+        :param a:
+        :param anew:
+        :param dt:
+        :return:
+        """
+
+        coeff = -1.0 / (self.one_over_const + 2.0 + self.const)
+
+        # # 2nd order ABC
+        a_left = (self.one_over_const - 2.0 + self.const) * (anew[1] + aold[0])
+        a_left += 2.0 * (self.const - self.one_over_const) * (a[0] + a[2] - anew[0] - aold[1])
+        a_left -= 4.0 * (self.one_over_const + self.const) * a[1]
+        a_left *= coeff
+        a_left -= aold[2]
+        a_left = jnp.array([a_left])
+
+        a_right = (self.one_over_const - 2.0 + self.const) * (anew[-2] + aold[-1])
+        a_right += 2.0 * (self.const - self.one_over_const) * (a[-1] + a[-3] - anew[-1] - aold[-2])
+        a_right -= 4.0 * (self.one_over_const + self.const) * a[-2]
+        a_right *= coeff
+        a_right -= aold[-3]
+        a_right = jnp.array([a_right])
+
+        # commenting out first order damping
+        # a_left = jnp.array([a[1] + abc_const * (anew[0] - a[0])])
+        # a_right = jnp.array([a[-2] + abc_const * (anew[-1] - a[-1])])
+
+        return jnp.concatenate([a_left, anew, a_right])
+
+    def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_charge: jnp.ndarray):
+        if self.c > 0:
+            d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
+            anew = (
+                2.0 * a[1:-1]
+                - aold[1:-1]
+                + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array)
+            )
+            return self.apply_2nd_order_abc(aold, a, anew), a
+        else:
+            return a, aold
+
+
 class Driver(eqx.Module):
     xax: jax.Array
 
     def __init__(self, xax):
-        super().__init__()
         self.xax = xax
 
     def __call__(self, this_pulse: Dict, current_time: jnp.float64):
@@ -66,7 +108,6 @@ class PoissonSolver(eqx.Module):
     one_over_kx: jax.Array
 
     def __init__(self, one_over_kx):
-        super().__init__()
         self.one_over_kx = one_over_kx
 
     def __call__(self, dn):
@@ -74,9 +115,6 @@ class PoissonSolver(eqx.Module):
 
 
 class StepAmpere(eqx.Module):
-    def __init__(self):
-        super().__init__()
-
     def __call__(self, n, u):
         return n * u
 
@@ -89,7 +127,6 @@ class DensityStepper(eqx.Module):
     kx: jax.Array
 
     def __init__(self, kx):
-        super().__init__()
         self.kx = kx
 
     def __call__(self, n, u):
@@ -98,16 +135,19 @@ class DensityStepper(eqx.Module):
 
 class VelocityStepper(eqx.Module):
     kx: jax.Array
-    wis: jax.Array
     wr_corr: jax.Array
+    wis: jax.Array
 
-    def __init__(self, kx, kxr, physics):
-        super().__init__()
+    def __init__(self, kx, kxr, one_over_kxr, physics):
         self.kx = kx
 
-        wrs, wis, klds = get_complex_frequency_table(128, physics["kinetic_real_wepw"])
-        wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=0.0, right=wrs[-1]))
-        self.wr_corr = wrs / jnp.sqrt(1 + 3 * kxr**2.0)
+        wrs, wis, klds = get_complex_frequency_table(1024, True if physics["gamma"] == "kinetic" else False)
+        wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1]))
+
+        if physics["gamma"] == "kinetic":
+            self.wr_corr = (jnp.square(wrs) - 1.0) * one_over_kxr**2.0
+        else:
+            self.wr_corr = 1.0
 
         if physics["landau_damping"]:
             self.wis = jnp.array(jnp.interp(kxr, klds, wis, left=0.0, right=wis[-1]))
@@ -131,12 +171,14 @@ class VelocityStepper(eqx.Module):
 
 class EnergyStepper(eqx.Module):
     kx: jax.Array
-    gamma: jnp.float64
+    gamma: float
 
-    def __init__(self, kx, gamma):
-        super().__init__()
+    def __init__(self, kx, physics):
         self.kx = kx
-        self.gamma = gamma
+        if physics["gamma"] == "kinetic":
+            self.gamma = 1.0
+        else:
+            self.gamma = physics["gamma"]
 
     def __call__(self, n, u, p_over_m, q_over_m_times_e):
         return (
@@ -147,30 +189,60 @@ class EnergyStepper(eqx.Module):
 
 
 class ParticleTrapper(eqx.Module):
-    kxr: jax.Array
+    kxr: np.ndarray
+    kx: jax.Array
+    model_kld: float
     wrs: jax.Array
     wis: jax.Array
-    kx: jax.Array
-    vph: jax.Array
-    kld: float
-    growth_coeff: float
-    damping_coeff: float
+    table_klds: jax.Array
+    norm_kld: jnp.float64
+    norm_nuee: jnp.float64
+    vph: jnp.float64
+    nu_g_model: eqx.Module
+    nu_d_model: eqx.Module
 
-    def __init__(self, kld, kxr, kx, kinetic_real_epw):
-        super().__init__()
+    def __init__(self, cfg, species="electron", models=None):
+        nuee = cfg["physics"][species]["trapping"]["nuee"]
+        kxr = np.array(cfg["grid"]["kxr"])
+        one_over_kxr = np.zeros(kxr.size)
+        one_over_kxr[1:] = 1.0 / kxr[1:]
+        kx = cfg["grid"]["kx"]
+        if cfg["physics"][species]["gamma"] == "kinetic":
+            kinetic_real_epw = True
+        else:
+            kinetic_real_epw = False
+
         self.kxr = kxr
         self.kx = kx
-        wrs, wis, klds = get_complex_frequency_table(128, kinetic_real_epw)
-        self.wrs = jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1])
-        self.wis = jnp.interp(kxr, klds, wis, left=0.0, right=0.0)
-        self.kld = kld
-        self.vph = jnp.interp(kld, klds, wrs, left=1.0, right=wrs[-1]) / kld
-        self.growth_coeff = 1e2
-        self.damping_coeff = 1e-2
+        table_wrs, table_wis, table_klds = get_complex_frequency_table(1024, kinetic_real_epw)
+        self.model_kld = cfg["physics"][species]["trapping"]["kld"]
+        self.wrs = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1])
+        self.wis = jnp.interp(kxr, table_klds, table_wis, left=0.0, right=0.0)
+        self.table_klds = table_klds
+        self.norm_kld = (self.model_kld - 0.26) / 0.14
+        self.norm_nuee = (jnp.log10(nuee) + 7.0) / -4.0
+        self.vph = jnp.interp(self.model_kld, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / self.model_kld
 
-    def __call__(self, e, delta):
+        # Make models
+        if models:
+            self.nu_g_model = models["nu_g"]
+        else:
+            self.nu_g_model = lambda x: 1e-3
+
+        if models:
+            self.nu_d_model = models["nu_d"]
+        else:
+            self.nu_d_model = lambda x: 1e-3
+
+    def __call__(self, e, delta, args):
+        ek = jnp.fft.rfft(e, axis=0) * 2.0 / self.kx.size
+        norm_e = (jnp.log10(jnp.interp(self.model_kld, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
+        func_inputs = jnp.stack([norm_e, self.norm_kld, self.norm_nuee], axis=-1)
+        growth_rates = 10 ** (3 * jnp.squeeze(self.nu_g_model(func_inputs)))
+        damping_rates = 10 ** (3 * jnp.squeeze(self.nu_d_model(func_inputs)))
+
         return (
             -self.vph * gradient(delta, self.kx)
-            + self.growth_coeff * jnp.abs(jnp.fft.irfft(jnp.fft.rfft(e, axis=0) * self.wis))
-            - self.damping_coeff * delta
+            + growth_rates * jnp.abs(jnp.fft.irfft(ek * self.kx.size / 2.0 * self.wis)) / (1.0 + delta**2.0)
+            - damping_rates * delta
         )

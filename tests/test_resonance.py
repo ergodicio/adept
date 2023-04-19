@@ -1,6 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-import yaml
+import yaml, pytest
 
 import numpy as np
 from jax.config import config
@@ -15,26 +15,33 @@ from theory import electrostatic
 from utils.runner import run
 
 
-def _modify_defaults_(defaults, rng):
+def _modify_defaults_(defaults, rng, gamma):
     rand_k0 = np.round(rng.uniform(0.25, 0.4), 3)
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
-    root = np.sqrt(1.0 + 3.0 * rand_k0**2.0)
+    defaults["physics"]["electron"]["gamma"] = gamma
+    if gamma == "kinetic":
+        root = np.real(electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0))
+        defaults["mlflow"]["run"] = "kinetic"
+    else:
+        root = np.sqrt(1.0 + 3.0 * rand_k0**2.0)
+        defaults["mlflow"]["run"] = "bohm-gross"
+
     xmax = float(2.0 * np.pi / rand_k0)
-    # electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0)
-    # defaults["save"]["field"]["xmax_to_store"] = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
+    defaults["mlflow"]["experiment"] = "test-resonance"
 
-    return defaults, float(np.real(root))
+    return defaults, float(root)
 
 
-def test_single_resonance():
+@pytest.mark.parametrize("gamma", ["kinetic", 3.0])
+def test_single_resonance(gamma):
     with open("./tests/configs/resonance.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     # modify config
     rng = np.random.default_rng()
-    mod_defaults, actual_resonance = _modify_defaults_(defaults, rng)
+    mod_defaults, actual_resonance = _modify_defaults_(defaults, rng, gamma)
 
     # run
     mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
@@ -51,18 +58,25 @@ def test_single_resonance():
     )
     one_over_kx = np.zeros_like(kx)
     one_over_kx[1:] = 1.0 / kx[1:]
-    efs = jnp.real(jnp.fft.ifft(1j * one_over_kx[None, :] * jnp.fft.fft(1 - result.ys["x"]["electron"]["n"][:, :])))
+    efs = jnp.real(
+        jnp.fft.ifft(
+            1j
+            * one_over_kx[None, :]
+            * jnp.fft.fft(result.ys["x"]["ion"]["n"][:, :] - result.ys["x"]["electron"]["n"][:, :])
+        )
+    )
     ek1 = np.fft.fft(efs, axis=1)[:, 1]
     env, freq = electrostatic.get_nlfs(ek1, result.ts[1] - result.ts[0])
-    frslc = slice(400, -400)
+    frslc = slice(-80, -10)
     print(
         f"Frequency check \n"
         f"measured: {np.round(np.mean(freq[frslc]), 5)}, "
-        f"bohm-gross: {np.round(actual_resonance, 5)}, "
+        f"desired: {np.round(actual_resonance, 5)}, "
     )
     measured_resonance = np.mean(freq[frslc])
     np.testing.assert_almost_equal(measured_resonance, actual_resonance, decimal=2)
 
 
 if __name__ == "__main__":
-    test_single_resonance()
+    for gamma in ["kinetic", 3.0]:
+        test_single_resonance(gamma)

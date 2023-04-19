@@ -1,32 +1,32 @@
 mode: es-1d
 
 mlflow:
-  experiment: es1d-ions-test
+  experiment: es1d-resonance-search
   run: test
 
+adjoint: Backsolve
+
 grid:
-    nx: 32
+    nx: 16
     xmin: 0.0
     xmax: 20.94
     tmin: 0.0
     tmax: 50
 
-models: False
-
 save:
     func:
-      is_on: True
+      is_on: False
     t:
       tmin: 0.0
       tmax: 50.0
-      nt: 201
+      nt: 101
     x:
       is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 64
+      nx: 32
     kx:
-      is_on: True
+      is_on: False
       kxmin: 0.0
       kxmax: 0.3
       nkx: 2
@@ -34,7 +34,7 @@ save:
 physics:
     ion:
       is_on: False
-      landau_damping: False
+      landau_damping: True
       mass: 1836.0
       T0: 0.01
       charge: 1.0

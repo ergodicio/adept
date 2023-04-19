@@ -1,64 +1,82 @@
 mode: es-1d
 
 mlflow:
-  experiment: es1d-trapping
-  run: test
+  experiment: ion-wavepacket-test
+  run: e-only
 
 grid:
-    nx: 2048
+    nx: 4096
     xmin: 0.0
-    xmax: 2000
+    xmax: 4000
     tmin: 0.0
-    tmax: 800
+    tmax: 1000.0
 
 save:
     t:
       tmin: 0.0
-      tmax: 800.0
-      nt: 1601
+      tmax: 1000.0
+      nt: 2001
     x:
       is_on: True
-      xmin: 1.0
-      xmax: 1999.0
-      nx: 512
+      xmin: 0.0
+      xmax: 4000.0
+      nx: 1024
     kx:
       is_on: True
       kxmin: 0.0
       kxmax: 0.5
-      nkx: 6
+      nkx: 21
 
 physics:
-    gamma: 3
-    T0: 1.0
-    kinetic_real_wepw: False
-    landau_damping: True
     ion:
-      is_on: False
+      is_on: True
       mass: 1836.0
+      gamma: 3.0
       charge: 1.0
+      T0: 0.1
+      landau_damping: False
       trapping:
         is_on: False
         kld: 0.3
+        nuee: 1.0e-9
     electron:
       is_on: True
       mass: 1.0
+      T0: 1.0
+      gamma: 3.0
       charge: -1.0
+      landau_damping: False
       trapping:
-        is_on: True
+        is_on: False
         kld: 0.3
+        nuee: 1.1e-5
+        nn: 8|8
 
+
+weights: models/delta-epw.pkl
 
 drivers:
   "ex":
-    "0": {
-            "k0": 0.3,
-            "w0": 1.13,
-            "dw0": 0.0,
-            "t_c": 80,
-            "t_w": 100,
-            "t_r": 20,
-            "x_c": 600,
-            "x_w": 800,
-            "x_r": 80,
-            "a0": 1.e-2,
-    }
+    "0":
+      "k0": 0.3
+      "w0": 1.126
+      "dw0": 0.0
+      "t_c": 80
+      "t_w": 100
+      "t_r": 20
+      "x_c": 2000
+      "x_w": 800
+      "x_r": 80
+      "a0": 4.e-3
+    "1":
+      "k0": 0.26
+      "w0": 1.11
+      "dw0": 0.0
+      "t_c": 400
+      "t_w": 100
+      "t_r": 20
+      "x_c": 2000
+      "x_w": 800
+      "x_r": 80
+      "a0": 0.e-2
+
