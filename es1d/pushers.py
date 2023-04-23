@@ -198,7 +198,7 @@ class ParticleTrapper(eqx.Module):
     norm_nuee: jnp.float64
     vph: jnp.float64
     nu_g_model: eqx.Module
-    nu_d_model: eqx.Module
+    # nu_d_model: eqx.Module
 
     def __init__(self, cfg, species="electron", models=None):
         nuee = cfg["physics"][species]["trapping"]["nuee"]
