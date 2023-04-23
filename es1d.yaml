@@ -1,8 +1,8 @@
 mode: es-1d
 
 mlflow:
-  experiment: ion-wavepacket-test
-  run: e-only
+  experiment: wavepackets-for-fluid
+  run: single-k=0.3-finite-amplitude-fluid-trapping
 
 grid:
     nx: 4096
@@ -12,6 +12,8 @@ grid:
     tmax: 1000.0
 
 save:
+    func:
+        is_on: True
     t:
       tmin: 0.0
       tmax: 1000.0
@@ -27,9 +29,27 @@ save:
       kxmax: 0.5
       nkx: 21
 
+models:
+    file: models/weights.eqx
+    nu_g:
+        in_size: 3
+        out_size: 1
+        width_size: 8
+        depth: 3
+        activation: tanh
+        final_activation: tanh
+    nu_d:
+        in_size: 3
+        out_size: 1
+        width_size: 8
+        depth: 3
+        activation: tanh
+        final_activation: tanh
+
+
 physics:
     ion:
-      is_on: True
+      is_on: False
       mass: 1836.0
       gamma: 3.0
       charge: 1.0
@@ -45,26 +65,22 @@ physics:
       T0: 1.0
       gamma: 3.0
       charge: -1.0
-      landau_damping: False
+      landau_damping: True
       trapping:
-        is_on: False
+        is_on: True
         kld: 0.3
         nuee: 1.1e-5
-        nn: 8|8
-
-
-weights: models/delta-epw.pkl
 
 drivers:
   "ex":
     "0":
       "k0": 0.3
-      "w0": 1.126
+      "w0": 1.1598
       "dw0": 0.0
       "t_c": 80
       "t_w": 100
       "t_r": 20
-      "x_c": 2000
+      "x_c": 600
       "x_w": 800
       "x_r": 80
       "a0": 4.e-3

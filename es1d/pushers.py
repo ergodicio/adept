@@ -1,8 +1,7 @@
-from typing import Dict, Tuple, Callable
+from typing import Dict
 
 import jax
 from jax import numpy as jnp
-from jax.nn import tanh
 import numpy as np
 import equinox as eqx
 
@@ -229,20 +228,13 @@ class ParticleTrapper(eqx.Module):
         else:
             self.nu_g_model = lambda x: 1e-3
 
-        if models:
-            self.nu_d_model = models["nu_d"]
-        else:
-            self.nu_d_model = lambda x: 1e-3
-
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0) * 2.0 / self.kx.size
         norm_e = (jnp.log10(jnp.interp(self.model_kld, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
         func_inputs = jnp.stack([norm_e, self.norm_kld, self.norm_nuee], axis=-1)
+        # jax.debug.print("{x}", x=func_inputs)
         growth_rates = 10 ** (3 * jnp.squeeze(self.nu_g_model(func_inputs)))
-        damping_rates = 10 ** (3 * jnp.squeeze(self.nu_d_model(func_inputs)))
 
-        return (
-            -self.vph * gradient(delta, self.kx)
-            + growth_rates * jnp.abs(jnp.fft.irfft(ek * self.kx.size / 2.0 * self.wis)) / (1.0 + delta**2.0)
-            - damping_rates * delta
-        )
+        return -self.vph * gradient(delta, self.kx) + growth_rates * jnp.abs(
+            jnp.fft.irfft(ek * self.kx.size / 2.0 * self.wis)
+        ) / (1.0 + delta**2.0)

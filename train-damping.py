@@ -42,14 +42,6 @@ def _modify_defaults_(defaults, k0, a0, nuee):
 
 
 def train_loop():
-    weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
-    trapping_models = {
-        "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
-        "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
-    }
-    optimizer = optax.adam(0.1)
-    opt_state = optimizer.init(eqx.filter(trapping_models, eqx.is_array))
-
     # modify config
     fks = xr.open_dataset("./epws.nc")
 
@@ -61,6 +53,12 @@ def train_loop():
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
+        with open("./damping.yaml", "r") as file:
+            defaults = yaml.safe_load(file)
+        trapping_models = helpers.get_models(defaults["models"])
+        optimizer = optax.adam(0.1)
+        opt_state = optimizer.init(eqx.filter(trapping_models, eqx.is_array))
+
         for epoch in range(100):
             rng.shuffle(nus)
             rng.shuffle(k0s)
@@ -83,7 +81,6 @@ def train_loop():
                     with tempfile.TemporaryDirectory() as td:
                         # run
                         t0 = time.time()
-
                         state = helpers.init_state(mod_defaults)
 
                         def loss(models):
@@ -132,14 +129,12 @@ def train_loop():
 
 
 def remote_train_loop():
-    weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
-    models = {
-        "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
-        "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
-    }
+    with open("./damping.yaml", "r") as file:
+        defaults = yaml.safe_load(file)
+    trapping_models = helpers.get_models(defaults["models"])
+    optimizer = optax.adam(0.1)
+    opt_state = optimizer.init(eqx.filter(trapping_models, eqx.is_array))
 
-    optimizer = optax.adam(0.01)
-    opt_state = optimizer.init(eqx.filter(models, eqx.is_array))
     batch_size = 16
 
     # modify config
@@ -167,9 +162,11 @@ def remote_train_loop():
                 run_ids, job_done = [], []
                 for sim, (nuee, k0, a0) in enumerate(batch):
                     run_ids, job_done = queue_sim(
-                        fks, nuee, k0, a0, run_ids, job_done, models, epoch, i_batch, sim, t_or_v="grad"
+                        fks, nuee, k0, a0, run_ids, job_done, trapping_models, epoch, i_batch, sim, t_or_v="grad"
                     )
-                models = update_w_and_b(job_done, run_ids, optimizer, opt_state, eqx.filter(models, eqx.is_array))
+                trapping_models = update_w_and_b(
+                    job_done, run_ids, optimizer, opt_state, eqx.filter(trapping_models, eqx.is_array)
+                )
                 batch_loss = float(
                     np.average(
                         np.array([misc.get_this_metric_of_this_run("loss", queued_run_id) for queued_run_id in run_ids])
@@ -184,7 +181,7 @@ def remote_train_loop():
             # validation
             run_ids, job_done = [], []
             for sim, (nuee, k0, a0) in enumerate(all_sims[val_sims]):
-                run_ids, job_done = queue_sim(fks, nuee, k0, a0, run_ids, job_done, models, epoch, 0, sim, t_or_v="val")
+                run_ids, job_done = queue_sim(fks, nuee, k0, a0, run_ids, job_done, trapping_models, epoch, 0, sim, t_or_v="val")
             wait_for_jobs(job_done, run_ids)
             val_loss = float(
                 np.average(

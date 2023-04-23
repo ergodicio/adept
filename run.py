@@ -7,7 +7,7 @@ import yaml, mlflow
 from utils.runner import run
 
 if __name__ == "__main__":
-    with open("es1d.yaml", "r") as fi:
+    with open("epw.yaml", "r") as fi:
     # with open("tests/configs/resonance.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
