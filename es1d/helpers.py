@@ -14,6 +14,7 @@ import equinox as eqx
 
 from jax import numpy as jnp
 from es1d import pushers
+from utils import nn
 
 
 def save_arrays(result, td, cfg, label):
@@ -313,7 +314,7 @@ def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
                     if config[act] == "tanh":
                         config[act] = jnp.tanh
 
-                model_dict[term] = eqx.nn.MLP(**{**config, "key": this_key})
+                model_dict[term] = nn.MLP(**{**config, "key": this_key})
         if model_config["file"]:
             model_dict = eqx.tree_deserialise_leaves(model_config["file"], model_dict)
 
