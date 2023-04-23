@@ -224,7 +224,7 @@ class ParticleTrapper(eqx.Module):
 
         # Make models
         if models:
-            self.nu_g_model = models["nu_g"]
+            self.nu_g_model = models
         else:
             self.nu_g_model = lambda x: 1e-3
 
