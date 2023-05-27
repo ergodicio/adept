@@ -154,7 +154,7 @@ class VelocityStepper(eqx.Module):
             self.wis = jnp.zeros_like(kxr)
 
     def landau_damping_term(self, u):
-        return 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
+        return 0.25 * 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
 
     def restoring_force_term(self, gradp_over_nm):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
@@ -202,21 +202,17 @@ class ParticleTrapper(eqx.Module):
 
     def __init__(self, cfg, species="electron", models=None):
         nuee = cfg["physics"][species]["trapping"]["nuee"]
-        kxr = np.array(cfg["grid"]["kxr"])
-        one_over_kxr = np.zeros(kxr.size)
-        one_over_kxr[1:] = 1.0 / kxr[1:]
-        kx = cfg["grid"]["kx"]
         if cfg["physics"][species]["gamma"] == "kinetic":
             kinetic_real_epw = True
         else:
             kinetic_real_epw = False
 
-        self.kxr = kxr
-        self.kx = kx
+        self.kxr = cfg["grid"]["kxr"]
+        self.kx = cfg["grid"]["kx"]
         table_wrs, table_wis, table_klds = get_complex_frequency_table(1024, kinetic_real_epw)
         self.model_kld = cfg["physics"][species]["trapping"]["kld"]
-        self.wrs = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1])
-        self.wis = jnp.interp(kxr, table_klds, table_wis, left=0.0, right=0.0)
+        self.wrs = jnp.interp(cfg["grid"]["kxr"], table_klds, table_wrs, left=1.0, right=table_wrs[-1])
+        self.wis = jnp.interp(cfg["grid"]["kxr"], table_klds, table_wis, left=0.0, right=0.0)
         self.table_klds = table_klds
         self.norm_kld = (self.model_kld - 0.26) / 0.14
         self.norm_nuee = (jnp.log10(nuee) + 7.0) / -4.0

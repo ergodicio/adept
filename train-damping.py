@@ -41,84 +41,93 @@ def _modify_defaults_(defaults, k0, a0, nuee):
     return defaults
 
 
+def loss(models, this_cfg, state, actual_nk1):
+    vf = helpers.VectorField(this_cfg, models=models)
+    args = {"driver": this_cfg["drivers"]}
+
+    results = diffeqsolve(
+        terms=ODETerm(vf),
+        solver=Tsit5(),
+        t0=this_cfg["grid"]["tmin"],
+        t1=this_cfg["grid"]["tmax"],
+        max_steps=this_cfg["grid"]["max_steps"],
+        dt0=this_cfg["grid"]["dt"],
+        y0=state,
+        args=args,
+        saveat=SaveAt(ts=this_cfg["save"]["t"]["ax"], fn=this_cfg["save"]["func"]["callable"]),
+    )
+    nk1 = jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / this_cfg["grid"]["nx"]
+    return jnp.mean(jnp.square((actual_nk1 - nk1) / jnp.amax(actual_nk1))), results
+
+
 def train_loop():
+    vg_func = eqx.filter_jit(eqx.filter_value_and_grad(loss, has_aux=True))
+    with open("./damping.yaml", "r") as file:
+        defaults = yaml.safe_load(file)
+    trapping_models = helpers.get_models(defaults["models"])
+    optimizer = optax.adam(0.1)
+    opt_state = optimizer.init(eqx.filter(trapping_models, eqx.is_array))
+
+    batch_size = 3
+
     # modify config
     fks = xr.open_dataset("./epws.nc")
 
-    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)  # [::4]
-    k0s = np.copy(fks.coords["$k_0$"].data)  # [::4]
-    a0s = np.copy(fks.coords["$a_0$"].data)  # [::4]
+    nus = np.copy(fks.coords[r"$\nu_{ee}$"].data[::3])
+    k0s = np.copy(fks.coords["$k_0$"].data[::2])
+    a0s = np.copy(fks.coords["$a_0$"].data[::3])
+    all_sims = np.array(list(product(nus, k0s, a0s)))
 
     rng = np.random.default_rng(420)
 
-    mlflow.set_experiment("train-damping-rates-epw")
+    train_sims = rng.choice(
+        np.arange(all_sims.shape[0]), int(0.8 * all_sims.shape[0] / batch_size) * batch_size, replace=False
+    )
+    val_sims = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_sims)))
+
+    mlflow.set_experiment("damping-rates-epw-new-model")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
-        with open("./damping.yaml", "r") as file:
-            defaults = yaml.safe_load(file)
-        trapping_models = helpers.get_models(defaults["models"])
-        optimizer = optax.adam(0.1)
-        opt_state = optimizer.init(eqx.filter(trapping_models, eqx.is_array))
-
         for epoch in range(100):
-            rng.shuffle(nus)
-            rng.shuffle(k0s)
-            rng.shuffle(a0s)
             epoch_loss = 0.0
-            for sim, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
-                with open("./damping.yaml", "r") as file:
-                    defaults = yaml.safe_load(file)
+            rng.shuffle(train_sims)
+            train_batches = all_sims[train_sims].reshape((-1, batch_size, 3))
+            for i_batch, batch in (pbar := tqdm(enumerate(train_batches), total=len(train_batches))):
+                grads = []
+                for sim, (nuee, k0, a0) in tqdm(enumerate(batch), total=batch_size):
+                    with open("./damping.yaml", "r") as file:
+                        defaults = yaml.safe_load(file)
 
-                mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
-                locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
-                actual_nk1 = xr.DataArray(fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),))
-                with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
-                    mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
-                    misc.log_params(mod_defaults)
+                    mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
+                    locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
+                    actual_nk1 = xr.DataArray(
+                        fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),)
+                    ).data
+                    with mlflow.start_run(run_name=f"{epoch=}-{batch=}-{sim=}", nested=True) as mlflow_run:
+                        mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
+                        misc.log_params(mod_defaults)
 
-                    mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
-                    mod_defaults = helpers.get_save_quantities(mod_defaults)
+                        mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
+                        mod_defaults = helpers.get_save_quantities(mod_defaults)
 
-                    with tempfile.TemporaryDirectory() as td:
-                        # run
-                        t0 = time.time()
-                        state = helpers.init_state(mod_defaults)
+                        with tempfile.TemporaryDirectory() as td:
+                            # run
+                            t0 = time.time()
+                            state = helpers.init_state(mod_defaults)
 
-                        def loss(models):
-                            vf = helpers.VectorField(mod_defaults, models=models)
-                            args = {"driver": mod_defaults["drivers"]}
+                            (loss_val, results), grad = vg_func(trapping_models, mod_defaults, state, actual_nk1)
+                            mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
-                            results = diffeqsolve(
-                                terms=ODETerm(vf),
-                                solver=Tsit5(),
-                                t0=mod_defaults["grid"]["tmin"],
-                                t1=mod_defaults["grid"]["tmax"],
-                                max_steps=mod_defaults["grid"]["max_steps"],
-                                dt0=mod_defaults["grid"]["dt"],
-                                y0=state,
-                                args=args,
-                                saveat=SaveAt(
-                                    ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]
-                                ),
-                            )
-                            nk1 = (
-                                jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
-                                * 2.0
-                                / mod_defaults["grid"]["nx"]
-                            )
-                            return jnp.mean(jnp.square((actual_nk1.data - nk1) / np.amax(actual_nk1.data))), results
+                            t0 = time.time()
+                            helpers.post_process(results, mod_defaults, td)
+                            plotters.mva(actual_nk1, mod_defaults, results, td, fks.coords)
+                            mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
+                            # log artifacts
+                            mlflow.log_artifacts(td)
 
-                        vg_func = eqx.filter_value_and_grad(loss, has_aux=True)
-                        (loss_val, results), grad = eqx.filter_jit(vg_func)(trapping_models)
-                        mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
+                    grads.append(grad)
 
-                        t0 = time.time()
-                        helpers.post_process(results, mod_defaults, td)
-                        plotters.mva(actual_nk1, mod_defaults, results, td)
-                        mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-                        # log artifacts
-                        mlflow.log_artifacts(td)
-
-                updates, opt_state = optimizer.update(grad, opt_state, trapping_models)
+                grads = misc.all_reduce_gradients(grads, len(grads))
+                updates, opt_state = optimizer.update(grads, opt_state, trapping_models)
                 trapping_models = eqx.apply_updates(trapping_models, updates)
                 loss_val = float(loss_val)
                 mlflow.log_metrics({"run_loss": loss_val}, step=sim + epoch * 100)
@@ -181,7 +190,9 @@ def remote_train_loop():
             # validation
             run_ids, job_done = [], []
             for sim, (nuee, k0, a0) in enumerate(all_sims[val_sims]):
-                run_ids, job_done = queue_sim(fks, nuee, k0, a0, run_ids, job_done, trapping_models, epoch, 0, sim, t_or_v="val")
+                run_ids, job_done = queue_sim(
+                    fks, nuee, k0, a0, run_ids, job_done, trapping_models, epoch, 0, sim, t_or_v="val"
+                )
             wait_for_jobs(job_done, run_ids)
             val_loss = float(
                 np.average(

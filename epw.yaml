@@ -1,27 +1,27 @@
 drivers:
   ex:
     '0':
-      a0: 0.002154434690031882
+      a0: 0.005
       dw0: 0.0
       k0: 0.3
       t_c: 40.0
       t_r: 5.0
       t_w: 40.0
       w0: 1.1598464805919155
-      x_c: 400.0
+      x_c: 300.0
       x_r: 10.0
-      x_w: 1000000.0
+      x_w: 300.0
 
 grid:
-  nx: 16
+  nx: 2048
   tmax: 500.0
   tmin: 0.0
-  xmax: 20.943951023931955
+  xmax: 2000
   xmin: 0.0
 
 mlflow:
   experiment: es1d-epw-test
-  run: test
+  run: wp-l
 
 mode: es-1d
 
@@ -34,10 +34,10 @@ physics:
     landau_damping: true
     mass: 1.0
     trapping:
-      is_on: true
+      is_on: false
       kld: 0.3
       nn: 8|8
-      nuee: 4.641588833612772e-05
+      nuee: 1.0e-05
   ion:
     T0: 1.0
     charge: 1.0
@@ -55,32 +55,25 @@ save:
   func:
     is_on: true
   kx:
-    is_on: false
-    kxmax: 0.3
-    kxmin: 0.0
-    nkx: 2
+    is_on: true
+    kxmax: 0.9
+    kxmin: 0.3
+    nkx: 3
   t:
     nt: 1000
     tmax: 500.0
     tmin: 0.5
   x:
     is_on: true
-    nx: 16
-    xmax: 20.943951023931955
+    nx: 256
+    xmax: 1000
     xmin: 0.0
 models:
-    file: models/weights.eqx
-    nu_g:
-        in_size: 3
-        out_size: 1
-        width_size: 8
-        depth: 3
-        activation: tanh
-        final_activation: tanh
-    nu_d:
-        in_size: 3
-        out_size: 1
-        width_size: 8
-        depth: 3
-        activation: tanh
-        final_activation: tanh
+    file: False #models/weights.eqx
+#    nu_g:
+#      activation: tanh
+#      depth: 4
+#      final_activation: tanh
+#      in_size: 3
+#      out_size: 1
+#      width_size: 8

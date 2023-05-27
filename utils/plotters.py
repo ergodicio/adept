@@ -3,15 +3,15 @@ from matplotlib import pyplot as plt
 import numpy as np
 
 
-def mva(actual_nk1, mod_defaults, results, td):
+def mva(actual_nk1, mod_defaults, results, td, coords):
     fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
-    ax[0].plot(actual_nk1.coords["t"].data, actual_nk1.data, label="Vlasov")
+    ax[0].plot(coords["t"].data, actual_nk1, label="Vlasov")
     ax[0].plot(
         mod_defaults["save"]["t"]["ax"],
         (np.abs(np.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / mod_defaults["grid"]["nx"]),
         label="NN + Fluid",
     )
-    ax[1].semilogy(actual_nk1.coords["t"].data, actual_nk1.data, label="Vlasov")
+    ax[1].semilogy(coords["t"].data, actual_nk1, label="Vlasov")
     ax[1].semilogy(
         mod_defaults["save"]["t"]["ax"],
         (np.abs(np.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1]) * 2.0 / mod_defaults["grid"]["nx"]),

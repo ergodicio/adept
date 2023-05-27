@@ -132,7 +132,7 @@ def remote_gradient(run_id):
 
             t0 = time.time()
             es1d.helpers.post_process(results, mod_defaults, td)
-            plotters.mva(actual_nk1, mod_defaults, results, td)
+            plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             # log artifacts
             mlflow.log_artifacts(td)
@@ -193,7 +193,7 @@ def remote_val(run_id):
 
             t0 = time.time()
             es1d.helpers.post_process(results, mod_defaults, td)
-            plotters.mva(actual_nk1, mod_defaults, results, td)
+            plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             # log artifacts
             mlflow.log_artifacts(td)
