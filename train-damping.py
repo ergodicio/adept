@@ -62,7 +62,7 @@ def loss(models, this_cfg, state, actual_nk1):
 
 def train_loop():
     vg_func = eqx.filter_jit(eqx.filter_value_and_grad(loss, has_aux=True))
-    with open("./damping.yaml", "r") as file:
+    with open("configs/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
     optimizer = optax.adam(0.1)
@@ -94,7 +94,7 @@ def train_loop():
             for i_batch, batch in (pbar := tqdm(enumerate(train_batches), total=len(train_batches))):
                 grads = []
                 for sim, (nuee, k0, a0) in tqdm(enumerate(batch), total=batch_size):
-                    with open("./damping.yaml", "r") as file:
+                    with open("configs/damping.yaml", "r") as file:
                         defaults = yaml.safe_load(file)
 
                     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
@@ -138,7 +138,7 @@ def train_loop():
 
 
 def remote_train_loop():
-    with open("./damping.yaml", "r") as file:
+    with open("configs/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
     optimizer = optax.adam(0.1)
@@ -225,7 +225,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
 
 
 def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
-    with open("./damping.yaml", "r") as file:
+    with open("configs/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
