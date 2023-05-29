@@ -2,13 +2,13 @@
 ADEPT is an [A]utomatic [D]ifferentation [E]nabled [P]lasma [T]ransport code.
 
 It solves the fluid equations of motion for a plasma. These are derived from moments of the Vlasov-Boltzmann equation.
-In 1D, this equation is
+In 1D-1V, the Vlasov-Boltzmann equation is
 
 $$ \int \partial_t f + v \partial_x f + E \partial_v f = C(f) $$
 
 The first moment gives the continunity equation
 
-$$ \partial_t n + \partial_x (n~u) $$
+$$ \partial_t n + \partial_x (n~u) = 0$$
 
 The second moment gives the continunity equation
 
@@ -21,13 +21,13 @@ $$ p = \gamma n k_B T $$
 or can be considered dynamic.
 
 ### What is novel about it?
-- Automatic Differentiation (AD) Enabled
-- GPU-capable
-- Experiment manager enabled (mlflow)
+- Automatic Differentiation (AD) Enabled (bc of JAX, Diffrax)
+- GPU-capable (bc of JAX, XLA)
+- Experiment manager enabled (bc of mlflow)
 - Pythonic
 
 ### What does AD do for us?
-AD enables the calculation of derivatives of entire simulations. This can be used for 
+AD enables the calculation of derivatives of entire simulations, pieces of it, or anything in between. This can be used for 
 - sensitivity analyses
 - parameter estimation
 - parameter optimization
@@ -49,6 +49,9 @@ just run a simulation and type `mlflow ui` into your terminal and see what happe
 
 ## Current (Tested) Implementation:
 1D Electrostatic Plasma - 3 Moments - $$n(t, x), u(t, x), p(t, x)$$
+
+- Gradients are calculated spectrally using FFTs
+- 4th order explicit time integrator (using Diffrax)
 
 Depending on the flags in the config, it can support
 - Bohm-Gross oscillation frequency (Fluid dispersion relation)
