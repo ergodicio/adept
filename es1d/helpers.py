@@ -14,6 +14,7 @@ import equinox as eqx
 
 from jax import numpy as jnp
 from es1d import pushers
+from utils import nn
 
 
 def save_arrays(result, td, cfg, label):
@@ -41,6 +42,7 @@ def plot_xrs(which, td, xrs):
         fname = f"{'-'.join(k.split('-')[1:])}.png"
         fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
         v.plot(ax=ax, cmap="gist_ncar")
+        ax.grid()
         fig.savefig(os.path.join(td, "plots", which, k.split("-")[0], fname), bbox_inches="tight")
         plt.close(fig)
 
@@ -305,9 +307,16 @@ def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
         model_keys = jax.random.split(jax.random.PRNGKey(420), len(model_config.keys()))
         model_dict = defaultdict(eqx.Module)
         for (term, config), this_key in zip(model_config.items(), model_keys):
-            model_dict[term] = eqx.nn.MLP(**{**config, "key": this_key})
-            if config["file"]:
-                model_dict[term] = eqx.tree_deserialise_leaves(config["file"], model_dict[term])
+            if term == "file":
+                pass
+            else:
+                for act in ["activation", "final_activation"]:
+                    if config[act] == "tanh":
+                        config[act] = jnp.tanh
+
+                model_dict[term] = nn.MLP(**{**config, "key": this_key})
+        if model_config["file"]:
+            model_dict = eqx.tree_deserialise_leaves(model_config["file"], model_dict)
 
         return model_dict
     else:

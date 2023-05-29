@@ -1,16 +1,13 @@
 from typing import Dict
-from functools import partial
-import os, pickle, time, tempfile
+import os, time, tempfile
 
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution, Kvaerno5, PIDController
-from jax import jit, value_and_grad
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
 from jax import numpy as jnp
 import numpy as np
 
 import mlflow
 import equinox as eqx
 import xarray as xr
-import jax
 
 import es1d
 from utils import plotters, misc
@@ -47,7 +44,7 @@ def run(cfg: Dict) -> Solution:
         # run
         t0 = time.time()
 
-        @eqx.filter_jit
+        # @eqx.filter_jit
         def _run_():
             vf = helpers.VectorField(cfg, models=models)
             return diffeqsolve(
@@ -79,14 +76,7 @@ def run(cfg: Dict) -> Solution:
 def remote_gradient(run_id):
     with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
         with tempfile.TemporaryDirectory() as td:
-            weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
-            models = {
-                "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
-                "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
-            }
-
             mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
-            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td, models=models)
             actual_nk1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
@@ -97,9 +87,13 @@ def remote_gradient(run_id):
             t0 = time.time()
 
             state = es1d.helpers.init_state(mod_defaults)
+            mod_defaults["models"]["file"] = misc.download_file(
+                "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
+            )
+            models = es1d.helpers.get_models(mod_defaults["models"])
 
-            def loss(models):
-                vf = es1d.helpers.VectorField(mod_defaults, models=models)
+            def loss(these_models):
+                vf = es1d.helpers.VectorField(mod_defaults, models=these_models)
                 args = {"driver": mod_defaults["drivers"]}
 
                 results = diffeqsolve(
@@ -130,7 +124,7 @@ def remote_gradient(run_id):
                 )
 
             vg_func = eqx.filter_value_and_grad(loss, has_aux=True)
-            (loss_val, results), grad = eqx.filter_jit(vg_func)(w_and_b)
+            (loss_val, results), grad = eqx.filter_jit(vg_func)(models)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "loss": float(loss_val)})
 
             # dump gradients
@@ -138,7 +132,7 @@ def remote_gradient(run_id):
 
             t0 = time.time()
             es1d.helpers.post_process(results, mod_defaults, td)
-            plotters.mva(actual_nk1, mod_defaults, results, td)
+            plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             # log artifacts
             mlflow.log_artifacts(td)
@@ -148,14 +142,7 @@ def remote_gradient(run_id):
 def remote_val(run_id):
     with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
         with tempfile.TemporaryDirectory() as td:
-            weight_keys = jax.random.split(jax.random.PRNGKey(420), num=2)
-            models = {
-                "nu_g": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[0]),
-                "nu_d": eqx.nn.MLP(3, 1, 8, 3, activation=jnp.tanh, final_activation=jnp.tanh, key=weight_keys[1]),
-            }
-
             mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
-            w_and_b = misc.get_weights(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td, models=models)
             actual_nk1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
@@ -166,9 +153,13 @@ def remote_val(run_id):
             t0 = time.time()
 
             state = es1d.helpers.init_state(mod_defaults)
+            mod_defaults["models"]["file"] = misc.download_file(
+                "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
+            )
+            models = es1d.helpers.get_models(mod_defaults["models"])
 
-            def loss(models):
-                vf = es1d.helpers.VectorField(mod_defaults, models=models)
+            def loss(these_models):
+                vf = es1d.helpers.VectorField(mod_defaults, models=these_models)
                 args = {"driver": mod_defaults["drivers"]}
                 results = diffeqsolve(
                     terms=ODETerm(vf),
@@ -197,12 +188,12 @@ def remote_val(run_id):
                     results,
                 )
 
-            loss_val, results = eqx.filter_jit(loss)(w_and_b)
+            loss_val, results = eqx.filter_jit(loss)(models)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "val_loss": float(loss_val)})
 
             t0 = time.time()
             es1d.helpers.post_process(results, mod_defaults, td)
-            plotters.mva(actual_nk1, mod_defaults, results, td)
+            plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             # log artifacts
             mlflow.log_artifacts(td)
