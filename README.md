@@ -12,7 +12,7 @@ $$ \partial_t n + \partial_x (n~u) = 0$$
 
 The second moment gives the continunity equation
 
-$$ \partial_t u + u \partial_x u = e E - \partial_x p$$
+$$ \partial_t u + u \partial_x u = e E - \partial_x p / n$$
 
 The third moment can be considered to be static which gives something like the ideal gas law
 
