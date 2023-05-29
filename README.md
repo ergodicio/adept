@@ -1,5 +1,5 @@
 # ADEPT
-ADEPT is an [A]utomatic [D]ifferentation [E]nabled [P]lasma [T]ransport code.
+ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ransport code.
 
 It solves the fluid equations of motion for a plasma. These are derived from moments of the Vlasov-Boltzmann equation.
 In 1D-1V, the Vlasov-Boltzmann equation is
