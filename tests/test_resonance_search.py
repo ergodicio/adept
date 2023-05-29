@@ -20,7 +20,7 @@ from jaxopt import OptaxSolver
 import equinox as eqx
 from tqdm import tqdm
 
-from es1d import helpers
+from adept.es1d import helpers
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 

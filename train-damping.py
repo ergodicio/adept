@@ -11,15 +11,14 @@ config.update("jax_enable_x64", True)
 # config.update("jax_debug_nans", True)
 # config.update("jax_disable_jit", True)
 
-import jax
 from jax import numpy as jnp
 import xarray as xr
 import tempfile, time
-import mlflow, optax, pickle
+import mlflow, optax
 import equinox as eqx
 from tqdm import tqdm
 
-from es1d import helpers
+import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
 from utils import misc, plotters
 

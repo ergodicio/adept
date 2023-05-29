@@ -6,7 +6,7 @@ WORKDIR /workdir
 
 # copying all files over
 COPY dockerfiles/cpu/requirements-cpu.txt .
-COPY es1d es1d
+COPY adept adept
 COPY utils utils
 COPY theory theory
 COPY run_job.py .
