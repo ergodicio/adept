@@ -9,7 +9,7 @@ import mlflow
 import equinox as eqx
 import xarray as xr
 
-import es1d
+from adept.es1d import helpers
 from utils import plotters, misc
 
 
@@ -25,11 +25,6 @@ def start_run(run_type, run_id):
 
 
 def run(cfg: Dict) -> Solution:
-    if cfg["mode"] == "es-1d":
-        helpers = es1d.helpers
-    else:
-        raise NotImplementedError("This mode hasn't been implemented yet")
-
     # get derived quantities
     cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
     misc.log_params(cfg)
@@ -80,20 +75,20 @@ def remote_gradient(run_id):
             actual_nk1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
-            mod_defaults["grid"] = es1d.helpers.get_derived_quantities(mod_defaults["grid"])
+            mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
             misc.log_params(mod_defaults)
-            mod_defaults["grid"] = es1d.helpers.get_solver_quantities(mod_defaults["grid"])
-            mod_defaults = es1d.helpers.get_save_quantities(mod_defaults)
+            mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
+            mod_defaults = helpers.get_save_quantities(mod_defaults)
             t0 = time.time()
 
-            state = es1d.helpers.init_state(mod_defaults)
+            state = helpers.init_state(mod_defaults)
             mod_defaults["models"]["file"] = misc.download_file(
                 "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
             )
-            models = es1d.helpers.get_models(mod_defaults["models"])
+            models = helpers.get_models(mod_defaults["models"])
 
             def loss(these_models):
-                vf = es1d.helpers.VectorField(mod_defaults, models=these_models)
+                vf = helpers.VectorField(mod_defaults, models=these_models)
                 args = {"driver": mod_defaults["drivers"]}
 
                 results = diffeqsolve(
@@ -131,7 +126,7 @@ def remote_gradient(run_id):
             eqx.tree_serialise_leaves(os.path.join(td, "grads.eqx"), grad)
 
             t0 = time.time()
-            es1d.helpers.post_process(results, mod_defaults, td)
+            helpers.post_process(results, mod_defaults, td)
             plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             # log artifacts
@@ -146,20 +141,20 @@ def remote_val(run_id):
             actual_nk1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
-            mod_defaults["grid"] = es1d.helpers.get_derived_quantities(mod_defaults["grid"])
+            mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
             misc.log_params(mod_defaults)
-            mod_defaults["grid"] = es1d.helpers.get_solver_quantities(mod_defaults["grid"])
-            mod_defaults = es1d.helpers.get_save_quantities(mod_defaults)
+            mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
+            mod_defaults = helpers.get_save_quantities(mod_defaults)
             t0 = time.time()
 
-            state = es1d.helpers.init_state(mod_defaults)
+            state = helpers.init_state(mod_defaults)
             mod_defaults["models"]["file"] = misc.download_file(
                 "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
             )
-            models = es1d.helpers.get_models(mod_defaults["models"])
+            models = helpers.get_models(mod_defaults["models"])
 
             def loss(these_models):
-                vf = es1d.helpers.VectorField(mod_defaults, models=these_models)
+                vf = helpers.VectorField(mod_defaults, models=these_models)
                 args = {"driver": mod_defaults["drivers"]}
                 results = diffeqsolve(
                     terms=ODETerm(vf),
@@ -192,7 +187,7 @@ def remote_val(run_id):
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "val_loss": float(loss_val)})
 
             t0 = time.time()
-            es1d.helpers.post_process(results, mod_defaults, td)
+            helpers.post_process(results, mod_defaults, td)
             plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             # log artifacts

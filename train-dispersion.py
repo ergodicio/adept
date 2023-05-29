@@ -2,7 +2,6 @@
 #  research@ergodic.io
 
 import yaml, os
-from itertools import product
 
 import numpy as np
 from jax.config import config
@@ -14,14 +13,14 @@ config.update("jax_enable_x64", True)
 import jax
 from jax import numpy as jnp
 import tempfile, time
-import mlflow, optax, pickle
+import mlflow, optax
 import equinox as eqx
 from tqdm import tqdm
 from matplotlib import pyplot as plt
 
-from es1d import helpers
+import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import misc, plotters
+from utils import misc
 
 
 def _modify_defaults_(defaults, k0):

@@ -13,7 +13,7 @@ from flatdict import FlatDict
 import equinox as eqx
 
 from jax import numpy as jnp
-from es1d import pushers
+from adept.es1d import pushers
 from utils import nn
 
 
