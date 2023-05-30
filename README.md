@@ -4,7 +4,7 @@ ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ranspor
 It solves the fluid equations of motion for a plasma. These are derived from moments of the Vlasov-Boltzmann equation.
 In 1D-1V, the Vlasov-Boltzmann equation is
 
-$$ dv v^n \int \partial_t f + v \partial_x f + E \partial_v f = C(f) $$
+$$ \int dv ~ v^n ~ \partial_t f + v \partial_x f + E \partial_v f = C(f) $$
 
 The zeroth ($v^0$) moment gives the continuity equation
 
