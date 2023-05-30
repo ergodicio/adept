@@ -6,7 +6,7 @@ In 1D-1V, the Vlasov-Boltzmann equation is
 
 $$ dv v^n \int \partial_t f + v \partial_x f + E \partial_v f = C(f) $$
 
-The zeroth ($$v^0$$) moment gives the continunity equation
+The zeroth ($v^0$) moment gives the continuity equation
 
 $$ \partial_t n + \partial_x (n~u) = 0$$
 
