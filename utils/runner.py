@@ -1,5 +1,5 @@
 from typing import Dict
-import os, time, tempfile
+import os, time, tempfile, yaml
 
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
 from jax import numpy as jnp
@@ -25,17 +25,20 @@ def start_run(run_type, run_id):
 
 
 def run(cfg: Dict) -> Solution:
-    # get derived quantities
-    cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
-    misc.log_params(cfg)
-
-    cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
-    cfg = helpers.get_save_quantities(cfg)
-
-    models = helpers.get_models(cfg["models"])
-    state = helpers.init_state(cfg)
-
     with tempfile.TemporaryDirectory() as td:
+        with open(os.path.join(td, "config.yaml"), "w") as fi:
+            yaml.dump(cfg, fi)
+
+        # get derived quantities
+        cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
+        misc.log_params(cfg)
+
+        cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
+        cfg = helpers.get_save_quantities(cfg)
+
+        models = helpers.get_models(cfg["models"])
+        state = helpers.init_state(cfg)
+
         # run
         t0 = time.time()
 
