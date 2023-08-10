@@ -1,10 +1,9 @@
-from typing import Any, Literal, Optional, TypeVar, Union, Callable, Tuple
+from typing import Literal, Optional, Union, Callable, Tuple
 import jax.random as jrandom
 from jax import nn as jnn
 import numpy as np
 from jaxtyping import Array
 
-from equinox._custom_types import PRNGKey
 from equinox import Module, static_field
 
 
@@ -23,7 +22,7 @@ class Linear(Module):
         out_features: Union[int, Literal["scalar"]],
         use_bias: bool = True,
         *,
-        key: PRNGKey,
+        key,
     ):
         """**Arguments:**
 
@@ -32,7 +31,7 @@ class Linear(Module):
         - `out_features`: The output size. The output from the layer will be a vector
             of shape `(out_features,)`.
         - `use_bias`: Whether to add on a bias as well.
-        - `key`: A `jax.random.PRNGKey` used to provide randomness for parameter
+        - `key`: A `ja` used to provide randomness for parameter
             initialisation. (Keyword only argument.)
 
         Note that `in_features` also supports the string `"scalar"` as a special value.
@@ -56,7 +55,7 @@ class Linear(Module):
         self.out_features = out_features
         self.use_bias = use_bias
 
-    def __call__(self, x: Array, *, key: Optional[PRNGKey] = None) -> Array:
+    def __call__(self, x: Array, *, key=None) -> Array:
         """**Arguments:**
 
         - `x`: The input. Should be a JAX array of shape `(in_features,)`. (Or shape
@@ -111,7 +110,7 @@ class MLP(Module):
         activation: Callable = jnn.relu,
         final_activation: Callable = jnn.relu,
         *,
-        key: PRNGKey,
+        key,
         **kwargs,
     ):
         """**Arguments**:
@@ -157,7 +156,7 @@ class MLP(Module):
         self.activation = activation
         self.final_activation = final_activation
 
-    def __call__(self, x: Array, *, key: Optional[PRNGKey] = None) -> Array:
+    def __call__(self, x: Array, *, key=None) -> Array:
         """**Arguments:**
 
         - `x`: A JAX array with shape `(in_size,)`. (Or shape `()` if
