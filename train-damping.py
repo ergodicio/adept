@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 from adept.es1d import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import misc, plotters
+from utils import misc, plotters, runner
 
 
 def _modify_defaults_(defaults, k0, a0, nuee):
@@ -215,7 +215,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
     return w_and_b
 
 
-def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
+def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad", dummy_queue=False):
     with open("./damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
@@ -232,15 +232,17 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
             eqx.tree_serialise_leaves(os.path.join(td, "weights.eqx"), w_and_b)
 
             mlflow.log_artifacts(td)
-        misc.queue_sim(
-            {
-                "job_name": f"epw-{t_or_v}-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
-                "run_id": mlflow_run.info.run_id,
-                "sim_type": "fluid",
-                "run_type": t_or_v,
-                "machine": "continuum-cpu",
-            }
-        )
+
+        if not dummy_queue:
+            misc.queue_sim(
+                {
+                    "job_name": f"epw-{t_or_v}-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
+                    "run_id": mlflow_run.info.run_id,
+                    "sim_type": "fluid",
+                    "run_type": t_or_v,
+                    "machine": "continuum-cpu",
+                }
+            )
         mlflow.set_tags({"status": "queued"})
         run_ids.append(mlflow_run.info.run_id)
         job_done.append(False)
@@ -286,7 +288,10 @@ def eval_over_all():
             run_ids, job_done = queue_sim(
                 fks, nuee, k0, a0, run_ids, job_done, trapping_models, 0, 0, sim, t_or_v="val"
             )
-        wait_for_jobs(job_done, run_ids)
+
+        for rid in run_ids:
+            runner.remote_val(rid)
+
         val_loss = float(
             np.average(
                 np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
