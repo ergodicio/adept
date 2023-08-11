@@ -61,6 +61,7 @@ physics:
       charge: -1.0
       trapping:
         is_on: True
+        ld_model:
         kld: 0.3
         nuee: 1.0e-9
         nn: 8|8

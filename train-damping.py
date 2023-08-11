@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 from adept.es1d import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import misc, plotters, runner
+from utils import misc, plotters
 
 
 def _modify_defaults_(defaults, k0, a0, nuee):
@@ -123,7 +123,7 @@ def train_loop():
                 loss_val = float(loss_val)
                 mlflow.log_metrics({"run_loss": loss_val}, step=sim + epoch * 100)
                 epoch_loss = epoch_loss + loss_val
-                pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
+                pbar.set_description(f"{loss_val=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss / (sim + 1):.2e}")
 
             mlflow.log_metrics({"epoch_loss": epoch_loss})
 
@@ -174,7 +174,7 @@ def remote_train_loop():
                 )
                 mlflow.log_metrics({"batch_loss": batch_loss}, step=i_batch + epoch * len(train_batches))
                 epoch_loss = epoch_loss + batch_loss
-                pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss/(sim+1):.2e}")
+                pbar.set_description(f"{batch_loss=:.2e}, {epoch_loss=:.2e}, average_loss={epoch_loss / (sim + 1):.2e}")
 
             mlflow.log_metrics({"epoch_loss": epoch_loss / len(train_sims)}, step=epoch)
 
@@ -215,8 +215,8 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
     return w_and_b
 
 
-def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad", dummy_queue=False):
-    with open("./damping.yaml", "r") as file:
+def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
+    with open("./configs/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
@@ -232,17 +232,15 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
             eqx.tree_serialise_leaves(os.path.join(td, "weights.eqx"), w_and_b)
 
             mlflow.log_artifacts(td)
-
-        if not dummy_queue:
-            misc.queue_sim(
-                {
-                    "job_name": f"epw-{t_or_v}-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
-                    "run_id": mlflow_run.info.run_id,
-                    "sim_type": "fluid",
-                    "run_type": t_or_v,
-                    "machine": "continuum-cpu",
-                }
-            )
+        misc.queue_sim(
+            {
+                "job_name": f"epw-{t_or_v}-epoch-{epoch}-batch-{i_batch}-sim-{sim}",
+                "run_id": mlflow_run.info.run_id,
+                "sim_type": "fluid",
+                "run_type": t_or_v,
+                "machine": "continuum-cpu",
+            }
+        )
         mlflow.set_tags({"status": "queued"})
         run_ids.append(mlflow_run.info.run_id)
         job_done.append(False)
@@ -251,7 +249,7 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
 
 
 def eval_over_all():
-    with open("./damping.yaml", "r") as file:
+    with open("./configs/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
 
@@ -263,35 +261,34 @@ def eval_over_all():
     nus = np.copy(fks.coords[r"$\nu_{ee}$"].data[::3])
     k0s = np.copy(fks.coords["$k_0$"].data[::2])
     a0s = np.copy(fks.coords["$a_0$"].data[::3])
-    # all_sims = np.array(list(product(nus, k0s, a0s)))
-    # rng = np.random.default_rng(420)
+    train_val_sims = list(product(list(nus), list(k0s), list(a0s)))
 
-    # train_sims = rng.choice(
-    #     np.arange(all_sims.shape[0]), int(0.9 * all_sims.shape[0] / batch_size) * batch_size, replace=False
-    # )
-    # val_sims = np.array(list(set(np.arange(all_sims.shape[0])) - set(train_sims)))
-
-    test_sims = np.array(
-        list(
-            product(
-                list(set(list(fks.coords[r"$\nu_{ee}$"].data)) - set(list(nus))),
-                list(set(list(fks.coords["$k_0$"].data)) - set(list(k0s))),
-                list(set(list(fks.coords["$a_0$"].data)) - set(list(a0s))),
-            )
+    all_sims = list(
+        product(
+            list(np.copy(fks.coords[r"$\nu_{ee}$"].data)),
+            list(np.copy(fks.coords["$k_0$"].data)),
+            list(np.copy(fks.coords["$a_0$"].data)),
         )
     )
 
+    test_sims = np.array(list(set(all_sims) - set(train_val_sims)))
+    test_sim_inds = np.arange(test_sims.shape[0])
+    np.random.shuffle(test_sim_inds)
+    #     print(test_sim_inds)
+    #     print(len(test_sim_inds))
+
+    #     raise ValueError
+
     mlflow.set_experiment(defaults["mlflow"]["experiment"])
-    with mlflow.start_run(run_name="test-nl-damping-opt", nested=True) as mlflow_run:
+    with mlflow.start_run(run_name="test-all-nl-damping-opt", nested=True) as mlflow_run:
         run_ids, job_done = [], []
-        for sim, (nuee, k0, a0) in enumerate(test_sims):
+        for sim in tqdm(test_sim_inds, total=len(test_sim_inds)):
+            nuee, k0, a0 = test_sims[sim]
             run_ids, job_done = queue_sim(
                 fks, nuee, k0, a0, run_ids, job_done, trapping_models, 0, 0, sim, t_or_v="val"
             )
 
-        for rid in run_ids:
-            runner.remote_val(rid)
-
+        wait_for_jobs(job_done, run_ids)
         val_loss = float(
             np.average(
                 np.array([misc.get_this_metric_of_this_run("val_loss", queued_run_id) for queued_run_id in run_ids])
@@ -301,4 +298,4 @@ def eval_over_all():
 
 
 if __name__ == "__main__":
-    remote_train_loop()
+    eval_over_all()
