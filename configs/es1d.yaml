@@ -5,9 +5,9 @@ mlflow:
   run: single-k=0.3-finite-amplitude-fluid-trapping
 
 grid:
-    nx: 4096
+    nx: 6144
     xmin: 0.0
-    xmax: 4000
+    xmax: 6000
     tmin: 0.0
     tmax: 1000.0
 
@@ -35,16 +35,16 @@ models:
         in_size: 3
         out_size: 1
         width_size: 8
-        depth: 3
+        depth: 4
         activation: tanh
         final_activation: tanh
-    nu_d:
-        in_size: 3
-        out_size: 1
-        width_size: 8
-        depth: 3
-        activation: tanh
-        final_activation: tanh
+#    nu_d:
+#        in_size: 3
+#        out_size: 1
+#        width_size: 8
+#        depth: 3
+#        activation: tanh
+#        final_activation: tanh
 
 
 physics:

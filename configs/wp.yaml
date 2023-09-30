@@ -1,28 +1,28 @@
 drivers:
   ex:
     '0':
-      a0: 0.01
+      a0: 0.005
       dw0: 0.0
-      k0: 0.32
+      k0: 0.3
       t_c: 40.0
       t_r: 5.0
       t_w: 40.0
-      w0: 1.1433284742365162
-      x_c: 400.0
+      w0: 1.1598464805919155
+      x_c: 300.0
       x_r: 10.0
-      x_w: 1000000.0
+      x_w: 300.0
 grid:
-  nx: 16
+  nx: 4096
   tmax: 500.0
   tmin: 0.0
-  xmax: 19.634954084936208
+  xmax: 4000
   xmin: 0.0
 mlflow:
   experiment: es1d-epw-test
-  run: nl-fluid-noml
+  run: wp-nl-local
 mode: es-1d
 models:
-  file: false
+  file: models/weights.eqx
   nu_g:
     activation: tanh
     depth: 4
@@ -39,10 +39,10 @@ physics:
     landau_damping: true
     mass: 1.0
     trapping:
-      is_on: false
-      kld: 0.32
+      is_on: true
+      kld: 0.3
       nn: 8|8
-      nuee: 0.0001
+      nuee: 1.0e-05
   ion:
     T0: 1.0
     charge: 1.0
@@ -51,24 +51,23 @@ physics:
     landau_damping: false
     mass: 1836.0
     trapping:
-      is_on: false
+      is_on: true
       kld: 0.3
       nuee: 1.0e-09
-  landau_damping: true
 save:
   func:
     is_on: true
   kx:
-    is_on: false
-    kxmax: 0.32
-    kxmin: 0.0
-    nkx: 2
+    is_on: true
+    kxmax: 0.9
+    kxmin: 0.3
+    nkx: 3
   t:
     nt: 1000
     tmax: 500.0
     tmin: 0.5
   x:
     is_on: true
-    nx: 16
-    xmax: 19.634954084936208
+    nx: 256
+    xmax: 1000
     xmin: 0.0
