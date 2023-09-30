@@ -5,14 +5,14 @@ mlflow:
   run: test
 
 models:
-    file: False #models/weights.eqx
+    file: models/weights.eqx
     nu_g:
-        in_size: 3
-        out_size: 1
-        width_size: 16
-        depth: 3
-        activation: tanh
-        final_activation: tanh
+      activation: tanh
+      depth: 4
+      final_activation: tanh
+      in_size: 3
+      out_size: 1
+      width_size: 8
 
 
 grid:
@@ -35,9 +35,9 @@ save:
       xmax: 20.94
       nx: 16
     kx:
-      is_on: False
+      is_on: True
       kxmin: 0.0
-      kxmax: 0.6
+      kxmax: 0.3
       nkx: 2
 
 physics:
@@ -61,17 +61,17 @@ physics:
       charge: -1.0
       trapping:
         is_on: True
-        ld_model:
+        model: zk
         kld: 0.3
-        nuee: 1.0e-9
+        nuee: 1.0e-7
         nn: 8|8
 
 
 drivers:
   "ex":
     "0":
-      "k0": 0.22
-      "w0": 1.1
+      "k0": 0.3
+      "w0": 1.16
       "dw0": 0.0
       "t_c": 40.0
       "t_w": 40.0
@@ -79,4 +79,4 @@ drivers:
       "x_c": 400.0
       "x_w": 1000000.0
       "x_r": 10.0
-      "a0": 1.e-5
+      "a0": 1.e-3

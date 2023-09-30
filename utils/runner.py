@@ -1,6 +1,7 @@
 from typing import Dict
 import os, time, tempfile, yaml
 
+import diffrax
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
 from jax import numpy as jnp
 import numpy as np
@@ -54,6 +55,7 @@ def run(cfg: Dict) -> Solution:
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args={"driver": cfg["drivers"]},
+                # adjoint=diffrax.DirectAdjoint(),
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
             )
 

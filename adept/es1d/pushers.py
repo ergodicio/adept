@@ -138,6 +138,8 @@ class VelocityStepper(eqx.Module):
     wr_corr: jax.Array
     wis: jax.Array
     nuee: jnp.float64
+    vph: jnp.float64
+    model_kld: jnp.float64
     trapping_model: str
 
     def __init__(self, kx, kxr, one_over_kxr, physics):
@@ -150,18 +152,18 @@ class VelocityStepper(eqx.Module):
 
         table_wrs, table_wis, table_klds = get_complex_frequency_table(1024, kinetic_real_epw)
         wrs, wis, klds = get_complex_frequency_table(1024, True if physics["gamma"] == "kinetic" else False)
-        # wrs = jnp.array(jnp.interp(kxr, klds, wrs, left=1.0, right=wrs[-1]))
         wrs = jnp.interp(kxr, table_klds, table_wrs, left=1.0, right=table_wrs[-1])
         self.wis = jnp.interp(kxr, table_klds, table_wis, left=0.0, right=0.0)
         self.nuee = 0.0
+        self.model_kld = 0.0
+        self.vph = 0.0
         self.trapping_model = "none"
 
         if physics["trapping"]["is_on"]:
             self.nuee = physics["trapping"]["nuee"]
             self.trapping_model = physics["trapping"]["model"]
-
             self.model_kld = physics["trapping"]["kld"]
-            self.table_klds = table_klds
+            # table_klds = table_klds
             self.vph = jnp.interp(self.model_kld, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / self.model_kld
 
         if physics["gamma"] == "kinetic":
@@ -200,8 +202,9 @@ class VelocityStepper(eqx.Module):
         vtrap_sq = ek / self.model_kld
         tau1 = 1.0 / self.nuee * vtrap_sq / self.vph**2.0
         tau2 = 2.0 * np.pi / self.model_kld / jnp.sqrt(vtrap_sq)
+        coeff = 0.5 #beta * (vt / self.vph) ** 2.0 * tau2 / tau1
 
-        return beta * (vt / self.vph) ** 2.0 * tau2 / tau1
+        return coeff
 
     def __call__(self, n, u, p_over_m, q_over_m_times_e, delta):
         return (
