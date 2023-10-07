@@ -12,3 +12,4 @@ h5netcdf
 optax
 jaxopt
 boto3
+pint

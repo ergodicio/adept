@@ -202,7 +202,7 @@ class VelocityStepper(eqx.Module):
         vtrap_sq = ek / self.model_kld
         tau1 = 1.0 / self.nuee * vtrap_sq / self.vph**2.0
         tau2 = 2.0 * np.pi / self.model_kld / jnp.sqrt(vtrap_sq)
-        coeff = 0.5 #beta * (vt / self.vph) ** 2.0 * tau2 / tau1
+        coeff = 0.5  # beta * (vt / self.vph) ** 2.0 * tau2 / tau1
 
         return coeff
 

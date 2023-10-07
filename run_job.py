@@ -1,8 +1,8 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-import sys, os
-from utils.runner import start_run
+import sys
+from runner import start_run
 
 
 if __name__ == "__main__":
