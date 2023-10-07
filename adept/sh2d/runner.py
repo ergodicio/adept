@@ -2,15 +2,14 @@ from typing import Dict
 import os, time, tempfile, yaml
 
 import diffrax
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution, Euler
-from jax import numpy as jnp
+from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
 import numpy as np
 import equinox as eqx
 
 import mlflow, pint
 
-from adept.sh2d import helpers
-from utils import plotters, misc
+from adept.sh2d.utils import helpers
+from utils import misc
 
 
 def write_units(cfg, td):

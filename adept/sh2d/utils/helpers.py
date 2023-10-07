@@ -1,157 +1,22 @@
-from typing import Callable, Dict
-from functools import partial
+from typing import Dict
+
 
 import os
 
 import numpy as np
-from matplotlib import pyplot as plt
-import xarray as xr
-from flatdict import FlatDict
 import equinox as eqx
 
 from jax import numpy as jnp
-from jax import tree_util as jtu
-from adept.sh2d import vlasov, field
 
-
-def save_arrays(result, td, cfg):
-    """
-
-    :param result:
-    :param td:
-    :param cfg:
-    :param label:
-    :return:
-    """
-    new_dict = {}
-    for k in result.ys["flm"].keys():
-        new_dict[str(k)] = {}
-        for kk in result.ys["flm"][k].keys():
-            new_dict[str(k)][str(kk)] = result.ys["flm"][k][kk]
-
-    flattened_flm_dict = dict(FlatDict(new_dict, delimiter=","))
-
-    data_vars = {
-        k: xr.DataArray(
-            v.view(dtype=np.complex128),
-            coords=(
-                ("t", cfg["save"]["t"]["ax"]),
-                ("x", cfg["grid"]["x"]),
-                ("y", cfg["grid"]["y"]),
-                ("v", cfg["grid"]["v"]),
-            ),
-        )
-        for k, v in flattened_flm_dict.items()
-    }
-
-    saved_arrays_xr = xr.Dataset(data_vars)
-    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"flm_xyv.nc"), engine="h5netcdf", invalid_netcdf=True)
-
-    data_vars = {
-        k: xr.DataArray(
-            result.ys[k],
-            coords=(
-                ("t", cfg["save"]["t"]["ax"]),
-                ("x", cfg["grid"]["x"]),
-                ("y", cfg["grid"]["y"]),
-                ("component", ["x", "y", "z"]),
-            ),
-        )
-        for k in ["e", "b"]
-    }
-
-    saved_arrays_xr = xr.Dataset(data_vars)
-    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"fields.nc"))
-
-    return saved_arrays_xr
-
-
-def get_save_func(cfg):
-    if cfg["save"]["func"]["is_on"]:
-        if cfg["save"]["x"]["is_on"]:
-            dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
-            cfg["save"]["x"]["ax"] = jnp.linspace(
-                cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
-            )
-
-            save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
-
-        if cfg["save"]["kx"]["is_on"]:
-            cfg["save"]["kx"]["ax"] = jnp.linspace(
-                cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
-            )
-
-            def save_kx(field):
-                complex_field = jnp.fft.rfft(field, axis=0) * 2.0 / cfg["grid"]["nx"]
-                interped_field = jnp.interp(cfg["save"]["kx"]["ax"], cfg["grid"]["kxr"], complex_field)
-                return {"mag": jnp.abs(interped_field), "ang": jnp.angle(interped_field)}
-
-        def save_func(t, y, args):
-            save_dict = {}
-            if cfg["save"]["x"]["is_on"]:
-                save_dict["x"] = jtu.tree_map(save_x, y)
-            if cfg["save"]["kx"]["is_on"]:
-                save_dict["kx"] = jtu.tree_map(save_kx, y)
-
-            return save_dict
-
-    else:
-        cfg["save"]["x"]["ax"] = cfg["grid"]["x"]
-        save_func = None
-
-    return save_func
-
-
-def plot_xrs(which, td, xrs):
-    os.makedirs(os.path.join(td, "plots", which))
-    os.makedirs(os.path.join(td, "plots", which, "ion"))
-    os.makedirs(os.path.join(td, "plots", which, "electron"))
-
-    for k, v in xrs.items():
-        fname = f"{'-'.join(k.split('-')[1:])}.png"
-        fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
-        v.plot(ax=ax, cmap="gist_ncar")
-        ax.grid()
-        fig.savefig(os.path.join(td, "plots", which, k.split("-")[0], fname), bbox_inches="tight")
-        plt.close(fig)
-
-        if which == "kx":
-            os.makedirs(os.path.join(td, "plots", which, "ion", "hue"), exist_ok=True)
-            os.makedirs(os.path.join(td, "plots", which, "electron", "hue"), exist_ok=True)
-            # only plot
-            if v.coords["kx"].size > 8:
-                hue_skip = v.coords["kx"].size // 8
-            else:
-                hue_skip = 1
-
-            for log in [True, False]:
-                fig, ax = plt.subplots(1, 1, figsize=(7, 4), tight_layout=True)
-                v[:, ::hue_skip].plot(ax=ax, hue="kx")
-                ax.set_yscale("log" if log else "linear")
-                ax.grid()
-                fig.savefig(
-                    os.path.join(
-                        td, "plots", which, k.split("-")[0], f"hue", f"{'-'.join(k.split('-')[1:])}-log-{log}.png"
-                    ),
-                    bbox_inches="tight",
-                )
-                plt.close(fig)
+from adept.sh2d.solvers import vlasov, field
+from adept.sh2d.utils import save
 
 
 def post_process(result, cfg: Dict, td: str) -> None:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
-    # if cfg["save"]["func"]["is_on"]:
-    #     if cfg["save"]["x"]["is_on"]:
-    #         xrs = save_arrays(result, td, cfg, label="x")
-    #         plot_xrs("x", td, xrs)
-    #
-    #     if cfg["save"]["kx"]["is_on"]:
-    #         xrs = save_arrays(result, td, cfg, label="kx")
-    #         plot_xrs("kx", td, xrs)
-    # else:
-    xrs = save_arrays(result, td, cfg)
+    xrs = save.save_arrays(result, td, cfg)
     # plot_xrs("x", td, xrs)
 
 
@@ -286,6 +151,8 @@ def init_state(cfg: Dict) -> Dict:
 
     state["e"] = jnp.zeros((nx, ny, 3))
     state["b"] = jnp.zeros((nx, ny, 3))
+    state["de"] = jnp.zeros((nx, ny, 3))
+    state["db"] = jnp.zeros((nx, ny, 3))
 
     return state
 
@@ -351,6 +218,8 @@ class VectorField(eqx.Module):
             "flm": self.push_vlasov(y["flm"], total_e, total_b),
             "e": jnp.zeros_like(total_e),
             "b": jnp.zeros_like(total_e),
+            "de": jnp.zeros_like(total_e),
+            "db": jnp.zeros_like(total_e),
         }
 
         for il in range(0, self.cfg["grid"]["nl"] + 1):

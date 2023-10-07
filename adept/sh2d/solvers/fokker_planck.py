@@ -2,7 +2,7 @@ import equinox as eqx
 import jax
 from jax import numpy as jnp
 import numpy as np
-from adept.sh2d.tridiagonal import TridiagonalSolver
+from adept.sh2d.solvers.tridiagonal import TridiagonalSolver
 
 
 class IsotropicCollisions(eqx.Module):
