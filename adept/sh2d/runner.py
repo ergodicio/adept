@@ -8,7 +8,7 @@ import equinox as eqx
 
 import mlflow, pint
 
-from adept.sh2d.utils import helpers
+from adept.sh2d.utils import helpers, save
 from utils import misc
 
 
@@ -111,7 +111,7 @@ def run(cfg: Dict) -> Solution:
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
         t0 = time.time()
-        helpers.post_process(result, cfg, td)
+        post_process(result, cfg, td)
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
         # log artifacts
         mlflow.log_artifacts(td)
@@ -119,3 +119,10 @@ def run(cfg: Dict) -> Solution:
     # fin
 
     return result
+
+
+def post_process(result, cfg: Dict, td: str) -> None:
+    os.makedirs(os.path.join(td, "binary"))
+    os.makedirs(os.path.join(td, "plots"))
+
+    xrs = save.save_arrays(result, td, cfg)

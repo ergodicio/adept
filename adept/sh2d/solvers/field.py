@@ -1,6 +1,7 @@
 import jax
 from jax import numpy as jnp
 import equinox as eqx
+import numpy as np
 
 
 class SpectralPoissonSolver(eqx.Module):
@@ -40,3 +41,32 @@ class SpectralPoissonSolver(eqx.Module):
             ],
             axis=-1,
         )
+
+
+class AmpereSolver(eqx.Module):
+    dv: float
+    v: jax.Array
+
+    def __init__(self, cfg):
+        super(AmpereSolver, self).__init__()
+        self.dv = cfg["grid"]["dv"]
+        self.v = cfg["grid"]["v"]
+
+    def compute_currents(self, f):
+        return (
+            -8.0
+            / 3.0
+            * np.pi
+            * self.dv
+            * jnp.concatenate(
+                [
+                    0.5 * jnp.sum(f[0] * self.v[None, None, :] ** 3.0, axis=2)[..., None],
+                    jnp.sum(jnp.real(f[1]) * self.v[None, None, :] ** 3.0, axis=2)[..., None],
+                    -jnp.sum(jnp.imag(f[1]) * self.v[None, None, :] ** 3.0, axis=2)[..., None],
+                ],
+                axis=-1,
+            )
+        )
+
+    def __call__(self, t, y, args):
+        return self.compute_currents(y["flm"][1])

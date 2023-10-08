@@ -3,21 +3,15 @@ from typing import Dict
 
 import os
 
+import diffrax
 import numpy as np
 import equinox as eqx
+from equinox.internal import ω
+from diffrax import Euler
 
 from jax import numpy as jnp
 
 from adept.sh2d.solvers import vlasov, field
-from adept.sh2d.utils import save
-
-
-def post_process(result, cfg: Dict, td: str) -> None:
-    os.makedirs(os.path.join(td, "binary"))
-    os.makedirs(os.path.join(td, "plots"))
-
-    xrs = save.save_arrays(result, td, cfg)
-    # plot_xrs("x", td, xrs)
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
@@ -172,7 +166,8 @@ class VectorField(eqx.Module):
     cfg: Dict
     push_vlasov: eqx.Module
     push_driver: eqx.Module
-    poisson_solver: eqx.Module
+    # poisson_solver: eqx.Module
+    ampere_solver: eqx.Module
 
     def __init__(self, cfg):
         super().__init__()
@@ -180,13 +175,14 @@ class VectorField(eqx.Module):
         self.push_vlasov = vlasov.Vlasov(cfg)
         self.push_driver = vlasov.Driver(cfg["grid"]["x"], cfg["grid"]["y"])
         # cfg["profiles"]["ion_charge"]
-        self.poisson_solver = field.SpectralPoissonSolver(
-            jnp.ones((cfg["grid"]["nx"], cfg["grid"]["ny"])),
-            cfg["grid"]["one_over_kx"],
-            cfg["grid"]["one_over_ky"],
-            cfg["grid"]["dv"],
-            cfg["grid"]["v"],
-        )
+        # self.poisson_solver = field.SpectralPoissonSolver(
+        #     jnp.ones((cfg["grid"]["nx"], cfg["grid"]["ny"])),
+        #     cfg["grid"]["one_over_kx"],
+        #     cfg["grid"]["one_over_ky"],
+        #     cfg["grid"]["dv"],
+        #     cfg["grid"]["v"],
+        # )
+        self.ampere_solver = field.AmpereSolver(cfg)
 
     def __call__(self, t: float, y: Dict, args: Dict):
         """
@@ -201,7 +197,8 @@ class VectorField(eqx.Module):
             for im in range(0, il + 1):
                 y["flm"][il][im] = y["flm"][il][im].view(dtype=jnp.complex128)
 
-        y["e"] = self.poisson_solver(y["flm"][0][0])
+        # y["e"] = self.poisson_solver(y["flm"][0][0])
+        this_j = -jnp.real(self.ampere_solver(t, y, args))
         # y["b"] = self.b_solver(y)
 
         ed = 0.0
@@ -209,14 +206,14 @@ class VectorField(eqx.Module):
         for p_ind in self.cfg["drivers"]["ex"].keys():
             ed += self.push_driver(args["driver"]["ex"][p_ind], t)
 
-        total_e = y["e"] + jnp.concatenate(
-            [ed[:, :, None], jnp.zeros_like(ed[:, :, None]), jnp.zeros_like(ed[:, :, None])], axis=-1
-        )
+        ed = jnp.concatenate([ed[:, :, None], jnp.zeros_like(ed[:, :, None]), jnp.zeros_like(ed[:, :, None])], axis=-1)
+
+        total_e = y["e"] + ed
         total_b = y["b"] + args["b_ext"]
 
         dydt = {
             "flm": self.push_vlasov(y["flm"], total_e, total_b),
-            "e": jnp.zeros_like(total_e),
+            "e": this_j,
             "b": jnp.zeros_like(total_e),
             "de": jnp.zeros_like(total_e),
             "db": jnp.zeros_like(total_e),
@@ -228,3 +225,20 @@ class VectorField(eqx.Module):
                 dydt["flm"][il][im] = dydt["flm"][il][im].view(dtype=jnp.float64)
 
         return dydt
+
+
+# class Stepper(Euler):
+#     def __init__(self, cfg):
+#         self.vlasov_stepper = diffrax.Tsit5()
+#         self.maxwell_stepper =
+#
+#     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+#         del solver_state, made_jump
+#         control = terms.contr(t0, t1)
+#         y_after_vlasov = self.vlasov_stepper.step(terms, t0, t1, y0, args, solver_state, made_jump)
+#         # y_after_collisions = self.collision_stepper.step()
+#         # y_after_maxwell = self.maxwell_stepper.step()
+#
+#         y1 = (y0**ω + terms.vf_prod(t0, y0, args, control) ** ω).ω
+#         dense_info = dict(y0=y0, y1=y1)
+#         return y1, None, dense_info, None, diffrax.RESULTS.successful

@@ -12,6 +12,8 @@ class IsotropicCollisions(eqx.Module):
             self.coll_opp = LenardBernstein()
         elif self.cfg["coll"]["isotropic"] == "chang_cooper":
             self.coll_opp = ChangCooper(cfg)
+        elif self.cfg["coll"]["isotropic"] == "shkarofsky":
+            self.coll_opp = Shkarofsky(cfg)
         else:
             raise NotImplementedError
 
@@ -90,14 +92,21 @@ class AnisotropicCollisions(eqx.Module):
         self.dv_sq = self.dv**2.0
         self.lms = {}
         self.td_solve = TridiagonalSolver(cfg)
-        self.Y_dt = 4 * np.pi * (cfg["units"]["Z"] * ["units"]["Zp"]) ** 2.0 * cfg["units"]["logLambda_ee"]
+        self.Y_dt = (
+            4
+            * np.pi
+            * (cfg["units"]["Z"] * ["units"]["Zp"]) ** 2.0
+            * cfg["units"]["logLambda_ee"]
+            * cfg["units"]["nuee_norm"]
+            * cfg["grid"]["dt"]
+        )
         for il in range(0, cfg["grid"]["nl"] + 1):
             for im in range(0, il + 1):
                 self.lms[il][im] = (il, im)
 
     def calc_ij(self, flm, ij):
         ilm_j = 4 * jnp.pi / self.v[None, None, :] * jnp.cumsum(flm * self.v[None, None, :] ** (ij + 2), axis=2)
-        jlm_j = ilm_j[None, None, ::-1]
+        jlm_j = 4 * jnp.pi / self.v[None, None, :] * jnp.cumsum(flm * self.v[None, None, :] ** (ij + 2), axis=2)[::-1]
 
         return ilm_j, jlm_j
 

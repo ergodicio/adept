@@ -72,12 +72,29 @@ class Edfdv(eqx.Module):
     nl: int
     ny: int
     dv: float
+    a1: Dict
+    c1: Dict
 
     def __init__(self, cfg: Dict):
         self.v = cfg["grid"]["v"]
         self.nl = cfg["grid"]["nl"]
         self.ny = cfg["grid"]["ny"]
         self.dv = cfg["grid"]["dv"]
+        self.a1 = {}
+        self.c1 = {}
+        for il in range(self.nl + 1):
+            self.a1[il] = {}
+            self.c1[il] = 1 / (2 * il + 1) * il / (2 * (il + 1))
+            for im in range(il + 1):
+                self.a1[il][im] = (il + 1 - im) / (2 * il + 1) * il / (2 * (il + 1))
+
+        self.a1[0][0] = 1.0
+        self.c1[0] = 0.5
+
+    def ddv(self, f):
+        return (
+            jnp.gradient(jnp.concatenate([-f[..., 0:1], f, 0.0 * f[..., 0:1]], axis=-1), axis=-1)[..., 1:-1] / self.dv
+        )
 
     def calc_gh(self, prev_f: Dict) -> Tuple[Dict, Dict]:
         g = {}
@@ -86,16 +103,16 @@ class Edfdv(eqx.Module):
             g[il] = {}
             h[il] = {}
             for im, flm in m_dict.items():
-                g[il][im] = jnp.gradient(flm, axis=2) / self.dv - il / self.v[None, None, :] * flm
-                h[il][im] = (il + 1) / self.v[None, None, :] * flm + jnp.gradient(flm, axis=2) / self.dv
+                g[il][im] = self.ddv(flm) - il / self.v[None, None, :] * flm
+                h[il][im] = (il + 1) / self.v[None, None, :] * flm + self.ddv(flm)
 
         return g, h
 
     def calc_a1(self, ex, g, il, im):
-        return (il + 1 - im) / (2 * il + 1) * il / (2 * (il + 1)) * ex[..., None] * g[il][0]
+        return self.a1[il][im] * ex[..., None] * g[il][0]
 
     def calc_c1(self, em, g, il, im):
-        return 1 / (2 * il + 1) * il / (2 * (il + 1)) * em[..., None] * g[il][im]
+        return self.c1[il] * em[..., None] * g[il][im]
 
     def calc_c2(self, ep, g, il, im):
         return -(il - im + 2) * (il - im + 1) / (2 * il + 1) * il / (2 * (il + 1)) * ep[..., None] * g[il][im]
@@ -127,12 +144,12 @@ class Edfdv(eqx.Module):
             for im in range(0, il + 1):
                 delta_f[il + 1][im] += self.calc_a1(ex=ex, g=g, il=il, im=im)
 
-            if self.ny > 1:
+            if self.ny > 2:
                 # c1 l=0:nl-1 m=0:nm-1
                 for im in range(0, il):
                     delta_f[il + 1][im + 1] += self.calc_c1(em=em, g=g, il=il, im=im)
 
-        if self.ny > 1:
+        if self.ny > 2:
             for il in range(1, self.nl):
                 # c2 l=1:nl-1 m=1:nm
                 for im in range(1, il + 1):
@@ -148,12 +165,12 @@ class Edfdv(eqx.Module):
                 if il > im:
                     delta_f[il - 1][im] += self.calc_a2(ex=ex, h=h, il=il, im=im)
 
-            if self.ny > 1:
+            if self.ny > 2:
                 # c4 l=1:nl   m=1:nl
                 for im in range(1, il + 1):
                     delta_f[il - 1][im - 1] += self.calc_c4(ep=ep, h=h, il=il, im=im)
 
-        if self.ny > 1:
+        if self.ny > 2:
             # c3 l=2:nl   m=0:m-1
             for il in range(2, self.nl + 1):
                 for im in range(0, il):
@@ -205,11 +222,14 @@ class Vdfdx(eqx.Module):
         self.dx = cfg["grid"]["dx"]
         self.dy = cfg["grid"]["dy"]
 
+    def ddx(self, flm):
+        return jnp.gradient(jnp.concatenate([flm[-1:], flm, flm[:1]]), axis=0)[1:-1] / self.dx
+
     def calc_a1(self, prev_f, il, im):
-        return -((il - im + 1) / (2 * il + 1)) * self.v[None, None, :] * jnp.gradient(prev_f[il][im], axis=0) / self.dx
+        return -((il - im + 1) / (2 * il + 1)) * self.v[None, None, :] * self.ddx(prev_f[il][im])
 
     def calc_a2(self, prev_f, il, im):
-        return -((il + im) / (2 * il + 1)) * self.v[None, None, :] * jnp.gradient(prev_f[il][im], axis=0) / self.dx
+        return -((il + im) / (2 * il + 1)) * self.v[None, None, :] * self.ddx(prev_f[il][im])
 
     def calc_b1(self, prev_f, il, im):
         return (
@@ -248,7 +268,7 @@ class Vdfdx(eqx.Module):
             for im in range(0, il + 1):
                 delta_f[il + 1][im] += self.calc_a1(prev_f, il, im)
 
-            if self.ny > 1:
+            if self.ny > 2:
                 for im in range(0, 1):
                     delta_f[il + 1][im] += self.calc_b1(prev_f, il, im)
 
@@ -257,11 +277,11 @@ class Vdfdx(eqx.Module):
                 if il > im:
                     delta_f[il - 1][im] += self.calc_a2(prev_f, il, im)
 
-            if self.ny > 1:
+            if self.ny > 2:
                 for im in range(0, 1):
                     delta_f[il - 1][im] += self.calc_b2(prev_f, il, im)
 
-        if self.ny > 1:
+        if self.ny > 2:
             for il in range(1, self.nl):
                 for im in range(1, il):
                     delta_f[il + 1][im + 1] += self.calc_c1(prev_f, il, im)

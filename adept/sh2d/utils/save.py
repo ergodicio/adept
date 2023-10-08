@@ -6,6 +6,7 @@ import xarray as xr
 from flatdict import FlatDict
 import numpy as np
 from jax import numpy as jnp
+from matplotlib import pyplot as plt
 
 
 def get_save_func(cfg):
@@ -104,8 +105,112 @@ def save_vector_fields(result, cfg, td):
         for k in ["e", "b", "de", "db"]
     }
 
+    data_vars["j"] = xr.DataArray(
+        calc_j(result.ys["flm"][1], v=cfg["grid"]["v"]),
+        coords=(
+            ("t", cfg["save"]["t"]["ax"]),
+            ("x", cfg["grid"]["x"]),
+            ("y", cfg["grid"]["y"]),
+            ("component", ["x", "y", "z"]),
+        ),
+    )
+
     saved_arrays_xr = xr.Dataset(data_vars)
     saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"vector-fields.nc"))
+
+    num_plots = 8
+    t_skip = int(saved_arrays_xr.coords["t"].size // num_plots)
+    if t_skip == 1:
+        slc = slice(0, num_plots, 1)
+    elif t_skip == 0:
+        slc = slice(0, -1)
+    else:
+        slc = slice(t_skip // 2, -1, t_skip)
+
+    for k, v in saved_arrays_xr.items():
+        plot_path = os.path.join(td, "plots", k)
+        os.makedirs(plot_path, exist_ok=True)
+        for i, comp in enumerate(saved_arrays_xr.coords["component"].data):
+            v[slc, ..., i].plot(figsize=(12, 6), x="x", y="y", col="t", col_wrap=4)
+            plt.savefig(os.path.join(plot_path, f"{comp}.png"), bbox_inches="tight")
+            plt.close()
+
+    return saved_arrays_xr
+
+
+def calc_n(f00, v):
+    return np.real(
+        4.0 * np.pi * (v[2] - v[1]) * np.sum(f00.view(np.complex128) * v[None, None, None, :] ** 2.0, axis=-1)
+    )
+
+
+def calc_T(f00, v):
+    return np.real(
+        4.0 * np.pi * (v[2] - v[1]) * np.sum(0.5 * f00.view(np.complex128) * v[None, None, None, :] ** 4.0, axis=-1)
+    )
+
+
+def calc_j(f1, v):
+    return jnp.concatenate(
+        [
+            -np.real(
+                4.0 * np.pi * (v[2] - v[1]) * np.sum(f1[0].view(np.complex128) * v[None, None, None, :] ** 3.0, axis=-1)
+            )[..., None],
+            -8.0
+            * np.pi
+            * (v[2] - v[1])
+            * np.sum(np.real(f1[1].view(np.complex128)) * v[None, None, None, :] ** 3.0, axis=-1)[..., None],
+            8.0
+            * np.pi
+            * (v[2] - v[1])
+            * np.sum(np.imag(f1[1].view(np.complex128)) * v[None, None, None, :] ** 3.0, axis=-1)[..., None],
+        ],
+        axis=-1,
+    )
+
+
+def calc_q():
+    pass
+
+
+def save_scalar_fields(result, cfg, td):
+    """
+    saves vector fields to an xarray dataset
+
+    :param result:
+    :param cfg:
+    :param td:
+    :return:
+    """
+    data_vars = {
+        k: xr.DataArray(
+            func(result.ys["flm"][0][0], cfg["grid"]["v"]),
+            coords=(
+                ("t", cfg["save"]["t"]["ax"]),
+                ("x", cfg["grid"]["x"]),
+                ("y", cfg["grid"]["y"]),
+            ),
+        )
+        for k, func in zip(["n", "T"], [calc_n, calc_T])
+    }
+
+    saved_arrays_xr = xr.Dataset(data_vars)
+    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"scalar-fields.nc"))
+
+    num_plots = 8
+    t_skip = int(saved_arrays_xr.coords["t"].size // num_plots)
+    if t_skip == 1:
+        slc = slice(0, num_plots, 1)
+    elif t_skip == 0:
+        slc = slice(0, -1)
+    else:
+        slc = slice(t_skip // 2, -1, t_skip)
+
+    for k, v in saved_arrays_xr.items():
+        plot_path = os.path.join(td, "plots", f"{k}.png")
+        v[slc].plot(figsize=(12, 6), x="x", y="y", col="t", col_wrap=4)
+        plt.savefig(os.path.join(plot_path), bbox_inches="tight")
+        plt.close()
 
     return saved_arrays_xr
 
@@ -156,5 +261,6 @@ def save_arrays(result, td, cfg):
     """
     dists = save_dists(result, cfg, td)
     vector_fields = save_vector_fields(result, cfg, td)
+    scalar_fields = save_scalar_fields(result, cfg, td)
 
     return dists, vector_fields
