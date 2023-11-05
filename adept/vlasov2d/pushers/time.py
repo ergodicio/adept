@@ -1,3 +1,4 @@
+from typing import Dict
 import equinox as eqx
 from jax import numpy as jnp
 
@@ -12,7 +13,7 @@ class VlasovPoissonBase(eqx.Module):
 
     def __init__(self, cfg):
         super(VlasovPoissonBase, self).__init__()
-        self.dt = cfg["derived"]["dt"]
+        self.dt = cfg["grid"]["dt"]
         # self.vx = cfg["derived"]["vx"]
         # self.vy = cfg["derived"]["vy"]
         self.vdfdx = self.get_vdfdx(cfg)
@@ -54,16 +55,19 @@ def get_vp_timestep(cfg):
 
 
 class LeapfrogIntegrator(VlasovPoissonBase):
-    dt_array: jnp.ndarray
+    b: jnp.ndarray
 
     def __init__(self, cfg):
         super(LeapfrogIntegrator, self).__init__(cfg)
-        self.dt_array = self.dt * jnp.array([0.0, 1.0])
+        self.b = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
+        self.driver = field.Driver(cfg["grid"]["x"], cfg["grid"]["y"])
 
-    def __call__(self, f, de_array):
+    def __call__(self, t, y, args):
+        f = y["dist"]
         f = self.vdfdx(f=f, dt=0.5 * self.dt)
-        force, e = self.field_solve(de_array=de_array[0], f=f)
+        de_array = self.driver(t, args)
+        force, e = self.field_solve(de_array=de_array[..., 0], f=f)
         f = self.edfdv(f=f, e=force, dt=self.dt)
         f = self.vdfdx(f=f, dt=0.5 * self.dt)
 
-        return f, {"total_ex": force[0], "total_ey": force[1], "ex": e[0], "ey": e[1]}
+        return {"dist": f, "total_e": force, "e": e, "b": self.b}

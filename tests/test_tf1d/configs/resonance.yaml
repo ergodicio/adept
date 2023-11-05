@@ -14,19 +14,15 @@ grid:
 models: False
 
 save:
-    func:
-      is_on: True
     t:
       tmin: 0.0
       tmax: 50.0
       nt: 201
     x:
-      is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 64
+      nx: 16
     kx:
-      is_on: True
       kxmin: 0.0
       kxmax: 0.3
       nkx: 2

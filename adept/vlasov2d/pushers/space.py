@@ -10,13 +10,13 @@ class Exponential(eqx.Module):
 
     def __init__(self, cfg):
         super(Exponential, self).__init__()
-        kx = cfg["derived"]["kx"]
-        ky = cfg["derived"]["ky"]
+        kx = cfg["grid"]["kx"]
+        ky = cfg["grid"]["ky"]
         self.kx_real = jnp.array(kx)
         self.ky_real = jnp.array(ky[: int(ky.size // 2) + 1])
 
-        self.vx = jnp.array(cfg["derived"]["vx"])
-        self.vy = jnp.array(cfg["derived"]["vy"])
+        self.vx = jnp.array(cfg["grid"]["vx"])
+        self.vy = jnp.array(cfg["grid"]["vy"])
 
     def __call__(self, f, dt):
         temp = jnp.fft.rfft2(f, axes=(0, 1))

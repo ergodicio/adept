@@ -22,11 +22,12 @@ def save_arrays(result, td, cfg, label):
     if label is None:
         label = "x"
         flattened_dict = dict(FlatDict(result.ys, delimiter="-"))
+        save_ax = cfg["grid"]["x"]
     else:
         flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
+        save_ax = cfg["save"][label]["ax"]
     data_vars = {
-        k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, cfg["save"][label]["ax"])))
-        for k, v in flattened_dict.items()
+        k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, save_ax))) for k, v in flattened_dict.items()
     }
 
     saved_arrays_xr = xr.Dataset(data_vars)
@@ -74,12 +75,12 @@ def post_process(result, cfg: Dict, td: str) -> None:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
-    if cfg["save"]["func"]["is_on"]:
-        if cfg["save"]["x"]["is_on"]:
+    if any(x in ["x", "kx"] for x in cfg["save"]):
+        if "x" in cfg["save"].keys():
             xrs = save_arrays(result, td, cfg, label="x")
             plot_xrs("x", td, xrs)
 
-        if cfg["save"]["kx"]["is_on"]:
+        if "kx" in cfg["save"].keys():
             xrs = save_arrays(result, td, cfg, label="kx")
             plot_xrs("kx", td, xrs)
     else:
@@ -110,7 +111,7 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     return cfg_grid
 
 
-def get_solver_quantities(cfg_grid: Dict) -> Dict:
+def get_solver_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are arrays
 
@@ -119,6 +120,8 @@ def get_solver_quantities(cfg_grid: Dict) -> Dict:
     :param cfg_grid:
     :return:
     """
+    cfg_grid = cfg["grid"]
+
     cfg_grid = {
         **cfg_grid,
         **{
@@ -139,7 +142,9 @@ def get_solver_quantities(cfg_grid: Dict) -> Dict:
     one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
     cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
 
-    return cfg_grid
+    cfg["grid"] = cfg_grid
+
+    return cfg
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -149,7 +154,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
+    cfg["save"]["func"] = {"callable": get_save_func(cfg)}
     cfg["save"]["t"]["ax"] = jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"])
 
     return cfg
@@ -272,8 +277,8 @@ class VectorField(eqx.Module):
 
 
 def get_save_func(cfg):
-    if cfg["save"]["func"]["is_on"]:
-        if cfg["save"]["x"]["is_on"]:
+    if any(x in ["x", "kx"] for x in cfg["save"]):
+        if "x" in cfg["save"].keys():
             dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
             cfg["save"]["x"]["ax"] = jnp.linspace(
                 cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
@@ -281,7 +286,7 @@ def get_save_func(cfg):
 
             save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
 
-        if cfg["save"]["kx"]["is_on"]:
+        if "kx" in cfg["save"].keys():
             cfg["save"]["kx"]["ax"] = jnp.linspace(
                 cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
             )
@@ -293,15 +298,14 @@ def get_save_func(cfg):
 
         def save_func(t, y, args):
             save_dict = {}
-            if cfg["save"]["x"]["is_on"]:
+            if "x" in cfg["save"].keys():
                 save_dict["x"] = jtu.tree_map(save_x, y)
-            if cfg["save"]["kx"]["is_on"]:
+            if "kx" in cfg["save"].keys():
                 save_dict["kx"] = jtu.tree_map(save_kx, y)
 
             return save_dict
 
     else:
-        cfg["save"]["x"]["ax"] = cfg["grid"]["x"]
         save_func = None
 
     return save_func

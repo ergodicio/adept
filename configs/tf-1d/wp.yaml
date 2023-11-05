@@ -61,10 +61,7 @@ physics:
       nuee: 1.0e-09
 
 save:
-  func:
-    is_on: true
   kx:
-    is_on: true
     kxmax: 0.9
     kxmin: 0.3
     nkx: 3
@@ -73,7 +70,6 @@ save:
     tmax: 500.0
     tmin: 0.5
   x:
-    is_on: true
     nx: 256
     xmax: 1000
     xmin: 0.0

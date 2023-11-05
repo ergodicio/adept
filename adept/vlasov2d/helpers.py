@@ -5,8 +5,9 @@ import os
 
 import numpy as np
 import xarray
-import flatdict
-import mlflow
+from jax import numpy as jnp
+from adept.vlasov2d.integrator import LeapfrogIntegrator, Stepper
+from diffrax import ODETerm
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -86,41 +87,9 @@ def _initialize_distribution_(
     return f, vaxs
 
 
-def initialize_velocity_quantities(vmax, nvs):
-    """
-    This function initializes the velocity grid and related quantities
-
-    :param vmaxs:
-    :param nvs:
-    :return:
-    """
-    dvs = [2.0 * vmax / nv for nv in nvs]
-    vs = [np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv) for dv, nv in zip(dvs, nvs)]
-    kvs = [np.fft.fftfreq(v.size, d=dv) * 2.0 * np.pi for dv, v in zip(dvs, vs)]
-
-    return dvs, vs, kvs
-
-
-def initialize_spatial_quantities(mins: List, maxs: List, ns: List):
-    """
-    This function initializes the spatial grid and related quantities
-
-    :param mins:
-    :param maxs:
-    :param ns:
-    :return:
-    """
-    dxs = [(xmax - xmin) / nx for xmin, xmax, nx in zip(mins, maxs, ns)]
-    xs = [np.linspace(xmin + dx / 2.0, xmax - dx / 2.0, int(nx)) for xmin, xmax, nx, dx in zip(mins, maxs, ns, dxs)]
-    kxs = [np.fft.fftfreq(x.size, d=dx) * 2.0 * np.pi for x, dx in zip(xs, dxs)]
-    one_over_kxs = [np.zeros_like(kx) for kx in kxs]
-    for one_over_kx, kx in zip(one_over_kxs, kxs):
-        one_over_kx[1:] = 1.0 / kx[1:]
-
-    return dxs, xs, kxs, one_over_kxs
-
-
-def initialize_total_distribution(params, cfg, xs):
+def initialize_total_distribution(cfg):
+    params = cfg["density"]
+    xs = (cfg["grid"]["x"], cfg["grid"]["y"])
     n_prof_total = np.zeros([x.size for x in xs])
     f = np.zeros([x.size for x in xs] + [cfg["grid"]["nvx"], cfg["grid"]["nvy"]])
     species_found = False
@@ -139,17 +108,6 @@ def initialize_total_distribution(params, cfg, xs):
                 if "m" in params[name]:
                     m = params[name]["m"]
 
-            # if species_params["basis"] == "sine":
-            #     baseline = species_params["space-profile"]["baseline"]
-            #     amp = species_params["space-profile"]["amplitude"]
-            #     kk = species_params["space-profile"]["wavenumber"]
-            #     nprof = baseline * (1.0 + amp * np.sin(kk * xs[0][:, None]))
-            #     nprof = np.repeat(nprof, cfg["grid"]["ny"], axis=1)
-            #
-            # elif species_params["basis"] == "tanh":
-            #     nprof = get_profile_with_mask(
-            #         species_params["space-profile"], xs[0], species_params["space-profile"]["bump_or_trough"]
-            #     )
             if species_params["basis"] == "uniform":
                 nprof = np.ones_like(n_prof_total)
             else:
@@ -181,102 +139,240 @@ def initialize_total_distribution(params, cfg, xs):
     return n_prof_total, f
 
 
-def add_derived_quantities(cfg):
+def get_derived_quantities(cfg_grid: Dict) -> Dict:
     """
+    This function just updates the config with the derived quantities that are only integers or strings.
 
-    In order to keep the main time loop clean, this function handles all the
-    necessary initialization and array creation for the main simulation time loop.
+    This is run prior to the log params step
 
-    Initialized here:
-    spatial grid
-    velocity grid
-    distribution function
-    time grid
-    driver array
-
-    :param cfg: Dictionary
+    :param cfg_grid:
     :return:
     """
+    cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
+    cfg_grid["dy"] = cfg_grid["ymax"] / cfg_grid["ny"]
+    cfg_grid["dvx"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvx"]
+    cfg_grid["dvy"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvy"]
 
-    # Initialize machinery
-    # Spatial Grid
-    dxs, xs, kxs, one_over_kxs = initialize_spatial_quantities(
-        mins=[cfg["grid"]["xmin"], cfg["grid"]["ymin"]],
-        maxs=[cfg["grid"]["xmax"], cfg["grid"]["ymax"]],
-        ns=[cfg["grid"]["nx"], cfg["grid"]["ny"]],
-    )
+    # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
+    cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
+    cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
-    # Distribution function
-    n_prof_total, f = initialize_total_distribution(cfg["density"], cfg, xs)
-
-    kprof = np.ones_like(
-        n_prof_total
-    )  # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
-    if cfg["density"]["quasineutrality"]:
-        ion_charge = np.copy(n_prof_total)
-    else:
-        ion_charge = np.ones_like(n_prof_total)
-
-    # Velocity grid
-    dvs, vs, kvs = initialize_velocity_quantities(
-        vmax=cfg["grid"]["vmax"], nvs=[int(cfg["grid"]["nvx"]), int(cfg["grid"]["nvy"])]
-    )
-
-    # dt = cfg["grid"]["tmax"] / cfg["grid"]["nt"]
-    # t = dt * np.arange(0, cfg["grid"]["nt"] + 1)
-
-    cfg["grid"]["nt"] = int(cfg["grid"]["tmax"] / cfg["grid"]["dt"] + 1)
-    cfg["grid"]["tmax"] = cfg["grid"]["dt"] * cfg["grid"]["nt"]
-
-    if cfg["grid"]["nt"] > 1e6:
-        cfg["grid"]["max_steps"] = int(1e6)
+    if cfg_grid["nt"] > 1e6:
+        cfg_grid["max_steps"] = int(1e6)
         print(r"Only running $10^6$ steps")
     else:
-        cfg["grid"]["max_steps"] = cfg["grid"]["nt"] + 4
+        cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    nuprof = 1.0  # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
-    ktprof = (
-        1.0  # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-    )
+    return cfg_grid
 
-    driver_function = get_driver_function(xs=xs)
 
-    cfg["derived"] = {
-        "e": np.zeros([x.size for x in xs]),
-        "f": f,
-        "nx": int(cfg["grid"]["nx"]),
-        "ny": int(cfg["grid"]["ny"]),
-        "kx": kxs[0],
-        "ky": kxs[1],
-        "x": xs[0],
-        "y": xs[1],
-        "dx": dxs[0],
-        "dy": dxs[1],
-        "c_light": cfg["grid"]["c_light"],
-        # "a": (jnp.zeros(x.size + 2), jnp.zeros(x.size + 2)),
-        "nprof": n_prof_total,
-        "kr_prof": kprof,
-        "iprof": ion_charge,
-        "one_over_kx": one_over_kxs[0],
-        "one_over_ky": one_over_kxs[1],
-        "vx": vs[0],
-        "kvx": kvs[0],
-        "nvx": int(cfg["grid"]["nvx"]),
-        "dvx": dvs[0],
-        "vy": vs[1],
-        "kvy": kvs[1],
-        "nvy": int(cfg["grid"]["nvy"]),
-        "dvy": dvs[1],
-        "driver_function": driver_function,
-        # "dt": dt,
-        # "nu_prof": nuprof,
-        # "kt_prof": ktprof,
-        "t": np.linspace(0, cfg["grid"]["tmax"], cfg["grid"]["nt"]),
+def get_solver_quantities(cfg: Dict) -> Dict:
+    """
+    This function just updates the config with the derived quantities that are arrays
+
+    This is run after the log params step
+
+    :param cfg_grid:
+    :return:
+    """
+    cfg_grid = cfg["grid"]
+
+    cfg_grid = {
+        **cfg_grid,
+        **{
+            "x": jnp.linspace(
+                cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
+            ),
+            "y": jnp.linspace(
+                cfg_grid["ymin"] + cfg_grid["dy"] / 2, cfg_grid["ymax"] - cfg_grid["dy"] / 2, cfg_grid["ny"]
+            ),
+            "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
+            "vx": jnp.linspace(
+                -cfg_grid["vmax"] + cfg_grid["dvx"] / 2, cfg_grid["vmax"] - cfg_grid["dvx"] / 2, cfg_grid["nvx"]
+            ),
+            "vy": jnp.linspace(
+                -cfg_grid["vmax"] + cfg_grid["dvy"] / 2, cfg_grid["vmax"] - cfg_grid["dvy"] / 2, cfg_grid["nvy"]
+            ),
+            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
+            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
+            "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
+            "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
+            "kvx": jnp.fft.fftfreq(cfg_grid["nvx"], d=cfg_grid["dvx"]) * 2.0 * np.pi,
+            "kvxr": jnp.fft.rfftfreq(cfg_grid["nvx"], d=cfg_grid["dvx"]) * 2.0 * np.pi,
+            "kvy": jnp.fft.fftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
+            "kyvr": jnp.fft.rfftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
+        },
     }
-    # cfg["derived"]["dt"] = float(cfg["derived"]["dt"][1] - cfg["derived"]["dt"][0])
+
+    # config axes
+    one_over_kx = np.zeros_like(cfg_grid["kx"])
+    one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
+    cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
+
+    one_over_kxr = np.zeros_like(cfg_grid["kxr"])
+    one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
+    cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
+
+    one_over_ky = np.zeros_like(cfg_grid["ky"])
+    one_over_ky[1:] = 1.0 / cfg_grid["ky"][1:]
+    cfg_grid["one_over_ky"] = jnp.array(one_over_ky)
+
+    one_over_kyr = np.zeros_like(cfg_grid["kyr"])
+    one_over_kyr[1:] = 1.0 / cfg_grid["kyr"][1:]
+    cfg_grid["one_over_kyr"] = jnp.array(one_over_kyr)
+
+    # velocity axes
+    one_over_kvx = np.zeros_like(cfg_grid["kvx"])
+    one_over_kvx[1:] = 1.0 / cfg_grid["kvx"][1:]
+    cfg_grid["one_over_kvx"] = jnp.array(one_over_kvx)
+
+    one_over_kvxr = np.zeros_like(cfg_grid["kvxr"])
+    one_over_kvxr[1:] = 1.0 / cfg_grid["kvxr"][1:]
+    cfg_grid["one_over_kvxr"] = jnp.array(one_over_kvxr)
+
+    one_over_kvy = np.zeros_like(cfg_grid["kvy"])
+    one_over_kvy[1:] = 1.0 / cfg_grid["kvy"][1:]
+    cfg_grid["one_over_kvy"] = jnp.array(one_over_kvy)
+
+    one_over_kvyr = np.zeros_like(cfg_grid["kvyr"])
+    one_over_kvyr[1:] = 1.0 / cfg_grid["kvyr"][1:]
+    cfg_grid["one_over_kvyr"] = jnp.array(one_over_kvyr)
+
+    cfg_grid["nuprof"] = 1.0
+    # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
+    cfg_grid["ktprof"] = 1.0
+    # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
+    cfg_grid["n_prof_total"], cfg_grid["starting_f"] = initialize_total_distribution(cfg)
+
+    cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
+    # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
+
+    cfg_grid["ion_charge"] = np.ones_like(cfg_grid["n_prof_total"])
 
     return cfg
+
+
+def init_state(cfg: Dict) -> Dict:
+    """
+    This function initializes the state
+
+    :param cfg:
+    :return:
+    """
+    n_prof_total, f = initialize_total_distribution(cfg)
+
+    state = {}
+    for species in ["electron"]:
+        state[species] = dict(
+            dist=f,
+            total_e=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"])),
+            e=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"])),
+            b=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"])),
+        )
+
+    return state
+
+
+def get_terms_and_solver(cfg):
+    return dict(terms=ODETerm(LeapfrogIntegrator(cfg)), solver=Stepper())
+
+
+# def add_derived_quantities(cfg):
+#     """
+#
+#     In order to keep the main time loop clean, this function handles all the
+#     necessary initialization and array creation for the main simulation time loop.
+#
+#     Initialized here:
+#     spatial grid
+#     velocity grid
+#     distribution function
+#     time grid
+#     driver array
+#
+#     :param cfg: Dictionary
+#     :return:
+#     """
+#
+#     # Initialize machinery
+#     # Spatial Grid
+#     # dxs, xs, kxs, one_over_kxs = initialize_spatial_quantities(
+#     #     mins=[cfg["grid"]["xmin"], cfg["grid"]["ymin"]],
+#     #     maxs=[cfg["grid"]["xmax"], cfg["grid"]["ymax"]],
+#     #     ns=[cfg["grid"]["nx"], cfg["grid"]["ny"]],
+#     # )
+#
+#     # Distribution function
+#     n_prof_total, f = initialize_total_distribution(cfg["density"], cfg, xs)
+#
+#     kprof = np.ones_like(
+#         n_prof_total
+#     )  # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
+#
+#     if cfg["density"]["quasineutrality"]:
+#         ion_charge = np.copy(n_prof_total)
+#     else:
+#         ion_charge = np.ones_like(n_prof_total)
+#
+#     # Velocity grid
+#     # dvs, vs, kvs = initialize_velocity_quantities(
+#     #     vmax=cfg["grid"]["vmax"], nvs=[int(cfg["grid"]["nvx"]), int(cfg["grid"]["nvy"])]
+#     # )
+#
+#     # dt = cfg["grid"]["tmax"] / cfg["grid"]["nt"]
+#     # t = dt * np.arange(0, cfg["grid"]["nt"] + 1)
+#
+#     cfg["grid"]["nt"] = int(cfg["grid"]["tmax"] / cfg["grid"]["dt"] + 1)
+#     cfg["grid"]["tmax"] = cfg["grid"]["dt"] * cfg["grid"]["nt"]
+#
+#     if cfg["grid"]["nt"] > 1e6:
+#         cfg["grid"]["max_steps"] = int(1e6)
+#         print(r"Only running $10^6$ steps")
+#     else:
+#         cfg["grid"]["max_steps"] = cfg["grid"]["nt"] + 4
+#
+#     nuprof = 1.0  # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
+#     ktprof = (
+#         1.0  # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
+#     )
+#
+#     driver_function = get_driver_function(xs=xs)
+#
+#     cfg["derived"] = {
+#         "e": np.zeros([x.size for x in xs]),
+#         "f": f,
+#         "nx": int(cfg["grid"]["nx"]),
+#         "ny": int(cfg["grid"]["ny"]),
+#         "kx": kxs[0],
+#         "ky": kxs[1],
+#         "x": xs[0],
+#         "y": xs[1],
+#         "dx": dxs[0],
+#         "dy": dxs[1],
+#         "c_light": cfg["grid"]["c_light"],
+#         # "a": (jnp.zeros(x.size + 2), jnp.zeros(x.size + 2)),
+#         "nprof": n_prof_total,
+#         "kr_prof": kprof,
+#         "iprof": ion_charge,
+#         "one_over_kx": one_over_kxs[0],
+#         "one_over_ky": one_over_kxs[1],
+#         "vx": vs[0],
+#         "kvx": kvs[0],
+#         "nvx": int(cfg["grid"]["nvx"]),
+#         "dvx": dvs[0],
+#         "vy": vs[1],
+#         "kvy": kvs[1],
+#         "nvy": int(cfg["grid"]["nvy"]),
+#         "dvy": dvs[1],
+#         "driver_function": driver_function,
+#         # "dt": dt,
+#         # "nu_prof": nuprof,
+#         # "kt_prof": ktprof,
+#         "t": np.linspace(0, cfg["grid"]["tmax"], cfg["grid"]["nt"]),
+#     }
+#     # cfg["derived"]["dt"] = float(cfg["derived"]["dt"][1] - cfg["derived"]["dt"][0])
+#
+#     return cfg
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -365,77 +461,3 @@ def get_profile_with_mask(prof_dict, axs, b_or_t, this_np=np):
     profile *= prof_dict["slope"] * mask * ax + 1.0
 
     return profile
-
-
-def get_driver_function(xs):
-    def get_envelope(p_wL, p_wR, p_L, p_R, ax):
-        return 0.5 * (np.tanh((ax - p_L) / p_wL) - np.tanh((ax - p_R) / p_wR))
-
-    def get_this_pulse(this_pulse, current_time):
-        kk = this_pulse["k0"]
-        ww = this_pulse["w0"]
-        dw = this_pulse["dw0"]
-        t_L = this_pulse["t_center"] - this_pulse["t_width"] * 0.5
-        t_R = this_pulse["t_center"] + this_pulse["t_width"] * 0.5
-        t_wL = this_pulse["t_rise"]
-        t_wR = this_pulse["t_rise"]
-        x_L = this_pulse["x_center"] - this_pulse["x_width"] * 0.5
-        x_R = this_pulse["x_center"] + this_pulse["x_width"] * 0.5
-        x_wL = this_pulse["x_rise"]
-        x_wR = this_pulse["x_rise"]
-
-        y_L = this_pulse["y_center"] - this_pulse["y_width"] * 0.5
-        y_R = this_pulse["y_center"] + this_pulse["y_width"] * 0.5
-        y_wL = this_pulse["y_rise"]
-        y_wR = this_pulse["y_rise"]
-
-        envelope_t = get_envelope(t_wL, t_wR, t_L, t_R, current_time)
-        envelope_x = get_envelope(x_wL, x_wR, x_L, x_R, xs[0])
-        envelope_y = get_envelope(y_wL, y_wR, y_L, y_R, xs[1])
-
-        return (
-            envelope_t[:, :, None, None]
-            * envelope_x[None, None, :, None]
-            * envelope_y[None, None, None, :]
-            * np.abs(kk)
-            * this_pulse["a0"]
-            * np.sin(kk * xs[0][None, None, :, None] - (ww + dw) * current_time[:, :, None, None])
-        )
-
-    def driver_function(current_time: np.array, pulses: Dict):
-        """
-        Applies the driver function
-
-        P.S. This needs names because its going through a jitted JAX call
-
-        :param current_time:
-        :param pulses:
-        :return:
-        """
-        total_dex = np.zeros(current_time.shape + xs[0].shape + xs[1].shape)
-        # total_djy = np.zeros(current_time.shape + xs[0].shape + xs[1].shape)
-
-        for key, pulse in pulses["ex"].items():
-            total_dex += get_this_pulse(pulse, current_time)
-
-        # for key, pulse in pulses["ey"].items():
-        #     total_djy += get_this_pulse(pulse, current_time)
-
-        return total_dex  # , total_djy
-
-    return driver_function
-
-
-def log_params(cfg):
-    flattened_dict = dict(flatdict.FlatDict(cfg, delimiter="."))
-    num_entries = len(flattened_dict.keys())
-
-    if num_entries > 100:
-        num_batches = num_entries % 100
-        fl_list = list(flattened_dict.items())
-        for i in range(num_batches):
-            end_ind = min((i + 1) * 100, num_entries)
-            trunc_dict = {k: v for k, v in fl_list[i * 100 : end_ind]}
-            mlflow.log_params(trunc_dict)
-    else:
-        mlflow.log_params(flattened_dict)

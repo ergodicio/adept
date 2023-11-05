@@ -50,7 +50,7 @@ def run(cfg: Dict) -> Solution:
         cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
         misc.log_params(cfg)
 
-        cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
+        cfg = helpers.get_solver_quantities(cfg)
         cfg = helpers.get_save_quantities(cfg)
 
         models = helpers.get_models(cfg["models"])
@@ -62,10 +62,10 @@ def run(cfg: Dict) -> Solution:
         # @eqx.filter_jit
         t_and_s = helpers.get_terms_and_solver(cfg)
 
-        def _run_():
+        def _run_(these_models):
             args = {"driver": cfg["drivers"]}
             if "models" in cfg:
-                args["models"] = helpers.get_models(cfg["models"])
+                args["models"] = these_models
 
             return diffeqsolve(
                 terms=t_and_s["terms"],
@@ -80,7 +80,7 @@ def run(cfg: Dict) -> Solution:
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
             )
 
-        result = _run_()
+        result = _run_(models)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
         t0 = time.time()

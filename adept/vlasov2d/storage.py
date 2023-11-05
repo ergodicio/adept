@@ -12,7 +12,7 @@ def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray) -> xr.Dat
     os.makedirs(fields_dir, exist_ok=True)
 
     das = {
-        k: xr.DataArray(v, coords=(("t", this_t), ("x", cfg["derived"]["x"]), ("y", cfg["derived"]["y"])))
+        k: xr.DataArray(v, coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])))
         for k, v in fields.items()
     }
     fields = xr.Dataset(das)
@@ -24,10 +24,10 @@ def store_f(cfg, this_t, td, this_f):
         this_f[None, :, :, :, :],
         coords=(
             ("t", this_t),
-            ("x", cfg["derived"]["x"]),
-            ("y", cfg["derived"]["y"]),
-            ("v_x", cfg["derived"]["vx"]),
-            ("v_y", cfg["derived"]["vy"]),
+            ("x", cfg["grid"]["x"]),
+            ("y", cfg["grid"]["y"]),
+            ("v_x", cfg["grid"]["vx"]),
+            ("v_y", cfg["grid"]["vy"]),
         ),
     )
     f_store.to_netcdf(os.path.join(td, "binary", "f", f"f-{round(this_t[0],4)}.nc"))
@@ -42,7 +42,7 @@ def first_store(td, cfg):
     os.makedirs(os.path.join(td, "binary", "f"))
     os.makedirs(os.path.join(td, "binary", "fields"))
 
-    start_f = jnp.array(cfg["derived"]["f"])
+    start_f = jnp.array(cfg["grid"]["f"])
     store_f(cfg, np.array([0.0]), td, start_f)
     fields = {
         "ex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),

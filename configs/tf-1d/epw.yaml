@@ -56,19 +56,11 @@ physics:
       nuee: 1.0e-09
   landau_damping: true
 save:
-  func:
-    is_on: true
-  kx:
-    is_on: false
-    kxmax: 0.32
-    kxmin: 0.0
-    nkx: 2
   t:
     nt: 1000
     tmax: 500.0
     tmin: 0.5
   x:
-    is_on: true
     nx: 16
     xmax: 19.634954084936208
     xmin: 0.0

@@ -79,14 +79,14 @@ class Collisions(eqx.Module):
         return f
 
     def __call__(self, nu_fp: jnp.float64, nu_K: jnp.float64, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
-        if np.any(self.cfg["derived"]["nu_prof"] > 0.0):
+        if np.any(self.cfg["grid"]["nu_prof"] > 0.0):
             # Solve x * y * vy independent linear systems for f(vx)
             f = self.step_vx(nu_fp, f, dt)
 
             # Solve x * y * vx independent linear systems for f(vy)
             f = self.step_vy(nu_fp, f, dt)
 
-        if (np.any(self.cfg["derived"]["kr_prof"] > 0.0)) and (np.any(self.cfg["derived"]["kt_prof"] > 0.0)):
+        if (np.any(self.cfg["grid"]["kr_prof"] > 0.0)) and (np.any(self.cfg["grid"]["kt_prof"] > 0.0)):
             f = self.krook(nu_K, f, dt)
         return f
 
@@ -95,10 +95,10 @@ class Krook(eqx.Module):
     def __init__(self, cfg):
         super(Krook, self).__init__()
         self.cfg = cfg
-        self.dvx = self.cfg["derived"]["dvx"]
-        self.dvy = self.cfg["derived"]["dvy"]
-        self.f_mx = jnp.copy(self.cfg["derived"]["f"])
-        self.dv = self.cfg["derived"]["dv"]
+        self.dvx = self.cfg["grid"]["dvx"]
+        self.dvy = self.cfg["grid"]["dvy"]
+        self.f_mx = jnp.copy(self.cfg["grid"]["f"])
+        self.dv = self.cfg["grid"]["dv"]
 
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
         nu_Kxdt = dt * nu_K[:, :, None, None]
@@ -112,10 +112,10 @@ class LenardBernstein(eqx.Module):
     def __init__(self, cfg):
         super(LenardBernstein, self).__init__()
         self.cfg = cfg
-        self.vx = self.cfg["derived"]["vx"]
-        self.dvx = self.cfg["derived"]["dvx"]
-        self.vy = self.cfg["derived"]["vy"]
-        self.dvy = self.cfg["derived"]["dvy"]
+        self.vx = self.cfg["grid"]["vx"]
+        self.dvx = self.cfg["grid"]["dvx"]
+        self.vy = self.cfg["grid"]["vy"]
+        self.dvy = self.cfg["grid"]["dvy"]
         self.ones = jnp.ones(
             (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], self.cfg["grid"]["nvx"], self.cfg["grid"]["nvy"])
         )
@@ -181,10 +181,10 @@ class Dougherty(eqx.Module):
     def __init__(self, cfg):
         super(Dougherty, self).__init__()
         self.cfg = cfg
-        self.vx = self.cfg["derived"]["vx"]
-        self.dvx = self.cfg["derived"]["dvx"]
-        self.vy = self.cfg["derived"]["vy"]
-        self.dvy = self.cfg["derived"]["dvy"]
+        self.vx = self.cfg["grid"]["vx"]
+        self.dvx = self.cfg["grid"]["dvx"]
+        self.vy = self.cfg["grid"]["vy"]
+        self.dvy = self.cfg["grid"]["dvy"]
         self.ones = jnp.ones(
             (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], self.cfg["grid"]["nvx"], self.cfg["grid"]["nvy"])
         )

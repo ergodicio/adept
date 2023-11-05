@@ -23,19 +23,15 @@ grid:
     tmax: 500.0
 
 save:
-    func:
-      is_on: True
     t:
       tmin: 0.5
       tmax: 500.0
       nt: 1000
     x:
-      is_on: True
       xmin: 0.0
       xmax: 20.94
       nx: 16
     kx:
-      is_on: True
       kxmin: 0.0
       kxmax: 0.3
       nkx: 2
