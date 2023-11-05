@@ -45,17 +45,9 @@ class VlasovPoissonBase(eqx.Module):
         return edfdv
 
 
-def get_vp_timestep(cfg):
-    if cfg["solver"]["dfdt"] == "leapfrog":
-        return LeapfrogIntegrator(cfg)
-    # elif cfg["solver"]["dfdt"] == "hamiltonian_sixth":
-    #     return SixthOrderHamIntegrator(cfg)
-    else:
-        raise NotImplementedError
-
-
 class LeapfrogIntegrator(VlasovPoissonBase):
     b: jnp.ndarray
+    driver: eqx.Module
 
     def __init__(self, cfg):
         super(LeapfrogIntegrator, self).__init__(cfg)
@@ -70,4 +62,4 @@ class LeapfrogIntegrator(VlasovPoissonBase):
         f = self.edfdv(f=f, e=force, dt=self.dt)
         f = self.vdfdx(f=f, dt=0.5 * self.dt)
 
-        return {"dist": f, "total_e": force, "e": e, "b": self.b}
+        return {"dist": f, "de": de_array, "e": e, "b": self.b}

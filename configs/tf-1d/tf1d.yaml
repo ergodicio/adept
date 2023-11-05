@@ -92,3 +92,9 @@ drivers:
       "x_r": 80
       "a0": 0.e-2
 
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10

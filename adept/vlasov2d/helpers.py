@@ -3,8 +3,9 @@
 from typing import Dict, List
 import os
 
+from time import time
 import numpy as np
-import xarray
+import xarray, mlflow
 from jax import numpy as jnp
 from adept.vlasov2d.integrator import LeapfrogIntegrator, Stepper
 from diffrax import ODETerm
@@ -87,7 +88,7 @@ def _initialize_distribution_(
     return f, vaxs
 
 
-def initialize_total_distribution(cfg):
+def _initialize_total_distribution_(cfg):
     params = cfg["density"]
     xs = (cfg["grid"]["x"], cfg["grid"]["y"])
     n_prof_total = np.zeros([x.size for x in xs])
@@ -259,15 +260,15 @@ def init_state(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    n_prof_total, f = initialize_total_distribution(cfg)
+    n_prof_total, f = _initialize_total_distribution_(cfg)
 
     state = {}
     for species in ["electron"]:
         state[species] = dict(
             dist=f,
-            total_e=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"])),
-            e=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"])),
-            b=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"])),
+            de=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2)),
+            e=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2)),
+            b=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2)),
         )
 
     return state
@@ -275,104 +276,6 @@ def init_state(cfg: Dict) -> Dict:
 
 def get_terms_and_solver(cfg):
     return dict(terms=ODETerm(LeapfrogIntegrator(cfg)), solver=Stepper())
-
-
-# def add_derived_quantities(cfg):
-#     """
-#
-#     In order to keep the main time loop clean, this function handles all the
-#     necessary initialization and array creation for the main simulation time loop.
-#
-#     Initialized here:
-#     spatial grid
-#     velocity grid
-#     distribution function
-#     time grid
-#     driver array
-#
-#     :param cfg: Dictionary
-#     :return:
-#     """
-#
-#     # Initialize machinery
-#     # Spatial Grid
-#     # dxs, xs, kxs, one_over_kxs = initialize_spatial_quantities(
-#     #     mins=[cfg["grid"]["xmin"], cfg["grid"]["ymin"]],
-#     #     maxs=[cfg["grid"]["xmax"], cfg["grid"]["ymax"]],
-#     #     ns=[cfg["grid"]["nx"], cfg["grid"]["ny"]],
-#     # )
-#
-#     # Distribution function
-#     n_prof_total, f = initialize_total_distribution(cfg["density"], cfg, xs)
-#
-#     kprof = np.ones_like(
-#         n_prof_total
-#     )  # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-#
-#     if cfg["density"]["quasineutrality"]:
-#         ion_charge = np.copy(n_prof_total)
-#     else:
-#         ion_charge = np.ones_like(n_prof_total)
-#
-#     # Velocity grid
-#     # dvs, vs, kvs = initialize_velocity_quantities(
-#     #     vmax=cfg["grid"]["vmax"], nvs=[int(cfg["grid"]["nvx"]), int(cfg["grid"]["nvy"])]
-#     # )
-#
-#     # dt = cfg["grid"]["tmax"] / cfg["grid"]["nt"]
-#     # t = dt * np.arange(0, cfg["grid"]["nt"] + 1)
-#
-#     cfg["grid"]["nt"] = int(cfg["grid"]["tmax"] / cfg["grid"]["dt"] + 1)
-#     cfg["grid"]["tmax"] = cfg["grid"]["dt"] * cfg["grid"]["nt"]
-#
-#     if cfg["grid"]["nt"] > 1e6:
-#         cfg["grid"]["max_steps"] = int(1e6)
-#         print(r"Only running $10^6$ steps")
-#     else:
-#         cfg["grid"]["max_steps"] = cfg["grid"]["nt"] + 4
-#
-#     nuprof = 1.0  # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
-#     ktprof = (
-#         1.0  # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-#     )
-#
-#     driver_function = get_driver_function(xs=xs)
-#
-#     cfg["derived"] = {
-#         "e": np.zeros([x.size for x in xs]),
-#         "f": f,
-#         "nx": int(cfg["grid"]["nx"]),
-#         "ny": int(cfg["grid"]["ny"]),
-#         "kx": kxs[0],
-#         "ky": kxs[1],
-#         "x": xs[0],
-#         "y": xs[1],
-#         "dx": dxs[0],
-#         "dy": dxs[1],
-#         "c_light": cfg["grid"]["c_light"],
-#         # "a": (jnp.zeros(x.size + 2), jnp.zeros(x.size + 2)),
-#         "nprof": n_prof_total,
-#         "kr_prof": kprof,
-#         "iprof": ion_charge,
-#         "one_over_kx": one_over_kxs[0],
-#         "one_over_ky": one_over_kxs[1],
-#         "vx": vs[0],
-#         "kvx": kvs[0],
-#         "nvx": int(cfg["grid"]["nvx"]),
-#         "dvx": dvs[0],
-#         "vy": vs[1],
-#         "kvy": kvs[1],
-#         "nvy": int(cfg["grid"]["nvy"]),
-#         "dvy": dvs[1],
-#         "driver_function": driver_function,
-#         # "dt": dt,
-#         # "nu_prof": nuprof,
-#         # "kt_prof": ktprof,
-#         "t": np.linspace(0, cfg["grid"]["tmax"], cfg["grid"]["nt"]),
-#     }
-#     # cfg["derived"]["dt"] = float(cfg["derived"]["dt"][1] - cfg["derived"]["dt"][0])
-#
-#     return cfg
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -388,11 +291,19 @@ def get_save_quantities(cfg: Dict) -> Dict:
         )
 
     if "fields" in cfg["save"].keys():
+        if "x" in cfg["save"]["x"]:
+            cfg["save"]["fields"]["x"]["ax"] = np.linspace(
+                cfg["save"]["fields"]["x"]["xmin"], cfg["save"]["fields"]["x"]["xmax"], cfg["save"]["fields"]["x"]["nx"]
+            )
+            cfg["save"]["fields"]["y"]["ax"] = np.linspace(
+                cfg["save"]["fields"]["y"]["ymin"], cfg["save"]["fields"]["y"]["ymax"], cfg["save"]["fields"]["y"]["ny"]
+            )
+        else:
 
-        def fields_save_func(t, y, args):
-            return {"fields": y["fields"]}
+            def fields_save_func(t, y, args):
+                return {"fields": {"e": y["e"], "b": y["b"]}}
 
-        cfg["save"]["fields"]["func"] = fields_save_func
+            cfg["save"]["fields"]["func"] = fields_save_func
 
     if "dist" in cfg["save"].keys():
 
@@ -404,60 +315,38 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_envelope(p_wL, p_wR, p_L, p_R, ax, a0, bump_or_trough="trough", this_np=np):
-    if bump_or_trough.casefold() == "trough":
-        return a0 * 0.5 * (this_np.tanh((ax - p_L) / p_wL) - this_np.tanh((ax - p_R) / p_wR))
-    elif bump_or_trough.casefold() == "bump":
-        return a0 * 0.5 * (2.0 - this_np.tanh((ax - p_L) / p_wL) + this_np.tanh((ax - p_R) / p_wR))
+def postprocess(result, cfg: Dict, td: str):
+    t0 = time()
+    flds_path = os.path.join(td, "binary", "fields")
+    flds_list = os.listdir(flds_path)
+
+    # merge
+    flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
+    arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
+    arr.to_netcdf(os.path.join(flds_path, "fields.nc"))
+    _ = [os.remove(fl) for fl in flds_paths]
+    del arr
+
+    os.makedirs(os.path.join(td, "plots"), exist_ok=True)
+
+    arr = xarray.open_dataset(os.path.join(flds_path, "fields.nc"))
+    t_skip = int(arr.coords["t"].data.size // 10)
+    t_skip = t_skip if t_skip > 1 else 1
+
+    for quant in ["ex", "ey", "dex"]:
+        _plot_2d_(arr, quant, t_skip, td)
+
+    mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
+
+    return arr
 
 
-def get_profile_with_mask(prof_dict, axs, b_or_t, this_np=np):
-    profile = 1.0 - (
-        get_envelope(
-            p_wL=prof_dict["rise"][0],
-            p_L=prof_dict["center"][0] - 0.5 * prof_dict["width"][0],
-            p_wR=prof_dict["rise"][0],
-            p_R=prof_dict["center"][0] + 0.5 * prof_dict["width"][0],
-            ax=axs[0],
-            a0=1.0,
-            bump_or_trough=b_or_t,
-            this_np=this_np,
-        )[:, None]
-        * get_envelope(
-            p_wL=prof_dict["rise"][1],
-            p_L=prof_dict["center"][1] - 0.5 * prof_dict["width"][1],
-            p_wR=prof_dict["rise"][1],
-            p_R=prof_dict["center"][1] + 0.5 * prof_dict["width"][1],
-            ax=axs[1],
-            a0=1.0,
-            bump_or_trough=b_or_t,
-            this_np=this_np,
-        )[None, :]
-    )
-    mask = (
-        get_envelope(
-            p_wL=prof_dict["rise"][0],
-            p_L=prof_dict["center"][0] - 0.5 * prof_dict["width"][0],
-            p_wR=prof_dict["rise"][0],
-            p_R=prof_dict["center"][0] + 0.5 * prof_dict["width"][0],
-            ax=axs[0],
-            a0=1.0,
-            bump_or_trough="trough",
-            this_np=this_np,
-        )[:, None]
-        * get_envelope(
-            p_wL=prof_dict["rise"][1],
-            p_L=prof_dict["center"][1] - 0.5 * prof_dict["width"][1],
-            p_wR=prof_dict["rise"][1],
-            p_R=prof_dict["center"][1] + 0.5 * prof_dict["width"][1],
-            ax=axs[1],
-            a0=1.0,
-            bump_or_trough="trough",
-            this_np=this_np,
-        )[None, :]
-    )
-    profile *= prof_dict["wall_height"]
-    profile += prof_dict["baseline"]
-    profile *= prof_dict["slope"] * mask * ax + 1.0
+def _plot_2d_(arr, quant, t_skip, td):
+    fig, ax = plt.subplots(3, 3, figsize=(16, 12))
+    for plot_num in range(9):
+        this_ax_row = plot_num // 3
+        this_ax_col = plot_num - 3 * this_ax_row
+        arr[quant][plot_num * t_skip + t_skip // 2].T.plot(ax=ax[this_ax_row, this_ax_col])
 
-    return profile
+    fig.savefig(os.path.join(td, "plots", f"{quant}.png"), bbox_inches="tight")
+    plt.close()

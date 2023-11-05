@@ -5,7 +5,7 @@ from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
 from jax import numpy as jnp
 import numpy as np
 
-import mlflow
+import mlflow, pint
 import equinox as eqx
 import xarray as xr
 
@@ -13,18 +13,7 @@ import xarray as xr
 from utils import plotters, misc
 
 
-def start_run(run_type, run_id):
-    if run_type == "forward":
-        run(run_id)
-    elif run_type == "grad":
-        remote_gradient(run_id)
-    elif run_type == "val":
-        remote_val(run_id)
-    else:
-        raise NotImplementedError
-
-
-def get_helper(mode):
+def get_helpers(mode):
     if mode == "tf-1d":
         from adept.tf1d import helpers
     elif mode == "sh-2d":
@@ -39,8 +28,62 @@ def get_helper(mode):
     return helpers
 
 
+def write_units(cfg, td):
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+
+    lambda0 = _Q(cfg["units"]["laser wavelength"])
+    w0 = (2 * np.pi / lambda0 * ureg.c).to("rad/s")
+    t0 = (1 / w0).to("fs")
+    n0 = (w0**2 * ureg.m_e * ureg.epsilon_0 / ureg.e**2.0).to("1/cc")
+    T0 = _Q(cfg["units"]["electron temperature"]).to("eV")
+    v0 = np.sqrt(2.0 * T0 / (ureg.m_e)).to("m/s")
+    debye_length = (v0 / w0).to("nm")
+
+    logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
+    logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
+    nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
+    nuee_norm = nuee / w0
+
+    # if (Ti * me / mi) < Te:
+    #     if Te > 10 * Z ^ 2:
+    #         logLambda_ei = 24 - np.log(ne.magnitude**0.5 / Te.magnitude)
+    #     else:
+    #         logLambda_ei = 23 - np.log(ne.magnitude**0.5 * Z * Te.magnitude**-1.5)
+    # else:
+    #     logLambda_ei = 30 - np.log(ni.magnitude**0.5 * Z**2 / mu * Ti.magnitude**-1.5)
+
+    # nuei = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0**1.5, "Hz")
+    # nuee_norm = nuee / w0
+
+    box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * debye_length).to("microns")
+    if "ymax" in cfg["grid"].keys():
+        box_width = ((cfg["grid"]["ymax"] - cfg["grid"]["ymin"]) * debye_length).to("microns")
+    else:
+        box_width = "inf"
+    sim_duration = (cfg["grid"]["tmax"] * t0).to("ps")
+
+    all_quantities = {
+        "w0": w0,
+        "t0": t0,
+        "n0": n0,
+        "v0": v0,
+        "T0": T0,
+        "lambda_D": debye_length,
+        "logLambda_ee": logLambda_ee,
+        "nuee": nuee,
+        "nuee_norm": nuee_norm,
+        "box_length": box_length,
+        "box_width": box_width,
+        "sim_duration": sim_duration,
+    }
+
+    with open(os.path.join(td, "units.yaml"), "w") as fi:
+        yaml.dump(all_quantities, fi)
+
+
 def run(cfg: Dict) -> Solution:
-    helpers = get_helper(cfg["mode"])
+    helpers = get_helpers(cfg["mode"])
 
     with tempfile.TemporaryDirectory() as td:
         with open(os.path.join(td, "config.yaml"), "w") as fi:
@@ -52,6 +95,8 @@ def run(cfg: Dict) -> Solution:
 
         cfg = helpers.get_solver_quantities(cfg)
         cfg = helpers.get_save_quantities(cfg)
+
+        write_units(cfg, td)
 
         models = helpers.get_models(cfg["models"])
         state = helpers.init_state(cfg)
