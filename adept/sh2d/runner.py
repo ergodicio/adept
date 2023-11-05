@@ -57,16 +57,18 @@ def write_units(cfg, td):
         "box_length": box_length,
         "sim_duration": sim_duration,
     }
-    all_quantities = {k: str(v) for k, v in all_quantities.items()}
+    all_quantities_str = {k: str(v) for k, v in all_quantities.items()}
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
-        yaml.dump(all_quantities, fi)
+        yaml.dump(all_quantities_str, fi)
 
     print("units: ")
-    print(all_quantities)
+    print(all_quantities_str)
     print()
 
     mlflow.log_artifacts(td)
+
+    return all_quantities
 
 
 def run(cfg: Dict) -> Solution:
@@ -81,7 +83,7 @@ def run(cfg: Dict) -> Solution:
         cfg["grid"] = helpers.get_solver_quantities(cfg["grid"])
         cfg = helpers.get_save_quantities(cfg)
 
-        write_units(cfg, td)
+        cfg["units"]["derived"] = write_units(cfg, td)
 
         state = helpers.init_state(cfg)
 
@@ -90,18 +92,19 @@ def run(cfg: Dict) -> Solution:
 
         @eqx.filter_jit
         def _run_():
-            vf = helpers.VectorField(cfg)
+            vvf = helpers.VlasovVectorField(cfg)
+            cvf = helpers.FokkerPlanckVectorField(cfg)
             args = {"driver": cfg["drivers"], "b_ext": 0.0}
             return diffeqsolve(
-                terms=ODETerm(vf),
-                solver=Tsit5(),
+                terms=diffrax.MultiTerm(ODETerm(vvf), ODETerm(cvf)),
+                solver=helpers.ExplicitEStepper(),
                 t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args=args,
-                adjoint=diffrax.DirectAdjoint(),
+                # adjoint=diffrax.DirectAdjoint(),
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"]),  # , fn=cfg["save"]["func"]["callable"]),
             )
 

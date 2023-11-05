@@ -1,4 +1,5 @@
 from typing import Dict, Tuple
+from collections import defaultdict
 
 import equinox as eqx
 import jax
@@ -74,22 +75,45 @@ class Edfdv(eqx.Module):
     dv: float
     a1: Dict
     c1: Dict
+    c2: Dict
+    b1: Dict
+    a2: Dict
+    c3: Dict
+    c4: Dict
+    b2: Dict
 
     def __init__(self, cfg: Dict):
         self.v = cfg["grid"]["v"]
         self.nl = cfg["grid"]["nl"]
         self.ny = cfg["grid"]["ny"]
         self.dv = cfg["grid"]["dv"]
-        self.a1 = {}
+        self.a1, self.c2, self.b1, self.a2, self.c3, self.c4, self.b2 = (
+            defaultdict(dict),
+            defaultdict(dict),
+            defaultdict(dict),
+            defaultdict(dict),
+            defaultdict(dict),
+            defaultdict(dict),
+            defaultdict(dict),
+        )
         self.c1 = {}
         for il in range(self.nl + 1):
-            self.a1[il] = {}
             self.c1[il] = 1 / (2 * il + 1) * il / (2 * (il + 1))
             for im in range(il + 1):
                 self.a1[il][im] = (il + 1 - im) / (2 * il + 1) * il / (2 * (il + 1))
+                self.c2[il][im] = -(il - im + 2) * (il - im + 1) / (2 * il + 1) * il / (2 * (il + 1))
+                self.b1[il][im] = -il / (2 * il + 1) * (il / 2)
+                self.a2[il][im] = (il + im) / (2 * il + 1)
+                self.c3[il][im] = 0.5 / (2 * il + 1)
+                self.c4[il][im] = -0.5 * (il + im - 1) * (il + im) / (2 * il + 1)
+                self.b2[il][im] = -il * (il + 1) / (2 * il + 1)
 
         self.a1[0][0] = 1.0
         self.c1[0] = 0.5
+        self.a2[1][0] = 1.0 / 3.0
+        self.b2[1][0] = 2.0 / 3.0
+        # self.a3[1][0] = 0.4
+        self.c3[1][1] = -0.1
 
     def ddv(self, f):
         return (
@@ -115,22 +139,22 @@ class Edfdv(eqx.Module):
         return self.c1[il] * em[..., None] * g[il][im]
 
     def calc_c2(self, ep, g, il, im):
-        return -(il - im + 2) * (il - im + 1) / (2 * il + 1) * il / (2 * (il + 1)) * ep[..., None] * g[il][im]
+        return self.c2[il][im] * ep[..., None] * g[il][im]
 
     def calc_b1(self, ep, g, il, im):
-        return -il / (2 * il + 1) * (il / 2) * jnp.real(ep[..., None] * g[il][im])
+        return self.b1[il][im] * jnp.real(ep[..., None] * g[il][im])
 
     def calc_a2(self, ex, h, il, im):
-        return (il + im) / (2 * il + 1) * ex[..., None] * h[il][im]
+        return self.a2[il][im] * ex[..., None] * h[il][im]
 
     def calc_c3(self, em, h, il, im):
-        return 0.5 / (2 * il + 1) * em[..., None] * h[il][im]
+        return self.c3[il][im] * em[..., None] * h[il][im]
 
     def calc_c4(self, ep, h, il, im):
-        return -0.5 * (il + im - 1) * (il + im) / (2 * il + 1) * ep[..., None] * h[il][im]
+        return self.c4[il][im] * ep[..., None] * h[il][im]
 
     def calc_b2(self, ep, h, il, im):
-        return -il * (il + 1) / (2 * il + 1) * jnp.real(ep[..., None] * h[il][im])
+        return self.b2[il][im] * jnp.real(ep[..., None] * h[il][im])
 
     def __call__(self, prev_f, delta_f, e):
         g, h = self.calc_gh(prev_f)

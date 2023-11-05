@@ -8,6 +8,8 @@ units:
   laser wavelength: 351nm
   electron temperature: 2000eV
   density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
 
 
 grid:
@@ -46,3 +48,10 @@ drivers:
       "y_w": 1000000.0
       "y_r": 10.0
       "a0": 1.e-8
+
+terms:
+  vlasov: True
+  fokker-planck:
+    active: False
+    flm: tridiagonal
+    f00: chang_cooper

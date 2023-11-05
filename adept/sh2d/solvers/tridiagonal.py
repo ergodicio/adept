@@ -11,7 +11,7 @@ class TridiagonalSolver(eqx.Module):
 
     def __init__(self, cfg):
         super(TridiagonalSolver, self).__init__()
-        self.num_unroll = cfg["solver"]["num_unroll"]
+        self.num_unroll = 16
 
     @staticmethod
     def compute_primes(last_primes, x):

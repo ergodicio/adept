@@ -1,3 +1,7 @@
+from typing import Dict, Callable
+from collections import defaultdict
+import functools
+
 import equinox as eqx
 import jax
 from jax import numpy as jnp
@@ -6,13 +10,15 @@ from adept.sh2d.solvers.tridiagonal import TridiagonalSolver
 
 
 class IsotropicCollisions(eqx.Module):
+    coll_opp: eqx.Module
+
     def __init__(self, cfg):
-        self.v = cfg["grid"]["v"]
-        if self.cfg["coll"]["isotropic"] == "lenard_bernstein":
+        # self.v = cfg["grid"]["v"]
+        if cfg["terms"]["fokker-planck"]["f00"] == "lenard_bernstein":
             self.coll_opp = LenardBernstein()
-        elif self.cfg["coll"]["isotropic"] == "chang_cooper":
+        elif cfg["terms"]["fokker-planck"]["f00"] == "chang_cooper":
             self.coll_opp = ChangCooper(cfg)
-        elif self.cfg["coll"]["isotropic"] == "shkarofsky":
+        elif cfg["terms"]["fokker-planck"]["f00"] == "shkarofsky":
             self.coll_opp = Shkarofsky(cfg)
         else:
             raise NotImplementedError
@@ -22,11 +28,62 @@ class IsotropicCollisions(eqx.Module):
         return new_f00
 
 
-class ChangCooper(eqx.Module):
+def calc_i(v, flm, j):
+    return 4 * jnp.pi / v[None, None, :] * jnp.cumsum(flm * v[None, None, :] ** (j + 2), axis=2)
+
+
+def calc_j(v, flm, j):
+    temp = jnp.cumsum(flm * v[None, None, :] ** (j + 2), axis=2)
+    return 4 * jnp.pi / v[None, None, :] * (jnp.sum(flm * v[None, None, :] ** (j + 2), axis=2)[..., None] - temp)
+
+
+class Shkarofsky(eqx.Module):
     def __init__(self, cfg):
         self.v = cfg["grid"]["v"]
-        self.dv = cfg["grid"]["dv"]
+        self.nv = cfg["grid"]["nv"]
         self.nuee_dt = cfg["grid"]["dt"] * cfg["units"]["nuee_norm"]
+        self.td_solve = TridiagonalSolver(cfg)
+        self.calc_i2 = functools.partial(calc_i, v=self.v, j=2)
+        self.calc_i0 = functools.partial(calc_i, v=self.v, j=0)
+        self.calc_jm1 = functools.partial(calc_j, v=self.v, j=-1)
+
+    def __call__(self, t, y, args):
+        f00 = y["flm"][0][0]
+        i20 = self.calc_i2(f00)
+        jm10 = self.calc_jm1(f00)
+        i00 = self.calc_i0(f00)
+
+        v = self.v
+        subdiag = (1 / 3 / v) * (i20 + jm10) - (1 / 3 / v**2) * (2 * jm10 - i20 + 3 * i00)
+        diag = 4 * np.pi * f00 - 2 / 3 / v * (i20 + jm10)
+        supdiag = (1 / 3 / v) * (i20 + jm10) + (1 / 3 / v**2) * (2 * jm10 - i20 + 3 * i00)
+        subdiag *= -self.nuee_dt
+        diag *= -self.nuee_dt
+        supdiag *= -self.nuee_dt
+        diag = 1 - diag
+
+        subdiag = subdiag.reshape(-1, self.nv)
+        diag = diag.reshape(-1, self.nv)
+        supdiag = supdiag.reshape(-1, self.nv)
+
+        return self.td_solve(subdiag, diag, supdiag, f00)
+
+
+class ChangCooper(eqx.Module):
+    v: jax.Array
+    nx: int
+    ny: int
+    dv: float
+    nuee_dt: float
+    td_solve: eqx.Module
+    zeros: jax.Array
+
+    def __init__(self, cfg):
+        self.nx = cfg["grid"]["nx"]
+        self.ny = cfg["grid"]["ny"]
+        self.v = cfg["grid"]["v"]
+        self.dv = cfg["grid"]["dv"]
+        self.nuee_dt = cfg["grid"]["dt"] * cfg["units"]["derived"]["nuee_norm"].magnitude
         self.td_solve = TridiagonalSolver(cfg)
         self.zeros = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 1))
 
@@ -46,7 +103,7 @@ class ChangCooper(eqx.Module):
         )
 
     def __call__(self, t, y, args):
-        f00 = y[0][0]
+        f00 = y
         dv = self.dv
         nuee_dt = self.nuee_dt
 
@@ -62,9 +119,9 @@ class ChangCooper(eqx.Module):
         )
         diag = jnp.concatenate(
             [
-                [ck[..., 0] * dlt[..., 0] - dk[..., 0] / dv],
+                (ck[..., 0] * dlt[..., 0] - dk[..., 0] / dv)[..., None],
                 diag,
-                [-ck[..., -2] * (1 - dlt[..., -2]) - dk[..., -2] / dv],
+                (-ck[..., -2] * (1 - dlt[..., -2]) - dk[..., -2] / dv)[..., None],
             ],
             axis=-1,
         )
@@ -80,40 +137,57 @@ class ChangCooper(eqx.Module):
         subdiag = jnp.concatenate([self.zeros, subdiag], axis=-1)
         supdiag = jnp.concatenate([supdiag, self.zeros], axis=-1)
 
-        return self.td_solve(subdiag, diag, supdiag, f00)
+        subdiag = subdiag.reshape((-1, self.v.size))
+        diag = diag.reshape((-1, self.v.size))
+        supdiag = supdiag.reshape((-1, self.v.size))
+        f00 = f00.reshape((-1, self.v.size))
+
+        return self.td_solve(subdiag, diag, supdiag, f00).reshape((self.nx, self.ny, self.v.size))
 
 
 class AnisotropicCollisions(eqx.Module):
+    td: bool
+    num_batches: int
+    v: jax.Array
+    nl: int
+    dv: float
+    dv_sq: float
+    lms: Dict
+    td_solve: eqx.Module
+    Y_dt: float
+    calc_i2: Callable
+    calc_i0: Callable
+    calc_jm1: Callable
+
     def __init__(self, cfg):
-        self.td = cfg["coll"]["tridiagonal_only"]
+        self.td = cfg["terms"]["fokker-planck"]["flm"] == "tridiagonal"
         self.num_batches = cfg["grid"]["nx"] * cfg["grid"]["ny"]
         self.v = cfg["grid"]["v"]
+        self.nl = cfg["grid"]["nl"]
         self.dv = self.v[1] - self.v[0]
         self.dv_sq = self.dv**2.0
-        self.lms = {}
+        self.lms = defaultdict(dict)
         self.td_solve = TridiagonalSolver(cfg)
         self.Y_dt = (
             4
             * np.pi
-            * (cfg["units"]["Z"] * ["units"]["Zp"]) ** 2.0
-            * cfg["units"]["logLambda_ee"]
-            * cfg["units"]["nuee_norm"]
+            * (cfg["units"]["Z"] * cfg["units"]["Zp"]) ** 2.0
+            * cfg["units"]["derived"]["logLambda_ee"]
+            * cfg["units"]["derived"]["nuee_norm"].magnitude
             * cfg["grid"]["dt"]
         )
         for il in range(0, cfg["grid"]["nl"] + 1):
             for im in range(0, il + 1):
                 self.lms[il][im] = (il, im)
 
-    def calc_ij(self, flm, ij):
-        ilm_j = 4 * jnp.pi / self.v[None, None, :] * jnp.cumsum(flm * self.v[None, None, :] ** (ij + 2), axis=2)
-        jlm_j = 4 * jnp.pi / self.v[None, None, :] * jnp.cumsum(flm * self.v[None, None, :] ** (ij + 2), axis=2)[::-1]
-
-        return ilm_j, jlm_j
+        self.calc_i2 = functools.partial(calc_i, v=self.v, j=2)
+        self.calc_i0 = functools.partial(calc_i, v=self.v, j=0)
+        self.calc_jm1 = functools.partial(calc_j, v=self.v, j=-1)
 
     def tridiagonal_flm(self, flm, il, im):
-        i_2, _ = self.calc_ij(flm, ij=2)
-        _, j_minus_1 = self.calc_ij(flm, ij=-1)
-        i_0, _ = self.calc_ij(flm, ij=0)
+        i_2 = self.calc_i2(flm=flm)
+        j_minus_1 = self.calc_jm1(flm=flm)
+        i_0 = self.calc_i0(flm=flm)
 
         coeff1 = (-i_2 + 2 * j_minus_1 + 3 * i_0) / 3 / self.v[None, None, :] ** 2.0
         coeff2 = (i_2 + j_minus_1) / 3 / self.v[None, None, :]
@@ -126,12 +200,18 @@ class AnisotropicCollisions(eqx.Module):
         diagonal = diagonal.reshape((self.num_batches, -1)) * self.Y_dt + 1
         superdiagonal = superdiagonal.reshape((self.num_batches, -1)) * self.Y_dt
 
-        return self.tri_solve(subdiagonal, diagonal, superdiagonal, flm)
+        flm = flm.reshape((self.num_batches, -1))
 
-    def __call__(self, prev_f):
-        if self.td:
-            new_f = jax.tree_util.tree_map_with_path(self.tridiagonal_flm, prev_f, (self.lms,))
-        else:
-            new_f = jax.tree_util.tree_map_with_path(self.full_flm, prev_f, (self.lms,))
+        return self.td_solve(subdiagonal, diagonal, superdiagonal, flm)
 
-        return new_f
+    def __call__(self, t, y, args):
+        for il in range(1, self.nl + 1):
+            for im in range(0, il + 1):
+                y[il][im] = self.tridiagonal_flm(y[il][im], il, im)
+
+        # if self.td:
+        #     new_f = jax.tree_util.tree_map_with_path(self.tridiagonal_flm, y, (self.lms,))
+        # else:
+        #     new_f = jax.tree_util.tree_map_with_path(self.full_flm, y, (self.lms,))
+
+        return y

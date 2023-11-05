@@ -11,7 +11,7 @@ from diffrax import Euler
 
 from jax import numpy as jnp
 
-from adept.sh2d.solvers import vlasov, field
+from adept.sh2d.solvers import vlasov, field, fokker_planck
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
@@ -151,7 +151,46 @@ def init_state(cfg: Dict) -> Dict:
     return state
 
 
-class VectorField(eqx.Module):
+class FokkerPlanckVectorField(eqx.Module):
+    """
+    :param cfg:
+    :return:
+    """
+
+    cfg: Dict
+    fp_flm: eqx.Module
+    fp_f00: eqx.Module
+
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self.fp_flm = fokker_planck.AnisotropicCollisions(cfg)
+        self.fp_f00 = fokker_planck.IsotropicCollisions(cfg)
+
+    def __call__(self, t: float, y: Dict, args: Dict):
+        """
+        :param t:
+        :param y:
+        :param args:
+        :return:
+        """
+        if self.cfg["terms"]["fokker-planck"]["active"]:
+            y["flm"][0][0] = y["flm"][0][0].view(dtype=jnp.complex128)
+            y["flm"][0][0] = self.fp_f00(t, y["flm"][0][0], args)
+
+            for il in range(1, self.cfg["grid"]["nl"] + 1):
+                for im in range(0, il + 1):
+                    y["flm"][il][im] = y["flm"][il][im].view(dtype=jnp.complex128)
+            y["flm"] = self.fp_flm(t, y["flm"], args)
+
+            for il in range(0, self.cfg["grid"]["nl"] + 1):
+                for im in range(0, il + 1):
+                    y["flm"][il][im] = y["flm"][il][im].view(dtype=jnp.float64)
+
+        return y
+
+
+class VlasovVectorField(eqx.Module):
     """
     This function returns the function that defines $d_state / dt$
 
@@ -164,6 +203,7 @@ class VectorField(eqx.Module):
     """
 
     cfg: Dict
+
     push_vlasov: eqx.Module
     push_driver: eqx.Module
     # poisson_solver: eqx.Module
@@ -227,18 +267,54 @@ class VectorField(eqx.Module):
         return dydt
 
 
-# class Stepper(Euler):
-#     def __init__(self, cfg):
-#         self.vlasov_stepper = diffrax.Tsit5()
-#         self.maxwell_stepper =
-#
-#     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
-#         del solver_state, made_jump
-#         control = terms.contr(t0, t1)
-#         y_after_vlasov = self.vlasov_stepper.step(terms, t0, t1, y0, args, solver_state, made_jump)
-#         # y_after_collisions = self.collision_stepper.step()
-#         # y_after_maxwell = self.maxwell_stepper.step()
-#
-#         y1 = (y0**ω + terms.vf_prod(t0, y0, args, control) ** ω).ω
-#         dense_info = dict(y0=y0, y1=y1)
-#         return y1, None, dense_info, None, diffrax.RESULTS.successful
+class ExplicitEStepper(Euler):
+    def step(self, term: diffrax.MultiTerm, t0, t1, y0, args, solver_state, made_jump):
+        vlasov_term, collision_term = term.terms
+
+        # control1 = vlasov_term.contr(t0, t1)
+        # control2 = collision_term.contr(t0, t1)
+        # y1, _, dense_info, _, success = self.vlasov_stepper.step(
+        #     vlasov_term, t0, t1, y0, args, solver_state, made_jump
+        # )
+        y1 = (y0**ω + vlasov_term.vf_prod(t0, y0, args, vlasov_term.contr(t0, t1)) ** ω).ω
+        # y1, _, dense_info, _, success = self.vlasov_stepper.step(term_2, t0, t1, y0, args, solver_state, made_jump)
+        y1 = collision_term.vf(t0, y1, args)
+
+        dense_info = dict(y0=y0, y1=y1)
+        return y1, None, dense_info, None, diffrax.RESULTS.successful
+
+
+class ImplicitEStepper(Euler):
+    def __init__(self, cfg):
+        self.vlasov_stepper = diffrax.Tsit5()
+        self.field_solver = None
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        del solver_state, made_jump
+        vlasov_without_e, vlasov_e, collisions, implicit_e_solve = terms
+        y_after_vlasov_part_a = vlasov_without_e.vf_prod(t0, y0, args, vlasov.contr(t0, t1))
+
+        de = self.calc_de(y_after_vlasov_part_a)
+
+        # get j0
+        j0 = self.calc_j0(y_after_vlasov_part_a)
+
+        # get jdEx
+        y_after_vlasov_part_a["e"] = jnp.concatenate([de[..., :1], self.zeros, self.zeros])
+        e_dex = vlasov_e.vf_prod(t0, y_after_vlasov_part_a, args, vlasov_e.contr(t0, t1))
+
+        # get jdEy
+        y_after_vlasov_part_a["e"] = jnp.concatenate([self.zeros, de[..., 1:2], self.zeros])
+        jdey = vlasov_e.vf_prod(t0, y_after_vlasov_part_a, args, vlasov_e.contr(t0, t1))
+
+        # get jdEz
+        y_after_vlasov_part_a["e"] = jnp.concatenate([self.zeros, self.zeros, de[..., 2:]])
+        jdez = vlasov_e.vf_prod(t0, y_after_vlasov_part_a, args, vlasov_e.contr(t0, t1))
+
+        # get JN
+
+        # solve 3x3 systems
+        # y["e"] = implicit_e_solve.vf_prod()
+
+        dense_info = dict(y0=y0, y1=y1)
+        return y1, None, dense_info, None, diffrax.RESULTS.successful
