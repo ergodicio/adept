@@ -202,7 +202,7 @@ class VelocityStepper(eqx.Module):
         vtrap_sq = ek / self.model_kld
         tau1 = 1.0 / self.nuee * vtrap_sq / self.vph**2.0
         tau2 = 2.0 * np.pi / self.model_kld / jnp.sqrt(vtrap_sq)
-        coeff = 0.5 #beta * (vt / self.vph) ** 2.0 * tau2 / tau1
+        coeff = 0.5  # beta * (vt / self.vph) ** 2.0 * tau2 / tau1
 
         return coeff
 
@@ -247,7 +247,7 @@ class ParticleTrapper(eqx.Module):
     nu_g_model: eqx.Module
     # nu_d_model: eqx.Module
 
-    def __init__(self, cfg, species="electron", models=None):
+    def __init__(self, cfg, species="electron"):
         nuee = cfg["physics"][species]["trapping"]["nuee"]
         if cfg["physics"][species]["gamma"] == "kinetic":
             kinetic_real_epw = True
@@ -266,17 +266,17 @@ class ParticleTrapper(eqx.Module):
         self.vph = jnp.interp(self.model_kld, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / self.model_kld
 
         # Make models
-        if models:
-            self.nu_g_model = models["nu_g"]
-        else:
-            self.nu_g_model = lambda x: 1e-3
+        # if models:
+        #     self.nu_g_model = models["nu_g"]
+        # else:
+        #     self.nu_g_model = lambda x: 1e-3
 
     def __call__(self, e, delta, args):
         ek = jnp.fft.rfft(e, axis=0) * 2.0 / self.kx.size
         norm_e = (jnp.log10(jnp.interp(self.model_kld, self.kxr, jnp.abs(ek)) + 1e-10) + 10.0) / -10.0
         func_inputs = jnp.stack([norm_e, self.norm_kld, self.norm_nuee], axis=-1)
         # jax.debug.print("{x}", x=func_inputs)
-        growth_rates = 10 ** (3 * jnp.squeeze(self.nu_g_model(func_inputs)))
+        growth_rates = 10 ** (3 * jnp.squeeze(args["nu_g"](func_inputs)))
 
         return -self.vph * gradient(delta, self.kx) + growth_rates * jnp.abs(
             jnp.fft.irfft(ek * self.kx.size / 2.0 * self.wis)

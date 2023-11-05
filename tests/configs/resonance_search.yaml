@@ -1,7 +1,7 @@
-mode: es-1d
+mode: tf-1d
 
 mlflow:
-  experiment: es1d-resonance-search
+  experiment: tf1d-resonance-search
   run: test
 
 adjoint: Backsolve

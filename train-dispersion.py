@@ -84,7 +84,7 @@ def train_loop():
                             def loss(models):
                                 w0 = jnp.squeeze(0.5 * models["w_of_k"](jnp.array([k0])) + 1.1)
                                 mod_defaults["drivers"]["ex"]["0"]["w0"] = w0
-                                vf = helpers.VectorField(mod_defaults, models=False)
+                                vf = helpers.VectorField(mod_defaults)
                                 args = {"driver": mod_defaults["drivers"]}
 
                                 results = diffeqsolve(

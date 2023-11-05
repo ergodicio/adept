@@ -1,7 +1,7 @@
-mode: es-1d
+mode: tf-1d
 
 mlflow:
-  experiment: es1d-epw-test
+  experiment: tf1d-epw-test
   run: test
 
 models:

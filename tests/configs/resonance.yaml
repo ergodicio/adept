@@ -1,7 +1,7 @@
-mode: es-1d
+mode: tf-1d
 
 mlflow:
-  experiment: es1d-ions-test
+  experiment: tf1d-ions-test
   run: test
 
 grid:

@@ -20,7 +20,7 @@ from jaxopt import OptaxSolver
 import equinox as eqx
 from tqdm import tqdm
 
-from adept.es1d import helpers
+from adept.tf1d import helpers
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
@@ -137,7 +137,7 @@ def get_loss(state, pulse_dict, mod_defaults):
 
     def loss(w0):
         pulse_dict["driver"]["ex"]["0"]["w0"] = w0
-        vf = helpers.VectorField(mod_defaults, models=False)
+        vf = helpers.VectorField(mod_defaults)
         results = diffeqsolve(
             terms=ODETerm(vf),
             solver=Tsit5(),

@@ -1,7 +1,6 @@
 from typing import Dict
 import os, time, tempfile, yaml
 
-import diffrax
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
 from jax import numpy as jnp
 import numpy as np
@@ -10,13 +9,13 @@ import mlflow
 import equinox as eqx
 import xarray as xr
 
-from adept.es1d import helpers
+
 from utils import plotters, misc
 
 
 def start_run(run_type, run_id):
     if run_type == "forward":
-        just_forward(run_id, nested=False)
+        run(run_id)
     elif run_type == "grad":
         remote_gradient(run_id)
     elif run_type == "val":
@@ -25,7 +24,24 @@ def start_run(run_type, run_id):
         raise NotImplementedError
 
 
+def get_helper(mode):
+    if mode == "tf-1d":
+        from adept.tf1d import helpers
+    elif mode == "sh-2d":
+        from adept.sh2d import helpers
+    elif mode == "vlasov-2d":
+        from adept.vlasov2d import helpers
+    elif mode == "envelope-2d":
+        from adept.envelope2d import helpers
+    else:
+        raise NotImplementedError("This solver approach has not been implemented yet")
+
+    return helpers
+
+
 def run(cfg: Dict) -> Solution:
+    helpers = get_helper(cfg["mode"])
+
     with tempfile.TemporaryDirectory() as td:
         with open(os.path.join(td, "config.yaml"), "w") as fi:
             yaml.dump(cfg, fi)
@@ -44,17 +60,22 @@ def run(cfg: Dict) -> Solution:
         t0 = time.time()
 
         # @eqx.filter_jit
+        t_and_s = helpers.get_terms_and_solver(cfg)
+
         def _run_():
-            vf = helpers.VectorField(cfg, models=models)
+            args = {"driver": cfg["drivers"]}
+            if "models" in cfg:
+                args["models"] = helpers.get_models(cfg["models"])
+
             return diffeqsolve(
-                terms=ODETerm(vf),
-                solver=Tsit5(),
+                terms=t_and_s["terms"],
+                solver=t_and_s["solver"],
                 t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
                 max_steps=cfg["grid"]["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                args={"driver": cfg["drivers"]},
+                args=args,
                 # adjoint=diffrax.DirectAdjoint(),
                 saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
             )

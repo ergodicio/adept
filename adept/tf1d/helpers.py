@@ -11,10 +11,11 @@ import xarray as xr
 from jax import tree_util as jtu
 from flatdict import FlatDict
 import equinox as eqx
+from diffrax import ODETerm, Tsit5
 
 from jax import numpy as jnp
-from adept.es1d import pushers
-from utils import nn
+from adept.tf1d import pushers
+from equinox import nn
 
 
 def save_arrays(result, td, cfg, label):
@@ -154,6 +155,10 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
+def get_terms_and_solver(cfg):
+    return dict(terms=ODETerm(VectorField(cfg)), solver=Tsit5())
+
+
 def init_state(cfg: Dict) -> Dict:
     """
     This function initializes the state
@@ -190,7 +195,7 @@ class VectorField(eqx.Module):
     push_driver: Callable
     poisson_solver: Callable
 
-    def __init__(self, cfg, models):
+    def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         self.pusher_dict = {"ion": {}, "electron": {}}
@@ -203,7 +208,7 @@ class VectorField(eqx.Module):
                 cfg["grid"]["kx"], cfg["physics"][species_name]
             )
             if cfg["physics"][species_name]["trapping"]["is_on"]:
-                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name, models)
+                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name)
 
         self.push_driver = pushers.Driver(cfg["grid"]["x"])
         # if "ey" in self.cfg["drivers"]:

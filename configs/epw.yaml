@@ -18,9 +18,9 @@ grid:
   xmax: 19.634954084936208
   xmin: 0.0
 mlflow:
-  experiment: es1d-epw-test
+  experiment: tf1d-epw-test
   run: nl-fluid-noml
-mode: es-1d
+mode: tf-1d
 models:
   file: false
   nu_g:
