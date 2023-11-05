@@ -65,7 +65,7 @@ def train_loop():
             for batch, this_batch in tqdm(enumerate(these_batches), total=len(these_batches)):
                 grads = []
                 for sim, k0 in enumerate(this_batch):
-                    with open("./tests/configs/resonance.yaml", "r") as file:
+                    with open("tests/test_tf1d/configs/resonance.yaml", "r") as file:
                         defaults = yaml.safe_load(file)
                     mod_defaults = _modify_defaults_(defaults, float(k0))
                     with mlflow.start_run(run_name=f"{epoch=}-{batch=}-{sim=}", nested=True) as mlflow_run:

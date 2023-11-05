@@ -25,7 +25,7 @@ from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
 def load_cfg(rand_k0, gamma, adjoint):
-    with open("./tests/configs/resonance_search.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance_search.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)

@@ -35,7 +35,7 @@ def _modify_defaults_(defaults, rng):
 
 
 def test_single_resonance():
-    with open("./tests/configs/resonance.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     # modify config

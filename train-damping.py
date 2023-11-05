@@ -216,7 +216,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
 
 
 def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
-    with open("./configs/damping.yaml", "r") as file:
+    with open("configs/tf-1d/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
@@ -249,7 +249,7 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
 
 
 def eval_over_all():
-    with open("./configs/damping.yaml", "r") as file:
+    with open("configs/tf-1d/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
 
