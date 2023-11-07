@@ -51,15 +51,21 @@ class LeapfrogIntegrator(VlasovPoissonBase):
 
     def __init__(self, cfg):
         super(LeapfrogIntegrator, self).__init__(cfg)
-        self.b = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
+        self.b = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2))
         self.driver = field.Driver(cfg["grid"]["x"], cfg["grid"]["y"])
 
     def __call__(self, t, y, args):
-        f = y["dist"]
-        f = self.vdfdx(f=f, dt=0.5 * self.dt)
-        de_array = self.driver(t, args)
-        force, e = self.field_solve(de_array=de_array[..., 0], f=f)
-        f = self.edfdv(f=f, e=force, dt=self.dt)
-        f = self.vdfdx(f=f, dt=0.5 * self.dt)
+        new_state = {}
+        for species in ["electron"]:
+            f = self.vdfdx(f=y["electron"], dt=0.5 * self.dt)
+            de_array = self.driver(t, args)
+            force, e = self.field_solve(de_array=de_array, f=f)
+            f = self.edfdv(f=f, e=force, dt=self.dt)
+            f = self.vdfdx(f=f, dt=0.5 * self.dt)
 
-        return {"dist": f, "de": de_array, "e": e, "b": self.b}
+            new_state[species] = f
+
+        for nm, fld in zip(["e", "b", "de"], [e, self.b, de_array]):
+            new_state[nm] = fld
+
+        return new_state

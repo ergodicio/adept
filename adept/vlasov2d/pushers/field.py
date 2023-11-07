@@ -26,16 +26,22 @@ class SpectralPoissonSolver(eqx.Module):
         return jnp.trapz(jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
 
     def __call__(self, f: jnp.ndarray):
-        return jnp.real(
-            jnp.fft.ifft(
-                1j * self.one_over_kx[:, None] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=0),
-                axis=0,
-            )
-        ), jnp.real(
-            jnp.fft.ifft(
-                1j * self.one_over_ky[None, :] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=1),
-                axis=1,
-            )
+        return jnp.concatenate(
+            [
+                jnp.real(
+                    jnp.fft.ifft(
+                        1j * self.one_over_kx[:, None] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=0),
+                        axis=0,
+                    )
+                )[..., None],
+                jnp.real(
+                    jnp.fft.ifft(
+                        1j * self.one_over_ky[None, :] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=1),
+                        axis=1,
+                    )
+                )[..., None],
+            ],
+            axis=-1,
         )
 
 
@@ -58,7 +64,7 @@ class ElectricFieldSolver(eqx.Module):
 
         if cfg["solver"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(
-                ion_charge=cfg["grid"]["iprof"],
+                ion_charge=cfg["grid"]["ion_charge"],
                 one_over_kx=cfg["grid"]["one_over_kx"],
                 one_over_ky=cfg["grid"]["one_over_ky"],
                 dvx=cfg["grid"]["dvx"],
@@ -85,8 +91,8 @@ class ElectricFieldSolver(eqx.Module):
         :return:
         """
         # ponderomotive_force = -0.5 * jnp.gradient(jnp.square(a), self.dx)[1:-1]
-        self_consistent_ex, self_consistent_ey = self.es_field_solver(f)
-        return (de_array + self_consistent_ex, self_consistent_ey), (self_consistent_ex, self_consistent_ey)
+        self_consistent_e = self.es_field_solver(f)
+        return de_array + self_consistent_e, self_consistent_e
 
 
 class Driver(eqx.Module):

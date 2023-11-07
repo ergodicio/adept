@@ -142,9 +142,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
     cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
 
-    cfg["grid"] = cfg_grid
-
-    return cfg
+    return cfg_grid
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -160,8 +158,12 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_terms_and_solver(cfg):
-    return dict(terms=ODETerm(VectorField(cfg)), solver=Tsit5())
+def get_diffeqsolve_quants(cfg):
+    return dict(
+        terms=ODETerm(VectorField(cfg)),
+        solver=Tsit5(),
+        saveat=dict(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
+    )
 
 
 def init_state(cfg: Dict) -> Dict:

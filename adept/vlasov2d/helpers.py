@@ -7,8 +7,11 @@ from time import time
 import numpy as np
 import xarray, mlflow
 from jax import numpy as jnp
+from diffrax import ODETerm, SubSaveAt
+from matplotlib import pyplot as plt
+
 from adept.vlasov2d.integrator import LeapfrogIntegrator, Stepper
-from diffrax import ODETerm
+from adept.vlasov2d.storage import store_f, store_fields
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -88,11 +91,11 @@ def _initialize_distribution_(
     return f, vaxs
 
 
-def _initialize_total_distribution_(cfg):
+def _initialize_total_distribution_(cfg, cfg_grid):
     params = cfg["density"]
-    xs = (cfg["grid"]["x"], cfg["grid"]["y"])
+    xs = (cfg_grid["x"], cfg_grid["y"])
     n_prof_total = np.zeros([x.size for x in xs])
-    f = np.zeros([x.size for x in xs] + [cfg["grid"]["nvx"], cfg["grid"]["nvy"]])
+    f = np.zeros([x.size for x in xs] + [cfg_grid["nvx"], cfg_grid["nvy"]])
     species_found = False
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
@@ -118,12 +121,12 @@ def _initialize_total_distribution_(cfg):
 
             # Distribution function
             temp_f, _ = _initialize_distribution_(
-                nxs=[int(cfg["grid"]["nx"]), int(cfg["grid"]["ny"])],
-                nvs=[int(cfg["grid"]["nvx"]), int(cfg["grid"]["nvy"])],
+                nxs=[int(cfg_grid["nx"]), int(cfg_grid["ny"])],
+                nvs=[int(cfg_grid["nvx"]), int(cfg_grid["nvy"])],
                 v0=v0,
                 m=m,
                 T0=T0,
-                vmax=cfg["grid"]["vmax"],
+                vmax=cfg_grid["vmax"],
                 n_prof=nprof,
                 noise_val=species_params["noise_val"],
                 noise_seed=int(species_params["noise_seed"]),
@@ -201,7 +204,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
             "kvx": jnp.fft.fftfreq(cfg_grid["nvx"], d=cfg_grid["dvx"]) * 2.0 * np.pi,
             "kvxr": jnp.fft.rfftfreq(cfg_grid["nvx"], d=cfg_grid["dvx"]) * 2.0 * np.pi,
             "kvy": jnp.fft.fftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
-            "kyvr": jnp.fft.rfftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
+            "kvyr": jnp.fft.rfftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
         },
     }
 
@@ -243,14 +246,14 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
     cfg_grid["ktprof"] = 1.0
     # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-    cfg_grid["n_prof_total"], cfg_grid["starting_f"] = initialize_total_distribution(cfg)
+    cfg_grid["n_prof_total"], cfg_grid["starting_f"] = _initialize_total_distribution_(cfg, cfg_grid)
 
     cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
     # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
 
     cfg_grid["ion_charge"] = np.ones_like(cfg_grid["n_prof_total"])
 
-    return cfg
+    return cfg_grid
 
 
 def init_state(cfg: Dict) -> Dict:
@@ -260,22 +263,29 @@ def init_state(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    n_prof_total, f = _initialize_total_distribution_(cfg)
+    n_prof_total, f = _initialize_total_distribution_(cfg, cfg["grid"])
 
     state = {}
     for species in ["electron"]:
-        state[species] = dict(
-            dist=f,
-            de=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2)),
-            e=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2)),
-            b=jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2)),
-        )
+        state[species] = f
+
+    for field in ["e", "b", "de"]:
+        state[field] = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2))
 
     return state
 
 
-def get_terms_and_solver(cfg):
-    return dict(terms=ODETerm(LeapfrogIntegrator(cfg)), solver=Stepper())
+def get_diffeqsolve_quants(cfg):
+    return dict(
+        terms=ODETerm(LeapfrogIntegrator(cfg)),
+        solver=Stepper(),
+        saveat=dict(
+            subs={
+                "fields": SubSaveAt(ts=cfg["save"]["fields"]["t"]["ax"], fn=cfg["save"]["fields"]["func"]),
+                "electron": SubSaveAt(ts=cfg["save"]["electron"]["t"]["ax"], fn=cfg["save"]["electron"]["func"]),
+            }
+        ),
+    )
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -291,7 +301,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
         )
 
     if "fields" in cfg["save"].keys():
-        if "x" in cfg["save"]["x"]:
+        if "x" in cfg["save"]["fields"]:
             cfg["save"]["fields"]["x"]["ax"] = np.linspace(
                 cfg["save"]["fields"]["x"]["xmin"], cfg["save"]["fields"]["x"]["xmax"], cfg["save"]["fields"]["x"]["nx"]
             )
@@ -301,52 +311,51 @@ def get_save_quantities(cfg: Dict) -> Dict:
         else:
 
             def fields_save_func(t, y, args):
-                return {"fields": {"e": y["e"], "b": y["b"]}}
+                return {"e": y["e"], "b": y["b"], "de": y["de"]}
 
             cfg["save"]["fields"]["func"] = fields_save_func
 
-    if "dist" in cfg["save"].keys():
+    if "electron" in cfg["save"].keys():
 
         def dist_save_func(t, y, args):
-            return {"dist": y["dist"]}
+            return y["electron"]
 
-        cfg["save"]["dist"]["func"] = dist_save_func
+        cfg["save"]["electron"]["func"] = dist_save_func
 
     return cfg
 
 
-def postprocess(result, cfg: Dict, td: str):
+def post_process(result, cfg: Dict, td: str):
     t0 = time()
-    flds_path = os.path.join(td, "binary", "fields")
-    flds_list = os.listdir(flds_path)
 
     # merge
-    flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
-    arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
-    arr.to_netcdf(os.path.join(flds_path, "fields.nc"))
-    _ = [os.remove(fl) for fl in flds_paths]
-    del arr
-
+    # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
+    # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
+    fields_xr = store_fields(cfg, td, result.ys["fields"], result.ts["fields"])
+    f_xr = store_f(cfg, result.ts, td, result.ys)
+    # arr.to_netcdf(os.path.join(flds_path, "fields.nc"))
+    # _ = [os.remove(fl) for fl in flds_paths]
+    # del arr
+    #
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
-
-    arr = xarray.open_dataset(os.path.join(flds_path, "fields.nc"))
-    t_skip = int(arr.coords["t"].data.size // 10)
+    #
+    t_skip = int(fields_xr.coords["t"].data.size // 8)
     t_skip = t_skip if t_skip > 1 else 1
+    tslice = slice(0, -1, t_skip)
 
-    for quant in ["ex", "ey", "dex"]:
-        _plot_2d_(arr, quant, t_skip, td)
+    for quant in ["e", "b", "de"]:
+        for comp in ["x", "y"]:
+            _plot_2d_(fields_xr, quant, tslice, td, comp)
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
-    return arr
 
+def _plot_2d_(arr: xarray.Dataset, quant: str, tslice: slice, td: str, comp: str):
+    # fig, ax = plt.subplots(3, 3, figsize=(16, 12))
+    # for plot_num in range(9):
+    #     this_ax_row = plot_num // 3
+    #     this_ax_col = plot_num - 3 * this_ax_row
+    arr[quant][tslice].loc[{"comp": comp}].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
 
-def _plot_2d_(arr, quant, t_skip, td):
-    fig, ax = plt.subplots(3, 3, figsize=(16, 12))
-    for plot_num in range(9):
-        this_ax_row = plot_num // 3
-        this_ax_col = plot_num - 3 * this_ax_row
-        arr[quant][plot_num * t_skip + t_skip // 2].T.plot(ax=ax[this_ax_row, this_ax_col])
-
-    fig.savefig(os.path.join(td, "plots", f"{quant}.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(td, "plots", f"{quant}-{comp}.png"), bbox_inches="tight")
     plt.close()

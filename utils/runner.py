@@ -1,16 +1,14 @@
 from typing import Dict
 import os, time, tempfile, yaml
 
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
-from jax import numpy as jnp
+
+from diffrax import diffeqsolve, SaveAt, Solution
 import numpy as np
-
-import mlflow, pint
 import equinox as eqx
-import xarray as xr
+import mlflow, pint
 
 
-from utils import plotters, misc
+from utils import misc
 
 
 def get_helpers(mode):
@@ -64,18 +62,18 @@ def write_units(cfg, td):
     sim_duration = (cfg["grid"]["tmax"] * t0).to("ps")
 
     all_quantities = {
-        "w0": w0,
-        "t0": t0,
-        "n0": n0,
-        "v0": v0,
-        "T0": T0,
-        "lambda_D": debye_length,
-        "logLambda_ee": logLambda_ee,
-        "nuee": nuee,
-        "nuee_norm": nuee_norm,
-        "box_length": box_length,
-        "box_width": box_width,
-        "sim_duration": sim_duration,
+        "w0": str(w0),
+        "t0": str(t0),
+        "n0": str(n0),
+        "v0": str(v0),
+        "T0": str(T0),
+        "lambda_D": str(debye_length),
+        "logLambda_ee": str(logLambda_ee),
+        "nuee": str(nuee),
+        "nuee_norm": str(nuee_norm),
+        "box_length": str(box_length),
+        "box_width": str(box_width),
+        "sim_duration": str(sim_duration),
     }
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
@@ -93,28 +91,28 @@ def run(cfg: Dict) -> Solution:
         cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
         misc.log_params(cfg)
 
-        cfg = helpers.get_solver_quantities(cfg)
+        cfg["grid"] = helpers.get_solver_quantities(cfg)
         cfg = helpers.get_save_quantities(cfg)
 
         write_units(cfg, td)
 
-        models = helpers.get_models(cfg["models"])
+        models = helpers.get_models(cfg["models"]) if "models" in cfg else None
         state = helpers.init_state(cfg)
 
         # run
         t0 = time.time()
 
-        # @eqx.filter_jit
-        t_and_s = helpers.get_terms_and_solver(cfg)
+        diffeqsolve_quants = helpers.get_diffeqsolve_quants(cfg)
 
+        @eqx.filter_jit
         def _run_(these_models):
             args = {"driver": cfg["drivers"]}
-            if "models" in cfg:
+            if these_models is not None:
                 args["models"] = these_models
 
             return diffeqsolve(
-                terms=t_and_s["terms"],
-                solver=t_and_s["solver"],
+                terms=diffeqsolve_quants["terms"],
+                solver=diffeqsolve_quants["solver"],
                 t0=cfg["grid"]["tmin"],
                 t1=cfg["grid"]["tmax"],
                 max_steps=cfg["grid"]["max_steps"],
@@ -122,7 +120,7 @@ def run(cfg: Dict) -> Solution:
                 y0=state,
                 args=args,
                 # adjoint=diffrax.DirectAdjoint(),
-                saveat=SaveAt(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
+                saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
         result = _run_(models)
@@ -137,130 +135,3 @@ def run(cfg: Dict) -> Solution:
     # fin
 
     return result
-
-
-def remote_gradient(run_id):
-    with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
-        with tempfile.TemporaryDirectory() as td:
-            mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
-            actual_nk1 = xr.open_dataarray(
-                misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
-            )
-            mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
-            misc.log_params(mod_defaults)
-            mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
-            mod_defaults = helpers.get_save_quantities(mod_defaults)
-            t0 = time.time()
-
-            state = helpers.init_state(mod_defaults)
-            mod_defaults["models"]["file"] = misc.download_file(
-                "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
-            )
-            models = helpers.get_models(mod_defaults["models"])
-
-            def loss(these_models):
-                vf = helpers.VectorField(mod_defaults, models=these_models)
-                args = {"driver": mod_defaults["drivers"]}
-
-                results = diffeqsolve(
-                    terms=ODETerm(vf),
-                    solver=Tsit5(),
-                    t0=mod_defaults["grid"]["tmin"],
-                    t1=mod_defaults["grid"]["tmax"],
-                    max_steps=mod_defaults["grid"]["max_steps"],
-                    dt0=mod_defaults["grid"]["dt"],
-                    y0=state,
-                    args=args,
-                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]),
-                )
-                nk1 = (
-                    jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
-                    * 2.0
-                    / mod_defaults["grid"]["nx"]
-                )
-                return (
-                    jnp.mean(
-                        jnp.square(
-                            (np.log10(actual_nk1.data + 1e-20) - jnp.log10(nk1 + 1e-20))
-                            / np.log10(np.amax(actual_nk1.data))
-                        )
-                        * jnp.exp(-2 * (1 - (mod_defaults["save"]["t"]["ax"] / mod_defaults["save"]["t"]["tmax"])))
-                    ),
-                    results,
-                )
-
-            vg_func = eqx.filter_value_and_grad(loss, has_aux=True)
-            (loss_val, results), grad = eqx.filter_jit(vg_func)(models)
-            mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "loss": float(loss_val)})
-
-            # dump gradients
-            eqx.tree_serialise_leaves(os.path.join(td, "grads.eqx"), grad)
-
-            t0 = time.time()
-            helpers.post_process(results, mod_defaults, td)
-            plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
-            mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-            # log artifacts
-            mlflow.log_artifacts(td)
-            mlflow.set_tags({"status": "completed"})
-
-
-def remote_val(run_id):
-    with mlflow.start_run(run_id=run_id, nested=True) as mlflow_run:
-        with tempfile.TemporaryDirectory() as td:
-            mod_defaults = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=td)
-            actual_nk1 = xr.open_dataarray(
-                misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
-            )
-            mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
-            misc.log_params(mod_defaults)
-            mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
-            mod_defaults = helpers.get_save_quantities(mod_defaults)
-            t0 = time.time()
-
-            state = helpers.init_state(mod_defaults)
-            mod_defaults["models"]["file"] = misc.download_file(
-                "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
-            )
-            models = helpers.get_models(mod_defaults["models"])
-
-            def loss(these_models):
-                vf = helpers.VectorField(mod_defaults, models=these_models)
-                args = {"driver": mod_defaults["drivers"]}
-                results = diffeqsolve(
-                    terms=ODETerm(vf),
-                    solver=Tsit5(),
-                    t0=mod_defaults["grid"]["tmin"],
-                    t1=mod_defaults["grid"]["tmax"],
-                    max_steps=mod_defaults["grid"]["max_steps"],
-                    dt0=mod_defaults["grid"]["dt"],
-                    y0=state,
-                    args=args,
-                    saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"]),
-                )
-                nk1 = (
-                    jnp.abs(jnp.fft.fft(results.ys["x"]["electron"]["n"], axis=1)[:, 1])
-                    * 2.0
-                    / mod_defaults["grid"]["nx"]
-                )
-                return (
-                    jnp.mean(
-                        jnp.square(
-                            (np.log10(actual_nk1.data + 1e-20) - jnp.log10(nk1 + 1e-20))
-                            / np.log10(np.amax(actual_nk1.data))
-                        )
-                        * jnp.exp(-2 * (1 - (mod_defaults["save"]["t"]["ax"] / mod_defaults["save"]["t"]["tmax"])))
-                    ),
-                    results,
-                )
-
-            loss_val, results = eqx.filter_jit(loss)(models)
-            mlflow.log_metrics({"run_time": round(time.time() - t0, 4), "val_loss": float(loss_val)})
-
-            t0 = time.time()
-            helpers.post_process(results, mod_defaults, td)
-            plotters.mva(actual_nk1.data, mod_defaults, results, td, actual_nk1.coords)
-            mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-            # log artifacts
-            mlflow.log_artifacts(td)
-            mlflow.set_tags({"status": "completed"})
