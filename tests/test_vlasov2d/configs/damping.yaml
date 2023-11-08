@@ -28,40 +28,38 @@ density:
       width: 100000.0
 grid:
   c_light: 10
-  num_checkpoints: 10
-  num_fs: 2
   dt: 0.1
-  nvx: 64
-  nvy: 64
+  nvx: 128
+  nvy: 128
   nx: 24
-  ny: 8
+  ny: 12
   tmin: 0.
-  tmax: 100.0
+  tmax: 150.0
   vmax: 6.4
   xmax: 20.94
   xmin: 0.0
-  ymin: -8.0
-  ymax: 8.0
+  ymin: -4.0
+  ymax: 4.0
 
 save:
   fields:
     t:
       tmin: 0.5
-      tmax: 99.0
-      nt: 64
-    x:
-      xmin: 0.5
-      xmax: 19.0
-      nx: 16
-    y:
-      ymin: -2.0
-      ymax: 2.0
-      ny: 2
+      tmax: 149.0
+      nt: 96
+#    x:
+#      xmin: 0.0
+#      xmax: 19.0
+#      nx: 16
+#    y:
+#      ymin: -6.0
+#      ymax: 6.0
+#      ny: 2
   electron:
     t:
-      tmin: 5.
-      tmax: 95.
-      nt: 6
+      tmin: 25.
+      tmax: 75.
+      nt: 2
 
 krook:
   space-profile:
@@ -92,9 +90,9 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-6
+      a0: 1.e-5
       k0: 0.3
-      t_center: 40.0
+      t_center: 30.0
       t_rise: 5.0
       t_width: 30.0
       w0: 1.1598
@@ -108,9 +106,9 @@ drivers:
   ey: {}
 
 solver:
-  dfdt: hamiltonian_sixth
+  dfdt: leapfrog
   edfdv: exponential
   fp_operator: dougherty
   num_unroll: 32
-  field: poisson
+  field: ampere
   vdfdx: exponential

@@ -1,7 +1,8 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict
+from typing import Dict, Callable
+from functools import partial
 
 from jax import numpy as jnp
 import equinox as eqx
@@ -25,7 +26,7 @@ class SpectralPoissonSolver(eqx.Module):
     def compute_charges(self, f):
         return jnp.trapz(jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
 
-    def __call__(self, f: jnp.ndarray):
+    def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
         return jnp.concatenate(
             [
                 jnp.real(
@@ -45,23 +46,34 @@ class SpectralPoissonSolver(eqx.Module):
         )
 
 
-# class AmpereSolver(eqx.Module):
-#     def __init__(self, cfg):
-#         super(AmpereSolver, self).__init__()
-#         self.vx = cfg["derived"]["v"]
-#         self.vx_moment = partial(jnp.trapz, dx=cfg["derived"]["dv"], axis=1)
-#
-#     def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
-#         return prev_force - dt * self.vx_moment(self.vx[None, :] * f)
-#
+class AmpereSolver(eqx.Module):
+    vx: jnp.array
+    vy: jnp.array
+    moment_x: Callable
+    moment_y: Callable
+
+    def __init__(self, cfg):
+        super(AmpereSolver, self).__init__()
+        self.vx = cfg["grid"]["vx"]
+        self.vy = cfg["grid"]["vy"]
+        self.moment_x = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
+        self.moment_y = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=-1)
+
+    def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
+        jx = self.moment_x(self.vx[None, None, :] * self.moment_y(f))[..., None]
+        jy = self.moment_y(self.vy[None, None, :] * self.moment_x(f))[..., None]
+
+        return prev_force - dt * jnp.concatenate([jx, jy], axis=-1)
 
 
 class ElectricFieldSolver(eqx.Module):
     es_field_solver: eqx.Module
+    dt: float
 
     def __init__(self, cfg):
         super(ElectricFieldSolver, self).__init__()
 
+        self.dt = cfg["grid"]["dt"]
         if cfg["solver"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(
                 ion_charge=cfg["grid"]["ion_charge"],
@@ -70,29 +82,28 @@ class ElectricFieldSolver(eqx.Module):
                 dvx=cfg["grid"]["dvx"],
                 dvy=cfg["grid"]["dvy"],
             )
-        # elif cfg["solver"]["field"] == "ampere":
-        #     if cfg["solver"]["dfdt"] == "leapfrog":
-        #         self.es_field_solver = AmpereSolver(cfg)
-        #     else:
-        #         raise NotImplementedError(f"ampere + {cfg['solver']['dfdt']} has not yet been implemented")
+        elif cfg["solver"]["field"] == "ampere":
+            if cfg["solver"]["dfdt"] == "leapfrog":
+                self.es_field_solver = AmpereSolver(cfg)
+            else:
+                raise NotImplementedError(f"ampere + {cfg['solver']['dfdt']} has not yet been implemented")
         else:
             raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
         # self.dx = cfg["derived"]["dx"]
 
-    def __call__(self, de_array: jnp.ndarray, f: jnp.ndarray):
+    def __call__(self, prev_force: jnp.ndarray, f: jnp.ndarray):
         """
         This returns the total electrostatic field that is used in the Vlasov equation
         The total field is a sum of the driver field and the
         self-consistent electrostatic field from a Poisson or Ampere solve
 
-        :param de_array: an electric field
         :param f: distribution function
         :param a:
         :return:
         """
         # ponderomotive_force = -0.5 * jnp.gradient(jnp.square(a), self.dx)[1:-1]
-        self_consistent_e = self.es_field_solver(f)
-        return de_array + self_consistent_e, self_consistent_e
+        self_consistent_e = self.es_field_solver(f, prev_force, self.dt)
+        return self_consistent_e
 
 
 class Driver(eqx.Module):

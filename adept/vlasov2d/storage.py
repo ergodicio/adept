@@ -169,8 +169,12 @@ def get_field_save_func(cfg, k):
             flds = {}
             for this_k in ["e", "b", "de"]:
                 arr = trans_func(y[this_k])
-                fldx = interpax.interp2d(xq, yq, xax, yax, arr[..., 0]).reshape((xhat.size, yhat.size, 1))
-                fldy = interpax.interp2d(xq, yq, xax, yax, arr[..., 1]).reshape((xhat.size, yhat.size, 1))
+                fldx = interpax.interp2d(xq, yq, xax, yax, arr[..., 0], method="linear").reshape(
+                    (xhat.size, yhat.size, 1)
+                )
+                fldy = interpax.interp2d(xq, yq, xax, yax, arr[..., 1], method="linear").reshape(
+                    (xhat.size, yhat.size, 1)
+                )
 
                 flds[this_k] = jnp.concatenate([fldx, fldy], axis=-1)
             return flds
@@ -209,9 +213,18 @@ def get_save_quantities(cfg: Dict) -> Dict:
     """
     for k in cfg["save"].keys():
         for k2 in cfg["save"][k].keys():
-            cfg["save"][k][k2]["ax"] = np.linspace(
-                cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
-            )
+            if (k2 == "x") or (k2 == "y"):
+                dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
+                cfg["save"][k][k2]["ax"] = np.linspace(
+                    cfg["save"][k][k2][f"{k2}min"] + dx / 2.0,
+                    cfg["save"][k][k2][f"{k2}max"] - dx / 2.0,
+                    cfg["save"][k][k2][f"n{k2}"],
+                )
+
+            else:
+                cfg["save"][k][k2]["ax"] = np.linspace(
+                    cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
+                )
 
         if k.startswith("fields"):
             cfg["save"][k]["func"] = get_field_save_func(cfg, k)
