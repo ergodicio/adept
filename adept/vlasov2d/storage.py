@@ -2,7 +2,7 @@ import itertools
 from typing import Dict
 import os
 
-import interpax
+# import interpax
 from jax import numpy as jnp
 import numpy as np
 import xarray as xr
@@ -126,58 +126,59 @@ def get_field_save_func(cfg, k):
             return {this_k: y[this_k] for this_k in ["e", "b", "de"]}
 
     else:
-        if {"t", "x", "y"} == set(cfg["save"][k].keys()):
-            xhat, yhat = cfg["save"][k]["x"]["ax"], cfg["save"][k]["y"]["ax"]
-            xax, yax = cfg["grid"]["x"], cfg["grid"]["y"]
-            nx, ny = xax.size, yax.size
-
-            def trans_func(arr):
-                return arr
-
-        elif {"t", "kx", "y"} == set(cfg["save"][k].keys()):
-            xhat, yhat = cfg["save"][k]["kx"]["ax"], cfg["save"][k]["y"]["ax"]
-            xax, yax = cfg["grid"]["kx"], cfg["grid"]["y"]
-            nx, ny = xax.size, yax.size
-
-            def trans_func(arr):
-                return jnp.fft.rfft(arr, axis=0) * 2 / nx
-
-        elif {"t", "x", "ky"} == set(cfg["save"][k].keys()):
-            xhat, yhat = cfg["save"][k]["x"]["ax"], cfg["save"][k]["ky"]["ax"]
-            xax, yax = cfg["grid"]["x"], cfg["grid"]["ky"]
-            nx, ny = xax.size, yax.size
-
-            def trans_func(arr):
-                return jnp.fft.rfft(arr, axis=1) * 2 / ny
-
-        elif {"t", "kx", "ky"} == set(cfg["save"][k].keys()):
-            xhat, yhat = cfg["save"][k]["kx"]["ax"], cfg["save"][k]["ky"]["ax"]
-            xax, yax = cfg["grid"]["kx"], cfg["grid"]["ky"]
-            nx, ny = xax.size, yax.size
-
-            def trans_func(arr):
-                return jnp.fft.rfft(jnp.fft.rfft(arr, axis=0), axis=1) * 4 / (nx * ny)
-
-        else:
-            raise NotImplementedError
-
-        coords = list(itertools.product(xhat, yhat))
-        xq = [tup[0] for tup in coords]
-        yq = [tup[1] for tup in coords]
-
-        def fields_save_func(t, y, args):
-            flds = {}
-            for this_k in ["e", "b", "de"]:
-                arr = trans_func(y[this_k])
-                fldx = interpax.interp2d(xq, yq, xax, yax, arr[..., 0], method="linear").reshape(
-                    (xhat.size, yhat.size, 1)
-                )
-                fldy = interpax.interp2d(xq, yq, xax, yax, arr[..., 1], method="linear").reshape(
-                    (xhat.size, yhat.size, 1)
-                )
-
-                flds[this_k] = jnp.concatenate([fldx, fldy], axis=-1)
-            return flds
+        raise NotImplementedError
+        # if {"t", "x", "y"} == set(cfg["save"][k].keys()):
+        #     xhat, yhat = cfg["save"][k]["x"]["ax"], cfg["save"][k]["y"]["ax"]
+        #     xax, yax = cfg["grid"]["x"], cfg["grid"]["y"]
+        #     nx, ny = xax.size, yax.size
+        #
+        #     def trans_func(arr):
+        #         return arr
+        #
+        # elif {"t", "kx", "y"} == set(cfg["save"][k].keys()):
+        #     xhat, yhat = cfg["save"][k]["kx"]["ax"], cfg["save"][k]["y"]["ax"]
+        #     xax, yax = cfg["grid"]["kx"], cfg["grid"]["y"]
+        #     nx, ny = xax.size, yax.size
+        #
+        #     def trans_func(arr):
+        #         return jnp.fft.rfft(arr, axis=0) * 2 / nx
+        #
+        # elif {"t", "x", "ky"} == set(cfg["save"][k].keys()):
+        #     xhat, yhat = cfg["save"][k]["x"]["ax"], cfg["save"][k]["ky"]["ax"]
+        #     xax, yax = cfg["grid"]["x"], cfg["grid"]["ky"]
+        #     nx, ny = xax.size, yax.size
+        #
+        #     def trans_func(arr):
+        #         return jnp.fft.rfft(arr, axis=1) * 2 / ny
+        #
+        # elif {"t", "kx", "ky"} == set(cfg["save"][k].keys()):
+        #     xhat, yhat = cfg["save"][k]["kx"]["ax"], cfg["save"][k]["ky"]["ax"]
+        #     xax, yax = cfg["grid"]["kx"], cfg["grid"]["ky"]
+        #     nx, ny = xax.size, yax.size
+        #
+        #     def trans_func(arr):
+        #         return jnp.fft.rfft(jnp.fft.rfft(arr, axis=0), axis=1) * 4 / (nx * ny)
+        #
+        # else:
+        #     raise NotImplementedError
+        #
+        # coords = list(itertools.product(xhat, yhat))
+        # xq = [tup[0] for tup in coords]
+        # yq = [tup[1] for tup in coords]
+        #
+        # def fields_save_func(t, y, args):
+        #     flds = {}
+        #     for this_k in ["e", "b", "de"]:
+        #         arr = trans_func(y[this_k])
+        #         fldx = interpax.interp2d(xq, yq, xax, yax, arr[..., 0], method="linear").reshape(
+        #             (xhat.size, yhat.size, 1)
+        #         )
+        #         fldy = interpax.interp2d(xq, yq, xax, yax, arr[..., 1], method="linear").reshape(
+        #             (xhat.size, yhat.size, 1)
+        #         )
+        #
+        #         flds[this_k] = jnp.concatenate([fldx, fldy], axis=-1)
+        #     return flds
 
     return fields_save_func
 
