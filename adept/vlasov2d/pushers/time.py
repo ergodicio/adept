@@ -60,9 +60,10 @@ class LeapfrogIntegrator(VlasovPoissonBase):
         for species in ["electron"]:
             f = self.vdfdx(f=y["electron"], dt=0.5 * self.dt)
             de = self.driver(t, args)
-            e = self.field_solve(prev_force=e, f=f)
+            e = self.field_solve(prev_force=e, f=f, dt=0.5 * self.dt)
             f = self.edfdv(f=f, e=e + de, dt=self.dt)
             f = self.vdfdx(f=f, dt=0.5 * self.dt)
+            e = self.field_solve(prev_force=e, f=f, dt=0.5 * self.dt)
 
             new_state[species] = f
 

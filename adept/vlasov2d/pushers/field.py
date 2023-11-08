@@ -68,12 +68,10 @@ class AmpereSolver(eqx.Module):
 
 class ElectricFieldSolver(eqx.Module):
     es_field_solver: eqx.Module
-    dt: float
 
     def __init__(self, cfg):
         super(ElectricFieldSolver, self).__init__()
 
-        self.dt = cfg["grid"]["dt"]
         if cfg["solver"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(
                 ion_charge=cfg["grid"]["ion_charge"],
@@ -91,7 +89,7 @@ class ElectricFieldSolver(eqx.Module):
             raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
         # self.dx = cfg["derived"]["dx"]
 
-    def __call__(self, prev_force: jnp.ndarray, f: jnp.ndarray):
+    def __call__(self, prev_force: jnp.ndarray, f: jnp.ndarray, dt: float) -> jnp.ndarray:
         """
         This returns the total electrostatic field that is used in the Vlasov equation
         The total field is a sum of the driver field and the
@@ -102,7 +100,7 @@ class ElectricFieldSolver(eqx.Module):
         :return:
         """
         # ponderomotive_force = -0.5 * jnp.gradient(jnp.square(a), self.dx)[1:-1]
-        self_consistent_e = self.es_field_solver(f, prev_force, self.dt)
+        self_consistent_e = self.es_field_solver(f, prev_force, dt)
         return self_consistent_e
 
 
