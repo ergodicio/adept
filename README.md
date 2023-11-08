@@ -1,24 +1,12 @@
 # ADEPT
 ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ransport code.
 
-It solves the fluid equations of motion for a plasma. These are derived from moments of the Vlasov-Boltzmann equation.
-In 1D-1V, the Vlasov-Boltzmann equation is
+It solves the equations of motion for a plasma. 
 
-$$ \int dv ~ v^n ~ \partial_t f + v \partial_x f + E \partial_v f = C(f) $$
+Currently, it is tested to reproduce
 
-The zeroth ($v^0$) moment gives the continuity equation
-
-$$ \partial_t n + \partial_x (n~u) = 0$$
-
-The first moment gives the continunity equation
-
-$$ \partial_t u + u \partial_x u = e E - \partial_x p / n$$
-
-The second moment can be considered to be static which gives something like the ideal gas law
-
-$$ p = \gamma n k_B T $$ 
-
-or can be considered dynamic.
+1. Two fluid - Poisson system in 1D
+2. Vlasov-Poisson system in 2D
 
 ### What is novel about it?
 - Automatic Differentiation (AD) Enabled (bc of JAX, Diffrax)
@@ -36,10 +24,16 @@ AD enables the calculation of derivatives of entire simulations, pieces of it, o
 A couple of implemented examples are
 
 #### Find the resonant frequency given a density and temperature
-This is provided as a test in `tests/test_resonance_search.py`  
+This is provided as a test in `tests/test_resonance_search.py`. Also see ref. [1]  
 
 #### Fit a parameteric model for unresolved / unsolved microphysics
-This work is described in an upcoming publication
+The gist is that there is a discrepancy in the observable between a "first-principles" and "approximate" simulation.
+You would like for that discrepancy to decrease. To do so, you add a neural network to your "approximate" solver in a smart fashion.
+Then, you calibrate the results of your "approximate" simulation against the "ground-truth" from the "first-principles" simulation.
+After doing that enough times, over a diverse enough set of physical parameters, the neural network is able to help your "approximate" solver
+recover the "correct" answer.
+
+See ref. [2] for details and an application
 
 ### What does an experiment manager do for us?
 An experiment manager, namely `mlflow` here, simplifies management of simulation configurations and artifacts.
@@ -84,8 +78,13 @@ The package is tested against
 Take one of the `config`s in the `/configs` directory and modify it as you wish. Then use `run.py` to run the simulation
 You will find the results using the mlflow ui. You can find the binary run information will be stored using mlflow as well.
 
-## Train physics models in-situ using differentiable plasma simulations
-In development. Please reach out if you'd like to learn about this before I get a chance to write it down here.
-
 ## Contributing guide
 The contributing guide is in development but for now, just make an issue / pull request and we can go from there :)
+
+References:
+[1] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
+[2] A. S. Joglekar and A. G. R. Thomas, “Unsupervised discovery of nonlinear plasma physics using differentiable kinetic simulations,” J. Plasma Phys., vol. 88, no. 6, p. 905880608, Dec. 2022, doi: 10.1017/S0022377822000939.
+ 
+
+Citation:
+[1] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
