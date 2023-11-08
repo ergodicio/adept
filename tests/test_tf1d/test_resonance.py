@@ -36,7 +36,7 @@ def _modify_defaults_(defaults, rng, gamma):
 
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
 def test_single_resonance(gamma):
-    with open("./tests/configs/resonance.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     # modify config
@@ -47,7 +47,7 @@ def test_single_resonance(gamma):
     mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-        result = run(mod_defaults)
+        result, datasets = run(mod_defaults)
 
     kx = (
         np.fft.fftfreq(

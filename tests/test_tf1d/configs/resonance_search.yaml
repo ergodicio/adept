@@ -1,10 +1,17 @@
-mode: es-1d
+mode: tf-1d
 
 mlflow:
-  experiment: es1d-resonance-search
+  experiment: tf1d-resonance-search
   run: test
 
 adjoint: Backsolve
+
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
 
 grid:
     nx: 16
@@ -14,22 +21,10 @@ grid:
     tmax: 50
 
 save:
-    func:
-      is_on: False
     t:
       tmin: 0.0
       tmax: 50.0
       nt: 101
-    x:
-      is_on: True
-      xmin: 0.0
-      xmax: 20.94
-      nx: 32
-    kx:
-      is_on: False
-      kxmin: 0.0
-      kxmax: 0.3
-      nkx: 2
 
 physics:
     ion:

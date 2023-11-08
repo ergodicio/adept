@@ -65,7 +65,7 @@ def train_loop():
             for batch, this_batch in tqdm(enumerate(these_batches), total=len(these_batches)):
                 grads = []
                 for sim, k0 in enumerate(this_batch):
-                    with open("./tests/configs/resonance.yaml", "r") as file:
+                    with open("tests/test_tf1d/configs/resonance.yaml", "r") as file:
                         defaults = yaml.safe_load(file)
                     mod_defaults = _modify_defaults_(defaults, float(k0))
                     with mlflow.start_run(run_name=f"{epoch=}-{batch=}-{sim=}", nested=True) as mlflow_run:
@@ -84,7 +84,7 @@ def train_loop():
                             def loss(models):
                                 w0 = jnp.squeeze(0.5 * models["w_of_k"](jnp.array([k0])) + 1.1)
                                 mod_defaults["drivers"]["ex"]["0"]["w0"] = w0
-                                vf = helpers.VectorField(mod_defaults, models=False)
+                                vf = helpers.VectorField(mod_defaults)
                                 args = {"driver": mod_defaults["drivers"]}
 
                                 results = diffeqsolve(

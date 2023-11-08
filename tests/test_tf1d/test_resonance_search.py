@@ -20,12 +20,12 @@ from jaxopt import OptaxSolver
 import equinox as eqx
 from tqdm import tqdm
 
-from adept.es1d import helpers
+from adept.tf1d import helpers
 from theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
 def load_cfg(rand_k0, gamma, adjoint):
-    with open("./tests/configs/resonance_search.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance_search.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
@@ -41,7 +41,6 @@ def load_cfg(rand_k0, gamma, adjoint):
 
     xmax = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = xmax
-    defaults["save"]["x"]["xmax"] = xmax
 
     return defaults, wepw
 
@@ -56,7 +55,8 @@ def test_resonance_search(gamma, adjoint):
         mod_defaults, _ = load_cfg(sim_k0, gamma, adjoint)
         mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
         misc.log_params(mod_defaults)
-        mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
+        mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults)
+
         mod_defaults = helpers.get_save_quantities(mod_defaults)
 
         rng_key = jax.random.PRNGKey(420)
@@ -116,7 +116,7 @@ def get_vg_func(gamma, adjoint):
     defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
     misc.log_params(defaults)
 
-    defaults["grid"] = helpers.get_solver_quantities(defaults["grid"])
+    defaults["grid"] = helpers.get_solver_quantities(cfg=defaults)
     defaults = helpers.get_save_quantities(defaults)
 
     pulse_dict = {"driver": defaults["drivers"]}
@@ -135,9 +135,14 @@ def get_loss(state, pulse_dict, mod_defaults):
     else:
         raise NotImplementedError
 
+    if mod_defaults["save"]["func"]["callable"] is None:
+        save_at_args = dict(ts=mod_defaults["save"]["t"]["ax"])
+    else:
+        save_at_args = dict(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"])
+
     def loss(w0):
         pulse_dict["driver"]["ex"]["0"]["w0"] = w0
-        vf = helpers.VectorField(mod_defaults, models=False)
+        vf = helpers.VectorField(mod_defaults)
         results = diffeqsolve(
             terms=ODETerm(vf),
             solver=Tsit5(),
@@ -148,7 +153,7 @@ def get_loss(state, pulse_dict, mod_defaults):
             adjoint=adjoint,
             y0=state,
             args=pulse_dict,
-            saveat=SaveAt(ts=mod_defaults["save"]["t"]["ax"]),
+            saveat=SaveAt(**save_at_args),
         )
         nk1 = jnp.abs(jnp.fft.fft(results.ys["electron"]["n"], axis=1)[:, 1])
         return -jnp.amax(nk1), results

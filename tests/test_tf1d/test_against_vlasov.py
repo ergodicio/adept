@@ -36,7 +36,7 @@ def _modify_defaults_(defaults):
 
 
 def test_single_resonance():
-    with open("./tests/configs/vlasov_comparison.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/vlasov_comparison.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     # modify config
@@ -46,9 +46,9 @@ def test_single_resonance():
     mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-        result = run(mod_defaults)
+        result, datasets = run(mod_defaults)
 
-    vds = xr.open_dataset("tests/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")
+    vds = xr.open_dataset("tests/test_tf1d/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")
 
     nk1_fluid = result.ys["kx"]["electron"]["n"]["mag"][:, 1]
     nk1_vlasov = vds["n-(k_x)"][:, 1].data

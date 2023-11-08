@@ -1,28 +1,28 @@
 drivers:
   ex:
     '0':
-      a0: 0.005
+      a0: 0.01
       dw0: 0.0
-      k0: 0.3
+      k0: 0.32
       t_c: 40.0
       t_r: 5.0
       t_w: 40.0
-      w0: 1.1598464805919155
-      x_c: 300.0
+      w0: 1.1433284742365162
+      x_c: 400.0
       x_r: 10.0
-      x_w: 300.0
+      x_w: 1000000.0
 grid:
-  nx: 4096
+  nx: 16
   tmax: 500.0
   tmin: 0.0
-  xmax: 4000
+  xmax: 19.634954084936208
   xmin: 0.0
 mlflow:
-  experiment: es1d-epw-test
-  run: wp-nl-local
-mode: es-1d
+  experiment: tf1d-epw-test
+  run: nl-fluid-noml
+mode: tf-1d
 models:
-  file: models/weights.eqx
+  file: false
   nu_g:
     activation: tanh
     depth: 4
@@ -39,10 +39,10 @@ physics:
     landau_damping: true
     mass: 1.0
     trapping:
-      is_on: true
-      kld: 0.3
+      is_on: false
+      kld: 0.32
       nn: 8|8
-      nuee: 1.0e-05
+      nuee: 0.0001
   ion:
     T0: 1.0
     charge: 1.0
@@ -51,23 +51,24 @@ physics:
     landau_damping: false
     mass: 1836.0
     trapping:
-      is_on: true
+      is_on: false
       kld: 0.3
       nuee: 1.0e-09
+  landau_damping: true
+
 save:
-  func:
-    is_on: true
-  kx:
-    is_on: true
-    kxmax: 0.9
-    kxmin: 0.3
-    nkx: 3
   t:
     nt: 1000
     tmax: 500.0
     tmin: 0.5
   x:
-    is_on: true
-    nx: 256
-    xmax: 1000
+    nx: 16
+    xmax: 19.634954084936208
     xmin: 0.0
+
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10

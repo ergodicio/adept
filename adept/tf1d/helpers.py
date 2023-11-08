@@ -11,21 +11,23 @@ import xarray as xr
 from jax import tree_util as jtu
 from flatdict import FlatDict
 import equinox as eqx
+from diffrax import ODETerm, Tsit5
 
 from jax import numpy as jnp
-from adept.es1d import pushers
-from utils import nn
+from adept.tf1d import pushers
+from equinox import nn
 
 
 def save_arrays(result, td, cfg, label):
     if label is None:
         label = "x"
         flattened_dict = dict(FlatDict(result.ys, delimiter="-"))
+        save_ax = cfg["grid"]["x"]
     else:
         flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
+        save_ax = cfg["save"][label]["ax"]
     data_vars = {
-        k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, cfg["save"][label]["ax"])))
-        for k, v in flattened_dict.items()
+        k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, save_ax))) for k, v in flattened_dict.items()
     }
 
     saved_arrays_xr = xr.Dataset(data_vars)
@@ -69,21 +71,23 @@ def plot_xrs(which, td, xrs):
                 plt.close(fig)
 
 
-def post_process(result, cfg: Dict, td: str) -> None:
+def post_process(result, cfg: Dict, td: str) -> Dict:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
-    if cfg["save"]["func"]["is_on"]:
-        if cfg["save"]["x"]["is_on"]:
-            xrs = save_arrays(result, td, cfg, label="x")
-            plot_xrs("x", td, xrs)
-
-        if cfg["save"]["kx"]["is_on"]:
-            xrs = save_arrays(result, td, cfg, label="kx")
-            plot_xrs("kx", td, xrs)
+    datasets = {}
+    if any(x in ["x", "kx"] for x in cfg["save"]):
+        if "x" in cfg["save"].keys():
+            datasets["x"] = save_arrays(result, td, cfg, label="x")
+            plot_xrs("x", td, datasets["x"])
+        if "kx" in cfg["save"].keys():
+            datasets["kx"] = save_arrays(result, td, cfg, label="kx")
+            plot_xrs("kx", td, datasets["kx"])
     else:
-        xrs = save_arrays(result, td, cfg, label=None)
-        plot_xrs("x", td, xrs)
+        datasets["full"] = save_arrays(result, td, cfg, label=None)
+        plot_xrs("x", td, datasets["full"])
+
+    return datasets
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
@@ -109,7 +113,7 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     return cfg_grid
 
 
-def get_solver_quantities(cfg_grid: Dict) -> Dict:
+def get_solver_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are arrays
 
@@ -118,6 +122,8 @@ def get_solver_quantities(cfg_grid: Dict) -> Dict:
     :param cfg_grid:
     :return:
     """
+    cfg_grid = cfg["grid"]
+
     cfg_grid = {
         **cfg_grid,
         **{
@@ -148,10 +154,18 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
+    cfg["save"]["func"] = {"callable": get_save_func(cfg)}
     cfg["save"]["t"]["ax"] = jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"])
 
     return cfg
+
+
+def get_diffeqsolve_quants(cfg):
+    return dict(
+        terms=ODETerm(VectorField(cfg)),
+        solver=Tsit5(),
+        saveat=dict(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
+    )
 
 
 def init_state(cfg: Dict) -> Dict:
@@ -190,7 +204,7 @@ class VectorField(eqx.Module):
     push_driver: Callable
     poisson_solver: Callable
 
-    def __init__(self, cfg, models):
+    def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         self.pusher_dict = {"ion": {}, "electron": {}}
@@ -203,7 +217,7 @@ class VectorField(eqx.Module):
                 cfg["grid"]["kx"], cfg["physics"][species_name]
             )
             if cfg["physics"][species_name]["trapping"]["is_on"]:
-                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name, models)
+                self.pusher_dict[species_name]["particle_trapper"] = pushers.ParticleTrapper(cfg, species_name)
 
         self.push_driver = pushers.Driver(cfg["grid"]["x"])
         # if "ey" in self.cfg["drivers"]:
@@ -267,8 +281,8 @@ class VectorField(eqx.Module):
 
 
 def get_save_func(cfg):
-    if cfg["save"]["func"]["is_on"]:
-        if cfg["save"]["x"]["is_on"]:
+    if any(x in ["x", "kx"] for x in cfg["save"]):
+        if "x" in cfg["save"].keys():
             dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
             cfg["save"]["x"]["ax"] = jnp.linspace(
                 cfg["save"]["x"]["xmin"] + dx / 2.0, cfg["save"]["x"]["xmax"] - dx / 2.0, cfg["save"]["x"]["nx"]
@@ -276,7 +290,7 @@ def get_save_func(cfg):
 
             save_x = partial(jnp.interp, cfg["save"]["x"]["ax"], cfg["grid"]["x"])
 
-        if cfg["save"]["kx"]["is_on"]:
+        if "kx" in cfg["save"].keys():
             cfg["save"]["kx"]["ax"] = jnp.linspace(
                 cfg["save"]["kx"]["kxmin"], cfg["save"]["kx"]["kxmax"], cfg["save"]["kx"]["nkx"]
             )
@@ -288,15 +302,14 @@ def get_save_func(cfg):
 
         def save_func(t, y, args):
             save_dict = {}
-            if cfg["save"]["x"]["is_on"]:
+            if "x" in cfg["save"].keys():
                 save_dict["x"] = jtu.tree_map(save_x, y)
-            if cfg["save"]["kx"]["is_on"]:
+            if "kx" in cfg["save"].keys():
                 save_dict["kx"] = jtu.tree_map(save_kx, y)
 
             return save_dict
 
     else:
-        cfg["save"]["x"]["ax"] = cfg["grid"]["x"]
         save_func = None
 
     return save_func

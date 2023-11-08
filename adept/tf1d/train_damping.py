@@ -11,15 +11,14 @@ config.update("jax_enable_x64", True)
 # config.update("jax_debug_nans", True)
 # config.update("jax_disable_jit", True)
 
-import jax
 from jax import numpy as jnp
 import xarray as xr
 import tempfile, time
-import mlflow, optax, pickle
+import mlflow, optax
 import equinox as eqx
 from tqdm import tqdm
 
-from adept.es1d import helpers
+from adept.tf1d import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
 from utils import misc, plotters
 
@@ -43,7 +42,7 @@ def _modify_defaults_(defaults, k0, a0, nuee):
 
 def train_loop():
     # modify config
-    fks = xr.open_dataset("./epws.nc")
+    fks = xr.open_dataset("../../epws.nc")
 
     nus = np.copy(fks.coords[r"$\nu_{ee}$"].data)  # [::4]
     k0s = np.copy(fks.coords["$k_0$"].data)  # [::4]
@@ -138,7 +137,7 @@ def remote_train_loop():
     batch_size = 16
 
     # modify config
-    fks = xr.open_dataset("./epws.nc")
+    fks = xr.open_dataset("../../epws.nc")
 
     nus = np.copy(fks.coords[r"$\nu_{ee}$"].data[::3])
     k0s = np.copy(fks.coords["$k_0$"].data[::2])
@@ -216,7 +215,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
 
 
 def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
-    with open("./configs/damping.yaml", "r") as file:
+    with open("../../configs/tf-1d/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
 
     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
@@ -249,14 +248,14 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
 
 
 def eval_over_all():
-    with open("./configs/damping.yaml", "r") as file:
+    with open("../../configs/tf-1d/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
 
     # batch_size = 16
 
     # modify config
-    fks = xr.open_dataset("./epws.nc")
+    fks = xr.open_dataset("../../epws.nc")
 
     nus = np.copy(fks.coords[r"$\nu_{ee}$"].data[::3])
     k0s = np.copy(fks.coords["$k_0$"].data[::2])

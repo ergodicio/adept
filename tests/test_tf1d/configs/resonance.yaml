@@ -1,10 +1,8 @@
-mode: es-1d
+mode: tf-1d
 
 mlflow:
-  experiment: es1d-ions-test
+  experiment: tf1d-ions-test
   run: test
-
-models: False
 
 grid:
     nx: 32
@@ -13,20 +11,25 @@ grid:
     tmin: 0.0
     tmax: 50
 
+models: False
+
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
 save:
-    func:
-      is_on: True
     t:
       tmin: 0.0
       tmax: 50.0
       nt: 201
     x:
-      is_on: True
       xmin: 0.0
       xmax: 20.94
-      nx: 32
+      nx: 16
     kx:
-      is_on: True
       kxmin: 0.0
       kxmax: 0.3
       nkx: 2

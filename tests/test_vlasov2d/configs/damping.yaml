@@ -1,0 +1,114 @@
+calculator_machine: s-t4
+
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    space-profile:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0
+grid:
+  c_light: 10
+  dt: 0.1
+  nvx: 128
+  nvy: 128
+  nx: 24
+  ny: 12
+  tmin: 0.
+  tmax: 150.0
+  vmax: 6.4
+  xmax: 20.94
+  xmin: 0.0
+  ymin: -4.0
+  ymax: 4.0
+
+save:
+  fields:
+    t:
+      tmin: 0.5
+      tmax: 149.0
+      nt: 96
+#    x:
+#      xmin: 0.0
+#      xmax: 19.0
+#      nx: 16
+#    y:
+#      ymin: -6.0
+#      ymax: 6.0
+#      ny: 2
+  electron:
+    t:
+      tmin: 25.
+      tmax: 75.
+      nt: 2
+
+krook:
+  space-profile:
+    baseline: 0.0
+    bump_or_trough: bump
+    center: 2500
+    rise: 10.0
+    slope: 0.0
+    wall_height: 0.0
+    width: 48000000.0
+  time-profile:
+    baseline: 0.0
+    bump_or_trough: bump
+    center: 0.0
+    rise: 10.0
+    slope: 0.0
+    wall_height: 0.0
+    width: 100000.0
+
+machine: s-t4
+
+mode: vlasov-2d
+
+mlflow:
+  experiment: ld-2d2v
+  run: envelope-driver-small-amp
+
+drivers:
+  ex:
+    '0':
+      a0: 1.e-5
+      k0: 0.3
+      t_center: 30.0
+      t_rise: 5.0
+      t_width: 30.0
+      w0: 1.1598
+      dw0: 0.
+      x_center: 0.0
+      x_rise: 10.0
+      x_width: 4000000.0
+      y_center: 0.0
+      y_rise: 10.0
+      y_width: 200.0
+  ey: {}
+
+solver:
+  dfdt: leapfrog
+  edfdv: exponential
+  fp_operator: dougherty
+  num_unroll: 32
+  field: ampere
+  vdfdx: exponential
