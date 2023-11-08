@@ -34,7 +34,7 @@ grid:
   nvx: 64
   nvy: 64
   nx: 24
-  ny: 16
+  ny: 8
   tmin: 0.
   tmax: 100.0
   vmax: 6.4
@@ -47,8 +47,8 @@ save:
   fields:
     t:
       tmin: 0.5
-      tmax: 80.0
-      nt: 40
+      tmax: 99.0
+      nt: 64
     x:
       xmin: 0.5
       xmax: 19.0

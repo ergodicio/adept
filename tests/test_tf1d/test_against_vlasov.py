@@ -46,7 +46,7 @@ def test_single_resonance():
     mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-        result = run(mod_defaults)
+        result, datasets = run(mod_defaults)
 
     vds = xr.open_dataset("tests/test_tf1d/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")
 

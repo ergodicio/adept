@@ -71,21 +71,23 @@ def plot_xrs(which, td, xrs):
                 plt.close(fig)
 
 
-def post_process(result, cfg: Dict, td: str) -> None:
+def post_process(result, cfg: Dict, td: str) -> Dict:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
+    datasets = {}
     if any(x in ["x", "kx"] for x in cfg["save"]):
         if "x" in cfg["save"].keys():
-            xrs = save_arrays(result, td, cfg, label="x")
-            plot_xrs("x", td, xrs)
-
+            datasets["x"] = save_arrays(result, td, cfg, label="x")
+            plot_xrs("x", td, datasets["x"])
         if "kx" in cfg["save"].keys():
-            xrs = save_arrays(result, td, cfg, label="kx")
-            plot_xrs("kx", td, xrs)
+            datasets["kx"] = save_arrays(result, td, cfg, label="kx")
+            plot_xrs("kx", td, datasets["kx"])
     else:
-        xrs = save_arrays(result, td, cfg, label=None)
-        plot_xrs("x", td, xrs)
+        datasets["full"] = save_arrays(result, td, cfg, label=None)
+        plot_xrs("x", td, datasets["full"])
+
+    return datasets
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:

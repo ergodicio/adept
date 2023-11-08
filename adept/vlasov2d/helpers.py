@@ -4,6 +4,7 @@ from typing import Dict, List
 import os
 
 from time import time
+
 import numpy as np
 import xarray, mlflow
 from jax import numpy as jnp
@@ -11,7 +12,7 @@ from diffrax import ODETerm, SubSaveAt
 from matplotlib import pyplot as plt
 
 from adept.vlasov2d.integrator import LeapfrogIntegrator, Stepper
-from adept.vlasov2d.storage import store_f, store_fields
+from adept.vlasov2d.storage import store_f, store_fields, get_save_quantities
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -279,83 +280,32 @@ def get_diffeqsolve_quants(cfg):
     return dict(
         terms=ODETerm(LeapfrogIntegrator(cfg)),
         solver=Stepper(),
-        saveat=dict(
-            subs={
-                "fields": SubSaveAt(ts=cfg["save"]["fields"]["t"]["ax"], fn=cfg["save"]["fields"]["func"]),
-                "electron": SubSaveAt(ts=cfg["save"]["electron"]["t"]["ax"], fn=cfg["save"]["electron"]["func"]),
-            }
-        ),
+        saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
     )
-
-
-def get_save_quantities(cfg: Dict) -> Dict:
-    """
-    This function updates the config with the quantities required for the diagnostics and saving routines
-
-    :param cfg:
-    :return:
-    """
-    for k in cfg["save"].keys():
-        cfg["save"][k]["t"]["ax"] = np.linspace(
-            cfg["save"][k]["t"]["tmin"], cfg["save"][k]["t"]["tmax"], cfg["save"][k]["t"]["nt"]
-        )
-
-    if "fields" in cfg["save"].keys():
-        if "x" in cfg["save"]["fields"]:
-            cfg["save"]["fields"]["x"]["ax"] = np.linspace(
-                cfg["save"]["fields"]["x"]["xmin"], cfg["save"]["fields"]["x"]["xmax"], cfg["save"]["fields"]["x"]["nx"]
-            )
-            cfg["save"]["fields"]["y"]["ax"] = np.linspace(
-                cfg["save"]["fields"]["y"]["ymin"], cfg["save"]["fields"]["y"]["ymax"], cfg["save"]["fields"]["y"]["ny"]
-            )
-        else:
-
-            def fields_save_func(t, y, args):
-                return {"e": y["e"], "b": y["b"], "de": y["de"]}
-
-            cfg["save"]["fields"]["func"] = fields_save_func
-
-    if "electron" in cfg["save"].keys():
-
-        def dist_save_func(t, y, args):
-            return y["electron"]
-
-        cfg["save"]["electron"]["func"] = dist_save_func
-
-    return cfg
 
 
 def post_process(result, cfg: Dict, td: str):
     t0 = time()
-
+    os.makedirs(os.path.join(td, "plots"), exist_ok=True)
+    os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
     # merge
     # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
     # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
-    fields_xr = store_fields(cfg, td, result.ys["fields"], result.ts["fields"])
-    f_xr = store_f(cfg, result.ts, td, result.ys)
-    # arr.to_netcdf(os.path.join(flds_path, "fields.nc"))
-    # _ = [os.remove(fl) for fl in flds_paths]
-    # del arr
-    #
-    os.makedirs(os.path.join(td, "plots"), exist_ok=True)
-    #
-    t_skip = int(fields_xr.coords["t"].data.size // 8)
-    t_skip = t_skip if t_skip > 1 else 1
-    tslice = slice(0, -1, t_skip)
+    for k in result.ys.keys():
+        if k.startswith("field"):
+            fields_xr = store_fields(cfg, td, result.ys[k], result.ts[k], k)
+            t_skip = int(fields_xr.coords["t"].data.size // 8)
+            t_skip = t_skip if t_skip > 1 else 1
+            tslice = slice(0, -1, t_skip)
 
-    for quant in ["e", "b", "de"]:
-        for comp in ["x", "y"]:
-            _plot_2d_(fields_xr, quant, tslice, td, comp)
+            for nm, fld in fields_xr.items():
+                for comp in ["x", "y"]:
+                    fld[tslice].loc[{"comp": comp}].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
+                    plt.savefig(os.path.join(td, "plots", "fields", f"{nm[7:]}-{comp}.png"), bbox_inches="tight")
+                    plt.close()
+
+    f_xr = store_f(cfg, result.ts, td, result.ys)
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
-
-def _plot_2d_(arr: xarray.Dataset, quant: str, tslice: slice, td: str, comp: str):
-    # fig, ax = plt.subplots(3, 3, figsize=(16, 12))
-    # for plot_num in range(9):
-    #     this_ax_row = plot_num // 3
-    #     this_ax_col = plot_num - 3 * this_ax_row
-    arr[quant][tslice].loc[{"comp": comp}].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
-
-    plt.savefig(os.path.join(td, "plots", f"{quant}-{comp}.png"), bbox_inches="tight")
-    plt.close()
+    return {"fields": fields_xr, "dists": f_xr}

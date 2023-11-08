@@ -14,4 +14,4 @@ if __name__ == "__main__":
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
-        run(cfg)
+        result, datasets = run(cfg)

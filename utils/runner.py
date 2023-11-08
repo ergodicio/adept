@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Tuple
 import os, time, tempfile, yaml
 
 
@@ -80,7 +80,7 @@ def write_units(cfg, td):
         yaml.dump(all_quantities, fi)
 
 
-def run(cfg: Dict) -> Solution:
+def run(cfg: Dict) -> Tuple[Solution, Dict]:
     helpers = get_helpers(cfg["mode"])
 
     with tempfile.TemporaryDirectory() as td:
@@ -127,11 +127,11 @@ def run(cfg: Dict) -> Solution:
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
         t0 = time.time()
-        helpers.post_process(result, cfg, td)
+        datasets = helpers.post_process(result, cfg, td)
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
         # log artifacts
         mlflow.log_artifacts(td)
 
     # fin
 
-    return result
+    return result, datasets

@@ -55,7 +55,7 @@ def test_resonance_search(gamma, adjoint):
         mod_defaults, _ = load_cfg(sim_k0, gamma, adjoint)
         mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
         misc.log_params(mod_defaults)
-        mod_defaults = helpers.get_solver_quantities(mod_defaults)
+        mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults)
 
         mod_defaults = helpers.get_save_quantities(mod_defaults)
 
@@ -116,7 +116,7 @@ def get_vg_func(gamma, adjoint):
     defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
     misc.log_params(defaults)
 
-    defaults = helpers.get_solver_quantities(cfg=defaults)
+    defaults["grid"] = helpers.get_solver_quantities(cfg=defaults)
     defaults = helpers.get_save_quantities(defaults)
 
     pulse_dict = {"driver": defaults["drivers"]}
