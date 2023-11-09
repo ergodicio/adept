@@ -10,7 +10,7 @@ Welcome to adept's documentation!
 
 In some form or the other, they solve the equations of motion for a plasma.
 
-Currently, it is tested to reproduce
+So far, we have implemented
 
 1. Two fluid - Poisson system in 1D
 2. Vlasov-Poisson system in 2D
