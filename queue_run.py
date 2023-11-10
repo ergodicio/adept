@@ -36,8 +36,6 @@ def load_and_make_folders(cfg_path):
     with open(f"{cfg_path}.yaml", "r") as file:
         cfg = yaml.safe_load(file)
 
-    cfg["machine"] = {"calculator": "nersc-gpu", "postprocess": "local"}
-
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as run:
