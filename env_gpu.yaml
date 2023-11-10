@@ -21,10 +21,10 @@ dependencies:
       - mlflow
       - boto3
       - flatten-dict
-      - dm-haiku==0.0.10
       - typing-extensions
       - optax
       - tqdm
       - xarray
       - mlflow_export_import
       - pint
+      - diffrax
