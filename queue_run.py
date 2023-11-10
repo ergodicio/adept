@@ -25,7 +25,7 @@ def _queue_run_(machine, run_id):
 
     with open(os.path.join(os.getcwd(), "new_job.sh"), "w") as job_file:
         job_file.write(base_job)
-        job_file.writelines(f"srun python run_job.py {run_id} nersc-calculator")
+        job_file.writelines(f"srun python run.py --mode remote --run_id {run_id}")
 
     os.system(f"sbatch new_job.sh")
     time.sleep(0.1)
