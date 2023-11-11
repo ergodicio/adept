@@ -54,14 +54,13 @@ def download_file(fname, artifact_uri, destination_path):
             s3.download_file(bucket_name, rest_of_path[1:], dest_file_path)
         except botocore.exceptions.ClientError as e:
             return None
-    elif "file" in artifact_uri:
-        file_uri = file_uri[7:]
+    else:
+        if "file" in artifact_uri:
+            file_uri = file_uri[7:]
         if os.path.exists(file_uri):
             shutil.copyfile(file_uri, dest_file_path)
         else:
             return None
-    else:
-        raise NotImplementedError
 
     return dest_file_path
 
