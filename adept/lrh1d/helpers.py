@@ -207,8 +207,15 @@ class VectorField(eqx.Module):
 
     def __init__(self, cfg):
         super().__init__()
+        self.eta0 = None
+        self.sigma_sb = None
         self.cfg = cfg
         self.eos = pushers.IdealGas(cfg)
+        self.dt = cfg["grid"]["dt"]
+        self.gamma = 3.0
+        self.temperature = pushers.Temperature(cfg)
+        # self.velocity = pushers.Temperature(cfg)
+        # self.density = pushers.density(cfg)
 
     def __call__(self, t: float, y: Dict, args: Dict):
         """
@@ -230,32 +237,18 @@ class VectorField(eqx.Module):
         ne, ni = self.get_density_from_mass_density(rho)
         pi, pe, pr = self.eos(ne=ne, ni=ni, Te=Te, Ti=Ti, Tr=Tr)
 
-        new_u = u - self.dt / rho[1:-1] / delta_r[:-1] * ((P_all + q)[2:] - (Pall + q)[1:-1])
+        p_all = pi + pe + pr
+
+        new_u = u - self.dt / rho[1:-1] / delta_r[:-1] * ((p_all + q)[2:] - (p_all + q)[1:-1])
         new_r = r - 0.5 * self.dt * (new_u + u[1:-1])
         padded_new_r = jnp.concatenate([[0.0], new_r, new_r[-1:]])
-        new_delta_r = r[1:] - r[:-1]
+
         new_vol = 4.0 / 3.0 * jnp.pi * new_r**3.0
         new_rho = rho * (vol[1:-1] / new_vol)
 
-        new_Ti = Ti - self.dt / delta_r[:-1] * (self.gamma - 1) * new_vol / ni * (
-            0.5 * pi + q + eta0 * (new_u[2:] - u[1:-1]) / new_delta_r
-        ) / ((new_r**2.0 * new_u)[1:-1] - (new_r**2.0 * new_u)[:-2])
+        new_Ti, new_Te, new_Tr = self.temperature(new_rho, new_u, new_r, Ti, Te, Tr, pi, pe, pr)
 
-        new_Te = Te - self.dt / delta_r[:-1] * (self.gamma - 1) * new_vol / ne * (0.5 * pe) / (
-            (new_r**2.0 * new_u)[1:-1] - (new_r**2.0 * new_u)[:-2]
-        )
-
-        new_Tr = Tr - self.dt / delta_r[:-1] * self.c / (self.sigma_sb * Tr**3.0) * (0.5 * pr) / (
-            (new_r**2.0 * new_u)[1:-1] - (new_r**2.0 * new_u)[:-2]
-        )
-
-        new_Ti = self.diffusion_solve(kappa_i, T_i)
-        new_Te = self.diffusion_solve(kappa_e, T_e)
-        new_Tr = self.diffusion_solve(kappa_r, T_r)
-
-        new_Ti, new_Te, new_Tr = self.couple_temperatures(new_Ti, new_Te, new_Tr)
-
-        new_y = {"u": u, "r": r, "rho": rho, Ti: "Ti", "Te": Te, "Tr": Tr}
+        new_y = {"u": new_u, "r": new_r, "rho": new_rho, "Ti": new_Ti, "Te": new_Te, "Tr": new_Tr}
 
         return new_y
 
