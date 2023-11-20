@@ -1,8 +1,9 @@
-import flatdict, mlflow, os, boto3, botocore, shutil, pickle, yaml, operator
+import flatdict, mlflow, os, boto3, botocore, shutil, pickle, yaml, time, tempfile
 from urllib.parse import urlparse
 from mlflow.tracking import MlflowClient
 import jax
 import equinox as eqx
+from mlflow_export_import.run.export_run import RunExporter
 
 
 def log_params(cfg):
@@ -53,14 +54,13 @@ def download_file(fname, artifact_uri, destination_path):
             s3.download_file(bucket_name, rest_of_path[1:], dest_file_path)
         except botocore.exceptions.ClientError as e:
             return None
-    elif "file" in artifact_uri:
-        file_uri = file_uri[7:]
+    else:
+        if "file" in artifact_uri:
+            file_uri = file_uri[7:]
         if os.path.exists(file_uri):
             shutil.copyfile(file_uri, dest_file_path)
         else:
             return None
-    else:
-        raise NotImplementedError
 
     return dest_file_path
 
@@ -143,3 +143,45 @@ def queue_sim(sim_request):
     submissionResult = client.submit_job(**job_template)
 
     return submissionResult
+
+
+def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id: str):
+    """
+    Uploads directory to s3 bucket for ingestion into mlflow on remote / cloud side
+
+    This requires you to have permission to access the s3 bucket
+
+    :param local_directory:
+    :param bucket:
+    :param destination:
+    :param run_id:
+    :return:
+    """
+    client = boto3.client("s3")
+
+    # enumerate local files recursively
+    for root, dirs, files in os.walk(local_directory):
+        for filename in files:
+            # construct the full local path
+            local_path = os.path.join(root, filename)
+
+            # construct the full Dropbox path
+            relative_path = os.path.relpath(local_path, local_directory)
+            s3_path = os.path.join(destination, relative_path)
+            client.upload_file(local_path, bucket, s3_path)
+
+    with open(os.path.join(local_directory, f"ingest-{run_id}.txt"), "w") as fi:
+        fi.write("ready")
+
+    client.upload_file(os.path.join(local_directory, f"ingest-{run_id}.txt"), bucket, f"ingest-{run_id}.txt")
+
+
+def export_run(run_id):
+    t0 = time.time()
+    run_exp = RunExporter(mlflow_client=mlflow.MlflowClient())
+    with tempfile.TemporaryDirectory() as td2:
+        run_exp.export_run(run_id, td2)
+        print(f"Export took {round(time.time() - t0, 2)} s")
+        t0 = time.time()
+        upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id)
+    print(f"Uploading took {round(time.time() - t0, 2)} s")

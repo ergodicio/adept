@@ -10,6 +10,11 @@ import mlflow, pint
 
 from utils import misc
 
+if "BASE_TEMPDIR" in os.environ:
+    BASE_TEMPDIR = os.environ["BASE_TEMPDIR"]
+else:
+    BASE_TEMPDIR = None
+
 
 def get_helpers(mode):
     if mode == "tf-1d":
@@ -78,6 +83,13 @@ def write_units(cfg, td):
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
         yaml.dump(all_quantities, fi)
+
+
+def run_job(run_id, nested):
+    with mlflow.start_run(run_id=run_id, nested=nested) as run:
+        with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as temp_path:
+            cfg = misc.get_cfg(artifact_uri=run.info.artifact_uri, temp_path=temp_path)
+        run(cfg)
 
 
 def run(cfg: Dict) -> Tuple[Solution, Dict]:

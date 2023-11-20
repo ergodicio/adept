@@ -1,28 +1,30 @@
-name: adept
+name: adept-gpu
 channels:
   - conda-forge
-  - "nvidia/label/cuda-11.7.0"
-  - nvidia
 dependencies:
   - python=3.10
   - ipython
   - ipykernel
-  - cuda-nvcc
-  - cudatoolkit==11.7.0
   - pip
   - pip:
+      # works for regular pip packages
       - --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-      - "jax[cuda11_cudnn82]"
+      - jaxlib==0.4.20+cuda12.cudnn89
+      - jax==0.4.20
+      - jaxopt
       - numpy
       - scipy
       - matplotlib
+      - pyhdf
+      - xlrd
       - pyyaml
       - mlflow
       - boto3
-      - flatdict
+      - typing-extensions
+      - optax
       - tqdm
       - xarray
+      - mlflow_export_import
+      - pint
       - diffrax
-      - h5netcdf
-      - optax
-      - jaxopt
+      - flatdict
