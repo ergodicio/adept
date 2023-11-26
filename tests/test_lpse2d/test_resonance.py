@@ -69,7 +69,7 @@ def run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state):
 
 def get_vg_func(gamma, adjoint):
     rng = np.random.default_rng(420)
-    sim_k0 = rng.uniform(0.26, 0.4)
+    sim_k0 = rng.uniform(0.16, 0.24)
 
     defaults, actual_w0 = load_cfg(sim_k0, gamma, adjoint)
     defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
@@ -95,7 +95,7 @@ def get_loss(state, pulse_dict, mod_defaults):
         raise NotImplementedError
 
     def loss(w0):
-        pulse_dict["drivers"]["E2"]["k0"] = w0
+        pulse_dict["drivers"]["E2"]["w0"] = w0
         vf = integrator.VectorField(mod_defaults)
         results = diffeqsolve(
             terms=ODETerm(vf),

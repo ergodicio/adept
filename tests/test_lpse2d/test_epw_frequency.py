@@ -16,7 +16,7 @@ def _real_part_(kinetic):
     with open("tests/test_lpse2d/configs/epw.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
-    mlflow.set_experiment("test-epw-frequency")
+    mlflow.set_experiment("test-epw-frequency-lpse")
 
     # modify config
     rand_k0 = np.random.uniform(0.15, 0.22)
@@ -51,7 +51,7 @@ def _imaginary_part_(kinetic):
     with open("tests/test_lpse2d/configs/epw.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
-    mlflow.set_experiment("test-epw-frequency")
+    mlflow.set_experiment("test-epw-frequency-lpse")
 
     # modify config
     rand_k0 = np.random.uniform(0.26, 0.4)

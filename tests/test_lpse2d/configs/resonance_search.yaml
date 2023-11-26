@@ -17,8 +17,8 @@ drivers:
     intensity: 4.0e14
   E2:
     w0: 0.1536
-    t_c: 40.
-    t_w: 40.
+    t_c: 60.
+    t_w: 80.
     t_r: 5.
     x_c: 0.
     x_w: 800.
@@ -27,7 +27,7 @@ drivers:
     y_w: 2000000.
     y_r: 5.
     k0: 0.32
-    a0: 0.0125
+    a0: 125
     intensity: 4.0e14
 
 save:
