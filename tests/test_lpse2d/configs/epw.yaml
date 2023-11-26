@@ -1,0 +1,79 @@
+mode: envelope-2d
+
+drivers:
+  E0:
+    w0: 2.0
+    t_c: 500.
+    t_w: 600.
+    t_r: 20.
+    x_c: 500.
+    x_w: 600.
+    x_r: 20.
+    y_c: 500.
+    y_w: 60000000.
+    y_r: 20.
+    k0: 1.0
+    a0: 0.0
+    intensity: 4.0e14
+  E2:
+    w0: 0.1536
+    t_c: 40.
+    t_w: 40.
+    t_r: 5.
+    x_c: 0.
+    x_w: 800.
+    x_r: 20.
+    y_c: 0.
+    y_w: 2000000.
+    y_r: 5.
+    k0: 0.32
+    a0: 0.0125
+    intensity: 4.0e14
+
+save:
+  t:
+    tmin: 10.0
+    tmax: 195.0
+    nt: 384
+
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+plasma:
+  wp0: 1.0
+  nu_ei: 0.0
+  Z: 2
+  nb: 1.0
+  density: 2.3e27  #m^3
+
+grid:
+  xmin: 000.0
+  xmax: 16.535
+  nx: 64
+  ymin: -4.0
+  ymax: 4.0
+  ny: 8
+  tmin: 0.
+  tmax: 200.0
+  dt: 0.5
+
+mlflow:
+  experiment: epw
+  run: compare-against-vlasov
+
+terms:
+  epw:
+    linear: True
+    density_gradient: False
+    kinetic real part: True
+    trapping:
+      active: False
+      kld: 0.1
+      nuee: 0.001
+  tpd:
+    source: False
+

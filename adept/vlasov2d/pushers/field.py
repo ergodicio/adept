@@ -157,7 +157,7 @@ class Driver(eqx.Module):
         total_dex = jnp.zeros(current_time.shape + self.xax.shape + self.yax.shape)
         # total_djy = np.zeros(current_time.shape + xs[0].shape + xs[1].shape)
 
-        for key, pulse in args["driver"]["ex"].items():
+        for key, pulse in args["drivers"]["ex"].items():
             total_dex += self.get_this_pulse(pulse, current_time)
 
         # for key, pulse in pulses["ey"].items():

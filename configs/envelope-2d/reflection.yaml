@@ -1,0 +1,82 @@
+mode: envelope-2d
+
+drivers:
+  E0:
+    w0: 2.0
+    t_c: 500.
+    t_w: 600.
+    t_r: 20.
+    x_c: 500.
+    x_w: 600.
+    x_r: 20.
+    y_c: 500.
+    y_w: 60000000.
+    y_r: 20.
+    k0: 1.0
+    a0: 0.0
+    intensity: 4.0e14
+  E2:
+    w0: 0.1176
+    t_c: 230.
+    t_w: 400.
+    t_r: 5.
+    x_c: 1400.
+    x_w: 600.
+    x_r: 20.
+    y_c: 0.
+    y_w: 2000000.
+    y_r: 5.
+    k0: 0.28
+    a0: 100.0
+    intensity: 4.0e14
+
+save:
+  t:
+    tmin: 1.0
+    tmax: 9999.0
+    nt: 256
+
+plasma:
+  wp0: 1.0
+  nu_ei: 0.0
+  Z: 2
+  nb: 1.0
+  temperature: 2.0 #keV
+  density: 2.3e27  #m^3
+
+grid:
+  xmin: 000.0
+  xmax: 10000.0
+  nx: 4096
+  ymin: -4.0
+  ymax: 4.0
+  ny: 8
+  tmin: 0.
+  tmax: 10000.0
+  dt: 2.0
+
+mlflow:
+  experiment: epw-finite-length
+  run: trapping
+
+models:
+  file: /Users/archis/Dev/code/ergodic/laplax/weights.eqx
+  nu_g:
+    activation: tanh
+    depth: 4
+    final_activation: tanh
+    in_size: 3
+    out_size: 1
+    width_size: 8
+
+terms:
+  epw:
+    linear: True
+    density_gradient: False
+    kinetic real part: False
+    trapping:
+      active: True
+      kld: 0.28
+      nuee: 0.0000001
+  tpd:
+    source: False

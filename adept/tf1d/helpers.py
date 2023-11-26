@@ -240,7 +240,7 @@ class VectorField(eqx.Module):
         ed = 0.0
 
         for p_ind in self.cfg["drivers"]["ex"].keys():
-            ed += self.push_driver(args["driver"]["ex"][p_ind], t)
+            ed += self.push_driver(args["drivers"]["ex"][p_ind], t)
 
         # if "ey" in self.cfg["drivers"]:
         #     ad = 0.0
