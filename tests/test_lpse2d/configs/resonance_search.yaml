@@ -71,6 +71,9 @@ terms:
     linear: True
     density_gradient: False
     kinetic real part: True
+    boundary:
+      x: periodic
+      y: periodic
     trapping:
       kld: 0.3
       active: False
