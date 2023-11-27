@@ -13,7 +13,7 @@ from utils.misc import export_run
 
 def _run_(cfg_path):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
-    with open(f"{cfg_path}.yaml", "r") as fi:
+    with open(f"{os.path.join(os.getcwd(), cfg_path)}.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
@@ -30,10 +30,9 @@ if __name__ == "__main__":
     parser.add_argument("--run_id", help="enter run_id to continue")
     args = parser.parse_args()
 
-    if args.mode == "local":
+    if args.run_id is None:
         run_id = _run_(args.cfg)
-
-    elif args.mode == "remote":
+    else:
         run_job(args.run_id, nested=None)
         run_id = args.run_id
 

@@ -45,6 +45,12 @@ models:
       in_size: 3
       out_size: 1
       width_size: 8
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
 
 plasma:
   wp0: 1.0

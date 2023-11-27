@@ -36,6 +36,13 @@ save:
     tmax: 3950.0
     nt: 400
 
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
 plasma:
   wp0: 1.0
   nu_ei: 0.0

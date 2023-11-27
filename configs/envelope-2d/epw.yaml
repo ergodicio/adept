@@ -44,6 +44,13 @@ plasma:
   temperature: 2.0 #keV
   density: 2.3e27  #m^3
 
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
 grid:
   xmin: 000.0
   xmax: 22.44

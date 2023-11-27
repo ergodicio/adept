@@ -16,7 +16,7 @@ drivers:
     a0: 0.0
     intensity: 4.0e14
   E2:
-    w0: 0.1176
+    w0: 0.0864
     t_c: 230.
     t_w: 400.
     t_r: 5.
@@ -26,14 +26,14 @@ drivers:
     y_c: 0.
     y_w: 2000000.
     y_r: 5.
-    k0: 0.28
+    k0: 0.24
     a0: 100.0
     intensity: 4.0e14
 
 save:
   t:
     tmin: 1.0
-    tmax: 9999.0
+    tmax: 24999.0
     nt: 256
 
 plasma:
@@ -44,6 +44,13 @@ plasma:
   temperature: 2.0 #keV
   density: 2.3e27  #m^3
 
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
 grid:
   xmin: 000.0
   xmax: 10000.0
@@ -52,7 +59,7 @@ grid:
   ymax: 4.0
   ny: 8
   tmin: 0.
-  tmax: 10000.0
+  tmax: 25000.0
   dt: 2.0
 
 mlflow:
@@ -72,10 +79,10 @@ models:
 terms:
   epw:
     linear: True
-    density_gradient: False
+    density_gradient: True
     kinetic real part: False
     trapping:
-      active: True
+      active: False
       kld: 0.28
       nuee: 0.0000001
   tpd:
