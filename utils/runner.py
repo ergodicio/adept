@@ -24,7 +24,7 @@ def get_helpers(mode):
     elif mode == "vlasov-2d":
         from adept.vlasov2d import helpers
     elif mode == "envelope-2d":
-        from adept.envelope2d import helpers
+        from adept.lpse2d import helpers
     else:
         raise NotImplementedError("This solver approach has not been implemented yet")
 
@@ -118,7 +118,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
         @eqx.filter_jit
         def _run_(these_models):
-            args = {"driver": cfg["drivers"]}
+            args = {"drivers": cfg["drivers"]}
             if these_models is not None:
                 args["models"] = these_models
 
