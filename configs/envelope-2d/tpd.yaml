@@ -70,5 +70,8 @@ terms:
   epw:
     linear: True
     density_gradient: False
+    boundary:
+      x: absorbing
+      y: periodic
   tpd:
     source: False

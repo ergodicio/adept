@@ -12,7 +12,7 @@ import equinox as eqx
 from diffrax import ODETerm
 import xarray as xr
 
-from adept.lpse2d.core import integrator
+from adept.lpse2d.core import integrator, driver
 
 
 def get_derived_quantities(cfg_grid: Dict) -> Dict:
@@ -101,6 +101,18 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     one_over_ksq = np.array(1.0 / (cfg_grid["kx"][:, None] ** 2.0 + cfg_grid["ky"][None, :] ** 2.0))
     one_over_ksq[0, 0] = 0.0
     cfg_grid["one_over_ksq"] = jnp.array(one_over_ksq)
+
+    if cfg["terms"]["epw"]["boundary"]["x"] == "absorbing":
+        envelope_x = driver.get_envelope(50.0, 50.0, 300.0, cfg["grid"]["xmax"] - 300.0, cfg_grid["x"])[:, None]
+    else:
+        envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+
+    if cfg["terms"]["epw"]["boundary"]["y"] == "absorbing":
+        envelope_y = driver.get_envelope(50.0, 50.0, 300.0, cfg["grid"]["ymax"] - 300.0, cfg_grid["y"])[None, :]
+    else:
+        envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+
+    cfg_grid["absorbing_boundaries"] = np.exp(-cfg_grid["dt"] * (1.0 - envelope_x * envelope_y))
 
     return cfg_grid
 

@@ -224,4 +224,12 @@ class EPW2D(eqx.Module):
             )
             y["phi"] = self.get_phi_from_eh(eh)
 
+        if (
+            self.cfg["terms"]["epw"]["boundary"]["x"] == "absorbing"
+            or self.cfg["terms"]["epw"]["boundary"]["y"] == "absorbing"
+        ):
+            y["phi"] = self.get_phi_from_eh(
+                self.get_eh_x(y["phi"]) * self.cfg["grid"]["absorbing_boundaries"][..., None]
+            )
+
         return y

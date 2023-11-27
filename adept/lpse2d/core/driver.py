@@ -19,7 +19,6 @@ class Driver(eqx.Module):
     def __call__(self, this_pulse: Dict, current_time: jnp.float64):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
-        # dw = 0.this_pulse["dw0"]
         t_L = this_pulse["t_c"] - this_pulse["t_w"] * 0.5
         t_R = this_pulse["t_c"] + this_pulse["t_w"] * 0.5
         t_wL = this_pulse["t_r"]
