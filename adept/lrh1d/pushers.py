@@ -32,12 +32,14 @@ class Temperature:
             (r**2.0 * u)[1:-1] - (r**2.0 * u)[:-2]
         )
 
-        new_Tr = Tr - self.dt / delta_r[:-1] * self.c / (self.sigma_sb * Tr**3.0) * (0.5 * pr) / (
-            (r**2.0 * u)[1:-1] - (r**2.0 * u)[:-2]
-        )
+        new_Tr = Tr
+
+        # new_Tr = Tr - self.dt / delta_r[:-1] * self.c / (self.sigma_sb * Tr**3.0) * (0.5 * pr) / (
+        #     (r**2.0 * u)[1:-1] - (r**2.0 * u)[:-2]
+        # )
 
         new_Ti = self.diffusion_solve(kappa_i, new_Ti)
         new_Te = self.diffusion_solve(kappa_e, new_Te)
-        new_Tr = self.diffusion_solve(kappa_r, new_Tr)
+        # new_Tr = self.diffusion_solve(kappa_r, new_Tr)
 
         return self.couple_temperatures(new_Ti, new_Te, new_Tr)

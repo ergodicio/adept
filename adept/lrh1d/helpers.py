@@ -177,8 +177,8 @@ def init_state(cfg: Dict) -> Dict:
     :return:
     """
     state = dict(
-        u=jnp.zeros(cfg["grid"]["nx"]),
-        r=jnp.zeros(cfg["grid"]["nx"]),
+        u=jnp.zeros(cfg["grid"]["nx"]+1),
+        r=jnp.zeros(cfg["grid"]["nx"]+1),
         Ti=jnp.zeros(cfg["grid"]["nx"]),
         Te=jnp.zeros(cfg["grid"]["nx"]),
         Tr=jnp.zeros(cfg["grid"]["nx"]),
@@ -229,7 +229,7 @@ class VectorField(eqx.Module):
         u, r, rho = (
             jnp.concatenate([[0.0], y["u"], y["u"][-1:]]),
             jnp.concatenate([[0.0], y["r"], y["r"][-1:]]),
-            jnp.concatenate([[0.0], y["rho"], y["rho"][-1:]]),
+            jnp.concatenate([y["rho"][0:1], y["rho"], y["rho"][-1:]]),
         )
         delta_r, vol = r[1:] - r[:-1], jnp.pi * 4.0 / 3.0 * r**3.0
         Te, Ti, Tr = y["Te"], y["Ti"], y["Tr"]
