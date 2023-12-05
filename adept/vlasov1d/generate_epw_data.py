@@ -79,7 +79,6 @@ def generate_data():
     print(sum(tf))
 
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate EPW data")
     parser.add_argument("--mode", help="enter mode")
