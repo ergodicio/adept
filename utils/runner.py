@@ -133,7 +133,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args=args,
-                # adjoint=diffrax.DirectAdjoint(),
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
@@ -143,7 +142,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
         datasets = helpers.post_process(result, cfg, td)
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-        # log artifacts
         mlflow.log_artifacts(td)
 
     # fin
