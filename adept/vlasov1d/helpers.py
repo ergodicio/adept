@@ -11,7 +11,7 @@ from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt
 from matplotlib import pyplot as plt
 
-from adept.vlasov1d.integrator import VlasovExternalE, Stepper
+from adept.vlasov1d.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d.storage import store_f, store_fields, get_save_quantities
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
@@ -238,15 +238,18 @@ def init_state(cfg: Dict) -> Dict:
     for species in ["electron"]:
         state[species] = f
 
-    # for field in ["e", "b", "de"]:
-    #     state[field] = jnp.zeros(cfg["grid"]["nx"])
+    for field in ["e", "de"]:
+        state[field] = jnp.zeros(cfg["grid"]["nx"])
+
+    for field in ["a", "da", "prev_a"]:
+        state[field] = jnp.zeros(cfg["grid"]["nx"])
 
     return state
 
 
-def get_diffeqsolve_quants(cfg, interp_e):
+def get_diffeqsolve_quants(cfg):
     return dict(
-        terms=ODETerm(VlasovExternalE(cfg, interp_e)),
+        terms=ODETerm(VlasovMaxwell(cfg)),
         solver=Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
     )
@@ -256,6 +259,7 @@ def post_process(result, cfg: Dict, td: str):
     t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
+    os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
     # merge
     # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
     # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
@@ -267,8 +271,12 @@ def post_process(result, cfg: Dict, td: str):
             tslice = slice(0, -1, t_skip)
 
             for nm, fld in fields_xr.items():
+                fld.plot()
+                plt.savefig(os.path.join(td, "plots", "fields", f"spacetime-{nm[7:]}.png"), bbox_inches="tight")
+                plt.close()
+
                 fld[tslice].T.plot(col="t", col_wrap=4)
-                plt.savefig(os.path.join(td, "plots", "fields", f"{nm[7:]}.png"), bbox_inches="tight")
+                plt.savefig(os.path.join(td, "plots", "fields", "lineouts", f"{nm[7:]}.png"), bbox_inches="tight")
                 plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)

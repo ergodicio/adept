@@ -111,6 +111,8 @@ def get_field_save_func(cfg, k):
             v_m_vbar = cfg["grid"]["v"][None, :] - temp["v"][:, None]
             temp["p"] = jnp.trapz(y["electron"] * v_m_vbar**2.0, dx=cfg["grid"]["dv"], axis=1)
             temp["q"] = jnp.trapz(y["electron"] * v_m_vbar**3.0, dx=cfg["grid"]["dv"], axis=1)
+            temp["e"] = y["e"]
+            temp["de"] = y["de"]
 
             return temp
 

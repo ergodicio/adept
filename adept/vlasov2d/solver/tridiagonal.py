@@ -6,10 +6,10 @@ from jax.lax import scan
 import equinox as eqx
 
 
-class TridiagonalSolver(eqx.Module):
+class TridiagonalSolver:
     def __init__(self, cfg):
         super(TridiagonalSolver, self).__init__()
-        self.num_unroll = cfg["solver"]["num_unroll"]
+        self.num_unroll = 128  # cfg["solver"]["num_unroll"]
 
     @staticmethod
     def compute_primes(last_primes, x):

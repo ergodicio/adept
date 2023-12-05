@@ -21,6 +21,8 @@ def get_helpers(mode):
         from adept.tf1d import helpers
     elif mode == "sh-2d":
         from adept.sh2d import helpers
+    elif mode == "vlasov-1d":
+        from adept.vlasov1d import helpers
     elif mode == "vlasov-2d":
         from adept.vlasov2d import helpers
     elif mode == "envelope-2d":

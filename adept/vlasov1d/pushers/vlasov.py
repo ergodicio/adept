@@ -2,9 +2,8 @@ from functools import partial
 from typing import Callable
 
 import equinox as eqx
-import numpy as np
 from jax import numpy as jnp
-from interpax import interp2d, Interpolator2D
+from interpax import interp2d
 
 
 class VlasovExternalE(eqx.Module):
@@ -46,3 +45,24 @@ class VlasovExternalE(eqx.Module):
         new_f = self.step_vdfdx(t, new_f, 0.5)
 
         return {"electron": new_f}
+
+
+class VelocityExponential:
+    def __init__(self, cfg):
+        self.kv_real = cfg["grid"]["kvr"]
+
+    def __call__(self, f, e, dt):
+        return jnp.real(
+            jnp.fft.irfft(jnp.exp(-1j * self.kv_real[None, :] * dt * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1)
+        )
+
+
+class SpaceExponential:
+    def __init__(self, cfg):
+        self.kx_real = cfg["grid"]["kxr"]
+        self.v = cfg["grid"]["v"]
+
+    def __call__(self, f, dt):
+        return jnp.real(
+            jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * dt * self.v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
+        )
