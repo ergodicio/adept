@@ -21,10 +21,12 @@ def get_helpers(mode):
         from adept.tf1d import helpers
     elif mode == "sh-2d":
         from adept.sh2d import helpers
+    elif mode == "vlasov-1d":
+        from adept.vlasov1d import helpers
     elif mode == "vlasov-2d":
         from adept.vlasov2d import helpers
     elif mode == "envelope-2d":
-        from adept.envelope2d import helpers
+        from adept.lpse2d import helpers
     else:
         raise NotImplementedError("This solver approach has not been implemented yet")
 
@@ -118,7 +120,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
         @eqx.filter_jit
         def _run_(these_models):
-            args = {"driver": cfg["drivers"]}
+            args = {"drivers": cfg["drivers"]}
             if these_models is not None:
                 args["models"] = these_models
 
@@ -131,7 +133,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args=args,
-                # adjoint=diffrax.DirectAdjoint(),
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
@@ -141,7 +142,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
         datasets = helpers.post_process(result, cfg, td)
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-        # log artifacts
         mlflow.log_artifacts(td)
 
     # fin

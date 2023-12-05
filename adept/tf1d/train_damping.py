@@ -84,7 +84,7 @@ def train_loop():
 
                         def loss(models):
                             vf = helpers.VectorField(mod_defaults, models=models)
-                            args = {"driver": mod_defaults["drivers"]}
+                            args = {"drivers": mod_defaults["drivers"]}
 
                             results = diffeqsolve(
                                 terms=ODETerm(vf),

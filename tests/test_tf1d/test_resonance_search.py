@@ -48,7 +48,7 @@ def load_cfg(rand_k0, gamma, adjoint):
 @pytest.mark.parametrize("adjoint", ["Recursive", "Backsolve"])
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
 def test_resonance_search(gamma, adjoint):
-    mlflow.set_experiment("test-res-search")
+    mlflow.set_experiment("test-res-search-tf1d")
     with mlflow.start_run(run_name="res-search-opt") as mlflow_run:
         vg_func, sim_k0, actual_w0 = get_vg_func(gamma, adjoint)
 
@@ -119,7 +119,7 @@ def get_vg_func(gamma, adjoint):
     defaults["grid"] = helpers.get_solver_quantities(cfg=defaults)
     defaults = helpers.get_save_quantities(defaults)
 
-    pulse_dict = {"driver": defaults["drivers"]}
+    pulse_dict = {"drivers": defaults["drivers"]}
     state = helpers.init_state(defaults)
     loss_fn = get_loss(state, pulse_dict, defaults)
     vg_func = eqx.filter_jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
@@ -141,7 +141,7 @@ def get_loss(state, pulse_dict, mod_defaults):
         save_at_args = dict(ts=mod_defaults["save"]["t"]["ax"], fn=mod_defaults["save"]["func"]["callable"])
 
     def loss(w0):
-        pulse_dict["driver"]["ex"]["0"]["w0"] = w0
+        pulse_dict["drivers"]["ex"]["0"]["w0"] = w0
         vf = helpers.VectorField(mod_defaults)
         results = diffeqsolve(
             terms=ODETerm(vf),
