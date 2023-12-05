@@ -14,8 +14,6 @@ class VlasovPoissonBase(eqx.Module):
     def __init__(self, cfg):
         super(VlasovPoissonBase, self).__init__()
         self.dt = cfg["grid"]["dt"]
-        # self.vx = cfg["derived"]["vx"]
-        # self.vy = cfg["derived"]["vy"]
         self.vdfdx = self.get_vdfdx(cfg)
         self.edfdv = self.get_edfdv(cfg)
         self.field_solve = field.ElectricFieldSolver(cfg=cfg)
@@ -23,8 +21,6 @@ class VlasovPoissonBase(eqx.Module):
     def get_vdfdx(self, cfg):
         if cfg["solver"]["vdfdx"] == "exponential":
             vdfdx = space.Exponential(cfg)
-        # elif cfg["solver"]["vdfdx"] == "semilagrangian":
-        #     vdfdx = space.SemiLagrangian(cfg)
         else:
             raise NotImplementedError("v df/dx: <" + cfg["solver"]["vdfdx"] + "> has not yet been implemented in JAX")
 

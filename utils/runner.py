@@ -21,6 +21,8 @@ def get_helpers(mode):
         from adept.tf1d import helpers
     elif mode == "sh-2d":
         from adept.sh2d import helpers
+    elif mode == "vlasov-1d":
+        from adept.vlasov1d import helpers
     elif mode == "vlasov-2d":
         from adept.vlasov2d import helpers
     elif mode == "envelope-2d":
@@ -131,7 +133,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args=args,
-                # adjoint=diffrax.DirectAdjoint(),
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
@@ -141,7 +142,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
         datasets = helpers.post_process(result, cfg, td)
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-        # log artifacts
         mlflow.log_artifacts(td)
 
     # fin
