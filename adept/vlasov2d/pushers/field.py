@@ -27,20 +27,15 @@ class SpectralPoissonSolver(eqx.Module):
         return jnp.trapz(jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
 
     def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
+        dcharge = self.ion_charge - self.compute_charges(f)
         return jnp.concatenate(
             [
-                jnp.real(
-                    jnp.fft.ifft(
-                        1j * self.one_over_kx[:, None] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=0),
-                        axis=0,
-                    )
-                )[..., None],
-                jnp.real(
-                    jnp.fft.ifft(
-                        1j * self.one_over_ky[None, :] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=1),
-                        axis=1,
-                    )
-                )[..., None],
+                jnp.real(jnp.fft.ifft(1j * self.one_over_kx[:, None] * jnp.fft.fft(dcharge, axis=0), axis=0))[
+                    ..., None
+                ],
+                jnp.real(jnp.fft.ifft(1j * self.one_over_ky[None, :] * jnp.fft.fft(dcharge, axis=1), axis=1))[
+                    ..., None
+                ],
             ],
             axis=-1,
         )
