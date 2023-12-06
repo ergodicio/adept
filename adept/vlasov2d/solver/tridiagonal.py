@@ -3,7 +3,6 @@
 
 from jax import numpy as jnp
 from jax.lax import scan
-import equinox as eqx
 
 
 class TridiagonalSolver:
