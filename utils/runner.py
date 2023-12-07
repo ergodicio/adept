@@ -88,9 +88,9 @@ def write_units(cfg, td):
 
 
 def run_job(run_id, nested):
-    with mlflow.start_run(run_id=run_id, nested=nested) as run:
+    with mlflow.start_run(run_id=run_id, nested=nested) as mlflow_run:
         with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as temp_path:
-            cfg = misc.get_cfg(artifact_uri=run.info.artifact_uri, temp_path=temp_path)
+            cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
         run(cfg)
 
 
