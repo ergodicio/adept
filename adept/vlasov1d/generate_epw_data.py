@@ -25,14 +25,14 @@ else:
     BASE_TEMPDIR = None
 
 
-def _modify_defaults_(defaults, k0, nuee, a0):
+def _modify_defaults_(defaults, k0, log10_nuee, log10_a0):
     defaults["drivers"]["ex"]["0"]["k0"] = float(k0)
-    defaults["drivers"]["ex"]["0"]["a0"] = float(a0)
+    defaults["drivers"]["ex"]["0"]["a0"] = float(10 ** log10_a0)
 
     xmax = float(2.0 * np.pi / k0)
     defaults["grid"]["xmax"] = xmax
 
-    defaults["nuee"] = float(nuee)
+    defaults["nuee"] = float(10 ** log10_nuee)
 
     return defaults
 
@@ -52,22 +52,24 @@ def remote_run(run_id):
 
 
 def generate_data():
-    nuees = np.logspace(-7, -3, 5)
+    nuees = np.linspace(-7, -3, 5)
     klds = np.linspace(0.26, 0.4, 8)
-    a0s = np.logspace(-6, -2, 5)
+    a0s = np.linspace(-6, -2, 5)
+
+    klds = [float(np.round(kld, 2)) for kld in klds]
 
     tf = []
-    for nuee, kld, a0 in product(nuees, klds, a0s):
+    for log10_nuee, kld, log10_a0 in product(nuees, klds, a0s):
         # load cfg
         with open(f"configs/vlasov-1d/epw.yaml", "r") as file:
             cfg = yaml.safe_load(file)
 
         # modify cfg
-        mod_defaults = _modify_defaults_(cfg, kld, nuee, a0)
+        mod_defaults = _modify_defaults_(cfg, kld, log10_nuee, log10_a0)
 
         mlflow.set_experiment(cfg["mlflow"]["experiment"])
         # modify config
-        with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as run:
+        with mlflow.start_run(run_name=f"{kld=}, {log10_a0=}, {log10_nuee=}") as run:
             tags = {"sim_status": "queued"}
             with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as temp_path:
                 with open(os.path.join(temp_path, "config.yaml"), "w") as fp:
@@ -144,11 +146,11 @@ if __name__ == "__main__":
     else:
         raise NotImplementedError(f"{args.machine} not implemented as a provider")
 
-    batch_size = 64
+    batch_size = 32
     htex = HighThroughputExecutor(
         label="generate-epw-data",
         provider=this_provider(**provider_args),
-        cores_per_worker=int(256 // batch_size),
+        cores_per_worker=int(128 // batch_size),
         max_workers=batch_size,
         cpu_affinity="block",
     )
