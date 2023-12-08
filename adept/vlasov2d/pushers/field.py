@@ -1,110 +1,54 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict, Callable
+from typing import Dict, Tuple
 from functools import partial
 
 from jax import numpy as jnp
-import equinox as eqx
 
 
-class SpectralPoissonSolver(eqx.Module):
-    ion_charge: jnp.array
-    one_over_kx: jnp.array
-    one_over_ky: jnp.array
-    dvx: float
-    dvy: float
-
-    def __init__(self, ion_charge, one_over_kx, one_over_ky, dvx, dvy):
-        super(SpectralPoissonSolver, self).__init__()
-        self.ion_charge = jnp.array(ion_charge)
-        self.one_over_kx = jnp.array(one_over_kx)
-        self.one_over_ky = jnp.array(one_over_ky)
-        self.dvx = dvx
-        self.dvy = dvy
-
-    def compute_charges(self, f):
-        return jnp.trapz(jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
-
-    def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
-        return jnp.concatenate(
-            [
-                jnp.real(
-                    jnp.fft.ifft(
-                        1j * self.one_over_kx[:, None] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=0),
-                        axis=0,
-                    )
-                )[..., None],
-                jnp.real(
-                    jnp.fft.ifft(
-                        1j * self.one_over_ky[None, :] * jnp.fft.fft(self.ion_charge - self.compute_charges(f), axis=1),
-                        axis=1,
-                    )
-                )[..., None],
-            ],
-            axis=-1,
-        )
-
-
-class AmpereSolver(eqx.Module):
-    vx: jnp.array
-    vy: jnp.array
-    moment_x: Callable
-    moment_y: Callable
-
+class FieldSolver:
     def __init__(self, cfg):
-        super(AmpereSolver, self).__init__()
+        self.ion_charge = cfg["grid"]["ion_charge"]
+        self.one_over_kxr = cfg["grid"]["one_over_kxr"]
+        self.one_over_kyr = cfg["grid"]["one_over_kyr"]
+        self.kxr = cfg["grid"]["kxr"]
+        self.kyr = cfg["grid"]["kyr"]
+        self.vx_mom = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
+        self.vy_mom = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=3)
+        self.dvx = cfg["grid"]["dvx"]
+        self.dvy = cfg["grid"]["dvy"]
         self.vx = cfg["grid"]["vx"]
         self.vy = cfg["grid"]["vy"]
-        self.moment_x = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
-        self.moment_y = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=-1)
+        self.zero = jnp.concatenate([jnp.array([0.0]), jnp.ones(cfg["grid"]["nx"] - 1)])
 
-    def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
-        jx = self.moment_x(self.vx[None, None, :] * self.moment_y(f))[..., None]
-        jy = self.moment_y(self.vy[None, None, :] * self.moment_x(f))[..., None]
+    def compute_charge(self, f):
+        return self.vx_mom(self.vy_mom(f))
 
-        return prev_force - dt * jnp.concatenate([jx, jy], axis=-1)
+    def compute_jx(self, f):
+        return jnp.trapz(self.vx[None, None, :] * jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
 
+    def compute_jy(self, f):
+        return jnp.trapz(self.vy[None, None, :] * jnp.trapz(f, dx=self.dvx, axis=2), dx=self.dvy, axis=2)
 
-class ElectricFieldSolver(eqx.Module):
-    es_field_solver: eqx.Module
+    def poisson(self, f: jnp.ndarray):
+        net_charge = self.compute_charge(f)  # * self.zero[:, None] * self.zero[None, :]
+        ex = 1j * self.one_over_kxr[:, None] * net_charge  # the background gets zerod out here anyway ...
+        ey = 1j * self.one_over_kyr[None, :] * net_charge  # it acts as the ion charge
+        return ex, ey
 
-    def __init__(self, cfg):
-        super(ElectricFieldSolver, self).__init__()
+    def ampere(self, exk, eyk, bzk, jxk, jyk, dt):
+        exkp = exk + dt * (1j * self.kyr[None, :] * bzk - jxk)
+        eykp = eyk + dt * (-1j * self.kxr[:, None] * bzk - jyk)
+        return exkp, eykp
 
-        if cfg["solver"]["field"] == "poisson":
-            self.es_field_solver = SpectralPoissonSolver(
-                ion_charge=cfg["grid"]["ion_charge"],
-                one_over_kx=cfg["grid"]["one_over_kx"],
-                one_over_ky=cfg["grid"]["one_over_ky"],
-                dvx=cfg["grid"]["dvx"],
-                dvy=cfg["grid"]["dvy"],
-            )
-        elif cfg["solver"]["field"] == "ampere":
-            if cfg["solver"]["dfdt"] == "leapfrog":
-                self.es_field_solver = AmpereSolver(cfg)
-            else:
-                raise NotImplementedError(f"ampere + {cfg['solver']['dfdt']} has not yet been implemented")
-        else:
-            raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
-        # self.dx = cfg["derived"]["dx"]
+    def faraday(self, bzk, exk, eyk, dt):
+        bzkp = bzk + dt * 1j * (self.kyr[None, :] * exk - self.kxr[:, None] * eyk)
 
-    def __call__(self, prev_force: jnp.ndarray, f: jnp.ndarray, dt: float) -> jnp.ndarray:
-        """
-        This returns the total electrostatic field that is used in the Vlasov equation
-        The total field is a sum of the driver field and the
-        self-consistent electrostatic field from a Poisson or Ampere solve
-
-        :param f: distribution function
-        :param a:
-        :return:
-        """
-        # ponderomotive_force = -0.5 * jnp.gradient(jnp.square(a), self.dx)[1:-1]
-        self_consistent_e = self.es_field_solver(f, prev_force, dt)
-        return self_consistent_e
+        return bzkp
 
 
-class Driver(eqx.Module):
+class Driver:
     xax: jnp.ndarray
     yax: jnp.ndarray
 
@@ -163,9 +107,10 @@ class Driver(eqx.Module):
         # for key, pulse in pulses["ey"].items():
         #     total_djy += get_this_pulse(pulse, current_time)
 
-        total_dey = jnp.zeros((self.xax.size, self.yax.size))
+        total_dey = jnp.zeros((self.xax.size, self.yax.size), dtype=jnp.complex128)
+        total_dex = jnp.fft.fft2(total_dex)
 
-        return jnp.concatenate([total_dex[..., None], total_dey[..., None]], axis=-1)
+        return total_dex, total_dey
 
 
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):

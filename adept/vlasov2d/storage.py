@@ -36,15 +36,14 @@ def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray, prefix: s
             raise NotImplementedError
 
         xx, yx = cfg["save"][prefix][xnm]["ax"], cfg["save"][prefix][ynm]["ax"]
-
         das = {
-            f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), (xnm, xx), (ynm, yx), ("comp", ["x", "y"])))
-            for k, v in fields.items()
+            [f"{prefix}-{k}"]: xr.DataArray(v, coords=(("t", this_t), (xnm, xx), (ynm, yx))) for k, v in fields.items()
         }
     else:
         das = {
             f"{prefix}-{k}": xr.DataArray(
-                v, coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"]), ("comp", ["x", "y"]))
+                np.real(np.fft.ifft2(v.view(dtype=np.complex128), axes=(0, 1))),
+                coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
             )
             for k, v in fields.items()
         }
@@ -67,7 +66,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     f_store = xr.Dataset(
         {
             spc: xr.DataArray(
-                ys[spc],
+                np.real(np.fft.ifft2(ys[spc].view(dtype=np.complex128), axes=(0, 1))),
                 coords=(
                     ("t", this_t[spc]),
                     ("x", cfg["grid"]["x"]),
