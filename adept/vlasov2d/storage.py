@@ -122,7 +122,7 @@ def get_field_save_func(cfg, k):
     if {"t"} == set(cfg["save"][k].keys()):
 
         def fields_save_func(t, y, args):
-            return {this_k: y[this_k] for this_k in ["e", "b", "de"]}
+            return {this_k: y[this_k] for this_k in ["ex", "ey", "bz", "dex", "dey"]}
 
     else:
         raise NotImplementedError
