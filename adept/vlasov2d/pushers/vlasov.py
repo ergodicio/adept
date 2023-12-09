@@ -3,49 +3,39 @@ from jax import numpy as jnp
 
 class ExponentialSpatialAdvection:
     def __init__(self, cfg):
-        self.kx_real = cfg["grid"]["kxr"]
-        self.ky_real = cfg["grid"]["kyr"]
-
-        self.vx = jnp.array(cfg["grid"]["vx"])
-        self.vy = jnp.array(cfg["grid"]["vy"])
+        self.i_kx_vx = -1j * cfg["grid"]["kx"][:, None, None, None] * cfg["grid"]["vx"][None, None, :, None]
+        self.i_ky_vy = -1j * cfg["grid"]["ky"][None, :, None, None] * cfg["grid"]["vy"][None, None, None, :]
 
     def step_x(self, f, dt):
-        temp_x = self.vx[None, None, :, None] * self.kx_real[:, None, None, None]
-        return f * jnp.exp(-1j * dt * temp_x)
+        return f * jnp.exp(self.i_kx_vx * dt)
 
     def step_y(self, f, dt):
-        temp_y = self.vy[None, None, None, :] * self.ky_real[None, :, None, None]
-        return f * jnp.exp(-1j * dt * temp_y)
+        return f * jnp.exp(self.i_ky_vy * dt)
 
     def __call__(self, f, dt):
-        temp = jnp.fft.fft(jnp.fft.fft(f, axis=0), axis=1)
-        temp_x = self.vx[None, None, :, None] * self.kx_real[:, None, None, None]
-        temp_y = self.vy[None, None, None, :] * self.ky_real[None, :, None, None]
-        return temp * jnp.exp(-1j * dt * (temp_x + temp_y))
+        return f * jnp.exp(self.i_kx_vx + self.i_ky_vy)
 
 
 class ExponentialVelocityAdvection:
     def __init__(self, cfg):
-        self.kvxr = cfg["grid"]["kvxr"]
-        self.kvyr = cfg["grid"]["kvyr"]
-        self.vx = cfg["grid"]["vx"]
-        self.vy = cfg["grid"]["vy"]
+        self.kvx = cfg["grid"]["kvx"][None, None, :, None]
+        self.kvy = cfg["grid"]["kvy"][None, None, None, :]
+        self.vx = cfg["grid"]["vx"][None, None, :, None]
+        self.vy = cfg["grid"]["vy"][None, None, None, :]
 
     def __call__(self, fk, ex, ey, bz, dt):
-        fxy = jnp.fft.ifft(jnp.fft.ifft(fk, axis=0), axis=1)
-        fxykv = jnp.fft.fft(jnp.fft.fft(fxy, axis=2), axis=3)
+        fxy = jnp.fft.ifft2(fk, axes=(0, 1))
+        fxykv = jnp.fft.fft2(fxy, axes=(2, 3))
 
-        exxy = jnp.real(jnp.fft.ifft(jnp.fft.ifft(ex, axis=0), axis=1))
-        eyxy = jnp.real(jnp.fft.ifft(jnp.fft.ifft(ey, axis=0), axis=1))
-        bzxy = jnp.real(jnp.fft.ifft(jnp.fft.ifft(bz, axis=0), axis=1))
+        exxy = jnp.real(jnp.fft.ifft2(ex, axes=(0, 1)))[..., None, None]
+        eyxy = jnp.real(jnp.fft.ifft2(ey, axes=(0, 1)))[..., None, None]
+        bzxy = jnp.real(jnp.fft.ifft2(bz, axes=(0, 1)))[..., None, None]
 
-        temp_x = exxy[..., None, None] + self.vy[None, None, None, :] * bzxy[..., None, None]
-        temp_y = eyxy[..., None, None] - self.vx[None, None, :, None] * bzxy[..., None, None]
+        temp_x = exxy + self.vy * bzxy
+        temp_y = eyxy - self.vx * bzxy
 
-        new_fxykv = fxykv * jnp.exp(
-            -1j * dt * (temp_x * self.kvxr[None, None, :, None] + temp_y * self.kvyr[None, None, None, :])
-        )
+        new_fxykv = fxykv * jnp.exp(-1j * dt * (temp_x * self.kvx + temp_y * self.kvy))
 
-        new_fk = jnp.fft.fft(jnp.fft.fft(jnp.fft.ifft(jnp.fft.ifft(new_fxykv, axis=2), axis=3), axis=0), axis=1)
+        new_fk = jnp.fft.fft2(jnp.fft.ifft2(new_fxykv, axes=(2, 3)), axes=(0, 1))
 
         return new_fk
