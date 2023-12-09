@@ -42,6 +42,7 @@ class VlasovFieldBase:
 
         return edfdv
 
+
 #
 # class LeapfrogIntegrator(VlasovFieldBase):
 #     def __init__(self, cfg):
@@ -71,6 +72,7 @@ class VlasovFieldBase:
 #
 #         return new_state
 #
+
 
 class ChargeConservingMaxwell(VlasovFieldBase):
     """
@@ -131,10 +133,12 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
         dex, dey = self.driver(t, args)
 
+        dex, dey = jnp.fft.fft2(dex), jnp.fft.fft2(dey)
+
         bznph, exnph, eynph = self.step_1(ex, ey, bz, f)
         fn1, jxn12 = self.step_2(f)
         fn2, jyn32 = self.step_3(fn1)
-        fn3 = self.step_4(exnph, eynph, bznph, fn2)
+        fn3 = self.step_4(exnph + dex, eynph + dey, bznph, fn2)
         fn4, jyn72 = self.step_5(fn3)
         fnp1, jxn92 = self.step_6(fn4)
         exnp1, eynp1 = self.step_7(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)

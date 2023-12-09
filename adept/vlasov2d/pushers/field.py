@@ -43,11 +43,7 @@ class FieldSolver:
         return exkp, eykp
 
     def faraday(self, bzk, exk, eyk, dt):
-        print(exk.shape, eyk.shape, bzk.shape, self.ky.shape, self.kx.shape)
-
-        bzkp = bzk + dt * 1j * (self.ky[None, :] * exk - self.kx[:, None] * eyk)
-
-        return bzkp
+        return bzk + dt * 1j * (self.ky[None, :] * exk - self.kx[:, None] * eyk)
 
 
 class Driver:
