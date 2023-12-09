@@ -42,29 +42,35 @@ class VlasovFieldBase:
 
         return edfdv
 
-
-class LeapfrogIntegrator(VlasovFieldBase):
-    def __init__(self, cfg):
-        super(LeapfrogIntegrator, self).__init__(cfg)
-        self.bz = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
-
-    def __call__(self, t, y, args):
-        new_state = {}
-        for species in ["electron"]:
-            f = self.vdfdx(f=y["electron"], dt=0.5 * self.dt)
-            dex, dey = self.driver(t, args)
-            ex, ey = self.field_solve.poisson(f=f)
-            f = self.velocity_pusher(fk=f, ex=ex + dex, ey=ey + dey, bz=self.bz, dt=self.dt)
-            f = self.vdfdx(f=f, dt=0.5 * self.dt)
-            ex, ey = self.field_solve.poisson(f=f)
-
-            new_state[species] = f
-
-        for nm, fld in zip(["ex", "ey", "bz", "dex", "dey", "dbz"], [ex, ey, self.bz, dex, dey]):
-            new_state[nm] = fld
-
-        return new_state
-
+#
+# class LeapfrogIntegrator(VlasovFieldBase):
+#     def __init__(self, cfg):
+#         super(LeapfrogIntegrator, self).__init__(cfg)
+#         self.bz = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
+#
+#     def __call__(self, t, y, args):
+#
+#         f = y["electron"].view(dtype=jnp.complex128)
+#         bz = y["bz"].view(dtype=jnp.complex128)
+#
+#
+#
+#         new_state = {}
+#         for species in ["electron"]:
+#             f = self.vdfdx(f=f, dt=0.5 * self.dt)
+#             dex, dey = self.driver(t, args)
+#             ex, ey = self.field_solve.poisson(f=f)
+#             f = self.velocity_pusher(fk=f, ex=ex + dex, ey=ey + dey, bz=self.bz, dt=self.dt)
+#             f = self.vdfdx(f=f, dt=0.5 * self.dt)
+#             ex, ey = self.field_solve.poisson(f=f)
+#
+#             new_state[species] = f
+#
+#         for nm, fld in zip(["ex", "ey", "bz", "dex", "dey", "dbz"], [ex, ey, self.bz, dex, dey]):
+#             new_state[nm] = fld
+#
+#         return new_state
+#
 
 class ChargeConservingMaxwell(VlasovFieldBase):
     """

@@ -10,10 +10,10 @@ from jax import numpy as jnp
 class FieldSolver:
     def __init__(self, cfg):
         self.ion_charge = cfg["grid"]["ion_charge"]
-        self.one_over_kxr = cfg["grid"]["one_over_kxr"]
-        self.one_over_kyr = cfg["grid"]["one_over_kyr"]
-        self.kxr = cfg["grid"]["kxr"]
-        self.kyr = cfg["grid"]["kyr"]
+        self.one_over_kx = cfg["grid"]["one_over_kx"]
+        self.one_over_ky = cfg["grid"]["one_over_ky"]
+        self.kx = cfg["grid"]["kx"]
+        self.ky = cfg["grid"]["ky"]
         self.vx_mom = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
         self.vy_mom = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=3)
         self.dvx = cfg["grid"]["dvx"]
@@ -33,17 +33,19 @@ class FieldSolver:
 
     def poisson(self, f: jnp.ndarray):
         net_charge = self.compute_charge(f)  # * self.zero[:, None] * self.zero[None, :]
-        ex = 1j * self.one_over_kxr[:, None] * net_charge  # the background gets zerod out here anyway ...
-        ey = 1j * self.one_over_kyr[None, :] * net_charge  # it acts as the ion charge
+        ex = 1j * self.one_over_kx[:, None] * net_charge  # the background gets zerod out here anyway ...
+        ey = 1j * self.one_over_ky[None, :] * net_charge  # it acts as the ion charge
         return ex, ey
 
     def ampere(self, exk, eyk, bzk, jxk, jyk, dt):
-        exkp = exk + dt * (1j * self.kyr[None, :] * bzk - jxk)
-        eykp = eyk + dt * (-1j * self.kxr[:, None] * bzk - jyk)
+        exkp = exk + dt * (1j * self.ky[None, :] * bzk - jxk)
+        eykp = eyk + dt * (-1j * self.kx[:, None] * bzk - jyk)
         return exkp, eykp
 
     def faraday(self, bzk, exk, eyk, dt):
-        bzkp = bzk + dt * 1j * (self.kyr[None, :] * exk - self.kxr[:, None] * eyk)
+        print(exk.shape, eyk.shape, bzk.shape, self.ky.shape, self.kx.shape)
+
+        bzkp = bzk + dt * 1j * (self.ky[None, :] * exk - self.kx[:, None] * eyk)
 
         return bzkp
 

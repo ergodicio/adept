@@ -11,7 +11,7 @@ from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt
 from matplotlib import pyplot as plt
 
-from adept.vlasov2d.pushers import time
+from adept.vlasov2d.pushers import time as time_integrator
 from adept.vlasov2d.storage import store_f, store_fields, get_save_quantities
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
@@ -282,15 +282,15 @@ def init_state(cfg: Dict) -> Dict:
 
 def get_diffeqsolve_quants(cfg):
     if cfg["solver"]["field"] == "poisson":
-        VectorField = time.LeapfrogIntegrator(cfg)
+        VectorField = time_integrator.LeapfrogIntegrator(cfg)
     elif cfg["solver"]["field"] == "maxwell":
-        VectorField = time.ChargeConservingMaxwell(cfg)
+        VectorField = time_integrator.ChargeConservingMaxwell(cfg)
     else:
         raise NotImplementedError
 
     return dict(
         terms=ODETerm(VectorField),
-        solver=time.Stepper(),
+        solver=time_integrator.Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
     )
 
