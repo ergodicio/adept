@@ -310,10 +310,9 @@ def post_process(result, cfg: Dict, td: str):
             tslice = slice(0, -1, t_skip)
 
             for nm, fld in fields_xr.items():
-                for comp in ["x", "y"]:
-                    fld[tslice].loc[{"comp": comp}].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
-                    plt.savefig(os.path.join(td, "plots", "fields", f"{nm[7:]}-{comp}.png"), bbox_inches="tight")
-                    plt.close()
+                fld[tslice].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
+                plt.savefig(os.path.join(td, "plots", "fields", f"{nm[7:]}.png"), bbox_inches="tight")
+                plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)
 
