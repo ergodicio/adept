@@ -35,7 +35,7 @@ def _modify_defaults_(defaults, rng, field_solver):
     return defaults, float(np.imag(root))
 
 
-@pytest.mark.parametrize("field_solver", ["poisson", "ampere"])
+@pytest.mark.parametrize("field_solver", ["maxwell"])
 def test_single_resonance(field_solver):
     with open("tests/test_vlasov2d/configs/damping.yaml", "r") as file:
         defaults = yaml.safe_load(file)
@@ -54,7 +54,7 @@ def test_single_resonance(field_solver):
         tax = datasets["fields"].coords["t"].data
         dt = tax[1] - tax[0]
 
-        ex = datasets["fields"]["fields-e"].data[:, :, :, 0]
+        ex = datasets["fields"]["fields-ex"].data
         ek1 = 2.0 / xax.size * np.abs(np.fft.fft(ex, axis=1)[:, 1, 0])
         frslc = slice(-48, -1)
         measured_damping_rate = np.mean(np.gradient(ek1[frslc], dt) / ek1[frslc])
@@ -100,4 +100,4 @@ def test_single_resonance(field_solver):
 
 
 if __name__ == "__main__":
-    test_single_resonance("poisson")
+    test_single_resonance("maxwell")

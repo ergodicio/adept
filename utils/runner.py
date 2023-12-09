@@ -43,6 +43,7 @@ def write_units(cfg, td):
     n0 = (w0**2 * ureg.m_e * ureg.epsilon_0 / ureg.e**2.0).to("1/cc")
     T0 = _Q(cfg["units"]["electron temperature"]).to("eV")
     v0 = np.sqrt(2.0 * T0 / (ureg.m_e)).to("m/s")
+    beta = v0 / ureg.c
     debye_length = (v0 / w0).to("nm")
 
     logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
@@ -74,6 +75,7 @@ def write_units(cfg, td):
         "n0": str(n0),
         "v0": str(v0),
         "T0": str(T0),
+        "beta": str(beta),
         "lambda_D": str(debye_length),
         "logLambda_ee": str(logLambda_ee),
         "nuee": str(nuee),
@@ -82,6 +84,8 @@ def write_units(cfg, td):
         "box_width": str(box_width),
         "sim_duration": str(sim_duration),
     }
+
+    cfg["grid"]["beta"] = beta
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
         yaml.dump(all_quantities, fi)

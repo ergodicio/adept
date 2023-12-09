@@ -27,9 +27,9 @@ class ExponentialVelocityAdvection:
         fxy = jnp.fft.ifft2(fk, axes=(0, 1))
         fxykv = jnp.fft.fft2(fxy, axes=(2, 3))
 
-        exxy = jnp.real(jnp.fft.ifft2(ex, axes=(0, 1)))[..., None, None]
-        eyxy = jnp.real(jnp.fft.ifft2(ey, axes=(0, 1)))[..., None, None]
-        bzxy = jnp.real(jnp.fft.ifft2(bz, axes=(0, 1)))[..., None, None]
+        exxy = jnp.fft.ifft2(ex, axes=(0, 1))[..., None, None]
+        eyxy = jnp.fft.ifft2(ey, axes=(0, 1))[..., None, None]
+        bzxy = jnp.fft.ifft2(bz, axes=(0, 1))[..., None, None]
 
         temp_x = exxy + self.vy * bzxy
         temp_y = eyxy - self.vx * bzxy

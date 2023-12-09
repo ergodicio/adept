@@ -124,10 +124,10 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             temp_f, _ = _initialize_distribution_(
                 nxs=[int(cfg_grid["nx"]), int(cfg_grid["ny"])],
                 nvs=[int(cfg_grid["nvx"]), int(cfg_grid["nvy"])],
-                v0=v0,
+                v0=v0 * cfg_grid["beta"],
                 m=m,
-                T0=T0,
-                vmax=cfg_grid["vmax"],
+                T0=T0 * cfg_grid["beta"] ** 2.0,
+                vmax=cfg_grid["vmax"] * cfg_grid["beta"],
                 n_prof=nprof,
                 noise_val=species_params["noise_val"],
                 noise_seed=int(species_params["noise_seed"]),
@@ -155,8 +155,8 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     """
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dy"] = cfg_grid["ymax"] / cfg_grid["ny"]
-    cfg_grid["dvx"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvx"]
-    cfg_grid["dvy"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvy"]
+    cfg_grid["dvx"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvx"] * cfg_grid["beta"]
+    cfg_grid["dvy"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvy"] * cfg_grid["beta"]
 
     # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
@@ -193,19 +193,23 @@ def get_solver_quantities(cfg: Dict) -> Dict:
             ),
             "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
             "vx": jnp.linspace(
-                -cfg_grid["vmax"] + cfg_grid["dvx"] / 2, cfg_grid["vmax"] - cfg_grid["dvx"] / 2, cfg_grid["nvx"]
+                -cfg_grid["beta"] * (cfg_grid["vmax"] + cfg_grid["dvx"] / 2),
+                cfg_grid["beta"] * (cfg_grid["vmax"] - cfg_grid["dvx"] / 2),
+                cfg_grid["nvx"],
             ),
             "vy": jnp.linspace(
-                -cfg_grid["vmax"] + cfg_grid["dvy"] / 2, cfg_grid["vmax"] - cfg_grid["dvy"] / 2, cfg_grid["nvy"]
+                -cfg_grid["beta"] * (cfg_grid["vmax"] + cfg_grid["dvy"] / 2),
+                cfg_grid["beta"] * (cfg_grid["vmax"] - cfg_grid["dvy"] / 2),
+                cfg_grid["nvy"],
             ),
             "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
             "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
             "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
             "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
-            "kvx": jnp.fft.fftfreq(cfg_grid["nvx"], d=cfg_grid["dvx"]) * 2.0 * np.pi,
-            "kvxr": jnp.fft.rfftfreq(cfg_grid["nvx"], d=cfg_grid["dvx"]) * 2.0 * np.pi,
-            "kvy": jnp.fft.fftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
-            "kvyr": jnp.fft.rfftfreq(cfg_grid["nvy"], d=cfg_grid["dvy"]) * 2.0 * np.pi,
+            "kvx": jnp.fft.fftfreq(cfg_grid["nvx"], d=cfg_grid["beta"] * cfg_grid["dvx"]) * 2.0 * np.pi,
+            "kvxr": jnp.fft.rfftfreq(cfg_grid["nvx"], d=cfg_grid["beta"] * cfg_grid["dvx"]) * 2.0 * np.pi,
+            "kvy": jnp.fft.fftfreq(cfg_grid["nvy"], d=cfg_grid["beta"] * cfg_grid["dvy"]) * 2.0 * np.pi,
+            "kvyr": jnp.fft.rfftfreq(cfg_grid["nvy"], d=cfg_grid["beta"] * cfg_grid["dvy"]) * 2.0 * np.pi,
         },
     }
 
@@ -281,12 +285,12 @@ def init_state(cfg: Dict) -> Dict:
 
 
 def get_diffeqsolve_quants(cfg):
-    if cfg["solver"]["field"] == "poisson":
-        VectorField = time_integrator.LeapfrogIntegrator(cfg)
-    elif cfg["solver"]["field"] == "maxwell":
-        VectorField = time_integrator.ChargeConservingMaxwell(cfg)
-    else:
-        raise NotImplementedError
+    # if cfg["solver"]["field"] == "poisson":
+    #     VectorField = time_integrator.LeapfrogIntegrator(cfg)
+    # elif cfg["solver"]["field"] == "maxwell":
+    VectorField = time_integrator.ChargeConservingMaxwell(cfg)
+    # else:
+    #     raise NotImplementedError
 
     return dict(
         terms=ODETerm(VectorField),

@@ -133,8 +133,6 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
         dex, dey = self.driver(t, args)
 
-        dex, dey = jnp.fft.fft2(dex), jnp.fft.fft2(dey)
-
         bznph, exnph, eynph = self.step_1(ex, ey, bz, f)
         fn1, jxn12 = self.step_2(f)
         fn2, jyn32 = self.step_3(fn1)

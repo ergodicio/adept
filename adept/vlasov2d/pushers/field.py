@@ -96,7 +96,7 @@ class Driver:
         :return:
         """
 
-        total_dex = jnp.zeros(current_time.shape + self.xax.shape + self.yax.shape)
+        total_dex = jnp.zeros((self.xax.size, self.yax.size))
         # total_djy = np.zeros(current_time.shape + xs[0].shape + xs[1].shape)
 
         for key, pulse in args["drivers"]["ex"].items():
@@ -106,7 +106,7 @@ class Driver:
         #     total_djy += get_this_pulse(pulse, current_time)
 
         total_dey = jnp.zeros((self.xax.size, self.yax.size), dtype=jnp.complex128)
-        total_dex = jnp.fft.fft2(total_dex)
+        total_dex = jnp.fft.fft2(total_dex, axes=(0, 1))
 
         return total_dex, total_dey
 
