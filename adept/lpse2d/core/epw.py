@@ -185,7 +185,7 @@ class EPW2D(eqx.Module):
                 eh_x = eh_x * jnp.exp(density_step * self.dt)
                 new_phi = self.get_phi_from_eh(eh_x)
 
-            if self.cfg["terms"]["tpd"]["source"]:
+            if self.cfg["terms"]["epw"]["source"]["tpd"]:
                 new_phi += self.dt * self.calc_tpd_source_step(y["phi"], y["e0"], y["nb"], y["t"])
 
         else:

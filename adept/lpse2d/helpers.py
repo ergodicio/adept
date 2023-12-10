@@ -131,7 +131,7 @@ def init_state(cfg: Dict, td=None) -> Dict:
     """
 
     e0 = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=jnp.complex128)
-    phi = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]), dtype=jnp.complex128)
+    # phi = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]), dtype=jnp.complex128)
     # phi += (
     #     1e-3
     #     * jnp.exp(-(((cfg["grid"]["x"][:, None] - 2000) / 400.0) ** 2.0))
@@ -143,20 +143,34 @@ def init_state(cfg: Dict, td=None) -> Dict:
     # e0 = jnp.concatenate([e0[:, :, None], jnp.zeros_like(e0)[:, :, None]], axis=-1)
     # e0 *= cfg["drivers"]["E0"]["e0"]
 
-    random_amps_x = 1.0e-12 * np.random.uniform(0.1, 1, cfg["grid"]["nx"])
-    random_amps_y = 1.0e-12 * np.random.uniform(0.1, 1, cfg["grid"]["ny"])
+    if cfg["density"]["noise"]["type"] == "uniform":
+        random_amps_x = np.random.uniform(
+            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["nx"]
+        )
+        random_amps_y = np.random.uniform(
+            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["ny"]
+        )
+    elif cfg["density"]["noise"]["type"] == "normal":
+        loc = 0.5 * (cfg["density"]["noise"]["min"] + cfg["density"]["noise"]["max"])
+        scale = 1.0
+        random_amps_x = np.random.normal(loc, scale, cfg["grid"]["nx"])
+        random_amps_y = np.random.normal(loc, scale, cfg["grid"]["ny"])
 
-    # phi = jnp.sum(random_amps_x * jnp.exp(1j * cfg["grid"]["kx"][None, :] * cfg["grid"]["x"][:, None]), axis=-1)[
-    #     :, None
-    # ]
-    # phi += jnp.sum(random_amps_y * jnp.exp(1j * cfg["grid"]["ky"][None, :] * cfg["grid"]["y"][:, None]), axis=-1)[
-    #     None, :
-    # ]
-    # phi = jnp.fft.fft2(phi)
+    else:
+        raise NotImplementedError
+
+    phi = jnp.sum(random_amps_x * jnp.exp(1j * cfg["grid"]["kx"][None, :] * cfg["grid"]["x"][:, None]), axis=-1)[
+        :, None
+    ]
+    phi += jnp.sum(random_amps_y * jnp.exp(1j * cfg["grid"]["ky"][None, :] * cfg["grid"]["y"][:, None]), axis=-1)[
+        None, :
+    ]
+    phi = jnp.fft.fft2(phi)
 
     state = {
         "e0": e0,
-        "nb": (0.8 + 0.4 * cfg["grid"]["x"] / cfg["grid"]["xmax"])[:, None] * np.ones_like(phi, dtype=np.float64),
+        "nb": (cfg["density"]["offset"] + cfg["density"]["slope"] * cfg["grid"]["x"] / cfg["grid"]["xmax"])[:, None]
+        * np.ones_like(phi, dtype=np.float64),
         "temperature": jnp.ones_like(e0[..., 0], dtype=jnp.float64),
         "dn": jnp.zeros_like(e0[..., 0], dtype=jnp.float64),
         "phi": phi,

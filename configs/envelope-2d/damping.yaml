@@ -1,5 +1,13 @@
 mode: envelope-2d
 
+density:
+  offset: 0.9
+  slope: 0.3
+  noise:
+    min: 0.0
+    max: 0.0
+    type: uniform
+
 drivers:
   E0:
     w0: 2.0
@@ -87,7 +95,6 @@ terms:
       active: True
       kld: 0.3
       nuee: 0.00000001
-
-  tpd:
-    source: False
+    source:
+      tpd: False
 
