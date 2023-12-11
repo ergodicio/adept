@@ -99,4 +99,4 @@ terms:
     source:
       tpd: False
   pump:
-    on: False
+    is_on: False

@@ -130,18 +130,18 @@ def init_state(cfg: Dict, td=None) -> Dict:
     :return: state: Dict
     """
 
-    e0 = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=jnp.complex128)
+    # e0 = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=jnp.complex128)
     # phi = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]), dtype=jnp.complex128)
     # phi += (
     #     1e-3
     #     * jnp.exp(-(((cfg["grid"]["x"][:, None] - 2000) / 400.0) ** 2.0))
     #     * jnp.exp(-1j * 0.2 * cfg["grid"]["x"][:, None])
     # )
-    # e0 = jnp.concatenate(
-    #     [jnp.exp(1j * cfg["drivers"]["E0"]["k0"] * cfg["grid"]["x"])[:, None] for _ in range(cfg["grid"]["ny"])], axis=-1
-    # )
-    # e0 = jnp.concatenate([e0[:, :, None], jnp.zeros_like(e0)[:, :, None]], axis=-1)
-    # e0 *= cfg["drivers"]["E0"]["e0"]
+    e0 = jnp.concatenate(
+        [jnp.exp(1j * cfg["drivers"]["E0"]["k0"] * cfg["grid"]["x"])[:, None] for _ in range(cfg["grid"]["ny"])], axis=-1
+    )
+    e0 = jnp.concatenate([e0[:, :, None], jnp.zeros_like(e0)[:, :, None]], axis=-1)
+    e0 *= cfg["drivers"]["E0"]["a0"]
 
     if cfg["density"]["noise"]["type"] == "uniform":
         random_amps_x = np.random.uniform(
@@ -348,10 +348,7 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
 
 def make_xarrays(cfg, this_t, state, td):
     phi_vs_t = state["phi"].view(np.complex128)
-    phi_k = xr.DataArray(
-        phi_vs_t,
-        coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])),
-    )
+    phi_k = xr.DataArray(phi_vs_t, coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])))
 
     ex_k = xr.DataArray(
         -1j * cfg["grid"]["kx"][:, None] * phi_vs_t,
@@ -376,10 +373,21 @@ def make_xarrays(cfg, this_t, state, td):
         -np.fft.ifft2(1j * cfg["grid"]["ky"][None, :] * phi_vs_t) / cfg["grid"]["nx"] / cfg["grid"]["ny"] * 4,
         coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
     )
+
+    e0x = xr.DataArray(
+        state["e0"].view(np.complex128)[..., 0],
+        coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
+    )
+
+    e0y = xr.DataArray(
+        state["e0"].view(np.complex128)[..., 1],
+        coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
+    )
+
     delta = xr.DataArray(state["delta"], coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])))
 
     kfields = xr.Dataset({"phi": phi_k, "ex": ex_k, "ey": ey_k})
-    fields = xr.Dataset({"phi": phi_x, "ex": ex, "ey": ey, "delta": delta})
+    fields = xr.Dataset({"phi": phi_x, "ex": ex, "ey": ey, "delta": delta, "e0_x": e0x, "e0_y": e0y})
     kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
