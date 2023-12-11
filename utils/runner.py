@@ -95,6 +95,8 @@ def run_job(run_id, nested):
 
 
 def run(cfg: Dict) -> Tuple[Solution, Dict]:
+    t__ = time.time()
+
     helpers = get_helpers(cfg["mode"])
 
     with tempfile.TemporaryDirectory() as td:
@@ -143,6 +145,8 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         datasets = helpers.post_process(result, cfg, td)
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
         mlflow.log_artifacts(td)
+
+        mlflow.log_metrics({"total_time": round(time.time() - t__, 4)})
 
     # fin
 
