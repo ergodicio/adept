@@ -388,7 +388,7 @@ def make_xarrays(cfg, this_t, state, td):
 
     kfields = xr.Dataset({"phi": phi_k, "ex": ex_k, "ey": ey_k})
     fields = xr.Dataset({"phi": phi_x, "ex": ex, "ey": ey, "delta": delta, "e0_x": e0x, "e0_y": e0y})
-    kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
+    # kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
     return kfields, fields
