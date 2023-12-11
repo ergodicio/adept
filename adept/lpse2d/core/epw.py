@@ -172,7 +172,7 @@ class EPW2D(eqx.Module):
         )
         return coeff * (term1 + term2)
 
-    def update_potential(self, y):
+    def update_potential(self, t, y):
         # do the equation first --- this is equation 54 so far
         if self.cfg["terms"]["epw"]["linear"]:
             osc_term, damping_term = self.calc_linear_step(y["temperature"])
@@ -186,7 +186,7 @@ class EPW2D(eqx.Module):
                 new_phi = self.get_phi_from_eh(eh_x)
 
             if self.cfg["terms"]["epw"]["source"]["tpd"]:
-                new_phi += self.dt * self.calc_tpd_source_step(y["phi"], y["e0"], y["nb"], y["t"])
+                new_phi += self.dt * self.calc_tpd_source_step(y["phi"], y["e0"], y["nb"], t)
 
         else:
             raise NotImplementedError("The linear term is necessary to run the code")
@@ -208,7 +208,7 @@ class EPW2D(eqx.Module):
 
     def __call__(self, t, y, args):
         # push the equation of motion for the potential
-        y["phi"] = self.update_potential(y)
+        y["phi"] = self.update_potential(t, y)
 
         if ("E2" in self.cfg["drivers"].keys()) or self.cfg["terms"]["epw"]["trapping"]["active"]:
             eh = self.get_eh_x(y["phi"])
