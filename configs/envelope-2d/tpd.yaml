@@ -40,9 +40,9 @@ drivers:
 
 save:
   t:
-    tmin: 1.0
-    tmax: 24999.0
-    nt: 256
+    tmin: 0.0
+    tmax: 10000.0
+    nt: 32
 
 plasma:
   wp0: 1.0
@@ -67,22 +67,22 @@ grid:
   ymax: 1000.0
   ny: 512
   tmin: 0.
-  tmax: 25000.0
+  tmax: 10000.0
   dt: 2.0
 
 mlflow:
   experiment: lpse2d-tpd
-  run: noise-test
+  run: noise-test-no-density-gradient
 
-models:
-  file: /Users/archis/Dev/code/ergodic/laplax/weights.eqx
-  nu_g:
-    activation: tanh
-    depth: 4
-    final_activation: tanh
-    in_size: 3
-    out_size: 1
-    width_size: 8
+# models:
+  # file: None #/Users/archis/Dev/code/ergodic/laplax/weights.eqx
+  # nu_g:
+  #   activation: tanh
+  #   depth: 4
+  #   final_activation: tanh
+  #   in_size: 3
+  #   out_size: 1
+  #   width_size: 8
 
 terms:
   epw:
@@ -98,5 +98,3 @@ terms:
       nuee: 0.0000001
     source:
       tpd: False
-  pump:
-    is_on: False
