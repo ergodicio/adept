@@ -15,7 +15,7 @@ import xarray as xr
 from adept.lpse2d.core import integrator, driver
 
 
-def get_derived_quantities(cfg_grid: Dict) -> Dict:
+def get_derived_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -24,6 +24,8 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     :param cfg_grid:
     :return:
     """
+    cfg_grid = cfg["grid"]
+
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dy"] = cfg_grid["ymax"] / cfg_grid["ny"]
 
@@ -37,7 +39,11 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    return cfg_grid
+    cfg = calc_norms(cfg)
+
+    cfg["grid"] = cfg_grid
+
+    return cfg
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -138,7 +144,8 @@ def init_state(cfg: Dict, td=None) -> Dict:
     #     * jnp.exp(-1j * 0.2 * cfg["grid"]["x"][:, None])
     # )
     e0 = jnp.concatenate(
-        [jnp.exp(1j * cfg["drivers"]["E0"]["k0"] * cfg["grid"]["x"])[:, None] for _ in range(cfg["grid"]["ny"])], axis=-1
+        [jnp.exp(1j * cfg["drivers"]["E0"]["k0"] * cfg["grid"]["x"])[:, None] for _ in range(cfg["grid"]["ny"])],
+        axis=-1,
     )
     e0 = jnp.concatenate([e0[:, :, None], jnp.zeros_like(e0)[:, :, None]], axis=-1)
     e0 *= cfg["drivers"]["E0"]["a0"]

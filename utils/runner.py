@@ -104,7 +104,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
             yaml.dump(cfg, fi)
 
         # get derived quantities
-        cfg["grid"] = helpers.get_derived_quantities(cfg["grid"])
+        cfg = helpers.get_derived_quantities(cfg)
         misc.log_params(cfg)
 
         cfg["grid"] = helpers.get_solver_quantities(cfg)

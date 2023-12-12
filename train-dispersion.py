@@ -69,7 +69,7 @@ def train_loop():
                         defaults = yaml.safe_load(file)
                     mod_defaults = _modify_defaults_(defaults, float(k0))
                     with mlflow.start_run(run_name=f"{epoch=}-{batch=}-{sim=}", nested=True) as mlflow_run:
-                        mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
+                        mod_defaults = helpers.get_derived_quantities(mod_defaults)
                         misc.log_params(mod_defaults)
 
                         mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])

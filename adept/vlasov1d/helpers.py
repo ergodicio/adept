@@ -140,7 +140,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     return n_prof_total, f
 
 
-def get_derived_quantities(cfg_grid: Dict) -> Dict:
+def get_derived_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -149,6 +149,8 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     :param cfg_grid:
     :return:
     """
+    cfg_grid = cfg["grid"]
+
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
@@ -161,6 +163,8 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
         print(r"Only running $10^6$ steps")
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
+
+    cfg["grid"] = cfg_grid
 
     return cfg_grid
 
