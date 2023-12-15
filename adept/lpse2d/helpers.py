@@ -4,13 +4,14 @@ from collections import defaultdict
 
 
 import matplotlib.pyplot as plt
-import jax
+import jax, pint
 from jax import numpy as jnp
 import numpy as np
 from scipy import constants
 import equinox as eqx
 from diffrax import ODETerm
 import xarray as xr
+from plasmapy.formulary.collisions.frequencies import fundamental_electron_collision_freq
 
 from adept.lpse2d.core import integrator, driver
 
@@ -39,7 +40,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    cfg = calc_norms(cfg)
+    cfg = get_more_units(cfg)
 
     cfg["grid"] = cfg_grid
 
@@ -230,50 +231,51 @@ def init_state(cfg: Dict, td=None) -> Dict:
     return {k: v.view(dtype=np.float64) for k, v in state.items()}
 
 
-def calc_e0(cfg):
-    e_laser = np.sqrt(2.0 * (float(cfg["drivers"]["E0"]["intensity"]) * 100) / constants.c / constants.epsilon_0)
-    e_norm = constants.m_e * cfg["norms"]["velocity"] * cfg["norms"]["frequency"] / constants.e
-
-    cfg["norms"]["electric field"] = e_norm
-    cfg["norms"]["laser field"] = e_laser
-
-    cfg["drivers"]["E0"]["e0"] = e_laser / e_norm
-    cfg["drivers"]["E0"]["k0"] = np.sqrt(
-        (cfg["drivers"]["E0"]["w0"] ** 2.0 - cfg["plasma"]["wp0"] ** 2.0) / cfg["norms"]["c"] ** 2.0
-    )
-
-    print("laser parameters: ")
-    print(f'w0 = {round(cfg["drivers"]["E0"]["w0"],4)}')
-    print(f'k0 = {round(cfg["drivers"]["E0"]["k0"],4)}')
-    print(f"a0 = {round(e_laser / e_norm, 4)}")
-    print()
-
-    return cfg
-
-
-def calc_norms(cfg: Dict):
+def get_more_units(cfg: Dict):
     """
 
     :type cfg: object
     """
-    cfg["norms"] = {}
-    cfg["norms"]["n0"] = float(cfg["plasma"]["density"])
-    cfg["norms"]["T0"] = cfg["plasma"]["temperature"]
-    cfg["norms"]["frequency"] = np.sqrt(cfg["norms"]["n0"] * constants.e**2.0 / constants.m_e / constants.epsilon_0)
-    cfg["norms"]["velocity"] = (
-        2.0
-        * np.sqrt(
-            np.average(cfg["plasma"]["temperature"])
-            / (1000.0 * constants.physical_constants["electron mass energy equivalent in MeV"][0])
-        )
-        * constants.c
+
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+    import astropy.units as u
+
+    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
+    wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
+    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
+    v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
+    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
+
+    _nuei_ = fundamental_electron_collision_freq(
+        T_e=(Te := _Q(cfg["units"]["electron temperature"]).to("eV")).magnitude * u.eV,
+        n_e=n0.to("1/m^3").magnitude / u.m**3,
+        ion=f'{cfg["units"]["gas fill"]} {cfg["units"]["ionization state"]}+',
+    ).value
+    cfg["units"]["derived"]["nuei"] = _Q(f"{_nuei_} Hz")
+    cfg["units"]["derived"]["nuei_norm"] = (cfg["units"]["derived"]["nuei"].to("rad/s") / wp0).magnitude
+
+    lambda_0 = _Q(cfg["units"]["laser wavelength"])
+    laser_frequency = (2 * np.pi / lambda_0 * ureg.c).to("rad/s")
+    laser_period = (1 / laser_frequency).to("fs")
+
+    e_laser = np.sqrt(2.0 * _Q(cfg["drivers"]["E0"]["intensity"]) / ureg.c / ureg.epsilon_0).to("V/m")
+    e_norm = (ureg.m_e * (np.sqrt(2.0 * Te / ureg.m_e).to("m/s")) * laser_frequency / ureg.e).to("V/m")
+
+    cfg["units"]["derived"]["electric field"] = e_norm
+    cfg["units"]["derived"]["laser field"] = e_laser
+
+    cfg["drivers"]["E0"]["w0"] = (laser_frequency / wp0).magnitude
+    cfg["drivers"]["E0"]["a0"] = (e_laser / e_norm).magnitude
+    cfg["drivers"]["E0"]["k0"] = np.sqrt(
+        (cfg["drivers"]["E0"]["w0"] ** 2.0 - cfg["plasma"]["wp0"] ** 2.0) / c_light.magnitude**2.0
     )
-    cfg["norms"]["c"] = constants.c / cfg["norms"]["velocity"]
 
-    cfg["norms"]["space"] = cfg["norms"]["velocity"] / cfg["norms"]["frequency"]
-    cfg["norms"]["time"] = 1.0 / cfg["norms"]["frequency"]
-
-    cfg = calc_e0(cfg)
+    print("laser parameters: ")
+    print(f'w0 = {round(cfg["drivers"]["E0"]["w0"], 4)}')
+    print(f'k0 = {round(cfg["drivers"]["E0"]["k0"], 4)}')
+    print(f'a0 = {round(cfg["drivers"]["E0"]["a0"], 4)}')
+    print()
 
     return cfg
 
