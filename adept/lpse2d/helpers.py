@@ -342,6 +342,10 @@ def plot_kt(kfields, td):
         plt.savefig(os.path.join(fld_dir, f"{k}_kx.png"), bbox_inches="tight")
         plt.close()
 
+        np.log10(np.abs(v[tslice, :, :])).T.plot(col="t", col_wrap=4)
+        plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
+        plt.close()
+
         kx = kfields.coords["kx"].data
 
 

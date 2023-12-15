@@ -100,6 +100,15 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         cfg["grid"] = helpers.get_solver_quantities(cfg)
         cfg = helpers.get_save_quantities(cfg)
 
+        tqs = {
+            "t0": cfg["grid"]["tmin"],
+            "t1": cfg["grid"]["tmax"],
+            "max_steps": cfg["grid"]["max_steps"],
+            "save_t0": cfg["grid"]["tmin"],
+            "save_t1": cfg["grid"]["tmax"],
+            "save_nt": cfg["grid"]["tmax"],
+        }
+
         models = helpers.get_models(cfg["models"]) if "models" in cfg else None
         state = helpers.init_state(cfg)
 
@@ -109,7 +118,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         diffeqsolve_quants = helpers.get_diffeqsolve_quants(cfg)
 
         @eqx.filter_jit
-        def _run_(these_models):
+        def _run_(these_models, time_quantities: Dict):
             args = {"drivers": cfg["drivers"]}
             if these_models is not None:
                 args["models"] = these_models
@@ -117,16 +126,16 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
             return diffeqsolve(
                 terms=diffeqsolve_quants["terms"],
                 solver=diffeqsolve_quants["solver"],
-                t0=cfg["grid"]["tmin"],
-                t1=cfg["grid"]["tmax"],
-                max_steps=cfg["grid"]["max_steps"],
+                t0=time_quantities["t0"],
+                t1=time_quantities["t1"],
+                max_steps=time_quantities["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args=args,
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
-        result = _run_(models)
+        result = _run_(models, tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
 
         t0 = time.time()
