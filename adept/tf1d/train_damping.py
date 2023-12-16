@@ -71,7 +71,7 @@ def train_loop():
                 locs = {"$k_0$": k0, "$a_0$": a0, r"$\nu_{ee}$": nuee}
                 actual_nk1 = xr.DataArray(fks["n-(k_x)"].loc[locs].data[:, 1], coords=(("t", fks.coords["t"].data),))
                 with mlflow.start_run(run_name=f"{epoch=}-{sim=}", nested=True) as mlflow_run:
-                    mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
+                    mod_defaults = helpers.get_derived_quantities(mod_defaults)
                     misc.log_params(mod_defaults)
 
                     mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])

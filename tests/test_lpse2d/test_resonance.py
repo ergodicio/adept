@@ -72,7 +72,7 @@ def get_vg_func(gamma, adjoint):
     sim_k0 = rng.uniform(0.16, 0.24)
 
     defaults, actual_w0 = load_cfg(sim_k0, gamma, adjoint)
-    defaults["grid"] = helpers.get_derived_quantities(defaults["grid"])
+    defaults = helpers.get_derived_quantities(defaults)
     misc.log_params(defaults)
 
     defaults["grid"] = helpers.get_solver_quantities(defaults)
@@ -124,7 +124,7 @@ def test_resonance_search(kinetic, adjoint):
         vg_func, sim_k0, actual_w0 = get_vg_func(kinetic, adjoint)
 
         mod_defaults, _ = load_cfg(sim_k0, kinetic, adjoint)
-        mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
+        mod_defaults = helpers.get_derived_quantities(mod_defaults)
         misc.log_params(mod_defaults)
         mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults)
         mod_defaults = helpers.get_save_quantities(mod_defaults)

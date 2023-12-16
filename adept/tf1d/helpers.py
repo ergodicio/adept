@@ -90,7 +90,7 @@ def post_process(result, cfg: Dict, td: str) -> Dict:
     return datasets
 
 
-def get_derived_quantities(cfg_grid: Dict) -> Dict:
+def get_derived_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -99,6 +99,9 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     :param cfg_grid:
     :return:
     """
+
+    cfg_grid = cfg["grid"]
+
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
@@ -109,6 +112,8 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
         print(r"Only running $10^6$ steps")
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
+
+    cfg["grid"] = cfg_grid
 
     return cfg_grid
 

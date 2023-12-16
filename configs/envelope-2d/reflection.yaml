@@ -1,5 +1,13 @@
 mode: envelope-2d
 
+density:
+  offset: 0.9
+  slope: 0.3
+  noise:
+    min: 0.0
+    max: 0.0
+    type: uniform
+
 drivers:
   E0:
     w0: 2.0
@@ -14,11 +22,11 @@ drivers:
     y_r: 20.
     k0: 1.0
     a0: 0.0
-    intensity: 4.0e14
+    intensity: 4.0e14 W/cm^2
   E2:
-    w0: 0.03375
-    t_c: 230.
-    t_w: 400.
+    w0: 0.1176
+    t_c: 70.
+    t_w: 100.
     t_r: 5.
     x_c: 1400.
     x_w: 600.
@@ -26,61 +34,61 @@ drivers:
     y_c: 0.
     y_w: 2000000.
     y_r: 5.
-    k0: 0.15
-    a0: 100.0
+    k0: 0.28
+    a0: 5000.0
     intensity: 4.0e14
 
 save:
   t:
-    tmin: 1.0
-    tmax: 24999.0
-    nt: 256
+    tmin: 0.0
+    tmax: 1000.0
+    nt: 512
 
 plasma:
   wp0: 1.0
-  nu_ei: 0.0
-  Z: 2
-  nb: 1.0
-  temperature: 2.0 #keV
-  density: 2.3e27  #m^3
+#  Z: 2
+#  nb: 1.0
+#  temperature: 2.0 #keV
+#  density: 2.3e27  #m^3
 
 units:
   laser wavelength: 351nm
-  electron temperature: 2000eV
-  density for collisions: 1.5e21/cc
-  Z: 10
-  Zp: 10
+  normalizing temperature: 4000eV
+  normalizing density: 2.24e21/cc
+  gas fill: N
+  ionization state: 6
+  electron temperature: 4000eV
 
 grid:
   xmin: 000.0
-  xmax: 10000.0
-  nx: 4096
+  xmax: 4000.0
+  nx: 1024
   ymin: -4.0
   ymax: 4.0
   ny: 8
   tmin: 0.
-  tmax: 25000.0
+  tmax: 1000.0
   dt: 2.0
 
 mlflow:
-  experiment: epw-finite-length
-  run: trapping
+  experiment: epw-finite-length-compare
+  run: lpse-kinetic
 
-models:
-  file: /Users/archis/Dev/code/ergodic/laplax/weights.eqx
-  nu_g:
-    activation: tanh
-    depth: 4
-    final_activation: tanh
-    in_size: 3
-    out_size: 1
-    width_size: 8
+#models:
+#  file: /Users/archis/Dev/code/ergodic/laplax/weights.eqx
+#  nu_g:
+#    activation: tanh
+#    depth: 4
+#    final_activation: tanh
+#    in_size: 3
+#    out_size: 1
+#    width_size: 8
 
 terms:
   epw:
     linear: True
-    density_gradient: True
-    kinetic real part: False
+    density_gradient: False
+    kinetic real part: True
     boundary:
       x: absorbing
       y: periodic
@@ -88,5 +96,5 @@ terms:
       active: False
       kld: 0.28
       nuee: 0.0000001
-  tpd:
-    source: False
+    source:
+      tpd: False

@@ -22,9 +22,9 @@ def _real_part_(kinetic):
     rand_k0 = np.random.uniform(0.15, 0.22)
     cfg["drivers"]["E2"]["k0"] = float(rand_k0)
     cfg["grid"]["xmax"] = float(2 * np.pi / rand_k0)
-    cfg["grid"]["tmax"] = 6000.0
-    cfg["save"]["t"]["tmax"] = 5900.0
-    cfg["save"]["t"]["nt"] = 4096
+    cfg["grid"]["tmax"] = 4000.0
+    cfg["save"]["t"]["tmax"] = 4000.0
+    cfg["save"]["t"]["nt"] = 2048
 
     cfg["terms"]["epw"]["kinetic real part"] = kinetic
 

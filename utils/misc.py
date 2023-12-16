@@ -1,5 +1,7 @@
 import flatdict, mlflow, os, boto3, botocore, shutil, pickle, yaml, time, tempfile
 from urllib.parse import urlparse
+
+from pint import Quantity
 from mlflow.tracking import MlflowClient
 import jax
 import equinox as eqx
@@ -9,6 +11,8 @@ from mlflow_export_import.run.export_run import RunExporter
 def log_params(cfg):
     flattened_dict = dict(flatdict.FlatDict(cfg, delimiter="."))
     num_entries = len(flattened_dict.keys())
+
+    flattened_dict = {k: str(v) if isinstance(v, Quantity) else v for k, v in flattened_dict.items()}
 
     if num_entries > 100:
         num_batches = num_entries % 100

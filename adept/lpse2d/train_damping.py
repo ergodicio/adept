@@ -62,7 +62,7 @@ def remote_run(run_id, t_or_v):
             actual_ek1 = xr.open_dataarray(
                 misc.download_file("ground_truth.nc", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td)
             )
-            mod_defaults["grid"] = helpers.get_derived_quantities(mod_defaults["grid"])
+            mod_defaults = helpers.get_derived_quantities(mod_defaults)
             misc.log_params(mod_defaults)
             mod_defaults["grid"] = helpers.get_solver_quantities(mod_defaults["grid"])
             mod_defaults = helpers.get_save_quantities(mod_defaults)
