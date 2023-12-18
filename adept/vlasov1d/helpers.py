@@ -295,8 +295,13 @@ def post_process(result, cfg: Dict, td: str):
             scalars_xr.to_netcdf(os.path.join(binary_dir, f"scalars-t={round(scalars_xr.coords['t'].data[-1], 4)}.nc"))
 
             for nm, srs in scalars_xr.items():
-                srs.plot()
-                plt.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
+                fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+                srs.plot(ax=ax[0])
+                ax[0].grid()
+                np.log10(np.abs(srs)).plot(ax=ax[1])
+                ax[1].grid()
+                ax[1].set_ylabel("$log_{10}$(|" + nm + "|)")
+                fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
                 plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)

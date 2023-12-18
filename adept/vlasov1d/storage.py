@@ -188,6 +188,7 @@ def get_default_save_func(cfg):
             "mean_j": _calc_mean_moment_(y["electron"] * v),
             "mean_n": _calc_mean_moment_(y["electron"]),
             "mean_q": _calc_mean_moment_(y["electron"] * v**3.0),
+            "mean_-flogf": _calc_mean_moment_(-jnp.log(jnp.abs(y["electron"])) * jnp.abs(y["electron"])),
             "mean_de2": jnp.mean(y["de"] ** 2.0),
             "mean_e2": jnp.mean(y["e"] ** 2.0),
         }
