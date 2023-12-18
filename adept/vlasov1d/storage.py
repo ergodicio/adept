@@ -8,7 +8,7 @@ import numpy as np
 import xarray as xr
 
 
-def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
+def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
     """
     Stores fields to netcdf
 
@@ -19,8 +19,6 @@ def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray, prefix: s
     :param this_t:
     :return:
     """
-    binary_dir = os.path.join(td, "binary")
-    os.makedirs(binary_dir, exist_ok=True)
 
     if any(x in ["x", "kx"] for x in cfg["save"][prefix].keys()):
         crds = set(cfg["save"][prefix].keys()) - {"t", "func"}
@@ -172,4 +170,28 @@ def get_save_quantities(cfg: Dict) -> Dict:
         elif k.startswith("electron"):
             cfg["save"][k]["func"] = get_dist_save_func(cfg, k)
 
+    cfg["save"]["default"] = {"t": {"ax": cfg["grid"]["t"]}, "func": get_default_save_func(cfg)}
+
     return cfg
+
+
+def get_default_save_func(cfg):
+    v = cfg["grid"]["v"][None, :]
+    dv = cfg["grid"]["dv"]
+
+    def _calc_mean_moment_(inp):
+        return jnp.mean(jnp.trapz(inp, dx=dv, axis=1))
+
+    def save(t, y, args):
+        scalars = {
+            "mean_P": _calc_mean_moment_(y["electron"] * v**2.0),
+            "mean_j": _calc_mean_moment_(y["electron"] * v),
+            "mean_n": _calc_mean_moment_(y["electron"]),
+            "mean_q": _calc_mean_moment_(y["electron"] * v**3.0),
+            "mean_de2": jnp.mean(y["de"] ** 2.0),
+            "mean_e2": jnp.mean(y["e"] ** 2.0),
+        }
+
+        return scalars
+
+    return save

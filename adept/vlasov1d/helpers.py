@@ -264,12 +264,17 @@ def post_process(result, cfg: Dict, td: str):
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
+
+    os.makedirs(os.path.join(td, "plots", "scalars"), exist_ok=True)
+
+    binary_dir = os.path.join(td, "binary")
+    os.makedirs(binary_dir)
     # merge
     # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
     # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
     for k in result.ys.keys():
         if k.startswith("field"):
-            fields_xr = store_fields(cfg, td, result.ys[k], result.ts[k], k)
+            fields_xr = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
             t_skip = int(fields_xr.coords["t"].data.size // 8)
             t_skip = t_skip if t_skip > 1 else 1
             tslice = slice(0, -1, t_skip)
@@ -283,8 +288,19 @@ def post_process(result, cfg: Dict, td: str):
                 plt.savefig(os.path.join(td, "plots", "fields", "lineouts", f"{nm[7:]}.png"), bbox_inches="tight")
                 plt.close()
 
+        elif k.startswith("default"):
+            scalars_xr = xarray.Dataset(
+                {k: xarray.DataArray(v, coords=(("t", result.ts["default"]),)) for k, v in result.ys["default"].items()}
+            )
+            scalars_xr.to_netcdf(os.path.join(binary_dir, f"scalars-t={round(scalars_xr.coords['t'].data[-1], 4)}.nc"))
+
+            for nm, srs in scalars_xr.items():
+                srs.plot()
+                plt.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
+                plt.close()
+
     f_xr = store_f(cfg, result.ts, td, result.ys)
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
-    return {"fields": fields_xr, "dists": f_xr}
+    return {"fields": fields_xr, "dists": f_xr, "scalars": scalars_xr}
