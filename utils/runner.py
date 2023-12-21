@@ -122,6 +122,8 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
             args = {"drivers": cfg["drivers"]}
             if these_models is not None:
                 args["models"] = these_models
+            if "terms" in cfg.keys():
+                args["terms"] = cfg["terms"]
 
             return diffeqsolve(
                 terms=diffeqsolve_quants["terms"],

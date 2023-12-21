@@ -17,22 +17,23 @@ class Collisions:
         self.td_solver = TridiagonalSolver(self.cfg)
 
     def __init_fp_operator__(self):
-        # if self.cfg["solver"]["fp_operator"] == "lenard_bernstein":
-        #     return LenardBernstein(self.cfg)
-        # elif self.cfg["solver"]["fp_operator"] == "dougherty":
-        return Dougherty(self.cfg)
-        # else:
-        #     raise NotImplementedError
+        if self.cfg["terms"]["fokker_planck"]["type"].casefold() == "lenard_bernstein":
+            return LenardBernstein(self.cfg)
+        elif self.cfg["terms"]["fokker_planck"]["type"].casefold() == "dougherty":
+            return Dougherty(self.cfg)
+        else:
+            raise NotImplementedError
 
-    def __call__(self, nu_fp: jnp.float64, nu_K: jnp.float64, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
-        if np.any(self.cfg["nuee"] > 0.0):
+    def __call__(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+        if self.cfg["terms"]["fokker_planck"]["is_on"]:
             # The three diagonals representing collision operator for all x
             cee_a, cee_b, cee_c = self.fp(nu=nu_fp, f_xv=f, dt=dt)
             # Solve over all x
             f = self.td_solver(cee_a, cee_b, cee_c, f)
 
-        # if (np.any(self.cfg["grid"]["kr_prof"] > 0.0)) and (np.any(self.cfg["grid"]["kt_prof"] > 0.0)):
-        #     f = self.krook(nu_K, f, dt)
+        if self.cfg["terms"]["krook"]["is_on"]:
+            f = self.krook(nu_K, f, dt)
+
         return f
 
 
@@ -72,9 +73,9 @@ class LenardBernstein:
         """
 
         v0t_sq = self.vx_moment(f_xv * self.v[None, :] ** 2.0)
-        a = nu * dt * (-v0t_sq[:, None] / self.dv**2.0 + jnp.roll(self.v, 1)[None, :] / 2 / self.dv)
-        b = 1.0 + nu * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
-        c = nu * dt * (-v0t_sq[:, None] / self.dv**2.0 - jnp.roll(self.v, -1)[None, :] / 2 / self.dv)
+        a = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 + jnp.roll(self.v, 1)[None, :] / 2 / self.dv)
+        b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
+        c = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 - jnp.roll(self.v, -1)[None, :] / 2 / self.dv)
         return a, b, c
 
 
@@ -101,13 +102,13 @@ class Dougherty:
         v0t_sq = self.vx_moment(f_xv * (self.v[None, :] - vbar[:, None]) ** 2.0)
 
         a = (
-            nu
+            nu[:, None]
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 + (jnp.roll(self.v, 1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
         )
-        b = 1.0 + nu * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
+        b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
         c = (
-            nu
+            nu[:, None]
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 - (jnp.roll(self.v, -1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
         )

@@ -24,6 +24,7 @@ density:
       slope: 0.0
       wall_height: 0.0
       width: 100000.0
+
 grid:
   c_light: 10
   dt: 0.5
@@ -68,4 +69,41 @@ drivers:
       x_width: 4000000.0
   ey: {}
 
-nuee: 1.0e-5
+terms:
+  fokker_planck:
+    is_on: True
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: True
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0

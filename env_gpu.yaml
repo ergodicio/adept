@@ -29,3 +29,5 @@ dependencies:
       - diffrax
       - flatdict
       - plasmapy
+      - parsl
+      - interpax

@@ -101,14 +101,16 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
 def get_field_save_func(cfg, k):
     if {"t"} == set(cfg["save"][k].keys()):
 
+        def _calc_moment_(inp):
+            return jnp.trapz(inp, dx=cfg["grid"]["dv"], axis=1)
+
         def fields_save_func(t, y, args):
-            temp = {
-                "n": jnp.trapz(y["electron"], dx=cfg["grid"]["dv"], axis=1),
-                "v": jnp.trapz(y["electron"] * cfg["grid"]["v"][None, :], dx=cfg["grid"]["dv"], axis=1),
-            }
+            temp = {"n": _calc_moment_(y["electron"]), "v": _calc_moment_(y["electron"] * cfg["grid"]["v"][None, :])}
             v_m_vbar = cfg["grid"]["v"][None, :] - temp["v"][:, None]
-            temp["p"] = jnp.trapz(y["electron"] * v_m_vbar**2.0, dx=cfg["grid"]["dv"], axis=1)
-            temp["q"] = jnp.trapz(y["electron"] * v_m_vbar**3.0, dx=cfg["grid"]["dv"], axis=1)
+            temp["p"] = _calc_moment_(y["electron"] * v_m_vbar**2.0)
+            temp["q"] = _calc_moment_(y["electron"] * v_m_vbar**3.0)
+            temp["-flogf"] = _calc_moment_(y["electron"] * jnp.log(jnp.abs(y["electron"])))
+            temp["f^2"] = _calc_moment_(y["electron"] * y["electron"])
             temp["e"] = y["e"]
             temp["de"] = y["de"]
 
@@ -189,6 +191,7 @@ def get_default_save_func(cfg):
             "mean_n": _calc_mean_moment_(y["electron"]),
             "mean_q": _calc_mean_moment_(y["electron"] * v**3.0),
             "mean_-flogf": _calc_mean_moment_(-jnp.log(jnp.abs(y["electron"])) * jnp.abs(y["electron"])),
+            "mean_f2": _calc_mean_moment_(y["electron"] * y["electron"]),
             "mean_de2": jnp.mean(y["de"] ** 2.0),
             "mean_e2": jnp.mean(y["e"] ** 2.0),
         }
