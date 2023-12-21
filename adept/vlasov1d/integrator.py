@@ -136,10 +136,17 @@ class VlasovMaxwell:
         x_wL = nu_args["space"]["rise"]
         x_wR = nu_args["space"]["rise"]
 
-        nu_amp = get_envelope(t_wL, t_wR, t_L, t_R, t)
-        nu_prof = get_envelope(x_wL, x_wR, x_L, x_R, self.cfg["grid"]["x"])
+        nu_time = get_envelope(t_wL, t_wR, t_L, t_R, t)
+        if nu_args["time"]["bump_or_trough"] == "trough":
+            nu_time = 1 - nu_time
+        nu_time = nu_args["time"]["baseline"] + nu_args["time"]["bump_height"] * nu_time
 
-        return nu_amp * nu_prof
+        nu_prof = get_envelope(x_wL, x_wR, x_L, x_R, self.cfg["grid"]["x"])
+        if nu_args["space"]["bump_or_trough"] == "trough":
+            nu_prof = 1 - nu_prof
+        nu_prof = nu_args["space"]["baseline"] + nu_args["space"]["bump_height"] * nu_prof
+
+        return nu_time * nu_prof
 
     def __call__(self, t, y, args):
         """
@@ -161,7 +168,7 @@ class VlasovMaxwell:
         else:
             nu_fp_prof = None
 
-        if self.cfg["terms"]["fokker_planck"]["is_on"]:
+        if self.cfg["terms"]["krook"]["is_on"]:
             nu_K_prof = self.nu_prof(t=t, nu_args=args["terms"]["krook"])
         else:
             nu_K_prof = None

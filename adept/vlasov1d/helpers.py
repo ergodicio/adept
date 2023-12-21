@@ -264,6 +264,7 @@ def post_process(result, cfg: Dict, td: str):
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
+    os.makedirs(os.path.join(td, "plots", "fields", "logplots"), exist_ok=True)
 
     os.makedirs(os.path.join(td, "plots", "scalars"), exist_ok=True)
 
@@ -282,6 +283,12 @@ def post_process(result, cfg: Dict, td: str):
             for nm, fld in fields_xr.items():
                 fld.plot()
                 plt.savefig(os.path.join(td, "plots", "fields", f"spacetime-{nm[7:]}.png"), bbox_inches="tight")
+                plt.close()
+
+                np.log10(np.abs(fld)).plot()
+                plt.savefig(
+                    os.path.join(td, "plots", "fields", "logplots", f"spacetime-log-{nm[7:]}.png"), bbox_inches="tight"
+                )
                 plt.close()
 
                 fld[tslice].T.plot(col="t", col_wrap=4)

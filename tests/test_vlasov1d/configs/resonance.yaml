@@ -22,7 +22,7 @@ density:
       center: 0.0
       rise: 25.0
       slope: 0.0
-      wall_height: 0.0
+      bump_height: 0.0
       width: 100000.0
 
 grid:
@@ -79,7 +79,7 @@ terms:
       center: 0.0
       rise: 25.0
       slope: 0.0
-      wall_height: 0.0
+      bump_height: 0.0
       width: 100000.0
     space:
       baseline: 1.0
@@ -87,7 +87,7 @@ terms:
       center: 0.0
       rise: 25.0
       slope: 0.0
-      wall_height: 0.0
+      bump_height: 0.0
       width: 100000.0
   krook:
     is_on: True
@@ -97,7 +97,7 @@ terms:
       center: 0.0
       rise: 25.0
       slope: 0.0
-      wall_height: 0.0
+      bump_height: 0.0
       width: 100000.0
     space:
       baseline: 1.0
@@ -105,5 +105,5 @@ terms:
       center: 0.0
       rise: 25.0
       slope: 0.0
-      wall_height: 0.0
+      bump_height: 0.0
       width: 100000.0
