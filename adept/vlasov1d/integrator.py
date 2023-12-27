@@ -121,7 +121,7 @@ class VlasovMaxwell:
     def __init__(self, cfg):
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
-        self.wave_solver = field.WaveSolver(c=cfg["grid"]["c_light"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
+        # self.wave_solver = field.WaveSolver(c=cfg["grid"]["c_light"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
         self.compute_charges = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
         self.dt = self.cfg["grid"]["dt"]
         self.driver = field.Driver(cfg["grid"]["x"])
@@ -173,15 +173,15 @@ class VlasovMaxwell:
         else:
             nu_K_prof = None
 
-        electron_density_n = self.compute_charges(y["electron"])
+        # electron_density_n = self.compute_charges(y["electron"])
         e, f, force, pond = self.vpfp(y["electron"], y["a"], y["e"], dex, nu_fp_prof, nu_K_prof)
-        electron_density_np1 = self.compute_charges(f)
+        # electron_density_np1 = self.compute_charges(f)
 
-        a = self.wave_solver(
-            a=y["a"],
-            aold=y["prev_a"],
-            djy_array=djy[2],
-            electron_charge=0.5 * (electron_density_n + electron_density_np1),
-        )
+        # a = self.wave_solver(
+        #     a=y["a"],
+        #     aold=y["prev_a"],
+        #     djy_array=djy[2],
+        #     electron_charge=0.5 * (electron_density_n + electron_density_np1),
+        # )
 
-        return {"electron": f, "a": a[0], "prev_a": a[1], "da": djy, "de": dex[3], "e": e}
+        return {"electron": f, "a": y["a"], "prev_a": y["prev_a"], "da": djy, "de": dex[3], "e": e}
