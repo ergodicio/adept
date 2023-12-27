@@ -15,23 +15,21 @@ density:
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: uniform
-    space-profile:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+    basis: exponential
+    val at center: 1.0
+    bump_or_trough: bump
+    center: 2000.0
+    rise: 25.0
+    bump_height: 0.99
+    width: 3800.0
+    gradient scale length: -170um
 
 grid:
-  c_light: 10
   dt: 0.5
   nv: 512
   nx: 4096
   tmin: 0.
-  tmax: 1000.0
+  tmax: 100.0
   vmax: 6.4
   xmax: 4000.0
   xmin: 0.0
@@ -40,13 +38,13 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 1000.0
-      nt: 512
+      tmax: 100.0
+      nt: 32
   electron:
     t:
       tmin: 0.0
-      tmax: 1000.0
-      nt: 9
+      tmax: 100.0
+      nt: 1
 
 mode: vlasov-1d
 
@@ -107,4 +105,4 @@ terms:
       rise: 20.0
       slope: 0.0
       bump_height: 1.0
-      width: 3800.0
+      width: 3500.0
