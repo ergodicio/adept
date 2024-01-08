@@ -4,18 +4,19 @@ from collections import defaultdict
 
 
 import matplotlib.pyplot as plt
-import jax
+import jax, pint
 from jax import numpy as jnp
 import numpy as np
 from scipy import constants
 import equinox as eqx
 from diffrax import ODETerm
 import xarray as xr
+from plasmapy.formulary.collisions.frequencies import fundamental_electron_collision_freq
 
 from adept.lpse2d.core import integrator, driver
 
 
-def get_derived_quantities(cfg_grid: Dict) -> Dict:
+def get_derived_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -24,6 +25,8 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     :param cfg_grid:
     :return:
     """
+    cfg_grid = cfg["grid"]
+
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dy"] = cfg_grid["ymax"] / cfg_grid["ny"]
 
@@ -37,7 +40,11 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    return cfg_grid
+    cfg = get_more_units(cfg)
+
+    cfg["grid"] = cfg_grid
+
+    return cfg
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -130,33 +137,48 @@ def init_state(cfg: Dict, td=None) -> Dict:
     :return: state: Dict
     """
 
-    e0 = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=jnp.complex128)
-    phi = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]), dtype=jnp.complex128)
+    # e0 = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=jnp.complex128)
+    # phi = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]), dtype=jnp.complex128)
     # phi += (
     #     1e-3
     #     * jnp.exp(-(((cfg["grid"]["x"][:, None] - 2000) / 400.0) ** 2.0))
     #     * jnp.exp(-1j * 0.2 * cfg["grid"]["x"][:, None])
     # )
-    # e0 = jnp.concatenate(
-    #     [jnp.exp(1j * cfg["drivers"]["E0"]["k0"] * cfg["grid"]["x"])[:, None] for _ in range(cfg["grid"]["ny"])], axis=-1
-    # )
-    # e0 = jnp.concatenate([e0[:, :, None], jnp.zeros_like(e0)[:, :, None]], axis=-1)
-    # e0 *= cfg["drivers"]["E0"]["e0"]
+    e0 = jnp.concatenate(
+        [jnp.exp(1j * cfg["drivers"]["E0"]["k0"] * cfg["grid"]["x"])[:, None] for _ in range(cfg["grid"]["ny"])],
+        axis=-1,
+    )
+    e0 = jnp.concatenate([e0[:, :, None], jnp.zeros_like(e0)[:, :, None]], axis=-1)
+    e0 *= cfg["drivers"]["E0"]["a0"]
 
-    random_amps_x = 1.0e-12 * np.random.uniform(0.1, 1, cfg["grid"]["nx"])
-    random_amps_y = 1.0e-12 * np.random.uniform(0.1, 1, cfg["grid"]["ny"])
+    if cfg["density"]["noise"]["type"] == "uniform":
+        random_amps_x = np.random.uniform(
+            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["nx"]
+        )
+        random_amps_y = np.random.uniform(
+            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["ny"]
+        )
+    elif cfg["density"]["noise"]["type"] == "normal":
+        loc = 0.5 * (cfg["density"]["noise"]["min"] + cfg["density"]["noise"]["max"])
+        scale = 1.0
+        random_amps_x = np.random.normal(loc, scale, cfg["grid"]["nx"])
+        random_amps_y = np.random.normal(loc, scale, cfg["grid"]["ny"])
 
-    # phi = jnp.sum(random_amps_x * jnp.exp(1j * cfg["grid"]["kx"][None, :] * cfg["grid"]["x"][:, None]), axis=-1)[
-    #     :, None
-    # ]
-    # phi += jnp.sum(random_amps_y * jnp.exp(1j * cfg["grid"]["ky"][None, :] * cfg["grid"]["y"][:, None]), axis=-1)[
-    #     None, :
-    # ]
-    # phi = jnp.fft.fft2(phi)
+    else:
+        raise NotImplementedError
+
+    phi = jnp.sum(random_amps_x * jnp.exp(1j * cfg["grid"]["kx"][None, :] * cfg["grid"]["x"][:, None]), axis=-1)[
+        :, None
+    ]
+    phi += jnp.sum(random_amps_y * jnp.exp(1j * cfg["grid"]["ky"][None, :] * cfg["grid"]["y"][:, None]), axis=-1)[
+        None, :
+    ]
+    phi = jnp.fft.fft2(phi)
 
     state = {
         "e0": e0,
-        "nb": (0.8 + 0.4 * cfg["grid"]["x"] / cfg["grid"]["xmax"])[:, None] * np.ones_like(phi, dtype=np.float64),
+        "nb": (cfg["density"]["offset"] + cfg["density"]["slope"] * cfg["grid"]["x"] / cfg["grid"]["xmax"])[:, None]
+        * np.ones_like(phi, dtype=np.float64),
         "temperature": jnp.ones_like(e0[..., 0], dtype=jnp.float64),
         "dn": jnp.zeros_like(e0[..., 0], dtype=jnp.float64),
         "phi": phi,
@@ -209,50 +231,51 @@ def init_state(cfg: Dict, td=None) -> Dict:
     return {k: v.view(dtype=np.float64) for k, v in state.items()}
 
 
-def calc_e0(cfg):
-    e_laser = np.sqrt(2.0 * (float(cfg["drivers"]["E0"]["intensity"]) * 100) / constants.c / constants.epsilon_0)
-    e_norm = constants.m_e * cfg["norms"]["velocity"] * cfg["norms"]["frequency"] / constants.e
-
-    cfg["norms"]["electric field"] = e_norm
-    cfg["norms"]["laser field"] = e_laser
-
-    cfg["drivers"]["E0"]["e0"] = e_laser / e_norm
-    cfg["drivers"]["E0"]["k0"] = np.sqrt(
-        (cfg["drivers"]["E0"]["w0"] ** 2.0 - cfg["plasma"]["wp0"] ** 2.0) / cfg["norms"]["c"] ** 2.0
-    )
-
-    print("laser parameters: ")
-    print(f'w0 = {round(cfg["drivers"]["E0"]["w0"],4)}')
-    print(f'k0 = {round(cfg["drivers"]["E0"]["k0"],4)}')
-    print(f"a0 = {round(e_laser / e_norm, 4)}")
-    print()
-
-    return cfg
-
-
-def calc_norms(cfg: Dict):
+def get_more_units(cfg: Dict):
     """
 
     :type cfg: object
     """
-    cfg["norms"] = {}
-    cfg["norms"]["n0"] = float(cfg["plasma"]["density"])
-    cfg["norms"]["T0"] = cfg["plasma"]["temperature"]
-    cfg["norms"]["frequency"] = np.sqrt(cfg["norms"]["n0"] * constants.e**2.0 / constants.m_e / constants.epsilon_0)
-    cfg["norms"]["velocity"] = (
-        2.0
-        * np.sqrt(
-            np.average(cfg["plasma"]["temperature"])
-            / (1000.0 * constants.physical_constants["electron mass energy equivalent in MeV"][0])
-        )
-        * constants.c
+
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+    import astropy.units as u
+
+    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
+    wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
+    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
+    v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
+    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
+
+    _nuei_ = fundamental_electron_collision_freq(
+        T_e=(Te := _Q(cfg["units"]["electron temperature"]).to("eV")).magnitude * u.eV,
+        n_e=n0.to("1/m^3").magnitude / u.m**3,
+        ion=f'{cfg["units"]["gas fill"]} {cfg["units"]["ionization state"]}+',
+    ).value
+    cfg["units"]["derived"]["nuei"] = _Q(f"{_nuei_} Hz")
+    cfg["units"]["derived"]["nuei_norm"] = (cfg["units"]["derived"]["nuei"].to("rad/s") / wp0).magnitude
+
+    lambda_0 = _Q(cfg["units"]["laser wavelength"])
+    laser_frequency = (2 * np.pi / lambda_0 * ureg.c).to("rad/s")
+    laser_period = (1 / laser_frequency).to("fs")
+
+    e_laser = np.sqrt(2.0 * _Q(cfg["drivers"]["E0"]["intensity"]) / ureg.c / ureg.epsilon_0).to("V/m")
+    e_norm = (ureg.m_e * (np.sqrt(2.0 * Te / ureg.m_e).to("m/s")) * laser_frequency / ureg.e).to("V/m")
+
+    cfg["units"]["derived"]["electric field"] = e_norm
+    cfg["units"]["derived"]["laser field"] = e_laser
+
+    cfg["drivers"]["E0"]["w0"] = (laser_frequency / wp0).magnitude
+    cfg["drivers"]["E0"]["a0"] = (e_laser / e_norm).magnitude
+    cfg["drivers"]["E0"]["k0"] = np.sqrt(
+        (cfg["drivers"]["E0"]["w0"] ** 2.0 - cfg["plasma"]["wp0"] ** 2.0) / c_light.magnitude**2.0
     )
-    cfg["norms"]["c"] = constants.c / cfg["norms"]["velocity"]
 
-    cfg["norms"]["space"] = cfg["norms"]["velocity"] / cfg["norms"]["frequency"]
-    cfg["norms"]["time"] = 1.0 / cfg["norms"]["frequency"]
-
-    cfg = calc_e0(cfg)
+    print("laser parameters: ")
+    print(f'w0 = {round(cfg["drivers"]["E0"]["w0"], 4)}')
+    print(f'k0 = {round(cfg["drivers"]["E0"]["k0"], 4)}')
+    print(f'a0 = {round(cfg["drivers"]["E0"]["a0"], 4)}')
+    print()
 
     return cfg
 
@@ -319,7 +342,11 @@ def plot_kt(kfields, td):
         plt.savefig(os.path.join(fld_dir, f"{k}_kx.png"), bbox_inches="tight")
         plt.close()
 
-        kx = kfields.coords["kx"].data
+        # np.log10(np.abs(v[tslice, :, :])).T.plot(col="t", col_wrap=4)
+        # plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
+        # plt.close()
+        #
+        # kx = kfields.coords["kx"].data
 
 
 def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
@@ -334,10 +361,7 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
 
 def make_xarrays(cfg, this_t, state, td):
     phi_vs_t = state["phi"].view(np.complex128)
-    phi_k = xr.DataArray(
-        phi_vs_t,
-        coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])),
-    )
+    phi_k = xr.DataArray(phi_vs_t, coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])))
 
     ex_k = xr.DataArray(
         -1j * cfg["grid"]["kx"][:, None] * phi_vs_t,
@@ -362,11 +386,22 @@ def make_xarrays(cfg, this_t, state, td):
         -np.fft.ifft2(1j * cfg["grid"]["ky"][None, :] * phi_vs_t) / cfg["grid"]["nx"] / cfg["grid"]["ny"] * 4,
         coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
     )
+
+    e0x = xr.DataArray(
+        state["e0"].view(np.complex128)[..., 0],
+        coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
+    )
+
+    e0y = xr.DataArray(
+        state["e0"].view(np.complex128)[..., 1],
+        coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
+    )
+
     delta = xr.DataArray(state["delta"], coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])))
 
     kfields = xr.Dataset({"phi": phi_k, "ex": ex_k, "ey": ey_k})
-    fields = xr.Dataset({"phi": phi_x, "ex": ex, "ey": ey, "delta": delta})
-    kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
+    fields = xr.Dataset({"phi": phi_x, "ex": ex, "ey": ey, "delta": delta, "e0_x": e0x, "e0_y": e0y})
+    # kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
     return kfields, fields

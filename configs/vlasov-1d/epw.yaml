@@ -1,7 +1,7 @@
 units:
   laser wavelength: 351nm
-  electron temperature: 2000eV
-  density for collisions: 1.5e21/cc
+  normalizing temperature: 2000eV
+  normalizing density: 1.5e21/cc
   Z: 10
   Zp: 10
 
@@ -16,19 +16,17 @@ density:
     T0: 1.0
     m: 2.0
     basis: uniform
-    space-profile:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      wall_height: 0.0
-      width: 100000.0
+    baseline: 1.0
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+
 grid:
-  c_light: 10
   dt: 0.5
-  nv: 512
-  nx: 32
+  nv: 4096
+  nx: 128
   tmin: 0.
   tmax: 480.0
   vmax: 6.4
@@ -56,7 +54,7 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-3
+      a0: 1.e-4
       k0: 0.3
       t_center: 40.0
       t_rise: 5.0
@@ -68,4 +66,41 @@ drivers:
       x_width: 4000000.0
   ey: {}
 
-nuee: 1.0e-5
+terms:
+  fokker_planck:
+    is_on: True
+    type: Dougherty
+    time:
+      baseline: 1.0e-5
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

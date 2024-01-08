@@ -6,6 +6,7 @@ from jax import numpy as jnp
 import diffrax
 
 from adept.vlasov1d.pushers import field, fokker_planck, vlasov
+from adept.tf1d.pushers import get_envelope
 
 
 class Stepper(diffrax.Euler):
@@ -120,19 +121,41 @@ class VlasovMaxwell:
     def __init__(self, cfg):
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
-        self.wave_solver = field.WaveSolver(c=cfg["grid"]["c_light"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
+        # self.wave_solver = field.WaveSolver(c=cfg["grid"]["c_light"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
         self.compute_charges = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
         self.dt = self.cfg["grid"]["dt"]
         self.driver = field.Driver(cfg["grid"]["x"])
-        self.nu_prof = cfg["nuee"]
-        self.kr_prof = 0.0
+
+    def nu_prof(self, t, nu_args):
+        t_L = nu_args["time"]["center"] - nu_args["time"]["width"] * 0.5
+        t_R = nu_args["time"]["center"] + nu_args["time"]["width"] * 0.5
+        t_wL = nu_args["time"]["rise"]
+        t_wR = nu_args["time"]["rise"]
+        x_L = nu_args["space"]["center"] - nu_args["space"]["width"] * 0.5
+        x_R = nu_args["space"]["center"] + nu_args["space"]["width"] * 0.5
+        x_wL = nu_args["space"]["rise"]
+        x_wR = nu_args["space"]["rise"]
+
+        nu_time = get_envelope(t_wL, t_wR, t_L, t_R, t)
+        if nu_args["time"]["bump_or_trough"] == "trough":
+            nu_time = 1 - nu_time
+        nu_time = nu_args["time"]["baseline"] + nu_args["time"]["bump_height"] * nu_time
+
+        nu_prof = get_envelope(x_wL, x_wR, x_L, x_R, self.cfg["grid"]["x"])
+        if nu_args["space"]["bump_or_trough"] == "trough":
+            nu_prof = 1 - nu_prof
+        nu_prof = nu_args["space"]["baseline"] + nu_args["space"]["bump_height"] * nu_prof
+
+        return nu_time * nu_prof
 
     def __call__(self, t, y, args):
         """
         This is just a wrapper around a Vlasov-Poisson + Fokker-Planck timestep
 
-        :param loop_carry:
-        :param current_params:
+        :param t:
+        :param y:
+        :param args:
+
         :return:
         """
 
@@ -140,15 +163,25 @@ class VlasovMaxwell:
         dex = [val[0] for val in de]
         djy = de[0][1]
 
-        electron_density_n = self.compute_charges(y["electron"])
-        e, f, force, pond = self.vpfp(y["electron"], y["a"], y["e"], dex, self.nu_prof, self.kr_prof)
-        electron_density_np1 = self.compute_charges(f)
+        if self.cfg["terms"]["fokker_planck"]["is_on"]:
+            nu_fp_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"])
+        else:
+            nu_fp_prof = None
 
-        a = self.wave_solver(
-            a=y["a"],
-            aold=y["prev_a"],
-            djy_array=djy[2],
-            electron_charge=0.5 * (electron_density_n + electron_density_np1),
-        )
+        if self.cfg["terms"]["krook"]["is_on"]:
+            nu_K_prof = self.nu_prof(t=t, nu_args=args["terms"]["krook"])
+        else:
+            nu_K_prof = None
 
-        return {"electron": f, "a": a[0], "prev_a": a[1], "da": djy, "de": dex[3], "e": e}
+        # electron_density_n = self.compute_charges(y["electron"])
+        e, f, force, pond = self.vpfp(y["electron"], y["a"], y["e"], dex, nu_fp_prof, nu_K_prof)
+        # electron_density_np1 = self.compute_charges(f)
+
+        # a = self.wave_solver(
+        #     a=y["a"],
+        #     aold=y["prev_a"],
+        #     djy_array=djy[2],
+        #     electron_charge=0.5 * (electron_density_n + electron_density_np1),
+        # )
+
+        return {"electron": f, "a": y["a"], "prev_a": y["prev_a"], "da": djy, "de": dex[3], "e": e}

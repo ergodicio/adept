@@ -15,66 +15,64 @@ density:
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: uniform
-    space-profile:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+    basis: exponential
+    val at center: 1.0
+    bump_or_trough: bump
+    center: 2000.0
+    rise: 25.0
+    bump_height: 0.99
+    width: 3800.0
+    gradient scale length: -170um
 
 grid:
-  c_light: 10
   dt: 0.5
   nv: 512
-  nx: 32
+  nx: 4096
   tmin: 0.
-  tmax: 480.0
+  tmax: 100.0
   vmax: 6.4
-  xmax: 20.94
+  xmax: 4000.0
   xmin: 0.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 480.0
-      nt: 961
+      tmax: 100.0
+      nt: 32
   electron:
     t:
       tmin: 0.0
-      tmax: 480.0
-      nt: 9
+      tmax: 100.0
+      nt: 1
 
 mode: vlasov-1d
 
 mlflow:
-  experiment: vlasov1d
-  run: test
+  experiment: vlasov1d-epw-finite-length-compare
+  run: vlasov-absorbing
 
 drivers:
   ex:
     '0':
-      a0: 1.e-6
-      k0: 0.3
-      t_center: 40.0
+      a0: 1.e-2
+      k0: 0.4
+      t_center: 60.0
       t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
+      t_width: 80.0
+      w0: 1.28
       dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      x_center: 600.0
+      x_rise: 20.0
+      x_width: 900.0
   ey: {}
 
 terms:
   fokker_planck:
-    is_on: True
+    is_on: False
     type: Dougherty
     time:
-      baseline: 1.0
+      baseline: 1.0e-5
       bump_or_trough: bump
       center: 0.0
       rise: 25.0
@@ -89,6 +87,7 @@ terms:
       slope: 0.0
       bump_height: 0.0
       width: 100000.0
+
   krook:
     is_on: True
     time:
@@ -100,10 +99,10 @@ terms:
       bump_height: 0.0
       width: 100000.0
     space:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
+      baseline: 0.0
+      bump_or_trough: trough
+      center: 2000.0
+      rise: 20.0
       slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+      bump_height: 1.0
+      width: 3500.0

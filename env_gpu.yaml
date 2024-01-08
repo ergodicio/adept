@@ -28,3 +28,6 @@ dependencies:
       - pint
       - diffrax
       - flatdict
+      - plasmapy
+      - parsl
+      - interpax
