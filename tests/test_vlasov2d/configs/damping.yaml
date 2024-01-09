@@ -35,7 +35,7 @@ grid:
   nx: 24
   ny: 8
   tmin: 0.
-  tmax: 150.0
+  tmax: 50.0
   vmax: 6.4
   xmax: 20.94
   xmin: 0.0
@@ -46,8 +46,8 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 150.0
-      nt: 151
+      tmax: 50.0
+      nt: 51
 #    x:
 #      xmin: 0.0
 #      xmax: 19.0
@@ -59,7 +59,7 @@ save:
   electron:
     t:
       tmin: 0.0
-      tmax: 150.0
+      tmax: 50.0
       nt: 4
 
 krook:
@@ -113,3 +113,4 @@ solver:
   num_unroll: 32
   field: ampere
   vdfdx: exponential
+  push_f: False

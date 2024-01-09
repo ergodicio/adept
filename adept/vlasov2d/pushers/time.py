@@ -89,6 +89,7 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
     def __init__(self, cfg):
         super(ChargeConservingMaxwell, self).__init__(cfg)
+        self.push = 1 if cfg["solver"]["push_f"] else 0
 
     def step_1(self, ex, ey, bz, f):
         bznph = self.field_solve.faraday(exk=ex, eyk=ey, bzk=bz, dt=self.dt)
@@ -99,22 +100,22 @@ class ChargeConservingMaxwell(VlasovFieldBase):
         return bznph, exnph, eynph
 
     def step_2(self, f):
-        fn1 = self.vdfdx.step_x(f=f, dt=0*0.5 * self.dt)
+        fn1 = self.vdfdx.step_x(f=f, dt=self.push * 0.5 * self.dt)
         return fn1, self.field_solve.compute_jx(fn1)
 
     def step_3(self, fn1):
-        fn2 = self.vdfdx.step_y(f=fn1, dt=0*0.5 * self.dt)
+        fn2 = self.vdfdx.step_y(f=fn1, dt=self.push * 0.5 * self.dt)
         return fn2, self.field_solve.compute_jy(f=fn2)
 
     def step_4(self, exnph, eynph, bznph, fn2):
-        return self.velocity_pusher(fk=fn2, ex=exnph, ey=eynph, bz=bznph, dt=0*self.dt)
+        return self.velocity_pusher(fk=fn2, ex=exnph, ey=eynph, bz=bznph, dt=self.push * self.dt)
 
     def step_5(self, fn3):
-        fn4 = self.vdfdx.step_y(f=fn3, dt=0*0.5 * self.dt)
+        fn4 = self.vdfdx.step_y(f=fn3, dt=self.push * 0.5 * self.dt)
         return fn4, self.field_solve.compute_jy(f=fn4)
 
     def step_6(self, fn4):
-        fn5 = self.vdfdx.step_x(f=fn4, dt=0*0.5 * self.dt)
+        fn5 = self.vdfdx.step_x(f=fn4, dt=self.push * 0.5 * self.dt)
         return fn5, self.field_solve.compute_jx(f=fn5)
 
     def step_7(self, ex, ey, bz, jxn12, jxn92, jyn32, jyn72):

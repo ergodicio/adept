@@ -114,3 +114,4 @@ solver:
   num_unroll: 32
   field: ampere
   vdfdx: exponential
+  push_f: True

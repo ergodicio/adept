@@ -42,7 +42,7 @@ def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray, prefix: s
     else:
         das = {
             f"{prefix}-{k}": xr.DataArray(
-                np.real(np.fft.ifft2(v.view(dtype=np.complex128), axes=(0, 1))),
+                np.real(np.fft.ifft2(v.view(dtype=np.complex128), axes=(1, 2))),
                 coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
             )
             for k, v in fields.items()
@@ -66,7 +66,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     f_store = xr.Dataset(
         {
             spc: xr.DataArray(
-                np.real(np.fft.ifft2(ys[spc].view(dtype=np.complex128), axes=(0, 1))),
+                np.real(np.fft.ifft2(ys[spc].view(dtype=np.complex128), axes=(1, 2))),
                 coords=(
                     ("t", this_t[spc]),
                     ("x", cfg["grid"]["x"]),
