@@ -46,7 +46,7 @@ def write_units(cfg, td):
     v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
     x0 = (v0 / wp0).to("nm")
     c_light = (_Q(1.0 * ureg.c).to("m/s") / v0)
-    beta = v0 / ureg.c
+    beta = (v0 / ureg.c).to("dimensionless")
 
     box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("microns")
     if "ymax" in cfg["grid"].keys():

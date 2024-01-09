@@ -89,8 +89,6 @@ class Driver:
         """
         Applies the driver function
 
-        P.S. This needs names because its going through a jitted JAX call
-
         :param current_time:
         :param pulses:
         :return:
