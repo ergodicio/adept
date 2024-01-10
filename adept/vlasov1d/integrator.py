@@ -17,27 +17,29 @@ class Stepper(diffrax.Euler):
         return y1, None, dense_info, None, diffrax.RESULTS.successful
 
 
-# class VectorField:
-#     """
-#     This class contains the function that updates the state
-#
-#     All the pushers are chosen and initialized here and a single time-step is defined here.
-#
-#     :param cfg:
-#     :return:
-#     """
-#
-#     def __init__(self, cfg):
-#         self.vlasov = Vlasov(cfg)
-#
-#     def __call__(self, t, y, args):
-#         return self.vlasov(t, y, args)
-#
+class LeapfrogIntegrator:
+    def __init__(self, cfg):
+        self.dt = cfg["grid"]["dt"]
+        self.dt_array = self.dt * jnp.array([0.0, 1.0])
+        self.field_solve = field.ElectricFieldSolver(cfg)
+        self.edfdv = vlasov.VelocityExponential(cfg)
+        self.vdfdx = vlasov.SpaceExponential(cfg)
+
+    def __call__(self, f, a, dex_array, prev_ex):
+        f = self.vdfdx(f=f, dt=self.dt)
+        pond, e = self.field_solve(f=f, a=a, prev_ex=prev_ex, dt=self.dt)
+        f = self.edfdv(f=f, e=pond + e + dex_array[0], dt=self.dt)
+
+        # f = self.vdfdx(f=f, dt=0.5 * self.dt)
+        # force, pond, e = self.field_solve(dex_array=dex_array[0], f=f, a=a, total_force=force, dt=0.5 * self.dt)
+
+        return e, f, pond
 
 
 class SixthOrderHamIntegrator:
     def __init__(self, cfg):
         self.dt = cfg["grid"]["dt"]
+
         self.a1 = 0.168735950563437422448196
         self.a2 = 0.377851589220928303880766
         self.a3 = -0.093175079568731452657924
@@ -69,52 +71,63 @@ class SixthOrderHamIntegrator:
         self.edfdv = vlasov.VelocityExponential(cfg)
         self.vdfdx = vlasov.SpaceExponential(cfg)
 
-    def __call__(self, f, a, dex_array, total_force):
-        force, _, _ = self.field_solve(dex_array=dex_array[0], f=f, a=a, total_force=None, dt=None)
+    def __call__(self, f, a, dex_array, prev_ex):
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[0] + self_consistent_ex
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a1 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[1], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[1] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D2 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a2 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[2], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[2] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D3 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a3 * self.dt)
-        force_save, pond_save, e_save = self.field_solve(dex_array=dex_array[3], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[3] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force_save, dt=self.D3 * self.dt)
+        f = self.edfdv(f=f, e=force, dt=self.D3 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a2 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[4], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[4] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D2 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a1 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[5], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[5] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
 
-        return e_save, f, force_save, pond_save
+        return self_consistent_ex, f, ponderomotive_force
 
 
 class VlasovPoissonFokkerPlanck:
     def __init__(self, cfg):
         self.dt = cfg["grid"]["dt"]
         self.v = cfg["grid"]["v"]
-        self.vlasov_poisson = SixthOrderHamIntegrator(cfg)
+        if cfg["terms"]["time"] == "sixth":
+            self.vlasov_poisson = SixthOrderHamIntegrator(cfg)
+            self.dex_save = 3
+        elif cfg["terms"]["time"] == "leapfrog":
+            self.vlasov_poisson = LeapfrogIntegrator(cfg)
+            self.dex_save = 0
+        else:
+            raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
 
-    def __call__(
-        self, f, a, total_force, dex_array, nu_fp, nu_K
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        e, f, force, pond = self.vlasov_poisson(f, a, dex_array, total_force)
+    def __call__(self, f, a, prev_ex, dex_array, nu_fp, nu_K) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        e, f, pond = self.vlasov_poisson(f, a, dex_array, prev_ex)
         f = self.fp(nu_fp, nu_K, f, dt=self.dt)
 
-        return e, f, force, pond
+        return e, f, pond
 
 
 class VlasovMaxwell:
@@ -174,7 +187,9 @@ class VlasovMaxwell:
             nu_K_prof = None
 
         # electron_density_n = self.compute_charges(y["electron"])
-        e, f, force, pond = self.vpfp(y["electron"], y["a"], y["e"], dex, nu_fp_prof, nu_K_prof)
+        e, f, pond = self.vpfp(
+            f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof
+        )
         # electron_density_np1 = self.compute_charges(f)
 
         # a = self.wave_solver(
@@ -184,4 +199,11 @@ class VlasovMaxwell:
         #     electron_charge=0.5 * (electron_density_n + electron_density_np1),
         # )
 
-        return {"electron": f, "a": y["a"], "prev_a": y["prev_a"], "da": djy, "de": dex[3], "e": e}
+        return {
+            "electron": f,
+            "a": y["a"],
+            "prev_a": y["prev_a"],
+            "da": djy,
+            "de": dex[self.vpfp.dex_save],
+            "e": e,
+        }

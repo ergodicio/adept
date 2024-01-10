@@ -114,7 +114,7 @@ class SpectralPoissonSolver:
         self.one_over_kx = one_over_kx
         self.compute_charges = partial(jnp.trapz, dx=dv, axis=1)
 
-    def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
+    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(self.ion_charge - self.compute_charges(f))))
 
 
@@ -124,40 +124,37 @@ class AmpereSolver:
         self.vx = cfg["grid"]["v"]
         self.vx_moment = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
 
-    def __call__(self, f: jnp.ndarray, prev_force: jnp.ndarray, dt: jnp.float64):
-        return prev_force - dt * self.vx_moment(self.vx[None, :] * f)
+    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+        return prev_ex - dt * self.vx_moment(self.vx[None, :] * f)
 
 
 class ElectricFieldSolver:
     def __init__(self, cfg):
         super(ElectricFieldSolver, self).__init__()
 
-        # if cfg["solver"]["field"] == "poisson":
-        self.es_field_solver = SpectralPoissonSolver(
-            ion_charge=cfg["grid"]["ion_charge"], one_over_kx=cfg["grid"]["one_over_kx"], dv=cfg["grid"]["dv"]
-        )
-        # elif cfg["solver"]["field"] == "ampere":
-        #     if cfg["solver"]["dfdt"] == "leapfrog":
-        #         self.es_field_solver = AmpereSolver(cfg)
-        #     else:
-        #         raise NotImplementedError(f"ampere + {cfg['solver']['dfdt']} has not yet been implemented")
-        # else:
-        #     raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
+        if cfg["terms"]["field"] == "poisson":
+            self.es_field_solver = SpectralPoissonSolver(
+                ion_charge=cfg["grid"]["ion_charge"], one_over_kx=cfg["grid"]["one_over_kx"], dv=cfg["grid"]["dv"]
+            )
+        elif cfg["terms"]["field"] == "ampere":
+            if cfg["terms"]["time"] == "leapfrog":
+                self.es_field_solver = AmpereSolver(cfg)
+            else:
+                raise NotImplementedError(f"ampere + {cfg['terms']['time']} has not yet been implemented")
+        else:
+            raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
         self.dx = cfg["grid"]["dx"]
 
-    def __call__(
-        self, dex_array: jnp.ndarray, f: jnp.ndarray, a: jnp.ndarray, total_force: jnp.ndarray, dt: jnp.float64
-    ):
+    def __call__(self, f: jnp.ndarray, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         """
         This returns the total electrostatic field that is used in the Vlasov equation
         The total field is a sum of the ponderomotive force from `E_y`, the driver field, and the
         self-consistent electrostatic field from a Poisson or Ampere solve
 
-        :param dex_array: an electric field
         :param f: distribution function
         :param a:
         :return:
         """
         ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)  # [1:-1]
-        self_consistent_ex = self.es_field_solver(f, total_force, dt)
-        return ponderomotive_force + dex_array + self_consistent_ex, ponderomotive_force, self_consistent_ex
+        self_consistent_ex = self.es_field_solver(f, prev_ex, dt)
+        return ponderomotive_force, self_consistent_ex

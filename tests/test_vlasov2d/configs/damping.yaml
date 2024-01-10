@@ -35,19 +35,19 @@ grid:
   nx: 24
   ny: 8
   tmin: 0.
-  tmax: 50.0
-  vmax: 6.4
+  tmax: 10.0
+  vmax: 8.0
   xmax: 20.94
   xmin: 0.0
-  ymin: -2.0
-  ymax: 2.0
+  ymin: -4.0
+  ymax: 4.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 50.0
-      nt: 51
+      tmax: 10.0
+      nt: 11
 #    x:
 #      xmin: 0.0
 #      xmax: 19.0
@@ -59,8 +59,8 @@ save:
   electron:
     t:
       tmin: 0.0
-      tmax: 50.0
-      nt: 4
+      tmax: 10.0
+      nt: 3
 
 krook:
   space-profile:
@@ -91,7 +91,7 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-5
+      a0: 1.e-12
       k0: 0.3
       t_center: 30.0
       t_rise: 5.0
@@ -113,4 +113,4 @@ solver:
   num_unroll: 32
   field: ampere
   vdfdx: exponential
-  push_f: False
+  push_f: True

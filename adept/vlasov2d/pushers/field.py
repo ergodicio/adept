@@ -29,13 +29,13 @@ class FieldSolver:
 
     def compute_jx(self, f):
         return (
-            jnp.trapz(self.vx[None, None, :] * jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
+            jnp.trapz(jnp.trapz(self.vx[None, None, :, None] * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
             * self.kx_mask[:, None]
         )
 
     def compute_jy(self, f):
         return (
-            jnp.trapz(self.vy[None, None, :] * jnp.trapz(f, dx=self.dvx, axis=2), dx=self.dvy, axis=2)
+            jnp.trapz(jnp.trapz(self.vy[None, None, None, :] * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
             * self.ky_mask[None, :]
         )
 

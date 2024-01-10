@@ -70,6 +70,8 @@ drivers:
   ey: {}
 
 terms:
+  field: poisson
+  time: leapfrog
   fokker_planck:
     is_on: True
     type: Dougherty
@@ -82,7 +84,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
     space:
-      baseline: 1.0
+      baseline: 1.0e-6
       bump_or_trough: bump
       center: 0.0
       rise: 25.0
@@ -100,7 +102,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
     space:
-      baseline: 1.0
+      baseline: 1.0e-6
       bump_or_trough: bump
       center: 0.0
       rise: 25.0
