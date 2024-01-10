@@ -30,13 +30,13 @@ class FieldSolver:
     def compute_jx(self, f):
         return (
             jnp.trapz(self.vx[None, None, :] * jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
-            * self.kx_mask[:, None, None, None]
+            * self.kx_mask[:, None]
         )
 
     def compute_jy(self, f):
         return (
             jnp.trapz(self.vy[None, None, :] * jnp.trapz(f, dx=self.dvx, axis=2), dx=self.dvy, axis=2)
-            * self.ky_mask[:, None, None, None]
+            * self.ky_mask[None, :]
         )
 
     def poisson(self, f: jnp.ndarray):
