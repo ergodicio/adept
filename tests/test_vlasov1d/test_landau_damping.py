@@ -19,7 +19,7 @@ from utils.runner import run
 def _modify_defaults_(defaults, rng, real_or_imag, time, field):
     defaults["terms"]["time"] = time
     defaults["terms"]["field"] = field
-    if time == "leapfrog":
+    if field == "ampere":
         defaults["grid"]["dt"] = 0.025
 
     if real_or_imag == "real":
@@ -39,10 +39,13 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field):
 
 
 @pytest.mark.parametrize(
-    "real_or_imag, time, field", itertools.product(["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere"])
+    "real_or_imag, time, field",
+    itertools.product(["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere", "hampere"]),
 )
 def test_single_resonance(real_or_imag, time, field):
     if (time == "sixth") and (field == "ampere"):
+        print("not implemented - skipping test")
+    elif (time == "sixth") and (field == "hampere"):
         print("not implemented - skipping test")
     else:
         with open("tests/test_vlasov1d/configs/resonance.yaml", "r") as file:

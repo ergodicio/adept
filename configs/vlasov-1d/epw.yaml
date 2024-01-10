@@ -67,8 +67,8 @@ drivers:
   ey: {}
 
 terms:
-  field: poisson
-  time: sixth
+  field: hampere
+  time: leapfrog
   fokker_planck:
     is_on: True
     type: Dougherty

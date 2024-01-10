@@ -128,6 +128,23 @@ class AmpereSolver:
         return prev_ex - dt * self.vx_moment(self.vx[None, :] * f)
 
 
+class HampereSolver:
+    def __init__(self, cfg):
+        self.vx = cfg["grid"]["v"][None, :]
+        self.dv = cfg["grid"]["dv"]
+        self.kx = cfg["grid"]["kx"][:, None]
+        self.one_over_ikx = cfg["grid"]["one_over_kx"] / 1j
+
+    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+        prev_ek = jnp.fft.fft(prev_ex, axis=0)
+        fk = jnp.fft.fft(f, axis=0)
+        new_ek = prev_ek + self.one_over_ikx * jnp.trapz(
+            fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), dx=self.dv, axis=1
+        )
+
+        return jnp.real(jnp.fft.ifft(new_ek))
+
+
 class ElectricFieldSolver:
     def __init__(self, cfg):
         super(ElectricFieldSolver, self).__init__()
@@ -136,9 +153,17 @@ class ElectricFieldSolver:
             self.es_field_solver = SpectralPoissonSolver(
                 ion_charge=cfg["grid"]["ion_charge"], one_over_kx=cfg["grid"]["one_over_kx"], dv=cfg["grid"]["dv"]
             )
+            self.hampere = False
         elif cfg["terms"]["field"] == "ampere":
             if cfg["terms"]["time"] == "leapfrog":
                 self.es_field_solver = AmpereSolver(cfg)
+                self.hampere = False
+            else:
+                raise NotImplementedError(f"ampere + {cfg['terms']['time']} has not yet been implemented")
+        elif cfg["terms"]["field"] == "hampere":
+            if cfg["terms"]["time"] == "leapfrog":
+                self.es_field_solver = HampereSolver(cfg)
+                self.hampere = True
             else:
                 raise NotImplementedError(f"ampere + {cfg['terms']['time']} has not yet been implemented")
         else:

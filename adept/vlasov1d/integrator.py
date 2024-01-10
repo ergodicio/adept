@@ -25,13 +25,14 @@ class LeapfrogIntegrator:
         self.edfdv = vlasov.VelocityExponential(cfg)
         self.vdfdx = vlasov.SpaceExponential(cfg)
 
-    def __call__(self, f, a, dex_array, prev_ex):
-        f = self.vdfdx(f=f, dt=self.dt)
-        pond, e = self.field_solve(f=f, a=a, prev_ex=prev_ex, dt=self.dt)
-        f = self.edfdv(f=f, e=pond + e + dex_array[0], dt=self.dt)
-
-        # f = self.vdfdx(f=f, dt=0.5 * self.dt)
-        # force, pond, e = self.field_solve(dex_array=dex_array[0], f=f, a=a, total_force=force, dt=0.5 * self.dt)
+    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        f_after_v = self.vdfdx(f=f, dt=self.dt)
+        if self.field_solve.hampere:
+            f_for_field = f
+        else:
+            f_for_field = f_after_v
+        pond, e = self.field_solve(f=f_for_field, a=a, prev_ex=prev_ex, dt=self.dt)
+        f = self.edfdv(f=f_after_v, e=pond + e + dex_array[0], dt=self.dt)
 
         return e, f, pond
 
@@ -71,7 +72,7 @@ class SixthOrderHamIntegrator:
         self.edfdv = vlasov.VelocityExponential(cfg)
         self.vdfdx = vlasov.SpaceExponential(cfg)
 
-    def __call__(self, f, a, dex_array, prev_ex):
+    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[0] + self_consistent_ex
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
