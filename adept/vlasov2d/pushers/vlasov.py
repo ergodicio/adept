@@ -3,8 +3,14 @@ from jax import numpy as jnp
 
 class ExponentialSpatialAdvection:
     def __init__(self, cfg):
+        self.kx = cfg["grid"]["kx"]
+        self.ky = cfg["grid"]["kx"]
+        self.kx_mask = jnp.where(jnp.abs(self.kx) > 0, 1, 0)[:, None, None, None]
+        self.ky_mask = jnp.where(jnp.abs(self.ky) > 0, 1, 0)[None, :, None, None]
         self.i_kx_vx = -1j * cfg["grid"]["kx"][:, None, None, None] * cfg["grid"]["vx"][None, None, :, None]
         self.i_ky_vy = -1j * cfg["grid"]["ky"][None, :, None, None] * cfg["grid"]["vy"][None, None, None, :]
+        self.one_over_ikx = cfg["grid"]["one_over_kx"] * 1j
+        self.one_over_iky = cfg["grid"]["one_over_ky"] * 1j
 
     def step_x(self, f, dt):
         return f * jnp.exp(self.i_kx_vx * dt)
@@ -12,8 +18,11 @@ class ExponentialSpatialAdvection:
     def step_y(self, f, dt):
         return f * jnp.exp(self.i_ky_vy * dt)
 
-    def __call__(self, f, dt):
-        return f * jnp.exp(self.i_kx_vx + self.i_ky_vy)
+    def fxh(self, f, dt):
+        return f * (1.0 - jnp.exp(self.i_kx_vx * dt) * self.one_over_ikx / dt) * self.kx_mask
+
+    def fyh(self, f, dt):
+        return f * (1.0 - jnp.exp(self.i_ky_vy * dt) * self.one_over_iky / dt) * self.ky_mask
 
 
 class ExponentialVelocityAdvection:

@@ -13,7 +13,9 @@ class FieldSolver:
         self.one_over_kx = cfg["grid"]["one_over_kx"]
         self.one_over_ky = cfg["grid"]["one_over_ky"]
         self.kx = cfg["grid"]["kx"]
+        self.kx_mask = jnp.where(jnp.abs(self.kx) > 0, 1, 0)
         self.ky = cfg["grid"]["ky"]
+        self.ky_mask = jnp.where(jnp.abs(self.ky) > 0, 1, 0)
         self.vx_mom = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
         self.vy_mom = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=3)
         self.dvx = cfg["grid"]["dvx"]
@@ -26,10 +28,16 @@ class FieldSolver:
         return self.vx_mom(self.vy_mom(f))
 
     def compute_jx(self, f):
-        return jnp.trapz(self.vx[None, None, :] * jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
+        return (
+            jnp.trapz(self.vx[None, None, :] * jnp.trapz(f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
+            * self.kx_mask[:, None, None, None]
+        )
 
     def compute_jy(self, f):
-        return jnp.trapz(self.vy[None, None, :] * jnp.trapz(f, dx=self.dvx, axis=2), dx=self.dvy, axis=2)
+        return (
+            jnp.trapz(self.vy[None, None, :] * jnp.trapz(f, dx=self.dvx, axis=2), dx=self.dvy, axis=2)
+            * self.ky_mask[:, None, None, None]
+        )
 
     def poisson(self, f: jnp.ndarray):
         net_charge = self.compute_charge(f)  # * self.zero[:, None] * self.zero[None, :]

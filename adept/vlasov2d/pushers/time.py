@@ -90,6 +90,7 @@ class ChargeConservingMaxwell(VlasovFieldBase):
     def __init__(self, cfg):
         super(ChargeConservingMaxwell, self).__init__(cfg)
         self.push = 1 if cfg["solver"]["push_f"] else 0
+        self.dth = self.push * 0.5 * self.dt
 
     def step_1(self, ex, ey, bz, f):
         bznph = self.field_solve.faraday(exk=ex, eyk=ey, bzk=bz, dt=self.dt)
@@ -99,24 +100,18 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
         return bznph, exnph, eynph
 
-    def step_2(self, f):
-        fn1 = self.vdfdx.step_x(f=f, dt=self.push * 0.5 * self.dt)
-        return fn1, self.field_solve.compute_jx(fn1)
-
-    def step_3(self, fn1):
-        fn2 = self.vdfdx.step_y(f=fn1, dt=self.push * 0.5 * self.dt)
-        return fn2, self.field_solve.compute_jy(f=fn2)
-
     def step_4(self, exnph, eynph, bznph, fn2):
         return self.velocity_pusher(fk=fn2, ex=exnph, ey=eynph, bz=bznph, dt=self.push * self.dt)
 
-    def step_5(self, fn3):
-        fn4 = self.vdfdx.step_y(f=fn3, dt=self.push * 0.5 * self.dt)
-        return fn4, self.field_solve.compute_jy(f=fn4)
+    def step_y(self, f):
+        fh = self.vdfdx.fyh(f=f, dt=self.dth)
+        f1 = f - (1j * self.ky[None, :, None, None] * self.dth) * fh
+        return f1, self.field_solve.compute_jy(f=fh)
 
-    def step_6(self, fn4):
-        fn5 = self.vdfdx.step_x(f=fn4, dt=self.push * 0.5 * self.dt)
-        return fn5, self.field_solve.compute_jx(f=fn5)
+    def step_x(self, f):
+        fh = self.vdfdx.fxh(f=f, dt=self.dth)
+        f1 = f - (1j * self.kx[:, None, None, None] * self.dth) * fh
+        return f1, self.field_solve.compute_jx(fh)
 
     def step_7(self, ex, ey, bz, jxn12, jxn92, jyn32, jyn72):
         jxnph = 0.5 * (jxn12 + jxn92)
@@ -135,11 +130,11 @@ class ChargeConservingMaxwell(VlasovFieldBase):
         dexk, deyk = self.driver(t, args)
 
         bznph, exnph, eynph = self.step_1(ex, ey, bz, f)
-        fn1, jxn12 = self.step_2(f)
-        fn2, jyn32 = self.step_3(fn1)
+        fn1, jxn12 = self.step_x(f)
+        fn2, jyn32 = self.step_y(fn1)
         fn3 = self.step_4(exnph + dexk, eynph + deyk, bznph, fn2)
-        fn4, jyn72 = self.step_5(fn3)
-        fnp1, jxn92 = self.step_6(fn4)
+        fn4, jyn72 = self.step_y(fn3)
+        fnp1, jxn92 = self.step_x(fn4)
         exnp1, eynp1 = self.step_7(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)
 
         return {
