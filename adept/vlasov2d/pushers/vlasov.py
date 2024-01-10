@@ -12,12 +12,6 @@ class ExponentialSpatialAdvection:
         self.one_over_ikx = cfg["grid"]["one_over_kx"] * 1j
         self.one_over_iky = cfg["grid"]["one_over_ky"] * 1j
 
-    def step_x(self, f, dt):
-        return f * jnp.exp(self.i_kx_vx * dt)
-
-    def step_y(self, f, dt):
-        return f * jnp.exp(self.i_ky_vy * dt)
-
     def fxh(self, f, dt):
         return f * (1.0 - jnp.exp(self.i_kx_vx * dt) * self.one_over_ikx / dt) * self.kx_mask
 

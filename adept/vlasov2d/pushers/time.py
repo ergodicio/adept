@@ -91,6 +91,8 @@ class ChargeConservingMaxwell(VlasovFieldBase):
         super(ChargeConservingMaxwell, self).__init__(cfg)
         self.push = 1 if cfg["solver"]["push_f"] else 0
         self.dth = self.push * 0.5 * self.dt
+        self.kx = cfg["grid"]["kx"]
+        self.ky = cfg["grid"]["ky"]
 
     def step_1(self, ex, ey, bz, f):
         bznph = self.field_solve.faraday(exk=ex, eyk=ey, bzk=bz, dt=self.dt)
