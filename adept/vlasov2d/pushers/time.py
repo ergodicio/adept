@@ -96,91 +96,91 @@ class ChargeConservingMaxwell(VlasovFieldBase):
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
 
-    def step_ampere_faraday(
-        self, ex: jnp.ndarray, ey: jnp.ndarray, bz: jnp.ndarray, f: jnp.ndarray
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Performs a Faraday full timestep and Ampere half timestep
-        This is the first split component of the Vlasov-Maxwell solve
-
-        :param ex:
-        :param ey:
-        :param bz:
-        :param f:
-        :return:
-        """
-        bznph = self.field_solve.faraday(exk=ex, eyk=ey, bzk=bz, dt=self.dt)
-        jx = self.field_solve.compute_jx(f=f)
-        jy = self.field_solve.compute_jy(f=f)
-        exnph, eynph = self.field_solve.ampere(exk=ex, eyk=ey, bzk=bz, jxk=jx, jyk=jy, dt=0.5 * self.dt)
-
-        return bznph, exnph, eynph
-
-    def step_v(self, exnph: jnp.ndarray, eynph: jnp.ndarray, bznph: jnp.ndarray, fn2: jnp.ndarray) -> jnp.ndarray:
-        if self.push:
-            return self.velocity_pusher(fk=fn2, ex=exnph, ey=eynph, bz=bznph, dt=self.dt)
-        else:
-            return fn2
-
-    def step_y(self, f: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        if self.push:
-            fh = self.vdfdx.fyh(f=f, dt=self.dth)
-            f1 = f - 1j * self.ky[None, :, None, None] * self.dth * fh
-        else:
-            fh = f
-            f1 = f
-        return f1, self.field_solve.compute_jy(f=fh)
-
-    def step_x(self, f: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-        if self.push:
-            fh = self.vdfdx.fxh(f=f, dt=self.dth)
-            f1 = f - 1j * self.kx[:, None, None, None] * self.dth * fh
-        else:
-            fh = f
-            f1 = f
-        return f1, self.field_solve.compute_jx(fh)
-
-    def step_ampere(
-        self,
-        ex: jnp.ndarray,
-        ey: jnp.ndarray,
-        bz: jnp.ndarray,
-        jxn12: jnp.ndarray,
-        jxn92: jnp.ndarray,
-        jyn32: jnp.ndarray,
-        jyn72: jnp.ndarray,
-    ) -> jnp.ndarray:
-        jxnph = 0.5 * (jxn12 + jxn92)
-        jynph = 0.5 * (jyn32 + jyn72)
-
-        return self.field_solve.ampere(exk=ex, eyk=ey, jxk=jxnph, jyk=jynph, bzk=bz, dt=0.5 * self.dt)
-
-    # def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
-    #     ex, ey, bz, f = (
-    #         y["ex"].view(dtype=jnp.complex128),
-    #         y["ey"].view(dtype=jnp.complex128),
-    #         y["bz"].view(dtype=jnp.complex128),
-    #         y["electron"].view(dtype=jnp.complex128),
-    #     )
+    # def step_ampere_faraday(
+    #     self, ex: jnp.ndarray, ey: jnp.ndarray, bz: jnp.ndarray, f: jnp.ndarray
+    # ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    #     """
+    #     Performs a Faraday full timestep and Ampere half timestep
+    #     This is the first split component of the Vlasov-Maxwell solve
     #
-    #     dexk, deyk = self.driver(t, args)
+    #     :param ex:
+    #     :param ey:
+    #     :param bz:
+    #     :param f:
+    #     :return:
+    #     """
+    #     bznph = self.field_solve.faraday(exk=ex, eyk=ey, bzk=bz, dt=self.dt)
+    #     jx = self.field_solve.compute_jx(f=f)
+    #     jy = self.field_solve.compute_jy(f=f)
+    #     exnph, eynph = self.field_solve.ampere(exk=ex, eyk=ey, bzk=bz, jxk=jx, jyk=jy, dt=0.5 * self.dt)
     #
-    #     bznph, exnph, eynph = self.step_ampere_faraday(ex, ey, bz, f)
-    #     fn1, jxn12 = self.step_x(f)
-    #     fn2, jyn32 = self.step_y(fn1)
-    #     fn3 = self.step_v(exnph + dexk, eynph + deyk, bznph, fn2)
-    #     fn4, jyn72 = self.step_y(fn3)
-    #     fnp1, jxn92 = self.step_x(fn4)
-    #     exnp1, eynp1 = self.step_ampere(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)
+    #     return bznph, exnph, eynph
     #
-    #     return {
-    #         "electron": fnp1.view(dtype=jnp.float64),
-    #         "ex": exnp1.view(dtype=jnp.float64),
-    #         "ey": eynp1.view(dtype=jnp.float64),
-    #         "bz": bznph.view(dtype=jnp.float64),
-    #         "dex": dexk.view(dtype=jnp.float64),
-    #         "dey": deyk.view(dtype=jnp.float64),
-    #     }
+    # def step_v(self, exnph: jnp.ndarray, eynph: jnp.ndarray, bznph: jnp.ndarray, fn2: jnp.ndarray) -> jnp.ndarray:
+    #     if self.push:
+    #         return self.velocity_pusher(fk=fn2, ex=exnph, ey=eynph, bz=bznph, dt=self.dt)
+    #     else:
+    #         return fn2
+    #
+    # def step_y(self, f: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    #     if self.push:
+    #         fh = self.vdfdx.fyh(f=f, dt=self.dth)
+    #         f1 = f - 1j * self.ky[None, :, None, None] * self.dth * fh
+    #     else:
+    #         fh = f
+    #         f1 = f
+    #     return f1, self.field_solve.compute_jy(f=fh)
+    #
+    # def step_x(self, f: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    #     if self.push:
+    #         fh = self.vdfdx.fxh(f=f, dt=self.dth)
+    #         f1 = f - 1j * self.kx[:, None, None, None] * self.dth * fh
+    #     else:
+    #         fh = f
+    #         f1 = f
+    #     return f1, self.field_solve.compute_jx(fh)
+    #
+    # def step_ampere(
+    #     self,
+    #     ex: jnp.ndarray,
+    #     ey: jnp.ndarray,
+    #     bz: jnp.ndarray,
+    #     jxn12: jnp.ndarray,
+    #     jxn92: jnp.ndarray,
+    #     jyn32: jnp.ndarray,
+    #     jyn72: jnp.ndarray,
+    # ) -> jnp.ndarray:
+    #     jxnph = 0.5 * (jxn12 + jxn92)
+    #     jynph = 0.5 * (jyn32 + jyn72)
+    #
+    #     return self.field_solve.ampere(exk=ex, eyk=ey, jxk=jxnph, jyk=jynph, bzk=bz, dt=0.5 * self.dt)
+    #
+    # # def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
+    # #     ex, ey, bz, f = (
+    # #         y["ex"].view(dtype=jnp.complex128),
+    # #         y["ey"].view(dtype=jnp.complex128),
+    # #         y["bz"].view(dtype=jnp.complex128),
+    # #         y["electron"].view(dtype=jnp.complex128),
+    # #     )
+    # #
+    # #     dexk, deyk = self.driver(t, args)
+    # #
+    # #     bznph, exnph, eynph = self.step_ampere_faraday(ex, ey, bz, f)
+    # #     fn1, jxn12 = self.step_x(f)
+    # #     fn2, jyn32 = self.step_y(fn1)
+    # #     fn3 = self.step_v(exnph + dexk, eynph + deyk, bznph, fn2)
+    # #     fn4, jyn72 = self.step_y(fn3)
+    # #     fnp1, jxn92 = self.step_x(fn4)
+    # #     exnp1, eynp1 = self.step_ampere(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)
+    # #
+    # #     return {
+    # #         "electron": fnp1.view(dtype=jnp.float64),
+    # #         "ex": exnp1.view(dtype=jnp.float64),
+    # #         "ey": eynp1.view(dtype=jnp.float64),
+    # #         "bz": bznph.view(dtype=jnp.float64),
+    # #         "dex": dexk.view(dtype=jnp.float64),
+    # #         "dey": deyk.view(dtype=jnp.float64),
+    # #     }
 
     def step_vxB(self, bz, f):
         return f

@@ -92,6 +92,12 @@ def test_single_resonance(real_or_imag, time, field):
                     f"desired: {np.round(actual_resonance, 5)}, "
                 )
                 measured_resonance = np.mean(freq[frslc])
+                mlflow.log_metrics(
+                    {
+                        "actual frequency": float(actual_resonance),
+                        "measured frequency": float(measured_resonance),
+                    }
+                )
                 np.testing.assert_almost_equal(measured_resonance, actual_resonance, decimal=2)
 
 

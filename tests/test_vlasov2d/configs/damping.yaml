@@ -47,7 +47,7 @@ save:
     t:
       tmin: 0.0
       tmax: 150.0
-      nt: 151
+      nt: 301
 #    x:
 #      xmin: 0.0
 #      xmax: 19.0
@@ -60,7 +60,7 @@ save:
     t:
       tmin: 0.0
       tmax: 150.0
-      nt: 4
+      nt: 3
 
 krook:
   space-profile:
