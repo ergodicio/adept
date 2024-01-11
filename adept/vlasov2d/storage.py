@@ -8,19 +8,17 @@ import numpy as np
 import xarray as xr
 
 
-def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
+def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
     """
     Stores fields to netcdf
 
     :param prefix:
     :param cfg:
-    :param td:
+    :param binary_dir:
     :param fields:
     :param this_t:
     :return:
     """
-    binary_dir = os.path.join(td, "binary")
-    os.makedirs(binary_dir, exist_ok=True)
 
     if any(x in ["x", "kx", "y", "ky"] for x in cfg["save"][prefix].keys()):
         crds = set(cfg["save"][prefix].keys()) - {"t", "func"}
@@ -41,10 +39,7 @@ def store_fields(cfg: Dict, td: str, fields: Dict, this_t: np.ndarray, prefix: s
         }
     else:
         das = {
-            f"{prefix}-{k}": xr.DataArray(
-                np.real(np.fft.ifft2(v.view(dtype=np.complex128), axes=(1, 2))),
-                coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])),
-            )
+            f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), ("x", cfg["grid"]["x"]), ("y", cfg["grid"]["y"])))
             for k, v in fields.items()
         }
     fields_xr = xr.Dataset(das)
@@ -66,7 +61,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     f_store = xr.Dataset(
         {
             spc: xr.DataArray(
-                np.real(np.fft.ifft2(ys[spc].view(dtype=np.complex128), axes=(1, 2))),
+                ys[spc],
                 coords=(
                     ("t", this_t[spc]),
                     ("x", cfg["grid"]["x"]),
@@ -232,4 +227,32 @@ def get_save_quantities(cfg: Dict) -> Dict:
         elif k.startswith("electron"):
             cfg["save"][k]["func"] = get_dist_save_func(cfg, k)
 
+    cfg["save"]["default"] = {"t": {"ax": cfg["grid"]["t"]}, "func": get_default_save_func(cfg)}
+
     return cfg
+
+
+def get_default_save_func(cfg):
+    vx = cfg["grid"]["vx"][None, None, :, None]
+    vy = cfg["grid"]["vx"][None, None, None, :]
+    dvx = cfg["grid"]["dvx"]
+    dvy = cfg["grid"]["dvx"]
+
+    def _calc_mean_moment_(inp):
+        return jnp.mean(jnp.trapz(jnp.trapz(inp, dx=dvy, axis=3), dx=dvx, axis=2))
+
+    def save(t, y, args):
+        scalars = {
+            "mean_P": _calc_mean_moment_(y["electron"] * vx**2.0 * vy**2.0),
+            "mean_j": _calc_mean_moment_(y["electron"] * vx * vy),
+            "mean_n": _calc_mean_moment_(y["electron"]),
+            "mean_q": _calc_mean_moment_(y["electron"] * vx**3.0 * vy**3.0),
+            "mean_-flogf": _calc_mean_moment_(-jnp.log(jnp.abs(y["electron"])) * jnp.abs(y["electron"])),
+            "mean_f2": _calc_mean_moment_(y["electron"] * y["electron"]),
+            "mean_de2": jnp.mean(y["dex"] ** 2.0 + y["dey"] ** 2.0),
+            "mean_e2": jnp.mean(y["ex"] ** 2.0 + y["ey"] ** 2.0),
+        }
+
+        return scalars
+
+    return save

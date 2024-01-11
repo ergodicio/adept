@@ -155,29 +155,71 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
         return self.field_solve.ampere(exk=ex, eyk=ey, jxk=jxnph, jyk=jynph, bzk=bz, dt=0.5 * self.dt)
 
+    # def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
+    #     ex, ey, bz, f = (
+    #         y["ex"].view(dtype=jnp.complex128),
+    #         y["ey"].view(dtype=jnp.complex128),
+    #         y["bz"].view(dtype=jnp.complex128),
+    #         y["electron"].view(dtype=jnp.complex128),
+    #     )
+    #
+    #     dexk, deyk = self.driver(t, args)
+    #
+    #     bznph, exnph, eynph = self.step_ampere_faraday(ex, ey, bz, f)
+    #     fn1, jxn12 = self.step_x(f)
+    #     fn2, jyn32 = self.step_y(fn1)
+    #     fn3 = self.step_v(exnph + dexk, eynph + deyk, bznph, fn2)
+    #     fn4, jyn72 = self.step_y(fn3)
+    #     fnp1, jxn92 = self.step_x(fn4)
+    #     exnp1, eynp1 = self.step_ampere(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)
+    #
+    #     return {
+    #         "electron": fnp1.view(dtype=jnp.float64),
+    #         "ex": exnp1.view(dtype=jnp.float64),
+    #         "ey": eynp1.view(dtype=jnp.float64),
+    #         "bz": bznph.view(dtype=jnp.float64),
+    #         "dex": dexk.view(dtype=jnp.float64),
+    #         "dey": deyk.view(dtype=jnp.float64),
+    #     }
+
+    def step_vxB(self, bz, f):
+        return f
+
     def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
-        ex, ey, bz, f = (
-            y["ex"].view(dtype=jnp.complex128),
-            y["ey"].view(dtype=jnp.complex128),
-            y["bz"].view(dtype=jnp.complex128),
-            y["electron"].view(dtype=jnp.complex128),
-        )
+        ex, ey, bz, f = y["ex"], y["ey"], y["bz"], y["electron"]
 
-        dexk, deyk = self.driver(t, args)
+        dex, dey = self.driver(t, args)
 
-        bznph, exnph, eynph = self.step_ampere_faraday(ex, ey, bz, f)
-        fn1, jxn12 = self.step_x(f)
-        fn2, jyn32 = self.step_y(fn1)
-        fn3 = self.step_v(exnph + dexk, eynph + deyk, bznph, fn2)
-        fn4, jyn72 = self.step_y(fn3)
-        fnp1, jxn92 = self.step_x(fn4)
-        exnp1, eynp1 = self.step_ampere(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)
+        # ex += dex
+        # ey += dey
 
-        return {
-            "electron": fnp1.view(dtype=jnp.float64),
-            "ex": exnp1.view(dtype=jnp.float64),
-            "ey": eynp1.view(dtype=jnp.float64),
-            "bz": bznph.view(dtype=jnp.float64),
-            "dex": dexk.view(dtype=jnp.float64),
-            "dey": deyk.view(dtype=jnp.float64),
-        }
+        # H_E
+        # update e df/dv
+        fhe_xy = self.velocity_pusher.edfdv(fxy=f, ex=ex + dex, ey=ey + dey, dt=self.dt)
+
+        exk, eyk, bzk = jnp.fft.fft2(ex), jnp.fft.fft2(ey), jnp.fft.fft2(bz)
+
+        # update b
+        bzkp = self.field_solve.faraday(bzk=bzk, exk=exk, eyk=eyk, dt=self.dt)
+
+        # H_1f
+        # update vxB df/dv
+        fb1_xy = self.step_vxB(bzkp, fhe_xy)
+
+        # update v1 df/dx1
+        f1_xy = self.vdfdx.step_x(fb1_xy, dt=self.dt)
+        # update e1
+        e1p = self.field_solve.hampere_e1(exk=exk, fxy=fb1_xy, dt=self.dt)
+
+        # H_2f
+        # update vxB df/dv
+        fb2_xy = self.step_vxB(bzkp, f1_xy)
+
+        # update v2 df/dx2
+        f2_xy = self.vdfdx.step_y(fb2_xy, dt=self.dt)
+        # update e2
+        e2p = self.field_solve.hampere_e2(eyk=eyk, fxy=fb2_xy, dt=self.dt)
+
+        e1n, e2n, bn = jnp.real(jnp.fft.ifft2(e1p)), jnp.real(jnp.fft.ifft2(e2p)), jnp.real(jnp.fft.ifft2(bzkp))
+
+        return {"electron": f2_xy, "ex": e1n, "ey": e2n, "bz": bn, "dex": dex, "dey": dey}

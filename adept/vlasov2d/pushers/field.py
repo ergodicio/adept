@@ -10,48 +10,52 @@ from jax import numpy as jnp
 class FieldSolver:
     def __init__(self, cfg):
         self.ion_charge = cfg["grid"]["ion_charge"]
-        self.one_over_kx = cfg["grid"]["one_over_kx"]
-        self.one_over_ky = cfg["grid"]["one_over_ky"]
-        self.kx = cfg["grid"]["kx"]
-        self.kx_mask = jnp.where(jnp.abs(self.kx) > 0, 1, 0)
-        self.ky = cfg["grid"]["ky"]
-        self.ky_mask = jnp.where(jnp.abs(self.ky) > 0, 1, 0)
+        self.one_over_ikx = cfg["grid"]["one_over_kx"][:, None] / 1j
+        self.one_over_iky = cfg["grid"]["one_over_ky"][None, :] / 1j
+        self.kx = cfg["grid"]["kx"][:, None]
+        self.kx_mask = jnp.where(jnp.abs(self.kx) > 0, 1, 0)[:, None]
+        self.ky = cfg["grid"]["ky"][None, :]
+        self.ky_mask = jnp.where(jnp.abs(self.ky) > 0, 1, 0)[None, :]
         self.vx_mom = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
         self.vy_mom = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=3)
         self.dvx = cfg["grid"]["dvx"]
         self.dvy = cfg["grid"]["dvy"]
-        self.vx = cfg["grid"]["vx"]
-        self.vy = cfg["grid"]["vy"]
+        self.vx = cfg["grid"]["vx"][None, None, :, None]
+        self.vy = cfg["grid"]["vy"][None, None, None, :]
         self.zero = jnp.concatenate([jnp.array([0.0]), jnp.ones(cfg["grid"]["nx"] - 1)])
 
     def compute_charge(self, f):
         return self.vx_mom(self.vy_mom(f))
 
     def compute_jx(self, f):
-        return (
-            jnp.trapz(jnp.trapz(self.vx[None, None, :, None] * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
-            * self.kx_mask[:, None]
-        )
+        return jnp.trapz(jnp.trapz(self.vx * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2) * self.kx_mask
 
     def compute_jy(self, f):
-        return (
-            jnp.trapz(jnp.trapz(self.vy[None, None, None, :] * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2)
-            * self.ky_mask[None, :]
-        )
-
-    def poisson(self, f: jnp.ndarray):
-        net_charge = self.compute_charge(f)  # * self.zero[:, None] * self.zero[None, :]
-        ex = 1j * self.one_over_kx[:, None] * net_charge  # the background gets zerod out here anyway ...
-        ey = 1j * self.one_over_ky[None, :] * net_charge  # it acts as the ion charge
-        return ex, ey
+        return jnp.trapz(jnp.trapz(self.vy * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2) * self.ky_mask
 
     def ampere(self, exk, eyk, bzk, jxk, jyk, dt):
-        exkp = exk + dt * (1j * self.ky[None, :] * bzk - jxk)
-        eykp = eyk + dt * (-1j * self.kx[:, None] * bzk - jyk)
+        exkp = exk + dt * (1j * self.ky * bzk - jxk)
+        eykp = eyk + dt * (-1j * self.kx * bzk - jyk)
         return exkp, eykp
 
     def faraday(self, bzk, exk, eyk, dt):
-        return bzk + dt * 1j * (self.ky[None, :] * exk - self.kx[:, None] * eyk)
+        return bzk + dt * 1j * (self.ky * exk - self.kx * eyk)
+
+    def hampere_e1(self, exk, fxy, dt):
+        fk = jnp.fft.fft2(fxy, axes=(0, 1))
+        return exk + self.one_over_ikx * jnp.trapz(
+            jnp.trapz(fk * (jnp.exp(-1j * self.kx[..., None, None] * dt * self.vx) - 1), dx=self.dvy, axis=3),
+            dx=self.dvx,
+            axis=2,
+        )
+
+    def hampere_e2(self, eyk, fxy, dt):
+        fk = jnp.fft.fft2(fxy, axes=(0, 1))
+        return eyk + self.one_over_iky * jnp.trapz(
+            jnp.trapz(fk * (jnp.exp(-1j * self.ky[..., None, None] * dt * self.vy) - 1), dx=self.dvy, axis=3),
+            dx=self.dvx,
+            axis=2,
+        )
 
 
 class Driver:
@@ -111,8 +115,8 @@ class Driver:
         # for key, pulse in pulses["ey"].items():
         #     total_djy += get_this_pulse(pulse, current_time)
 
-        total_dey = jnp.zeros((self.xax.size, self.yax.size), dtype=jnp.complex128)
-        total_dex = jnp.fft.fft2(total_dex, axes=(0, 1))
+        total_dey = jnp.zeros((self.xax.size, self.yax.size))  # , dtype=jnp.complex128)
+        # total_dex = jnp.fft.fft2(total_dex, axes=(0, 1))
 
         return total_dex, total_dey
 

@@ -18,6 +18,12 @@ class ExponentialSpatialAdvection:
     def fyh(self, f, dt):
         return f * (1.0 - jnp.exp(self.i_ky_vy * dt) * self.one_over_iky / dt) * self.ky_mask
 
+    def step_x(self, f, dt):
+        return jnp.real(jnp.fft.ifft(jnp.fft.fft(f, axis=0) * jnp.exp(self.i_kx_vx * dt), axis=0))
+
+    def step_y(self, f, dt):
+        return jnp.real(jnp.fft.ifft(jnp.fft.fft(f, axis=1) * jnp.exp(self.i_ky_vy * dt), axis=1))
+
 
 class ExponentialVelocityAdvection:
     def __init__(self, cfg):
@@ -47,6 +53,13 @@ class ExponentialVelocityAdvection:
         new_fk = jnp.fft.fft2(new_fxy, axes=(0, 1))
 
         return new_fk
+
+    def edfdv(self, fxy, ex, ey, dt):
+        fxykvxkvy = jnp.fft.fft2(fxy, axes=(2, 3))
+        new_fxykvxkvy = fxykvxkvy * jnp.exp(
+            -1j * dt * (ex[..., None, None] * self.kvx + ey[..., None, None] * self.kvy)
+        )
+        return jnp.real(jnp.fft.ifft2(new_fxykvxkvy, axes=(2, 3)))
 
 
 class CD2VelocityAdvection:
