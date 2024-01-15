@@ -68,6 +68,8 @@ drivers:
   ey: {}
 
 terms:
+  field: poisson
+  edfdv: exponential
   fokker_planck:
     is_on: False
     type: Dougherty

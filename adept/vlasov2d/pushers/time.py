@@ -45,44 +45,14 @@ class VlasovFieldBase:
         return edfdv
 
 
-#
-# class LeapfrogIntegrator(VlasovFieldBase):
-#     def __init__(self, cfg):
-#         super(LeapfrogIntegrator, self).__init__(cfg)
-#         self.bz = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
-#
-#     def __call__(self, t, y, args):
-#
-#         f = y["electron"].view(dtype=jnp.complex128)
-#         bz = y["bz"].view(dtype=jnp.complex128)
-#
-#
-#
-#         new_state = {}
-#         for species in ["electron"]:
-#             f = self.vdfdx(f=f, dt=0.5 * self.dt)
-#             dex, dey = self.driver(t, args)
-#             ex, ey = self.field_solve.poisson(f=f)
-#             f = self.velocity_pusher(fk=f, ex=ex + dex, ey=ey + dey, bz=self.bz, dt=self.dt)
-#             f = self.vdfdx(f=f, dt=0.5 * self.dt)
-#             ex, ey = self.field_solve.poisson(f=f)
-#
-#             new_state[species] = f
-#
-#         for nm, fld in zip(["ex", "ey", "bz", "dex", "dey", "dbz"], [ex, ey, self.bz, dex, dey]):
-#             new_state[nm] = fld
-#
-#         return new_state
-#
-
-
 class ChargeConservingMaxwell(VlasovFieldBase):
     """
     This class contains the function that updates the state
 
     All the pushers are chosen and initialized here and a single time-step is defined here.
 
-    1. Crouseilles, N., Navaro, P. & Sonnendrücker, É. Charge-conserving grid based methods for the Vlasov–Maxwell equations. Comptes Rendus Mécanique 342, 636–646 (2014).
+    1. Li, Y. et al. Solving the Vlasov–Maxwell equations using Hamiltonian splitting. Journal of Computational Physics 396, 381–399 (2019).
+
 
 
     :param cfg:
@@ -94,104 +64,26 @@ class ChargeConservingMaxwell(VlasovFieldBase):
         self.push = cfg["solver"]["push_f"]
         self.dth = 0.5 * self.dt
         self.kx = cfg["grid"]["kx"]
+        self.kvx = cfg["grid"]["kvx"][None, None, :, None]
+        self.vx = cfg["grid"]["vx"][None, None, :, None]
         self.ky = cfg["grid"]["ky"]
+        self.kvy = cfg["grid"]["kvy"][None, None, None, :]
+        self.vy = cfg["grid"]["vy"][None, None, None, :]
 
-    # def step_ampere_faraday(
-    #     self, ex: jnp.ndarray, ey: jnp.ndarray, bz: jnp.ndarray, f: jnp.ndarray
-    # ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-    #     """
-    #     Performs a Faraday full timestep and Ampere half timestep
-    #     This is the first split component of the Vlasov-Maxwell solve
-    #
-    #     :param ex:
-    #     :param ey:
-    #     :param bz:
-    #     :param f:
-    #     :return:
-    #     """
-    #     bznph = self.field_solve.faraday(exk=ex, eyk=ey, bzk=bz, dt=self.dt)
-    #     jx = self.field_solve.compute_jx(f=f)
-    #     jy = self.field_solve.compute_jy(f=f)
-    #     exnph, eynph = self.field_solve.ampere(exk=ex, eyk=ey, bzk=bz, jxk=jx, jyk=jy, dt=0.5 * self.dt)
-    #
-    #     return bznph, exnph, eynph
-    #
-    # def step_v(self, exnph: jnp.ndarray, eynph: jnp.ndarray, bznph: jnp.ndarray, fn2: jnp.ndarray) -> jnp.ndarray:
-    #     if self.push:
-    #         return self.velocity_pusher(fk=fn2, ex=exnph, ey=eynph, bz=bznph, dt=self.dt)
-    #     else:
-    #         return fn2
-    #
-    # def step_y(self, f: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    #     if self.push:
-    #         fh = self.vdfdx.fyh(f=f, dt=self.dth)
-    #         f1 = f - 1j * self.ky[None, :, None, None] * self.dth * fh
-    #     else:
-    #         fh = f
-    #         f1 = f
-    #     return f1, self.field_solve.compute_jy(f=fh)
-    #
-    # def step_x(self, f: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray]:
-    #     if self.push:
-    #         fh = self.vdfdx.fxh(f=f, dt=self.dth)
-    #         f1 = f - 1j * self.kx[:, None, None, None] * self.dth * fh
-    #     else:
-    #         fh = f
-    #         f1 = f
-    #     return f1, self.field_solve.compute_jx(fh)
-    #
-    # def step_ampere(
-    #     self,
-    #     ex: jnp.ndarray,
-    #     ey: jnp.ndarray,
-    #     bz: jnp.ndarray,
-    #     jxn12: jnp.ndarray,
-    #     jxn92: jnp.ndarray,
-    #     jyn32: jnp.ndarray,
-    #     jyn72: jnp.ndarray,
-    # ) -> jnp.ndarray:
-    #     jxnph = 0.5 * (jxn12 + jxn92)
-    #     jynph = 0.5 * (jyn32 + jyn72)
-    #
-    #     return self.field_solve.ampere(exk=ex, eyk=ey, jxk=jxnph, jyk=jynph, bzk=bz, dt=0.5 * self.dt)
-    #
-    # # def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
-    # #     ex, ey, bz, f = (
-    # #         y["ex"].view(dtype=jnp.complex128),
-    # #         y["ey"].view(dtype=jnp.complex128),
-    # #         y["bz"].view(dtype=jnp.complex128),
-    # #         y["electron"].view(dtype=jnp.complex128),
-    # #     )
-    # #
-    # #     dexk, deyk = self.driver(t, args)
-    # #
-    # #     bznph, exnph, eynph = self.step_ampere_faraday(ex, ey, bz, f)
-    # #     fn1, jxn12 = self.step_x(f)
-    # #     fn2, jyn32 = self.step_y(fn1)
-    # #     fn3 = self.step_v(exnph + dexk, eynph + deyk, bznph, fn2)
-    # #     fn4, jyn72 = self.step_y(fn3)
-    # #     fnp1, jxn92 = self.step_x(fn4)
-    # #     exnp1, eynp1 = self.step_ampere(exnph, eynph, bznph, jxn12, jxn92, jyn32, jyn72)
-    # #
-    # #     return {
-    # #         "electron": fnp1.view(dtype=jnp.float64),
-    # #         "ex": exnp1.view(dtype=jnp.float64),
-    # #         "ey": eynp1.view(dtype=jnp.float64),
-    # #         "bz": bznph.view(dtype=jnp.float64),
-    # #         "dex": dexk.view(dtype=jnp.float64),
-    # #         "dey": deyk.view(dtype=jnp.float64),
-    # #     }
+    def step_vxB_1(self, bz, f, dt):
+        fxykvx = jnp.fft.fft(f, axis=2)
+        new_fxykvx = fxykvx * jnp.exp(-1j * dt * self.kvx * self.vy * bz[..., None, None])
+        return jnp.fft.ifft(new_fxykvx, axis=2)
 
-    def step_vxB(self, bz, f):
-        return f
+    def step_vxB_2(self, bz, f, dt):
+        fxykvy = jnp.fft.fft(f, axis=3)
+        new_fxykvy = fxykvy * jnp.exp(1j * dt * self.kvy * self.vx * bz[..., None, None])
+        return jnp.fft.ifft(new_fxykvy, axis=3)
 
     def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
         ex, ey, bz, f = y["ex"], y["ey"], y["bz"], y["electron"]
 
         dex, dey = self.driver(t, args)
-
-        # ex += dex
-        # ey += dey
 
         # H_E
         # update e df/dv
@@ -201,10 +93,11 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
         # update b
         bzkp = self.field_solve.faraday(bzk=bzk, exk=exk, eyk=eyk, dt=self.dt)
+        bzn = jnp.real(jnp.fft.ifft2(bzkp))
 
         # H_1f
         # update vxB df/dv
-        fb1_xy = self.step_vxB(bzkp, fhe_xy)
+        fb1_xy = self.step_vxB_1(bzn, fhe_xy, dt=self.dt)
 
         # update v1 df/dx1
         f1_xy = self.vdfdx.step_x(fb1_xy, dt=self.dt)
@@ -213,13 +106,17 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
         # H_2f
         # update vxB df/dv
-        fb2_xy = self.step_vxB(bzkp, f1_xy)
+        fb2_xy = self.step_vxB_2(bzn, f1_xy, dt=self.dt)
 
         # update v2 df/dx2
         f2_xy = self.vdfdx.step_y(fb2_xy, dt=self.dt)
         # update e2
         e2p = self.field_solve.hampere_e2(eyk=eyk, fxy=fb2_xy, dt=self.dt)
 
-        e1n, e2n, bn = jnp.real(jnp.fft.ifft2(e1p)), jnp.real(jnp.fft.ifft2(e2p)), jnp.real(jnp.fft.ifft2(bzkp))
+        # H_B
+        # update E -> dE/dt = curl B
+        exkp, eykp = self.field_solve.ampere(exk=e1p, eyk=e2p, bzk=bzkp, dt=self.dt)
 
-        return {"electron": f2_xy, "ex": e1n, "ey": e2n, "bz": bn, "dex": dex, "dey": dey}
+        e1n, e2n = jnp.real(jnp.fft.ifft2(exkp)), jnp.real(jnp.fft.ifft2(eykp))
+
+        return {"electron": f2_xy, "ex": e1n, "ey": e2n, "bz": bzn, "dex": dex, "dey": dey}

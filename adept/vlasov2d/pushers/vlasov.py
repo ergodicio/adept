@@ -1,7 +1,12 @@
+import numpy as np
 from jax import numpy as jnp
 
 
 class ExponentialSpatialAdvection:
+    """
+    Performs v df/dx using an exponential integrator in time and spectral in space
+    """
+
     def __init__(self, cfg):
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
@@ -12,12 +17,6 @@ class ExponentialSpatialAdvection:
         self.one_over_ikx = cfg["grid"]["one_over_kx"][:, None, None, None] / 1j
         self.one_over_iky = cfg["grid"]["one_over_ky"][None, :, None, None] / 1j
 
-    def fxh(self, f, dt):
-        return f * (1.0 - jnp.exp(self.i_kx_vx * dt) * self.one_over_ikx / dt) * self.kx_mask
-
-    def fyh(self, f, dt):
-        return f * (1.0 - jnp.exp(self.i_ky_vy * dt) * self.one_over_iky / dt) * self.ky_mask
-
     def step_x(self, f, dt):
         return jnp.real(jnp.fft.ifft(jnp.fft.fft(f, axis=0) * jnp.exp(self.i_kx_vx * dt), axis=0))
 
@@ -25,65 +24,70 @@ class ExponentialSpatialAdvection:
         return jnp.real(jnp.fft.ifft(jnp.fft.fft(f, axis=1) * jnp.exp(self.i_ky_vy * dt), axis=1))
 
 
+class PSMVelocityAdvection:
+    def __init__(self, cfg):
+        A = (
+            np.diag(4 * np.ones(cfg["grid"]["nv"]), k=0)
+            + np.diag(np.ones(cfg["grid"]["nv"]), k=1)
+            + np.diag(np.ones(cfg["grid"]["nv"]), k=-1)
+        )
+        A[0, -1] = 1
+        A[-1, 0] = 1
+        self.A = jnp.array(A)
+
+        B = np.diag(2 * np.ones(cfg["grid"]["nv"]), k=0) + np.diag(np.ones(cfg["grid"]["nv"]), k=1)
+        # A[0, -1] = 1
+        B[-1, 0] = 1
+        self.B = jnp.array(B)
+
+    def __call__(self, force, f, dt):
+        # construct polynomial
+        # get gamma
+        _f_ = 3.0 * jnp.concatenate([[f[:, :, -1:, :] + f[:, :, 0:1, :]], f[:, :, 1:, :] + f[:, :, :-1, :]], axis=2)
+        gamma = lx.LinearSolve(self.A, _f_)
+
+        # get beta
+        _g_ = 6.0 * (f - gamma)
+        beta = lx.LinearSolve(self.B, _g_)
+
+        # get alpha
+        alpha = 0.5 * (beta[1:] - beta[:-1])
+        alpha = jnp.concatenate([beta[0:1] - beta[-1:], alpha])
+
+        new_vs = self.vx - force * dt
+
+        # perform interpolation at new locations
+
+        # return new f
+        pass
+
+
 class ExponentialVelocityAdvection:
+    """
+    Performs v df/dx using an exponential integrator in time and spectral in velocity space
+
+    It is a bit suspect because velocity space is not exactly periodic but it is `approximately` periodic...
+
+    """
+
     def __init__(self, cfg):
         self.kvx = cfg["grid"]["kvx"][None, None, :, None]
         self.kvy = cfg["grid"]["kvy"][None, None, None, :]
         self.vx = cfg["grid"]["vx"][None, None, :, None]
         self.vy = cfg["grid"]["vy"][None, None, None, :]
 
-    def __call__(self, fk, ex, ey, bz, dt):
-        fxy = jnp.real(jnp.fft.ifft2(fk, axes=(0, 1)))
-
-        # vx update
-        fxykvx = jnp.fft.fft(fxy, axis=2)
-        exxy = jnp.real(jnp.fft.ifft2(ex, axes=(0, 1))[..., None, None])
-        bzxy = jnp.real(jnp.fft.ifft2(bz, axes=(0, 1))[..., None, None])
-        temp_x = exxy + self.vy * bzxy
-        new_fxykvx = fxykvx * jnp.exp(-1j * dt * temp_x * self.kvx)
-        new_fxy = jnp.real(jnp.fft.ifft(new_fxykvx, axis=2))
-
-        # vy update
-        fxykvy = jnp.fft.fft(new_fxy, axis=3)
-        eyxy = jnp.real(jnp.fft.ifft2(ey, axes=(0, 1))[..., None, None])
-        temp_y = eyxy - self.vx * bzxy
-        new_fxykvy = fxykvy * jnp.exp(-1j * dt * temp_y * self.kvy)
-        new_fxy = jnp.real(jnp.fft.ifft(new_fxykvy, axis=3))
-
-        new_fk = jnp.fft.fft2(new_fxy, axes=(0, 1))
-
-        return new_fk
-
     def edfdv(self, fxy, ex, ey, dt):
+        """
+        e df/dv spectrally
+
+        :param fxy:
+        :param ex:
+        :param ey:
+        :param dt:
+        :return:
+        """
         fxykvxkvy = jnp.fft.fft2(fxy, axes=(2, 3))
         new_fxykvxkvy = fxykvxkvy * jnp.exp(
             -1j * dt * (ex[..., None, None] * self.kvx + ey[..., None, None] * self.kvy)
         )
         return jnp.real(jnp.fft.ifft2(new_fxykvxkvy, axes=(2, 3)))
-
-
-class CD2VelocityAdvection:
-    def __init__(self, cfg):
-        # self.kvx = cfg["grid"]["kvx"][None, None, :, None]
-        # self.kvy = cfg["grid"]["kvy"][None, None, None, :]
-        self.vx = cfg["grid"]["vx"][None, None, :, None]
-        self.vy = cfg["grid"]["vy"][None, None, None, :]
-        self.dvx = cfg["grid"]["dvx"]
-        self.dvy = cfg["grid"]["dvy"]
-
-    def __call__(self, fk, ex, ey, bz, dt):
-        fxy = jnp.fft.ifft2(fk, axes=(0, 1))
-        exxy = jnp.fft.ifft2(ex, axes=(0, 1))[..., None, None]
-        eyxy = jnp.fft.ifft2(ey, axes=(0, 1))[..., None, None]
-        bzxy = jnp.fft.ifft2(bz, axes=(0, 1))[..., None, None]
-
-        temp_x = exxy + self.vy * bzxy
-        temp_y = eyxy - self.vx * bzxy
-
-        dfx, dfy = jnp.gradient(fxy, axis=2) / self.dvx, jnp.gradient(fxy, axis=3) / self.dvy
-
-        dfxy = dt * (temp_x * dfx + temp_y * dfy)
-
-        new_fk = jnp.fft.fft2(fxy + 1e-12 * dfxy, axes=(0, 1))
-
-        return new_fk

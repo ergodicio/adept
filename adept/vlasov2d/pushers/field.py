@@ -33,9 +33,9 @@ class FieldSolver:
     def compute_jy(self, f):
         return jnp.trapz(jnp.trapz(self.vy * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2) * self.ky_mask
 
-    def ampere(self, exk, eyk, bzk, jxk, jyk, dt):
-        exkp = exk + dt * (1j * self.ky * bzk - jxk)
-        eykp = eyk + dt * (-1j * self.kx * bzk - jyk)
+    def ampere(self, exk, eyk, bzk, dt):
+        exkp = exk  # - dt * (1j * self.ky * bzk)
+        eykp = eyk  # - dt * (-1j * self.kx * bzk)
         return exkp, eykp
 
     def faraday(self, bzk, exk, eyk, dt):

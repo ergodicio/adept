@@ -16,9 +16,10 @@ from theory import electrostatic
 from utils.runner import run
 
 
-def _modify_defaults_(defaults, rng, real_or_imag, time, field):
+def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
     defaults["terms"]["time"] = time
     defaults["terms"]["field"] = field
+    defaults["terms"]["edfdv"] = edfdv
     if field == "ampere":
         defaults["grid"]["dt"] = 0.025
 
@@ -39,10 +40,12 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field):
 
 
 @pytest.mark.parametrize(
-    "real_or_imag, time, field",
-    itertools.product(["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere", "hampere"]),
+    "real_or_imag, time, field, edfdv",
+    itertools.product(
+        ["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere", "hampere"], ["exponential", "cubic-spline"]
+    ),
 )
-def test_single_resonance(real_or_imag, time, field):
+def test_single_resonance(real_or_imag, time, field, edfdv):
     if (time == "sixth") and (field == "ampere"):
         print("not implemented - skipping test")
     elif (time == "sixth") and (field == "hampere"):
@@ -53,7 +56,7 @@ def test_single_resonance(real_or_imag, time, field):
 
         # modify config
         rng = np.random.default_rng()
-        mod_defaults, root = _modify_defaults_(defaults, rng, real_or_imag, time, field)
+        mod_defaults, root = _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv)
 
         actual_damping_rate = np.imag(root)
         actual_resonance = np.real(root)

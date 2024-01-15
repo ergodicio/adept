@@ -17,13 +17,26 @@ class Stepper(diffrax.Euler):
         return y1, None, dense_info, None, diffrax.RESULTS.successful
 
 
-class LeapfrogIntegrator:
+class TimeIntegrator:
     def __init__(self, cfg):
+        self.field_solve = field.ElectricFieldSolver(cfg)
+        self.edfdv = self.get_edfdv(cfg)
+        self.vdfdx = vlasov.SpaceExponential(cfg)
+
+    def get_edfdv(self, cfg):
+        if cfg["terms"]["edfdv"] == "exponential":
+            return vlasov.VelocityExponential(cfg)
+        elif cfg["terms"]["edfdv"] == "cubic-spline":
+            return vlasov.VelocityCubicSpline(cfg)
+        else:
+            raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
+
+
+class LeapfrogIntegrator(TimeIntegrator):
+    def __init__(self, cfg):
+        super().__init__(cfg)
         self.dt = cfg["grid"]["dt"]
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
-        self.field_solve = field.ElectricFieldSolver(cfg)
-        self.edfdv = vlasov.VelocityExponential(cfg)
-        self.vdfdx = vlasov.SpaceExponential(cfg)
 
     def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         f_after_v = self.vdfdx(f=f, dt=self.dt)
@@ -37,8 +50,9 @@ class LeapfrogIntegrator:
         return e, f, pond
 
 
-class SixthOrderHamIntegrator:
+class SixthOrderHamIntegrator(TimeIntegrator):
     def __init__(self, cfg):
+        super().__init__(cfg)
         self.dt = cfg["grid"]["dt"]
 
         self.a1 = 0.168735950563437422448196
@@ -68,9 +82,9 @@ class SixthOrderHamIntegrator:
                 self.a1 + self.a2 + self.a3 + self.a2 + self.a1,
             ]
         )
-        self.field_solve = field.ElectricFieldSolver(cfg)
-        self.edfdv = vlasov.VelocityExponential(cfg)
-        self.vdfdx = vlasov.SpaceExponential(cfg)
+        # self.field_solve = field.ElectricFieldSolver(cfg)
+        # self.edfdv = vlasov.VelocityExponential(cfg)
+        # self.vdfdx = vlasov.SpaceExponential(cfg)
 
     def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)

@@ -2,8 +2,8 @@ from functools import partial
 from typing import Callable
 
 import equinox as eqx
-from jax import numpy as jnp
-from interpax import interp2d
+from jax import numpy as jnp, vmap
+from interpax import interp2d, interp1d
 
 
 class VlasovExternalE(eqx.Module):
@@ -55,6 +55,16 @@ class VelocityExponential:
         return jnp.real(
             jnp.fft.irfft(jnp.exp(-1j * self.kv_real[None, :] * dt * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1)
         )
+
+
+class VelocityCubicSpline:
+    def __init__(self, cfg):
+        self.v = jnp.repeat(cfg["grid"]["v"][None, :], repeats=cfg["grid"]["nx"], axis=0)
+        self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)  # {"xq": 0, "f": 0, "x": None})
+
+    def __call__(self, f, e, dt):
+        vq = self.v - e[:, None] * dt
+        return self.interp(xq=vq, x=self.v, f=f)
 
 
 class SpaceExponential:

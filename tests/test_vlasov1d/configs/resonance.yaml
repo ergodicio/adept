@@ -71,6 +71,7 @@ drivers:
 
 terms:
   field: poisson
+  edfdv: cubic-spline
   time: leapfrog
   fokker_planck:
     is_on: True

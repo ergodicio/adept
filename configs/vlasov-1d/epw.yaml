@@ -68,6 +68,7 @@ drivers:
 
 terms:
   field: hampere
+  edfdv: exponential
   time: leapfrog
   fokker_planck:
     is_on: True
