@@ -10,8 +10,9 @@ from adept.tf1d.pushers import get_envelope
 
 
 class Driver:
-    def __init__(self, xax):
+    def __init__(self, xax, driver_key="ex"):
         self.xax = xax
+        self.driver_key = driver_key
 
     def get_this_pulse(self, this_pulse: Dict, current_time: jnp.float64):
         kk = this_pulse["k0"]
@@ -33,16 +34,12 @@ class Driver:
         )
 
     def __call__(self, t, args):
-        total_dex = jnp.zeros_like(self.xax)
-        total_djy = jnp.zeros_like(self.xax)
+        total_de = jnp.zeros_like(self.xax)
 
-        for key, pulse in args["drivers"]["ex"].items():
-            total_dex += self.get_this_pulse(pulse, t)
+        for _, pulse in args["drivers"][self.driver_key].items():
+            total_de += self.get_this_pulse(pulse, t)
 
-        for key, pulse in args["drivers"]["ey"].items():
-            total_djy += self.get_this_pulse(pulse, t)
-
-        return total_dex, total_djy
+        return total_de
 
 
 class WaveSolver:
@@ -92,19 +89,19 @@ class WaveSolver:
         return jnp.concatenate([a_left, anew, a_right])
 
     def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_charge: jnp.ndarray):
-        # if self.c > 0:
-        #     # d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
-        #     padded_a = jnp.concatenate([a[-1:], a, a[:1]])
-        #     d2dx2 = (padded_a[:-2] - 2.0 * padded_a[1:-1] + padded_a[2:]) / self.dx**2.0
-        #     # anew = (
-        #     #     2.0 * a[1:-1]
-        #     #     - aold[1:-1]
-        #     #     + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array)
-        #     # )
-        #     anew = 2.0 * a - aold + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a + djy_array)
-        #     return self.apply_2nd_order_abc(aold, a, anew), a
-        # else:
-        return a, aold
+        if self.c > 0:
+            d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
+            # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
+            # d2dx2 = (padded_a[:-2] - 2.0 * padded_a[1:-1] + padded_a[2:]) / self.dx**2.0
+            anew = (
+                2.0 * a[1:-1]
+                - aold[1:-1]
+                + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array[1:-1])
+            )
+            # anew = 2.0 * a - aold + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a + djy_array)
+            return {"a": self.apply_2nd_order_abc(aold, a, anew), "prev_a": a}
+        else:
+            return {"a": a, "prev_a": aold}
 
 
 class SpectralPoissonSolver:
@@ -180,6 +177,6 @@ class ElectricFieldSolver:
         :param a:
         :return:
         """
-        ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)  # [1:-1]
+        ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)[1:-1]
         self_consistent_ex = self.es_field_solver(f, prev_ex, dt)
         return ponderomotive_force, self_consistent_ex

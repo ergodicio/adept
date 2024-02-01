@@ -1,5 +1,8 @@
+from functools import partial
 import numpy as np
-from jax import numpy as jnp
+from jax import numpy as jnp, vmap
+
+from interpax import interp1d
 
 
 class ExponentialSpatialAdvection:
@@ -91,3 +94,36 @@ class ExponentialVelocityAdvection:
             -1j * dt * (ex[..., None, None] * self.kvx + ey[..., None, None] * self.kvy)
         )
         return jnp.real(jnp.fft.ifft2(new_fxykvxkvy, axes=(2, 3)))
+
+
+class VelocityCubicSpline:
+    def __init__(self, cfg):
+        nx, ny, nvx, nvy = cfg["grid"]["nx"], cfg["grid"]["ny"], cfg["grid"]["nvx"], cfg["grid"]["nvy"]
+        self.vx = cfg["grid"]["vy"][None, None, :, None] * jnp.ones((nx, ny, nvx, nvy))
+        self.vy = cfg["grid"]["vy"][None, None, None, :] * jnp.ones((nx, ny, nvx, nvy))
+        self.interp_vx = vmap(partial(interp1d, extrap=True), in_axes=(0, 1, 3))
+        self.interp_vy = vmap(partial(interp1d, extrap=True), in_axes=(0, 1, 2))
+
+    def step_x(self, f, force_x, dt):
+        vq = self.vx - force_x * dt
+        return self.interp_vx(xq=vq, x=self.vx, f=f)
+
+    def step_y(self, f, force_y, dt):
+        vq = self.vy - force_y * dt
+        return self.interp_vy(xq=vq, x=self.vy, f=f)
+
+    def step_edfdv_x(self, f, ex, dt):
+        force_x = ex[:, :, None, None]
+        return self.step_x(f, force_x, dt)
+
+    def step_vxBdfdv_x(self, f, bz, dt):
+        force_x = self.vy * bz[:, :, None, None]
+        return self.step_x(f, force_x, dt)
+
+    def step_edfdv_y(self, f, ey, dt):
+        force_y = ey[:, :, None, None]
+        return self.step_y(f, force_y, dt)
+
+    def step_vxBdfdv_y(self, f, bz, dt):
+        force_y = -self.vx * bz[:, :, None, None]
+        return self.step_y(f, force_y, dt)
