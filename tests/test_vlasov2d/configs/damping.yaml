@@ -28,7 +28,6 @@ density:
       width: 100000.0
 
 grid:
-  c_light: 10
   dt: 0.1
   nvx: 128
   nvy: 128

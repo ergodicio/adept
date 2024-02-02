@@ -176,7 +176,7 @@ class VlasovMaxwell:
     def __init__(self, cfg):
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
-        self.wave_solver = field.WaveSolver(c=cfg["grid"]["c_light"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
+        self.wave_solver = field.WaveSolver(c=1.0 / cfg["grid"]["beta"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
         self.compute_charges = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
         self.dt = self.cfg["grid"]["dt"]
         self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
