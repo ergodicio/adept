@@ -25,8 +25,8 @@ density:
 
 grid:
   dt: 0.5
-  nv: 4096
-  nx: 128
+  nv: 512
+  nx: 32
   tmin: 0.
   tmax: 480.0
   vmax: 6.4
@@ -67,6 +67,9 @@ drivers:
   ey: {}
 
 terms:
+  field: hampere
+  edfdv: exponential
+  time: leapfrog
   fokker_planck:
     is_on: True
     type: Dougherty

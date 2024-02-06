@@ -11,7 +11,7 @@ from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt
 from matplotlib import pyplot as plt
 
-from adept.vlasov2d.integrator import LeapfrogIntegrator, Stepper
+from adept.vlasov2d.pushers import time as time_integrator
 from adept.vlasov2d.storage import store_f, store_fields, get_save_quantities
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
@@ -124,10 +124,10 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             temp_f, _ = _initialize_distribution_(
                 nxs=[int(cfg_grid["nx"]), int(cfg_grid["ny"])],
                 nvs=[int(cfg_grid["nvx"]), int(cfg_grid["nvy"])],
-                v0=v0,
+                v0=v0,  # * cfg_grid["beta"],
                 m=m,
-                T0=T0,
-                vmax=cfg_grid["vmax"],
+                T0=T0,  # * cfg_grid["beta"] ** 2.0,
+                vmax=cfg_grid["vmax"],  # * cfg_grid["beta"],
                 n_prof=nprof,
                 noise_val=species_params["noise_val"],
                 noise_seed=int(species_params["noise_seed"]),
@@ -157,6 +157,8 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dy"] = cfg_grid["ymax"] / cfg_grid["ny"]
+
+    # cfg_grid["vmax"] *= cfg_grid["beta"]
     cfg_grid["dvx"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvx"]
     cfg_grid["dvy"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nvy"]
 
@@ -172,7 +174,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     cfg["grid"] = cfg_grid
 
-    return cfg_grid
+    return cfg
 
 
 def get_solver_quantities(cfg: Dict) -> Dict:
@@ -274,39 +276,70 @@ def init_state(cfg: Dict) -> Dict:
     for species in ["electron"]:
         state[species] = f
 
-    for field in ["e", "b", "de"]:
-        state[field] = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2))
+    for field in ["ex", "ey", "bz", "dex", "dey"]:
+        state[field] = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
+
+    # transform
+    # for nm, quant in state.items():
+    #     state[nm] = jnp.fft.fft2(quant, axes=(0, 1)).view(dtype=jnp.float64)
 
     return state
 
 
 def get_diffeqsolve_quants(cfg):
+    # if cfg["solver"]["field"] == "poisson":
+    #     VectorField = time_integrator.LeapfrogIntegrator(cfg)
+    # elif cfg["solver"]["field"] == "maxwell":
+    VectorField = time_integrator.ChargeConservingMaxwell(cfg)
+    # else:
+    #     raise NotImplementedError
+
     return dict(
-        terms=ODETerm(LeapfrogIntegrator(cfg)),
-        solver=Stepper(),
+        terms=ODETerm(VectorField),
+        solver=time_integrator.Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
     )
 
 
 def post_process(result, cfg: Dict, td: str):
     t0 = time()
+    binary_dir = os.path.join(td, "binary")
+    os.makedirs(binary_dir, exist_ok=True)
+
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
+    os.makedirs(os.path.join(td, "plots", "scalars"), exist_ok=True)
+
     # merge
     # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
     # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
     for k in result.ys.keys():
         if k.startswith("field"):
-            fields_xr = store_fields(cfg, td, result.ys[k], result.ts[k], k)
+            fields_xr = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
             t_skip = int(fields_xr.coords["t"].data.size // 8)
             t_skip = t_skip if t_skip > 1 else 1
             tslice = slice(0, -1, t_skip)
 
             for nm, fld in fields_xr.items():
-                for comp in ["x", "y"]:
-                    fld[tslice].loc[{"comp": comp}].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
-                    plt.savefig(os.path.join(td, "plots", "fields", f"{nm[7:]}-{comp}.png"), bbox_inches="tight")
-                    plt.close()
+                fld[tslice].T.plot(col="t", col_wrap=4)  # ax=ax[this_ax_row, this_ax_col])
+                plt.savefig(os.path.join(td, "plots", "fields", f"{nm[7:]}.png"), bbox_inches="tight")
+
+                plt.close()
+        elif k.startswith("default"):
+            scalars_xr = xarray.Dataset(
+                {k: xarray.DataArray(v, coords=(("t", result.ts["default"]),)) for k, v in result.ys["default"].items()}
+            )
+            scalars_xr.to_netcdf(os.path.join(binary_dir, f"scalars-t={round(scalars_xr.coords['t'].data[-1], 4)}.nc"))
+
+            for nm, srs in scalars_xr.items():
+                fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+                srs.plot(ax=ax[0])
+                ax[0].grid()
+                np.log10(np.abs(srs)).plot(ax=ax[1])
+                ax[1].grid()
+                ax[1].set_ylabel("$log_{10}$(|" + nm + "|)")
+                fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
+                plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)
 

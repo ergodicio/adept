@@ -27,7 +27,6 @@ density:
       wall_height: 0.0
       width: 100000.0
 grid:
-  c_light: 10
   num_checkpoints: 10
   num_fs: 2
   dt: 0.1
@@ -114,3 +113,4 @@ solver:
   num_unroll: 32
   field: ampere
   vdfdx: exponential
+  push_f: True

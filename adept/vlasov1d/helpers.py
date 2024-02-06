@@ -213,6 +213,10 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
+    if len(cfg["drivers"]["ey"].keys()) > 0:
+        print("overriding dt to ensure wave solver stability")
+        cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / cfg["units"]["derived"]["c_light"]
+
     cfg["grid"] = cfg_grid
 
     return cfg
@@ -275,6 +279,14 @@ def get_solver_quantities(cfg: Dict) -> Dict:
 
     cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["n_prof_total"]) + cfg_grid["n_prof_total"]
 
+    cfg_grid["x_a"] = np.concatenate(
+        [
+            [cfg_grid["x"][0] - cfg_grid["dx"]],
+            cfg_grid["x"],
+            [cfg_grid["x"][-1] + cfg_grid["dx"]],
+        ]
+    )
+
     return cfg_grid
 
 
@@ -295,7 +307,7 @@ def init_state(cfg: Dict) -> Dict:
         state[field] = jnp.zeros(cfg["grid"]["nx"])
 
     for field in ["a", "da", "prev_a"]:
-        state[field] = jnp.zeros(cfg["grid"]["nx"])
+        state[field] = jnp.zeros(cfg["grid"]["nx"] + 2)  # need boundary cells
 
     return state
 

@@ -10,6 +10,11 @@ from adept.tf1d.pushers import get_envelope
 
 
 class Stepper(diffrax.Euler):
+    """
+
+    :param cfg:
+    """
+
     def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
         del solver_state, made_jump
         y1 = terms.vf(t0, y0, args)
@@ -17,27 +22,59 @@ class Stepper(diffrax.Euler):
         return y1, None, dense_info, None, diffrax.RESULTS.successful
 
 
-# class VectorField:
-#     """
-#     This class contains the function that updates the state
-#
-#     All the pushers are chosen and initialized here and a single time-step is defined here.
-#
-#     :param cfg:
-#     :return:
-#     """
-#
-#     def __init__(self, cfg):
-#         self.vlasov = Vlasov(cfg)
-#
-#     def __call__(self, t, y, args):
-#         return self.vlasov(t, y, args)
-#
+class TimeIntegrator:
+    """
 
+    :param cfg:
+    """
 
-class SixthOrderHamIntegrator:
     def __init__(self, cfg):
+        self.field_solve = field.ElectricFieldSolver(cfg)
+        self.edfdv = self.get_edfdv(cfg)
+        self.vdfdx = vlasov.SpaceExponential(cfg)
+
+    def get_edfdv(self, cfg):
+        if cfg["terms"]["edfdv"] == "exponential":
+            return vlasov.VelocityExponential(cfg)
+        elif cfg["terms"]["edfdv"] == "cubic-spline":
+            return vlasov.VelocityCubicSpline(cfg)
+        else:
+            raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
+
+
+class LeapfrogIntegrator(TimeIntegrator):
+    """
+
+    :param cfg:
+    """
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
         self.dt = cfg["grid"]["dt"]
+        self.dt_array = self.dt * jnp.array([0.0, 1.0])
+
+    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        f_after_v = self.vdfdx(f=f, dt=self.dt)
+        if self.field_solve.hampere:
+            f_for_field = f
+        else:
+            f_for_field = f_after_v
+        pond, e = self.field_solve(f=f_for_field, a=a, prev_ex=prev_ex, dt=self.dt)
+        f = self.edfdv(f=f_after_v, e=pond + e + dex_array[0], dt=self.dt)
+
+        return e, f
+
+
+class SixthOrderHamIntegrator(TimeIntegrator):
+    """
+
+    :param cfg:
+    """
+
+    def __init__(self, cfg):
+        super().__init__(cfg)
+        self.dt = cfg["grid"]["dt"]
+
         self.a1 = 0.168735950563437422448196
         self.a2 = 0.377851589220928303880766
         self.a3 = -0.093175079568731452657924
@@ -65,66 +102,85 @@ class SixthOrderHamIntegrator:
                 self.a1 + self.a2 + self.a3 + self.a2 + self.a1,
             ]
         )
-        self.field_solve = field.ElectricFieldSolver(cfg)
-        self.edfdv = vlasov.VelocityExponential(cfg)
-        self.vdfdx = vlasov.SpaceExponential(cfg)
 
-    def __call__(self, f, a, dex_array, total_force):
-        force, _, _ = self.field_solve(dex_array=dex_array[0], f=f, a=a, total_force=None, dt=None)
+    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[0] + self_consistent_ex
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a1 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[1], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[1] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D2 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a2 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[2], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[2] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D3 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a3 * self.dt)
-        force_save, pond_save, e_save = self.field_solve(dex_array=dex_array[3], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[3] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force_save, dt=self.D3 * self.dt)
+        f = self.edfdv(f=f, e=force, dt=self.D3 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a2 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[4], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[4] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D2 * self.dt)
 
         f = self.vdfdx(f=f, dt=self.a1 * self.dt)
-        force, _, _ = self.field_solve(dex_array=dex_array[5], f=f, a=a, total_force=None, dt=None)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[5] + self_consistent_ex
 
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
 
-        return e_save, f, force_save, pond_save
+        return self_consistent_ex, f
 
 
 class VlasovPoissonFokkerPlanck:
+    """
+
+    :param cfg:
+    """
+
     def __init__(self, cfg):
         self.dt = cfg["grid"]["dt"]
         self.v = cfg["grid"]["v"]
-        self.vlasov_poisson = SixthOrderHamIntegrator(cfg)
+        if cfg["terms"]["time"] == "sixth":
+            self.vlasov_poisson = SixthOrderHamIntegrator(cfg)
+            self.dex_save = 3
+        elif cfg["terms"]["time"] == "leapfrog":
+            self.vlasov_poisson = LeapfrogIntegrator(cfg)
+            self.dex_save = 0
+        else:
+            raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
 
-    def __call__(
-        self, f, a, total_force, dex_array, nu_fp, nu_K
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        e, f, force, pond = self.vlasov_poisson(f, a, dex_array, total_force)
+    def __call__(self, f, a, prev_ex, dex_array, nu_fp, nu_K) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+        e, f = self.vlasov_poisson(f, a, dex_array, prev_ex)
         f = self.fp(nu_fp, nu_K, f, dt=self.dt)
 
-        return e, f, force, pond
+        return e, f
 
 
 class VlasovMaxwell:
+    """
+
+    :param cfg:
+    """
+
     def __init__(self, cfg):
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
-        # self.wave_solver = field.WaveSolver(c=cfg["grid"]["c_light"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
+        self.wave_solver = field.WaveSolver(c=1.0 / cfg["grid"]["beta"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
         self.compute_charges = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
         self.dt = self.cfg["grid"]["dt"]
-        self.driver = field.Driver(cfg["grid"]["x"])
+        self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
+        self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
 
     def nu_prof(self, t, nu_args):
         t_L = nu_args["time"]["center"] - nu_args["time"]["width"] * 0.5
@@ -159,9 +215,8 @@ class VlasovMaxwell:
         :return:
         """
 
-        de = [self.driver(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
-        dex = [val[0] for val in de]
-        djy = de[0][1]
+        dex = [self.ex_driver(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
+        djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
 
         if self.cfg["terms"]["fokker_planck"]["is_on"]:
             nu_fp_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"])
@@ -173,15 +228,12 @@ class VlasovMaxwell:
         else:
             nu_K_prof = None
 
-        # electron_density_n = self.compute_charges(y["electron"])
-        e, f, force, pond = self.vpfp(y["electron"], y["a"], y["e"], dex, nu_fp_prof, nu_K_prof)
-        # electron_density_np1 = self.compute_charges(f)
+        electron_density_n = self.compute_charges(y["electron"])
+        e, f = self.vpfp(f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof)
+        electron_density_np1 = self.compute_charges(f)
 
-        # a = self.wave_solver(
-        #     a=y["a"],
-        #     aold=y["prev_a"],
-        #     djy_array=djy[2],
-        #     electron_charge=0.5 * (electron_density_n + electron_density_np1),
-        # )
+        a = self.wave_solver(
+            a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
+        )
 
-        return {"electron": f, "a": y["a"], "prev_a": y["prev_a"], "da": djy, "de": dex[3], "e": e}
+        return {"electron": f, "a": a["a"], "prev_a": a["prev_a"], "da": djy, "de": dex[self.vpfp.dex_save], "e": e}
