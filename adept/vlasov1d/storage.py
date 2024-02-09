@@ -33,13 +33,22 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
 
         das = {f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), (xnm, xx))) for k, v in fields.items()}
     else:
+        das = {}
         for k, v in fields.items():
-            if k in ["a", "prev_a"]:
-                xax = cfg["grid"]["x_a"]
-            else:
-                xax = cfg["grid"]["x"]
+            das[f"{prefix}-{k}"] = xr.DataArray(
+                v[:, 1:-1] if k in ["a", "prev_a"] else v, coords=(("t", this_t), ("x", cfg["grid"]["x"]))
+            )
 
-            das = {f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), ("x", xax)))}
+        if len(cfg["drivers"]["ey"].keys()) > 0:
+            ey = -(fields["a"][:, 1:-1] - fields["prev_a"][:, 1:-1]) / cfg["grid"]["dt"]
+            bz = jnp.gradient(fields["a"], cfg["grid"]["dx"], axis=1)[:, 1:-1]
+
+            ep = ey + cfg["units"]["derived"]["c_light"].magnitude * bz
+            em = ey - cfg["units"]["derived"]["c_light"].magnitude * bz
+
+            das[f"{prefix}-ep"] = xr.DataArray(ep, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
+            das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
+
     fields_xr = xr.Dataset(das)
     fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(this_t[-1],4)}.nc"))
 
@@ -117,6 +126,8 @@ def get_field_save_func(cfg, k):
             temp["f^2"] = _calc_moment_(y["electron"] * y["electron"])
             temp["e"] = y["e"]
             temp["de"] = y["de"]
+            temp["a"] = y["a"]
+            temp["prev_a"] = y["prev_a"]
             temp["pond"] = -0.5 * jnp.gradient(y["a"] ** 2.0, cfg["grid"]["dx"])[1:-1]
 
             return temp
