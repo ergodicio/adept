@@ -203,9 +203,11 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
-    # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
+    if len(cfg["drivers"]["ey"].keys()) > 0:
+        print("overriding dt to ensure wave solver stability")
+        cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / cfg["units"]["derived"]["c_light"]
+
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
-    cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
     if cfg_grid["nt"] > 1e6:
         cfg_grid["max_steps"] = int(1e6)
@@ -213,10 +215,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    if len(cfg["drivers"]["ey"].keys()) > 0:
-        print("overriding dt to ensure wave solver stability")
-        cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / cfg["units"]["derived"]["c_light"]
-
+    cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
     cfg["grid"] = cfg_grid
 
     return cfg

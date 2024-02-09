@@ -1,110 +1,104 @@
-units:
-  laser wavelength: 351nm
-  normalizing temperature: 2000eV
-  normalizing density: 1.5e21/cc
-  Z: 10
-  Zp: 10
-
-
 density:
   quasineutrality: true
   species-background:
+    T0: 1.0
+    basis: uniform
+    m: 2.0
     noise_seed: 420
     noise_type: gaussian
     noise_val: 0.0
+    space-profile:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      wall_height: 0.0
+      width: 100000.0
     v0: 0.0
-    T0: 1.0
-    m: 2.0
-    basis: exponential
-    val at center: 1.0
-    bump_or_trough: bump
-    center: 2000.0
-    rise: 25.0
-    bump_height: 0.99
-    width: 3800.0
-    gradient scale length: -170um
-
-grid:
-  dt: 0.5
-  nv: 512
-  nx: 4096
-  tmin: 0.
-  tmax: 100.0
-  vmax: 6.4
-  xmax: 4000.0
-  xmin: 0.0
-
-save:
-  fields:
-    t:
-      tmin: 0.0
-      tmax: 100.0
-      nt: 32
-  electron:
-    t:
-      tmin: 0.0
-      tmax: 100.0
-      nt: 1
-
-mode: vlasov-1d
-
-mlflow:
-  experiment: vlasov1d-epw-finite-length-compare
-  run: vlasov-absorbing
-
 drivers:
   ex:
     '0':
-      a0: 1.e-2
-      k0: 0.4
+      a0: 0.01
+      dw0: 0.0
+      k0: 0.28
       t_center: 60.0
       t_rise: 5.0
       t_width: 80.0
-      w0: 1.28
-      dw0: 0.
+      w0: 1.1370461486881023
       x_center: 600.0
       x_rise: 20.0
       x_width: 900.0
   ey: {}
-
+grid:
+  c_light: 10
+  dt: 0.1
+  nv: 6144
+  nx: 4096
+  tmax: 1000.0
+  tmin: 0.0
+  vmax: 6.4
+  xmax: 4000.0
+  xmin: 0.0
+mlflow:
+  experiment: wavepacket-k-nu-a-vlasov-hr-sl
+  run: vlasov-absorbing
+mode: vlasov-1d
+save:
+  electron:
+    t:
+      nt: 51
+      tmax: 1000.0
+      tmin: 0.0
+  fields:
+    t:
+      nt: 1001
+      tmax: 1000.0
+      tmin: 0.0
 terms:
   field: poisson
-  edfdv: exponential
+  edfdv: cubic-spline
+  time: leapfrog
   fokker_planck:
-    is_on: False
+    is_on: true
+    space:
+      baseline: 1.0
+      bump_height: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      width: 100000.0
+    time:
+      baseline: 1.0e-05
+      bump_height: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      width: 100000.0
     type: Dougherty
-    time:
-      baseline: 1.0e-5
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
-    space:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
-
   krook:
-    is_on: True
-    time:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+    is_on: true
     space:
-      baseline: 0.0
+      baseline: 0.0001
+      bump_height: 1.0
       bump_or_trough: trough
       center: 2000.0
       rise: 20.0
       slope: 0.0
-      bump_height: 1.0
-      width: 3500.0
+      width: 3800.0
+    time:
+      baseline: 1.0
+      bump_height: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      width: 100000.0
+units:
+  Z: 10
+  Zp: 10
+  laser wavelength: 351nm
+  normalizing density: 1.5e21/cc
+  normalizing temperature: 2000eV

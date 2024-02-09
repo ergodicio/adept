@@ -15,35 +15,35 @@ density:
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: uniform
-    baseline: 1.0
+    basis: tanh
+    baseline: 0.001
     bump_or_trough: bump
-    center: 0.0
+    center: 2000.0
     rise: 25.0
-    bump_height: 0.0
-    width: 100000.0
+    bump_height: 0.999
+    width: 3900.0
 
 grid:
   dt: 0.5
-  nv: 512
-  nx: 32
+  nv: 4096
+  nx: 4096
   tmin: 0.
-  tmax: 480.0
+  tmax: 8000.0
   vmax: 6.4
-  xmax: 20.94
+  xmax: 4000
   xmin: 0.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 480.0
-      nt: 961
+      tmax: 8000.0
+      nt: 2001
   electron:
     t:
       tmin: 0.0
-      tmax: 480.0
-      nt: 9
+      tmax: 2000.0
+      nt: 21
 
 mode: vlasov-1d
 
@@ -55,34 +55,34 @@ drivers:
   ex: {}
   ey: 
     '0':
-      a0: 1.e-4
-      k0: 1.11
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
+      a0: 1.0
+      k0: 1.0
+      t_center: 4000.0
+      t_rise: 20.0
+      t_width: 7900.0
+      w0: 2.79
       dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
-    '0':
-      a0: 1.e-4
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
+      x_center: 50.0
+      x_rise: 0.1
+      x_width: 1.0
+    '1':
+      a0: 1.e-6
+      k0: 1.0
+      t_center: 4000.0
+      t_rise: 20.0
+      t_width: 7900.0
+      w0: 1.63
       dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      x_center: 3950.0
+      x_rise: 0.1
+      x_width: 1.0
 
 terms:
-  field: hampere
+  field: poisson
   edfdv: exponential
   time: leapfrog
   fokker_planck:
-    is_on: True
+    is_on: false
     type: Dougherty
     time:
       baseline: 1.0e-5
@@ -101,20 +101,20 @@ terms:
       bump_height: 0.0
       width: 100000.0
   krook:
-    is_on: False
+    is_on: True
     time:
       baseline: 1.0
       bump_or_trough: bump
-      center: 0.0
+      center: 2000.0
       rise: 25.0
       slope: 0.0
       bump_height: 0.0
-      width: 100000.0
+      width: 10000000.0
     space:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
+      baseline: 0.0
+      bump_or_trough: trough
+      center: 2000.0
+      rise: 10.0
       slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+      bump_height: 10.0
+      width: 3800.0
