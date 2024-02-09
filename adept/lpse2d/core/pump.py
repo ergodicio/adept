@@ -22,6 +22,7 @@ class Pump2D(eqx.Module):
         self.kax_sq = cfg["grid"]["kx"][:, None] ** 2.0 + cfg["grid"]["ky"][None, :] ** 2.0
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
+        self.transverse_mask = None
 
     def _calc_div_(self, arr: jax.Array) -> jax.Array:
         arrk = jnp.fft.fft2(arr)
@@ -31,25 +32,40 @@ class Pump2D(eqx.Module):
     def calc_damping(self, nb) -> Tuple[jax.Array, jax.Array]:
         return nb / self.w0**2.0 * self.nuei / 2.0
 
-    def calc_oscillation(self, nb):
+    def calc_oscillation(self, nb: jax.Array) -> jax.Array:
+        """
+
+        calculates 1j / (2 w0) * w0^2 - nb - wp0^2 * nb / n0
+
+        """
         coeff = self.w0**2.0 - nb - self.wp0**2 * nb / self.n0
         return 1j / 2 / self.w0 * coeff
 
-    def calc_nabla(self, e0):
-        nabla2 = jnp.fft.fft2(e0) * (-self.kax_sq)
-        div = self._calc_div_(e0)
-        grad_x, grad_y = self.kx[:, None] * div, self.ky[None, :] * div
-        term = nabla2 - 1j * jnp.concatenate([grad_x[..., None], grad_y[..., None]], axis=-1)
-        term *= 1j * self.c_light**2.0 / 2.0 / self.w0
-        return term
+    def calc_nabla(self, e0: jax.Array) -> jax.Array:
+        """
+        Calculates the spatial advection term
 
-    def calc_epw_term(self, t, eh, nb):
+        """
+        nabla2 = jnp.fft.fft2(e0) * (-self.kax_sq)  # (ikx^2 + iky^2) * E0(kx, ky)
+        div = self._calc_div_(e0)  # div(E0)
+        grad_x, grad_y = self.kx[:, None] * div, self.ky[None, :] * div  # kx * div(E0), ky * div(E0)
+        term = nabla2 - 1j * jnp.concatenate(
+            [grad_x[..., None], grad_y[..., None]], axis=-1
+        )  # (ikx^2 + iky^2) * E0(kx, ky) - i * (kx * div(E0), ky * div(E0))
+        term *= 1j * self.c_light**2.0 / 2.0 / self.w0  # * i * c^2 / 2 / w0
+        return jnp.fft.ifft2(term)
+
+    def calc_epw_term(self, t: float, eh: jax.Array, nb: jax.Array) -> jax.Array:
+        """
+        Calculates the pump depletion term
+
+        """
+        coeff = 1j / 2.0 / self.w0 * jnp.exp(1j * (self.w0 - 2 * self.wp0) * t)
+
         div_eh = self._calc_div_(eh)
-        coeff = 1j / 2.0 / self.w0
-        term = nb / self.n0 * (eh * div_eh)
-        time_coeff = jnp.exp(1j * (self.w0 - 2 * self.wp0) * t)
+        term = nb / self.n0 * (eh * div_eh) * self.transverse_mask
 
-        return coeff * term * time_coeff
+        return coeff * term
 
     def get_eh_x(self, phi: jax.Array) -> jax.Array:
         ehx = -jnp.fft.ifft2(1j * self.kx[:, None] * phi)
