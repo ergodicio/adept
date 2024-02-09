@@ -5,14 +5,16 @@ import os
 
 from time import time
 
+
 import numpy as np
-import xarray, mlflow
+import xarray, mlflow, pint
 from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt
 from matplotlib import pyplot as plt
 
 from adept.vlasov1d.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d.storage import store_f, store_fields, get_save_quantities
+from adept.tf1d.pushers import get_envelope
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -111,6 +113,53 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
             if species_params["basis"] == "uniform":
                 nprof = np.ones_like(n_prof_total)
+
+            elif species_params["basis"] == "linear":
+                left = species_params["center"] - species_params["width"] * 0.5
+                right = species_params["center"] + species_params["width"] * 0.5
+                rise = species_params["rise"]
+                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+
+                ureg = pint.UnitRegistry()
+                _Q = ureg.Quantity
+
+                L = (
+                    _Q(species_params["gradient scale length"]).to("nm").magnitude
+                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
+                )
+                nprof = species_params["val at center"] + (cfg_grid["x"] - species_params["center"]) / L
+                nprof = mask * nprof
+            elif species_params["basis"] == "exponential":
+                left = species_params["center"] - species_params["width"] * 0.5
+                right = species_params["center"] + species_params["width"] * 0.5
+                rise = species_params["rise"]
+                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+
+                ureg = pint.UnitRegistry()
+                _Q = ureg.Quantity
+
+                L = (
+                    _Q(species_params["gradient scale length"]).to("nm").magnitude
+                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
+                )
+                nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
+                nprof = mask * nprof
+
+            elif species_params["basis"] == "tanh":
+                left = species_params["center"] - species_params["width"] * 0.5
+                right = species_params["center"] + species_params["width"] * 0.5
+                rise = species_params["rise"]
+                nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
+
+                if species_params["bump_or_trough"] == "trough":
+                    nprof = 1 - nprof
+                nprof = species_params["baseline"] + species_params["bump_height"] * nprof
+
+            elif species_params["basis"] == "sine":
+                baseline = species_params["baseline"]
+                amp = species_params["amplitude"]
+                kk = species_params["wavenumber"]
+                nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
             else:
                 raise NotImplementedError
 
@@ -163,6 +212,10 @@ def get_derived_quantities(cfg: Dict) -> Dict:
         print(r"Only running $10^6$ steps")
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
+
+    if len(cfg["drivers"]["ey"].keys()) > 0:
+        print("overriding dt to ensure wave solver stability")
+        cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / cfg["units"]["derived"]["c_light"]
 
     cfg["grid"] = cfg_grid
 
@@ -224,7 +277,15 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
     # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
 
-    cfg_grid["ion_charge"] = np.ones_like(cfg_grid["n_prof_total"])
+    cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["n_prof_total"]) + cfg_grid["n_prof_total"]
+
+    cfg_grid["x_a"] = np.concatenate(
+        [
+            [cfg_grid["x"][0] - cfg_grid["dx"]],
+            cfg_grid["x"],
+            [cfg_grid["x"][-1] + cfg_grid["dx"]],
+        ]
+    )
 
     return cfg_grid
 
@@ -246,7 +307,7 @@ def init_state(cfg: Dict) -> Dict:
         state[field] = jnp.zeros(cfg["grid"]["nx"])
 
     for field in ["a", "da", "prev_a"]:
-        state[field] = jnp.zeros(cfg["grid"]["nx"])
+        state[field] = jnp.zeros(cfg["grid"]["nx"] + 2)  # need boundary cells
 
     return state
 

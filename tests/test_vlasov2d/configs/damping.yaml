@@ -26,13 +26,13 @@ density:
       slope: 0.0
       wall_height: 0.0
       width: 100000.0
+
 grid:
-  c_light: 10
   dt: 0.1
   nvx: 128
   nvy: 128
   nx: 24
-  ny: 12
+  ny: 8
   tmin: 0.
   tmax: 150.0
   vmax: 6.4
@@ -44,9 +44,9 @@ grid:
 save:
   fields:
     t:
-      tmin: 0.5
-      tmax: 149.0
-      nt: 96
+      tmin: 0.0
+      tmax: 150.0
+      nt: 301
 #    x:
 #      xmin: 0.0
 #      xmax: 19.0
@@ -57,9 +57,9 @@ save:
 #      ny: 2
   electron:
     t:
-      tmin: 25.
-      tmax: 75.
-      nt: 2
+      tmin: 0.0
+      tmax: 150.0
+      nt: 3
 
 krook:
   space-profile:
@@ -90,7 +90,7 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-5
+      a0: 1.e-6
       k0: 0.3
       t_center: 30.0
       t_rise: 5.0
@@ -112,3 +112,4 @@ solver:
   num_unroll: 32
   field: ampere
   vdfdx: exponential
+  push_f: True

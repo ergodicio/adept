@@ -33,9 +33,13 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
 
         das = {f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), (xnm, xx))) for k, v in fields.items()}
     else:
-        das = {
-            f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), ("x", cfg["grid"]["x"]))) for k, v in fields.items()
-        }
+        for k, v in fields.items():
+            if k in ["a", "prev_a"]:
+                xax = cfg["grid"]["x_a"]
+            else:
+                xax = cfg["grid"]["x"]
+
+            das = {f"{prefix}-{k}": xr.DataArray(v, coords=(("t", this_t), ("x", xax)))}
     fields_xr = xr.Dataset(das)
     fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(this_t[-1],4)}.nc"))
 
@@ -113,6 +117,7 @@ def get_field_save_func(cfg, k):
             temp["f^2"] = _calc_moment_(y["electron"] * y["electron"])
             temp["e"] = y["e"]
             temp["de"] = y["de"]
+            temp["pond"] = -0.5 * jnp.gradient(y["a"] ** 2.0, cfg["grid"]["dx"])[1:-1]
 
             return temp
 
@@ -151,8 +156,8 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    for k in cfg["save"].keys():
-        for k2 in cfg["save"][k].keys():
+    for k in cfg["save"].keys():  # this can be fields or electron or scalar?
+        for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
             if k2 == "x":
                 dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
                 cfg["save"][k][k2]["ax"] = np.linspace(
@@ -194,6 +199,7 @@ def get_default_save_func(cfg):
             "mean_f2": _calc_mean_moment_(y["electron"] * y["electron"]),
             "mean_de2": jnp.mean(y["de"] ** 2.0),
             "mean_e2": jnp.mean(y["e"] ** 2.0),
+            "mean_pond": jnp.mean(-0.5 * jnp.gradient(y["a"] ** 2.0, cfg["grid"]["dx"])[1:-1]),
         }
 
         return scalars

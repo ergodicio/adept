@@ -45,7 +45,8 @@ def write_units(cfg, td):
 
     v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
     x0 = (v0 / wp0).to("nm")
-    c_light = (_Q(1.0 * ureg.c).to("m/s") / v0)
+    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
+    beta = (v0 / ureg.c).to("dimensionless")
 
     box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("microns")
     if "ymax" in cfg["grid"].keys():
@@ -54,6 +55,12 @@ def write_units(cfg, td):
         box_width = "inf"
     sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
 
+    # collisions
+    logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
+    logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
+    nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
+    nuee_norm = nuee / wp0
+
     all_quantities = {
         "wp0": wp0,
         "tp0": tp0,
@@ -61,13 +68,18 @@ def write_units(cfg, td):
         "v0": v0,
         "T0": T0,
         "c_light": c_light,
+        "beta": beta,
         "x0": x0,
+        "nuee": nuee,
+        "logLambda_ee": logLambda_ee,
         "box_length": box_length,
         "box_width": box_width,
         "sim_duration": sim_duration,
     }
 
     cfg["units"]["derived"] = all_quantities
+
+    cfg["grid"]["beta"] = beta.magnitude
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
         yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
