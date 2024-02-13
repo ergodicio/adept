@@ -138,9 +138,9 @@ class EPW2D(eqx.Module):
         return -1j / 2.0 * self.wp0 * (1.0 - nb / self.n0 - dn / self.n0)
 
     def _calc_div_(self, arr):
-        arrk = jnp.fft.fft2(arr)
+        arrk = jnp.fft.fft2(arr, axes=[0, 1])
         divk = self.kx[:, None] * arrk[..., 0] + self.ky[None, :] * arrk[..., 1]
-        return jnp.fft.ifft2(divk)
+        return jnp.fft.ifft2(divk, axes=[0, 1])
 
     def calc_tpd_source_step(self, phi: jax.Array, e0: jax.Array, nb: jax.Array, t: float) -> jax.Array:
         """
