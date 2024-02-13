@@ -1,7 +1,7 @@
 density:
   noise:
-    max: 1.0e-06
-    min: 1.0e-05
+    max: 1.0e-05
+    min: 1.0e-06
     type: uniform
   gradient scale length: 162.5um
   val at center: 0.95

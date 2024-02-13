@@ -152,27 +152,21 @@ def init_state(cfg: Dict, td=None) -> Dict:
     e0 *= cfg["drivers"]["E0"]["a0"]
 
     if cfg["density"]["noise"]["type"] == "uniform":
-        random_amps_x = np.random.uniform(
-            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["nx"]
+        random_amps = np.random.uniform(
+            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], (cfg["grid"]["nx"], cfg["grid"]["ny"])
         )
-        random_amps_y = np.random.uniform(
-            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["ny"]
-        )
+
     elif cfg["density"]["noise"]["type"] == "normal":
         loc = 0.5 * (cfg["density"]["noise"]["min"] + cfg["density"]["noise"]["max"])
         scale = 1.0
-        random_amps_x = np.random.normal(loc, scale, cfg["grid"]["nx"])
-        random_amps_y = np.random.normal(loc, scale, cfg["grid"]["ny"])
+        random_amps = np.random.normal(loc, scale, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
     else:
         raise NotImplementedError
 
-    phi = jnp.sum(random_amps_x * jnp.exp(1j * cfg["grid"]["kx"][None, :] * cfg["grid"]["x"][:, None]), axis=-1)[
-        :, None
-    ]
-    phi += jnp.sum(random_amps_y * jnp.exp(1j * cfg["grid"]["ky"][None, :] * cfg["grid"]["y"][:, None]), axis=-1)[
-        None, :
-    ]
+    random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
+
+    phi = random_amps * np.exp(1j * random_phases)
     phi = jnp.fft.fft2(phi)
 
     ureg = pint.UnitRegistry()
