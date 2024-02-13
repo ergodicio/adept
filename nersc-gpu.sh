@@ -10,9 +10,10 @@
 export SLURM_CPU_BIND="cores"
 export BASE_TEMPDIR="$PSCRATCH/tmp/"
 export MLFLOW_TRACKING_URI="$PSCRATCH/mlflow"
+export MLFLOW_EXPORT="True"
 
 # copy job stuff over
-module load python
+module load conda
 module load cudnn/8.9.3_cuda12.lua
 module load cudatoolkit/12.0.lua
 

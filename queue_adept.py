@@ -12,7 +12,7 @@ else:
     BASE_TEMPDIR = None
 
 
-def _queue_run_(machine, run_id):
+def _queue_run_(machine, run_id, mode, run_name):
     if "cpu" in machine:
         base_job_file = os.environ["CPU_BASE_JOB_FILE"]
     elif "gpu" in machine:
@@ -23,11 +23,11 @@ def _queue_run_(machine, run_id):
     with open(base_job_file, "r") as fh:
         base_job = fh.read()
 
-    with open(os.path.join(os.getcwd(), "new_job.sh"), "w") as job_file:
+    with open(os.path.join(os.getcwd(), f"queue-{mode}-{run_name}.sh"), "w") as job_file:
         job_file.write(base_job)
-        job_file.writelines(f"srun python run.py --mode remote --run_id {run_id}")
-
-    os.system(f"sbatch new_job.sh")
+        job_file.writelines(f"\nsrun python run.py --run_id {run_id}")
+    
+    os.system(f"sbatch queue-{mode}-{run_name}.sh")
     time.sleep(0.1)
     os.system("sqs")
 
@@ -55,4 +55,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     cfg, run_id = load_and_make_folders(args.cfg)
-    _queue_run_(cfg["machine"]["calculator"], run_id)
+    _queue_run_(cfg["machine"], run_id, cfg["mode"], cfg["mlflow"]["run"])

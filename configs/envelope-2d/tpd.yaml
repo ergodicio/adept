@@ -21,27 +21,13 @@ drivers:
     y_w: 60000000.
     y_r: 20.
     k0: 1.0
-    a0: 0.0
-    intensity: 4.0e14
-  E2:
-    w0: 0.03375
-    t_c: 230.
-    t_w: 400.
-    t_r: 5.
-    x_c: 1400.
-    x_w: 600.
-    x_r: 20.
-    y_c: 0.
-    y_w: 2000000.
-    y_r: 5.
-    k0: 0.15
-    a0: 0.0
-    intensity: 4.0e14
+    a0: doesnt_matter
+    intensity: 1.0e5 W/cm^2
 
 save:
   t:
     tmin: 0.0
-    tmax: 10000.0
+    tmax: 20000.0
     nt: 32
 
 plasma:
@@ -58,6 +44,9 @@ units:
   normalizing density: 1.5e21/cc
   Z: 10
   Zp: 10
+  gas fill: N
+  ionization state: 6
+  electron temperature: 4000eV
 
 grid:
   xmin: 000.0
@@ -67,12 +56,12 @@ grid:
   ymax: 1000.0
   ny: 512
   tmin: 0.
-  tmax: 10000.0
+  tmax: 20000.0
   dt: 2.0
 
 mlflow:
   experiment: lpse2d-tpd
-  run: noise-test-no-density-gradient
+  run: tpd-test-pump-evolution
 
 # models:
   # file: None #/Users/archis/Dev/code/ergodic/laplax/weights.eqx
@@ -86,15 +75,15 @@ mlflow:
 
 terms:
   epw:
-    linear: True
-    density_gradient: True
-    kinetic real part: False
+    linear: true
+    density_gradient: true
+    kinetic real part: false
     boundary:
       x: absorbing
       y: periodic
     trapping:
-      active: False
+      active: false
       kld: 0.28
       nuee: 0.0000001
     source:
-      tpd: False
+      tpd: true

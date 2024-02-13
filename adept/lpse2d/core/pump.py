@@ -11,13 +11,22 @@ from adept.lpse2d.core.driver import Driver
 
 class Pump2D(eqx.Module):
     cfg: Dict
+    dt: float
+    wp0: float
+    w0: float
+    n0: float
+    nuei: float
+    kax_sq: jax.Array
+    kx: jax.Array
+    ky: jax.Array
+    transverse_mask: jax.Array
 
     def __init__(self, cfg):
         self.cfg = cfg
+        self.dt = cfg["grid"]["dt"]
         self.wp0 = cfg["plasma"]["wp0"]
         self.w0 = cfg["drivers"]["E0"]["w0"]
         self.n0 = np.sqrt(self.wp0)
-        self.nb = cfg["plasma"]["nb"]
         self.nuei = -cfg["units"]["derived"]["nuei_norm"]
         self.kax_sq = cfg["grid"]["kx"][:, None] ** 2.0 + cfg["grid"]["ky"][None, :] ** 2.0
         self.kx = cfg["grid"]["kx"]
@@ -46,7 +55,7 @@ class Pump2D(eqx.Module):
         Calculates the spatial advection term
 
         """
-        nabla2 = jnp.fft.fft2(e0) * (-self.kax_sq)  # (ikx^2 + iky^2) * E0(kx, ky)
+        nabla2 = jnp.fft.fft2(e0, axis=(0, 1)) * (-self.kax_sq)[:, :, None]  # (ikx^2 + iky^2) * E0(kx, ky)
         div = self._calc_div_(e0)  # div(E0)
         grad_x, grad_y = self.kx[:, None] * div, self.ky[None, :] * div  # kx * div(E0), ky * div(E0)
         term = nabla2 - 1j * jnp.concatenate(
@@ -80,9 +89,9 @@ class Pump2D(eqx.Module):
 
         eh = self.get_eh_x(phi)
 
-        e0 = e0 * jnp.exp(self.calc_damping(nb=nb))
+        e0 = e0 * jnp.exp(self.calc_damping(nb=nb)[:, :, None])
         e0 = e0 + self.dt * self.calc_nabla(e0)
-        e0 = e0 + self.dt * self.calc_oscillation(nb)
+        e0 = e0 + self.dt * e0 * self.calc_oscillation(nb)[:, :, None]
         y["e0"] = e0 + self.dt * self.calc_epw_term(t, eh, nb)
 
         return y

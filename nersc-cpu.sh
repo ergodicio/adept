@@ -8,5 +8,6 @@
 export BASE_TEMPDIR="$PSCRATCH/tmp/"
 export MLFLOW_TRACKING_URI="$PSCRATCH/mlflow"
 
-source /global/u2/a/archis/adept/venv/bin/activate
+module load conda
+mamba activate adept
 cd /global/u2/a/archis/adept/
