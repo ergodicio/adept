@@ -175,19 +175,22 @@ def init_state(cfg: Dict, td=None) -> Dict:
     ]
     phi = jnp.fft.fft2(phi)
 
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+
+    L = (
+        _Q(cfg["density"]["gradient scale length"]).to("nm").magnitude
+        / cfg["units"]["derived"]["x0"].to("nm").magnitude
+    )
+    nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - cfg["density"]["center"]) / L
+
     state = {
         "e0": e0,
-        "nb": (cfg["density"]["offset"] + cfg["density"]["slope"] * cfg["grid"]["x"] / cfg["grid"]["xmax"])[:, None]
-        * np.ones_like(phi, dtype=np.float64),
+        "nb": nprof,
         "temperature": jnp.ones_like(e0[..., 0], dtype=jnp.float64),
         "dn": jnp.zeros_like(e0[..., 0], dtype=jnp.float64),
         "phi": phi,
-        "delta": (
-            0
-            + 0.0
-            * jnp.sin(2 * jnp.pi * cfg["grid"]["x"][:, None] / cfg["grid"]["xmax"])
-            * jnp.ones_like(e0[..., 0], dtype=jnp.float64)
-        ),
+        "delta": jnp.zeros_like(e0[..., 0], dtype=jnp.float64),
     }
 
     if td is not None:
