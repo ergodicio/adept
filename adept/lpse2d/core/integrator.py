@@ -4,7 +4,7 @@ from jax import numpy as jnp
 import equinox as eqx
 import diffrax
 
-from adept.lpse2d.core import epw
+from adept.lpse2d.core import epw, pump
 
 
 class Stepper(diffrax.Euler):
@@ -27,12 +27,14 @@ class VectorField(eqx.Module):
 
     cfg: Dict
     epw: eqx.Module
+    pump: eqx.Module
     complex_state_vars: List
 
     def __init__(self, cfg):
         super().__init__()
         self.cfg = cfg
         self.epw = epw.EPW2D(cfg)
+        self.pump = pump.Pump2D(cfg)
         self.complex_state_vars = ["e0", "phi"]
 
     def unpack_y(self, y):
@@ -46,6 +48,7 @@ class VectorField(eqx.Module):
 
     def __call__(self, t, y, args):
         new_y = self.epw(t, self.unpack_y(y), args)
+        new_y = self.pump(t, self.unpack_y(y), args)
 
         for k in y.keys():
             y[k] = y[k].view(jnp.float64)
