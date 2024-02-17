@@ -263,7 +263,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict) -> Dict:
+def init_state(cfg: Dict, td) -> Dict:
     """
     This function initializes the state
 

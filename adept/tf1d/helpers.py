@@ -173,7 +173,7 @@ def get_diffeqsolve_quants(cfg):
     )
 
 
-def init_state(cfg: Dict) -> Dict:
+def init_state(cfg: Dict, td) -> Dict:
     """
     This function initializes the state
 

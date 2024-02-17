@@ -101,7 +101,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
     helpers = get_helpers(cfg["mode"])
 
-    with tempfile.TemporaryDirectory() as td:
+    with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
         with open(os.path.join(td, "config.yaml"), "w") as fi:
             yaml.dump(cfg, fi)
 
@@ -124,7 +124,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         }
 
         models = helpers.get_models(cfg["models"]) if "models" in cfg else None
-        state = helpers.init_state(cfg)
+        state = helpers.init_state(cfg, td)
 
         # run
         t0 = time.time()
