@@ -177,6 +177,7 @@ def init_state(cfg: Dict, td=None) -> Dict:
         / cfg["units"]["derived"]["x0"].to("nm").magnitude
     )
     nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - cfg["density"]["center"]) / L
+    nprof = jnp.repeat(nprof[:, None], cfg["grid"]["ny"], axis=1)
 
     state = {
         "e0": e0,
@@ -339,6 +340,10 @@ def plot_kt(kfields, td):
         plt.savefig(os.path.join(fld_dir, f"{k}_kx.png"), bbox_inches="tight")
         plt.close()
 
+        np.abs(v[tslice]).T.plot(col="t", col_wrap=4)
+        plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
+        plt.close()
+
         # np.log10(np.abs(v[tslice, :, :])).T.plot(col="t", col_wrap=4)
         # plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
         # plt.close()
@@ -357,17 +362,27 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
 
 
 def make_xarrays(cfg, this_t, state, td):
+    shift_kx = np.fft.fftshift(cfg["grid"]["kx"])
+    shift_ky = np.fft.fftshift(cfg["grid"]["ky"])
+
     phi_vs_t = state["phi"].view(np.complex128)
-    phi_k = xr.DataArray(phi_vs_t, coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])))
+    phi_k = xr.DataArray(
+        np.fft.fftshift(phi_vs_t),
+        coords=(
+            ("t", this_t),
+            ("kx", shift_kx),
+            ("ky", shift_ky),
+        ),
+    )
 
     ex_k = xr.DataArray(
-        -1j * cfg["grid"]["kx"][:, None] * phi_vs_t,
-        coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])),
+        np.fft.fftshift(-1j * cfg["grid"]["kx"][:, None] * phi_vs_t),
+        coords=(("t", this_t), ("kx", shift_kx), ("ky", shift_ky)),
     )
 
     ey_k = xr.DataArray(
-        -1j * cfg["grid"]["ky"][None, :] * phi_vs_t,
-        coords=(("t", this_t), ("kx", cfg["grid"]["kx"]), ("ky", cfg["grid"]["ky"])),
+        np.fft.fftshift(-1j * cfg["grid"]["ky"][None, :] * phi_vs_t),
+        coords=(("t", this_t), ("kx", shift_kx), ("ky", shift_ky)),
     )
 
     phi_x = xr.DataArray(
