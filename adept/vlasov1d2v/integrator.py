@@ -34,12 +34,12 @@ class TimeIntegrator:
         self.vdfdx = vlasov.SpaceExponential(cfg)
 
     def get_edfdv(self, cfg):
-        # if cfg["terms"]["edfdv"] == "exponential":
-        return vlasov.VelocityExponential(cfg)
-        # elif cfg["terms"]["edfdv"] == "cubic-spline":
-        # return vlasov.VelocityCubicSpline(cfg)
-        # else:
-        # raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
+        if cfg["terms"]["edfdv"] == "exponential":
+            return vlasov.VelocityExponential(cfg)
+        elif cfg["terms"]["edfdv"] == "cubic-spline":
+            return vlasov.VelocityCubicSpline(cfg)
+        else:
+            raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
 
 
 class LeapfrogIntegrator(TimeIntegrator):

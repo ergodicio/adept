@@ -25,11 +25,11 @@ density:
 
 grid:
   dt: 0.1
-  nv: 128
+  nv: 1024
   nx: 32
   tmin: 0.
-  tmax: 200.0
-  vmax: 6.4
+  tmax: 1000.0
+  vmax: 8.0
   xmax: 20.94
   xmin: 0.0
 
@@ -37,24 +37,24 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 200.0
+      tmax: 1000.0
       nt: 91
   electron:
     t:
       tmin: 0.0
-      tmax: 200.0
-      nt: 91
+      tmax: 1000.0
+      nt: 2
 
 mode: vlasov-1d2v
 
 mlflow:
   experiment: 1d2v-epw
-  run: linear
+  run: nonlinear-nuee-nuei-vmax80
 
 drivers:
   ex:
     '0':
-      a0: 1.e-6
+      a0: 1.e-2
       k0: 0.3
       t_center: 40.0
       t_rise: 5.0
@@ -72,7 +72,7 @@ terms:
   time: sixth
   fokker_planck:
     nu_ee: 
-      is_on: false
+      is_on: true
       time:
         baseline: 1.0e-5
         bump_or_trough: bump
@@ -90,7 +90,7 @@ terms:
         bump_height: 0.0
         width: 100000.0
     nu_ei: 
-      is_on: false
+      is_on: true
       time:
         baseline: 1.0e-5
         bump_or_trough: bump

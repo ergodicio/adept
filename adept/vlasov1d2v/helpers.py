@@ -16,7 +16,7 @@ from adept.vlasov1d2v.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d2v.storage import store_f, store_fields, get_save_quantities
 from adept.tf1d.pushers import get_envelope
 
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
+gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
 g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
 g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
