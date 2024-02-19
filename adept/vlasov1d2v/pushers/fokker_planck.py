@@ -152,8 +152,22 @@ class Banks:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones(self.cfg["grid"]["nv"])
-        self.scan_over_vy = vmap(self._solve_one_vy_, in_axes=(None, 0, 1, None, 1), out_axes=1)
-        self.scan_over_vx = vmap(self._solve_one_vx_, in_axes=(None, 0, 0, None, 0), out_axes=0)
+        self.scan_over_vy = vmap(self._solve_one_vy_, in_axes=(1, 0, 1, None, 1), out_axes=1)
+        self.scan_over_vx = vmap(self._solve_one_vx_, in_axes=(0, 0, 0, None, 0), out_axes=0)
+        self.vr = np.sqrt(self.v[:, None] ** 2.0 + self.v[None, :] ** 2.0)
+        nu_envelope = np.zeros((self.cfg["grid"]["nv"], self.cfg["grid"]["nv"]))
+
+        vmax = cfg["grid"]["vmax"]
+        vbar = 0.06 * vmax
+        vc = vmax - 1.0
+        nu_envelope[self.vr < vbar] = vbar**-3.0
+        locs = (self.vr >= vbar) & (self.vr < vc)
+        nu_envelope[locs] = self.vr[locs] ** -3.0
+        locs = (self.vr >= vc) & (self.vr < vmax)
+        nu_envelope[locs] = self.vr[locs] ** -3.0 * (
+            1 - np.sin(0.5 * np.pi * (self.vr[locs] - vc) / (vmax - vc)) ** 2.0
+        )
+        self.nu_envelope = jnp.array(nu_envelope)
 
     def ddx(self, f_vxvy: jnp.ndarray):
         return jnp.gradient(f_vxvy, self.dv, axis=0)
@@ -188,7 +202,7 @@ class Banks:
         :return:
         """
         dfdvy = self.ddy(f_vxvy)
-        return self.scan_over_vy(nu, self.v, dfdvy, dt, f_vxvy)
+        return self.scan_over_vy(nu * self.nu_envelope, self.v, dfdvy, dt, f_vxvy)
 
     def implicit_vy(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """
@@ -199,9 +213,9 @@ class Banks:
         :return:
         """
         dfdvx = self.ddx(f_vxvy)
-        return self.scan_over_vx(nu, self.v, dfdvx, dt, f_vxvy)
+        return self.scan_over_vx(nu * self.nu_envelope, self.v, dfdvx, dt, f_vxvy)
 
-    def explicit_vx(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64):
+    def explicit_vx(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         dfdvx, dfdvy = self.ddx(f_vxvy), self.ddy(f_vxvy)
         dfdt = nu * (
             self.v[:, None] * dfdvx
@@ -211,7 +225,7 @@ class Banks:
         new_fvxvy = f_vxvy + dt * nu * dfdt
         return new_fvxvy
 
-    def explicit_vy(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64):
+    def explicit_vy(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         dfdvx, dfdvy = self.ddx(f_vxvy), self.ddy(f_vxvy)
         dfdt = nu * (
             self.v[None, :] * dfdvy
