@@ -1,100 +1,18 @@
-from typing import Dict, Tuple
-import os, time, tempfile, yaml
+Developer Guide
+---------------
 
+In case you are interested in looking past the forward simulation use case, that is, if you are interested in running a program which is not just 
 
-from diffrax import diffeqsolve, SaveAt, Solution
-import numpy as np
-import equinox as eqx
-import mlflow, pint
+.. code-block:: bash
 
+    python3 run.py --cfg config/<mode>/<config>
 
-from utils import misc
+This runs a forward simulation with the specified input parameters. It calls functions within `utils/runner.py` for this.
+The most important one to understand is the ``_run_`` function. Here is a stripped down pseudo-code version
 
-if "BASE_TEMPDIR" in os.environ:
-    BASE_TEMPDIR = os.environ["BASE_TEMPDIR"]
-else:
-    BASE_TEMPDIR = None
+.. code-block:: python
 
-
-def get_helpers(mode):
-    if mode == "tf-1d":
-        from adept.tf1d import helpers
-    elif mode == "sh-2d":
-        from adept.sh2d import helpers
-    elif mode == "vlasov-1d":
-        from adept.vlasov1d import helpers
-    elif mode == "vlasov-2d":
-        from adept.vlasov2d import helpers
-    elif mode == "envelope-2d":
-        from adept.lpse2d import helpers
-    else:
-        raise NotImplementedError("This solver approach has not been implemented yet")
-
-    return helpers
-
-
-def write_units(cfg, td):
-    ureg = pint.UnitRegistry()
-    _Q = ureg.Quantity
-
-    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
-    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
-
-    wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
-    tp0 = (1 / wp0).to("fs")
-
-    v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
-    x0 = (v0 / wp0).to("nm")
-    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
-    beta = (v0 / ureg.c).to("dimensionless")
-
-    box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("microns")
-    if "ymax" in cfg["grid"].keys():
-        box_width = ((cfg["grid"]["ymax"] - cfg["grid"]["ymin"]) * x0).to("microns")
-    else:
-        box_width = "inf"
-    sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
-
-    # collisions
-    logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
-    logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
-    nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
-    nuee_norm = nuee / wp0
-
-    all_quantities = {
-        "wp0": wp0,
-        "tp0": tp0,
-        "n0": n0,
-        "v0": v0,
-        "T0": T0,
-        "c_light": c_light,
-        "beta": beta,
-        "x0": x0,
-        "nuee": nuee,
-        "logLambda_ee": logLambda_ee,
-        "box_length": box_length,
-        "box_width": box_width,
-        "sim_duration": sim_duration,
-    }
-
-    cfg["units"]["derived"] = all_quantities
-
-    cfg["grid"]["beta"] = beta.magnitude
-
-    with open(os.path.join(td, "units.yaml"), "w") as fi:
-        yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
-
-    return cfg
-
-
-def run_job(run_id, nested):
-    with mlflow.start_run(run_id=run_id, nested=nested) as mlflow_run:
-        with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as temp_path:
-            cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
-        run(cfg)
-
-
-def run(cfg: Dict) -> Tuple[Solution, Dict]:
+    def run(cfg: Dict) -> Tuple[Solution, Dict]:
     """
     This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
     ``diffrax.Solution`` object and a dictionary of datasets.
@@ -182,3 +100,10 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
     # fin
     return result, datasets
+
+
+Here, we are heavily relying on two open-source libraries.
+
+1. **MLFlow** as an experiment manager to log parameters, metrics, and artifacts
+
+2. **Diffrax** to solve the ODEs
