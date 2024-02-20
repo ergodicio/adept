@@ -68,9 +68,7 @@ class WaveSolver(eqx.Module):
         if self.c > 0:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             anew = (
-                2.0 * a[1:-1]
-                - aold[1:-1]
-                + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array)
+                2.0 * a[1:-1] - aold[1:-1] + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array)
             )
             return self.apply_2nd_order_abc(aold, a, anew), a
         else:

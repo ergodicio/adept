@@ -1,3 +1,7 @@
-sphinx-copybutton
-sphinx_github_style
-sphinx_rtd_theme
+-r ./requirements.txt
+
+# building the docs
+sphinx > 3.0.0
+sphinx_copybutton
+sphinx-rtd-theme >= 1.0, < 2.0
+sphinx-github-style >= 1.0, <= 1.1
