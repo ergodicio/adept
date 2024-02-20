@@ -1,6 +1,31 @@
 Tests
 =============
+
+Run tests and examples
+------------------------------
+First install pytest via
+
+.. code-block:: console
+
+    (venv) $ pip install pytest
+    (venv) $ pytest
+
+.. code-block:: console
+
+    (adept) $ pip install pytest
+    (adept) $ pytest
+
+This will run all the tests, which will likely include relatively expensive 2D2V Vlasov simulations.
+If you only want to see example usage, you can choose particular tests by using the `-k` flag.
+
+
 The package is tested against
+
+1D1V Vlasov implementation
+--------------------------------
+- `test_landau_damping.py` - recover the real part and imaginary part (Landau damping) of the resoance according to the kinetic dispersion relation
+- `test_absorbing_wave.py` - make sure the absorbing boundary conditions for the wave solver for the vector potential work correctly
+
 
 1D two-fluid implementation
 --------------------------------
@@ -19,10 +44,3 @@ The package is tested against
 - `test_landau_damping.py` - recover the Landau damping rate according to the kinetic dispersion relation using a phenomenological term
 
 
-To run the tests
-------------------
-.. code-block:: console
-
-    (venv) $ pip install pytest
-    (venv) $ pytest
-    (venv) $ pytest tests/<test_filename>

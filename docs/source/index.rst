@@ -3,7 +3,7 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to adept's documentation!
+ADEPT
 =================================
 
 **ADEPT** is a set of **A** utomatic **D** ifferentation **E** nabled **P** lasma **T** ransport codes.
@@ -12,13 +12,15 @@ In some form or the other, they solve the equations of motion for a plasma.
 
 So far, we have implemented
 
-1. Two fluid - Poisson system in 1D
-2. Vlasov-Poisson system in 2D
+1. Vlasov-Poisson-Fokker-Planck 1D1V
+2. Two fluid - Poisson system in 1D
+3. Vlasov-Poisson-Fokker-Planck 1D2V
+4. Vlasov-Poisson system in 2D
 
 What is novel about it?
 ------------------------
-- Automatic Differentiation (AD) Enabled (bc of JAX, Diffrax etc.)
-- GPU-capable (bc of JAX, XLA)
+- Automatic Differentiation (AD) Enabled (bc of JAX)
+- GPU-capable (bc of XLA)
 - Experiment manager enabled (bc of mlflow)
 - Pythonic
 
@@ -46,18 +48,28 @@ A couple of implemented examples are
 
       See ref. [2] for details and an application
 
-What does an experiment manager do for us?
 --------------------------------------------------
-An experiment manager, namely `mlflow` here, simplifies management of simulation configurations and artifacts.
-We run `mlflow` on the cloud so we have a central, web-accessible store for all simulation objects. This saves all the
-data and simulation management effort and just let `mlflow` manage everything. To see for yourself,
-just run a simulation and type `mlflow ui` into your terminal and see what happens :)
 
-Run custom simulations
-------------------------
-Take one of the `config`s in the `/configs` directory and modify it as you wish. Then use `run.py` to run the simulation
-You will find the results using the mlflow ui. You can find the binary run information will be stored using mlflow as well.
+Documentation
+------------------
 
+.. toctree::
+   usage
+   custom_sims
+   faq
+   dev_guide
+   api_documentation
+
+   :maxdepth: 2
+   :caption: Contents:
+
+
+
+.. note::
+
+   This project is under active development.
+
+      
 Contributing guide
 ------------------------
 The contributing guide is in development but for now, just make an issue / pull request and we can go from there :)
@@ -75,22 +87,10 @@ Citation
 [1] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
 
 
-.. toctree::
-   usage
-   tests
-   tf1d
-   :maxdepth: 2
-   :caption: Contents:
 
+.. Indices and tables
+.. ==================
 
-
-.. note::
-
-   This project is under active development.
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+.. * :ref:`genindex`
+.. * :ref:`modindex`
+.. * :ref:`search`
