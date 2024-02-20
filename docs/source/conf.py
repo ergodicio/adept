@@ -58,9 +58,9 @@ extensions = [
     "sphinx_github_style",
 ]
 # options for sphinx_github_style
-top_level = "inverse_thomson_scattering"
+top_level = "adept"
 linkcode_blob = "head"
-linkcode_url = r"https://github.com/ergodicio/inverse-thomson-scattering/"
+linkcode_url = r"https://github.com/ergodicio/adept/"
 linkcode_link_text = "Source"
 
 
@@ -107,7 +107,7 @@ def linkcode_resolve(domain, info):
         print("Failed to get head")  # so no head?
         blob = "main"
 
-    linkcode_url = r"https://github.com/ergodicio/inverse-thomson-scattering/"
+    linkcode_url = r"https://github.com/ergodicio/adept/"
     linkcode_url = linkcode_url.strip("/") + f"/blob/{blob}/"
     linkcode_url += "{filepath}#L{linestart}-L{linestop}"
 
