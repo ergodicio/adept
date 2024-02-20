@@ -1,0 +1,3 @@
+sphinx-copybutton
+sphinx_github_style
+sphinx_rtd_theme

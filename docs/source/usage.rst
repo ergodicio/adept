@@ -20,21 +20,20 @@ or using conda:
    $ mamba activate adept
    (adept) $
 
+--------------
 
-Run tests and examples
-----------
-First install pytest via
 
-.. code-block:: console
+Run an example
+--------------
 
-    (venv) $ pip install pytest
-    (venv) $ pytest
+The most common and obvious use case for ADEPT is a simple forward simulation that can be run from the command line. For example, to run a 1D1V Vlasov simulation of a driven electron plasma wave, use the following command:
 
-.. code-block:: console
+.. code-block:: bash
+    
+    (venv) $ python3 run.py --config configs/vlasov-1d/epw
 
-    (adept) $ pip install pytest
-    (adept) $ pytest
+The input parameters are provided in `configs/vlasov-1d/epw.yaml`.  The output will be saved and made accessible via MLFlow. To access it, 
 
-This will run all the tests, which will likely include relatively expensive 2D2V Vlasov simulations.
-If you only want to see example usage, you can choose particular tests by using the `-k` flag.
-
+1. Launch an mlflow server via running ``mlflow ui`` from the command line
+2. Open a web browser and navigate to http://localhost:5000
+3. Click on the experiment name to see the results
