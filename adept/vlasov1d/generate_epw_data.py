@@ -27,12 +27,12 @@ else:
 
 def _modify_defaults_(defaults, k0, log10_nuee, log10_a0):
     defaults["drivers"]["ex"]["0"]["k0"] = float(k0)
-    defaults["drivers"]["ex"]["0"]["a0"] = float(10 ** log10_a0)
+    defaults["drivers"]["ex"]["0"]["a0"] = float(10**log10_a0)
 
     xmax = float(2.0 * np.pi / k0)
     defaults["grid"]["xmax"] = xmax
 
-    defaults["nuee"] = float(10 ** log10_nuee)
+    defaults["nuee"] = float(10**log10_nuee)
 
     return defaults
 
