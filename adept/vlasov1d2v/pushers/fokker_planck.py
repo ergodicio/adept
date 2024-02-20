@@ -147,7 +147,15 @@ class Dougherty:
 
 
 class Banks:
-    def __init__(self, cfg):
+    """
+    Electron-ion collision operator from Banks et al. [1].
+
+    1. Banks, J. W., Brunner, S., Berger, R. L. & Tran, T. M. Vlasov simulations of electron-ion collision effects on damping of electron plasma waves.
+    Physics of Plasmas 23, 032108 (2016).
+
+    """
+
+    def __init__(self, cfg: Dict):
         self.cfg = cfg
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
@@ -155,8 +163,9 @@ class Banks:
         self.scan_over_vy = vmap(self._solve_one_vy_, in_axes=(1, 0, 1, None, 1), out_axes=1)
         self.scan_over_vx = vmap(self._solve_one_vx_, in_axes=(0, 0, 0, None, 0), out_axes=0)
         self.vr = np.sqrt(self.v[:, None] ** 2.0 + self.v[None, :] ** 2.0)
-        nu_envelope = np.zeros((self.cfg["grid"]["nv"], self.cfg["grid"]["nv"]))
 
+        # collision operator envelope
+        nu_envelope = np.zeros((self.cfg["grid"]["nv"], self.cfg["grid"]["nv"]))
         vmax = cfg["grid"]["vmax"]
         vbar = 0.06 * vmax
         vc = vmax - 1.0
@@ -169,20 +178,24 @@ class Banks:
         )
         self.nu_envelope = jnp.array(nu_envelope)
 
-    def ddx(self, f_vxvy: jnp.ndarray):
+    def ddx(self, f_vxvy: jnp.ndarray) -> jnp.ndarray:
         return jnp.gradient(f_vxvy, self.dv, axis=0)
 
-    def ddy(self, f_vxvy: jnp.ndarray):
+    def ddy(self, f_vxvy: jnp.ndarray) -> jnp.ndarray:
         return jnp.gradient(f_vxvy, self.dv, axis=1)
 
     def _get_operator_(self, nu, vxy, dfdvxy, dt):
         a = (
-            nu
+            nu[:-1]
             * dt
             * (-(vxy**2.0) / self.dv**2.0 + (self.v[:-1] + 0.5 * self.v[:-1] * vxy * dfdvxy[:-1]) / 2.0 / self.dv)
         )
         b = 1.0 + nu * dt * self.ones * (2.0 * vxy**2.0 / self.dv**2.0)
-        c = nu * dt * (-(vxy**2.0) / self.dv**2.0 - (self.v[1:] + 0.5 * self.v[1:] * vxy * dfdvxy[1:]) / 2.0 / self.dv)
+        c = (
+            nu[1:]
+            * dt
+            * (-(vxy**2.0) / self.dv**2.0 - (self.v[1:] + 0.5 * self.v[1:] * vxy * dfdvxy[1:]) / 2.0 / self.dv)
+        )
         return lx.TridiagonalLinearOperator(b, a, c)
 
     def _solve_one_vy_(self, nu, this_vy, dfvxdvy, dt, f_vx):

@@ -38,7 +38,7 @@ save:
     t:
       tmin: 0.0
       tmax: 1000.0
-      nt: 91
+      nt: 101
   electron:
     t:
       tmin: 0.0
@@ -49,7 +49,7 @@ mode: vlasov-1d2v
 
 mlflow:
   experiment: 1d2v-epw
-  run: nonlinear-nuee-nuei-vmax80
+  run: large-amp-nuei-nuee
 
 drivers:
   ex:
