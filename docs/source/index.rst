@@ -4,7 +4,11 @@
    contain the root `toctree` directive.
 
 ADEPT
-=================================
+=========
+
+.. image:: adept-logo.png
+   :alt: ADEPT
+   :align: right
 
 **ADEPT** is a set of **A** utomatic **D** ifferentation **E** nabled **P** lasma **T** ransport codes.
 
