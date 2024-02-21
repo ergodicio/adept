@@ -59,7 +59,9 @@ Documentation
 
 .. toctree::
    usage
-   custom_sims
+   usage/vlasov1d
+   usage/tf1d
+   usage/vlasov1d2v
    faq
    dev_guide
    api_documentation
@@ -89,7 +91,6 @@ References
 Citation
 ------------
 [1] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
-
 
 
 .. Indices and tables

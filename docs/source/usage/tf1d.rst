@@ -1,10 +1,10 @@
-TwoFluid-Poisson 1D
+Fluid-Poisson 1D
 =======================
 
 To run the code for TwoFluid-Poisson 1D, use the configs in `configs/tf-1d/`.
 There is a `mode` option in the config file which tells `ADEPT` which solver to use.
 
-The normalized 1D Two-Fluid-Poisson system is given by:
+The normalized 1D Fluid-Poisson system is given by:
 
 .. note:: 
 
@@ -12,10 +12,13 @@ The normalized 1D Two-Fluid-Poisson system is given by:
 
 .. math:: 
 
-    \partial_t n + \partial_x (n u) = 0
+    \partial_t n_e + \partial_x (n_e u_e) = 0
 
-    \partial_t u + u \partial_x u = -\frac{1}{n} \partial_x P - \frac{1}{n} \partial_x \phi
+    \partial_t u_e + u_e \partial_x u_e = -\frac{\partial_x P_e}{n_e}  - \frac{E}{n_e}
 
+    \partial_x^2 E = n_i - n_e
+
+The ions are static but all the functionality is in place if someone wants to get them to move!
 
 **Things you might care about**
 

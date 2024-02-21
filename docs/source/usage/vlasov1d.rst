@@ -1,5 +1,5 @@
-Vlasov-Poisson 1D1V
-=======================
+Vlasov-Poisson-Fokker-Planck 1D1V
+====================================
 
 To run the code for Vlasov-Poisson 1D1V, use the configs in `configs/vlasov1d/`.
 There is a `mode` option in the config file which tells `ADEPT` which solver to use.
@@ -11,12 +11,14 @@ The normalized 1D1V Vlasov-Poisson-Fokker-Planck system is given by:
     \frac{\partial f}{\partial t} + v \frac{\partial f}{\partial x} + 
     E \frac{\partial f}{\partial v} = C_{ee}(f) + C_{K}(f)
 
-    \partial_x^2 E = \int f dv
+    \partial_x^2 E = 1 - \int f dv
 
     C_{ee}(f) = \nu_{ee} \frac{\partial}{\partial v} 
     \left( v f + v_{th}^2 \partial_v f \right)
 
     C_K(f) = \nu_K (f - f_{Mx})
+
+The ions are static but an enterprising individual should be able to reuse the electron code for the ions
 
 **Things you might care about**
 
