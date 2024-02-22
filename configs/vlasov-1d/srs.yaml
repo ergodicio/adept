@@ -1,0 +1,120 @@
+units:
+  laser wavelength: 351nm
+  normalizing temperature: 2000eV
+  normalizing density: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: tanh
+    baseline: 0.001
+    bump_or_trough: bump
+    center: 2000.0
+    rise: 25.0
+    bump_height: 0.999
+    width: 3900.0
+
+grid:
+  dt: 0.5
+  nv: 4096
+  nx: 4096
+  tmin: 0.
+  tmax: 8000.0
+  vmax: 6.4
+  xmax: 4000
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 8000.0
+      nt: 2001
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 2000.0
+      nt: 21
+
+mode: vlasov-1d
+
+mlflow:
+  experiment: vlasov1d-srs
+  run: test
+
+drivers:
+  ex: {}
+  ey: 
+    '0':
+      a0: 1.0
+      k0: 1.0
+      t_center: 4000.0
+      t_rise: 20.0
+      t_width: 7900.0
+      w0: 2.79
+      dw0: 0.
+      x_center: 50.0
+      x_rise: 0.1
+      x_width: 1.0
+    '1':
+      a0: 1.e-6
+      k0: 1.0
+      t_center: 4000.0
+      t_rise: 20.0
+      t_width: 7900.0
+      w0: 1.63
+      dw0: 0.
+      x_center: 3950.0
+      x_rise: 0.1
+      x_width: 1.0
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: leapfrog
+  fokker_planck:
+    is_on: false
+    type: Dougherty
+    time:
+      baseline: 1.0e-5
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: True
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 2000.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 10000000.0
+    space:
+      baseline: 0.0
+      bump_or_trough: trough
+      center: 2000.0
+      rise: 10.0
+      slope: 0.0
+      bump_height: 10.0
+      width: 3800.0

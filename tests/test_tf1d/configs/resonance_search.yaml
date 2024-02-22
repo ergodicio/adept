@@ -1,0 +1,64 @@
+mode: tf-1d
+
+mlflow:
+  experiment: tf1d-resonance-search
+  run: test
+
+adjoint: Backsolve
+
+units:
+  laser wavelength: 351nm
+  normalizing temperature: 2000eV
+  normalizing density: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+grid:
+    nx: 16
+    xmin: 0.0
+    xmax: 20.94
+    tmin: 0.0
+    tmax: 50
+
+save:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 101
+
+physics:
+    ion:
+      is_on: False
+      landau_damping: True
+      mass: 1836.0
+      T0: 0.01
+      charge: 1.0
+      gamma: 3
+      trapping:
+        is_on: False
+        kld: 0.3
+    electron:
+      is_on: True
+      landau_damping: True
+      T0: 1.0
+      mass: 1.0
+      charge: -1.0
+      gamma: 3.0
+      trapping:
+        is_on: False
+        kld: 0.3
+
+
+drivers:
+  "ex":
+    "0":
+      "k0": 0.3
+      "w0": 1.1
+      "dw0": 0.0
+      "t_c": 15.0
+      "t_w": 10.0
+      "t_r": 2.5
+      "x_c": 400
+      "x_w": 1000000
+      "x_r": 10
+      "a0": 1.e-6
