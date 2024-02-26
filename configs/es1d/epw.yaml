@@ -20,7 +20,7 @@ grid:
 mlflow:
   experiment: es1d-epw-test
   run: nl-fluid-noml
-mode: es-1d
+mode: es-1d 
 models:
   file: false
   nu_g:

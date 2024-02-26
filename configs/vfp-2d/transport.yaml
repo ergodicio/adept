@@ -1,0 +1,102 @@
+units:
+  laser wavelength: 351nm
+  reference electron temperature: 2000eV
+  reference ion temperature: 500eV
+  reference electron density: 1.5e21/cm^3
+  Z: 40
+  Ion: Au+
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    n: 
+      basis: uniform
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      bump_height: 0.0
+      width: 100000.0
+    T:
+      basis: sine
+      baseline: 1.0
+      amplitude: 1.0e-3
+      wavenumber: 0.001256637
+
+grid:
+  dt: 100.0
+  nv: 1024
+  nx: 32
+  tmin: 0.
+  tmax: 10000.0
+  vmax: 8.0
+  xmax: 5000.0
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 10000.0
+      nt: 51
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 10000.0
+      nt: 51
+
+mode: vfp-2d
+
+mlflow:
+  experiment: vfp2d
+  run: epperlein-short
+
+drivers:
+  ex: {}
+  ey: {}
+
+terms:
+  fokker_planck:
+    is_on: True
+    type: Dougherty
+    time:
+      baseline: 1.0e-5
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
