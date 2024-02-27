@@ -2,6 +2,8 @@ import numpy as np
 from typing import Dict
 from jax import numpy as jnp, vmap
 import lineax as lx
+import optimistix as optx
+import optax
 
 
 class IMPACT:
@@ -143,6 +145,10 @@ class LenardBernstein:
         self.ones = jnp.ones(2 * self.cfg["grid"]["nv"])
         self.refl_v = jnp.concatenate([-self.v[::-1], self.v])
         self.midpt = self.cfg["grid"]["nv"]
+        r_e = 2.8179402894e-13
+        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+
+        self.nuee_coeff = 4.0 * np.pi / 3.0 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
     def _solve_one_vslice_(self, nu: jnp.float64, f0: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         operator = self._get_operator_(nu, f0, dt)
@@ -154,9 +160,9 @@ class LenardBernstein:
             jnp.sum(f0 * (self.v[None, :]) ** 4.0, axis=1) / jnp.sum(f0 * (self.v[None, :]) ** 2.0, axis=1) / 3.0
         )
 
-        lower_diagonal = nu * dt * (-half_vth_sq / self.dv**2.0 + (self.refl_v[:-1]) / 2.0 / self.dv)
-        diagonal = 1.0 + nu * dt * self.ones * (2.0 * half_vth_sq / self.dv**2.0)
-        upper_diagonal = nu * dt * (-half_vth_sq / self.dv**2.0 - (self.refl_v[1:]) / 2.0 / self.dv)
+        lower_diagonal = self.nuee_coeff * dt * (-half_vth_sq / self.dv**2.0 + (self.refl_v[:-1]) / 2.0 / self.dv)
+        diagonal = 1.0 + self.nuee_coeff * dt * self.ones * (2.0 * half_vth_sq / self.dv**2.0)
+        upper_diagonal = self.nuee_coeff * dt * (-half_vth_sq / self.dv**2.0 - (self.refl_v[1:]) / 2.0 / self.dv)
         return lx.TridiagonalLinearOperator(
             diagonal=diagonal, upper_diagonal=upper_diagonal, lower_diagonal=lower_diagonal
         )
@@ -177,9 +183,14 @@ class EleectronIonCollisions:
     def __init__(self, cfg):
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
+        self.Z = cfg["units"]["Z"]
 
-    def __call__(self, nuei_coeff, f10, dt):
-        return f10 / (1.0 + nuei_coeff * dt / self.v[None, :] ** 3.0)
+        r_e = 2.8179402894e-13
+        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        self.nuei_coeff = c_kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
+
+    def __call__(self, nuei_profile, f10, dt):
+        return f10 / (1.0 + self.nuei_coeff * dt / self.v[None, :] ** 3.0)
 
 
 class OSHUN1D:
@@ -189,16 +200,11 @@ class OSHUN1D:
         self.dv = cfg["grid"]["dv"]
         self.m_frac = 1.0 / 1836.0 / 10.0
 
-        self.Z = cfg["units"]["Z"]
         self.dx = cfg["grid"]["dx"]
         self.dt = cfg["grid"]["dt"]
         self.nx = cfg["grid"]["nx"]
         # self.c_squared = cfg["units"]["derived"]["c_light"].magnitude ** 2.0
-        r_e = 2.8179402894e-13
-        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
-
-        self.nuei_coeff = c_kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
-        self.nuee_coeff = 4.0 * np.pi / 3.0 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
+        self.e_solver = "edfdv-ampere-implicit"
 
         self.lb = LenardBernstein(cfg)
         self.ei = EleectronIonCollisions(cfg)
@@ -219,15 +225,15 @@ class OSHUN1D:
         return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
 
     def step_f0_coll(self, f0):
-        return self.lb(self.nuee_coeff, f0, self.dt)
+        return self.lb(None, f0, self.dt)
 
     def step_f10_coll(self, f10):
-        return self.ei(self.nuei_coeff, f10, self.dt)
+        return self.ei(None, f10, self.dt)
 
     def calc_j(self, f1):
         return -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
 
-    def implicit_e_solve(self, f0, f10, e):
+    def _implicit_e_solve_(self, f0, f10, e):
 
         # calculate j without any e field
         f10_after_coll = self.step_f10_coll(f10)
@@ -260,36 +266,125 @@ class OSHUN1D:
 
         return new_e
 
-    def __call__(self, t, y, args) -> Dict:
+    def linear_implicit_e_f0_f1_operator(self, this_y):
+        f0, f1, e = this_y["f0"], this_y["f1"], this_y["e"]
 
-        f0 = y["f0"]
-        f10 = y["f10"]
+        prev_f0_approx = f0 + self.dt * (-e[:, None] / 3 * (self.ddv_f1(f1) + 2 / self.v * f1))
+        # C_f1 = self.step_f10_coll(f1)
+        prev_f1_approx = f1 + self.dt * (-e[:, None] * self.ddv(f0) + 1e-6 * f1 / self.v[None, :] ** 3.0)
 
-        df0dt_sa = -self.v[None, :] / 3.0 * self.ddx(f10)
-        df10dt_sa = -self.v[None, :] * self.ddx(y["f0"])
+        j = -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
+        prev_e_approx = e + self.dt * j
 
-        # push advection
-        f0_star = f0 + self.dt * df0dt_sa
-        f10_star = f10 + self.dt * df10dt_sa
+        return {"f0": prev_f0_approx, "f1": prev_f1_approx, "e": prev_e_approx}
 
-        # push f00 coll
-        f0_star = self.step_f0_coll(f0_star)
+    def nonlinear_implicit_e_f0_f1_operator(self, y, args):
+        new_f0, new_f1, new_e = y["f0"], y["f1"], y["e"]
+        old_f0, old_f1, old_e = args["f0"], args["f1"], args["e"]
 
-        # solve for Enp1
-        new_e = self.implicit_e_solve(f0_star, f10_star, y["e"])
+        res_f0 = (new_f0 - old_f0) / self.dt - new_e[:, None] / 3 * (self.ddv_f1(new_f1) + 2 / self.v * new_f1)
+        # C_f1 = self.step_f10_coll(f1)
+        res_f1 = (
+            (new_f1 - old_f1) / self.dt - new_e[:, None] * self.ddv(new_f0) + 1e-4 * new_f1 / self.v[None, :] ** 3.0
+        )
 
+        new_j = -4 * jnp.pi / 3.0 * jnp.sum(new_f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
+        res_e = (new_e - old_e) / self.dt + new_j
+
+        return {"f0": res_f0, "f1": res_f1, "e": res_e}
+
+        # return jnp.sum(jnp.square(res_f0)) + jnp.sum(jnp.square(res_f1)) + jnp.sum(jnp.square(res_e))
+
+    def implicit_e_f0_f1_solve(self, f0, f1, e):
+        """
+        This is a combined e dfdv and ampere's law solve
+        """
+
+        # sol = optx.minimise(
+        #     fn=self.nonlinear_implicit_e_f0_f1_operator,
+        #     solver=optx.OptaxMinimiser(
+        #         optim=optax.adam(learning_rate=1e-2), rtol=1e-3, atol=1e-4, verbose=frozenset({"step", "loss"})
+        #     ),
+        #     y0={"f0": f0, "f1": f1, "e": e},
+        #     args={"f0": f0, "f1": f1, "e": e},
+        #     max_steps=4096,
+        #     throw=False,
+        # )
+
+        sol = optx.least_squares(
+            fn=self.nonlinear_implicit_e_f0_f1_operator,
+            solver=optx.LevenbergMarquardt(rtol=1e-3, atol=1e-4),
+            y0={"f0": f0, "f1": f1, "e": e},
+            args={"f0": f0, "f1": f1, "e": e},
+            max_steps=4096,
+            throw=True,
+        )
+        # operator = lx.FunctionLinearOperator(
+        # self.implicit_e_f0_f1_operator, input_structure={"f0": f0, "f1": f1, "e": e}
+        # )
+        # rhs = {"f0": f0, "f1": f1, "e": e}
+        # solver = lx.GMRES(
+        #     rtol=1e-3, atol=1e-4, max_steps=16384, norm=lx.internal.max_norm  # restart=128, stagnation_iters=128
+        # )
+        # sol = lx.linear_solve(
+        #     operator, rhs, solver=solver, options={"y0": {"f0": f0, "f1": f1, "e": jnp.zeros_like(e)}}
+        # )
+
+        return sol.value["f0"], sol.value["f1"], sol.value["e"]
+
+    def implicit_e_solve(self, f0, f10, e):
+        """
+        This is based on how oshun did the implicit perturbative e solve and then an explicit e push
+
+        """
+
+        new_e = self._implicit_e_solve_(f0, f10, e)
         # push e
+        new_f0, new_f10 = self.explicit_e_push(f0, f10, new_e)
+
+        # push f10 coll
+        new_f10 = self.step_f10_coll(new_f10)
+
+        return new_f0, new_f10, new_e
+
+    def explicit_e_push(self, f0, f10, new_e):
         g00 = self.ddv(f0)
         h10 = 2.0 / self.v * f10 + self.ddv_f1(f10)
 
         df0dt_e = new_e[:, None] / 3.0 * h10
         df10dt_e = new_e[:, None] * g00
 
-        new_f0 = f0_star + self.dt * df0dt_e
-        new_f10 = f10_star + self.dt * df10dt_e
+        new_f0 = f0 + self.dt * df0dt_e
+        new_f10 = f10 + self.dt * df10dt_e
+        return new_f0, new_f10
 
-        # push f10 coll
-        # new_f0 = self.step_f0_coll(new_f0)
-        new_f10 = self.step_f10_coll(new_f10)
+    def push_vdfdx(self, f0, f10):
+        df0dt_sa = -self.v[None, :] / 3.0 * self.ddx(f10)
+        df10dt_sa = -self.v[None, :] * self.ddx(f0)
+
+        # push advection
+        f0_star = f0 + self.dt * df0dt_sa
+        f10_star = f10 + self.dt * df10dt_sa
+        return f0_star, f10_star
+
+    def __call__(self, t, y, args) -> Dict:
+
+        f0 = y["f0"]
+        f10 = y["f10"]
+
+        # explicit push for v df/dx
+        f0_star, f10_star = self.push_vdfdx(f0, f10)
+
+        # implicit solve f00 coll
+        f0_star = self.step_f0_coll(f0_star)
+
+        # implicit solve for E
+        if self.e_solver == "oshun":  # implicit E, explicit f0, f1 with this Taylor expansion of J method
+            new_f0, new_f10, new_e = self.implicit_e_solve(f0_star, f10_star, y["e"])
+
+        elif self.e_solver == "edfdv-ampere-implicit":  # implicit E, f0, f1 using a linear iterative inversion
+            new_f0, new_f10, new_e = self.implicit_e_f0_f1_solve(f0=f0_star, f1=f10_star, e=y["e"])
+        else:
+            raise NotImplementedError
 
         return {"f0": new_f0, "f10": new_f10, "e": new_e, "b": y["b"]}

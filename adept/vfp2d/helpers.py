@@ -1,5 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
+
 from typing import Dict
 import os
 
@@ -39,8 +40,9 @@ def write_units(cfg, td):
     ni = ne / cfg["units"]["Z"]
     Te = u.Quantity(cfg["units"]["reference electron temperature"]).to("eV")
     Ti = u.Quantity(cfg["units"]["reference ion temperature"]).to("eV")
-
+    Z = cfg["units"]["Z"]
     n0 = u.Quantity("9.09e21/cm^3")
+    ion_species = cfg["units"]["Ion"]
 
     wp0 = np.sqrt(n0 * csts.e.to("C") ** 2.0 / (csts.m_e * csts.eps0)).to("Hz")
     tp0 = (1 / wp0).to("fs")
@@ -59,27 +61,21 @@ def write_units(cfg, td):
         box_width = "inf"
     sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
 
-    logLambda_ei = plasmapy.formulary.Coulomb_logarithm(
-        n_e=ne, T=Te, z_mean=cfg["units"]["Z"], species=("e", cfg["units"]["Ion"])
-    )
-
+    logLambda_ei = plasmapy.formulary.Coulomb_logarithm(n_e=ne, T=Te, z_mean=Z, species=("e", ion_species))
     logLambda_ee = plasmapy.formulary.Coulomb_logarithm(n_e=ne, T=Te, z_mean=1.0, species=("e", "e"))
+    tauei = (
+        0.75
+        * np.sqrt(9.11e-31)
+        * Te.to("J").value ** 1.5
+        / (np.sqrt(2 * np.pi) * ni.to("1/m^3").value * Z**2.0 * csts.e.to("C").value ** 4.0 * logLambda_ei)
+    )  # from Epperlein and Haines (1986)
 
-    # collisions
-    electron_ion_collisions = plasmapy.formulary.MaxwellianCollisionFrequencies(
-        "e-",
-        cfg["units"]["Ion"],
-        v_drift=0.0 * u.meter / u.second,
-        n_a=ni,
-        T_a=Te,
-        n_b=ni,
-        T_b=Ti,
-        Coulomb_log=logLambda_ei,
-    )
-    nuei = electron_ion_collisions.Maxwellian_avg_ei_collision_freq
+    nuei = u.Quantity(f"{1 / tauei} Hz")
+    tauei = tauei * u.s
 
     all_quantities = {
         "wp0": wp0,
+        "n0": n0,
         "tp0": tp0,
         "n0": n0,
         "vthe": vthe,
@@ -91,13 +87,13 @@ def write_units(cfg, td):
         "beta": beta_e,
         "x0": x0,
         "nuei": nuei,
+        "tauei": tauei,
         "box_length": box_length,
         "box_width": box_width,
         "sim_duration": sim_duration,
     }
 
     cfg["units"]["derived"] = all_quantities
-
     cfg["grid"]["beta"] = beta_e.value
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
