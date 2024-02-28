@@ -3,7 +3,8 @@ from typing import Dict
 import os
 
 # import interpax
-from jax import numpy as jnp
+from functools import partial
+from jax import numpy as jnp, vmap
 import numpy as np
 import xarray as xr
 
@@ -55,7 +56,7 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
     return fields_xr
 
 
-def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
+def store_f(cfg: Dict, this_t: Dict, binary_dir: str, ys: Dict) -> Dict:
     """
     Stores f to netcdf
 
@@ -65,16 +66,25 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     :param ys:
     :return:
     """
-    f_store = xr.Dataset(
-        {
-            spc: xr.DataArray(
-                ys[spc],
-                coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]), ("vy", cfg["grid"]["v"])),
-            )
-            for spc in ["electron"]
-        }
-    )
-    f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))
+    f_store = {}
+    for k, save_dict in cfg["save"].items():
+        if k.startswith("electron"):
+            if {"t", "vx", "vy", "x", "func"} == set(save_dict.keys()):
+                f_store[k] = xr.DataArray(
+                    ys[k],
+                    coords=(
+                        ("t", this_t[k]),
+                        ("x", save_dict["x"]["ax"]),
+                        ("vx", save_dict["vx"]["ax"]),
+                        ("vy", save_dict["vy"]["ax"]),
+                    ),
+                )
+                f_store[k].to_netcdf(os.path.join(binary_dir, "f_t-x-vx-vy.nc"))
+            elif {"func", "t", "vx", "x"} == set(save_dict.keys()):
+                f_store[k] = xr.DataArray(
+                    ys[k], coords=(("t", this_t[k]), ("x", save_dict["x"]["ax"]), ("vx", save_dict["vx"]["ax"]))
+                )
+                f_store[k].to_netcdf(os.path.join(binary_dir, "f_t-x-vx.nc"))
 
     return f_store
 
@@ -148,26 +158,80 @@ def get_field_save_func(cfg, k):
     return fields_save_func
 
 
+def _get_x_save_func_(save_dict, cfg_grid):
+    nx = save_dict["nx"]
+    if "xmin" in save_dict:
+        xmin = save_dict["xmin"]
+        xmax = save_dict["xmax"]
+    else:
+        xmin = cfg_grid["xmin"]
+        xmax = cfg_grid["xmax"]
+
+    dx = (xmax - xmin) / nx
+
+    save_x = np.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
+    interp_x = vmap(partial(jnp.interp, x=save_x, xp=cfg_grid["x"]), in_axes=1, out_axes=1)
+
+    return save_x, interp_x
+
+
+def _get_vx_save_func_(save_dict, cfg_grid):
+    nvx = save_dict["nvx"]
+    if "vxmin" in save_dict:
+        vxmin = save_dict["vxmin"]
+        vxmax = save_dict["vxmax"]
+    else:
+        vxmin = -cfg_grid["vmax"]
+        vxmax = cfg_grid["vmax"]
+
+    dvx = (vxmax - vxmin) / nvx
+
+    save_v = np.linspace(vxmin + dvx / 2.0, vxmax - dvx / 2.0, nvx)
+    interp_v = vmap(partial(jnp.interp, x=save_v, xp=cfg_grid["v"]), in_axes=0, out_axes=0)
+
+    return save_v, interp_v
+
+
 def get_dist_save_func(cfg, k):
     if {"t"} == set(cfg["save"][k].keys()):
+        cfg["save"][k] = cfg["save"][k] | {"x": {}, "vx": {}, "vy": {}}
+        cfg["save"][k]["x"]["ax"] = cfg["grid"]["x"]
+        cfg["save"][k]["vx"]["ax"] = cfg["grid"]["v"]
+        cfg["save"][k]["vy"]["ax"] = cfg["grid"]["v"]
 
         def dist_save_func(t, y, args):
             return y["electron"]
 
-    elif {"t", "x", "y"} == set(cfg["save"][k].keys()):
-        pass
-    elif {"t", "kx", "y"} == set(cfg["save"][k].keys()):
-        pass
+    elif {"t", "x", "vx"} == set(cfg["save"][k].keys()):
 
-    elif {"t", "x", "ky"} == set(cfg["save"][k].keys()):
-        pass
+        if "nx" in cfg["save"][k]["x"]:
+            cfg["save"][k]["x"]["ax"], interp_x = _get_x_save_func_(cfg["save"][k]["x"], cfg["grid"])
+        else:
+            cfg["save"][k]["x"]["ax"] = cfg["grid"]["x"]
 
-    elif {"t", "kx", "ky"} == set(cfg["save"][k].keys()):
-        pass
+            def interp_x(fp):
+                return fp
+
+        if "nvx" in cfg["save"][k]["vx"]:
+            cfg["save"][k]["vx"]["ax"], interp_vx = _get_vx_save_func_(cfg["save"][k]["vx"], cfg["grid"])
+        else:
+            cfg["save"][k]["vx"]["ax"] = cfg["grid"]["v"]
+
+            def interp_vx(fp):
+                return fp
+
+        def dist_save_func(t, y, args):
+            fxvx = jnp.trapz(y["electron"], dx=cfg["grid"]["dv"], axis=2)
+            f_interp_x = interp_x(fp=fxvx)
+            f_interp_xv = interp_vx(fp=f_interp_x)
+            return f_interp_xv
+
     else:
         raise NotImplementedError
 
-    return dist_save_func
+    cfg["save"][k]["func"] = dist_save_func
+
+    return cfg["save"][k]
 
 
 def get_save_quantities(cfg: Dict) -> Dict:
@@ -178,25 +242,26 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :return:
     """
     for k in cfg["save"].keys():  # this can be fields or electron or scalar?
-        for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
-            if k2 == "x":
-                dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
-                cfg["save"][k][k2]["ax"] = np.linspace(
-                    cfg["save"][k][k2][f"{k2}min"] + dx / 2.0,
-                    cfg["save"][k][k2][f"{k2}max"] - dx / 2.0,
-                    cfg["save"][k][k2][f"n{k2}"],
-                )
+        # for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
+        #     if k2 == "x":
+        #         dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
+        #         cfg["save"][k][k2]["ax"] = np.linspace(
+        #             cfg["save"][k][k2][f"{k2}min"] + dx / 2.0,
+        #             cfg["save"][k][k2][f"{k2}max"] - dx / 2.0,
+        #             cfg["save"][k][k2][f"n{k2}"],
+        #         )
 
-            else:
-                cfg["save"][k][k2]["ax"] = np.linspace(
-                    cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
-                )
+        #     else:
+        k2 = "t"
+        cfg["save"][k][k2]["ax"] = np.linspace(
+            cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
+        )
 
         if k.startswith("fields"):
             cfg["save"][k]["func"] = get_field_save_func(cfg, k)
 
         elif k.startswith("electron"):
-            cfg["save"][k]["func"] = get_dist_save_func(cfg, k)
+            cfg["save"][k] = get_dist_save_func(cfg, k)
 
     cfg["save"]["default"] = {"t": {"ax": cfg["grid"]["t"]}, "func": get_default_save_func(cfg)}
 

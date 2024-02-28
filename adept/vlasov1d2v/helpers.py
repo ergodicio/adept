@@ -371,7 +371,7 @@ def post_process(result, cfg: Dict, td: str):
                 fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
                 plt.close()
 
-    f_xr = store_f(cfg, result.ts, td, result.ys)
+    f_xr = store_f(cfg, result.ts, binary_dir, result.ys)
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
