@@ -395,7 +395,7 @@ def post_process(result, cfg: Dict, td: str):
 
     f_xr = store_f(cfg, result.ts, td, result.ys)
 
-    mlflow.log_metrics({"max qx": np.amax(fields_xr["fields-q a.u."][-1].data)})
+    mlflow.log_metrics({"qx": np.amax(fields_xr["fields-q a.u."][-1].data)})
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
     return {"fields": fields_xr, "dists": f_xr}  # , "scalars": scalars_xr}

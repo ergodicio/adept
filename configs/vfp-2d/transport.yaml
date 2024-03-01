@@ -1,6 +1,6 @@
 units:
   laser wavelength: 351nm
-  reference electron temperature: 2000eV
+  reference electron temperature: 500eV
   reference ion temperature: 500eV
   reference electron density: 1.5e21/cm^3
   Z: 40
@@ -28,28 +28,28 @@ density:
       basis: sine
       baseline: 1.0
       amplitude: 1.0e-3
-      wavenumber: 0.001256637
+      wavenumber: 6.28e-6
 
 grid:
   dt: 25.0
-  nv: 256
+  nv: 512
   nx: 512
   tmin: 0.
-  tmax: 500.0
+  tmax: 1000.0
   vmax: 8.0
-  xmax: 5000.0
+  xmax: 1000000.0
   xmin: 0.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 500.0
-      nt: 101
+      tmax: 1000.0
+      nt: 11
   electron:
     t:
       tmin: 0.0
-      tmax: 500.0
+      tmax: 1000.0
       nt: 6
 
 mode: vfp-2d
