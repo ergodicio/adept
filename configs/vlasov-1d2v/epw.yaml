@@ -59,7 +59,10 @@ mode: vlasov-1d2v
 
 mlflow:
   experiment: 1d2v-epw
-  run: large-amp-nuee
+  run: a1em2-both-exact
+
+machine:
+  calculator: gpu
 
 drivers:
   ex:
@@ -100,9 +103,12 @@ terms:
         bump_height: 0.0
         width: 100000.0
     nu_ei: 
-      is_on: false
+      nr: 384
+      nth: 2048
+      solver: exact-fft
+      is_on: true
       time:
-        baseline: 1.0e-3
+        baseline: 1.0e-4
         bump_or_trough: bump
         center: 0.0
         rise: 25.0
