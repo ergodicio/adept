@@ -5,7 +5,7 @@ import os, time, tempfile, yaml
 from diffrax import diffeqsolve, SaveAt, Solution
 import numpy as np
 import equinox as eqx
-import mlflow, pint
+import mlflow, pint, jax
 
 
 from utils import misc
@@ -23,6 +23,8 @@ def get_helpers(mode):
         from adept.sh2d import helpers
     elif mode == "vlasov-1d":
         from adept.vlasov1d import helpers
+    elif mode == "vlasov-1d2v":
+        from adept.vlasov1d2v import helpers
     elif mode == "vlasov-2d":
         from adept.vlasov2d import helpers
     elif mode == "envelope-2d":
@@ -110,8 +112,8 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
     helpers = get_helpers(cfg["mode"])  # gets the right helper functions depending on the desired simulation
 
-    with tempfile.TemporaryDirectory() as td:  # creates a temporary directory to store the simulation data
-        with open(os.path.join(td, "config.yaml"), "w") as fi:  # writes the configuration to the temporary directory
+    with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
+        with open(os.path.join(td, "config.yaml"), "w") as fi:
             yaml.dump(cfg, fi)
 
         # NB - this is not yet solver specific but should be
@@ -139,7 +141,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         models = helpers.get_models(cfg["models"]) if "models" in cfg else None
 
         # initialize the state for the solver - NB - this is solver specific
-        state = helpers.init_state(cfg)
+        state = helpers.init_state(cfg, td)
 
         # NB - this is solver specific
         # Remember that we rely on the diffrax library to provide the ODE (time, usually) integrator
@@ -162,13 +164,14 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
                 solver=diffeqsolve_quants["solver"],
                 t0=time_quantities["t0"],
                 t1=time_quantities["t1"],
-                max_steps=time_quantities["max_steps"],
+                max_steps=cfg["grid"]["max_steps"],  # time_quantities["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
                 args=args,
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
+        _log_flops_(_run_, models, tqs)
         result = _run_(models, tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
@@ -182,3 +185,22 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
     # fin
     return result, datasets
+
+
+def _log_flops_(_run_, models, tqs):
+    """
+    Logs the number of flops to mlflow
+
+    Args:
+        _run_: The function that runs the simulation
+        models: The models used in the simulation
+        tqs: The time quantities used in the simulation
+
+    """
+    wrapped = jax.xla_computation(_run_)
+    computation = wrapped(models, tqs)
+    module = computation.as_hlo_module()
+    client = jax.lib.xla_bridge.get_backend()
+    analysis = jax.lib.xla_client._xla.hlo_module_cost_analysis(client, module)
+    flops_sum = analysis["flops"]
+    mlflow.log_metrics({"total GigaFLOP": flops_sum / 1e9})  # logs the flops to mlflow

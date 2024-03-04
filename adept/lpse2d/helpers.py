@@ -152,42 +152,39 @@ def init_state(cfg: Dict, td=None) -> Dict:
     e0 *= cfg["drivers"]["E0"]["a0"]
 
     if cfg["density"]["noise"]["type"] == "uniform":
-        random_amps_x = np.random.uniform(
-            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["nx"]
+        random_amps = np.random.uniform(
+            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], (cfg["grid"]["nx"], cfg["grid"]["ny"])
         )
-        random_amps_y = np.random.uniform(
-            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], cfg["grid"]["ny"]
-        )
+
     elif cfg["density"]["noise"]["type"] == "normal":
         loc = 0.5 * (cfg["density"]["noise"]["min"] + cfg["density"]["noise"]["max"])
         scale = 1.0
-        random_amps_x = np.random.normal(loc, scale, cfg["grid"]["nx"])
-        random_amps_y = np.random.normal(loc, scale, cfg["grid"]["ny"])
+        random_amps = np.random.normal(loc, scale, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
     else:
         raise NotImplementedError
 
-    phi = jnp.sum(random_amps_x * jnp.exp(1j * cfg["grid"]["kx"][None, :] * cfg["grid"]["x"][:, None]), axis=-1)[
-        :, None
-    ]
-    phi += jnp.sum(random_amps_y * jnp.exp(1j * cfg["grid"]["ky"][None, :] * cfg["grid"]["y"][:, None]), axis=-1)[
-        None, :
-    ]
+    random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
+
+    phi = random_amps * np.exp(1j * random_phases)
     phi = jnp.fft.fft2(phi)
 
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+
+    L = (
+        _Q(cfg["density"]["gradient scale length"]).to("nm").magnitude
+        / cfg["units"]["derived"]["x0"].to("nm").magnitude
+    )
+    nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - cfg["density"]["center"]) / L
+    nprof = jnp.repeat(nprof[:, None], cfg["grid"]["ny"], axis=1)
     state = {
         "e0": e0,
-        "nb": (cfg["density"]["offset"] + cfg["density"]["slope"] * cfg["grid"]["x"] / cfg["grid"]["xmax"])[:, None]
-        * np.ones_like(phi, dtype=np.float64),
+        "nb": nprof,
         "temperature": jnp.ones_like(e0[..., 0], dtype=jnp.float64),
         "dn": jnp.zeros_like(e0[..., 0], dtype=jnp.float64),
         "phi": phi,
-        "delta": (
-            0
-            + 0.0
-            * jnp.sin(2 * jnp.pi * cfg["grid"]["x"][:, None] / cfg["grid"]["xmax"])
-            * jnp.ones_like(e0[..., 0], dtype=jnp.float64)
-        ),
+        "delta": jnp.zeros_like(e0[..., 0], dtype=jnp.float64),
     }
 
     if td is not None:
@@ -340,6 +337,10 @@ def plot_kt(kfields, td):
 
         np.log10(np.abs(v[tslice, :, 0])).T.plot(col="t", col_wrap=4)
         plt.savefig(os.path.join(fld_dir, f"{k}_kx.png"), bbox_inches="tight")
+        plt.close()
+
+        np.abs(v[tslice, :, :]).T.plot(col="t", col_wrap=4)
+        plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
         plt.close()
 
         # np.log10(np.abs(v[tslice, :, :])).T.plot(col="t", col_wrap=4)
