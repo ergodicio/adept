@@ -28,7 +28,7 @@ def get_helpers(mode):
     elif mode == "envelope-2d":
         from adept.lpse2d import helpers
     elif mode == "vfp-2d":
-        from adept.vfp2d import helpers
+        from adept.vfp1d import helpers
     else:
         raise NotImplementedError("This solver approach has not been implemented yet")
 

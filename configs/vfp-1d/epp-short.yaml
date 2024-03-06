@@ -3,8 +3,9 @@ units:
   reference electron temperature: 500eV
   reference ion temperature: 500eV
   reference electron density: 1.5e21/cm^3
-  Z: 40
+  Z: 30
   Ion: Au+
+  logLambda: nrl
 
 
 density:
@@ -28,28 +29,29 @@ density:
       basis: sine
       baseline: 1.0
       amplitude: 1.0e-3
-      wavenumber: 6.28e-6
+      wavelength: 50000.0
 
 grid:
   dt: 25.0
-  nv: 512
-  nx: 512
+  nv: 256
+  nx: 32
   tmin: 0.
-  tmax: 1000.0
+  tmax: 50000.0
   vmax: 8.0
-  xmax: 1000000.0
+  xmax: 100000.0
   xmin: 0.0
+  nl: 1
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 1000.0
+      tmax: 50000.0
       nt: 11
   electron:
     t:
       tmin: 0.0
-      tmax: 1000.0
+      tmax: 50000.0
       nt: 6
 
 mode: vfp-2d
@@ -64,39 +66,8 @@ drivers:
 
 terms:
   fokker_planck:
-    is_on: True
-    type: Dougherty
-    time:
-      baseline: 1.0e-5
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
-    space:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
-  krook:
-    is_on: False
-    time:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
-    space:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+    flm:
+      ee_offdiag: false
+    f00:
+      type: Dougherty
+  e_solver: oshun

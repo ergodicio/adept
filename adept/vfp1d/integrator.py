@@ -3,9 +3,10 @@ from typing import Dict
 from jax import numpy as jnp, vmap
 import lineax as lx
 import optimistix as optx
+import diffrax
 
 from adept.tf1d.pushers import PoissonSolver
-from adept.vfp2d.fokker_planck import LenardBernstein, ElectronIonCollisions
+from adept.vfp1d.fokker_planck import LenardBernstein, FLMCollisions
 
 
 class IMPACT:
@@ -142,22 +143,19 @@ class OSHUN1D:
         self.cfg = cfg
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
-        self.m_frac = 1.0 / 1836.0 / 10.0
 
         self.dx = cfg["grid"]["dx"]
         self.dt = cfg["grid"]["dt"]
         self.nx = cfg["grid"]["nx"]
         # self.c_squared = cfg["units"]["derived"]["c_light"].magnitude ** 2.0
-        self.e_solver = "ampere"  # ampere # edfdv-ampere-implicit
+        self.e_solver = cfg["terms"]["e_solver"]
 
-        self.ampere_coeff = 1.0
+        self.ampere_coeff = 1e-4
         self.lb = LenardBernstein(cfg)
-        self.ei = ElectronIonCollisions(cfg)
+        self.ei = FLMCollisions(cfg)
 
-        self.large_eps = 1e-2
-        self.eps = 1e-4
-
-        self.poisson_solver = PoissonSolver(cfg["grid"]["one_over_kx"])
+        self.large_eps = 1e-6
+        self.eps = 1e-12
 
     def ddv(self, f):
         temp = jnp.concatenate([f[:, :1], f], axis=1)
@@ -168,26 +166,24 @@ class OSHUN1D:
         return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
 
     def ddx(self, f):
-        periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
-        return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
+        # periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
+        return jnp.gradient(f, self.dx, axis=0)  # [1:-1]
 
     def calc_j(self, f1):
         return -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
 
-    def implicit_e_solve(self, f0, f10, e):
+    def implicit_e_solve(self, Z, ni, f0, f10, e):
 
         # calculate j without any e field
-        f10_after_coll = self.ei(None, f10, self.dt)
+        f10_after_coll = self.ei(Z=Z, ni=ni, f0=f0, f10=f10, dt=self.dt)
         j0 = self.calc_j(f10_after_coll)
 
         # get perturbation
         de = jnp.abs(e) * self.large_eps + self.eps
 
         # calculate effect of dex
-        g00 = self.ddv(f0)
-        df10dt = de[:, None] * g00
-        f10_after_dex = f10 + self.dt * df10dt
-        f10_after_dex = self.ei(None, f10_after_dex, self.dt)
+        _, f10_after_dex = self.push_edfdv(f0, f10, de)
+        f10_after_dex = self.ei(Z=Z, ni=ni, f0=f0, f10=f10_after_dex, dt=self.dt)
         jx_dx = self.calc_j(f10_after_dex)
         # jy_dx = 0.0
         # jz_dx = 0.0
@@ -274,30 +270,57 @@ class OSHUN1D:
 
         return sol.value["f0"], sol.value["f1"], sol.value["e"]
 
-    def explicit_push_edfdv(self, f0, f10, new_e):
+    def _edfdv_(self, t, y, args):
+        f0 = y["f0"]
+        f10 = y["f10"]
+        e_field = args["e"]
+
         g00 = self.ddv(f0)
         h10 = 2.0 / self.v * f10 + self.ddv_f1(f10)
 
-        df0dt_e = new_e[:, None] / 3.0 * h10
-        df10dt_e = new_e[:, None] * g00
+        df0dt_e = e_field[:, None] / 3.0 * h10
+        df10dt_e = e_field[:, None] * g00
 
-        new_f0 = f0 + self.dt * df0dt_e
-        new_f10 = f10 + self.dt * df10dt_e
-        return new_f0, new_f10
+        return {"f0": df0dt_e, "f10": df10dt_e}
 
-    def push_vdfdx(self, f0, f10):
+    def push_edfdv(self, f0, f10, e):
+        result = diffrax.diffeqsolve(
+            diffrax.ODETerm(self._edfdv_),
+            solver=diffrax.Tsit5(),
+            t0=0.0,
+            t1=self.dt,
+            dt0=self.dt,
+            y0={"f0": f0, "f10": f10},
+            args={"e": e},
+        )
+        return result.ys["f0"][-1], result.ys["f10"][-1]
+
+    def _vdfdx_(self, t, y, args):
+        f0 = y["f0"]
+        f10 = y["f10"]
+
         df0dt_sa = -self.v[None, :] / 3.0 * self.ddx(f10)
         df10dt_sa = -self.v[None, :] * self.ddx(f0)
 
-        # push advection
-        f0_star = f0 + self.dt * df0dt_sa
-        f10_star = f10 + self.dt * df10dt_sa
-        return f0_star, f10_star
+        return {"f0": df0dt_sa, "f10": df10dt_sa}
+
+    def push_vdfdx(self, f0, f10):
+        result = diffrax.diffeqsolve(
+            diffrax.ODETerm(self._vdfdx_),
+            solver=diffrax.Tsit5(),
+            t0=0.0,
+            t1=self.dt,
+            dt0=self.dt,
+            y0={"f0": f0, "f10": f10},
+        )
+        return result.ys["f0"][-1], result.ys["f10"][-1]
 
     def __call__(self, t, y, args) -> Dict:
 
         f0 = y["f0"]
         f10 = y["f10"]
+        Z = y["Z"]
+        ni = y["ni"]
 
         # explicit push for v df/dx
         f0_star, f10_star = self.push_vdfdx(f0, f10)
@@ -307,33 +330,23 @@ class OSHUN1D:
         # implicit solve for E
         if self.e_solver == "oshun":  # implicit E, explicit f0, f1 with this Taylor expansion of J method
             # taylor expansion of j(E) method from Tzoufras 2013
-            new_e = self.implicit_e_solve(f0_star, f10_star, y["e"])
+            new_e = self.implicit_e_solve(Z, ni, f0_star, f10_star, y["e"])
             # push e
-            new_f0, new_f10 = self.explicit_push_edfdv(f0_star, f10_star, new_e)
+            new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
-            new_f10 = self.ei(None, new_f10, dt=self.dt)
+            new_f10 = self.ei(Z=Z, ni=ni, f0=f0_star, f10=new_f10, dt=self.dt)
 
-        elif self.e_solver == "edfdv-ampere-implicit":  # implicit E, f0, f1 using a linear iterative inversion
+        elif self.e_solver == "edfdv-ampere-implicit":  # implicit E, f0, f1 using a nonlinear iterative inversion
             new_f0, new_f10, new_e = self.implicit_e_f0_f1_solve(f0=f0_star, f1=f10_star, e=y["e"])
 
         elif self.e_solver == "ampere":
             new_e = y["e"] + self.dt * self.ampere_coeff * self.calc_j(f10_star)
             # push e
-            new_f0, new_f10 = self.explicit_push_edfdv(f0_star, f10_star, new_e)
+            new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
-            new_f10 = self.ei(None, new_f10, dt=self.dt)
-
-        elif self.e_solver == "poisson":
-            density = jnp.sum(f0 * self.v[None, :] ** 2.0, axis=1) * self.dv * 4 * jnp.pi
-
-            new_e = self.poisson_solver(1 - density)
-
-            # push edfdv
-            new_f0, new_f10 = self.explicit_push_edfdv(f0_star, f10_star, new_e)
-            # solve f10 coll
-            new_f10 = self.ei(None, new_f10, dt=self.dt)
+            new_f10 = self.ei(Z=Z, ni=ni, f0=new_f0, f10=new_f10, dt=self.dt)
 
         else:
             raise NotImplementedError
 
-        return {"f0": new_f0, "f10": new_f10, "e": new_e, "b": y["b"]}
+        return {"f0": new_f0, "f10": new_f10, "f11": y["f11"], "e": new_e, "b": y["b"], "Z": y["Z"], "ni": y["ni"]}
