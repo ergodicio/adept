@@ -5,7 +5,7 @@ import itertools
 import yaml, pytest
 
 import numpy as np
-from jax.config import config
+from jax import config
 
 config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
