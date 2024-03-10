@@ -169,7 +169,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     cfg["grid"] = cfg_grid
 
-    return cfg_grid
+    return cfg
 
 
 def get_solver_quantities(cfg: Dict) -> Dict:

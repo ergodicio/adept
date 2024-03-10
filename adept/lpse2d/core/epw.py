@@ -84,7 +84,7 @@ class EPW2D(eqx.Module):
         self.wp0 = cfg["plasma"]["wp0"]
         self.n0 = np.sqrt(self.wp0)
         self.w0 = cfg["drivers"]["E0"]["w0"]
-        self.nuei = -cfg["units"]["derived"]["nuei_norm"]
+        self.nuei = 0.0  # -cfg["units"]["derived"]["nuei_norm"]
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
         self.dx = cfg["grid"]["dx"]

@@ -12,7 +12,7 @@ import mlflow
 import xarray as xr
 
 from theory import electrostatic
-from runner import run
+from utils.runner import run
 
 
 def _modify_defaults_(defaults):

@@ -94,7 +94,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    cfg = get_more_units(cfg)
+    # cfg = get_more_units(cfg)
 
     cfg["grid"] = cfg_grid
 
@@ -291,8 +291,8 @@ def get_more_units(cfg: Dict):
     :type cfg: object
     """
 
-    ureg = pint.UnitRegistry()
-    _Q = ureg.Quantity
+    # ureg = pint.UnitRegistry()
+    # _Q = ureg.Quantity
     import astropy.units as u
 
     n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
@@ -301,13 +301,14 @@ def get_more_units(cfg: Dict):
     v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
     c_light = _Q(1.0 * ureg.c).to("m/s") / v0
 
-    _nuei_ = fundamental_electron_collision_freq(
-        T_e=(Te := _Q(cfg["units"]["electron temperature"]).to("eV")).magnitude * u.eV,
-        n_e=n0.to("1/m^3").magnitude / u.m**3,
-        ion=f'{cfg["units"]["gas fill"]} {cfg["units"]["ionization state"]}+',
-    ).value
-    cfg["units"]["derived"]["nuei"] = _Q(f"{_nuei_} Hz")
-    cfg["units"]["derived"]["nuei_norm"] = (cfg["units"]["derived"]["nuei"].to("rad/s") / wp0).magnitude
+    _nuei_ = 0.0
+    # fundamental_electron_collision_freq(
+    #     T_e=(Te := _Q(cfg["units"]["electron temperature"]).to("eV")).magnitude * u.eV,
+    #     n_e=n0.to("1/m^3").magnitude / u.m**3,
+    #     ion=f'{cfg["units"]["gas fill"]} {cfg["units"]["ionization state"]}+',
+    # ).value
+    # cfg["units"]["derived"]["nuei"] = _Q(f"{_nuei_} Hz")
+    # cfg["units"]["derived"]["nuei_norm"] = (cfg["units"]["derived"]["nuei"].to("rad/s") / wp0).magnitude
 
     lambda_0 = _Q(cfg["units"]["laser wavelength"])
     laser_frequency = (2 * np.pi / lambda_0 * ureg.c).to("rad/s")
