@@ -1,6 +1,7 @@
 mode: envelope-2d
 
 density:
+  basis: uniform
   offset: 1.0
   slope: 0.0
   noise:

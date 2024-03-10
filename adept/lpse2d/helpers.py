@@ -14,6 +14,7 @@ import xarray as xr
 from plasmapy.formulary.collisions.frequencies import fundamental_electron_collision_freq
 
 from adept.lpse2d.core import integrator, driver
+from adept.tf1d.pushers import get_envelope
 
 
 def write_units(cfg, td):
@@ -223,15 +224,59 @@ def init_state(cfg: Dict, td=None) -> Dict:
     phi = random_amps * np.exp(1j * random_phases)
     phi = jnp.fft.fft2(phi)
 
-    ureg = pint.UnitRegistry()
-    _Q = ureg.Quantity
+    if cfg["density"]["basis"] == "uniform":
+        nprof = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
-    L = (
-        _Q(cfg["density"]["gradient scale length"]).to("nm").magnitude
-        / cfg["units"]["derived"]["x0"].to("nm").magnitude
-    )
-    nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - cfg["density"]["center"]) / L
-    nprof = jnp.repeat(nprof[:, None], cfg["grid"]["ny"], axis=1)
+    elif cfg["density"]["basis"] == "linear":
+        left = cfg["density"]["center"] - cfg["density"]["width"] * 0.5
+        right = cfg["density"]["center"] + cfg["density"]["width"] * 0.5
+        rise = cfg["density"]["rise"]
+        mask = get_envelope(rise, rise, left, right, cfg["grid"]["x"])
+
+        ureg = pint.UnitRegistry()
+        _Q = ureg.Quantity
+
+        L = (
+            _Q(cfg["density"]["gradient scale length"]).to("nm").magnitude
+            / cfg["units"]["derived"]["x0"].to("nm").magnitude
+        )
+        nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - cfg["density"]["center"]) / L
+        nprof = mask * nprof
+
+    elif cfg["density"]["basis"] == "exponential":
+        left = cfg["density"]["center"] - cfg["density"]["width"] * 0.5
+        right = cfg["density"]["center"] + cfg["density"]["width"] * 0.5
+        rise = cfg["density"]["rise"]
+        mask = get_envelope(rise, rise, left, right, cfg["grid"]["x"])
+
+        ureg = pint.UnitRegistry()
+        _Q = ureg.Quantity
+
+        L = (
+            _Q(cfg["density"]["gradient scale length"]).to("nm").magnitude
+            / cfg["units"]["derived"]["x0"].to("nm").magnitude
+        )
+        nprof = cfg["density"]["val at center"] * np.exp((cfg["grid"]["x"] - cfg["density"]["center"]) / L)
+        nprof = mask * nprof
+
+    elif cfg["density"]["basis"] == "tanh":
+        left = cfg["density"]["center"] - cfg["density"]["width"] * 0.5
+        right = cfg["density"]["center"] + cfg["density"]["width"] * 0.5
+        rise = cfg["density"]["rise"]
+        nprof = get_envelope(rise, rise, left, right, cfg["grid"]["x"])
+
+        if cfg["density"]["bump_or_trough"] == "trough":
+            nprof = 1 - nprof
+        nprof = cfg["density"]["baseline"] + cfg["density"]["bump_height"] * nprof
+
+    elif cfg["density"]["basis"] == "sine":
+        baseline = cfg["density"]["baseline"]
+        amp = cfg["density"]["amplitude"]
+        kk = cfg["density"]["wavenumber"]
+        nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
+    else:
+        raise NotImplementedError
+
     state = {
         "e0": e0,
         "nb": nprof,
@@ -410,7 +455,7 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
 
     plot_fields(fields, td)
-    plot_kt(kfields, td)
+    # plot_kt(kfields, td)
 
     return kfields, fields
 
