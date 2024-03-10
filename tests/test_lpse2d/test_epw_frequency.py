@@ -41,7 +41,9 @@ def _real_part_(kinetic):
         slc = np.fft.fft(np.real(flds["phi"][:, :, 0]).data, axis=1)[:, 1]
         dt = flds.coords["t"].data[2] - flds.coords["t"].data[1]
         amplitude_envelope, instantaneous_frequency_smooth = get_nlfs(slc, dt)
-        actual = np.mean(instantaneous_frequency_smooth[1024:-1024])
+
+        sz = instantaneous_frequency_smooth.size // 3
+        actual = np.mean(instantaneous_frequency_smooth[sz:-sz])
         mlflow.log_metrics({"actual wepw": actual, "desired wepw": desired})
 
     testing.assert_almost_equal(desired=desired, actual=actual, decimal=2)

@@ -4,7 +4,7 @@ from collections import defaultdict
 
 
 import matplotlib.pyplot as plt
-import jax, pint
+import jax, pint, yaml
 from jax import numpy as jnp
 import numpy as np
 from scipy import constants
@@ -14,6 +14,60 @@ import xarray as xr
 from plasmapy.formulary.collisions.frequencies import fundamental_electron_collision_freq
 
 from adept.lpse2d.core import integrator, driver
+
+
+def write_units(cfg, td):
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+
+    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
+    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
+
+    wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
+    tp0 = (1 / wp0).to("fs")
+
+    v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
+    x0 = (v0 / wp0).to("nm")
+    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
+    beta = (v0 / ureg.c).to("dimensionless")
+
+    box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("microns")
+    if "ymax" in cfg["grid"].keys():
+        box_width = ((cfg["grid"]["ymax"] - cfg["grid"]["ymin"]) * x0).to("microns")
+    else:
+        box_width = "inf"
+    sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
+
+    # collisions
+    logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
+    logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
+    nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
+    nuee_norm = nuee / wp0
+
+    all_quantities = {
+        "wp0": wp0,
+        "tp0": tp0,
+        "n0": n0,
+        "v0": v0,
+        "T0": T0,
+        "c_light": c_light,
+        "beta": beta,
+        "x0": x0,
+        "nuee": nuee,
+        "logLambda_ee": logLambda_ee,
+        "box_length": box_length,
+        "box_width": box_width,
+        "sim_duration": sim_duration,
+    }
+
+    cfg["units"]["derived"] = all_quantities
+
+    cfg["grid"]["beta"] = beta.magnitude
+
+    with open(os.path.join(td, "units.yaml"), "w") as fi:
+        yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
+
+    return cfg
 
 
 def get_derived_quantities(cfg: Dict) -> Dict:
@@ -40,7 +94,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    cfg = get_more_units(cfg)
+    # cfg = get_more_units(cfg)
 
     cfg["grid"] = cfg_grid
 
@@ -234,8 +288,8 @@ def get_more_units(cfg: Dict):
     :type cfg: object
     """
 
-    ureg = pint.UnitRegistry()
-    _Q = ureg.Quantity
+    # ureg = pint.UnitRegistry()
+    # _Q = ureg.Quantity
     import astropy.units as u
 
     n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
@@ -244,13 +298,14 @@ def get_more_units(cfg: Dict):
     v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
     c_light = _Q(1.0 * ureg.c).to("m/s") / v0
 
-    _nuei_ = fundamental_electron_collision_freq(
-        T_e=(Te := _Q(cfg["units"]["electron temperature"]).to("eV")).magnitude * u.eV,
-        n_e=n0.to("1/m^3").magnitude / u.m**3,
-        ion=f'{cfg["units"]["gas fill"]} {cfg["units"]["ionization state"]}+',
-    ).value
-    cfg["units"]["derived"]["nuei"] = _Q(f"{_nuei_} Hz")
-    cfg["units"]["derived"]["nuei_norm"] = (cfg["units"]["derived"]["nuei"].to("rad/s") / wp0).magnitude
+    _nuei_ = 0.0
+    # fundamental_electron_collision_freq(
+    #     T_e=(Te := _Q(cfg["units"]["electron temperature"]).to("eV")).magnitude * u.eV,
+    #     n_e=n0.to("1/m^3").magnitude / u.m**3,
+    #     ion=f'{cfg["units"]["gas fill"]} {cfg["units"]["ionization state"]}+',
+    # ).value
+    # cfg["units"]["derived"]["nuei"] = _Q(f"{_nuei_} Hz")
+    # cfg["units"]["derived"]["nuei_norm"] = (cfg["units"]["derived"]["nuei"].to("rad/s") / wp0).magnitude
 
     lambda_0 = _Q(cfg["units"]["laser wavelength"])
     laser_frequency = (2 * np.pi / lambda_0 * ureg.c).to("rad/s")
