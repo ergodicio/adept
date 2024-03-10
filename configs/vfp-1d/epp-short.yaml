@@ -1,6 +1,6 @@
 units:
   laser wavelength: 351nm
-  reference electron temperature: 500eV
+  reference electron temperature: 2000eV
   reference ion temperature: 500eV
   reference electron density: 1.5e21/cm^3
   Z: 30
@@ -67,7 +67,7 @@ drivers:
 terms:
   fokker_planck:
     flm:
-      ee_offdiag: false
+      ee: true
     f00:
       type: Dougherty
   e_solver: oshun

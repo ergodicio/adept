@@ -122,8 +122,16 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
 
 def calc_kappa(cfg: Dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> xr.DataArray:
 
-    kappa = q.data / -np.gradient(np.square(T * 3.0), cfg["grid"]["dx"], axis=1)
-    kappa = kappa / (n.data / cfg["units"]["derived"]["nuei0_norm"] / 18.0)
+    # kappa = q.data / -np.gradient(np.square(T * 3.0), cfg["grid"]["dx"], axis=1)
+    # kappa = kappa / (n.data / cfg["units"]["derived"]["nuei0_norm"] / 18.0)
+
+    kappa = (
+        -q.data
+        / n.data
+        / T.data
+        / np.gradient(T.data, cfg["grid"]["dx"], axis=1)
+        * (cfg["units"]["derived"]["nuei_shk"] / cfg["units"]["derived"]["wp0"]).to("").value
+    ) / (3 * np.sqrt(2))
 
     return xr.DataArray(kappa, coords=(("t (ps)", T.coords["t (ps)"].data), ("x (um)", T.coords["x (um)"].data)))
 
@@ -284,8 +292,8 @@ def get_field_save_func(cfg, k):
 
         def fields_save_func(t, y, args):
             temp = {"n": _calc_f0_moment_(y["f0"]), "v": _calc_f1_moment_(y["f10"])}
-            temp["U"] = _calc_f0_moment_(0.5 * y["f0"] * cfg["grid"]["v"] ** 2.0)
-            temp["P"] = temp["U"] / 1.5
+            temp["U"] = _calc_f0_moment_(y["f0"] * cfg["grid"]["v"] ** 2.0)
+            temp["P"] = temp["U"] / 3.0
             temp["T"] = temp["P"] / temp["n"]
             temp["q"] = _calc_f1_moment_(0.5 * y["f10"] * cfg["grid"]["v"] ** 2.0)
             temp["e"] = y["e"]
@@ -353,11 +361,11 @@ def get_default_save_func(cfg):
         return 4 * jnp.pi * jnp.trapz(f0 * cfg["grid"]["v"] ** 2.0, dx=cfg["grid"]["dv"], axis=1)
 
     def _calc_f1_moment_(f1):
-        return 4 / 3 * jnp.pi * jnp.trapz(f1 * cfg["grid"]["v"] ** 2.0, dx=cfg["grid"]["dv"], axis=1)
+        return 4 / 3 * jnp.pi * jnp.trapz(f1 * cfg["grid"]["v"] ** 3.0, dx=cfg["grid"]["dv"], axis=1)
 
     def save(t, y, args):
         scalars = {
-            "mean_U": jnp.mean(0.5 * _calc_f0_moment_(y["f0"] * v**2.0)),
+            "mean_U": jnp.mean(_calc_f0_moment_(y["f0"] * v**2.0)),
             "mean_j": jnp.mean(_calc_f1_moment_(y["f10"])),
             "mean_n": jnp.mean(_calc_f0_moment_(y["f0"])),
             "mean_q": jnp.mean(_calc_f1_moment_(0.5 * y["f10"] * v**2.0)),

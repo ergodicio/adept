@@ -166,8 +166,8 @@ class OSHUN1D:
         return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
 
     def ddx(self, f):
-        # periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
-        return jnp.gradient(f, self.dx, axis=0)  # [1:-1]
+        periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
+        return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
 
     def calc_j(self, f1):
         return -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
@@ -325,7 +325,7 @@ class OSHUN1D:
         # explicit push for v df/dx
         f0_star, f10_star = self.push_vdfdx(f0, f10)
         # implicit solve f00 coll
-        f0_star = self.lb(None, f0_star, self.dt)
+        # f0_star = self.lb(None, f0_star, self.dt)
 
         # implicit solve for E
         if self.e_solver == "oshun":  # implicit E, explicit f0, f1 with this Taylor expansion of J method

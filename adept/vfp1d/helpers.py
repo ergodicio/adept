@@ -47,12 +47,11 @@ def write_units(cfg, td):
     wp0 = np.sqrt(n0 * csts.e.to("C") ** 2.0 / (csts.m_e * csts.eps0)).to("Hz")
     tp0 = (1 / wp0).to("fs")
 
-    vthe = np.sqrt(2.0 * Te / csts.m_e).to("m/s")
-    c_light = u.Quantity(1.0 * csts.c).to("m/s")
+    vth = np.sqrt(2 * Te / csts.m_e).to("m/s")  # mean square velocity eq 4-51a in Shkarofsky
 
-    x0 = (c_light / wp0).to("nm")
+    x0 = (csts.c / wp0).to("nm")
 
-    beta_e = vthe / c_light
+    beta = vth / csts.c
 
     box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("micron")
     if "ymax" in cfg["grid"].keys():
@@ -67,24 +66,47 @@ def write_units(cfg, td):
     nD_NRL = 1.72e9 * Te.value**1.5 / np.sqrt(ne.value)
     nD_Shkarofsky = np.exp(logLambda_ei) * Z / 9
 
-    nuei0 = np.sqrt(2 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
-    lambda_mfp0 = (vthe / nuei0).to("micron")
+    nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
+    lambda_mfp0 = (vth / nuei_shk).to("micron")
+
+    # Both will be multiplied by n_i or n_e / v^3
+    nuei_coeff = (
+        4
+        * np.pi
+        * n0
+        * (Z * csts.e.to("C") ** 2.0 / (4 * np.pi * csts.eps0 * csts.m_e)) ** 2.0
+        * logLambda_ei
+        / csts.c**3.0
+    ).to("Hz") / wp0
+    nuee_coeff = (
+        4
+        * np.pi
+        * n0
+        * (csts.e.to("C") ** 2.0 / (4 * np.pi * csts.eps0 * csts.m_e)) ** 2.0
+        * logLambda_ee
+        / csts.c**3.0
+    ).to("Hz") / wp0
+
+    # nuei_epphaines = (
+    #     0.75 * np.sqrt(csts.m_e) * Te**1.5 / (np.sqrt(2 * np.pi) * ni * Z**2.0 * csts.e.to("C") ** 4.0 * logLambda_ei)
+    # )
 
     all_quantities = {
         "wp0": wp0,
         "n0": n0,
         "tp0": tp0,
         "ne": ne,
-        "vthe": vthe,
+        "vth": vth,
         "Te": Te,
         "Ti": Ti,
         "logLambda_ei": logLambda_ei,
         "logLambda_ee": logLambda_ee,
-        "c_light": c_light,
-        "beta": beta_e,
+        "beta": beta,
         "x0": x0,
-        "nuei0": nuei0,
-        "nuei0_norm": nuei0 / wp0,
+        "nuee_coeff": nuee_coeff,
+        "nuei_coeff": nuei_coeff,
+        "nuei_shk": nuei_shk,
+        # "nuei_epphaines": nuei_epphaines,
         "lambda_mfp0": lambda_mfp0,
         "nD_NRL": nD_NRL,
         "nD_Shkarofsky": nD_Shkarofsky,
@@ -94,7 +116,7 @@ def write_units(cfg, td):
     }
 
     cfg["units"]["derived"] = all_quantities
-    cfg["grid"]["beta"] = beta_e.value
+    cfg["grid"]["beta"] = beta.value
 
     with open(os.path.join(td, "units.yaml"), "w") as fi:
         yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
@@ -175,11 +197,13 @@ def _initialize_distribution_(
     # alpha = np.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
     # cst = m / (4 * np.pi * alpha**3.0 * gamma(3.0 / m))
 
+    # single_dist = np.exp(-3 * (vax**2.0) / (2 * vth**2.0)) / (2 * np.pi * vth**2.0) ** 1.5
+    # norm = 1.0 / np.sum(4 * np.pi * single_dist * vax**2.0 * dv, axis=0)
+
     f = np.zeros([nx, nv])
     for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
-        single_dist = -vax[None, :] ** 2.0 / (tt * vth**2.0)
-        single_dist = np.exp(single_dist)
-        single_dist = single_dist / np.sum(4 * np.pi * single_dist * vax**2.0 * dv, axis=1)
+        # eq 4-51b in Shkarofsky
+        single_dist = (2 * np.pi * tt * (vth**2.0 / 2)) ** -1.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0 / 2)))
         f[ix, :] = tn * single_dist
 
     # if noise_type.casefold() == "uniform":
@@ -275,12 +299,19 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     :return:
     """
     cfg_grid = cfg["grid"]
+    # cfg_grid["xmax"] = u.Quantity(cfg_grid["xmax"])
 
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-    cfg_grid["vmax"] = cfg_grid["vmax"] * cfg["grid"]["beta"]
+
+    # sqrt(2 * k * T / m)
+    cfg_grid["vmax"] = (
+        8
+        * np.sqrt((u.Quantity(cfg["units"]["reference electron temperature"]) / (csts.m_e * csts.c**2.0)).to("")).value
+    )
+
     cfg_grid["dv"] = cfg_grid["vmax"] / cfg_grid["nv"]
 
-    cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
+    cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"]) + 1
 
     if cfg_grid["nt"] > 1e6:
         cfg_grid["max_steps"] = int(1e6)
@@ -337,11 +368,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["x"]) + cfg_grid["x"]
 
     cfg_grid["x_a"] = np.concatenate(
-        [
-            [cfg_grid["x"][0] - cfg_grid["dx"]],
-            cfg_grid["x"],
-            [cfg_grid["x"][-1] + cfg_grid["dx"]],
-        ]
+        [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
     )
 
     return cfg_grid
