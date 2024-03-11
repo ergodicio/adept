@@ -104,7 +104,7 @@ class FLMCollisions:
             * self.dv
         )
 
-    def get_offdiagonal_contrib(self, t, y, args):
+    def get_ee_offdiagonal_contrib(self, t, y, args):
         ddv = args["ddvf0"]
         d2dv2 = args["d2dv2f0"]
         il = args["il"]
@@ -115,9 +115,9 @@ class FLMCollisions:
         term3 = (self.a2[il] * d2dv2 + self.b3[il] * ddv) * self.calc_ros_i(flm, power=il)
         term4 = (self.a2[il] * d2dv2 + self.b4[il] * ddv) * self.calc_ros_j(flm, power=1.0 - il)
 
-        return self.nuee_coeff * (term1 + term2 + term3 + term4)
+        return term1 + term2 + term3 + term4
 
-    def get_ee_contrib(self, f0):
+    def get_ee_diagonal_contrib(self, f0):
         i0 = 4 * jnp.pi * jnp.cumsum(self.v[None, :] ** 2.0 * f0, axis=1) * self.dv
         jm1 = 4 * jnp.pi / self.v[None, :] * jnp.cumsum((self.v[None, :] * f0)[:, ::-1], axis=1)[:, ::-1] * self.dv
         i2 = 4 * jnp.pi * self.v[None, :] ** 2.0 * jnp.cumsum(self.v[None, :] ** 4.0 * f0, axis=1) * self.dv
@@ -191,7 +191,7 @@ class FLMCollisions:
         return lx.linear_solve(op, f10, solver=lx.SVD()).value
 
     def __call__(self, Z, ni, f0, f10, dt):
-        ee_diag, ee_lower, ee_upper = self.get_ee_contrib(f0)
+        ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
 
         for il in range(1, self.nl + 1):
             ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / self.v[None, :] ** 3.0
@@ -209,12 +209,12 @@ class FLMCollisions:
 
                 new_f10 = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, f10)
 
-                new_f10 = new_f10 + dt * self.get_offdiagonal_contrib(
+                new_f10 = new_f10 + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
                     None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
                 )
 
                 # new_f10 = diffrax.diffeqsolve(
-                #     diffrax.ODETerm(self.get_offdiagonal_contrib),
+                #     diffrax.ODETerm(self.get_ee_offdiagonal_contrib),
                 #     solver=diffrax.Tsit5(),
                 #     t0=0.0,
                 #     t1=dt,
