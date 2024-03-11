@@ -121,17 +121,24 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
 
 
 def calc_kappa(cfg: Dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> xr.DataArray:
+    """
+    This rescales using the EH tau ei.
 
-    # kappa = q.data / -np.gradient(np.square(T * 3.0), cfg["grid"]["dx"], axis=1)
-    # kappa = kappa / (n.data / cfg["units"]["derived"]["nuei0_norm"] / 18.0)
+    This does NOT work with nuei_shk and nuei_NRL
+
+    It needs a Z dependence which those other two do not have except maybe through the log Lambda.
+
+    1. Epperlein, E. M. & Haines, M. G. Plasma transport coefficients in a magnetic field by direct numerical solution of the Fokker–Planck equation. Physics of Fluids 29, 1029 (1986).
+
+    """
 
     kappa = (
         -q.data
         / n.data
         / T.data
         / np.gradient(T.data, cfg["grid"]["dx"], axis=1)
-        * (cfg["units"]["derived"]["nuei_shk"] / cfg["units"]["derived"]["wp0"]).to("").value
-    ) / (3 * np.sqrt(2))
+        * (cfg["units"]["derived"]["nuei_epphaines"] / cfg["units"]["derived"]["wp0"]).to("").value
+    )
 
     return xr.DataArray(kappa, coords=(("t (ps)", T.coords["t (ps)"].data), ("x (um)", T.coords["x (um)"].data)))
 
@@ -285,10 +292,10 @@ def get_field_save_func(cfg, k):
     if {"t"} == set(cfg["save"][k].keys()):
 
         def _calc_f0_moment_(f0):
-            return 4 * jnp.pi * jnp.trapz(f0 * cfg["grid"]["v"] ** 2.0, dx=cfg["grid"]["dv"], axis=1)
+            return 4 * jnp.pi * jnp.sum(f0 * cfg["grid"]["v"] ** 2.0, axis=1) * cfg["grid"]["dv"]
 
         def _calc_f1_moment_(f1):
-            return 4 / 3 * jnp.pi * jnp.trapz(f1 * cfg["grid"]["v"] ** 3.0, dx=cfg["grid"]["dv"], axis=1)
+            return 4 / 3 * jnp.pi * jnp.sum(f1 * cfg["grid"]["v"] ** 3.0, axis=1) * cfg["grid"]["dv"]
 
         def fields_save_func(t, y, args):
             temp = {"n": _calc_f0_moment_(y["f0"]), "v": _calc_f1_moment_(y["f10"])}
@@ -358,10 +365,10 @@ def get_default_save_func(cfg):
     dv = cfg["grid"]["dv"]
 
     def _calc_f0_moment_(f0):
-        return 4 * jnp.pi * jnp.trapz(f0 * cfg["grid"]["v"] ** 2.0, dx=cfg["grid"]["dv"], axis=1)
+        return 4 * jnp.pi * jnp.sum(f0 * cfg["grid"]["v"] ** 2.0, axis=1) * cfg["grid"]["dv"]
 
     def _calc_f1_moment_(f1):
-        return 4 / 3 * jnp.pi * jnp.trapz(f1 * cfg["grid"]["v"] ** 3.0, dx=cfg["grid"]["dv"], axis=1)
+        return 4 / 3 * jnp.pi * jnp.sum(f1 * cfg["grid"]["v"] ** 3.0, axis=1) * cfg["grid"]["dv"]
 
     def save(t, y, args):
         scalars = {

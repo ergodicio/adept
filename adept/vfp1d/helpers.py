@@ -61,35 +61,20 @@ def write_units(cfg, td):
     sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
 
     logLambda_ei, logLambda_ee = calc_logLambda(cfg, ne, Te, Z, ion_species)
-    # logLambda_ee = logLambda_ei
+    logLambda_ee = logLambda_ei
 
     nD_NRL = 1.72e9 * Te.value**1.5 / np.sqrt(ne.value)
     nD_Shkarofsky = np.exp(logLambda_ei) * Z / 9
 
     nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
-    lambda_mfp0 = (vth / nuei_shk).to("micron")
+    nuei_nrl = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / nD_NRL
 
-    # Both will be multiplied by n_i or n_e / v^3
-    nuei_coeff = (
-        4
-        * np.pi
-        * n0
-        * (Z * csts.e.to("C") ** 2.0 / (4 * np.pi * csts.eps0 * csts.m_e)) ** 2.0
-        * logLambda_ei
-        / csts.c**3.0
-    ).to("Hz") / wp0
-    nuee_coeff = (
-        4
-        * np.pi
-        * n0
-        * (csts.e.to("C") ** 2.0 / (4 * np.pi * csts.eps0 * csts.m_e)) ** 2.0
-        * logLambda_ee
-        / csts.c**3.0
-    ).to("Hz") / wp0
+    lambda_mfp_shk = (vth / nuei_shk).to("micron")
+    lambda_mfp_nrl = (vth / nuei_nrl).to("micron")
 
-    # nuei_epphaines = (
-    #     0.75 * np.sqrt(csts.m_e) * Te**1.5 / (np.sqrt(2 * np.pi) * ni * Z**2.0 * csts.e.to("C") ** 4.0 * logLambda_ei)
-    # )
+    nuei_epphaines = (
+        1 / (0.75 * np.sqrt(csts.m_e) * Te**1.5 / (np.sqrt(2 * np.pi) * ni * Z**2.0 * csts.e.gauss**4.0 * logLambda_ei))
+    ).to("Hz")
 
     all_quantities = {
         "wp0": wp0,
@@ -103,11 +88,15 @@ def write_units(cfg, td):
         "logLambda_ee": logLambda_ee,
         "beta": beta,
         "x0": x0,
-        "nuee_coeff": nuee_coeff,
-        "nuei_coeff": nuei_coeff,
         "nuei_shk": nuei_shk,
-        # "nuei_epphaines": nuei_epphaines,
-        "lambda_mfp0": lambda_mfp0,
+        "nuei_nrl": nuei_nrl,
+        "nuei_epphaines": nuei_epphaines,
+        "nuei_shk_norm": nuei_shk / wp0,
+        "nuei_nrl_norm": nuei_nrl / wp0,
+        "nuei_epphaines_norm": nuei_epphaines / wp0,
+        "lambda_mfp_shk": lambda_mfp_shk,
+        "lambda_mfp_nrl": lambda_mfp_nrl,
+        "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
         "nD_NRL": nD_NRL,
         "nD_Shkarofsky": nD_Shkarofsky,
         "box_length": box_length,
@@ -374,7 +363,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict) -> Dict:
+def init_state(cfg: Dict, td=None) -> Dict:
     """
     This function initializes the state
 

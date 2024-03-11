@@ -15,17 +15,9 @@ class LenardBernstein:
         self.ones = jnp.ones(2 * self.cfg["grid"]["nv"])
         self.refl_v = jnp.concatenate([-self.v[::-1], self.v])
         self.midpt = self.cfg["grid"]["nv"]
-        # r_e = 2.8179402894e-13
-        # c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
-
-        # self.nuee_coeff = (
-        #     cfg["units"]["derived"]["nuei0_norm"].value
-        #     * (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
-        #     / cfg["units"]["Z"]
-        # )
-
-        # self.nuee_coeff = 4.0 * np.pi / 3.0 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
-        self.nuee_coeff = cfg["units"]["derived"]["nuee_coeff"]
+        r_e = 2.8179402894e-13
+        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
     def _solve_one_vslice_(self, nu: jnp.float64, f0: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         operator = self._get_operator_(nu, f0, dt)
@@ -69,7 +61,7 @@ class FLMCollisions:
         #     cfg["units"]["derived"]["nuei0_norm"].value
         #     * (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
         # )
-        self.nuee_coeff = 4 * np.pi / 3 / self.Z * kpre * cfg["units"]["derived"]["logLambda_ee"]
+        self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
         self.nuei_coeff = (
             kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
         )  # will be multiplied by ni = ne / Z
@@ -81,7 +73,7 @@ class FLMCollisions:
         self.nl = cfg["grid"]["nl"]
         self.ee = cfg["terms"]["fokker_planck"]["flm"]["ee"]
 
-        self.Z_nuei_scaling = (cfg["units"]["Z"] + 0.24) / (cfg["units"]["Z"] + 4.2)
+        self.Z_nuei_scaling = (cfg["units"]["Z"] + 4.2) / (cfg["units"]["Z"] + 0.24)
 
         self.a1, self.a2, self.b1, self.b2, self.b3, self.b4 = (
             np.zeros(self.nl + 1),
@@ -203,6 +195,7 @@ class FLMCollisions:
 
         for il in range(1, self.nl + 1):
             ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / self.v[None, :] ** 3.0
+
             if self.ee:
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
                 d2dv2 = (
@@ -216,19 +209,23 @@ class FLMCollisions:
 
                 new_f10 = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, f10)
 
-                new_f10 = diffrax.diffeqsolve(
-                    diffrax.ODETerm(self.get_offdiagonal_contrib),
-                    solver=diffrax.Tsit5(),
-                    t0=0.0,
-                    t1=dt,
-                    dt0=dt / 4.0,
-                    y0=new_f10,
-                    args={"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il},
-                ).ys[-1]
+                new_f10 = new_f10 + dt * self.get_offdiagonal_contrib(
+                    None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
+                )
 
-                # new_f10 = vmap(self._solve_one_x_dense_, in_axes=(0, 0, 0, 0, None))(f0, f10, Z, ni, dt)
+                # new_f10 = diffrax.diffeqsolve(
+                #     diffrax.ODETerm(self.get_offdiagonal_contrib),
+                #     solver=diffrax.Tsit5(),
+                #     t0=0.0,
+                #     t1=dt,
+                #     dt0=dt,
+                #     y0=new_f10,
+                #     args={"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il},
+                # ).ys[-1]
 
             else:
-                new_f10 = f10 / (1 - dt * self.nuei_coeff / self.Z_nuei_scaling * ei_diag)
+                # only uses the Z* epperlein haines scaling instead of solving the ee collisions
+
+                new_f10 = f10 / (1 - dt * self.nuei_coeff * self.Z_nuei_scaling * ei_diag)
 
         return new_f10
