@@ -2,7 +2,6 @@ from jax import numpy as jnp
 from jax import vmap
 import numpy as np
 import lineax as lx
-import diffrax
 
 
 class LenardBernstein:
@@ -57,18 +56,10 @@ class FLMCollisions:
         r_e = 2.8179402894e-13
         kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         kpre = r_e * kp
-        # self.nuei_coeff = (
-        #     cfg["units"]["derived"]["nuei0_norm"].value
-        #     * (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
-        # )
         self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
         self.nuei_coeff = (
             kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
         )  # will be multiplied by ni = ne / Z
-        # self.nuei_coeff = cfg["units"]["derived"]["nuei_coeff"].to("").value
-        # self.nuee_coeff = cfg["units"]["derived"]["nuee_coeff"].to("").value
-
-        # c_kpre * cfg["units"]["derived"]["logLambda_ee"] * np.pi * 4.0 / 3.0
 
         self.nl = cfg["grid"]["nl"]
         self.ee = cfg["terms"]["fokker_planck"]["flm"]["ee"]
@@ -110,17 +101,18 @@ class FLMCollisions:
         il = args["il"]
         flm = y
 
-        term1 = (self.a1[il] * d2dv2 + self.b1[il] * ddv) * self.calc_ros_i(flm, power=2.0 + il)
-        term2 = (self.a1[il] * d2dv2 + self.b2[il] * ddv) * self.calc_ros_j(flm, power=-il - 1.0)
-        term3 = (self.a2[il] * d2dv2 + self.b3[il] * ddv) * self.calc_ros_i(flm, power=il)
-        term4 = (self.a2[il] * d2dv2 + self.b4[il] * ddv) * self.calc_ros_j(flm, power=1.0 - il)
+        contrib = (self.a1[il] * d2dv2 + self.b1[il] * ddv) * self.calc_ros_i(flm, power=2.0 + il)
+        contrib += (self.a1[il] * d2dv2 + self.b2[il] * ddv) * self.calc_ros_j(flm, power=-il - 1.0)
+        contrib += (self.a2[il] * d2dv2 + self.b3[il] * ddv) * self.calc_ros_i(flm, power=il)
+        if il > 1:
+            contrib += (self.a2[il] * d2dv2 + self.b4[il] * ddv) * self.calc_ros_j(flm, power=1.0 - il)
 
-        return term1 + term2 + term3 + term4
+        return contrib
 
     def get_ee_diagonal_contrib(self, f0):
-        i0 = 4 * jnp.pi * jnp.cumsum(self.v[None, :] ** 2.0 * f0, axis=1) * self.dv
-        jm1 = 4 * jnp.pi / self.v[None, :] * jnp.cumsum((self.v[None, :] * f0)[:, ::-1], axis=1)[:, ::-1] * self.dv
-        i2 = 4 * jnp.pi * self.v[None, :] ** 2.0 * jnp.cumsum(self.v[None, :] ** 4.0 * f0, axis=1) * self.dv
+        i0 = self.calc_ros_i(f0, power=0.0)
+        jm1 = self.calc_ros_j(f0, power=-1.0)
+        i2 = self.calc_ros_i(f0, power=2.0)
 
         diag_term1 = 8 * jnp.pi * f0
 
@@ -146,50 +138,6 @@ class FLMCollisions:
         op = lx.TridiagonalLinearOperator(diagonal=diag, upper_diagonal=upper, lower_diagonal=lower)
         return lx.linear_solve(op, f10, solver=lx.Tridiagonal()).value
 
-    def _solve_one_x_dense_(self, f0, f10, Z, ni, dt):
-        il = 1
-        i0 = 4 * jnp.pi * jnp.cumsum(self.v**2.0 * f0) * self.dv
-        jm1 = 4 * jnp.pi / self.v * jnp.cumsum((self.v * f0)[::-1])[::-1] * self.dv
-        i2 = 4 * jnp.pi * self.v**2.0 * jnp.cumsum(self.v**4.0 * f0) * self.dv
-        term1 = 8 * jnp.pi * f0
-        c_d2dv2 = (i2 + jm1) / (3.0 * self.v)
-        c_ang = -(-i2 + 2 * jm1 + 3 * i0) / (3.0 * self.v**3.0)
-        c_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * self.v**2.0)
-
-        pad_f0 = jnp.concatenate([f0[1::-1], f0])
-        d2dv2f0 = 0.5 / self.v * jnp.gradient(jnp.gradient(pad_f0, self.dv), self.dv)[2:]
-        ddvf0 = self.v**-2.0 * jnp.gradient(pad_f0, self.dv)[2:]
-
-        c_o1 = self.a1[il] * d2dv2f0 + self.b1[il] * ddvf0
-        c_o2 = self.a1[il] * d2dv2f0 + self.b2[il] * ddvf0
-        c_o3 = self.a2[il] * d2dv2f0 + self.b3[il] * ddvf0
-        c_o4 = self.a2[il] * d2dv2f0 + self.b4[il] * ddvf0
-
-        c_ang_ei = -il * (il + 1) / 2.0 * (Z**2.0) * ni / self.v**3.0
-
-        def __implicit_ee__(this_flm):
-            d2dv2flm = c_d2dv2 * jnp.gradient(jnp.gradient(this_flm, self.dv), self.dv)
-            angular = c_ang * this_flm
-            ddvflm = c_ddv * jnp.gradient(this_flm, self.dv)
-
-            offdiag_term1 = c_o1 * self.calc_ros_i(this_flm, power=2.0 + il)
-            offdiag_term2 = c_o2 * self.calc_ros_j(this_flm, power=-il - 1.0)
-            offdiag_term3 = c_o3 * self.calc_ros_i(this_flm, power=il)
-            offdiag_term4 = c_o4 * self.calc_ros_j(this_flm, power=1.0 - il)
-
-            ang_ei = c_ang_ei * this_flm
-
-            dflmdt_ee = self.nuee_coeff * (
-                term1 + angular + ddvflm + d2dv2flm + offdiag_term1 + offdiag_term2 + offdiag_term3 + offdiag_term4
-            )
-
-            dflmdt_ei = self.nuei_coeff * ang_ei
-
-            return this_flm - dt * (dflmdt_ee + dflmdt_ei)
-
-        op = lx.FunctionLinearOperator(__implicit_ee__, input_structure=f10)
-        return lx.linear_solve(op, f10, solver=lx.SVD()).value
-
     def __call__(self, Z, ni, f0, f10, dt):
         ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
 
@@ -198,9 +146,11 @@ class FLMCollisions:
 
             if self.ee:
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
+                #
                 d2dv2 = (
                     0.5 / self.v[None, :] * jnp.gradient(jnp.gradient(pad_f0, self.dv, axis=1), self.dv, axis=1)[:, 2:]
                 )
+
                 ddv = self.v[None, :] ** -2.0 * jnp.gradient(pad_f0, self.dv, axis=1)[:, 2:]
 
                 diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)
@@ -213,19 +163,8 @@ class FLMCollisions:
                     None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
                 )
 
-                # new_f10 = diffrax.diffeqsolve(
-                #     diffrax.ODETerm(self.get_ee_offdiagonal_contrib),
-                #     solver=diffrax.Tsit5(),
-                #     t0=0.0,
-                #     t1=dt,
-                #     dt0=dt,
-                #     y0=new_f10,
-                #     args={"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il},
-                # ).ys[-1]
-
             else:
                 # only uses the Z* epperlein haines scaling instead of solving the ee collisions
-
                 new_f10 = f10 / (1 - dt * self.nuei_coeff * self.Z_nuei_scaling * ei_diag)
 
         return new_f10
