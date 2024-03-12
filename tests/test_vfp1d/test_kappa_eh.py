@@ -1,14 +1,21 @@
 import os, yaml, mlflow, numpy as np, pytest
+import os, yaml, mlflow, numpy as np, pytest
 
 from utils.runner import run
 
 
+def _run_(Z, ee):
 def _run_(Z, ee):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
     with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d/epp-short')}.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
     cfg["units"]["Z"] = Z
+
+    if ee:
+        cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
+        cfg["grid"]["nv"] = 2048
+
 
     if ee:
         cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
