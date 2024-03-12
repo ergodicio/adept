@@ -19,13 +19,21 @@ def _run_(Z, ee):
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
         result, datasets = run(cfg)
 
+    dataT = datasets["fields"]["fields-T keV"].data
+    np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=5)
+
+    datan = datasets["fields"]["fields-n n_c"].data
+    np.testing.assert_almost_equal(np.mean(datan[-4, :]), np.mean(datan[4, :]), decimal=5)
+
     kappa_eh = mlflow.get_run(mlflow_run.info.run_id).data.metrics["kappa_eh"]
     kappa = mlflow.get_run(mlflow_run.info.run_id).data.metrics["kappa"]
-    return kappa, kappa_eh
+
+    np.testing.assert_almost_equal(kappa, kappa_eh, decimal=0)
+
+    return mlflow_run.info.run_id
 
 
 @pytest.mark.parametrize("Z", list(range(1, 21, 4)) + [40, 60, 80])
 @pytest.mark.parametrize("ee", [True, False])
 def test_kappa_eh(Z, ee):
-    kappa, kappa_eh = _run_(Z, ee)
-    np.testing.assert_almost_equal(kappa, kappa_eh, decimal=0)
+    _run_(Z, ee)
