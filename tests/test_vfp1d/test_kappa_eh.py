@@ -1,14 +1,19 @@
-import os, yaml, mlflow, numpy as np
+import os, yaml, mlflow, numpy as np, pytest
 
 from utils.runner import run
 
 
-def _run_(Z):
+def _run_(Z, ee):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
     with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d/epp-short')}.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
     cfg["units"]["Z"] = Z
+
+    if ee:
+        cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
+        cfg["grid"]["nv"] = 2048
+
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
@@ -19,12 +24,8 @@ def _run_(Z):
     return kappa, kappa_eh
 
 
-def test_kappa_eh():
-    actual = []
-    desired = []
-    for Z in list(range(1, 21, 4)) + [40, 60, 80]:
-        kappa, kappa_eh = _run_(Z)
-        actual.append(kappa)
-        desired.append(kappa_eh)
-
-    np.testing.assert_allclose(actual, desired, rtol=0.2)
+@pytest.mark.parametrize("Z", list(range(1, 21, 4)) + [40, 60, 80])
+@pytest.mark.parametrize("ee", [True, False])
+def test_kappa_eh(Z, ee):
+    kappa, kappa_eh = _run_(Z, ee)
+    np.testing.assert_almost_equal(kappa, kappa_eh, decimal=0)

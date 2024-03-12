@@ -57,18 +57,10 @@ class FLMCollisions:
         r_e = 2.8179402894e-13
         kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         kpre = r_e * kp
-        # self.nuei_coeff = (
-        #     cfg["units"]["derived"]["nuei0_norm"].value
-        #     * (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
-        # )
         self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
         self.nuei_coeff = (
             kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
         )  # will be multiplied by ni = ne / Z
-        # self.nuei_coeff = cfg["units"]["derived"]["nuei_coeff"].to("").value
-        # self.nuee_coeff = cfg["units"]["derived"]["nuee_coeff"].to("").value
-
-        # c_kpre * cfg["units"]["derived"]["logLambda_ee"] * np.pi * 4.0 / 3.0
 
         self.nl = cfg["grid"]["nl"]
         self.ee = cfg["terms"]["fokker_planck"]["flm"]["ee"]
@@ -110,17 +102,24 @@ class FLMCollisions:
         il = args["il"]
         flm = y
 
-        term1 = (self.a1[il] * d2dv2 + self.b1[il] * ddv) * self.calc_ros_i(flm, power=2.0 + il)
-        term2 = (self.a1[il] * d2dv2 + self.b2[il] * ddv) * self.calc_ros_j(flm, power=-il - 1.0)
-        term3 = (self.a2[il] * d2dv2 + self.b3[il] * ddv) * self.calc_ros_i(flm, power=il)
-        term4 = (self.a2[il] * d2dv2 + self.b4[il] * ddv) * self.calc_ros_j(flm, power=1.0 - il)
+        contrib = (self.a1[il] * d2dv2 + self.b1[il] * ddv) * self.calc_ros_i(flm, power=2.0 + il)
+        contrib += (self.a1[il] * d2dv2 + self.b2[il] * ddv) * self.calc_ros_j(flm, power=-il - 1.0)
+        contrib += (self.a2[il] * d2dv2 + self.b3[il] * ddv) * self.calc_ros_i(flm, power=il)
+        if il > 1:
+            contrib += (self.a2[il] * d2dv2 + self.b4[il] * ddv) * self.calc_ros_j(flm, power=1.0 - il)
+        # i31 = self.calc_ros_i(flm, power=3.0)
+        # jm21 = self.calc_ros_j(flm, power=-2.0)
+        # i11 = self.calc_ros_i(flm, power=1.0)
 
-        return term1 + term2 + term3 + term4
+        # term1 = 1 / 5.0 / self.v[None, :] * (i31 + jm21) * d2dv2
+        # term2 = 1 / 30.0 / self.v[None, :] ** 2.0 * (-6 * i31 + 4 * jm21 + 10 * i11) * ddv
+
+        return contrib
 
     def get_ee_diagonal_contrib(self, f0):
-        i0 = 4 * jnp.pi * jnp.cumsum(self.v[None, :] ** 2.0 * f0, axis=1) * self.dv
-        jm1 = 4 * jnp.pi / self.v[None, :] * jnp.cumsum((self.v[None, :] * f0)[:, ::-1], axis=1)[:, ::-1] * self.dv
-        i2 = 4 * jnp.pi * self.v[None, :] ** 2.0 * jnp.cumsum(self.v[None, :] ** 4.0 * f0, axis=1) * self.dv
+        i0 = self.calc_ros_i(f0, power=0.0)
+        jm1 = self.calc_ros_j(f0, power=-1.0)
+        i2 = self.calc_ros_i(f0, power=2.0)
 
         diag_term1 = 8 * jnp.pi * f0
 
@@ -198,9 +197,11 @@ class FLMCollisions:
 
             if self.ee:
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
+                #
                 d2dv2 = (
                     0.5 / self.v[None, :] * jnp.gradient(jnp.gradient(pad_f0, self.dv, axis=1), self.dv, axis=1)[:, 2:]
                 )
+
                 ddv = self.v[None, :] ** -2.0 * jnp.gradient(pad_f0, self.dv, axis=1)[:, 2:]
 
                 diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)

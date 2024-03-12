@@ -89,8 +89,7 @@ class IMPACT:
         return self.nuei_coeff * (0 * term1 + 0 * term2 + term3 + 0 * term4 + 0 * term5 + 0 * term6)
 
     def ddx(self, f):
-        aug_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
-        return jnp.gradient(aug_f, self.dx, axis=0)[1:-1]
+        return jnp.real(jnp.ifft(jnp.fft(f, axis=0) * 1j * self.kx), axis=0)
 
     def get_step(self, prev_f0, prev_f1):
         """
@@ -150,7 +149,7 @@ class OSHUN1D:
         # self.c_squared = cfg["units"]["derived"]["c_light"].magnitude ** 2.0
         self.e_solver = cfg["terms"]["e_solver"]
 
-        self.ampere_coeff = 1e-4
+        self.ampere_coeff = 1e-6
         self.lb = LenardBernstein(cfg)
         self.ei = FLMCollisions(cfg)
 
@@ -325,7 +324,7 @@ class OSHUN1D:
         # explicit push for v df/dx
         f0_star, f10_star = self.push_vdfdx(f0, f10)
         # implicit solve f00 coll
-        # f0_star = self.lb(None, f0_star, self.dt)
+        f0_star = self.lb(None, f0_star, self.dt)
 
         # implicit solve for E
         if self.e_solver == "oshun":  # implicit E, explicit f0, f1 with this Taylor expansion of J method
