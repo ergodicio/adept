@@ -16,3 +16,4 @@ pint
 mlflow_export_import
 plasmapy
 tabulate
+interpax
