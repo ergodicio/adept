@@ -220,11 +220,16 @@ def get_save_quantities(cfg: Dict) -> Dict:
 
 
 def get_diffeqsolve_quants(cfg):
-    return dict(
+    quants = dict(
         terms=ODETerm(VectorField(cfg)),
         solver=Tsit5(),
         saveat=dict(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]["callable"]),
+        args={"drivers": cfg["drivers"]},
     )
+    if "models" in cfg:
+        quants["args"]["models"] = get_models(cfg["models"])
+
+    return quants
 
 
 def init_state(cfg: Dict, td) -> Dict:

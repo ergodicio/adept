@@ -20,19 +20,15 @@ class Collisions:
         self.coll_ei_over_x = vmap(self._single_x_ei_, in_axes=(0, 0, None))
 
     def _single_x_ei_(self, nuei: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
-        # f_vxvy = self.ei_fp.explicit_vy(nuei, f_vxvy, 0.5 * dt)
-        # f_vxvy = self.ei_fp.implicit_vx(nuei, f_vxvy, 0.5 * dt)
-        # f_vxvy = self.ei_fp.implicit_cross_term(nuei, f_vxvy, dt)
-        # f_vxvy = self.ei_fp.explicit_vx(nuei, f_vxvy, 0.5 * dt)
-        # f_vxvy = self.ei_fp.implicit_vy(nuei, f_vxvy, 0.5 * dt)
-
-        return self.ei_fp.solve_azimuthal(f_vxvy, nuei, dt)
+        nu_ei_eff = nuei * self.ee_fp.cfg["units"]["derived"]["nuei_epphaines"]
+        return self.ei_fp.solve_azimuthal(f_vxvy, nu_ei_eff, dt)
 
     def _single_x_ee_(self, nu_ee: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
-        f_vxvy = self.ee_fp.explicit_vy(nu_ee, f_vxvy, 0.5 * dt)
-        f_vxvy = self.ee_fp.implicit_vx(nu_ee, f_vxvy, 0.5 * dt)
-        f_vxvy = self.ee_fp.explicit_vx(nu_ee, f_vxvy, 0.5 * dt)
-        f_vxvy = self.ee_fp.implicit_vy(nu_ee, f_vxvy, 0.5 * dt)
+        nu_ee_eff = nu_ee * self.ee_fp.cfg["units"]["derived"]["nuee_epphaines"]
+        f_vxvy = self.ee_fp.explicit_vy(nu_ee_eff, f_vxvy, 0.5 * dt)
+        f_vxvy = self.ee_fp.implicit_vx(nu_ee_eff, f_vxvy, 0.5 * dt)
+        f_vxvy = self.ee_fp.explicit_vx(nu_ee_eff, f_vxvy, 0.5 * dt)
+        f_vxvy = self.ee_fp.implicit_vy(nu_ee_eff, f_vxvy, 0.5 * dt)
 
         return f_vxvy
 
@@ -55,9 +51,11 @@ class Krook:
     def __init__(self, cfg):
         self.cfg = cfg
         f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
-        self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
+        self.f_mx = f_mx / np.sum(f_mx, axis=1)[:, None] / self.cfg["grid"]["dv"]
         self.dv = self.cfg["grid"]["dv"]
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+
+    def moment_x(self, f):
+        return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
         nu_Kxdt = dt * nu_K[:, None]
@@ -75,6 +73,7 @@ class Dougherty:
         self.ones = jnp.ones(self.cfg["grid"]["nv"])
         self.scan_over_vy = vmap(self._solve_one_vslice_, in_axes=(None, 1), out_axes=1)
         self.scan_over_vx = vmap(self._solve_one_vslice_, in_axes=(None, 0), out_axes=0)
+        self.nuee = self.cfg["units"]["derived"]["nuee_epphaines_norm"]
 
     def _solve_one_vslice_(self, operator, f_vxvy):
         return lx.linear_solve(operator, f_vxvy, solver=lx.Tridiagonal()).value
@@ -86,13 +85,13 @@ class Dougherty:
         return jnp.gradient(f_vxvy, self.dv, axis=1)
 
     def get_init_quants_x(self, f_vxvy: jnp.ndarray):
-        vxbar = jnp.trapz(jnp.trapz(f_vxvy * self.v[:, None], dx=self.dv, axis=1), dx=self.dv, axis=0)
-        v0t_sq = jnp.trapz(jnp.trapz(f_vxvy * (self.v[:, None] - vxbar) ** 2.0, dx=self.dv, axis=1), dx=self.dv, axis=0)
+        vxbar = jnp.sum(jnp.sum(f_vxvy * self.v[:, None], axis=1), axis=0) * self.dv**2.0
+        v0t_sq = jnp.sum(jnp.sum(f_vxvy * (self.v[:, None] - vxbar) ** 2.0, axis=1), axis=0) * self.dv**2.0
         return vxbar, v0t_sq
 
     def get_init_quants_y(self, f_vxvy: jnp.ndarray):
-        vybar = jnp.trapz(jnp.trapz(f_vxvy * self.v[None, :], dx=self.dv, axis=1), dx=self.dv, axis=0)
-        v0t_sq = jnp.trapz(jnp.trapz(f_vxvy * (self.v[None, :] - vybar) ** 2.0, dx=self.dv, axis=1), dx=self.dv, axis=0)
+        vybar = jnp.sum(jnp.sum(f_vxvy * self.v[None, :], axis=1), axis=0) * self.dv**2.0
+        v0t_sq = jnp.sum(jnp.sum(f_vxvy * (self.v[None, :] - vybar) ** 2.0, axis=1), axis=0) * self.dv**2.0
 
         return vybar, v0t_sq
 
@@ -229,6 +228,7 @@ class Banks:
         )
         self.nu_envelope = nu_envelope
         self.thksq_nu = jnp.array(nu_envelope[:, None] * thk_sq[None, :])
+        self.nuei = self.cfg["units"]["derived"]["nuei_epphaines_norm"]
 
     def pol2cart(self, f):
         f_pad = jnp.concatenate([f[:1, :], f])

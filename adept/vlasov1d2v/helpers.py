@@ -15,19 +15,7 @@ from matplotlib import pyplot as plt
 from adept.vlasov1d2v.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d2v.storage import store_f, store_fields, get_save_quantities
 from adept.tf1d.pushers import get_envelope
-
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
-m_ax = gamma_da.coords["m"].data
-g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
-g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
-
-
-def gamma_3_over_m(m):
-    return np.interp(m, m_ax, g_3_m)
-
-
-def gamma_5_over_m(m):
-    return np.interp(m, m_ax, g_5_m)
+from adept.vfp1d.helpers import write_units
 
 
 def _initialize_distribution_(
@@ -77,7 +65,7 @@ def _initialize_distribution_(
     # for ix in range(nx):
     f = np.repeat(single_dist, nx, axis=0)
     # normalize
-    f = f / np.trapz(np.trapz(f, dx=dv, axis=2), dx=dv, axis=1)[:, None, None]
+    f = f / np.sum(np.sum(f, axis=2), axis=1)[:, None, None] / dv**2.0
 
     # if n_prof.size > 1:
     #     # scale by density profile
@@ -279,11 +267,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["n_prof_total"]) + cfg_grid["n_prof_total"]
 
     cfg_grid["x_a"] = np.concatenate(
-        [
-            [cfg_grid["x"][0] - cfg_grid["dx"]],
-            cfg_grid["x"],
-            [cfg_grid["x"][-1] + cfg_grid["dx"]],
-        ]
+        [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
     )
 
     return cfg_grid
@@ -316,6 +300,7 @@ def get_diffeqsolve_quants(cfg):
         terms=ODETerm(VlasovMaxwell(cfg)),
         solver=Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
+        args={"drivers": cfg["drivers"]},
     )
 
 

@@ -558,4 +558,5 @@ def get_diffeqsolve_quants(cfg):
         terms=ODETerm(integrator.VectorField(cfg)),
         solver=integrator.Stepper(),
         saveat=dict(ts=cfg["save"]["t"]["ax"]),  # , fn=cfg["save"]["func"]["callable"]),
+        args={"drivers": cfg["drivers"]},
     )

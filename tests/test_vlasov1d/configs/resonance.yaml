@@ -1,9 +1,11 @@
 units:
   laser wavelength: 351nm
-  normalizing temperature: 2000eV
-  normalizing density: 1.5e21/cc
-  Z: 10
-  Zp: 10
+  reference ion temperature: 2000eV
+  reference electron temperature: 2000eV
+  reference electron density: 9.0663e21/cm^3
+  Z: 1
+  Ion: N+
+  logLambda: nrl
 
 
 density:
@@ -15,15 +17,10 @@ density:
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: uniform
-    space-profile:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      bump_height: 0.0
-      width: 100000.0
+    n:
+      basis: uniform
+    T:
+      basis: uniform
 
 grid:
   dt: 0.25
@@ -57,15 +54,15 @@ drivers:
   ex:
     '0':
       a0: 1.e-6
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
+      k0: 0.3kl_D
+      t_center: 40.0tp
+      t_rise: 5.0tp
+      t_width: 30.0tp
+      w0: 1.1598wp
       dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      x_center: 0.0l_D
+      x_rise: 10.0l_D
+      x_width: 4000000.0l_D
   ey: {}
 
 terms:
@@ -73,7 +70,7 @@ terms:
   edfdv: cubic-spline
   time: leapfrog
   fokker_planck:
-    is_on: True
+    is_on: false
     type: Dougherty
     time:
       baseline: 1.0
@@ -84,7 +81,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
     space:
-      baseline: 1.0e-6
+      baseline: 1.0
       bump_or_trough: bump
       center: 0.0
       rise: 25.0
@@ -92,7 +89,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
   krook:
-    is_on: True
+    is_on: false
     time:
       baseline: 1.0
       bump_or_trough: bump

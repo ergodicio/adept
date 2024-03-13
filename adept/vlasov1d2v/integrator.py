@@ -190,8 +190,11 @@ class VlasovMaxwell:
         self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
         self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
 
-    def compute_charges(self, f):
-        return jnp.trapz(jnp.trapz(f, dx=self.cfg["grid"]["dv"], axis=2), dx=self.cfg["grid"]["dv"], axis=1)
+    def moment_x(self, f):
+        return jnp.sum(f, axis=1) * self.cfg["grid"]["dv"]
+
+    def moment_y(self, f):
+        return jnp.sum(f, axis=2) * self.cfg["grid"]["dv"]
 
     def nu_prof(self, t, nu_args):
         t_L = nu_args["time"]["center"] - nu_args["time"]["width"] * 0.5
@@ -229,13 +232,21 @@ class VlasovMaxwell:
         dex = [self.ex_driver(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
         djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
 
+        ne_before = self.moment_x(self.moment_y(y["electron"]))
+        Te_before = (
+            self.moment_x(
+                self.moment_y(0.5 * y["electron"] * self.v[None, None, :] ** 2.0 * self.v[None, :, None] ** 2.0)
+            )
+            / ne_before
+        )
+
         if self.cfg["terms"]["fokker_planck"]["nu_ee"]["is_on"]:
-            nu_ee_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"])
+            nu_ee_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"]) * ne_before / Te_before**1.5
         else:
             nu_ee_prof = None
 
         if self.cfg["terms"]["fokker_planck"]["nu_ei"]["is_on"]:
-            nu_ei_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"])
+            nu_ei_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"]) * ne_before / Te_before**1.5
         else:
             nu_ei_prof = None
 
@@ -244,14 +255,11 @@ class VlasovMaxwell:
         # else:
         nu_K_prof = None
 
-        electron_density_n = self.compute_charges(y["electron"])
         e, f = self.vpfp(
             f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_ee=nu_ee_prof, nu_ei=nu_ei_prof, nu_K=nu_K_prof
         )
-        electron_density_np1 = self.compute_charges(f)
+        ne_after = self.moment_x(self.moment_y(f))
 
-        a = self.wave_solver(
-            a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
-        )
+        a = self.wave_solver(a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (ne_before + ne_after))
 
         return {"electron": f, "a": a["a"], "prev_a": a["prev_a"], "da": djy, "de": dex[self.vpfp.dex_save], "e": e}

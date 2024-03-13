@@ -1,9 +1,9 @@
 units:
   laser wavelength: 351nm
-  normalizing temperature: 2000eV
-  normalizing density: 1.5e21/cc
+  reference ion temperature: 2000eV
+  reference electron temperature: 2000eV
+  reference electron density: 1.5e21/cc
   Z: 10
-  Zp: 10
 
 
 density:
@@ -15,13 +15,10 @@ density:
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: uniform
-    baseline: 1.0
-    bump_or_trough: bump
-    center: 0.0
-    rise: 25.0
-    bump_height: 0.0
-    width: 100000.0
+    n:
+      basis: uniform
+    T:
+      basis: uniform
 
 grid:
   dt: 0.1

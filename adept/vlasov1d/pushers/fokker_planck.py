@@ -41,14 +41,16 @@ class Krook:
     def __init__(self, cfg):
         self.cfg = cfg
         f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
-        self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
+        self.f_mx = f_mx / np.sum(f_mx, axis=1)[:, None] / self.cfg["grid"]["dv"]
         self.dv = self.cfg["grid"]["dv"]
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+
+    def moment_x(self, f):
+        return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
         nu_Kxdt = dt * nu_K[:, None]
         exp_nuKxdt = jnp.exp(-nu_Kxdt)
-        n_prof = self.vx_moment(f_xv)
+        n_prof = self.moment_x(f_xv)
 
         return f_xv * exp_nuKxdt + n_prof[:, None] * self.f_mx * (1.0 - exp_nuKxdt)
 
@@ -59,7 +61,10 @@ class LenardBernstein:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+        self.nuee = self.cfg["units"]["derived"]["nuee_epphaines_norm"]
+
+    def moment_x(self, f):
+        return jnp.sum(f, axis=1) * self.dv
 
     def __call__(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
@@ -71,11 +76,11 @@ class LenardBernstein:
         :param dt:
         :return:
         """
-
-        v0t_sq = self.vx_moment(f_xv * self.v[None, :] ** 2.0)
-        a = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 + jnp.roll(self.v, 1)[None, :] / 2 / self.dv)
-        b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
-        c = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 - jnp.roll(self.v, -1)[None, :] / 2 / self.dv)
+        nu_eff = nu * self.nuee
+        v0t_sq = self.moment_x(f_xv * self.v[None, :] ** 2.0)
+        a = nu_eff[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 + jnp.roll(self.v, 1)[None, :] / 2 / self.dv)
+        b = 1.0 + nu_eff[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
+        c = nu_eff[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 - jnp.roll(self.v, -1)[None, :] / 2 / self.dv)
         return a, b, c
 
 
@@ -85,7 +90,10 @@ class Dougherty:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+        self.nuee = self.cfg["units"]["derived"]["nuee_epphaines_norm"]
+
+    def moment_x(self, f):
+        return jnp.sum(f, axis=1) * self.dv
 
     def __call__(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
@@ -98,17 +106,18 @@ class Dougherty:
         :return:
         """
 
-        vbar = self.vx_moment(f_xv * self.v[None, :])
-        v0t_sq = self.vx_moment(f_xv * (self.v[None, :] - vbar[:, None]) ** 2.0)
+        nu_eff = nu * self.nuee
+        vbar = self.moment_x(f_xv * self.v[None, :])
+        v0t_sq = self.moment_x(f_xv * (self.v[None, :] - vbar[:, None]) ** 2.0)
 
         a = (
-            nu[:, None]
+            nu_eff[:, None]
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 + (jnp.roll(self.v, 1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
         )
-        b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
+        b = 1.0 + nu_eff[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
         c = (
-            nu[:, None]
+            nu_eff[:, None]
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 - (jnp.roll(self.v, -1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
         )

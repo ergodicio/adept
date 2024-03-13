@@ -18,20 +18,7 @@ from matplotlib import pyplot as plt
 from adept.vfp1d.storage import post_process, get_save_quantities
 from adept.vlasov1d.integrator import Stepper
 from adept.tf1d.pushers import get_envelope
-from adept.vfp1d.integrator import IMPACT, OSHUN1D
-
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
-m_ax = gamma_da.coords["m"].data
-g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
-g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
-
-
-def gamma_3_over_m(m):
-    return np.interp(m, m_ax, g_3_m)
-
-
-def gamma_5_over_m(m):
-    return np.interp(m, m_ax, g_5_m)
+from adept.vfp1d.integrator import OSHUN1D
 
 
 def write_units(cfg, td):
@@ -45,13 +32,26 @@ def write_units(cfg, td):
     ion_species = cfg["units"]["Ion"]
 
     wp0 = np.sqrt(n0 * csts.e.to("C") ** 2.0 / (csts.m_e * csts.eps0)).to("Hz")
-    tp0 = (1 / wp0).to("fs")
+    wpe = np.sqrt(ne * csts.e.to("C") ** 2.0 / (csts.m_e * csts.eps0)).to("Hz")
 
-    vth = np.sqrt(2 * Te / csts.m_e).to("m/s")  # mean square velocity eq 4-51a in Shkarofsky
+    tp0 = (1 / wp0).to("fs")
+    tpe = (1 / wpe).to("fs")
+
+    vth = np.sqrt(2 * Te / csts.m_e).to("m/s")
 
     x0 = (csts.c / wp0).to("nm")
+    l_D = (vth / wpe).to("nm")
 
     beta = vth / csts.c
+
+    if "l_D" in str(cfg["grid"]["xmax"]):
+        cfg["grid"]["xmax"] = float(str(cfg["grid"]["xmax"]).strip("l_D")) / (x0 / l_D).to("").value
+        cfg["grid"]["xmin"] = float(str(cfg["grid"]["xmin"]).strip("l_D")) / (x0 / l_D).to("").value
+    elif isinstance(cfg["grid"]["xmax"], float):
+        pass
+    else:
+        cfg["grid"]["xmax"] = (u.Quantity(cfg["grid"]["xmax"]) / x0).to("").value
+        cfg["grid"]["xmin"] = (u.Quantity(cfg["grid"]["xmin"]) / x0).to("").value
 
     box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("micron")
     if "ymax" in cfg["grid"].keys():
@@ -76,12 +76,19 @@ def write_units(cfg, td):
         1 / (0.75 * np.sqrt(csts.m_e) * Te**1.5 / (np.sqrt(2 * np.pi) * ni * Z**2.0 * csts.e.gauss**4.0 * logLambda_ei))
     ).to("Hz")
 
+    nuee_epphaines = (
+        1 / (0.75 * np.sqrt(csts.m_e) * Te**1.5 / (np.sqrt(2 * np.pi) * ne * csts.e.gauss**4.0 * logLambda_ee))
+    ).to("Hz")
+
     all_quantities = {
         "wp0": wp0,
+        "wpe": wpe,
         "n0": n0,
         "tp0": tp0,
+        "tpe": tpe,
         "ne": ne,
         "vth": vth,
+        "lambda_D": l_D,
         "Te": Te,
         "Ti": Ti,
         "logLambda_ei": logLambda_ei,
@@ -91,9 +98,11 @@ def write_units(cfg, td):
         "nuei_shk": nuei_shk,
         "nuei_nrl": nuei_nrl,
         "nuei_epphaines": nuei_epphaines,
+        "nuee_epphaines": nuee_epphaines,
         "nuei_shk_norm": nuei_shk / wp0,
         "nuei_nrl_norm": nuei_nrl / wp0,
         "nuei_epphaines_norm": nuei_epphaines / wp0,
+        "nuee_epphaines_norm": nuee_epphaines / wp0,
         "lambda_mfp_shk": lambda_mfp_shk,
         "lambda_mfp_nrl": lambda_mfp_nrl,
         "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
@@ -213,14 +222,10 @@ def _initialize_total_distribution_(cfg, cfg_grid):
         if name.startswith("species-"):
             profs = {}
             v0 = species_params["v0"]
-            T0 = species_params["T0"]
             m = species_params["m"]
             if name in params:
                 if "v0" in params[name]:
                     v0 = params[name]["v0"]
-
-                if "T0" in params[name]:
-                    T0 = params[name]["T0"]
 
                 if "m" in params[name]:
                     m = params[name]["m"]
@@ -290,7 +295,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid = cfg["grid"]
     # cfg_grid["xmax"] = u.Quantity(cfg_grid["xmax"])
 
-    cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
+    cfg_grid["dx"] = (cfg_grid["xmax"] - cfg_grid["xmin"]) / cfg_grid["nx"]
 
     # sqrt(2 * k * T / m)
     cfg_grid["vmax"] = (
@@ -391,4 +396,5 @@ def get_diffeqsolve_quants(cfg):
         terms=ODETerm(OSHUN1D(cfg)),
         solver=Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
+        args={},
     )

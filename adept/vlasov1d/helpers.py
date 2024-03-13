@@ -7,6 +7,7 @@ from time import time
 
 
 import numpy as np
+from astropy import units as u, constants as const
 import xarray, mlflow, pint, yaml
 from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt
@@ -15,6 +16,7 @@ from matplotlib import pyplot as plt
 from adept.vlasov1d.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d.storage import store_f, store_fields, get_save_quantities
 from adept.tf1d.pushers import get_envelope
+from adept.vfp1d.helpers import write_units
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -30,68 +32,15 @@ def gamma_5_over_m(m):
     return np.interp(m, m_ax, g_5_m)
 
 
-def write_units(cfg, td):
-    ureg = pint.UnitRegistry()
-    _Q = ureg.Quantity
-
-    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
-    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
-
-    wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
-    tp0 = (1 / wp0).to("fs")
-
-    v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
-    x0 = (v0 / wp0).to("nm")
-    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
-    beta = (v0 / ureg.c).to("dimensionless")
-
-    box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("microns")
-    if "ymax" in cfg["grid"].keys():
-        box_width = ((cfg["grid"]["ymax"] - cfg["grid"]["ymin"]) * x0).to("microns")
-    else:
-        box_width = "inf"
-    sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
-
-    # collisions
-    logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
-    logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
-    nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
-    nuee_norm = nuee / wp0
-
-    all_quantities = {
-        "wp0": wp0,
-        "tp0": tp0,
-        "n0": n0,
-        "v0": v0,
-        "T0": T0,
-        "c_light": c_light,
-        "beta": beta,
-        "x0": x0,
-        "nuee": nuee,
-        "logLambda_ee": logLambda_ee,
-        "box_length": box_length,
-        "box_width": box_width,
-        "sim_duration": sim_duration,
-    }
-
-    cfg["units"]["derived"] = all_quantities
-
-    cfg["grid"]["beta"] = beta.magnitude
-
-    with open(os.path.join(td, "units.yaml"), "w") as fi:
-        yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
-
-    return cfg
-
-
 def _initialize_distribution_(
     nx: int,
     nv: int,
     v0=0.0,
     m=2.0,
-    T0=1.0,
+    vth=1.0,
     vmax=6.0,
     n_prof=np.ones(1),
+    T_prof=np.ones(1),
     noise_val=0.0,
     noise_seed=42,
     noise_type="Uniform",
@@ -119,23 +68,16 @@ def _initialize_distribution_(
 
     dv = 2.0 * vmax / nv
     vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
-
     alpha = np.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
-    # cst = m / (4 * np.pi * alpha**3.0 * gamma(3.0 / m))
 
-    single_dist = -(np.power(np.abs((vax[None, :] - v0) / alpha / np.sqrt(T0)), m))
+    f = np.zeros([nx, nv])
+    for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
+        # cst = m / (4 * np.pi * alpha**3.0 * gamma_3_over_m(m)) / (2 * tt * vth**2.0) ** 1.5
+        # single_dist = cst * np.exp(-(np.power(np.abs((vax[None, :] - v0) / (alpha * vth * np.sqrt(2 * tt))), m)))
+        single_dist = (2 * np.pi * tt * (vth**2.0)) ** -0.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0)))
+        f[ix, :] = tn * single_dist
 
-    single_dist = np.exp(single_dist)
-    # single_dist = np.exp(-(vaxs[0][None, None, :, None]**2.+vaxs[1][None, None, None, :]**2.)/2/T0)
-
-    # for ix in range(nx):
-    f = np.repeat(single_dist, nx, axis=0)
-    # normalize
-    f = f / np.trapz(f, dx=dv, axis=1)[:, None]
-
-    if n_prof.size > 1:
-        # scale by density profile
-        f = n_prof[:, None] * f
+    # f = f / np.sum(f, axis=1)[:, None] / dv
 
     # if noise_type.casefold() == "uniform":
     #     f = (1.0 + noise_generator.uniform(-noise_val, noise_val, nx)[:, None]) * f
@@ -147,77 +89,74 @@ def _initialize_distribution_(
 
 def _initialize_total_distribution_(cfg, cfg_grid):
     params = cfg["density"]
-    n_prof_total = np.zeros([cfg_grid["nx"]])
+    prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
     f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
     species_found = False
+    _Q = u.Quantity
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
+            profs = {}
             v0 = species_params["v0"]
-            T0 = species_params["T0"]
             m = species_params["m"]
             if name in params:
                 if "v0" in params[name]:
                     v0 = params[name]["v0"]
 
-                if "T0" in params[name]:
-                    T0 = params[name]["T0"]
-
                 if "m" in params[name]:
                     m = params[name]["m"]
 
-            if species_params["basis"] == "uniform":
-                nprof = np.ones_like(n_prof_total)
+            for k in ["n", "T"]:
+                if species_params[k]["basis"] == "uniform":
+                    profs[k] = np.ones_like(prof_total[k])
 
-            elif species_params["basis"] == "linear":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+                elif species_params[k]["basis"] == "linear":
+                    left = species_params[k]["center"] - species_params[k]["width"] * 0.5
+                    right = species_params[k]["center"] + species_params[k]["width"] * 0.5
+                    rise = species_params[k]["rise"]
+                    mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
 
-                ureg = pint.UnitRegistry()
-                _Q = ureg.Quantity
+                    L = (
+                        _Q(species_params[k]["gradient scale length"]).to("nm").value
+                        / cfg["units"]["derived"]["x0"].to("nm").value
+                    )
+                    nprof = species_params[k]["val at center"] + (cfg_grid["x"] - species_params[k]["center"]) / L
+                    profs[k] = mask * nprof
+                elif species_params[k]["basis"] == "exponential":
+                    left = species_params[k]["center"] - species_params[k]["width"] * 0.5
+                    right = species_params[k]["center"] + species_params[k]["width"] * 0.5
+                    rise = species_params[k]["rise"]
+                    mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
 
-                L = (
-                    _Q(species_params["gradient scale length"]).to("nm").magnitude
-                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
-                )
-                nprof = species_params["val at center"] + (cfg_grid["x"] - species_params["center"]) / L
-                nprof = mask * nprof
-            elif species_params["basis"] == "exponential":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+                    L = (
+                        _Q(species_params[k]["gradient scale length"]).to("nm").value
+                        / cfg["units"]["derived"]["x0"].to("nm").value
+                    )
+                    nprof = species_params[k]["val at center"] * np.exp(
+                        (cfg_grid["x"] - species_params[k]["center"]) / L
+                    )
+                    profs[k] = mask * nprof
 
-                ureg = pint.UnitRegistry()
-                _Q = ureg.Quantity
+                elif species_params[k]["basis"] == "tanh":
+                    left = species_params[k]["center"] - species_params[k]["width"] * 0.5
+                    right = species_params[k]["center"] + species_params[k]["width"] * 0.5
+                    rise = species_params[k]["rise"]
+                    nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
 
-                L = (
-                    _Q(species_params["gradient scale length"]).to("nm").magnitude
-                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
-                )
-                nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
-                nprof = mask * nprof
+                    if species_params[k]["bump_or_trough"] == "trough":
+                        nprof = 1 - nprof
+                    profs[k] = species_params[k]["baseline"] + species_params[k]["bump_height"] * nprof
 
-            elif species_params["basis"] == "tanh":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
+                elif species_params[k]["basis"] == "sine":
+                    baseline = species_params[k]["baseline"]
+                    amp = species_params[k]["amplitude"]
+                    kk = species_params[k]["wavenumber"]
+                    profs[k] = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
+                else:
+                    raise NotImplementedError
 
-                if species_params["bump_or_trough"] == "trough":
-                    nprof = 1 - nprof
-                nprof = species_params["baseline"] + species_params["bump_height"] * nprof
+            profs["n"] *= (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
 
-            elif species_params["basis"] == "sine":
-                baseline = species_params["baseline"]
-                amp = species_params["amplitude"]
-                kk = species_params["wavenumber"]
-                nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
-            else:
-                raise NotImplementedError
-
-            n_prof_total += nprof
+            prof_total["n"] += profs["n"]
 
             # Distribution function
             temp_f, _ = _initialize_distribution_(
@@ -225,9 +164,10 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 nv=int(cfg_grid["nv"]),
                 v0=v0,
                 m=m,
-                T0=T0,
+                vth=cfg_grid["beta"],
                 vmax=cfg_grid["vmax"],
-                n_prof=nprof,
+                n_prof=profs["n"],
+                T_prof=profs["T"],
                 noise_val=species_params["noise_val"],
                 noise_seed=int(species_params["noise_seed"]),
                 noise_type=species_params["noise_type"],
@@ -240,7 +180,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     if not species_found:
         raise ValueError("No species found! Check the config")
 
-    return n_prof_total, f
+    return f, prof_total["n"]
 
 
 def get_derived_quantities(cfg: Dict) -> Dict:
@@ -255,6 +195,12 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid = cfg["grid"]
 
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
+    cfg_grid["vmax"] = (
+        8
+        * np.sqrt(
+            (u.Quantity(cfg["units"]["reference electron temperature"]) / (const.m_e * const.c**2.0)).to("")
+        ).value
+    )
     cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
     if len(cfg["drivers"]["ey"].keys()) > 0:
@@ -330,14 +276,8 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
     # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
 
-    cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["n_prof_total"]) + cfg_grid["n_prof_total"]
-
     cfg_grid["x_a"] = np.concatenate(
-        [
-            [cfg_grid["x"][0] - cfg_grid["dx"]],
-            cfg_grid["x"],
-            [cfg_grid["x"][-1] + cfg_grid["dx"]],
-        ]
+        [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
     )
 
     return cfg_grid
@@ -350,11 +290,11 @@ def init_state(cfg: Dict, td) -> Dict:
     :param cfg:
     :return:
     """
-    n_prof_total, f = _initialize_total_distribution_(cfg, cfg["grid"])
+    f, ne_prof = _initialize_total_distribution_(cfg, cfg["grid"])
 
     state = {}
     for species in ["electron"]:
-        state[species] = f
+        state[species] = f * cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]
 
     for field in ["e", "de"]:
         state[field] = jnp.zeros(cfg["grid"]["nx"])
@@ -362,14 +302,45 @@ def init_state(cfg: Dict, td) -> Dict:
     for field in ["a", "da", "prev_a"]:
         state[field] = jnp.zeros(cfg["grid"]["nx"] + 2)  # need boundary cells
 
+    state["Z"] = jnp.ones(cfg["grid"]["nx"]) * cfg["units"]["Z"]
+    state["ni"] = ne_prof / cfg["units"]["Z"]
+
     return state
 
 
 def get_diffeqsolve_quants(cfg):
+
+    for k1, efield in cfg["drivers"].items():
+        for k2, pulse in efield.items():
+            # this is with respect to the "reference electron temperature" in the input deck for all debye lengths
+            # it is with respect to the "reference electron density" in the input deck for all timescales
+            if "kl_D" in pulse["k0"]:
+                cfg["drivers"][k1][k2]["k0"] = (
+                    float(pulse["k0"].replace("kl_D", ""))
+                    * (cfg["units"]["derived"]["x0"] / cfg["units"]["derived"]["lambda_D"]).to("").value
+                )
+            if "wp" in pulse["w0"]:
+                cfg["drivers"][k1][k2]["w0"] = (
+                    float(pulse["w0"].replace("wp", ""))
+                    * np.sqrt(cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).to("").value
+                )
+            if "l_D" in pulse["x_width"]:
+                conv_fac = (cfg["units"]["derived"]["x0"] / cfg["units"]["derived"]["lambda_D"]).to("").value
+                cfg["drivers"][k1][k2]["x_width"] = float(pulse["x_width"].replace("l_D", "")) / conv_fac
+                cfg["drivers"][k1][k2]["x_center"] = float(pulse["x_center"].replace("l_D", "")) / conv_fac
+                cfg["drivers"][k1][k2]["x_rise"] = float(pulse["x_rise"].replace("l_D", "")) / conv_fac
+
+            if "tp" in pulse["t_width"]:
+                conv_fac = (cfg["units"]["derived"]["tp0"] / cfg["units"]["derived"]["tpe"]).to("").value
+                cfg["drivers"][k1][k2]["t_width"] = float(pulse["t_width"].replace("tp", "")) / conv_fac
+                cfg["drivers"][k1][k2]["t_center"] = float(pulse["t_center"].replace("tp", "")) / conv_fac
+                cfg["drivers"][k1][k2]["t_rise"] = float(pulse["t_rise"].replace("tp", "")) / conv_fac
+
     return dict(
         terms=ODETerm(VlasovMaxwell(cfg)),
         solver=Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
+        args={"drivers": cfg["drivers"], "terms": cfg["terms"]},
     )
 
 

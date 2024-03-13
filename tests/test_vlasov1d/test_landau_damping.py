@@ -30,10 +30,10 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
 
     root = electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0)
 
-    defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
-    defaults["drivers"]["ex"]["0"]["w0"] = float(np.real(root))
+    defaults["drivers"]["ex"]["0"]["k0"] = str(rand_k0) + "kl_D"
+    defaults["drivers"]["ex"]["0"]["w0"] = str(np.real(root)) + "wp"
     xmax = float(2.0 * np.pi / rand_k0)
-    defaults["grid"]["xmax"] = xmax
+    defaults["grid"]["xmax"] = str(xmax) + "l_D"
     defaults["mlflow"]["experiment"] = "vlasov1d-test-resonance"
 
     return defaults, root

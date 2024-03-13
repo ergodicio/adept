@@ -85,9 +85,6 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
             "save_nt": cfg["grid"]["tmax"],
         }
 
-        # in case you are using ML models
-        models = helpers.get_models(cfg["models"]) if "models" in cfg else None
-
         # initialize the state for the solver - NB - this is solver specific
         state = helpers.init_state(cfg, td)
 
@@ -100,12 +97,17 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
 
         @eqx.filter_jit
-        def _run_(these_models, time_quantities: Dict):
-            args = {"drivers": cfg["drivers"]}
-            if these_models is not None:
-                args["models"] = these_models
-            if "terms" in cfg.keys():
-                args["terms"] = cfg["terms"]
+        def _run_(time_quantities: Dict):
+            """
+            The point here is that _args_ and time_quantities can be different without having
+            to recompile this code. In some universe, _args_ has trainable models or controllable
+            drivers, where it will be useful to run this code in a loop to control something
+
+            Args:
+                _args_: The arguments for the simulation
+                time_quantities: The time quantities for the simulation
+
+            """
 
             return diffeqsolve(
                 terms=diffeqsolve_quants["terms"],
@@ -115,12 +117,12 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
                 max_steps=cfg["grid"]["max_steps"],  # time_quantities["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                args=args,
+                args=diffeqsolve_quants["args"],
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
-        _log_flops_(_run_, models, tqs)
-        result = _run_(models, tqs)
+        _log_flops_(_run_, tqs)
+        result = _run_(tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
         t0 = time.time()
@@ -135,18 +137,18 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
     return result, datasets
 
 
-def _log_flops_(_run_, models, tqs):
+def _log_flops_(_run_, tqs):
     """
     Logs the number of flops to mlflow
 
     Args:
         _run_: The function that runs the simulation
-        models: The models used in the simulation
+        args: The args used in the simulation
         tqs: The time quantities used in the simulation
 
     """
     wrapped = jax.xla_computation(_run_)
-    computation = wrapped(models, tqs)
+    computation = wrapped(tqs)
     module = computation.as_hlo_module()
     client = jax.lib.xla_bridge.get_backend()
     analysis = jax.lib.xla_client._xla.hlo_module_cost_analysis(client, module)

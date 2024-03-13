@@ -13,19 +13,7 @@ from matplotlib import pyplot as plt
 
 from adept.vlasov2d.pushers import time as time_integrator
 from adept.vlasov2d.storage import store_f, store_fields, get_save_quantities
-
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
-m_ax = gamma_da.coords["m"].data
-g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
-g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
-
-
-def gamma_3_over_m(m):
-    return np.interp(m, m_ax, g_3_m)
-
-
-def gamma_5_over_m(m):
-    return np.interp(m, m_ax, g_5_m)
+from adept.vlasov1d.helpers import gamma_3_over_m, gamma_5_over_m
 
 
 def write_units(cfg, td):
@@ -132,7 +120,7 @@ def _initialize_distribution_(
     # for ix in range(nx):
     f = np.repeat(np.repeat(single_dist, nxs[0], axis=0), nxs[1], axis=1)
     # normalize
-    f = f / np.trapz(np.trapz(f, dx=dvs[0], axis=2), dx=dvs[1], axis=2)[:, :, None, None]
+    f = f / (np.sum(np.sum(f, axis=2), axis=2)[:, :, None, None] * dvs[0] * dvs[1])
 
     if n_prof.size > 1:
         # scale by density profile
@@ -352,6 +340,7 @@ def get_diffeqsolve_quants(cfg):
         terms=ODETerm(VectorField),
         solver=time_integrator.Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
+        args={"drivers": cfg["drivers"]},
     )
 
 

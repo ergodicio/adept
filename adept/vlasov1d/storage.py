@@ -115,12 +115,12 @@ def get_field_save_func(cfg, k):
     if {"t"} == set(cfg["save"][k].keys()):
 
         def _calc_moment_(inp):
-            return jnp.trapz(inp, dx=cfg["grid"]["dv"], axis=1)
+            return jnp.sum(inp, axis=1) * cfg["grid"]["dv"]
 
         def fields_save_func(t, y, args):
             temp = {"n": _calc_moment_(y["electron"]), "v": _calc_moment_(y["electron"] * cfg["grid"]["v"][None, :])}
             v_m_vbar = cfg["grid"]["v"][None, :] - temp["v"][:, None]
-            temp["p"] = _calc_moment_(y["electron"] * v_m_vbar**2.0)
+            temp["T"] = 0.5 * _calc_moment_(y["electron"] * v_m_vbar**2.0)
             temp["q"] = _calc_moment_(y["electron"] * v_m_vbar**3.0)
             temp["-flogf"] = _calc_moment_(y["electron"] * jnp.log(jnp.abs(y["electron"])))
             temp["f^2"] = _calc_moment_(y["electron"] * y["electron"])
@@ -198,11 +198,12 @@ def get_default_save_func(cfg):
     dv = cfg["grid"]["dv"]
 
     def _calc_mean_moment_(inp):
-        return jnp.mean(jnp.trapz(inp, dx=dv, axis=1))
+        return jnp.mean(jnp.sum(inp, axis=1)) * dv
 
     def save(t, y, args):
         scalars = {
-            "mean_P": _calc_mean_moment_(y["electron"] * v**2.0),
+            "mean_T_eV": 0.5 * _calc_mean_moment_(y["electron"] * v**2.0) * 510999,
+            "mean_T": 0.5 * _calc_mean_moment_(y["electron"] * v**2.0),
             "mean_j": _calc_mean_moment_(y["electron"] * v),
             "mean_n": _calc_mean_moment_(y["electron"]),
             "mean_q": _calc_mean_moment_(y["electron"] * v**3.0),
