@@ -61,6 +61,7 @@ class LenardBernstein:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
+
         r_e = 2.8179402894e-13
         c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]

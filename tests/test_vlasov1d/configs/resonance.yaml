@@ -2,7 +2,7 @@ units:
   laser wavelength: 351nm
   reference ion temperature: 1000eV
   reference electron temperature: 1000eV
-  reference electron density: 6.0663e20/cm^3
+  reference electron density: 9.0663e20/cm^3
   Z: 10
   Ion: N+
   logLambda: nrl

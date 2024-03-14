@@ -19,12 +19,12 @@ class Collisions:
         self.coll_ee_over_x = vmap(self._single_x_ee_, in_axes=(0, 0, None))
         self.coll_ei_over_x = vmap(self._single_x_ei_, in_axes=(0, 0, None))
 
-    def _single_x_ei_(self, nuei: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
-        nu_ei_eff = nuei * self.ee_fp.cfg["units"]["derived"]["nuei_epphaines"]
+    def _single_x_ei_(self, Zsq_ni_nuei: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+        nu_ei_eff = Zsq_ni_nuei * self.ei_fp.nuei_coeff
         return self.ei_fp.solve_azimuthal(f_vxvy, nu_ei_eff, dt)
 
     def _single_x_ee_(self, nu_ee: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
-        nu_ee_eff = nu_ee * self.ee_fp.cfg["units"]["derived"]["nuee_epphaines"]
+        nu_ee_eff = nu_ee * self.ee_fp.nuee_coeff
         f_vxvy = self.ee_fp.explicit_vy(nu_ee_eff, f_vxvy, 0.5 * dt)
         f_vxvy = self.ee_fp.implicit_vx(nu_ee_eff, f_vxvy, 0.5 * dt)
         f_vxvy = self.ee_fp.explicit_vx(nu_ee_eff, f_vxvy, 0.5 * dt)
@@ -33,13 +33,23 @@ class Collisions:
         return f_vxvy
 
     def __call__(
-        self, nu_ee: jnp.ndarray, nu_ei: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64
+        self,
+        nu_ee: jnp.ndarray,
+        nu_ei: jnp.ndarray,
+        nu_K: jnp.ndarray,
+        f: jnp.ndarray,
+        Z: jnp.ndarray,
+        ni: jnp.ndarray,
+        dt: jnp.float64,
     ) -> jnp.ndarray:
+
+        Zsq_ni_nuei = Z**2.0 * ni * self.ei_fp.nuei_coeff * nu_ei
+
         if self.cfg["terms"]["fokker_planck"]["nu_ee"]["is_on"]:
             f = self.coll_ee_over_x(nu_ee, f, dt)
 
         if self.cfg["terms"]["fokker_planck"]["nu_ei"]["is_on"]:
-            f = self.coll_ei_over_x(nu_ei, f, dt)
+            f = self.coll_ei_over_x(Zsq_ni_nuei, f, dt)
 
         # if self.cfg["terms"]["krook"]["is_on"]:
         #     f = self.krook(nu_K, f, dt)
@@ -73,7 +83,10 @@ class Dougherty:
         self.ones = jnp.ones(self.cfg["grid"]["nv"])
         self.scan_over_vy = vmap(self._solve_one_vslice_, in_axes=(None, 1), out_axes=1)
         self.scan_over_vx = vmap(self._solve_one_vslice_, in_axes=(None, 0), out_axes=0)
-        self.nuee = self.cfg["units"]["derived"]["nuee_epphaines_norm"]
+
+        r_e = 2.8179402894e-13
+        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
     def _solve_one_vslice_(self, operator, f_vxvy):
         return lx.linear_solve(operator, f_vxvy, solver=lx.Tridiagonal()).value
@@ -228,7 +241,12 @@ class Banks:
         )
         self.nu_envelope = nu_envelope
         self.thksq_nu = jnp.array(nu_envelope[:, None] * thk_sq[None, :])
-        self.nuei = self.cfg["units"]["derived"]["nuei_epphaines_norm"]
+
+        r_e = 2.8179402894e-13
+        kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        kpre = r_e * kp
+
+        self.nuei_coeff = kpre * cfg["units"]["derived"]["logLambda_ei"]  # will be multiplied by Z^2 ni = Z ne
 
     def pol2cart(self, f):
         f_pad = jnp.concatenate([f[:1, :], f])

@@ -7,7 +7,8 @@ from time import time
 
 
 import numpy as np
-import xarray, mlflow, pint
+import xarray, mlflow
+from astropy import units as u, constants as const
 from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt
 from matplotlib import pyplot as plt
@@ -16,6 +17,7 @@ from adept.vlasov1d2v.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d2v.storage import store_f, store_fields, get_save_quantities
 from adept.tf1d.pushers import get_envelope
 from adept.vfp1d.helpers import write_units
+from adept.vlasov1d.helpers import get_1D_n_and_T_profile, process_driver_units
 
 
 def _initialize_distribution_(
@@ -23,9 +25,10 @@ def _initialize_distribution_(
     nv: int,
     v0=0.0,
     m=2.0,
-    T0=1.0,
+    vth=1.0,
     vmax=6.0,
     n_prof=np.ones(1),
+    T_prof=np.ones(1),
     noise_val=0.0,
     noise_seed=42,
     noise_type="Uniform",
@@ -40,8 +43,6 @@ def _initialize_distribution_(
     """
     """
     Initializes a Maxwell-Boltzmann distribution
-
-    TODO: temperature and density pertubations
 
     :param nx: size of grid in x (single int)
     :param nv: size of grid in v (single int)
@@ -60,16 +61,21 @@ def _initialize_distribution_(
     # single_dist = -(np.power(np.abs((vax[None, :] - v0) / alpha / np.sqrt(T0)), m))
 
     # single_dist = np.exp(single_dist)
-    single_dist = np.exp(-(vax[None, :, None] ** 2.0 + vax[None, None, :] ** 2.0) / 2 / T0)
+    # single_dist = np.exp(-(vax[None, :, None] ** 2.0 + vax[None, None, :] ** 2.0) / 2 / T0)
 
-    # for ix in range(nx):
-    f = np.repeat(single_dist, nx, axis=0)
-    # normalize
-    f = f / np.sum(np.sum(f, axis=2), axis=1)[:, None, None] / dv**2.0
+    # # for ix in range(nx):
+    # f = np.repeat(single_dist, nx, axis=0)
+    # # normalize
+    # f = f / np.sum(np.sum(f, axis=2), axis=1)[:, None, None] / dv**2.0
 
-    # if n_prof.size > 1:
-    #     # scale by density profile
-    #     f = n_prof[:, None] * f
+    f = np.zeros([nx, nv, nv])
+    for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
+        # cst = m / (4 * np.pi * alpha**3.0 * gamma_3_over_m(m)) / (2 * tt * vth**2.0) ** 1.5
+        # single_dist = cst * np.exp(-(np.power(np.abs((vax[None, :] - v0) / (alpha * vth * np.sqrt(2 * tt))), m)))
+        single_dist = (2 * np.pi * tt * (vth**2.0)) * np.exp(
+            -(vax[None, :, None] ** 2.0 + vax[None, None, :] ** 2.0) / (2 * tt * (vth**2.0))
+        )
+        f[ix, :] = tn * single_dist
 
     # if noise_type.casefold() == "uniform":
     #     f = (1.0 + noise_generator.uniform(-noise_val, noise_val, nx)[:, None]) * f
@@ -81,77 +87,24 @@ def _initialize_distribution_(
 
 def _initialize_total_distribution_(cfg, cfg_grid):
     params = cfg["density"]
-    n_prof_total = np.zeros([cfg_grid["nx"]])
+    prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
     f = np.zeros([cfg_grid["nx"], cfg_grid["nv"], cfg_grid["nv"]])
     species_found = False
+    _Q = u.Quantity
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
+            profs = {}
             v0 = species_params["v0"]
-            T0 = species_params["T0"]
             m = species_params["m"]
             if name in params:
                 if "v0" in params[name]:
                     v0 = params[name]["v0"]
 
-                if "T0" in params[name]:
-                    T0 = params[name]["T0"]
-
                 if "m" in params[name]:
                     m = params[name]["m"]
 
-            if species_params["basis"] == "uniform":
-                nprof = np.ones_like(n_prof_total)
-
-            elif species_params["basis"] == "linear":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
-
-                ureg = pint.UnitRegistry()
-                _Q = ureg.Quantity
-
-                L = (
-                    _Q(species_params["gradient scale length"]).to("nm").magnitude
-                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
-                )
-                nprof = species_params["val at center"] + (cfg_grid["x"] - species_params["center"]) / L
-                nprof = mask * nprof
-            elif species_params["basis"] == "exponential":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
-
-                ureg = pint.UnitRegistry()
-                _Q = ureg.Quantity
-
-                L = (
-                    _Q(species_params["gradient scale length"]).to("nm").magnitude
-                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
-                )
-                nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
-                nprof = mask * nprof
-
-            elif species_params["basis"] == "tanh":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
-
-                if species_params["bump_or_trough"] == "trough":
-                    nprof = 1 - nprof
-                nprof = species_params["baseline"] + species_params["bump_height"] * nprof
-
-            elif species_params["basis"] == "sine":
-                baseline = species_params["baseline"]
-                amp = species_params["amplitude"]
-                kk = species_params["wavenumber"]
-                nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
-            else:
-                raise NotImplementedError
-
-            n_prof_total += nprof
+            profs = get_1D_n_and_T_profile(profs, species_params, cfg)
+            profs["n"] *= (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
 
             # Distribution function
             temp_f, _ = _initialize_distribution_(
@@ -159,22 +112,27 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 nv=int(cfg_grid["nv"]),
                 v0=v0,
                 m=m,
-                T0=T0,
+                vth=cfg_grid["beta"],
                 vmax=cfg_grid["vmax"],
-                n_prof=nprof,
+                n_prof=profs["n"],
+                T_prof=profs["T"],
                 noise_val=species_params["noise_val"],
                 noise_seed=int(species_params["noise_seed"]),
                 noise_type=species_params["noise_type"],
             )
+
+            prof_total["n"] += profs["n"]
             f += temp_f
             species_found = True
+
+            prof_total["n"] += profs["n"]
         else:
             pass
 
     if not species_found:
         raise ValueError("No species found! Check the config")
 
-    return n_prof_total, f
+    return f, prof_total["n"]
 
 
 def get_derived_quantities(cfg: Dict) -> Dict:
@@ -189,6 +147,12 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid = cfg["grid"]
 
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
+    cfg_grid["vmax"] = (
+        8
+        * np.sqrt(
+            (u.Quantity(cfg["units"]["reference electron temperature"]) / (const.m_e * const.c**2.0)).to("")
+        ).value
+    )
     cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
     if len(cfg["drivers"]["ey"].keys()) > 0:
@@ -264,8 +228,6 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
     # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
 
-    cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["n_prof_total"]) + cfg_grid["n_prof_total"]
-
     cfg_grid["x_a"] = np.concatenate(
         [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
     )
@@ -280,7 +242,7 @@ def init_state(cfg: Dict, td) -> Dict:
     :param cfg:
     :return:
     """
-    n_prof_total, f = _initialize_total_distribution_(cfg, cfg["grid"])
+    f, ne_prof = _initialize_total_distribution_(cfg, cfg["grid"])
 
     state = {}
     for species in ["electron"]:
@@ -292,15 +254,20 @@ def init_state(cfg: Dict, td) -> Dict:
     for field in ["a", "da", "prev_a"]:
         state[field] = jnp.zeros(cfg["grid"]["nx"] + 2)  # need boundary cells
 
+    state["Z"] = jnp.ones(cfg["grid"]["nx"]) * cfg["units"]["Z"]
+    state["ni"] = ne_prof / cfg["units"]["Z"]
+
     return state
 
 
 def get_diffeqsolve_quants(cfg):
+    cfg = process_driver_units(cfg)
+
     return dict(
         terms=ODETerm(VlasovMaxwell(cfg)),
         solver=Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
-        args={"drivers": cfg["drivers"]},
+        args={"drivers": cfg["drivers"], "terms": cfg["terms"]},
     )
 
 

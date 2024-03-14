@@ -105,17 +105,16 @@ class WaveSolver:
 
 
 class SpectralPoissonSolver:
-    def __init__(self, ion_charge, one_over_kx, dv):
+    def __init__(self, one_over_kx, dv):
         super(SpectralPoissonSolver, self).__init__()
-        self.ion_charge = ion_charge
         self.one_over_kx = one_over_kx
         self.dv = dv
 
     def compute_charges(self, f):
         return jnp.sum(jnp.sum(f, axis=2), axis=1) * self.dv**2.0
 
-    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
-        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(self.ion_charge - self.compute_charges(f))))
+    def __call__(self, f: jnp.ndarray, ni: jnp.ndarray, Z: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(Z * ni - self.compute_charges(f))))
 
 
 class AmpereSolver:
@@ -127,7 +126,7 @@ class AmpereSolver:
     def moment_x(self, f):
         return jnp.sum(f, axis=1) * self.dv
 
-    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+    def __call__(self, f: jnp.ndarray, ni, Z, prev_ex: jnp.ndarray, dt: jnp.float64):
         return prev_ex - dt * self.vx_moment(self.vx[None, :] * f)
 
 
@@ -138,7 +137,7 @@ class HampereSolver:
         self.kx = cfg["grid"]["kx"][:, None]
         self.one_over_ikx = cfg["grid"]["one_over_kx"] / 1j
 
-    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+    def __call__(self, f: jnp.ndarray, ni, Z, prev_ex: jnp.ndarray, dt: jnp.float64):
         prev_ek = jnp.fft.fft(prev_ex, axis=0)
         fk = jnp.fft.fft(f, axis=0)
         new_ek = (
@@ -153,9 +152,7 @@ class ElectricFieldSolver:
         super(ElectricFieldSolver, self).__init__()
 
         if cfg["terms"]["field"] == "poisson":
-            self.es_field_solver = SpectralPoissonSolver(
-                ion_charge=cfg["grid"]["ion_charge"], one_over_kx=cfg["grid"]["one_over_kx"], dv=cfg["grid"]["dv"]
-            )
+            self.es_field_solver = SpectralPoissonSolver(one_over_kx=cfg["grid"]["one_over_kx"], dv=cfg["grid"]["dv"])
             self.hampere = False
         elif cfg["terms"]["field"] == "ampere":
             if cfg["terms"]["time"] == "leapfrog":
@@ -173,7 +170,9 @@ class ElectricFieldSolver:
             raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
         self.dx = cfg["grid"]["dx"]
 
-    def __call__(self, f: jnp.ndarray, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+    def __call__(
+        self, f: jnp.ndarray, ni: jnp.ndarray, Z: jnp.ndarray, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64
+    ):
         """
         This returns the total electrostatic field that is used in the Vlasov equation
         The total field is a sum of the ponderomotive force from `E_y`, the driver field, and the
@@ -184,5 +183,5 @@ class ElectricFieldSolver:
         :return:
         """
         ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)[1:-1]
-        self_consistent_ex = self.es_field_solver(f, prev_ex, dt)
+        self_consistent_ex = self.es_field_solver(f, ni, Z, prev_ex, dt)
         return ponderomotive_force, self_consistent_ex
