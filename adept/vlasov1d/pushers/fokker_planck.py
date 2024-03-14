@@ -61,7 +61,9 @@ class LenardBernstein:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
-        self.nuee = self.cfg["units"]["derived"]["nuee_epphaines_norm"]
+        r_e = 2.8179402894e-13
+        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
     def moment_x(self, f):
         return jnp.sum(f, axis=1) * self.dv
@@ -90,7 +92,9 @@ class Dougherty:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
-        self.nuee = self.cfg["units"]["derived"]["nuee_epphaines_norm"]
+        r_e = 2.8179402894e-13
+        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
     def moment_x(self, f):
         return jnp.sum(f, axis=1) * self.dv
@@ -106,7 +110,7 @@ class Dougherty:
         :return:
         """
 
-        nu_eff = nu * self.nuee
+        nu_eff = nu * self.nuee_coeff
         vbar = self.moment_x(f_xv * self.v[None, :])
         v0t_sq = self.moment_x(f_xv * (self.v[None, :] - vbar[:, None]) ** 2.0)
 

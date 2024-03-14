@@ -70,7 +70,7 @@ terms:
   edfdv: cubic-spline
   time: leapfrog
   fokker_planck:
-    is_on: false
+    is_on: true
     type: Dougherty
     time:
       baseline: 1.0
