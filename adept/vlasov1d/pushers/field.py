@@ -114,7 +114,7 @@ class SpectralPoissonSolver:
         return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, f: jnp.ndarray, ni: jnp.ndarray, Z: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
-        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(ni - Z * self.compute_charges(f))))
+        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(Z * ni - self.compute_charges(f))))
 
 
 class AmpereSolver:

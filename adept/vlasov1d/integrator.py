@@ -260,3 +260,14 @@ class VlasovMaxwell:
             "de": dex[self.vpfp.dex_save],
             "e": e,
         }
+
+        # return {
+        #     "electron": y["electron"],
+        #     "a": a["a"],
+        #     "ni": y["ni"],
+        #     "Z": y["Z"],
+        #     "prev_a": a["prev_a"],
+        #     "da": djy,
+        #     "de": dex[self.vpfp.dex_save],
+        #     "e": e,
+        # }

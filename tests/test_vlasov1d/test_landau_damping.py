@@ -11,6 +11,7 @@ config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
 import mlflow
+from astropy import units as u
 
 from theory import electrostatic
 from utils.runner import run
@@ -28,6 +29,7 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
     else:
         rand_k0 = np.round(rng.uniform(0.28, 0.35), 3)
 
+    ne_n0 = u.Quantity(defaults["units"]["reference electron density"]) / u.Quantity("9.0663e21/cm^3")
     root = electrostatic.get_roots_to_electrostatic_dispersion(1.0, 1.0, rand_k0)
 
     defaults["drivers"]["ex"]["0"]["k0"] = str(rand_k0) + "kl_D"
@@ -35,6 +37,7 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
     xmax = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = str(xmax) + "l_D"
     defaults["mlflow"]["experiment"] = "vlasov1d-test-resonance"
+    root *= np.sqrt(ne_n0.to("").value)
 
     return defaults, root
 

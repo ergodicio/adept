@@ -294,7 +294,7 @@ def init_state(cfg: Dict, td) -> Dict:
 
     state = {}
     for species in ["electron"]:
-        state[species] = f * cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]
+        state[species] = f
 
     for field in ["e", "de"]:
         state[field] = jnp.zeros(cfg["grid"]["nx"])
