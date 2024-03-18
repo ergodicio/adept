@@ -2,7 +2,6 @@ import numpy as np
 from typing import Dict
 from jax import numpy as jnp, vmap
 import lineax as lx
-import optimistix as optx
 import diffrax
 
 from adept.tf1d.pushers import PoissonSolver

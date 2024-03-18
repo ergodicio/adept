@@ -72,9 +72,12 @@ def _initialize_distribution_(
     for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
         # cst = m / (4 * np.pi * alpha**3.0 * gamma_3_over_m(m)) / (2 * tt * vth**2.0) ** 1.5
         # single_dist = cst * np.exp(-(np.power(np.abs((vax[None, :] - v0) / (alpha * vth * np.sqrt(2 * tt))), m)))
-        single_dist = (2 * np.pi * tt * (vth**2.0)) * np.exp(
-            -(vax[None, :, None] ** 2.0 + vax[None, None, :] ** 2.0) / (2 * tt * (vth**2.0))
+        single_dist = (
+            1.0
+            / (2 * np.pi * tt * (vth**2.0))
+            * np.exp(-(vax[None, :, None] ** 2.0 + vax[None, None, :] ** 2.0) / (2 * tt * (vth**2.0)))
         )
+        # single_dist = single_dist / np.sum(single_dist) / dv**2.0
         f[ix, :] = tn * single_dist
 
     # if noise_type.casefold() == "uniform":
@@ -90,7 +93,6 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
     f = np.zeros([cfg_grid["nx"], cfg_grid["nv"], cfg_grid["nv"]])
     species_found = False
-    _Q = u.Quantity
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
             profs = {}
@@ -120,12 +122,11 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 noise_seed=int(species_params["noise_seed"]),
                 noise_type=species_params["noise_type"],
             )
-
-            prof_total["n"] += profs["n"]
+            actual_n = np.sum(np.sum(temp_f, axis=2), axis=1) * cfg_grid["dv"] ** 2.0
+            prof_total["n"] += actual_n
             f += temp_f
             species_found = True
 
-            prof_total["n"] += profs["n"]
         else:
             pass
 
@@ -148,7 +149,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["vmax"] = (
-        8
+        6.0
         * np.sqrt(
             (u.Quantity(cfg["units"]["reference electron temperature"]) / (const.m_e * const.c**2.0)).to("")
         ).value
@@ -223,9 +224,8 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
     cfg_grid["ktprof"] = 1.0
     # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-    cfg_grid["n_prof_total"], cfg_grid["starting_f"] = _initialize_total_distribution_(cfg, cfg_grid)
 
-    cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
+    cfg_grid["kprof"] = np.ones(cfg_grid["nx"])
     # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
 
     cfg_grid["x_a"] = np.concatenate(
@@ -235,7 +235,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td) -> Dict:
+def init_state(cfg: Dict, td=None) -> Dict:
     """
     This function initializes the state
 

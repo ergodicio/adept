@@ -138,10 +138,14 @@ def get_field_save_func(cfg, k):
             }
             vx_m_vxbar = cfg["grid"]["v"][None, :, None] - temp["vx"][:, None, None]
             vy_m_vybar = cfg["grid"]["v"][None, None, :] - temp["vy"][:, None, None]
-            temp["px"] = _calc_moment_(y["electron"] * vx_m_vxbar**2.0)
+            temp["T"] = _calc_moment_(
+                0.25 * y["electron"] * (cfg["grid"]["v"][None, :, None] ** 2.0 + cfg["grid"]["v"][None, None, :] ** 2.0)
+            )
             temp["qx"] = _calc_moment_(y["electron"] * vx_m_vxbar**3.0)
             temp["py"] = _calc_moment_(y["electron"] * vy_m_vybar**2.0)
             temp["qy"] = _calc_moment_(y["electron"] * vy_m_vybar**3.0)
+            temp["ni"] = y["ni"]
+            temp["Z"] = y["Z"]
             temp["-flogf"] = _calc_moment_(y["electron"] * jnp.log(jnp.abs(y["electron"])))
             temp["f^2"] = _calc_moment_(y["electron"] * y["electron"])
             temp["e"] = y["e"]
@@ -269,7 +273,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
 
 
 def get_default_save_func(cfg):
-    v = cfg["grid"]["v"][None, :]
+    v = cfg["grid"]["v"]
     dv = cfg["grid"]["dv"]
 
     def _calc_mean_moment_(inp):
@@ -277,10 +281,12 @@ def get_default_save_func(cfg):
 
     def save(t, y, args):
         scalars = {
-            "mean_P": _calc_mean_moment_(y["electron"] * v**2.0),
-            "mean_j": _calc_mean_moment_(y["electron"] * v),
+            "mean_ni": jnp.mean(y["ni"]),
+            "mean_Z": jnp.mean(y["Z"]),
+            "mean_T": _calc_mean_moment_(0.25 * y["electron"] * (v[None, :, None] ** 2.0 + v[None, None, :] ** 2.0)),
+            "mean_jx": _calc_mean_moment_(y["electron"] * (v[None, :, None])),
             "mean_n": _calc_mean_moment_(y["electron"]),
-            "mean_q": _calc_mean_moment_(y["electron"] * v**3.0),
+            # "mean_q": _calc_mean_moment_(y["electron"] * v**3.0),
             "mean_-flogf": _calc_mean_moment_(-jnp.log(jnp.abs(y["electron"])) * jnp.abs(y["electron"])),
             "mean_f2": _calc_mean_moment_(y["electron"] * y["electron"]),
             "mean_de2": jnp.mean(y["de"] ** 2.0),

@@ -79,7 +79,7 @@ class LenardBernstein:
         :param dt:
         :return:
         """
-        nu_eff = nu * self.nuee
+        nu_eff = nu * self.nuee_coeff
         v0t_sq = self.moment_x(f_xv * self.v[None, :] ** 2.0) / self.moment_x(f_xv)
         a = nu_eff[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 + jnp.roll(self.v, 1)[None, :] / 2 / self.dv)
         b = 1.0 + nu_eff[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)

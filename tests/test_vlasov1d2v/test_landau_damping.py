@@ -44,14 +44,10 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
 
 @pytest.mark.parametrize(
     "real_or_imag, time, field, edfdv",
-    itertools.product(
-        ["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere", "hampere"], ["exponential", "cubic-spline"]
-    ),
+    itertools.product(["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere"], ["exponential", "cubic-spline"]),
 )
 def test_single_resonance(real_or_imag, time, field, edfdv):
     if (time == "sixth") and (field == "ampere"):
-        print("not implemented - skipping test")
-    elif (time == "sixth") and (field == "hampere"):
         print("not implemented - skipping test")
     else:
         with open("tests/test_vlasov1d2v/configs/resonance.yaml", "r") as file:

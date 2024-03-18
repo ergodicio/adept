@@ -224,20 +224,14 @@ class VlasovMaxwell:
         djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
 
         ne_before = self.moment_x(self.moment_y(y["electron"]))
-        Te_before = (
-            self.moment_x(
-                self.moment_y(0.5 * y["electron"] * self.v[None, None, :] ** 2.0 * self.v[None, :, None] ** 2.0)
-            )
-            / ne_before
-        )
 
         if self.cfg["terms"]["fokker_planck"]["nu_ee"]["is_on"]:
-            nu_ee_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"]) * ne_before / Te_before**1.5
+            nu_ee_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"])
         else:
             nu_ee_prof = None
 
         if self.cfg["terms"]["fokker_planck"]["nu_ei"]["is_on"]:
-            nu_ei_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"]) * ne_before / Te_before**1.5
+            nu_ei_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"]["nu_ee"])
         else:
             nu_ei_prof = None
 

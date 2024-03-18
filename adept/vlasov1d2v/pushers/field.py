@@ -127,14 +127,14 @@ class AmpereSolver:
         return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, f: jnp.ndarray, ni, Z, prev_ex: jnp.ndarray, dt: jnp.float64):
-        return prev_ex - dt * self.vx_moment(self.vx[None, :] * f)
+        return prev_ex - dt * self.moment_x(self.vx[None, :] * f)
 
 
 class HampereSolver:
     def __init__(self, cfg):
-        self.vx = cfg["grid"]["v"][None, :]
+        self.vx = cfg["grid"]["v"][None, :, None]
         self.dv = cfg["grid"]["dv"]
-        self.kx = cfg["grid"]["kx"][:, None]
+        self.kx = cfg["grid"]["kx"][:, None, None]
         self.one_over_ikx = cfg["grid"]["one_over_kx"] / 1j
 
     def __call__(self, f: jnp.ndarray, ni, Z, prev_ex: jnp.ndarray, dt: jnp.float64):

@@ -1,9 +1,11 @@
 units:
   laser wavelength: 351nm
-  reference ion temperature: 2000eV
-  reference electron temperature: 2000eV
-  reference electron density: 1.5e21/cc
+  reference ion temperature: 1000eV
+  reference electron temperature: 1000eV
+  reference electron density: 9.0663e20/cm^3
   Z: 10
+  Ion: N+
+  logLambda: nrl
 
 
 density:
@@ -21,57 +23,57 @@ density:
       basis: uniform
 
 grid:
-  dt: 0.1
-  nv: 4096
-  nx: 128
+  dt: 0.2
+  nv: 512
+  nx: 32
   tmin: 0.
-  tmax: 600.0
+  tmax: 480.0
   vmax: 6.4
-  xmax: 20.94
+  xmax: 20.94l_D
   xmin: 0.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 600.0
-      nt: 91
+      tmax: 480.0
+      nt: 961
   electron:
     t:
       tmin: 0.0
-      tmax: 600.0
-      nt: 91
+      tmax: 480.0
+      nt: 9
 
 mode: vlasov-1d
 
 mlflow:
-  experiment: basic-epw-for-plots
-  run: nonlinear
+  experiment: vlasov1d
+  run: test
 
 drivers:
   ex:
     '0':
-      a0: 1.e-2
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
+      a0: 1.e-4
+      k0: 0.3kl_D
+      t_center: 40.0tp
+      t_rise: 5.0tp
+      t_width: 30.0tp
+      w0: 1.1598464805wp
       dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      x_center: 0.0l_D
+      x_rise: 10.0l_D
+      x_width: 4000000.0l_D
   ey: {}
 
 terms:
   field: poisson
-  edfdv: cubic-spline
+  edfdv: exponential
   time: sixth
   fokker_planck:
-    is_on: True
+    is_on: true
     type: Dougherty
     time:
-      baseline: 1.0e-5
+      baseline: 0.04
       bump_or_trough: bump
       center: 0.0
       rise: 25.0
@@ -87,7 +89,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
   krook:
-    is_on: False
+    is_on: false
     time:
       baseline: 1.0
       bump_or_trough: bump
@@ -97,7 +99,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
     space:
-      baseline: 1.0
+      baseline: 1.0e-6
       bump_or_trough: bump
       center: 0.0
       rise: 25.0

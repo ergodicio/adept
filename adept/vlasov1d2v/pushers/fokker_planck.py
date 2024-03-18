@@ -43,12 +43,11 @@ class Collisions:
         dt: jnp.float64,
     ) -> jnp.ndarray:
 
-        Zsq_ni_nuei = Z**2.0 * ni * self.ei_fp.nuei_coeff * nu_ei
-
         if self.cfg["terms"]["fokker_planck"]["nu_ee"]["is_on"]:
             f = self.coll_ee_over_x(nu_ee, f, dt)
 
         if self.cfg["terms"]["fokker_planck"]["nu_ei"]["is_on"]:
+            Zsq_ni_nuei = Z**2.0 * ni * self.ei_fp.nuei_coeff * nu_ei
             f = self.coll_ei_over_x(Zsq_ni_nuei, f, dt)
 
         # if self.cfg["terms"]["krook"]["is_on"]:
@@ -81,31 +80,37 @@ class Dougherty:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones(self.cfg["grid"]["nv"])
-        self.scan_over_vy = vmap(self._solve_one_vslice_, in_axes=(None, 1), out_axes=1)
-        self.scan_over_vx = vmap(self._solve_one_vslice_, in_axes=(None, 0), out_axes=0)
+        self.scan_over_vy = vmap(self._solve_one_vslice_, in_axes=(None, 0, 0, 1, None), out_axes=1)
+        self.scan_over_vx = vmap(self._solve_one_vslice_, in_axes=(None, 0, 0, 0, None), out_axes=0)
 
         r_e = 2.8179402894e-13
         c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
-    def _solve_one_vslice_(self, operator, f_vxvy):
+    def _solve_one_vslice_(self, nu, vbar, v0t_sq, f_vxvy, dt):
+        operator = self._get_operator_(nu, vbar, v0t_sq, dt)
         return lx.linear_solve(operator, f_vxvy, solver=lx.Tridiagonal()).value
 
     def ddx(self, f_vxvy: jnp.ndarray):
         return jnp.gradient(f_vxvy, self.dv, axis=0)
 
+    # def ddx_2(self, f_vxvy: jnp.ndarray):
+    #     padded = jnp.pad(f_vxvy, pad_width=((2, 2), (0, 0)), mode="reflect")
+    #     return jnp.gradient(f_vxvy, self.dv, axis=0)
+
     def ddy(self, f_vxvy: jnp.ndarray):
         return jnp.gradient(f_vxvy, self.dv, axis=1)
 
     def get_init_quants_x(self, f_vxvy: jnp.ndarray):
-        vxbar = jnp.sum(jnp.sum(f_vxvy * self.v[:, None], axis=1), axis=0) * self.dv**2.0
-        v0t_sq = jnp.sum(jnp.sum(f_vxvy * (self.v[:, None] - vxbar) ** 2.0, axis=1), axis=0) * self.dv**2.0
+        n = jnp.sum(f_vxvy, axis=0)
+        vxbar = jnp.sum(f_vxvy * self.v[:, None], axis=0) / n
+        v0t_sq = jnp.sum(f_vxvy * (self.v[:, None] - vxbar) ** 2.0, axis=0) / n
         return vxbar, v0t_sq
 
     def get_init_quants_y(self, f_vxvy: jnp.ndarray):
-        vybar = jnp.sum(jnp.sum(f_vxvy * self.v[None, :], axis=1), axis=0) * self.dv**2.0
-        v0t_sq = jnp.sum(jnp.sum(f_vxvy * (self.v[None, :] - vybar) ** 2.0, axis=1), axis=0) * self.dv**2.0
-
+        n = jnp.sum(f_vxvy, axis=1)
+        vybar = jnp.sum(f_vxvy * self.v[None, :], axis=1) / n
+        v0t_sq = jnp.sum(f_vxvy * (self.v[None, :] - vybar) ** 2.0, axis=1) / n
         return vybar, v0t_sq
 
     def _get_operator_(self, nu, vbar, v0t_sq, dt):
@@ -127,8 +132,7 @@ class Dougherty:
         """
 
         vxbar, v0t_sq = self.get_init_quants_x(f_vxvy)
-        operator = self._get_operator_(nu, vxbar, v0t_sq, dt)
-        return self.scan_over_vy(operator, f_vxvy)
+        return self.scan_over_vy(nu, vxbar, v0t_sq, f_vxvy, dt)
 
     def implicit_vy(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """
@@ -140,20 +144,21 @@ class Dougherty:
         """
 
         vybar, v0t_sq = self.get_init_quants_y(f_vxvy)
-        operator = self._get_operator_(nu, vybar, v0t_sq, dt)
-        return self.scan_over_vx(operator, f_vxvy)
+        # return vybar, v0t_sq
+        return self.scan_over_vx(nu, vybar, v0t_sq, f_vxvy, dt)
 
     def explicit_vx(self, nu, f_vxvy, dt: jnp.float64):
         vxbar, v0t_sq = self.get_init_quants_x(f_vxvy)
         dfdvx = self.ddx(f_vxvy)
-        dfdt = nu * self.ddx((self.v[:, None] - vxbar) * f_vxvy + v0t_sq * dfdvx)
+        # d2fdvx2 = self.ddx2(f_vxvy)
+        dfdt = f_vxvy + (self.v[:, None] - vxbar[None, :]) * self.ddx(f_vxvy) + v0t_sq[None, :] * self.ddx(dfdvx)
         new_fvxvy = f_vxvy + dt * nu * dfdt
         return new_fvxvy
 
     def explicit_vy(self, nu, f_vxvy, dt: jnp.float64):
         vybar, v0t_sq = self.get_init_quants_y(f_vxvy)
         dfdvy = self.ddy(f_vxvy)
-        dfdt = nu * self.ddy((self.v[None, :] - vybar) * f_vxvy + v0t_sq * dfdvy)
+        dfdt = f_vxvy + (self.v[None, :] - vybar[:, None]) * self.ddy(f_vxvy) + v0t_sq[:, None] * self.ddy(dfdvy)
         new_fvxvy = f_vxvy + dt * nu * dfdt
         return new_fvxvy
 

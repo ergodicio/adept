@@ -202,8 +202,9 @@ def _initialize_total_distribution_(cfg):
             )
 
             # total density and distribution function
+            actual_n = np.sum(temp_f, axis=1) * cfg_grid["dv"]
             f += temp_f
-            prof_total["n"] += profs["n"]
+            prof_total["n"] += actual_n
             species_found = True
         else:
             pass
