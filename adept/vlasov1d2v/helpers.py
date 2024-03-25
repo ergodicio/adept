@@ -149,7 +149,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["vmax"] = (
-        6.0
+        cfg_grid["vmax"]
         * np.sqrt(
             (u.Quantity(cfg["units"]["reference electron temperature"]) / (const.m_e * const.c**2.0)).to("")
         ).value

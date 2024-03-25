@@ -1,7 +1,7 @@
 units:
   laser wavelength: 351nm
-  reference ion temperature: 2000eV
-  reference electron temperature: 2000eV
+  reference ion temperature: 1000eV
+  reference electron temperature: 1000eV
   reference electron density: 9.0663e20/cm^3
   Z: 4
   Ion: N+
@@ -28,8 +28,8 @@ grid:
   nv: 1024
   nx: 32
   tmin: 0.
-  tmax: 2000.0
-  vmax: 6.4
+  tmax: 1000.0
+  vmax: 12.0
   xmax: 20.94l_D
   xmin: 0.0
 
@@ -37,12 +37,12 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 2000.0
+      tmax: 1000.0
       nt: 1001
   electron-fx-vx:
     t:
       tmin: 0.0
-      tmax: 2000.0
+      tmax: 1000.0
       nt: 101
     x: {}
     vx:
@@ -52,7 +52,7 @@ save:
   electron-full:
     t:
       tmin: 0.0
-      tmax: 2000.0
+      tmax: 1000.0
       nt: 6
 
 mode: vlasov-1d2v
@@ -79,7 +79,7 @@ drivers:
 terms:
   field: poisson
   edfdv: exponential
-  time: sixth
+  time: leapfrog
   fokker_planck:
     nu_ee: 
       is_on: true
@@ -100,10 +100,10 @@ terms:
         bump_height: 0.0
         width: 100000.0
     nu_ei: 
-      nr: 384
-      nth: 1024
+      nr: 512
+      nth: 2048
       solver: exact-fft
-      is_on: false
+      is_on: true
       time:
         baseline: 1.0
         bump_or_trough: bump

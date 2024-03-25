@@ -94,10 +94,6 @@ class Dougherty:
     def ddx(self, f_vxvy: jnp.ndarray):
         return jnp.gradient(f_vxvy, self.dv, axis=0)
 
-    # def ddx_2(self, f_vxvy: jnp.ndarray):
-    #     padded = jnp.pad(f_vxvy, pad_width=((2, 2), (0, 0)), mode="reflect")
-    #     return jnp.gradient(f_vxvy, self.dv, axis=0)
-
     def ddy(self, f_vxvy: jnp.ndarray):
         return jnp.gradient(f_vxvy, self.dv, axis=1)
 
@@ -144,13 +140,11 @@ class Dougherty:
         """
 
         vybar, v0t_sq = self.get_init_quants_y(f_vxvy)
-        # return vybar, v0t_sq
         return self.scan_over_vx(nu, vybar, v0t_sq, f_vxvy, dt)
 
     def explicit_vx(self, nu, f_vxvy, dt: jnp.float64):
         vxbar, v0t_sq = self.get_init_quants_x(f_vxvy)
         dfdvx = self.ddx(f_vxvy)
-        # d2fdvx2 = self.ddx2(f_vxvy)
         dfdt = f_vxvy + (self.v[:, None] - vxbar[None, :]) * self.ddx(f_vxvy) + v0t_sq[None, :] * self.ddx(dfdvx)
         new_fvxvy = f_vxvy + dt * nu * dfdt
         return new_fvxvy
@@ -219,26 +213,17 @@ class Banks:
         th_interp = np.where(th_interp < 0, 2 * np.pi + th_interp, th_interp)
 
         self.cart2pol = partial(interp2d, xq=vx_interp, yq=vy_interp, x=self.v, y=self.v, extrap=True, method="cubic")
-
-        self._pol2cart_ = partial(
-            interp2d,
-            xq=r_interp,
-            yq=th_interp,
-            x=vr_pad,
-            y=th_pad,
-            extrap=True,
-            method="cubic",
-        )
+        self._pol2cart_ = partial(interp2d, xq=r_interp, yq=th_interp, x=vr_pad, y=th_pad, extrap=True, method="cubic")
 
         thk_sq = (np.fft.rfftfreq(Nth, dth) * 2 * np.pi) ** 2.0
 
         # collision operator envelope
         nu_envelope = np.zeros(Nr)
         vmax = cfg["grid"]["vmax"]
-        vbar = 0.464
+        # vbar = 0.464 *
         vc = vmax - 1.0
-        nu_envelope[self.vr < vbar] = vbar**-3.0
-        locs = (self.vr >= vbar) & (self.vr < vc)
+        # nu_envelope[self.vr < vbar] = vbar**-3.0
+        locs = self.vr < vc
         nu_envelope[locs] = self.vr[locs] ** -3.0
         locs = (self.vr >= vc) & (self.vr < vmax)
         nu_envelope[locs] = self.vr[locs] ** -3.0 * (
