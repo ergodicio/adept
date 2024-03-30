@@ -1,0 +1,57 @@
+mode: sh-2d
+
+mlflow:
+  experiment: sh2d-epw-test
+  run: test
+
+units:
+  laser wavelength: 351nm
+  electron temperature: 2000eV
+  density for collisions: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+grid:
+    nx: 32
+    xmin: 0.0
+    xmax: 20.94
+    tmin: 0.0
+    tmax: 200.0
+    nt: 1536
+    nl: 5
+    ny: 2
+    ymin: -32.0
+    ymax: 32.0
+    nv: 1024
+    vmax: 8.0
+
+save:
+    t:
+      tmin: 0.5
+      tmax: 190.0
+      nt: 64
+
+drivers:
+  "ex":
+    "0":
+      "k0": 0.3
+      "w0": 1.16
+      "dw0": 0.0
+      "t_c": 40.0
+      "t_w": 40.0
+      "t_r": 5.0
+      "x_c": 400.0
+      "x_w": 1000000.0
+      "x_r": 10.0
+      "y_c": 400.0
+      "y_w": 1000000.0
+      "y_r": 10.0
+      "a0": 1.e-8
+
+terms:
+  vlasov: True
+  fokker-planck:
+    active: False
+    flm: tridiagonal
+    f00: chang_cooper

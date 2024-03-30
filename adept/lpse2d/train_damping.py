@@ -4,7 +4,7 @@ import yaml, os, argparse, tempfile
 from itertools import product
 
 import numpy as np
-from jax.config import config
+from jax import config
 
 config.update("jax_enable_x64", True)
 # config.update("jax_debug_nans", True)
@@ -41,7 +41,7 @@ def _modify_defaults_(defaults, k0, nuee, a0):
 
 @python_app
 def remote_run(run_id, t_or_v):
-    from jax.config import config
+    from jax import config
 
     config.update("jax_enable_x64", True)
 

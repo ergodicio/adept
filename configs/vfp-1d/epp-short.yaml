@@ -1,0 +1,72 @@
+units:
+  laser wavelength: 351nm
+  reference electron temperature: 1000eV
+  reference ion temperature: 500eV
+  reference electron density: 5e20/cm^3
+  Z: 30
+  Ion: Au+
+  logLambda: nrl
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    n: 
+      basis: uniform
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      bump_height: 0.0
+      width: 100000.0
+    T:
+      basis: sine
+      baseline: 1.0
+      amplitude: 1.0e-3
+      wavelength: 50000.0
+
+grid:
+  dt: 100.0
+  nv: 512
+  nx: 32
+  tmin: 0.
+  tmax: 50000.0
+  xmax: 100000.0
+  xmin: 0.0
+  nl: 1
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 50000.0
+      nt: 11
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 50000.0
+      nt: 6
+
+mode: vfp-2d
+
+mlflow:
+  experiment: vfp2d
+  run: epperlein-short
+
+drivers:
+  ex: {}
+  ey: {}
+
+terms:
+  fokker_planck:
+    flm:
+      ee: false
+    f00:
+      type: Dougherty
+  e_solver: oshun
