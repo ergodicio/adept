@@ -96,7 +96,7 @@ def get_loss(state, pulse_dict, mod_defaults):
 
     def loss(w0):
         pulse_dict["drivers"]["E2"]["w0"] = w0
-        vf = integrator.VectorField(mod_defaults)
+        vf = integrator.SpectralPotential(mod_defaults)
         results = diffeqsolve(
             terms=ODETerm(vf),
             solver=integrator.Stepper(),

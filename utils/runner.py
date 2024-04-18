@@ -77,10 +77,10 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
         # create the dictionary of time quantities that is given to the time integrator and save manager
         tqs = {
-            "t0": cfg["grid"]["tmin"],
+            "t0": 0.0,
             "t1": cfg["grid"]["tmax"],
             "max_steps": cfg["grid"]["max_steps"],
-            "save_t0": cfg["grid"]["tmin"],
+            "save_t0": 0.0,  # cfg["grid"]["tmin"],
             "save_t1": cfg["grid"]["tmax"],
             "save_nt": cfg["grid"]["tmax"],
         }
