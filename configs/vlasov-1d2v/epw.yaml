@@ -1,7 +1,7 @@
 units:
   laser wavelength: 351nm
   reference ion temperature: 1000eV
-  reference electron temperature: 1000eV
+  reference electron temperature: 500eV
   reference electron density: 9.0663e20/cm^3
   Z: 4
   Ion: N+
@@ -24,12 +24,12 @@ density:
       basis: uniform
 
 grid:
-  dt: 1.0
-  nv: 1024
-  nx: 32
+  dt: 0.5
+  nv: 512
+  nx: 64
   tmin: 0.
   tmax: 1000.0
-  vmax: 12.0
+  vmax: 8.0
   xmax: 20.94l_D
   xmin: 0.0
 
@@ -64,7 +64,7 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-4
+      a0: 2.e-4
       k0: 0.3kl_D
       t_center: 40.0tp
       t_rise: 5.0tp
@@ -100,10 +100,10 @@ terms:
         bump_height: 0.0
         width: 100000.0
     nu_ei: 
-      nr: 512
-      nth: 2048
+      nr: 256
+      nth: 512
       solver: exact-fft
-      is_on: true
+      is_on: false
       time:
         baseline: 1.0
         bump_or_trough: bump
@@ -120,3 +120,5 @@ terms:
         slope: 0.0
         bump_height: 0.0
         width: 100000.0
+    krook:
+      is_on: false

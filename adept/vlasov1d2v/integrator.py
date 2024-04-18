@@ -238,7 +238,7 @@ class VlasovMaxwell:
         # if self.cfg["terms"]["krook"]["is_on"]:
         #     nu_K_prof = self.nu_prof(t=t, nu_args=args["terms"]["krook"])
         # else:
-        nu_K_prof = None
+        nu_K_prof = jnp.ones(self.cfg["grid"]["nx"]) * 1e-4
 
         e, f = self.vpfp(
             f=y["electron"],

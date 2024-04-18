@@ -227,7 +227,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
 
     cfg_grid["kprof"] = np.ones(cfg_grid["nx"])
     # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
+    cfg_grid["f_mx"] = _initialize_total_distribution_(cfg, cfg_grid)[0]
     cfg_grid["x_a"] = np.concatenate(
         [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
     )

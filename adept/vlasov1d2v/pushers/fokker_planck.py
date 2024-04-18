@@ -14,7 +14,7 @@ class Collisions:
     def __init__(self, cfg):
         self.cfg = cfg
         self.ee_fp = Dougherty(self.cfg)  # self.__init_ee_operator__()
-        # self.krook = Krook(self.cfg)
+        self.krook = Krook(self.cfg)
         self.ei_fp = Banks(self.cfg)
         self.coll_ee_over_x = vmap(self._single_x_ee_, in_axes=(0, 0, None))
         self.coll_ei_over_x = vmap(self._single_x_ei_, in_axes=(0, 0, None))
@@ -50,8 +50,8 @@ class Collisions:
             Zsq_ni_nuei = Z**2.0 * ni * self.ei_fp.nuei_coeff * nu_ei
             f = self.coll_ei_over_x(Zsq_ni_nuei, f, dt)
 
-        # if self.cfg["terms"]["krook"]["is_on"]:
-        #     f = self.krook(nu_K, f, dt)
+        if self.cfg["terms"]["fokker_planck"]["krook"]["is_on"]:
+            f = self.krook(nu_K, f, dt)
 
         return f
 
@@ -59,19 +59,17 @@ class Collisions:
 class Krook:
     def __init__(self, cfg):
         self.cfg = cfg
-        f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
-        self.f_mx = f_mx / np.sum(f_mx, axis=1)[:, None] / self.cfg["grid"]["dv"]
+        self.f_mx = self.cfg["grid"]["f_mx"]
         self.dv = self.cfg["grid"]["dv"]
 
     def moment_x(self, f):
         return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
-        nu_Kxdt = dt * nu_K[:, None]
+        nu_Kxdt = dt * nu_K[:, None, None]
         exp_nuKxdt = jnp.exp(-nu_Kxdt)
-        n_prof = self.vx_moment(f_xv)
 
-        return f_xv * exp_nuKxdt + n_prof[:, None] * self.f_mx * (1.0 - exp_nuKxdt)
+        return f_xv * exp_nuKxdt + self.f_mx * (1.0 - exp_nuKxdt)
 
 
 class Dougherty:
@@ -206,14 +204,14 @@ class Banks:
         # vx = -r cos th
         # vy = r sin th
 
-        self.flat_oob_mask = np.where(r_interp > rmax - dr, 0, 1)
+        self.flat_oob_mask = np.where(r_interp > rmax - 2 * dr, 0, 1)
         self.reshaped_oob_mask = self.flat_oob_mask.reshape(self.v.size, self.v.size, order="C")
 
         # Negative angles are corrected
         th_interp = np.where(th_interp < 0, 2 * np.pi + th_interp, th_interp)
 
-        self.cart2pol = partial(interp2d, xq=vx_interp, yq=vy_interp, x=self.v, y=self.v, extrap=True, method="cubic")
-        self._pol2cart_ = partial(interp2d, xq=r_interp, yq=th_interp, x=vr_pad, y=th_pad, extrap=True, method="cubic")
+        self.cart2pol = partial(interp2d, xq=vx_interp, yq=vy_interp, x=self.v, y=self.v, extrap=False, method="cubic")
+        self._pol2cart_ = partial(interp2d, xq=r_interp, yq=th_interp, x=vr_pad, y=th_pad, extrap=False, method="cubic")
 
         thk_sq = (np.fft.rfftfreq(Nth, dth) * 2 * np.pi) ** 2.0
 
