@@ -20,8 +20,8 @@ from adept.tf1d.pushers import get_envelope
 
 
 def write_units(cfg, td):
-    timeScale = 1e-12
-    spatialScale = 1e-4
+    timeScale = 1e-12  # cgs (ps)
+    spatialScale = 1e-4  # cgs (um)
     velocityScale = spatialScale / timeScale
     massScale = 1
     chargeScale = spatialScale ** (3 / 2) * massScale ** (1 / 2) / timeScale
@@ -45,7 +45,7 @@ def write_units(cfg, td):
     me = me_cgs / massScale
     mi = mp_cgs * A / massScale
     e = e_cgs / chargeScale
-    w0 = 2 * np.pi * c / (lam0 * 1e-6 / spatialScale)  # 1/ps
+    w0 = 2 * np.pi * c / lam0  # 1/ps
     wp0 = w0 * np.sqrt(envelopeDensity)
     w1 = w0 - wp0
     # nc = (w0*1e12)^2 * me / (4*pi*e^2) * (1e-4)^3
@@ -96,38 +96,26 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     """
     cfg_grid = cfg["grid"]
 
-    cfg_grid["xmax_norm"] = _Q(cfg_grid["xmax"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-    cfg_grid["xmin_norm"] = _Q(cfg_grid["xmin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-    cfg_grid["ymax_norm"] = _Q(cfg_grid["ymax"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-    cfg_grid["ymin_norm"] = _Q(cfg_grid["ymin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-    cfg_grid["dx_norm"] = _Q(cfg_grid["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
+    cfg_grid["xmax"] = _Q(cfg_grid["xmax"]).to("um").value
+    cfg_grid["xmin"] = _Q(cfg_grid["xmin"]).to("um").value
+    cfg_grid["ymax"] = _Q(cfg_grid["ymax"]).to("um").value
+    cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
+    cfg_grid["dx"] = _Q(cfg_grid["dx"]).to("um").value
 
-    cfg_grid["nx"] = int(cfg_grid["xmax_norm"] / cfg_grid["dx_norm"]) + 1
+    cfg_grid["nx"] = int(cfg_grid["xmax"] / cfg_grid["dx"]) + 1
     # cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-    cfg_grid["dy_norm"] = cfg_grid["dx_norm"]  # cfg_grid["ymax"] / cfg_grid["ny"]
-    cfg_grid["ny"] = int(cfg_grid["ymax_norm"] / cfg_grid["dy_norm"]) + 1
+    cfg_grid["dy"] = cfg_grid["dx"]  # cfg_grid["ymax"] / cfg_grid["ny"]
+    cfg_grid["ny"] = int(cfg_grid["ymax"] / cfg_grid["dy"]) + 1
 
-    midpt = (cfg_grid["xmax_norm"] + cfg_grid["xmin_norm"]) / 2
+    midpt = (cfg_grid["xmax"] + cfg_grid["xmin"]) / 2
 
-    L = _Q(cfg["density"]["gradient scale length"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-    max_density = cfg["density"]["val at center"] + (cfg["grid"]["xmax_norm"] - midpt) / L
+    L = _Q(cfg["density"]["gradient scale length"]).to("um").value
+    max_density = cfg["density"]["val at center"] + (cfg["grid"]["xmax"] - midpt) / L
 
     n_max = np.abs(max_density / cfg["units"]["envelope density"] - 1)
     # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
-    cfg_grid["dt"] = (
-        0.5
-        * 1
-        / (
-            2
-            * 2
-            / _Q(cfg_grid["dx"]).to("micron").value ** 2
-            * 3
-            * cfg["units"]["derived"]["vte"] ** 2
-            / (2 * cfg["units"]["derived"]["wp0"])
-            + cfg["units"]["derived"]["wp0"] * n_max / 4
-        )
-    )
-    cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    cfg_grid["dt"] = _Q("0.05ps").to("ps").value
+    cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
@@ -178,20 +166,20 @@ def get_solver_quantities(cfg: Dict) -> Dict:
         **cfg_grid,
         **{
             "x": jnp.linspace(
-                cfg_grid["xmin_norm"] + cfg_grid["dx_norm"] / 2,
-                cfg_grid["xmax_norm"] - cfg_grid["dx_norm"] / 2,
+                cfg_grid["xmin"] + cfg_grid["dx"] / 2,
+                cfg_grid["xmax"] - cfg_grid["dx"] / 2,
                 cfg_grid["nx"],
             ),
             "y": jnp.linspace(
-                cfg_grid["ymin_norm"] + cfg_grid["dy_norm"] / 2,
-                cfg_grid["ymax_norm"] - cfg_grid["dy_norm"] / 2,
+                cfg_grid["ymin"] + cfg_grid["dy"] / 2,
+                cfg_grid["ymax"] - cfg_grid["dy"] / 2,
                 cfg_grid["ny"],
             ),
             "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx_norm"]) * 2.0 * np.pi,
-            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx_norm"]) * 2.0 * np.pi,
-            "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy_norm"]) * 2.0 * np.pi,
-            "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy_norm"]) * 2.0 * np.pi,
+            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
+            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
+            "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
+            "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
         },
     }
 
@@ -215,20 +203,20 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     one_over_ksq[0, 0] = 0.0
     cfg_grid["one_over_ksq"] = jnp.array(one_over_ksq)
 
-    rise = _Q("0.5um").to("m").value / cfg["units"]["derived"]["spatialScale"]
-    boundary_width = _Q("3um").to("m").value / cfg["units"]["derived"]["spatialScale"]
+    rise = _Q("0.5um").to("um").value
+    boundary_width = _Q("3um").to("um").value
 
     if cfg["terms"]["epw"]["boundary"]["x"] == "absorbing":
-        left = cfg["grid"]["xmin_norm"] + boundary_width
-        right = cfg["grid"]["xmax_norm"] - boundary_width
+        left = cfg["grid"]["xmin"] + boundary_width
+        right = cfg["grid"]["xmax"] - boundary_width
 
         envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
     else:
         envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
 
     if cfg["terms"]["epw"]["boundary"]["y"] == "absorbing":
-        left = cfg["grid"]["ymin_norm"] + boundary_width
-        right = cfg["grid"]["ymax_norm"] - boundary_width
+        left = cfg["grid"]["ymin"] + boundary_width
+        right = cfg["grid"]["ymax"] - boundary_width
         envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
     else:
         envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
@@ -270,7 +258,7 @@ def init_state(cfg: Dict, td=None) -> Dict:
     # ey_noise = -1j * np.fft.ifft(cfg["grid"]["ky"][None, :] * phi_noise)
 
     # div_E = (
-    #     np.gradient(ex_noise, axis=0) / cfg["grid"]["dx_norm"] + np.gradient(ey_noise, axis=1) / cfg["grid"]["dy_norm"]
+    #     np.gradient(ex_noise, axis=0) / cfg["grid"]["dx"] + np.gradient(ey_noise, axis=1) / cfg["grid"]["dy"]
     # )
     epw = phi_noise
 
@@ -335,13 +323,13 @@ def get_density_profile(cfg: Dict):
         nprof = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
     elif cfg["density"]["basis"] == "linear":
-        left = cfg["grid"]["xmin_norm"] + _Q("5.0um").to("m").value / cfg["units"]["derived"]["spatialScale"]
-        right = cfg["grid"]["xmax_norm"] - _Q("5.0um").to("m").value / cfg["units"]["derived"]["spatialScale"]
-        rise = _Q("0.5um").to("m").value / cfg["units"]["derived"]["spatialScale"]
+        left = cfg["grid"]["xmin"] + _Q("5.0um").to("um").value
+        right = cfg["grid"]["xmax"] - _Q("5.0um").to("um").value
+        rise = _Q("0.5um").to("um").value
         # mask = np.repeat(get_envelope(rise, rise, left, right, cfg["grid"]["x"])[:, None], cfg["grid"]["ny"], axis=-1)
-        midpt = (cfg["grid"]["xmax_norm"] + cfg["grid"]["xmin_norm"]) / 2
+        midpt = (cfg["grid"]["xmax"] + cfg["grid"]["xmin"]) / 2
 
-        L = _Q(cfg["density"]["gradient scale length"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
+        L = _Q(cfg["density"]["gradient scale length"]).to("um").value
         nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - midpt) / L
         # nprof = mask * nprof[:, None]
         nprof = np.repeat(nprof[:, None], cfg["grid"]["ny"], axis=-1)
@@ -464,9 +452,9 @@ def make_xarrays(cfg, this_t, state, td):
     shift_kx = np.fft.fftshift(cfg["grid"]["kx"])
     shift_ky = np.fft.fftshift(cfg["grid"]["ky"])
 
-    tax_tuple = ("t (ps)", this_t * cfg["units"]["derived"]["timeScale"] * 1e12)
-    xax_tuple = ("x (um)", cfg["grid"]["x"] * cfg["units"]["derived"]["spatialScale"] * 1e6)
-    yax_tuple = ("y (um)", cfg["grid"]["y"] * cfg["units"]["derived"]["spatialScale"] * 1e6)
+    tax_tuple = ("t (ps)", this_t)
+    xax_tuple = ("x (um)", cfg["grid"]["x"])
+    yax_tuple = ("y (um)", cfg["grid"]["y"])
 
     phi_vs_t = state["epw"].view(np.complex128)
     phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2))

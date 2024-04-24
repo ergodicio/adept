@@ -20,13 +20,13 @@ drivers:
     y_r: 20.0
     y_w: 60000000.0
 grid:
-  dx: 16nm
+  dx: 6nm
   tmax: 5.0ps
   tmin: 0.0ns
-  xmax: 32um
+  xmax: 24um
   xmin: 0.0um
-  ymax: 8um
-  ymin: -8um
+  ymax: 3um
+  ymin: -3um
 mlflow:
   experiment: lpse2d-tpd
   run: tpd-test-no-pump-evolution
@@ -57,5 +57,5 @@ units:
   ionization state: 6
   atomic number: 40
   laser wavelength: 351nm
-  laser intensity: 1e14W/cm^2
+  laser intensity: 2e14W/cm^2
   envelope density: 0.25
