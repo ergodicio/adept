@@ -30,7 +30,7 @@ class SplitStep:
         self.complex_state_vars = ["E0", "epw"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
-        self.nu_coll = 0.0
+        self.nu_coll = cfg["units"]["derived"]["nu_coll"]
 
     def unpack_y(self, y):
         new_y = {}
@@ -59,13 +59,13 @@ class SplitStep:
 
         return y
 
-    def landau_damping(self, t, epw, vte):
+    def landau_damping(self, t, epw, vte_sq):
         gammaLandauEpw = (
             np.sqrt(np.pi / 8)
             * self.wp0**4
             * self.one_over_ksq**1.5
-            / (vte**3.0)
-            * jnp.exp(-self.wp0**2.0 * self.one_over_ksq / (2 * vte**2.0))
+            / (vte_sq**1.5)
+            * jnp.exp(-self.wp0**2.0 * self.one_over_ksq / (2 * vte_sq))
         )
 
         return jnp.fft.ifft2(jnp.fft.fft2(epw) * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt))
@@ -79,7 +79,7 @@ class SplitStep:
         new_y["epw"] = self.epw(t, new_y, args)
 
         # landau and collisional damping
-        new_y["epw"] = self.landau_damping(t=t, epw=new_y["epw"], vte=y["vte_sq"])
+        new_y["epw"] = self.landau_damping(t=t, epw=new_y["epw"], vte_sq=y["vte_sq"])
 
         # boundary damping
         new_y["epw"] = new_y["epw"] * self.boundary_envelope

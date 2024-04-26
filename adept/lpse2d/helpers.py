@@ -4,7 +4,7 @@ from collections import defaultdict
 
 
 import matplotlib.pyplot as plt
-import jax, yaml
+import jax, yaml, mlflow
 from jax import numpy as jnp
 import numpy as np
 import equinox as eqx
@@ -53,6 +53,13 @@ def write_units(cfg, td):
     vte_sq = vte**2
     cs = c * np.sqrt((Z * Te + 3 * Ti) / (A * 511 * 1836))
 
+    # nu_sideloss = 1e-1
+
+    # nu_ei = calc_nuei(ne, Te, Z, ni, Ti)
+    # nu_ee = calc_nuee(ne, Te)
+
+    nu_coll = 1.0  # nu_ee + nu_ei + nu_sideloss
+
     nc = w0**2 * me / (4 * np.pi * e**2)
 
     E0_source = np.sqrt(8 * np.pi * np.pi * I0 * 1e7 / c_cgs) / fieldScale
@@ -70,6 +77,7 @@ def write_units(cfg, td):
         "vte_sq": vte_sq,
         "cs": cs,
         "nc": nc,
+        "nu_coll": nu_coll,
         "E0_source": E0_source,
         "timeScale": timeScale,
         "spatialScale": spatialScale,
@@ -114,7 +122,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     n_max = np.abs(max_density / cfg["units"]["envelope density"] - 1)
     # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
-    cfg_grid["dt"] = _Q("0.05ps").to("ps").value
+    cfg_grid["dt"] = _Q("0.002ps").to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
@@ -162,6 +170,9 @@ def get_solver_quantities(cfg: Dict) -> Dict:
 
     cfg_grid = cfg["grid"]
 
+    Lx = cfg_grid["xmax"] - cfg_grid["xmin"]
+    Ly = cfg_grid["ymax"] - cfg_grid["ymin"]
+
     cfg_grid = {
         **cfg_grid,
         **{
@@ -176,10 +187,10 @@ def get_solver_quantities(cfg: Dict) -> Dict:
                 cfg_grid["ny"],
             ),
             "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-            "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
-            "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"]) * 2.0 * np.pi,
+            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
+            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
+            "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
+            "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
         },
     }
 
@@ -253,7 +264,7 @@ def init_state(cfg: Dict, td=None) -> Dict:
         raise NotImplementedError
 
     random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
-    phi_noise = random_amps * jnp.exp(1j * random_phases)
+    phi_noise = 1 * jnp.exp(1j * random_phases)
     # ex_noise = -1j * np.fft.ifft(cfg["grid"]["kx"][:, None] * phi_noise)
     # ey_noise = -1j * np.fft.ifft(cfg["grid"]["ky"][None, :] * phi_noise)
 
@@ -415,25 +426,36 @@ def plot_fields(fields, td):
 
 
 def plot_kt(kfields, td):
-    t_skip = int(kfields.coords["t"].data.size // 8)
+    t_skip = int(kfields.coords["t (ps)"].data.size // 8)
     t_skip = t_skip if t_skip > 1 else 1
     tslice = slice(0, -1, t_skip)
+
+    k_min = -2.5
+    k_max = 2.5
+
+    ikx_min = np.argmin(np.abs(kfields.coords["kx"].data - k_min))
+    ikx_max = np.argmin(np.abs(kfields.coords["kx"].data - k_max))
+    iky_min = np.argmin(np.abs(kfields.coords["ky"].data - k_min))
+    iky_max = np.argmin(np.abs(kfields.coords["ky"].data - k_max))
+
+    kx_slice = slice(ikx_min, ikx_max)
+    ky_slice = slice(iky_min, iky_max)
 
     for k, v in kfields.items():
         fld_dir = os.path.join(td, "plots", k)
         os.makedirs(fld_dir, exist_ok=True)
 
-        np.log10(np.abs(v[tslice, :, 0])).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"{k}_kx.png"), bbox_inches="tight")
+        np.log10(np.abs(v[tslice, kx_slice, 0])).T.plot(col="t (ps)", col_wrap=4)
+        plt.savefig(os.path.join(fld_dir, f"log_{k}_kx.png"), bbox_inches="tight")
         plt.close()
 
-        np.abs(v[tslice, :, :]).T.plot(col="t (ps)", col_wrap=4)
+        np.abs(v[tslice, kx_slice, ky_slice]).T.plot(col="t (ps)", col_wrap=4)
         plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
         plt.close()
 
-        # np.log10(np.abs(v[tslice, :, :])).T.plot(col="t (ps)", col_wrap=4)
-        # plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
-        # plt.close()
+        np.log10(np.abs(v[tslice, kx_slice, ky_slice])).T.plot(col="t (ps)", col_wrap=4)
+        plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_ky.png"), bbox_inches="tight")
+        plt.close()
         #
         # kx = kfields.coords["kx"].data
 
@@ -443,14 +465,23 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
 
     plot_fields(fields, td)
-    # plot_kt(kfields, td)
+    plot_kt(kfields, td)
+
+    it = np.argmin(np.abs(fields.coords["t (ps)"].data - 1.5))
+    metrics = {}
+    metrics["total_e_sq_t15ps"] = float(
+        np.sum(np.abs(fields["ex"][it]) ** 2 + np.abs(fields["ey"][it]) ** 2) * cfg["grid"]["dx"] * cfg["grid"]["dy"]
+    )
+    metrics["log_total_e_sq_t15ps"] = float(np.log10(metrics["total_e_sq_t15ps"]))
+
+    mlflow.log_metrics(metrics)
 
     return kfields, fields
 
 
 def make_xarrays(cfg, this_t, state, td):
-    shift_kx = np.fft.fftshift(cfg["grid"]["kx"])
-    shift_ky = np.fft.fftshift(cfg["grid"]["ky"])
+    shift_kx = np.fft.fftshift(cfg["grid"]["kx"]) * cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
+    shift_ky = np.fft.fftshift(cfg["grid"]["ky"]) * cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
 
     tax_tuple = ("t (ps)", this_t)
     xax_tuple = ("x (um)", cfg["grid"]["x"])

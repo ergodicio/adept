@@ -26,7 +26,7 @@ class Light:
         wpe = self.w0 * jnp.sqrt(y["background_density"])[None]
         k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + self.delta_omega[:, None, None]) ** 2 - wpe**2 / self.w0**2)
         E0_static = (
-            (1 + 0j - wpe**2.0 / (self.w0 * (1 + self.delta_omega[:, None, None]) ** 2)) ** -0.25
+            (1 + 0j - wpe**2.0 / (self.w0 * (1 + self.delta_omega[:, None, None])) ** 2) ** -0.25
             * self.E0_source
             * jnp.exp(1j * k0 * self.x[None, :, None] + 1j * self.initial_phase[:, None, None])
         )
