@@ -21,12 +21,12 @@ drivers:
     y_w: 60000000.0
 grid:
   dx: 16nm
-  tmax: 2.0ps
+  tmax: 4.0ps
   tmin: 0.0ns
-  xmax: 20um
+  xmax: 50um
   xmin: 0.0um
-  ymax: 3um
-  ymin: -3um
+  ymax: 10um
+  ymin: -10um
 mlflow:
   experiment: lpse2d-tpd
   run: tpd-test-no-pump-evolution
@@ -35,7 +35,7 @@ mode: envelope-2d
 save:
   t:
     dt: 100fs
-    tmax: 2ps
+    tmax: 4ps
     tmin: 0ps
 terms:
   epw:
