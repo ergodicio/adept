@@ -1,6 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import os
 
 from time import time
@@ -317,7 +317,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td) -> Dict:
+def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -337,7 +337,7 @@ def init_state(cfg: Dict, td) -> Dict:
     # for nm, quant in state.items():
     #     state[nm] = jnp.fft.fft2(quant, axes=(0, 1)).view(dtype=jnp.float64)
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 def get_diffeqsolve_quants(cfg):

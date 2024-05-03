@@ -227,7 +227,7 @@ def get_diffeqsolve_quants(cfg):
     )
 
 
-def init_state(cfg: Dict, td) -> Dict:
+def init_state(cfg: Dict, td) -> tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -243,7 +243,7 @@ def init_state(cfg: Dict, td) -> Dict:
             delta=jnp.zeros(cfg["grid"]["nx"]),
         )
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 class VectorField(eqx.Module):

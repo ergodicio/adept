@@ -363,7 +363,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td=None) -> Dict:
+def init_state(cfg: Dict, td=None) -> tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -383,7 +383,7 @@ def init_state(cfg: Dict, td=None) -> Dict:
     state["Z"] = jnp.ones(cfg["grid"]["nx"])
     state["ni"] = ne_prof / cfg["units"]["Z"]
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 def get_diffeqsolve_quants(cfg):

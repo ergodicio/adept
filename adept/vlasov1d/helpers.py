@@ -1,6 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict
+from typing import Dict, Tuple
 import os
 
 from time import time
@@ -343,7 +343,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td) -> Dict:
+def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -362,7 +362,7 @@ def init_state(cfg: Dict, td) -> Dict:
     for field in ["a", "da", "prev_a"]:
         state[field] = jnp.zeros(cfg["grid"]["nx"] + 2)  # need boundary cells
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 def get_diffeqsolve_quants(cfg):

@@ -89,7 +89,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         models = helpers.get_models(cfg["models"]) if "models" in cfg else None
 
         # initialize the state for the solver - NB - this is solver specific
-        state = helpers.init_state(cfg, td)
+        state, args = helpers.init_state(cfg, td)
 
         # NB - this is solver specific
         # Remember that we rely on the diffrax library to provide the ODE (time, usually) integrator
@@ -100,10 +100,8 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
 
         @eqx.filter_jit
-        def _run_(these_models, time_quantities: Dict):
-            args = {"drivers": cfg["drivers"]}
-            if these_models is not None:
-                args["models"] = these_models
+        def _run_(_args_, time_quantities: Dict):
+
             if "terms" in cfg.keys():
                 args["terms"] = cfg["terms"]
 
@@ -115,12 +113,12 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
                 max_steps=cfg["grid"]["max_steps"],  # time_quantities["max_steps"],
                 dt0=cfg["grid"]["dt"],
                 y0=state,
-                args=args,
+                args=_args_,
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
-        _log_flops_(_run_, models, tqs)
-        result = _run_(models, tqs)
+        _log_flops_(_run_, args, tqs)
+        result = _run_(args, tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
         t0 = time.time()

@@ -64,6 +64,8 @@ def write_units(cfg, td):
 
     E0_source = np.sqrt(8 * np.pi * np.pi * I0 * 1e7 / c_cgs) / fieldScale
 
+    # for k in ["delta_omega", "initial_phase", "amplitudes"]:
+
     # Derived units
     cfg["units"]["derived"] = {
         "c": c,
@@ -237,7 +239,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td=None) -> Dict:
+def init_state(cfg: Dict, td=None) -> Tuple[Dict, Dict]:
     """
     This function initializes the state for the PDE solve
 
@@ -287,7 +289,48 @@ def init_state(cfg: Dict, td=None) -> Dict:
 
     state = {"background_density": background_density, "epw": epw, "E0": E0, "vte_sq": vte_sq}
 
-    return {k: v.view(dtype=np.float64) for k, v in state.items()}
+    drivers = assemble_bandwidth(cfg)
+    return {k: v.view(dtype=np.float64) for k, v in state.items()}, {"drivers": drivers}
+
+
+def assemble_bandwidth(cfg: Dict) -> Dict:
+    drivers = {"E0": {}}
+    num_colors = cfg["drivers"]["E0"]["num_colors"]
+
+    if num_colors == 1:
+        drivers["E0"]["delta_omega"] = np.zeros(1)
+        drivers["E0"]["initial_phase"] = np.zeros(1)
+        drivers["E0"]["amplitudes"] = np.ones(1)
+    else:
+        delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
+        delta_omega = np.linspace(-delta_omega_max, delta_omega_max, num_colors)
+
+        drivers["E0"]["delta_omega"] = delta_omega
+        drivers["E0"]["initial_phase"] = np.random.uniform(0, 2 * np.pi, num_colors)
+
+        if cfg["drivers"]["E0"]["amplitude_shape"] == "uniform":
+            drivers["E0"]["amplitudes"] = np.ones(num_colors)
+        elif cfg["drivers"]["E0"]["amplitude_shape"] == "gaussian":
+            drivers["E0"]["amplitudes"] = (
+                2
+                * np.log(2)
+                / delta_omega_max
+                / np.sqrt(np.pi)
+                * np.exp(-4 * np.log(2) * (delta_omega / delta_omega_max) ** 2.0)
+            )
+            drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
+
+        elif cfg["drivers"]["E0"]["amplitude_shape"] == "lorentzian":
+            drivers["E0"]["amplitudes"] = (
+                1 / np.pi * (delta_omega_max / 2) / (delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
+            )
+            drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
+        else:
+            raise NotImplemented
+
+        drivers["E0"]["amplitudes"] /= np.sum(np.square(drivers["E0"]["amplitudes"]))  # normalize to 1 intensity
+
+    return drivers
 
 
 def _startup_plots_(state, cfg, td):

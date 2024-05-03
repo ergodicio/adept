@@ -48,12 +48,12 @@ class SplitStep:
 
         return y, new_y
 
-    def light_split_step(self, t, y):
-        y["E0"] = self.light.laser_update(t, y)
+    def light_split_step(self, t, y, args):
+        y["E0"] = self.light.laser_update(t, y, args["E0"])
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
 
-        y["E0"] = self.light.laser_update(t + 0.5 * self.dt, y)
+        y["E0"] = self.light.laser_update(t + 0.5 * self.dt, y, args["E0"])
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + 1j * self.dt * jnp.imag(k1_E0)
 
@@ -75,7 +75,7 @@ class SplitStep:
         new_y = self.unpack_y(y)
 
         # split step
-        new_y = self.light_split_step(t, new_y)
+        new_y = self.light_split_step(t, new_y, args["drivers"])
         new_y["epw"] = self.epw(t, new_y, args)
 
         # landau and collisional damping

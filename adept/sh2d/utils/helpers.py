@@ -111,7 +111,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def init_state(cfg: Dict) -> Dict:
+def init_state(cfg: Dict) -> tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -148,7 +148,7 @@ def init_state(cfg: Dict) -> Dict:
     state["de"] = jnp.zeros((nx, ny, 3))
     state["db"] = jnp.zeros((nx, ny, 3))
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 class FokkerPlanckVectorField(eqx.Module):
