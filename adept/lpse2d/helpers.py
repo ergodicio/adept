@@ -267,26 +267,11 @@ def init_state(cfg: Dict, td=None) -> Tuple[Dict, Dict]:
 
     random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
     phi_noise = 1 * jnp.exp(1j * random_phases)
-    # ex_noise = -1j * np.fft.ifft(cfg["grid"]["kx"][:, None] * phi_noise)
-    # ey_noise = -1j * np.fft.ifft(cfg["grid"]["ky"][None, :] * phi_noise)
-
-    # div_E = (
-    #     np.gradient(ex_noise, axis=0) / cfg["grid"]["dx"] + np.gradient(ey_noise, axis=1) / cfg["grid"]["dy"]
-    # )
     epw = phi_noise
 
     background_density = get_density_profile(cfg)
-    # permittivity_0 = 1 - background_density
-
     vte_sq = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"])) * cfg["units"]["derived"]["vte"] ** 2
-    # k0 = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"] * jnp.sqrt(permittivity_0[x.size // 2])
-    # noise_amps = random_amps
-    # initial_amp = jnp.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
-    # div_E = initial_amp * jnp.exp(1j * k0 * x[:, None])
-    # div_E *= jnp.exp(-((x[:, None] - np.mean(x)) ** 2.0) / (cfg["grid"]["dx"] * 0.1) ** 2.0)
-
     E0 = np.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=np.complex128)
-
     state = {"background_density": background_density, "epw": epw, "E0": E0, "vte_sq": vte_sq}
 
     drivers = assemble_bandwidth(cfg)

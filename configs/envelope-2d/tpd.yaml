@@ -15,7 +15,7 @@ drivers:
 
 grid:
   dx: 24nm
-  tmax: 2.0ps
+  tmax: 4.0ps
   tmin: 0.0ns
   xmax: 30um
   xmin: 0.0um
@@ -29,7 +29,7 @@ mode: envelope-2d
 save:
   t:
     dt: 100fs
-    tmax: 2ps
+    tmax: 4ps
     tmin: 0ps
 terms:
   epw:
