@@ -149,7 +149,7 @@ def queue_sim(sim_request):
     return submissionResult
 
 
-def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id: str):
+def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id: str, prefix="individual"):
     """
     Uploads directory to s3 bucket for ingestion into mlflow on remote / cloud side
 
@@ -177,15 +177,20 @@ def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id
     with open(os.path.join(local_directory, f"ingest-{run_id}.txt"), "w") as fi:
         fi.write("ready")
 
-    client.upload_file(os.path.join(local_directory, f"ingest-{run_id}.txt"), bucket, f"ingest-{run_id}.txt")
+    if prefix == "individual":
+        fp = "ingest"
+    else:
+        fp = prefix
+
+    client.upload_file(os.path.join(local_directory, f"ingest-{run_id}.txt"), bucket, f"{fp}-{run_id}.txt")
 
 
-def export_run(run_id):
+def export_run(run_id, prefix="individual"):
     t0 = time.time()
     run_exp = RunExporter(mlflow_client=mlflow.MlflowClient())
     with tempfile.TemporaryDirectory() as td2:
         run_exp.export_run(run_id, td2)
         print(f"Export took {round(time.time() - t0, 2)} s")
         t0 = time.time()
-        upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id)
+        upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id, prefix)
     print(f"Uploading took {round(time.time() - t0, 2)} s")

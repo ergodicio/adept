@@ -4,12 +4,19 @@ from parsl.providers import SlurmProvider, LocalProvider
 from parsl.launchers import SrunLauncher
 from parsl.executors import HighThroughputExecutor
 from parsl.app.app import python_app
-import logging
+import logging, os
 
 logger = logging.getLogger(__name__)
 
+if "BASE_TEMPDIR" in os.environ:
+    BASE_TEMPDIR = os.environ["BASE_TEMPDIR"]
+else:
+    BASE_TEMPDIR = None
 
-def run_one_val_and_grad(these_params, opt_ind, primary_run_id):
+from utils import misc
+
+
+def run_one_val_and_grad(these_params, run_id):
     """
     This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
     ``diffrax.Solution`` object and a dictionary of datasets.
@@ -41,9 +48,6 @@ def run_one_val_and_grad(these_params, opt_ind, primary_run_id):
     import jax.numpy as jnp
     from equinox import filter_value_and_grad, filter_jit
     import mlflow, yaml
-    from jax.nn import sigmoid
-
-    from utils.misc import export_run
 
     # log to logger
     logging.info(f"Running a run")
@@ -54,11 +58,7 @@ def run_one_val_and_grad(these_params, opt_ind, primary_run_id):
     logging.info(f"Config is loaded")
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
-    with mlflow.start_run(
-        run_name=f"log_amp-lines={cfg['drivers']['E0']['num_colors']}-sim={opt_ind}",
-        log_system_metrics=True,
-        nested=True,
-    ) as mlflow_run:
+    with mlflow.start_run(log_system_metrics=True, nested=True, run_id=run_id) as mlflow_run:
         t__ = time.time()  # starts the timer
 
         with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
@@ -181,8 +181,7 @@ def run_one_val_and_grad(these_params, opt_ind, primary_run_id):
         # fin
         logging.info(f"Done!")
 
-    export_run(mlflow_run.info.run_id)
-    return grad
+    return val, grad
 
 
 def setup_parsl(parsl_provider="local"):
@@ -262,56 +261,54 @@ if __name__ == "__main__":
     else:
         import optax
 
-    import yaml
+    import yaml, mlflow, tempfile, os
     import numpy as np
 
     with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
-    opt_params = {
-        "learning_rate": 0.1,
-        "clip": 1e5,
-        "optimizer": "adam",
-    }
+    cfg["opt"] = {"learning_rate": 0.1, "clip": 1e5, "optimizer": "adam"}
+    mlflow.set_experiment(cfg["mlflow"]["experiment"])
 
-    cfg["opt"] = opt_params
+    with mlflow.start_run(run_name="learn-tpd") as mlflow_run:
+        with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
+            with open(os.path.join(td, "config.yaml"), "w") as fi:
+                yaml.dump(cfg, fi)
+            mlflow.log_artifacts(td)
+        misc.log_params(cfg)
 
-    # with mlflow.start_run(run_name="learn-tpd", log_system_metrics=True) as mlflow_run:
-    #     misc.log_params(all_params)
-
-    # run_id = mlflow_run.info.run_id
-    # export_run(run_id)
+    parent_run_id = mlflow_run.info.run_id
+    misc.export_run(parent_run_id)
 
     # # restart mlflow run
-    # with mlflow.start_run(run_id=run_id, log_system_metrics=True) as mlflow_run:
-
-    opt = optax.chain(optax.clip(opt_params["clip"]), optax.adam(learning_rate=opt_params["learning_rate"]))
-
-    params = {
-        "drivers": {
-            "E0": {
-                k: np.random.normal(size=cfg["drivers"]["E0"]["num_colors"]) for k in ["amplitudes", "initial_phase"]
+    with mlflow.start_run(run_id=parent_run_id, log_system_metrics=True) as mlflow_run:
+        opt = optax.chain(optax.clip(cfg["opt"]["clip"]), optax.adam(learning_rate=cfg["opt"]["learning_rate"]))
+        params = {
+            "drivers": {
+                "E0": {
+                    k: np.random.normal(size=cfg["drivers"]["E0"]["num_colors"])
+                    for k in ["amplitudes", "initial_phase"]
+                }
             }
         }
-    }
-    opt_state = opt.init(params)
+        opt_state = opt.init(params)
 
-    # get eqx nn instead
-    # model = BandwidthGenerator(cfg["drivers"]["E0"]["num_colors"])
-    # opt_state = opt.init(model)
+        for i in range(1000):
+            old_params = params
+            with mlflow.start_run(
+                nested=True, run_name=f"log_amp-lines={cfg['drivers']['E0']['num_colors']}-sim={i}"
+            ) as nested_run:
+                pass
 
-    for i in range(1000):
-        old_params = params
+            val_and_grad = run_one_val_and_grad(old_params, run_id=nested_run.info.run_id)
+            if run_parsl:
+                val, grad = val_and_grad.result()
+            else:
+                val, grad = val_and_grad
 
-        for j in enumerate(this_param_batch):
-            run_ids = queue_batch(params)
+            mlflow.log_metrics({"loss": float(val)}, step=i)
+            misc.export_run(parent_run_id, prefix="parent")
 
-        grads = []
-        for k, run_id in enumerate(run_ids):
-            grads.append(run_one_val_and_grad(old_params, epoch=i, batch=j, sample=k, run_id=run_id))
-
-        if run_parsl:
-            grads = [grad.result() for grad in grads]
-
-        updates, opt_state = opt.update(grads, opt_state)
-        params = optax.apply_updates(old_params, updates)
+            misc.export_run(nested_run.info.run_id)
+            updates, opt_state = opt.update(grad, opt_state)
+            params = optax.apply_updates(old_params, updates)

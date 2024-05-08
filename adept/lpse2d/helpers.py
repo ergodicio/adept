@@ -15,7 +15,6 @@ from astropy.units import Quantity as _Q
 from adept.lpse2d.core import integrator
 from adept.vlasov1d.integrator import Stepper
 
-# from adept.vfp1d.helpers import write_units
 from adept.tf1d.pushers import get_envelope
 
 
@@ -290,7 +289,7 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         delta_omega = np.linspace(-delta_omega_max, delta_omega_max, num_colors)
 
-        drivers["E0"]["delta_omega"] = delta_omega
+        # drivers["E0"]["delta_omega"] = delta_omega
         drivers["E0"]["initial_phase"] = np.random.uniform(0, 2 * np.pi, num_colors)
 
         if cfg["drivers"]["E0"]["amplitude_shape"] == "uniform":
@@ -313,7 +312,9 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
         else:
             raise NotImplemented
 
-        drivers["E0"]["amplitudes"] /= np.sum(np.square(drivers["E0"]["amplitudes"]))  # normalize to 1 intensity
+        drivers["E0"]["amplitudes"] /= np.sqrt(
+            np.sum(np.square(drivers["E0"]["amplitudes"]))
+        )  # normalize to 1 intensity
 
     return drivers
 
@@ -495,12 +496,12 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
     plot_fields(fields, td)
     plot_kt(kfields, td)
 
-    it = np.argmin(np.abs(fields.coords["t (ps)"].data - 1.5))
+    it = np.argmin(np.abs(fields.coords["t (ps)"].data - (np.amax(fields.coords["t (ps)"].data) - 0.5)))
     metrics = {}
-    metrics["total_e_sq_t15ps"] = float(
-        np.sum(np.abs(fields["ex"][it]) ** 2 + np.abs(fields["ey"][it]) ** 2) * cfg["grid"]["dx"] * cfg["grid"]["dy"]
+    metrics["total_e_sq"] = float(
+        np.sum(np.abs(fields["ex"]) ** 2 + np.abs(fields["ey"]) ** 2) * cfg["grid"]["dx"] * cfg["grid"]["dy"]
     )
-    metrics["log_total_e_sq_t15ps"] = float(np.log10(metrics["total_e_sq_t15ps"]))
+    metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
 
     mlflow.log_metrics(metrics)
 

@@ -5,31 +5,31 @@ density:
     min: 1.0e-10
     type: uniform
   gradient scale length: 200um
-  val at center: 0.24
+  val at center: 0.25
 
 drivers:
   E0:
-    num_colors: 200
+    num_colors: 64
     delta_omega_max: 0.03
-    amplitude_shape: gaussian
+    amplitude_shape: lorentzian
 
 grid:
   dx: 24nm
-  tmax: 4.0ps
+  tmax: 8.0ps
   tmin: 0.0ns
-  xmax: 30um
+  xmax: 61um
   xmin: 0.0um
-  ymax: 3um
-  ymin: -3um
+  ymax: 5um
+  ymin: -5um
 mlflow:
-  experiment: lpse2d-tpd
-  run: tpd-bandwidth
+  experiment: lpse2d-tpd-learn
+  run: baseline-lorentzian
 mode: envelope-2d
 
 save:
   t:
     dt: 100fs
-    tmax: 4ps
+    tmax: 8ps
     tmin: 0ps
 terms:
   epw:
@@ -52,5 +52,8 @@ units:
   ionization state: 6
   atomic number: 40
   laser wavelength: 351nm
-  laser intensity: 1e15W/cm^2
+  laser intensity: 3e15W/cm^2
   envelope density: 0.25
+
+machine:
+  calculator: gpu

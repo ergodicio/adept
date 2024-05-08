@@ -1,4 +1,4 @@
-jaxlib==0.4.26+cuda12.cudnn89
+jaxlib==0.4.26
 jax==0.4.26
 diffrax
 matplotlib
