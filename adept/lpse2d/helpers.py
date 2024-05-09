@@ -63,6 +63,18 @@ def write_units(cfg, td):
 
     E0_source = np.sqrt(8 * np.pi * np.pi * I0 * 1e7 / c_cgs) / fieldScale
 
+    ne_cc = nc * envelopeDensity * 1e4**3
+    Te_eV = Te * 1000
+
+    coulomb_log = (
+        23.0 - jnp.log(jnp.sqrt(ne_cc) * Z / Te_eV**1.5)
+        if Te_eV < 10 * Z**2
+        else 24.0 - jnp.log(jnp.sqrt(ne_cc) / Te_eV)
+    )
+    # NRL formulary Ti me/mi < 10 Z^2 eV < Te
+    tau_e = 3.44e11 * (Te_eV) ** 1.5 / ne_cc / coulomb_log / Z
+    nu_e = 1 / tau_e
+
     # for k in ["delta_omega", "initial_phase", "amplitudes"]:
 
     # Derived units

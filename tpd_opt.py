@@ -307,7 +307,7 @@ if __name__ == "__main__":
                 val, grad = val_and_grad
 
             mlflow.log_metrics({"loss": float(val)}, step=i)
-            misc.export_run(parent_run_id, prefix="parent")
+            misc.export_run(parent_run_id, prefix="parent", step=i)
 
             misc.export_run(nested_run.info.run_id)
             updates, opt_state = opt.update(grad, opt_state)
