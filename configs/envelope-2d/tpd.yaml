@@ -15,21 +15,21 @@ drivers:
 
 grid:
   dx: 24nm
-  tmax: 8.0ps
+  tmax: 5.0ps
   tmin: 0.0ns
   xmax: 61um
   xmin: 0.0um
   ymax: 5um
   ymin: -5um
 mlflow:
-  experiment: lpse2d-tpd-learn
+  experiment: lpse2d-tpd-nn-2
   run: baseline-lorentzian
 mode: envelope-2d
 
 save:
   t:
-    dt: 100fs
-    tmax: 8ps
+    dt: 40fs
+    tmax: 5ps
     tmin: 0ps
 terms:
   epw:
