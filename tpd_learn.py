@@ -12,69 +12,6 @@ else:
 from utils import misc
 
 
-def build_run_fn(cfg, diffeqsolve_quants, state, mode="bwd"):
-    from typing import Dict
-    from diffrax import diffeqsolve, SaveAt
-    import jax.numpy as jnp
-    from adept.lpse2d import nn
-    from equinox import filter_value_and_grad, filter_jit
-
-    def _run_(this_model, _args_, time_quantities: Dict):
-
-        if cfg["drivers"]["E0"]["amplitude_shape"] == "ML":
-
-            outputs = this_model(jnp.array([Te, L, I0]))
-            amps = outputs["amps"]
-            phases = outputs["phases"]
-
-            # _args_ = {"drivers": {"E0": {}}}
-            _args_["drivers"]["E0"]["amplitudes"] = jnp.tanh(amps)
-            _args_["drivers"]["E0"]["initial_phase"] = jnp.tanh(phases)
-
-            _args_["drivers"]["E0"]["delta_omega"] = jnp.linspace(
-                -cfg["drivers"]["E0"]["delta_omega_max"],
-                cfg["drivers"]["E0"]["delta_omega_max"],
-                num=cfg["drivers"]["E0"]["num_colors"],
-            )
-
-            _args_["drivers"]["E0"]["amplitudes"] *= 2.0  # from [-1, 1] to [-2, 2]
-            _args_["drivers"]["E0"]["amplitudes"] -= 2.0  # from [-2, 2] to [-4, 0]
-            _args_["drivers"]["E0"]["amplitudes"] = jnp.power(
-                10.0, _args_["drivers"]["E0"]["amplitudes"]
-            )  # from [-4, 0] to [1e-4, 1]
-            _args_["drivers"]["E0"]["amplitudes"] /= jnp.sqrt(
-                jnp.sum(jnp.square(_args_["drivers"]["E0"]["amplitudes"]))
-            )  # normalize
-
-            _args_["drivers"]["E0"]["initial_phase"] *= jnp.pi  # from [-1, 1] to [-pi, pi]
-
-        result = diffeqsolve(
-            terms=diffeqsolve_quants["terms"],
-            solver=diffeqsolve_quants["solver"],
-            t0=time_quantities["t0"],
-            t1=time_quantities["t1"],
-            max_steps=cfg["grid"]["max_steps"],  # time_quantities["max_steps"],
-            dt0=cfg["grid"]["dt"],
-            y0=state,
-            args=_args_,
-            saveat=SaveAt(**diffeqsolve_quants["saveat"]),
-        )
-
-        e_sq = jnp.sum(jnp.abs(result.ys["epw"].view(jnp.complex128)) ** 2)
-        loss = jnp.log10(e_sq)
-        aux_out = [result, _args_["drivers"]]
-        if cfg["model"]["type"] == "VAE":
-            loss += jnp.sum(outputs["kl_loss"])
-            aux_out += [outputs["kl_loss"]]
-
-        return loss, (result, aux_out)
-
-    if mode == "bwd":
-        return filter_jit(filter_value_and_grad(_run_, has_aux=True))
-    else:
-        return filter_jit(_run_)
-
-
 def run_one_val_and_grad(model_path, Te, L, I0, cfg_path, run_id, mode="bwd"):
     """
     This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
@@ -104,7 +41,7 @@ def run_one_val_and_grad(model_path, Te, L, I0, cfg_path, run_id, mode="bwd"):
     import mlflow, yaml
     from jax.flatten_util import ravel_pytree
 
-    from adept.lpse2d import helpers, nn
+    from adept.lpse2d import helpers, nn, run_fns
     from utils.misc import log_params, export_run
 
     # log to logger
@@ -166,7 +103,8 @@ def run_one_val_and_grad(model_path, Te, L, I0, cfg_path, run_id, mode="bwd"):
             model, hyperparams = nn.load(model_path)
             nn.save(os.path.join(td, f"model.eqx"), hyperparams, model)  # save the model
 
-            _run_ = build_run_fn(cfg, diffeqsolve_quants, state, mode=mode)
+            indep_quants = {"Te": Te, "L": L, "I0": I0}
+            _run_ = run_fns.bandwidth(cfg, diffeqsolve_quants, state, indep_quants, mode=mode)
 
             logging.info(f"Compile and run has begun")
 
@@ -251,7 +189,7 @@ if __name__ == "__main__":
         cfg = yaml.safe_load(fi)
 
     cfg["opt"] = {"learning_rate": 0.002, "optimizer": "adam"}
-    cfg["model"] = hyperparams = {
+    hyperparams = {
         "encoder_width": 4,
         "encoder_depth": 2,
         "decoder_width": 4,
@@ -259,9 +197,9 @@ if __name__ == "__main__":
         "input_width": 3,
         "output_width": 64,
         "latent_width": 4,
-        "key": 42,
-        "type": "MLP",
+        "key": 487,
     }
+    cfg["model"] = {"type": "VAE", "hyperparams": hyperparams}
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
 
@@ -283,7 +221,7 @@ if __name__ == "__main__":
     Ls = np.linspace(200, 500, 4)
     I0s = np.linspace(3e14, 5e15, 6)
 
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(487)
 
     # batch logic
     all_inputs = np.array(list(product(Tes, Ls, I0s)))
@@ -298,7 +236,13 @@ if __name__ == "__main__":
     with mlflow.start_run(run_id=parent_run_id, log_system_metrics=True) as mlflow_run:
         opt = optax.adam(learning_rate=cfg["opt"]["learning_rate"])
 
-        model = nn.DriverModel(**hyperparams)  # initialize the model
+        if cfg["model"]["type"] == "VAE":
+            model = nn.DriverVAE(**hyperparams)
+        elif cfg["model"]["type"] == "MLP":
+            model = nn.DriverModel(**hyperparams)
+        else:
+            raise ValueError("Invalid model type")
+
         opt_state = opt.init(eqx.filter(model, eqx.is_array))  # initialize the optimizer state
 
         with tempfile.TemporaryDirectory(
@@ -313,7 +257,7 @@ if __name__ == "__main__":
 
                 for j, batch_ind in tqdm(enumerate(batch_inds), total=num_batches):  # iterate over the batches
                     nn.save(
-                        model_path := os.path.join(td, "model-history", f"model-e-{i}-b-{j}.eqx"), hyperparams, model
+                        model_path := os.path.join(td, "model-history", f"model-e-{i}-b-{j}.eqx"), cfg["model"], model
                     )  # save the model
                     mlflow.log_artifacts(td)
                     misc.export_run(parent_run_id, prefix="artifact", step=i)
@@ -331,7 +275,9 @@ if __name__ == "__main__":
 
                         # get the futures for all the inputs
                         val_and_grads.append(
-                            run_one_val_and_grad(model_path, Te, L, I0, cfg_path, run_id=nested_run.info.run_id)
+                            run_one_val_and_grad(
+                                model_path, Te, L, I0, cfg_path, run_id=nested_run.info.run_id, mode="bwd"
+                            )
                         )
                         run_ids.append(nested_run.info.run_id)  # store the run_id
 

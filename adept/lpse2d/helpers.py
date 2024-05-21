@@ -301,7 +301,7 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         delta_omega = np.linspace(-delta_omega_max, delta_omega_max, num_colors)
 
-        # drivers["E0"]["delta_omega"] = delta_omega
+        drivers["E0"]["delta_omega"] = delta_omega
         drivers["E0"]["initial_phase"] = np.random.uniform(0, 2 * np.pi, num_colors)
 
         if cfg["drivers"]["E0"]["amplitude_shape"] == "uniform":
@@ -321,6 +321,8 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
                 1 / np.pi * (delta_omega_max / 2) / (delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
             )
             drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
+        elif cfg["drivers"]["E0"]["amplitude_shape"] == "ML":
+            drivers["E0"]["amplitudes"] = np.ones(num_colors)  # will be modified elsewhere
         else:
             raise NotImplemented
 
@@ -502,6 +504,29 @@ def plot_kt(kfields, td):
 
 
 def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
+    # used_driver = args["drivers"]
+    # import pickle
+
+    # with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
+    #     pickle.dump(used_driver, fi)
+
+    # dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
+    # fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
+    # ax[0].plot(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+    # ax[0].grid()
+    # ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+    # ax[0].set_ylabel("$|E|$", fontsize=14)
+    # ax[1].semilogy(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+    # ax[1].grid()
+    # ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+    # ax[1].set_ylabel("$|E|$", fontsize=14)
+    # ax[2].plot(dw_over_w, used_driver["E0"]["initial_phase"], "o")
+    # ax[2].grid()
+    # ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+    # ax[2].set_ylabel(r"$\angle E$", fontsize=14)
+    # plt.savefig(os.path.join(td, "learned_bandwidth.png"), bbox_inches="tight")
+    # plt.close()
+
     os.makedirs(os.path.join(td, "binary"))
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
 

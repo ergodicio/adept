@@ -220,7 +220,7 @@ def setup_parsl(parsl_provider="local"):
         )
 
         htex = HighThroughputExecutor(
-            available_accelerators=4, label="tpd-learn", provider=this_provider(**provider_args), cpu_affinity="block"
+            available_accelerators=1, label="tpd-learn", provider=this_provider(**provider_args), cpu_affinity="block"
         )
         print(f"{htex.workers_per_node=}")
 
