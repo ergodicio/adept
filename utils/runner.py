@@ -123,7 +123,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
         t0 = time.time()
         # NB - this is solver specific
-        datasets = helpers.post_process(result, cfg, td)  # post-processes the result
+        datasets = helpers.post_process(result, cfg, td, args)  # post-processes the result
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})  # logs the post-process time to mlflow
         mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
 

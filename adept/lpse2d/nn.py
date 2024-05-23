@@ -39,33 +39,36 @@ class DriverVAE(eqx.Module):
     amp_decoder: eqx.Module
     phase_decoder: eqx.Module
 
-    def __init__(
-        self, encoder_width, encoder_depth, decoder_width, decoder_depth, input_width, output_width, latent_width, key
-    ):
+    def __init__(self, input_width, output_width, latent_width, key):
         super().__init__()
         e_k, mu_k, sigma_k, da_k, dp_k, self.gen_k = jax.random.split(jax.random.PRNGKey(key), 6)
-        self.encoder = eqx.nn.MLP(
-            input_width, latent_width, width_size=encoder_width, depth=encoder_depth, key=e_k, activation=jnp.tanh
-        )
+        # self.encoder = eqx.nn.MLP(
+        #     input_width, latent_width, width_size=encoder_width, depth=encoder_depth, key=e_k, activation=jnp.tanh
+        # )
+        self.encoder = eqx.nn.Linear(input_width, latent_width, key=e_k)
         self.mu = eqx.nn.Linear(latent_width, latent_width, key=mu_k)
         self.sigma = eqx.nn.Linear(latent_width, latent_width, key=sigma_k)
-        self.amp_decoder = eqx.nn.MLP(
-            latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=jnp.tanh
-        )
-        self.phase_decoder = eqx.nn.MLP(
-            latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=jnp.tanh
-        )
+        self.amp_decoder = eqx.nn.Linear(latent_width, output_width, key=da_k)
+        self.phase_decoder = eqx.nn.Linear(latent_width, output_width, key=dp_k)
+
+        # self.amp_decoder = eqx.nn.MLP(
+        #     latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=jnp.tanh
+        # )
+        # self.phase_decoder = eqx.nn.MLP(
+        #     latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=jnp.tanh
+        # )
 
     def __call__(self, x):
-        latent = self.encoder(x)
+        latent = jnp.tanh(self.encoder(x))
         encoded_mu = jnp.tanh(self.mu(latent))
         encoded_sigma = jnp.tanh(self.sigma(latent))
         encoded_var = encoded_sigma**2.0
+        log_var = jnp.log(encoded_var)
         encoded = encoded_mu + encoded_sigma * jax.random.normal(self.gen_k, encoded_mu.shape)
 
         amps = self.amp_decoder(encoded)
         phases = self.phase_decoder(encoded)
-        kl_loss = 0.5 * jnp.sum(-jnp.log(encoded_var) - 1.0 + encoded_var + jnp.square(encoded_mu), axis=-1)
+        kl_loss = -0.5 * jnp.sum(1 + log_var - jnp.square(encoded_mu) - encoded_var)
 
         return {"amps": amps, "phases": phases, "kl_loss": kl_loss}
 

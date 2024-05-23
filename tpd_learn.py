@@ -147,7 +147,7 @@ def run_one_val_and_grad(model_path, Te, L, I0, cfg_path, run_id, mode="bwd"):
 
             t0 = time.time()
             # NB - this is solver specific
-            datasets = helpers.post_process(result, cfg, td)  # post-processes the result
+            datasets = helpers.post_process(result, cfg, td, {"drivers": used_driver})  # post-processes the result
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})  # logs the post-process time to mlflow
             mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
 
@@ -188,19 +188,6 @@ if __name__ == "__main__":
     with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
-    cfg["opt"] = {"learning_rate": 0.002, "optimizer": "adam"}
-    hyperparams = {
-        "encoder_width": 4,
-        "encoder_depth": 2,
-        "decoder_width": 4,
-        "decoder_depth": 2,
-        "input_width": 3,
-        "output_width": 64,
-        "latent_width": 4,
-        "key": 487,
-    }
-    cfg["model"] = {"type": "VAE", "hyperparams": hyperparams}
-
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
 
     with mlflow.start_run(run_name="learn-tpd") as mlflow_run:
@@ -237,9 +224,9 @@ if __name__ == "__main__":
         opt = optax.adam(learning_rate=cfg["opt"]["learning_rate"])
 
         if cfg["model"]["type"] == "VAE":
-            model = nn.DriverVAE(**hyperparams)
+            model = nn.DriverVAE(**cfg["model"]["hyperparams"])
         elif cfg["model"]["type"] == "MLP":
-            model = nn.DriverModel(**hyperparams)
+            model = nn.DriverModel(**cfg["model"]["hyperparams"])
         else:
             raise ValueError("Invalid model type")
 
@@ -280,6 +267,10 @@ if __name__ == "__main__":
                             )
                         )
                         run_ids.append(nested_run.info.run_id)  # store the run_id
+
+                    # for run_id in prev_run_ids:
+                    #     artifact_dir = mlflow.get_artifact_uri(run_id)
+                    #     shutil.rmtree(artifact_dir)
 
                     vgs = [vg.result() for vg in val_and_grads]  # get the results of the futures
                     val = np.mean([v for v, _ in vgs])  # get the mean of the loss values

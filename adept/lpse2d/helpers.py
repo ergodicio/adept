@@ -503,29 +503,29 @@ def plot_kt(kfields, td):
         # kx = kfields.coords["kx"].data
 
 
-def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
-    # used_driver = args["drivers"]
-    # import pickle
+def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
+    used_driver = args["drivers"]
+    import pickle
 
-    # with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
-    #     pickle.dump(used_driver, fi)
+    with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
+        pickle.dump(used_driver, fi)
 
-    # dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
-    # fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
-    # ax[0].plot(dw_over_w, used_driver["E0"]["amplitudes"], "o")
-    # ax[0].grid()
-    # ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-    # ax[0].set_ylabel("$|E|$", fontsize=14)
-    # ax[1].semilogy(dw_over_w, used_driver["E0"]["amplitudes"], "o")
-    # ax[1].grid()
-    # ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-    # ax[1].set_ylabel("$|E|$", fontsize=14)
-    # ax[2].plot(dw_over_w, used_driver["E0"]["initial_phase"], "o")
-    # ax[2].grid()
-    # ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-    # ax[2].set_ylabel(r"$\angle E$", fontsize=14)
-    # plt.savefig(os.path.join(td, "learned_bandwidth.png"), bbox_inches="tight")
-    # plt.close()
+    dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
+    fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
+    ax[0].plot(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+    ax[0].grid()
+    ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+    ax[0].set_ylabel("$|E|$", fontsize=14)
+    ax[1].semilogy(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+    ax[1].grid()
+    ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+    ax[1].set_ylabel("$|E|$", fontsize=14)
+    ax[2].plot(dw_over_w, used_driver["E0"]["initial_phase"], "o")
+    ax[2].grid()
+    ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+    ax[2].set_ylabel(r"$\angle E$", fontsize=14)
+    plt.savefig(os.path.join(td, "learned_bandwidth.png"), bbox_inches="tight")
+    plt.close()
 
     os.makedirs(os.path.join(td, "binary"))
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
