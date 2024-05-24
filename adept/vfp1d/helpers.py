@@ -392,3 +392,7 @@ def get_diffeqsolve_quants(cfg):
         solver=Stepper(),
         saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
     )
+
+
+def apply_models(models, state, args, cfg):
+    return state, args

@@ -376,3 +376,7 @@ def post_process(result, cfg: Dict, td: str):
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
     return {"fields": fields_xr, "dists": f_xr, "scalars": scalars_xr}
+
+
+def apply_models(models, state, args, cfg):
+    return state, args

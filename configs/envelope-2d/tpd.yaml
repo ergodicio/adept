@@ -1,16 +1,17 @@
 density:
   basis: linear
-  gradient scale length: 300.0um
+  gradient scale length: 200.0um
   noise:
     max: 1.0e-09
     min: 1.0e-10
     type: uniform
-  val at center: 0.25
+  max: 0.35
+  min: 0.15
 drivers:
   E0:
     amplitude_shape: uniform
     delta_omega_max: 0.03
-    num_colors: 64
+    num_colors: 1
 grid:
   dx: 24nm
   tmax: 5.0ps
@@ -22,26 +23,28 @@ grid:
 machine:
   calculator: gpu
 mlflow:
-  experiment: lpse2d-tpd-baselines
-  run: baseline-uniform
+  experiment: lpse2d-tpd-convergence
+  run: mono-newL
 mode: envelope-2d
-model:
-  hyperparams:
-    decoder_depth: 2
-    decoder_width: 4
-    encoder_depth: 2
-    encoder_width: 4
-    input_width: 3
-    key: 42
-    latent_width: 4
-    output_width: 64
-  type: MLP
+# models:
+#   bandwidth:
+#     hyperparams:
+#       decoder_depth: 2
+#       decoder_width: 4
+#       encoder_depth: 2
+#       encoder_width: 4
+#       input_width: 3
+#       key: 42
+#       latent_width: 4
+#       output_width: 64
+#     type: MLP
+#     file: /global/homes/a/archis/adept/models/tpd-vae.eqx
 opt:
   learning_rate: 0.002
   optimizer: adam
 save:
   t:
-    dt: 40fs
+    dt: 200fs
     tmax: 5ps
     tmin: 0ps
 terms:
@@ -63,7 +66,7 @@ units:
   atomic number: 40
   envelope density: 0.25
   ionization state: 6
-  laser intensity: 1.24e+15W/cm^2
+  laser intensity: 5.0e+15W/cm^2
   laser wavelength: 351nm
-  reference electron temperature: 2666.6666666666665eV
+  reference electron temperature: 4000eV
   reference ion temperature: 1000eV

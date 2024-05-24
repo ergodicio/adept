@@ -12,6 +12,7 @@ from diffrax import ODETerm
 import xarray as xr
 from astropy.units import Quantity as _Q
 
+from adept.lpse2d import nn
 from adept.lpse2d.core import integrator
 from adept.vlasov1d.integrator import Stepper
 
@@ -75,6 +76,7 @@ def write_units(cfg, td):
     tau_e = 3.44e11 * (Te_eV) ** 1.5 / ne_cc / coulomb_log / Z
     nu_e = 1 / tau_e
 
+    eta = calc_threshold_intensity(Te)
     # for k in ["delta_omega", "initial_phase", "amplitudes"]:
 
     # Derived units
@@ -106,6 +108,25 @@ def write_units(cfg, td):
     return cfg
 
 
+def calc_threshold_intensity(Te, Ln):
+    """
+    Calculate the TPD threshold intensity
+
+    :param Te:
+    :return: intensity
+    """
+
+    c = 2.99792458e10
+    me_keV = 510.998946  # keV/c^2
+    me_cgs = 9.10938291e-28
+    e = 4.8032068e-10
+
+    vte = np.sqrt(Te / me_keV) * c
+    I_threshold = 4 * 4.134 * 1 / (8 * np.pi) * (me_cgs * c / e) ** 2 * w0 * vte**2 / Ln * 1e-7
+
+    return I_threshold
+
+
 def get_derived_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
@@ -117,8 +138,18 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     """
     cfg_grid = cfg["grid"]
 
-    cfg_grid["xmax"] = _Q(cfg_grid["xmax"]).to("um").value
-    cfg_grid["xmin"] = _Q(cfg_grid["xmin"]).to("um").value
+    # cfg_grid["xmax"] = _Q(cfg_grid["xmax"]).to("um").value
+    # cfg_grid["xmin"] = _Q(cfg_grid["xmin"]).to("um").value
+    L = _Q(cfg["density"]["gradient scale length"]).to("um").value
+    nmax = cfg["density"]["max"]
+    nmin = cfg["density"]["min"]
+    Lgrid = L / 0.25 * (nmax - nmin)
+
+    print("Ignoring xmax and xmin and using the density gradient scale length to set the grid size")
+    print("Grid size = L / 0.25 * (nmax - nmin) = ", Lgrid, "um")
+    cfg_grid["xmax"] = Lgrid
+    cfg_grid["xmin"] = 0.0
+
     cfg_grid["ymax"] = _Q(cfg_grid["ymax"]).to("um").value
     cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
     cfg_grid["dx"] = _Q(cfg_grid["dx"]).to("um").value
@@ -128,12 +159,11 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid["dy"] = cfg_grid["dx"]  # cfg_grid["ymax"] / cfg_grid["ny"]
     cfg_grid["ny"] = int(cfg_grid["ymax"] / cfg_grid["dy"]) + 1
 
-    midpt = (cfg_grid["xmax"] + cfg_grid["xmin"]) / 2
+    # midpt = (cfg_grid["xmax"] + cfg_grid["xmin"]) / 2
 
-    L = _Q(cfg["density"]["gradient scale length"]).to("um").value
-    max_density = cfg["density"]["val at center"] + (cfg["grid"]["xmax"] - midpt) / L
+    # max_density = cfg["density"]["val at center"] + (cfg["grid"]["xmax"] - midpt) / L
 
-    n_max = np.abs(max_density / cfg["units"]["envelope density"] - 1)
+    norm_n_max = np.abs(nmax / cfg["units"]["envelope density"] - 1)
     # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["dt"] = _Q("0.002ps").to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
@@ -381,10 +411,12 @@ def get_density_profile(cfg: Dict):
         right = cfg["grid"]["xmax"] - _Q("5.0um").to("um").value
         rise = _Q("0.5um").to("um").value
         # mask = np.repeat(get_envelope(rise, rise, left, right, cfg["grid"]["x"])[:, None], cfg["grid"]["ny"], axis=-1)
-        midpt = (cfg["grid"]["xmax"] + cfg["grid"]["xmin"]) / 2
+        # midpt = (cfg["grid"]["xmax"] + cfg["grid"]["xmin"]) / 2
 
-        L = _Q(cfg["density"]["gradient scale length"]).to("um").value
-        nprof = cfg["density"]["val at center"] + (cfg["grid"]["x"] - midpt) / L
+        nprof = (
+            cfg["density"]["min"]
+            + (cfg["density"]["max"] - cfg["density"]["min"]) * cfg["grid"]["x"] / cfg["grid"]["xmax"]
+        )
         # nprof = mask * nprof[:, None]
         nprof = np.repeat(nprof[:, None], cfg["grid"]["ny"], axis=-1)
 
@@ -587,25 +619,21 @@ def make_xarrays(cfg, this_t, state, td):
     return kfields, fields
 
 
-def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
-    if model_config:
-        model_keys = jax.random.split(jax.random.PRNGKey(420), len(model_config.keys()))
-        model_dict = defaultdict(eqx.Module)
-        for (term, config), this_key in zip(model_config.items(), model_keys):
-            if term == "file":
-                pass
+def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
+    models = {}
+    for nm, this_models_config in all_models_config.items():
+        if "file" in this_models_config:
+            models[nm], _ = nn.load(this_models_config["file"])
+            print(f"Loading {nm} model from file {this_models_config['file']} and ignoring any other specifications.")
+        else:
+            if this_models_config["type"] == "MLP":
+                models[nm] = nn.DriverModel(**this_models_config["config"])
+            elif this_models_config["type"] == "VAE":
+                models[nm] = nn.VAE(**this_models_config["config"])
             else:
-                for act in ["activation", "final_activation"]:
-                    if config[act] == "tanh":
-                        config[act] = jnp.tanh
+                raise NotImplementedError
 
-                model_dict[term] = eqx.nn.MLP(**{**config, "key": this_key})
-        if model_config["file"]:
-            model_dict = eqx.tree_deserialise_leaves(model_config["file"], model_dict)
-
-        return model_dict
-    else:
-        return False
+    return models
 
 
 def mva(actual_ek1, mod_defaults, results, td, coords):
@@ -638,3 +666,42 @@ def get_diffeqsolve_quants(cfg):
         solver=Stepper(),
         saveat=dict(ts=cfg["save"]["t"]["ax"]),  # , fn=cfg["save"]["func"]["callable"]),
     )
+
+
+def apply_models(models, state, args, cfg):
+    if "bandwidth" in models:
+        this_model = models["bandwidth"]
+        L = float(cfg["density"]["gradient scale length"].strip("um"))
+        I0 = float(cfg["units"]["laser intensity"].strip("W/cm^2"))
+        Te = float(cfg["units"]["reference electron temperature"].strip("eV"))
+
+        _Te = (Te - 3000) / 2000
+        _L = (L - 300) / 200
+        _I0 = (jnp.log10(I0) - 15) / 2
+
+        outputs = this_model(jnp.array([_Te, _L, _I0]))
+        amps = outputs["amps"]
+        phases = outputs["phases"]
+
+        # _args_ = {"drivers": {"E0": {}}}
+        args["drivers"]["E0"]["amplitudes"] = jnp.tanh(amps)
+        args["drivers"]["E0"]["initial_phase"] = jnp.tanh(phases)
+
+        args["drivers"]["E0"]["delta_omega"] = jnp.linspace(
+            -cfg["drivers"]["E0"]["delta_omega_max"],
+            cfg["drivers"]["E0"]["delta_omega_max"],
+            num=cfg["drivers"]["E0"]["num_colors"],
+        )
+
+        args["drivers"]["E0"]["amplitudes"] *= 2.0  # from [-1, 1] to [-2, 2]
+        args["drivers"]["E0"]["amplitudes"] -= 2.0  # from [-2, 2] to [-4, 0]
+        args["drivers"]["E0"]["amplitudes"] = jnp.power(
+            10.0, args["drivers"]["E0"]["amplitudes"]
+        )  # from [-4, 0] to [1e-4, 1]
+        args["drivers"]["E0"]["amplitudes"] /= jnp.sqrt(
+            jnp.sum(jnp.square(args["drivers"]["E0"]["amplitudes"]))
+        )  # normalize
+
+        args["drivers"]["E0"]["initial_phase"] *= jnp.pi  # from [-1, 1] to [-pi, pi]
+
+    return state, args

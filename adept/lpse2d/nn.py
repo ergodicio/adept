@@ -2,6 +2,7 @@ import jax
 import equinox as eqx
 import jax.numpy as jnp
 import json
+import numpy as np
 
 
 class DriverModel(eqx.Module):
@@ -41,22 +42,13 @@ class DriverVAE(eqx.Module):
 
     def __init__(self, input_width, output_width, latent_width, key):
         super().__init__()
-        e_k, mu_k, sigma_k, da_k, dp_k, self.gen_k = jax.random.split(jax.random.PRNGKey(key), 6)
-        # self.encoder = eqx.nn.MLP(
-        #     input_width, latent_width, width_size=encoder_width, depth=encoder_depth, key=e_k, activation=jnp.tanh
-        # )
+        e_k, mu_k, sigma_k, da_k, dp_k = jax.random.split(jax.random.PRNGKey(key), 5)
+        self.gen_k = jax.random.PRNGKey(np.random.randint(0, 2**20))
         self.encoder = eqx.nn.Linear(input_width, latent_width, key=e_k)
         self.mu = eqx.nn.Linear(latent_width, latent_width, key=mu_k)
         self.sigma = eqx.nn.Linear(latent_width, latent_width, key=sigma_k)
         self.amp_decoder = eqx.nn.Linear(latent_width, output_width, key=da_k)
         self.phase_decoder = eqx.nn.Linear(latent_width, output_width, key=dp_k)
-
-        # self.amp_decoder = eqx.nn.MLP(
-        #     latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=jnp.tanh
-        # )
-        # self.phase_decoder = eqx.nn.MLP(
-        #     latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=jnp.tanh
-        # )
 
     def __call__(self, x):
         latent = jnp.tanh(self.encoder(x))
@@ -83,12 +75,17 @@ def save(filename, model_cfg, model):
 def load(filename):
     with open(filename, "rb") as f:
         model_cfg = json.loads(f.readline().decode())
-        hyperparams = model_cfg["hyperparams"]
-
-        if model_cfg["type"] == "VAE":
-            model = DriverVAE(**hyperparams)
-        elif model_cfg["type"] == "MLP":
-            model = DriverModel(**hyperparams)
+        if "type" in model_cfg:
+            hyperparams = model_cfg["hyperparams"]
+            if model_cfg["type"] == "VAE":
+                model = DriverVAE(**hyperparams)
+            elif model_cfg["type"] == "MLP":
+                model = DriverModel(**hyperparams)
+            else:
+                raise NotImplementedError(f"Model type {model_cfg['type']} not implemented")
         else:
-            raise NotImplementedError(f"Model type {model_cfg['type']} not implemented")
+            model = DriverVAE(**model_cfg)
+            print("Model type not specified, defaulting to VAE. dangerous (and often probably just doesn't load)")
+            hyperparams = model_cfg
+
         return eqx.tree_deserialise_leaves(f, model), hyperparams

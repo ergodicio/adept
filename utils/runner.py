@@ -86,7 +86,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         }
 
         # in case you are using ML models
-        models = helpers.get_models(cfg["models"]) if "models" in cfg else None
+        models = helpers.get_models(cfg["models"]) if "models" in cfg else {}
 
         # initialize the state for the solver - NB - this is solver specific
         state, args = helpers.init_state(cfg, td)
@@ -100,25 +100,27 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
 
         @eqx.filter_jit
-        def _run_(_args_, time_quantities: Dict):
+        def _run_(_models_, _state_, _args_, time_quantities: Dict):
 
-            if "terms" in cfg.keys():
-                args["terms"] = cfg["terms"]
-
-            return diffeqsolve(
+            _state_, _args_ = helpers.apply_models(_models_, _state_, _args_, cfg)
+            # if "terms" in cfg.keys():
+            #     args["terms"] = cfg["terms"]
+            solver_result = diffeqsolve(
                 terms=diffeqsolve_quants["terms"],
                 solver=diffeqsolve_quants["solver"],
                 t0=time_quantities["t0"],
                 t1=time_quantities["t1"],
                 max_steps=cfg["grid"]["max_steps"],  # time_quantities["max_steps"],
                 dt0=cfg["grid"]["dt"],
-                y0=state,
+                y0=_state_,
                 args=_args_,
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
-        _log_flops_(_run_, args, tqs)
-        result = _run_(args, tqs)
+            return solver_result, _state_, _args_
+
+        _log_flops_(_run_, models, state, args, tqs)
+        result, state, args = _run_(models, state, args, tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
         t0 = time.time()
@@ -133,7 +135,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
     return result, datasets
 
 
-def _log_flops_(_run_, models, tqs):
+def _log_flops_(_run_, models, state, args, tqs):
     """
     Logs the number of flops to mlflow
 
@@ -144,7 +146,7 @@ def _log_flops_(_run_, models, tqs):
 
     """
     wrapped = jax.xla_computation(_run_)
-    computation = wrapped(models, tqs)
+    computation = wrapped(models, state, args, tqs)
     module = computation.as_hlo_module()
     client = jax.lib.xla_bridge.get_backend()
     analysis = jax.lib.xla_client._xla.hlo_module_cost_analysis(client, module)

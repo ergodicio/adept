@@ -393,3 +393,7 @@ def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
         return model_dict
     else:
         return False
+
+
+def apply_models(models, state, args, cfg):
+    return state, args
