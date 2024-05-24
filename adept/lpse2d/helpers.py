@@ -208,6 +208,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
         dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
         nx = int((xmax - xmin) / dx) + 1
         cfg["save"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
+        cfg["save"]["kx"]["ax"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
 
         if "y" in cfg["save"]:
             ymin = _Q(cfg["save"]["y"]["ymin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
@@ -215,6 +216,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
             dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
             ny = int((ymax - ymin) / dy) + 1
             cfg["save"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
+            cfg["save"]["ky"]["ax"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
         else:
             raise NotImplementedError("Must specify y in save")
 
@@ -634,28 +636,44 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
 
 
 def make_xarrays(cfg, this_t, state, td):
-    shift_kx = np.fft.fftshift(cfg["grid"]["kx"]) * cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
-    shift_ky = np.fft.fftshift(cfg["grid"]["ky"]) * cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
+    if "x" in cfg["save"]:
+        kx = cfg["save"]["kx"]["ax"]
+        ky = cfg["save"]["ky"]["ax"]
+        xax = cfg["save"]["x"]["ax"]
+        yax = cfg["save"]["y"]["ax"]
+        nx = cfg["save"]["x"]["ax"].size
+        ny = cfg["save"]["y"]["ax"].size
+
+    else:
+        kx = cfg["grid"]["kx"]
+        ky = cfg["grid"]["ky"]
+        xax = cfg["grid"]["x"]
+        yax = cfg["grid"]["y"]
+        nx = cfg["grid"]["nx"]
+        ny = cfg["grid"]["ny"]
+
+    shift_kx = np.fft.fftshift(kx) * cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
+    shift_ky = np.fft.fftshift(ky) * cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
 
     tax_tuple = ("t (ps)", this_t)
-    xax_tuple = ("x (um)", cfg["grid"]["x"])
-    yax_tuple = ("y (um)", cfg["grid"]["y"])
+    xax_tuple = ("x (um)", xax)
+    yax_tuple = ("y (um)", yax)
 
     phi_vs_t = state["epw"].view(np.complex128)
     phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2))
-    ex_k_np = -1j * cfg["grid"]["kx"][None, :, None] * phi_k_np
-    ey_k_np = -1j * cfg["grid"]["ky"][None, None, :] * phi_k_np
+    ex_k_np = -1j * kx[None, :, None] * phi_k_np
+    ey_k_np = -1j * ky[None, None, :] * phi_k_np
 
     phi_k = xr.DataArray(np.fft.fftshift(phi_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
     ex_k = xr.DataArray(np.fft.fftshift(ex_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
     ey_k = xr.DataArray(np.fft.fftshift(ey_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
     ex = xr.DataArray(
-        np.fft.ifft2(ex_k_np, axes=(1, 2)) / cfg["grid"]["nx"] / cfg["grid"]["ny"] * 4,
+        np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4,
         coords=(tax_tuple, xax_tuple, yax_tuple),
     )
     ey = xr.DataArray(
-        np.fft.ifft2(ey_k_np, axes=(1, 2)) / cfg["grid"]["nx"] / cfg["grid"]["ny"] * 4,
+        np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4,
         coords=(tax_tuple, xax_tuple, yax_tuple),
     )
     e0x = xr.DataArray(state["E0"].view(np.complex128)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
