@@ -47,6 +47,10 @@ save:
     dt: 200fs
     tmax: 5ps
     tmin: 0ps
+  x:
+    dx: 128nm
+    xmax: 160um
+    xmin: 0um
 terms:
   epw:
     boundary:

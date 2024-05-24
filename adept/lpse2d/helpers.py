@@ -1,15 +1,16 @@
 import os
 from typing import Dict, Callable, Tuple, List
 from collections import defaultdict
-
+from functools import partial
 
 import matplotlib.pyplot as plt
-import jax, yaml, mlflow
+import yaml, mlflow
 from jax import numpy as jnp
 import numpy as np
 import equinox as eqx
 from diffrax import ODETerm
 import xarray as xr
+import interpax
 from astropy.units import Quantity as _Q
 
 from adept.lpse2d import nn
@@ -190,6 +191,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
+
     # cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
     tmin = _Q(cfg["save"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     tmax = _Q(cfg["save"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
@@ -197,6 +199,35 @@ def get_save_quantities(cfg: Dict) -> Dict:
     nt = int((tmax - tmin) / dt) + 1
 
     cfg["save"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
+
+    if "x" in cfg["save"]:
+        xmin = _Q(cfg["save"]["x"]["xmin"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+        xmax = _Q(cfg["save"]["x"]["xmax"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+        dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+        nx = int((xmax - xmin) / dx) + 1
+        cfg["save"]["x"]["ax"] = jnp.linspace(xmin, xmax, nx)
+
+        if "y" in cfg["save"]:
+            ymin = _Q(cfg["save"]["y"]["ymin"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+            ymax = _Q(cfg["save"]["y"]["ymax"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+            dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+            ny = int((ymax - ymin) / dy) + 1
+            cfg["save"]["y"]["ax"] = jnp.linspace(ymin, ymax, ny)
+        else:
+            raise NotImplementedError("Must specify y in save")
+
+        interpolator = partial(
+            interpax.interp2d,
+            x=cfg["grid"]["x"],
+            y=cfg["grid"]["y"],
+            xq=cfg["save"]["x"]["ax"],
+            yq=cfg["save"]["y"]["ax"],
+        )
+
+        def save_func(t, y, args):
+            return {k: interpolator(f=v) for k, v in y.items()}
+
+        cfg["save"]["func"] = save_func
 
     return cfg
 
