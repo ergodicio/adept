@@ -77,7 +77,8 @@ def write_units(cfg, td):
     tau_e = 3.44e11 * (Te_eV) ** 1.5 / ne_cc / coulomb_log / Z
     nu_e = 1 / tau_e
 
-    eta = calc_threshold_intensity(Te)
+    gradient_scale_length = _Q(cfg["density"]["gradient scale length"]).to("um").value
+    I_thresh = calc_threshold_intensity(Te, Ln=gradient_scale_length, w0=w0)
     # for k in ["delta_omega", "initial_phase", "amplitudes"]:
 
     # Derived units
@@ -94,6 +95,7 @@ def write_units(cfg, td):
         "cs": cs,
         "nc": nc,
         "nu_coll": nu_coll,
+        "I_thresh": I_thresh,
         "E0_source": E0_source,
         "timeScale": timeScale,
         "spatialScale": spatialScale,
@@ -109,7 +111,7 @@ def write_units(cfg, td):
     return cfg
 
 
-def calc_threshold_intensity(Te, Ln):
+def calc_threshold_intensity(Te, Ln, w0):
     """
     Calculate the TPD threshold intensity
 
