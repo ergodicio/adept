@@ -203,33 +203,56 @@ def get_save_quantities(cfg: Dict) -> Dict:
     cfg["save"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
 
     if "x" in cfg["save"]:
-        xmin = _Q(cfg["save"]["x"]["xmin"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
-        xmax = _Q(cfg["save"]["x"]["xmax"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
-        dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+        xmin = _Q(cfg["save"]["x"]["xmin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
+        xmax = _Q(cfg["save"]["x"]["xmax"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
+        dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
         nx = int((xmax - xmin) / dx) + 1
-        cfg["save"]["x"]["ax"] = jnp.linspace(xmin, xmax, nx)
+        cfg["save"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
 
         if "y" in cfg["save"]:
-            ymin = _Q(cfg["save"]["y"]["ymin"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
-            ymax = _Q(cfg["save"]["y"]["ymax"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
-            dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["lengthScale"]
+            ymin = _Q(cfg["save"]["y"]["ymin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
+            ymax = _Q(cfg["save"]["y"]["ymax"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
+            dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
             ny = int((ymax - ymin) / dy) + 1
-            cfg["save"]["y"]["ax"] = jnp.linspace(ymin, ymax, ny)
+            cfg["save"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
         else:
             raise NotImplementedError("Must specify y in save")
 
+        xq, yq = jnp.meshgrid(cfg["save"]["x"]["ax"], cfg["save"]["y"]["ax"], indexing="ij")
+
         interpolator = partial(
             interpax.interp2d,
+            xq=jnp.reshape(xq, (nx * ny), order="F"),
+            yq=jnp.reshape(yq, (nx * ny), order="F"),
             x=cfg["grid"]["x"],
             y=cfg["grid"]["y"],
-            xq=cfg["save"]["x"]["ax"],
-            yq=cfg["save"]["y"]["ax"],
+            method="linear",
         )
 
         def save_func(t, y, args):
-            return {k: interpolator(f=v) for k, v in y.items()}
+            save_y = {}
+            for k, v in y.items():
+                if k == "E0":
+                    cmplx_fld = v.view(jnp.complex128)
+                    save_y[k] = jnp.concatenate(
+                        [
+                            jnp.reshape(interpolator(f=cmplx_fld[..., ivec]), (nx, ny), order="F")[..., None]
+                            for ivec in range(2)
+                        ],
+                        axis=-1,
+                    ).view(jnp.float64)
+                elif k == "epw":
+                    cmplx_fld = v.view(jnp.complex128)
+                    save_y[k] = jnp.reshape(interpolator(f=cmplx_fld), (nx, ny), order="F").view(jnp.float64)
+                else:
+                    save_y[k] = jnp.reshape(interpolator(f=v), (nx, ny), order="F")
 
-        cfg["save"]["func"] = save_func
+            return save_y
+
+    else:
+        save_func = lambda t, y, args: y
+
+    cfg["save"]["func"] = save_func
 
     return cfg
 
@@ -697,7 +720,7 @@ def get_diffeqsolve_quants(cfg):
     return dict(
         terms=ODETerm(integrator.SplitStep(cfg)),
         solver=Stepper(),
-        saveat=dict(ts=cfg["save"]["t"]["ax"]),  # , fn=cfg["save"]["func"]["callable"]),
+        saveat=dict(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]),
     )
 
 

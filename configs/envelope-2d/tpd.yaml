@@ -51,6 +51,10 @@ save:
     dx: 128nm
     xmax: 160um
     xmin: 0um
+  y:
+    dy: 128nm
+    ymax: 5um
+    ymin: -5um
 terms:
   epw:
     boundary:
