@@ -5,11 +5,7 @@ from pint import Quantity
 from mlflow.tracking import MlflowClient
 import jax
 import equinox as eqx
-import parsl
-from parsl.config import Config
-from parsl.providers import SlurmProvider, LocalProvider
-from parsl.launchers import SrunLauncher
-from parsl.executors import HighThroughputExecutor
+
 
 from mlflow_export_import.run.export_run import RunExporter
 
@@ -203,6 +199,11 @@ def export_run(run_id, prefix="individual", step=0):
 
 
 def setup_parsl(parsl_provider="local"):
+    import parsl
+    from parsl.config import Config
+    from parsl.providers import SlurmProvider, LocalProvider
+    from parsl.launchers import SrunLauncher
+    from parsl.executors import HighThroughputExecutor
 
     if parsl_provider == "local":
 

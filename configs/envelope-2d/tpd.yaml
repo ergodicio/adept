@@ -14,7 +14,7 @@ drivers:
     num_colors: 1
 grid:
   dx: 24nm
-  tmax: 5.0ps
+  tmax: 2.0ps
   tmin: 0.0ns
   xmax: 61um
   xmin: 0.0um
@@ -25,7 +25,8 @@ machine:
 mlflow:
   experiment: lpse2d-tpd-convergence
   run: mono-newL
-mode: envelope-2d
+solver: envelope-2d
+
 # models:
 #   bandwidth:
 #     hyperparams:
@@ -45,7 +46,7 @@ opt:
 save:
   t:
     dt: 200fs
-    tmax: 5ps
+    tmax: 2ps
     tmin: 0ps
   x:
     dx: 128nm

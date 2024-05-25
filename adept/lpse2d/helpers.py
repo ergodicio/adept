@@ -1,21 +1,18 @@
 import os
 from typing import Dict, Callable, Tuple, List
 from collections import defaultdict
-from functools import partial
 
 import matplotlib.pyplot as plt
 import yaml, mlflow
 from jax import numpy as jnp
 import numpy as np
 import equinox as eqx
-from diffrax import ODETerm
+
 import xarray as xr
-import interpax
 from astropy.units import Quantity as _Q
 
 from adept.lpse2d import nn
-from adept.lpse2d.core import integrator
-from adept.vlasov1d.integrator import Stepper
+from adept.lpse2d.run_fns import get_run_fn
 
 from adept.tf1d.pushers import get_envelope
 
@@ -186,79 +183,6 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_save_quantities(cfg: Dict) -> Dict:
-    """
-    This function updates the config with the quantities required for the diagnostics and saving routines
-
-    :param cfg:
-    :return:
-    """
-
-    # cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
-    tmin = _Q(cfg["save"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
-    tmax = _Q(cfg["save"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
-    dt = _Q(cfg["save"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
-    nt = int((tmax - tmin) / dt) + 1
-
-    cfg["save"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
-
-    if "x" in cfg["save"]:
-        xmin = _Q(cfg["save"]["x"]["xmin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-        xmax = _Q(cfg["save"]["x"]["xmax"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-        dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-        nx = int((xmax - xmin) / dx) + 1
-        cfg["save"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
-        cfg["save"]["kx"]["ax"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
-
-        if "y" in cfg["save"]:
-            ymin = _Q(cfg["save"]["y"]["ymin"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-            ymax = _Q(cfg["save"]["y"]["ymax"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-            dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"]
-            ny = int((ymax - ymin) / dy) + 1
-            cfg["save"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
-            cfg["save"]["ky"]["ax"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
-        else:
-            raise NotImplementedError("Must specify y in save")
-
-        xq, yq = jnp.meshgrid(cfg["save"]["x"]["ax"], cfg["save"]["y"]["ax"], indexing="ij")
-
-        interpolator = partial(
-            interpax.interp2d,
-            xq=jnp.reshape(xq, (nx * ny), order="F"),
-            yq=jnp.reshape(yq, (nx * ny), order="F"),
-            x=cfg["grid"]["x"],
-            y=cfg["grid"]["y"],
-            method="linear",
-        )
-
-        def save_func(t, y, args):
-            save_y = {}
-            for k, v in y.items():
-                if k == "E0":
-                    cmplx_fld = v.view(jnp.complex128)
-                    save_y[k] = jnp.concatenate(
-                        [
-                            jnp.reshape(interpolator(f=cmplx_fld[..., ivec]), (nx, ny), order="F")[..., None]
-                            for ivec in range(2)
-                        ],
-                        axis=-1,
-                    ).view(jnp.float64)
-                elif k == "epw":
-                    cmplx_fld = v.view(jnp.complex128)
-                    save_y[k] = jnp.reshape(interpolator(f=cmplx_fld), (nx, ny), order="F").view(jnp.float64)
-                else:
-                    save_y[k] = jnp.reshape(interpolator(f=v), (nx, ny), order="F")
-
-            return save_y
-
-    else:
-        save_func = lambda t, y, args: y
-
-    cfg["save"]["func"] = save_func
-
-    return cfg
-
-
 def get_solver_quantities(cfg: Dict) -> Dict:
     """
     This function just updates the config with the derived quantities that are arrays
@@ -421,45 +345,6 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
     return drivers
 
 
-def _startup_plots_(state, cfg, td):
-    plot_dir = os.path.join(td, "plots", "init_state")
-    os.makedirs(plot_dir)
-
-    for comp, label in zip(np.arange(2), ["x", "y"]):
-        for func, nm in zip([np.real, np.abs], ["real", "abs"]):
-            fig, ax = plt.subplots(1, 1, figsize=(10, 4), tight_layout=True)
-            cb = ax.contourf(cfg["grid"]["x"], cfg["grid"]["y"], func(state["e0"][..., comp].T), 32)
-            ax.grid()
-            ax.set_xlabel("x")
-            ax.set_ylabel("y")
-            ax.set_title(f"{nm}(e0_{label}(x,y))")
-            fig.colorbar(cb)
-            fig.savefig(os.path.join(plot_dir, f"{nm}-e0-{label}.png"), bbox_inches="tight")
-            plt.close()
-
-    for k in ["nb", "dn", "temperature", "delta"]:
-        fig, ax = plt.subplots(1, 1, figsize=(10, 4), tight_layout=True)
-        cb = ax.contourf(cfg["grid"]["x"], cfg["grid"]["y"], state[k].T, 32)
-        ax.grid()
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title(k)
-        fig.colorbar(cb)
-        fig.savefig(os.path.join(plot_dir, f"{k}.png"), bbox_inches="tight")
-        plt.close()
-
-    for func, nm in zip([np.real, np.abs], ["real", "abs"]):
-        fig, ax = plt.subplots(1, 1, figsize=(10, 4), tight_layout=True)
-        cb = ax.contourf(cfg["grid"]["x"], cfg["grid"]["y"], func(state["phi"].T), 32)
-        ax.grid()
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title(f"{nm}(phi(x,y))")
-        fig.colorbar(cb)
-        fig.savefig(os.path.join(plot_dir, f"{nm}-phi.png"), bbox_inches="tight")
-        plt.close()
-
-
 def get_density_profile(cfg: Dict):
     if cfg["density"]["basis"] == "uniform":
         nprof = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
@@ -593,7 +478,14 @@ def plot_kt(kfields, td):
         # kx = kfields.coords["kx"].data
 
 
-def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
+def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
+
+    if isinstance(sim_out, tuple):
+        val, actual_sim_out = sim_out[0]
+        grad = sim_out[1]
+        result = actual_sim_out["solver_result"]
+    else:
+        result = sim_out["solver_result"]
     used_driver = args["drivers"]
     import pickle
 
@@ -637,8 +529,8 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
 
 def make_xarrays(cfg, this_t, state, td):
     if "x" in cfg["save"]:
-        kx = cfg["save"]["kx"]["ax"]
-        ky = cfg["save"]["ky"]["ax"]
+        kx = cfg["save"]["kx"]
+        ky = cfg["save"]["ky"]
         xax = cfg["save"]["x"]["ax"]
         yax = cfg["save"]["y"]["ax"]
         nx = cfg["save"]["x"]["ax"].size
@@ -697,8 +589,17 @@ def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
     models = {}
     for nm, this_models_config in all_models_config.items():
         if "file" in this_models_config:
-            models[nm], _ = nn.load(this_models_config["file"])
-            print(f"Loading {nm} model from file {this_models_config['file']} and ignoring any other specifications.")
+            file_path = this_models_config["file"]
+            if file_path.endswith(".pkl"):
+                import pickle
+
+                with open(file_path, "rb") as fi:
+                    models[nm] = pickle.load(fi)
+                print(f"Loading {nm} weights from file {file_path} and ignoring any other specifications.")
+            elif file_path.endswith(".eqx"):
+                models[nm], _ = nn.load(file_path)
+
+                print(f"Loading {nm} model from file {file_path} and ignoring any other specifications.")
         else:
             if this_models_config["type"] == "MLP":
                 models[nm] = nn.DriverModel(**this_models_config["config"])
@@ -708,74 +609,3 @@ def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
                 raise NotImplementedError
 
     return models
-
-
-def mva(actual_ek1, mod_defaults, results, td, coords):
-    loss_t = np.linspace(200, 400, 64)
-    ek1 = -1j * mod_defaults["grid"]["kx"][None, :, None] * results.ys["phi"].view(np.complex128)
-    ek1 = jnp.mean(jnp.abs(ek1[:, -1, :]), axis=-1)
-    rescaled_ek1 = ek1 / jnp.amax(ek1) * np.amax(actual_ek1.data)
-    # interp_ek1 = jnp.interp(loss_t, mod_defaults["save"]["t"]["ax"], rescaled_ek1)
-
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
-    ax[0].plot(coords["t"].data, actual_ek1, label="Vlasov")
-    ax[0].plot(mod_defaults["save"]["t"]["ax"], rescaled_ek1, label="NN + Fluid")
-    ax[0].axvspan(loss_t[0], loss_t[-1], alpha=0.1)
-    ax[1].semilogy(coords["t"].data, actual_ek1, label="Vlasov")
-    ax[1].semilogy(mod_defaults["save"]["t"]["ax"], rescaled_ek1, label="NN + Fluid")
-    ax[1].axvspan(loss_t[0], loss_t[-1], alpha=0.1)
-    ax[0].set_xlabel(r"t ($\omega_p^{-1}$)", fontsize=12)
-    ax[1].set_xlabel(r"t ($\omega_p^{-1}$)", fontsize=12)
-    ax[0].set_ylabel(r"$|\hat{n}|^{1}$", fontsize=12)
-    ax[0].grid()
-    ax[1].grid()
-    ax[0].legend(fontsize=14)
-    fig.savefig(os.path.join(td, "plots", "vlasov_v_fluid.png"), bbox_inches="tight")
-    plt.close(fig)
-
-
-def get_diffeqsolve_quants(cfg):
-    return dict(
-        terms=ODETerm(integrator.SplitStep(cfg)),
-        solver=Stepper(),
-        saveat=dict(ts=cfg["save"]["t"]["ax"], fn=cfg["save"]["func"]),
-    )
-
-
-def apply_models(models, state, args, cfg):
-    if "bandwidth" in models:
-        this_model = models["bandwidth"]
-        L = float(cfg["density"]["gradient scale length"].strip("um"))
-        I0 = float(cfg["units"]["laser intensity"].strip("W/cm^2"))
-        Te = float(cfg["units"]["reference electron temperature"].strip("eV"))
-
-        _Te = (Te - 3000) / 2000
-        _L = (L - 300) / 200
-        _I0 = (jnp.log10(I0) - 15) / 2
-
-        outputs = this_model(jnp.array([_Te, _L, _I0]))
-        amps = outputs["amps"]
-        phases = outputs["phases"]
-
-        # _args_ = {"drivers": {"E0": {}}}
-        args["drivers"]["E0"]["amplitudes"] = jnp.tanh(amps)
-        args["drivers"]["E0"]["initial_phase"] = jnp.tanh(phases)
-
-        args["drivers"]["E0"]["delta_omega"] = jnp.linspace(
-            -cfg["drivers"]["E0"]["delta_omega_max"],
-            cfg["drivers"]["E0"]["delta_omega_max"],
-            num=cfg["drivers"]["E0"]["num_colors"],
-        )
-
-        args["drivers"]["E0"]["amplitudes"] *= 2.0  # from [-1, 1] to [-2, 2]
-        args["drivers"]["E0"]["amplitudes"] -= 2.0  # from [-2, 2] to [-4, 0]
-        args["drivers"]["E0"]["amplitudes"] = jnp.power(
-            10.0, args["drivers"]["E0"]["amplitudes"]
-        )  # from [-4, 0] to [1e-4, 1]
-        args["drivers"]["E0"]["amplitudes"] /= jnp.sqrt(
-            jnp.sum(jnp.square(args["drivers"]["E0"]["amplitudes"]))
-        )  # normalize
-
-        args["drivers"]["E0"]["initial_phase"] *= jnp.pi  # from [-1, 1] to [-pi, pi]
-
-    return state, args

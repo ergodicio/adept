@@ -43,7 +43,7 @@ grid:
 mlflow:
   experiment: wavepacket-k-nu-a-vlasov-hr-sl
   run: vlasov-absorbing
-mode: vlasov-1d
+solver: vlasov-1d
 save:
   electron:
     t:

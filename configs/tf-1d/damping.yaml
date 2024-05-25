@@ -1,4 +1,4 @@
-mode: tf-1d
+solver: tf-1d
 
 mlflow:
   experiment: tf1d-epw-test

@@ -23,7 +23,7 @@ mlflow:
   experiment: tf1d-epw-test
   run: wp-nl-local
 
-mode: tf-1d
+solver: tf-1d
 
 models:
   file: models/weights.eqx

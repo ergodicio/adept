@@ -9,8 +9,9 @@ from time import time
 import numpy as np
 import xarray, mlflow, pint, yaml
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt
+from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
 from matplotlib import pyplot as plt
+from equinox import filter_jit
 
 from adept.vlasov1d.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d.storage import store_f, store_fields, get_save_quantities
@@ -343,6 +344,32 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
+def get_run_fn(cfg):
+    diffeqsolve_quants = get_diffeqsolve_quants(cfg)
+
+    @filter_jit
+    def _run_(_models_, _state_, _args_, time_quantities: Dict):
+
+        _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
+        # if "terms" in cfg.keys():
+        #     args["terms"] = cfg["terms"]
+        solver_result = diffeqsolve(
+            terms=diffeqsolve_quants["terms"],
+            solver=diffeqsolve_quants["solver"],
+            t0=time_quantities["t0"],
+            t1=time_quantities["t1"],
+            max_steps=cfg["grid"]["max_steps"],
+            dt0=cfg["grid"]["dt"],
+            y0=_state_,
+            args=_args_,
+            saveat=SaveAt(**diffeqsolve_quants["saveat"]),
+        )
+
+        return solver_result, _state_, _args_
+
+    return _run_
+
+
 def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
     """
     This function initializes the state
@@ -366,6 +393,7 @@ def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
 
 
 def get_diffeqsolve_quants(cfg):
+    cfg = get_save_quantities(cfg)
     return dict(
         terms=ODETerm(VlasovMaxwell(cfg)),
         solver=Stepper(),

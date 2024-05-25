@@ -20,7 +20,7 @@ grid:
 mlflow:
   experiment: es1d-epw-test
   run: wp-nl-local
-mode: es-1d
+solver: es-1d
 models:
   file: models/weights.eqx
   nu_g:

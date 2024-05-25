@@ -47,7 +47,7 @@ save:
       tmax: 480.0
       nt: 9
 
-mode: vlasov-1d
+solver: vlasov-1d
 
 mlflow:
   experiment: vlasov1d

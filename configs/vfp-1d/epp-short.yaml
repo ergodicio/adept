@@ -53,7 +53,7 @@ save:
       tmax: 50000.0
       nt: 6
 
-mode: vfp-2d
+solver: vfp-2d
 
 mlflow:
   experiment: vfp2d
