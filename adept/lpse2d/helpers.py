@@ -122,7 +122,7 @@ def calc_threshold_intensity(Te, Ln, w0):
     e = 4.8032068e-10
 
     vte = np.sqrt(Te / me_keV) * c
-    I_threshold = 4 * 4.134 * 1 / (8 * np.pi) * (me_cgs * c / e) ** 2 * w0 * vte**2 / Ln * 1e-7
+    I_threshold = 4 * 4.134 * 1 / (8 * np.pi) * (me_cgs * c / e) ** 2 * w0 * vte**2 / (Ln / 100) * 1e-7
 
     return I_threshold
 
@@ -149,6 +149,9 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     print("Grid size = L / 0.25 * (nmax - nmin) = ", Lgrid, "um")
     cfg_grid["xmax"] = Lgrid
     cfg_grid["xmin"] = 0.0
+
+    if "x" in cfg["save"]:
+        cfg["save"]["x"]["xmax"] = cfg_grid["xmax"]
 
     cfg_grid["ymax"] = _Q(cfg_grid["ymax"]).to("um").value
     cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
