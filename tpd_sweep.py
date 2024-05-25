@@ -32,6 +32,9 @@ def run_once(Te, L, I0, _amp_):
     cfg["density"]["gradient scale length"] = f"{L}um"
     cfg["units"]["laser intensity"] = f"{I0:.2e}W/cm^2"
     cfg["units"]["reference electron temperature"] = f"{Te}eV"
+    if _amp_ == "mono":
+        cfg["drivers"]["E0"]["num_colors"] = 1
+
     cfg["drivers"]["E0"]["amplitude_shape"] = _amp_
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
@@ -65,16 +68,16 @@ if __name__ == "__main__":
     # create the dataset with the appropriate independent variables
 
     # 125 simulations in total
-    Tes = np.linspace(2000, 4000, 4)
-    Ls = np.linspace(200, 500, 4)
-    I0s = np.linspace(3e14, 5e15, 6)
-    amp_spec = ["gaussian", "uniform", "lorentzian"]
+    Tes = np.linspace(2000, 4000, 2)
+    Ls = np.linspace(200, 500, 2)
+    I0s = np.logspace(14, 17, 2)
+    amp_spec = ["uniform", "mono"]
 
     all_inputs = list(product(Tes, Ls, I0s, amp_spec))
 
     res = []
-    for Te, L, I0, amp in tqdm(all_inputs):
+    for Te, L, I0, amp in all_inputs:
         res.append(run_once(Te, L, I0, amp))
 
-    for r in res:
+    for r in tqdm(res):
         print(r.result())
