@@ -336,7 +336,7 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
                 1 / np.pi * (delta_omega_max / 2) / (delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
             )
             drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
-        elif cfg["drivers"]["E0"]["amplitude_shape"] == "ML":
+        elif cfg["drivers"]["E0"]["amplitude_shape"] == "ML" or cfg["drivers"]["E0"]["amplitude_shape"] == "opt":
             drivers["E0"]["amplitudes"] = np.ones(num_colors)  # will be modified elsewhere
         else:
             raise NotImplemented
@@ -487,9 +487,10 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
         val, actual_sim_out = sim_out[0]
         grad = sim_out[1]
         result = actual_sim_out["solver_result"]
+        used_driver = actual_sim_out["args"]["drivers"]
     else:
         result = sim_out["solver_result"]
-    used_driver = args["drivers"]
+        used_driver = sim_out["args"]["drivers"]
     import pickle
 
     with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
@@ -518,11 +519,13 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
     plot_fields(fields, td)
     plot_kt(kfields, td)
 
-    it = np.argmin(np.abs(fields.coords["t (ps)"].data - (np.amax(fields.coords["t (ps)"].data) - 0.5)))
+
+    dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
+    dy = fields.coords["y (um)"].data[1] - fields.coords["y (um)"].data[0]
+    dt = fields.coords["t (ps)"].data[1] - fields.coords["t (ps)"].data[0]
+
     metrics = {}
-    metrics["total_e_sq"] = float(
-        np.sum(np.abs(fields["ex"]) ** 2 + np.abs(fields["ey"]) ** 2) * cfg["grid"]["dx"] * cfg["grid"]["dy"]
-    )
+    metrics["total_e_sq"] = float(np.abs(np.sum(fields["ex"].data ** 2 + fields["ey"].data ** 2) * dx * dy * dt))
     metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
 
     mlflow.log_metrics(metrics)
@@ -582,7 +585,7 @@ def make_xarrays(cfg, this_t, state, td):
     fields = xr.Dataset(
         {"phi": phi_x, "ex": ex, "ey": ey, "e0_x": e0x, "e0_y": e0y, "background_density": background_density}
     )
-    # kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
+    kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
     return kfields, fields
@@ -598,6 +601,7 @@ def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
 
                 with open(file_path, "rb") as fi:
                     models[nm] = pickle.load(fi)
+                    print(models)
                 print(f"Loading {nm} weights from file {file_path} and ignoring any other specifications.")
             elif file_path.endswith(".eqx"):
                 models[nm], _ = nn.load(file_path)

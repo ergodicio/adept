@@ -48,7 +48,7 @@ def get_apply_func(cfg):
 
         return these_args
 
-    if cfg["drivers"]["E0"]["amplitude_shape"] == "ML":
+    if "train" in cfg["mode"]:
 
         def apply_fn(models, _state_, _args_):
             this_model = models["bandwidth"]
@@ -65,7 +65,7 @@ def get_apply_func(cfg):
 
             return model_outputs, _state_, _args_
 
-    elif cfg["drivers"]["E0"]["amplitude_shape"] == "Optimization":
+    elif "optimize" in cfg["mode"]:
 
         def apply_fn(models, _state_, _args_):
             these_params = models["bandwidth"]
@@ -82,13 +82,20 @@ def get_apply_func(cfg):
 
 
 def get_run_fn(cfg):
+    """
+    This function returns a function that will run the simulation and calculate the gradient
+    if specified
+
+    """
     if cfg["mode"] == "train-bandwidth":
+        diffeqsolve_quants = get_diffeqsolve_quants(cfg)
+
         kx = cfg["save"]["kx"] if "kx" in cfg["save"] else cfg["grid"]["kx"]
         ky = cfg["save"]["ky"] if "ky" in cfg["save"] else cfg["grid"]["ky"]
-        k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
-        low_pass_filter = np.where(np.sqrt(k_sq) < 2.0 / 3.0 * np.amax(kx), 1, 0)
+        dx = cfg["save"]["x"]["dx"] if "dx" in cfg["save"]["x"] else cfg["grid"]["dx"]
+        dy = cfg["save"]["y"]["dy"] if "dy" in cfg["save"]["y"] else cfg["grid"]["dy"]
+        dt = cfg["save"]["t"]["dt"] if "dt" in cfg["save"]["t"] else cfg["grid"]["dt"]
 
-        diffeqsolve_quants = get_diffeqsolve_quants(cfg)
         apply_models = get_apply_func(cfg)
 
         def _run_(_models_, _state_, _args_, time_quantities: Dict):
@@ -107,9 +114,9 @@ def get_run_fn(cfg):
             )
 
             phi_k = jnp.fft.fft2(solver_result.ys["epw"].view(jnp.complex128), axes=(1, 2))
-            ex_k = kx[None, :, None] * phi_k * low_pass_filter
-            ey_k = ky[None, None, :] * phi_k * low_pass_filter
-            e_sq = jnp.sum(ex_k**2.0 + ey_k**2.0) * cfg["grid"]["dx"] * cfg["grid"]["dy"] * cfg["grid"]["dt"]
+            ex_k = kx[None, :, None] * phi_k
+            ey_k = ky[None, None, :] * phi_k
+            e_sq = jnp.abs(jnp.sum(ex_k**2.0 + ey_k**2.0) * dx * dy * dt)
             loss = jnp.log10(e_sq)
             loss_dict = {"loss": loss}
             if cfg["model"]["type"] == "VAE":
@@ -121,16 +128,19 @@ def get_run_fn(cfg):
         return filter_jit(filter_value_and_grad(_run_, has_aux=True))
 
     elif cfg["mode"] == "optimize-bandwidth":
-        # if no mode is specified, then we are just running the simulation
         diffeqsolve_quants = get_diffeqsolve_quants(cfg)
+
+        kx = cfg["save"]["kx"] if "kx" in cfg["save"] else cfg["grid"]["kx"]
+        ky = cfg["save"]["ky"] if "ky" in cfg["save"] else cfg["grid"]["ky"]
+        dx = cfg["save"]["x"]["dx"] if "dx" in cfg["save"]["x"] else cfg["grid"]["dx"]
+        dy = cfg["save"]["y"]["dy"] if "dy" in cfg["save"]["y"] else cfg["grid"]["dy"]
+        dt = cfg["save"]["t"]["dt"] if "dt" in cfg["save"]["t"] else cfg["grid"]["dt"]
+
         apply_parameters = get_apply_func(cfg)
 
-        @filter_jit
         def _run_(_models_, _state_, _args_, time_quantities: Dict):
 
-            _, _state_, _args_ = apply_parameters(_models_, _state_, _args_, cfg)
-            # if "terms" in cfg.keys():
-            #     args["terms"] = cfg["terms"]
+            _, _state_, _args_ = apply_parameters(_models_, _state_, _args_)
             solver_result = diffeqsolve(
                 terms=diffeqsolve_quants["terms"],
                 solver=diffeqsolve_quants["solver"],
@@ -144,9 +154,9 @@ def get_run_fn(cfg):
             )
 
             phi_k = jnp.fft.fft2(solver_result.ys["epw"].view(jnp.complex128), axes=(1, 2))
-            ex_k = kx[None, :, None] * phi_k * low_pass_filter
-            ey_k = ky[None, None, :] * phi_k * low_pass_filter
-            e_sq = jnp.sum(ex_k**2.0 + ey_k**2.0) * cfg["grid"]["dx"] * cfg["grid"]["dy"] * cfg["grid"]["dt"]
+            ex_k = kx[None, :, None] * phi_k
+            ey_k = ky[None, None, :] * phi_k
+            e_sq = jnp.abs(jnp.sum(ex_k**2.0 + ey_k**2.0) * dx * dy * dt)
             loss = jnp.log10(e_sq)
             loss_dict = {"loss": loss}
             return loss, {"solver_result": solver_result, "state": _state_, "args": _args_, "loss_dict": loss_dict}

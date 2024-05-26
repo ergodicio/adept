@@ -9,12 +9,12 @@ density:
   min: 0.15
 drivers:
   E0:
-    amplitude_shape: uniform
+    amplitude_shape: opt
     delta_omega_max: 0.03
-    num_colors: 1
+    num_colors: 64
 grid:
   dx: 24nm
-  tmax: 2.0ps
+  tmax: 3.0ps
   tmin: 0.0ns
   xmax: 61um
   xmin: 0.0um
@@ -23,12 +23,13 @@ grid:
 machine:
   calculator: gpu
 mlflow:
-  experiment: lpse2d-tpd-convergence
+  experiment: tpd-opt
   run: mono-newL
 solver: envelope-2d
 
-# models:
-#   bandwidth:
+models:
+  bandwidth:
+    file: None
 #     hyperparams:
 #       decoder_depth: 2
 #       decoder_width: 4
@@ -41,21 +42,19 @@ solver: envelope-2d
 #     type: MLP
 #     file: /global/homes/a/archis/adept/models/tpd-vae.eqx
 opt:
-  learning_rate: 0.002
+  learning_rate: 0.1
   optimizer: adam
 save:
   t:
-    dt: 200fs
-    tmax: 2ps
+    dt: 100fs
+    tmax: 3ps
     tmin: 0ps
   x:
     dx: 128nm
-    xmax: 160um
-    xmin: 0um
+
   y:
     dy: 128nm
-    ymax: 5um
-    ymin: -5um
+
 terms:
   epw:
     boundary:

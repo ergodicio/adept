@@ -24,6 +24,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     dt = _Q(cfg["save"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     nt = int((tmax - tmin) / dt) + 1
 
+    cfg["save"]["t"]["dt"] = dt
     cfg["save"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
 
     if "x" in cfg["save"]:
@@ -31,6 +32,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
         xmax = cfg["grid"]["xmax"]
         dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
         nx = int((xmax - xmin) / dx)
+        cfg["save"]["x"]["dx"] = dx
         cfg["save"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
         cfg["save"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
 
@@ -39,6 +41,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
             ymax = cfg["grid"]["ymax"]
             dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
             ny = int((ymax - ymin) / dy)
+            cfg["save"]["y"]["dy"] = dy
             cfg["save"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
             cfg["save"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
         else:

@@ -198,7 +198,7 @@ def export_run(run_id, prefix="individual", step=0):
     # print(f"Uploading took {round(time.time() - t0, 2)} s")
 
 
-def setup_parsl(parsl_provider="local"):
+def setup_parsl(parsl_provider="local", num_gpus=4):
     import parsl
     from parsl.config import Config
     from parsl.providers import SlurmProvider, LocalProvider
@@ -221,7 +221,10 @@ def setup_parsl(parsl_provider="local"):
         )
 
         htex = HighThroughputExecutor(
-            available_accelerators=4, label="tpd-sweep", provider=this_provider(**provider_args), cpu_affinity="block"
+            available_accelerators=num_gpus,
+            label="tpd-sweep",
+            provider=this_provider(**provider_args),
+            cpu_affinity="block",
         )
         print(f"{htex.workers_per_node=}")
 
