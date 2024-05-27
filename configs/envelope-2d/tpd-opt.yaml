@@ -9,11 +9,11 @@ density:
   min: 0.15
 drivers:
   E0:
-    amplitude_shape: uniform
+    amplitude_shape: opt
     delta_omega_max: 0.03
     num_colors: 64
 grid:
-  dx: 24nm
+  dx: 16nm
   tmax: 4.0ps
   tmin: 0.0ns
   xmax: 61um
@@ -23,13 +23,13 @@ grid:
 machine:
   calculator: gpu
 mlflow:
-  experiment: tpd-uniform-baselines
+  experiment: tpd-Te2-I1e15-L200-nc64
   run: uniform
 solver: envelope-2d
 
-# models:
-#   bandwidth:
-#     file: None
+models:
+  bandwidth:
+    file: None
   #   hyperparams:
   #     input_width: 3
   #     key: 534

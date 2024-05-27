@@ -57,7 +57,7 @@ def get_apply_func(cfg):
             Te = float(cfg["units"]["reference electron temperature"].strip("eV"))
 
             Te = (Te - 3000) / 2000
-            L = (L - 300) / 200
+            L = (L - 300) / 500
             I0 = (jnp.log10(I0) - 15) / 2
 
             model_outputs = this_model(jnp.array([Te, L, I0]))
@@ -92,6 +92,8 @@ def get_run_fn(cfg):
 
         kx = cfg["save"]["kx"] if "kx" in cfg["save"] else cfg["grid"]["kx"]
         ky = cfg["save"]["ky"] if "ky" in cfg["save"] else cfg["grid"]["ky"]
+        kx *= cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
+        ky *= cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
         dx = cfg["save"]["x"]["dx"] if "dx" in cfg["save"]["x"] else cfg["grid"]["dx"]
         dy = cfg["save"]["y"]["dy"] if "dy" in cfg["save"]["y"] else cfg["grid"]["dy"]
         dt = cfg["save"]["t"]["dt"] if "dt" in cfg["save"]["t"] else cfg["grid"]["dt"]
@@ -100,7 +102,7 @@ def get_run_fn(cfg):
 
         def _run_(_models_, _state_, _args_, time_quantities: Dict):
 
-            _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
+            model_output, _state_, _args_ = apply_models(_models_, _state_, _args_)
             solver_result = diffeqsolve(
                 terms=diffeqsolve_quants["terms"],
                 solver=diffeqsolve_quants["solver"],
@@ -119,9 +121,9 @@ def get_run_fn(cfg):
             e_sq = jnp.abs(jnp.sum(ex_k**2.0 + ey_k**2.0) * dx * dy * dt)
             loss = jnp.log10(e_sq)
             loss_dict = {"loss": loss}
-            if cfg["model"]["type"] == "VAE":
-                loss += jnp.sum(solver_result["kl_loss"])
-                loss_dict["kl_loss"] = jnp.sum(solver_result["kl_loss"])
+            if cfg["models"]["bandwidth"]["type"] == "VAE":
+                loss += jnp.sum(model_output["kl_loss"])
+                loss_dict["kl_loss"] = jnp.sum(model_output["kl_loss"])
 
             return loss, {"solver_result": solver_result, "state": _state_, "args": _args_, "loss_dict": loss_dict}
 
@@ -132,6 +134,8 @@ def get_run_fn(cfg):
 
         kx = cfg["save"]["kx"] if "kx" in cfg["save"] else cfg["grid"]["kx"]
         ky = cfg["save"]["ky"] if "ky" in cfg["save"] else cfg["grid"]["ky"]
+        kx *= cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
+        ky *= cfg["units"]["derived"]["c"] / cfg["units"]["derived"]["w0"]
         dx = cfg["save"]["x"]["dx"] if "dx" in cfg["save"]["x"] else cfg["grid"]["dx"]
         dy = cfg["save"]["y"]["dy"] if "dy" in cfg["save"]["y"] else cfg["grid"]["dy"]
         dt = cfg["save"]["t"]["dt"] if "dt" in cfg["save"]["t"] else cfg["grid"]["dt"]

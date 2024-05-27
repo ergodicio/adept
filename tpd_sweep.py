@@ -59,18 +59,19 @@ if __name__ == "__main__":
     import jax
     from jax.flatten_util import ravel_pytree
 
-    jax.config.update("jax_platform_name", "cpu")
+    # jax.config.update("jax_platform_name", "cpu")
     jax.config.update("jax_enable_x64", True)
 
-    misc.setup_parsl("local")
+    misc.setup_parsl("gpu", 4, 32)
+    # misc.setup_parsl("local", 1)
     run_once = python_app(run_once)
 
     # create the dataset with the appropriate independent variables
 
     # 125 simulations in total
-    Tes = np.linspace(2000, 4000, 2)
-    Ls = np.linspace(200, 500, 2)
-    I0s = np.logspace(14, 17, 2)
+    Tes = np.linspace(2000, 4000, 5)
+    Ls = np.linspace(200, 800, 7)
+    I0s = np.logspace(14, 17, 10)
     amp_spec = ["uniform", "mono"]
 
     all_inputs = list(product(Tes, Ls, I0s, amp_spec))

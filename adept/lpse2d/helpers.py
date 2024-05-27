@@ -519,7 +519,6 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
     plot_fields(fields, td)
     plot_kt(kfields, td)
 
-
     dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
     dy = fields.coords["y (um)"].data[1] - fields.coords["y (um)"].data[0]
     dt = fields.coords["t (ps)"].data[1] - fields.coords["t (ps)"].data[0]
@@ -527,6 +526,11 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
     metrics = {}
     metrics["total_e_sq"] = float(np.abs(np.sum(fields["ex"].data ** 2 + fields["ey"].data ** 2) * dx * dy * dt))
     metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
+    
+    if isinstance(sim_out, tuple):
+        if "loss_dict" in sim_out[0][1]:
+            for k, v in sim_out[0][1]["loss_dict"].items():
+                metrics[k] = float(v)
 
     mlflow.log_metrics(metrics)
 

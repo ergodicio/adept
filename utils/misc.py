@@ -198,7 +198,7 @@ def export_run(run_id, prefix="individual", step=0):
     # print(f"Uploading took {round(time.time() - t0, 2)} s")
 
 
-def setup_parsl(parsl_provider="local", num_gpus=4):
+def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
     import parsl
     from parsl.config import Config
     from parsl.providers import SlurmProvider, LocalProvider
@@ -206,6 +206,8 @@ def setup_parsl(parsl_provider="local", num_gpus=4):
     from parsl.executors import HighThroughputExecutor
 
     if parsl_provider == "local":
+
+        print(f"Using local provider, ignoring {max_blocks=}")
 
         this_provider = LocalProvider
         provider_args = dict(
@@ -249,7 +251,7 @@ def setup_parsl(parsl_provider="local", num_gpus=4):
             cmd_timeout=120,
             nodes_per_block=1,
             # init_blocks=1,
-            max_blocks=3,
+            max_blocks=max_blocks,
         )
 
         htex = HighThroughputExecutor(

@@ -22,33 +22,28 @@ def run_one_val_and_grad(cfg, run_id):
 
     config.update("jax_enable_x64", True)
 
-    import yaml, mlflow
+    import mlflow
     from utils.runner import run
     from utils.misc import export_run
 
-    mlflow.set_experiment(cfg["mlflow"]["experiment"])
-
-    # modify config
     with mlflow.start_run(run_id=run_id) as mlflow_run:
         solver_output, postprocessing_output = run(cfg)
 
-    export_run(run_id)
+    export_run(mlflow_run.info.run_id)
 
-    val = solver_output["loss"]
-    grad = solver_output["grad"]
+    val = solver_output[0][0]
+    grad = solver_output[1]
 
     return val, grad
 
 
 if __name__ == "__main__":
     import uuid
-    from itertools import product
-    from tqdm import tqdm
 
     logging.basicConfig(filename=f"runlog-tpd-learn-{str(uuid.uuid4())[-4:]}.log", level=logging.INFO)
 
     # use the logger to note that we're running a parsl job
-    logging.info("Running with parsl")
+    # logging.info("Running with parsl")
 
     import jax
     from jax.flatten_util import ravel_pytree
@@ -58,19 +53,19 @@ if __name__ == "__main__":
 
     import optax
 
-    misc.setup_parsl("local")
+    misc.setup_parsl("local", num_gpus=1)
     run_one_val_and_grad = python_app(run_one_val_and_grad)
 
     import yaml, mlflow, tempfile, os
     import numpy as np, equinox as eqx
     from adept.lpse2d import nn
 
-    with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd.yaml", "r") as fi:
+    with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd-opt.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
 
-    with mlflow.start_run(run_name="learn-tpd") as mlflow_run:
+    with mlflow.start_run(run_name="learn-tpd-dx16nm") as mlflow_run:
         with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
             with open(os.path.join(td, "config.yaml"), "w") as fi:
                 yaml.dump(cfg, fi)
@@ -80,10 +75,12 @@ if __name__ == "__main__":
     parent_run_id = mlflow_run.info.run_id
     misc.export_run(parent_run_id)
 
-    rng = np.random.default_rng(487)
+    rng = np.random.default_rng(6367)
     initial_amps = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
     initial_phases = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
     weights = {"amps": initial_amps, "phases": initial_phases}
+
+    cfg["mode"] = "optimize-bandwidth"
 
     with mlflow.start_run(run_id=parent_run_id, log_system_metrics=True) as mlflow_run:
         opt = optax.adam(learning_rate=cfg["opt"]["learning_rate"])
@@ -104,11 +101,14 @@ if __name__ == "__main__":
                 with open(weights_path, "wb") as fi:
                     pickle.dump(weights, fi)
                 cfg["models"]["bandwidth"]["file"] = weights_path
-                val, grad = run_one_val_and_grad(cfg, run_id=nested_run.info.run_id)
 
-                flat_grad, _ = ravel_pytree(grad)
+                # val, grad = run_one_val_and_grad(cfg)  # , run_id=nested_run.info.run_id)
+                val, grad = run_one_val_and_grad(cfg, run_id=nested_run.info.run_id).result()
+
+                grad_bandwidth = grad["bandwidth"]
+                flat_grad, _ = ravel_pytree(grad_bandwidth)
                 mlflow.log_metrics({"grad norm": float(np.linalg.norm(flat_grad))}, step=i)
                 mlflow.log_metrics({"loss": float(val)}, step=i)
                 misc.export_run(parent_run_id, prefix="parent", step=i)
-                updates, opt_state = opt.update(grad, opt_state, weights)
+                updates, opt_state = opt.update(grad_bandwidth, opt_state, weights)
                 weights = eqx.apply_updates(weights, updates)
