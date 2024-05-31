@@ -5,6 +5,26 @@ import json
 import numpy as np
 
 
+class GenerativeDriver(eqx.Module):
+    amp_decoder: eqx.Module
+    phase_decoder: eqx.Module
+
+    def __init__(self, decoder_width, decoder_depth, input_width, output_width, key):
+        super().__init__()
+        da_k, dp_k = jax.random.split(jax.random.PRNGKey(key), 2)
+        self.amp_decoder = eqx.nn.MLP(
+            input_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=jnp.tanh
+        )
+        self.phase_decoder = eqx.nn.MLP(
+            input_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=jnp.tanh
+        )
+
+    def __call__(self, x):
+        amps = self.amp_decoder(x)
+        phases = self.phase_decoder(x)
+        return {"amps": amps, "phases": phases}
+
+
 class DriverModel(eqx.Module):
     encoder: eqx.Module
     amp_decoder: eqx.Module
@@ -81,6 +101,8 @@ def load(filename):
                 model = DriverVAE(**hyperparams)
             elif model_cfg["type"] == "MLP":
                 model = DriverModel(**hyperparams)
+            elif model_cfg["type"] == "GEN":
+                model = GenerativeDriver(**hyperparams)
             else:
                 raise NotImplementedError(f"Model type {model_cfg['type']} not implemented")
         else:

@@ -297,7 +297,7 @@ class SpectralPotential:
     def get_noise(self):
         random_amps = 1.0
         random_phases = 2 * np.pi * jax.random.uniform(self.PRNGKey, (self.nx, self.ny))
-        return random_amps * jnp.exp(1j * random_phases)
+        return jnp.fft.ifft2(random_amps * jnp.exp(1j * random_phases) * self.low_pass_filter)
 
     def __call__(self, t, y, args):
         phi = y["epw"]

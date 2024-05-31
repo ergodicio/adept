@@ -28,6 +28,7 @@ def run_one_val_and_grad(cfg, run_id):
 
     with mlflow.start_run(run_id=run_id) as mlflow_run:
         solver_output, postprocessing_output = run(cfg)
+        mlflow.log_artifact(cfg["models"]["bandwidth"]["file"])
 
     export_run(mlflow_run.info.run_id)
 
@@ -53,7 +54,7 @@ if __name__ == "__main__":
 
     import optax
 
-    misc.setup_parsl("local", num_gpus=1)
+    misc.setup_parsl("gpu", num_gpus=4, max_blocks=8)
     run_one_val_and_grad = python_app(run_one_val_and_grad)
 
     import yaml, mlflow, tempfile, os
@@ -65,7 +66,7 @@ if __name__ == "__main__":
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
 
-    with mlflow.start_run(run_name="learn-tpd-dx16nm") as mlflow_run:
+    with mlflow.start_run(run_name="gen-tpd") as mlflow_run:
         with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
             with open(os.path.join(td, "config.yaml"), "w") as fi:
                 yaml.dump(cfg, fi)
@@ -76,36 +77,60 @@ if __name__ == "__main__":
     misc.export_run(parent_run_id)
 
     rng = np.random.default_rng(6367)
-    initial_amps = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
-    initial_phases = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
-    weights = {"amps": initial_amps, "phases": initial_phases}
+
+    if "hyperparams" in cfg["models"]["bandwidth"]:
+        weights = nn.GenerativeDriver(**cfg["models"]["bandwidth"]["hyperparams"])
+    else:
+        initial_amps = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
+        initial_phases = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
+        weights = {"amps": initial_amps, "phases": initial_phases}
 
     cfg["mode"] = "optimize-bandwidth"
-
+    batch_size = 32
     with mlflow.start_run(run_id=parent_run_id, log_system_metrics=True) as mlflow_run:
         opt = optax.adam(learning_rate=cfg["opt"]["learning_rate"])
-        opt_state = opt.init(weights)  # initialize the optimizer state
+        opt_state = opt.init(eqx.filter(weights, eqx.is_array))  # initialize the optimizer state
 
         with tempfile.TemporaryDirectory(
             dir=BASE_TEMPDIR
         ) as td:  # create a temporary directory for optimizer run artifacts
+
             os.makedirs(os.path.join(td, "weights-history"), exist_ok=True)  # create a directory for model history
             with open(cfg_path := os.path.join(td, "config.yaml"), "w") as fi:
                 yaml.dump(cfg, fi)
 
             for i in range(1000):  # 1000 epochs
-                with mlflow.start_run(nested=True, run_name=f"epoch-{i}") as nested_run:
-                    pass
 
-                weights_path = os.path.join(td, "weights-history", f"weights-{i}.pkl")
-                with open(weights_path, "wb") as fi:
-                    pickle.dump(weights, fi)
+                if "hyperparams" in cfg["models"]["bandwidth"]:
+                    nn.save(
+                        weights_path := os.path.join(td, "weights-history", f"weights-{i}.eqx"),
+                        cfg["models"]["bandwidth"],
+                        weights,
+                    )
+                else:
+                    with open(weights_path := os.path.join(td, "weights-history", f"weights-{i}.pkl"), "wb") as fi:
+                        pickle.dump(weights, fi)
                 cfg["models"]["bandwidth"]["file"] = weights_path
 
-                # val, grad = run_one_val_and_grad(cfg)  # , run_id=nested_run.info.run_id)
-                val, grad = run_one_val_and_grad(cfg, run_id=nested_run.info.run_id).result()
+                if batch_size == 1:
+                    with mlflow.start_run(nested=True, run_name=f"epoch-{i}") as nested_run:
+                        pass
+                    val, avg_grad = run_one_val_and_grad(cfg, run_id=nested_run.info.run_id)
+                else:
+                    val_and_grads = []
+                    for j in range(batch_size):
+                        with mlflow.start_run(nested=True, run_name=f"epoch-{i}-sim-{j}") as nested_run:
+                            # val, grad = run_one_val_and_grad(cfg, run_id=nested_run.info.run_id).result()
+                            val_and_grads.append(run_one_val_and_grad(cfg, run_id=nested_run.info.run_id))
 
-                grad_bandwidth = grad["bandwidth"]
+                    vgs = [vg.result() for vg in val_and_grads]  # get the results of the futures
+                    val = np.mean([v for v, _ in vgs])  # get the mean of the loss values
+
+                    avg_grad = misc.all_reduce_gradients(
+                        [g for _, g in vgs], batch_size
+                    )  # get the average of the gradients
+
+                grad_bandwidth = avg_grad["bandwidth"]
                 flat_grad, _ = ravel_pytree(grad_bandwidth)
                 mlflow.log_metrics({"grad norm": float(np.linalg.norm(flat_grad))}, step=i)
                 mlflow.log_metrics({"loss": float(val)}, step=i)

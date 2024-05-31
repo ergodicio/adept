@@ -92,7 +92,10 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
         t0 = time.time()
         _run_ = helpers.get_run_fn(cfg)
 
-        _log_flops_(_run_, models, state, args, tqs)
+        try:
+            _log_flops_(_run_, models, state, args, tqs)
+        except:
+            print("Flops not logged")
         run_output = _run_(models, state, args, tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 

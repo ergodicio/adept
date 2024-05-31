@@ -1,20 +1,22 @@
 density:
   basis: linear
-  gradient scale length: 200.0um
+  gradient scale length: 300.0um
+  max: 0.35
+  min: 0.15
   noise:
     max: 1.0e-09
     min: 1.0e-10
     type: uniform
-  max: 0.35
-  min: 0.15
 drivers:
   E0:
-    amplitude_shape: uniform
+    amplitude_shape: file
+    file: s3://public-ergodic-continuum/74766/b0bb9e4bc45944eeab6c9906fb0ca586/artifacts/used_driver.pkl
     delta_omega_max: 0.03
     num_colors: 64
 grid:
-  dx: 24nm
-  tmax: 4.0ps
+  dt: 0.002ps
+  dx: 16nm
+  tmax: 20.0ps
   tmin: 0.0ns
   xmax: 61um
   xmin: 0.0um
@@ -23,33 +25,18 @@ grid:
 machine:
   calculator: gpu
 mlflow:
-  experiment: tpd-uniform-baselines
-  run: uniform
-solver: envelope-2d
-
-# models:
-#   bandwidth:
-#     file: None
-  #   hyperparams:
-  #     input_width: 3
-  #     key: 534
-  #     latent_width: 4
-  #     output_width: 8
-  #   type: VAE
-opt:
-  learning_rate: 0.003
-  optimizer: adam
+  experiment: tpd-gen-th-i45e13
+  run: ml-long
 save:
   t:
     dt: 100fs
-    tmax: 4ps
+    tmax: 20ps
     tmin: 0ps
   x:
     dx: 128nm
-
   y:
     dy: 128nm
-
+solver: envelope-2d
 terms:
   epw:
     boundary:
@@ -69,7 +56,7 @@ units:
   atomic number: 40
   envelope density: 0.25
   ionization state: 6
-  laser intensity: 1.0e+15W/cm^2
+  laser intensity: 4.5e+14W/cm^2
   laser wavelength: 351nm
   reference electron temperature: 2000eV
   reference ion temperature: 1000eV

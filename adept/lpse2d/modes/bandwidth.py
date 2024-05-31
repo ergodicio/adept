@@ -1,6 +1,7 @@
 from typing import Dict
 
 from jax import numpy as jnp
+from jax.random import normal, PRNGKey
 import numpy as np
 from diffrax import diffeqsolve, SaveAt
 from equinox import filter_value_and_grad, filter_jit
@@ -68,7 +69,15 @@ def get_apply_func(cfg):
     elif "optimize" in cfg["mode"]:
 
         def apply_fn(models, _state_, _args_):
-            these_params = models["bandwidth"]
+            if "hyperparams" in cfg["models"]["bandwidth"]:
+                these_params = models["bandwidth"](
+                    normal(
+                        PRNGKey(seed=np.random.randint(2**20)),
+                        shape=(cfg["models"]["bandwidth"]["hyperparams"]["input_width"],),
+                    )
+                )
+            else:
+                these_params = models["bandwidth"]
             _args_ = _unnorm_weights_(these_params, _args_)
             return these_params, _state_, _args_
 
@@ -157,7 +166,7 @@ def get_run_fn(cfg):
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
-            phi_k = jnp.fft.fft2(solver_result.ys["epw"].view(jnp.complex128), axes=(1, 2))
+            phi_k = jnp.fft.fft2(solver_result.ys["epw"][-5:].view(jnp.complex128), axes=(1, 2))
             ex_k = kx[None, :, None] * phi_k
             ey_k = ky[None, None, :] * phi_k
             e_sq = jnp.abs(jnp.sum(ex_k**2.0 + ey_k**2.0) * dx * dy * dt)

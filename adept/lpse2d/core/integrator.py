@@ -5,6 +5,7 @@ import numpy as np
 import equinox as eqx
 
 from adept.lpse2d.core import epw, laser
+from adept.tf1d.pushers import get_envelope
 
 
 class SplitStep:
@@ -49,11 +50,13 @@ class SplitStep:
         return y, new_y
 
     def light_split_step(self, t, y, args):
-        y["E0"] = self.light.laser_update(t, y, args["E0"])
+        t_coeff = get_envelope(0.1, 0.1, 0.2, 100.0, t)
+        y["E0"] = t_coeff * self.light.laser_update(t, y, args["E0"])
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
 
-        y["E0"] = self.light.laser_update(t + 0.5 * self.dt, y, args["E0"])
+        t_coeff = get_envelope(0.1, 0.1, 0.2, 100.0, t + 0.5 * self.dt)
+        y["E0"] = t_coeff * self.light.laser_update(t + 0.5 * self.dt, y, args["E0"])
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + 1j * self.dt * jnp.imag(k1_E0)
 

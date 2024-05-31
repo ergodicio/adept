@@ -1,6 +1,6 @@
 density:
   basis: linear
-  gradient scale length: 200.0um
+  gradient scale length: 300.0um
   noise:
     max: 1.0e-09
     min: 1.0e-10
@@ -14,6 +14,7 @@ drivers:
     num_colors: 64
 grid:
   dx: 16nm
+  dt: 0.002ps
   tmax: 4.0ps
   tmin: 0.0ns
   xmax: 61um
@@ -23,19 +24,20 @@ grid:
 machine:
   calculator: gpu
 mlflow:
-  experiment: tpd-Te2-I1e15-L200-nc64
+  experiment: tpd-gen-th-i45e13
   run: uniform
 solver: envelope-2d
 
 models:
   bandwidth:
     file: None
-  #   hyperparams:
-  #     input_width: 3
-  #     key: 534
-  #     latent_width: 4
-  #     output_width: 8
-  #   type: VAE
+    hyperparams:
+      input_width: 8
+      key: 248
+      decoder_width: 16
+      decoder_depth: 3
+      output_width: 64
+    type: GEN
 opt:
   learning_rate: 0.003
   optimizer: adam
@@ -69,7 +71,7 @@ units:
   atomic number: 40
   envelope density: 0.25
   ionization state: 6
-  laser intensity: 1.0e+15W/cm^2
+  laser intensity: 4.5e+14W/cm^2
   laser wavelength: 351nm
   reference electron temperature: 2000eV
   reference ion temperature: 1000eV

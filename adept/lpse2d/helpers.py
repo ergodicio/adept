@@ -168,7 +168,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     norm_n_max = np.abs(nmax / cfg["units"]["envelope density"] - 1)
     # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
-    cfg_grid["dt"] = _Q("0.002ps").to("ps").value
+    cfg_grid["dt"] = _Q(cfg_grid["dt"]).to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
@@ -293,7 +293,7 @@ def init_state(cfg: Dict, td=None) -> Tuple[Dict, Dict]:
 
     random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
     phi_noise = 1 * jnp.exp(1j * random_phases)
-    epw = phi_noise
+    epw = 0 * phi_noise
 
     background_density = get_density_profile(cfg)
     vte_sq = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"])) * cfg["units"]["derived"]["vte"] ** 2
@@ -338,6 +338,27 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
             drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
         elif cfg["drivers"]["E0"]["amplitude_shape"] == "ML" or cfg["drivers"]["E0"]["amplitude_shape"] == "opt":
             drivers["E0"]["amplitudes"] = np.ones(num_colors)  # will be modified elsewhere
+        elif cfg["drivers"]["E0"]["amplitude_shape"] == "file":
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as td:
+
+                import pickle
+
+                if cfg["drivers"]["E0"]["file"].startswith("s3"):
+                    import boto3
+
+                    fname = cfg["drivers"]["E0"]["file"]
+
+                    bucket = fname.split("/")[2]
+                    key = "/".join(fname.split("/")[3:])
+                    s3 = boto3.client("s3")
+                    s3.download_file(bucket, key, local_fname := os.path.join(td, "drivers.pkl"))
+                else:
+                    local_fname = cfg["drivers"]["E0"]["file"]
+
+                with open(local_fname, "rb") as fi:
+                    drivers = pickle.load(fi)
         else:
             raise NotImplemented
 
@@ -402,6 +423,9 @@ def plot_fields(fields, td):
     t_skip = t_skip if t_skip > 1 else 1
     tslice = slice(0, -1, t_skip)
 
+    dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
+    dy = fields.coords["y (um)"].data[1] - fields.coords["y (um)"].data[0]
+
     for k, v in fields.items():
         fld_dir = os.path.join(td, "plots", k)
         os.makedirs(fld_dir)
@@ -444,6 +468,23 @@ def plot_fields(fields, td):
         np.real(v[:, :, ymidpt]).plot()
         plt.savefig(os.path.join(slice_dir, f"spacetime-real-{k}.png"))
         plt.close()
+
+    # plot total electric field energy in box vs time
+    fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+    total_e_sq = np.abs(fields["ex"].data ** 2 + fields["ey"].data ** 2).sum(axis=(1, 2)) * dx * dy
+    ax[0].plot(fields.coords["t (ps)"].data, total_e_sq)
+    ax[0].set_xlabel("t (ps)")
+    ax[0].set_ylabel("Total E^2")
+
+    ax[1].semilogy(fields.coords["t (ps)"].data, total_e_sq)
+    ax[1].set_xlabel("t (ps)")
+    ax[1].set_ylabel("Total E^2")
+
+    ax[0].grid()
+    ax[1].grid()
+
+    fig.savefig(os.path.join(td, "plots", "total_e_sq.png"))
+    plt.close()
 
 
 def plot_kt(kfields, td):
@@ -524,9 +565,11 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
     dt = fields.coords["t (ps)"].data[1] - fields.coords["t (ps)"].data[0]
 
     metrics = {}
-    metrics["total_e_sq"] = float(np.abs(np.sum(fields["ex"].data ** 2 + fields["ey"].data ** 2) * dx * dy * dt))
+    metrics["total_e_sq"] = float(
+        np.abs(np.sum(fields["ex"][-5:].data ** 2 + fields["ey"][-5:].data ** 2) * dx * dy * dt)
+    )
     metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
-    
+
     if isinstance(sim_out, tuple):
         if "loss_dict" in sim_out[0][1]:
             for k, v in sim_out[0][1]["loss_dict"].items():
@@ -570,14 +613,8 @@ def make_xarrays(cfg, this_t, state, td):
     ex_k = xr.DataArray(np.fft.fftshift(ex_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
     ey_k = xr.DataArray(np.fft.fftshift(ey_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
-    ex = xr.DataArray(
-        np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4,
-        coords=(tax_tuple, xax_tuple, yax_tuple),
-    )
-    ey = xr.DataArray(
-        np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4,
-        coords=(tax_tuple, xax_tuple, yax_tuple),
-    )
+    ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
+    ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
     e0x = xr.DataArray(state["E0"].view(np.complex128)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
     e0y = xr.DataArray(state["E0"].view(np.complex128)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
 
