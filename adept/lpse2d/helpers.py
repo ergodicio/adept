@@ -60,7 +60,7 @@ def write_units(cfg, td):
 
     nc = w0**2 * me / (4 * np.pi * e**2)
 
-    E0_source = np.sqrt(8 * np.pi * np.pi * I0 * 1e7 / c_cgs) / fieldScale
+    E0_source = np.sqrt(8 * np.pi * I0 / 2 * 1e7 / c_cgs) / fieldScale
 
     ne_cc = nc * envelopeDensity * 1e4**3
     Te_eV = Te * 1000
@@ -260,7 +260,9 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     else:
         envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
 
-    cfg_grid["absorbing_boundaries"] = np.exp(-1e4 * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y))
+    cfg_grid["absorbing_boundaries"] = np.exp(
+        -cfg_grid["boundary_abs_coeff"] * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y)
+    )
 
     return cfg_grid
 
@@ -566,7 +568,7 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
 
     metrics = {}
     metrics["total_e_sq"] = float(
-        np.abs(np.sum(fields["ex"][-5:].data ** 2 + fields["ey"][-5:].data ** 2) * dx * dy * dt)
+        np.sum(np.abs(fields["ex"][-20:].data) ** 2 + np.abs(fields["ey"][-20:].data ** 2) * dx * dy * dt)
     )
     metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
 

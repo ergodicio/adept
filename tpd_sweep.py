@@ -12,7 +12,7 @@ else:
 from utils import misc
 
 
-def run_once(Te, L, I0, _amp_):
+def run_once(Te, L, I0, delta_omega):
     import os
 
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
@@ -32,14 +32,15 @@ def run_once(Te, L, I0, _amp_):
     cfg["density"]["gradient scale length"] = f"{L}um"
     cfg["units"]["laser intensity"] = f"{I0:.2e}W/cm^2"
     cfg["units"]["reference electron temperature"] = f"{Te}eV"
-    if _amp_ == "mono":
-        cfg["drivers"]["E0"]["num_colors"] = 1
+    # if _amp_ == "mono":
+    #     cfg["drivers"]["E0"]["num_colors"] = 1
 
-    cfg["drivers"]["E0"]["amplitude_shape"] = _amp_
+    # cfg["drivers"]["E0"]["amplitude_shape"] = _amp_
+    cfg["drivers"]["E0"]["delta_omega_max"] = float(delta_omega)
 
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     # modify config
-    with mlflow.start_run(run_name=f"Te={Te:.2f}, L={L:.2f}, I0={I0:.2e}, amp={_amp_}") as mlflow_run:
+    with mlflow.start_run(run_name=f"Te={Te:.2f}, L={L:.2f}, I0={I0:.2e}, dw={delta_omega}") as mlflow_run:
         result, datasets = run(cfg)
 
     export_run(mlflow_run.info.run_id)
@@ -57,28 +58,32 @@ if __name__ == "__main__":
     logging.info("Running with parsl")
 
     import jax
-    from jax.flatten_util import ravel_pytree
+
+    # from jax.flatten_util import ravel_pytree
 
     # jax.config.update("jax_platform_name", "cpu")
     jax.config.update("jax_enable_x64", True)
 
-    misc.setup_parsl("gpu", 4, 32)
-    # misc.setup_parsl("local", 1)
+    # misc.setup_parsl("gpu", 4, 32)
+    misc.setup_parsl("local", 4)
     run_once = python_app(run_once)
 
     # create the dataset with the appropriate independent variables
 
     # 125 simulations in total
-    Tes = np.linspace(2000, 4000, 5)
-    Ls = np.linspace(200, 800, 7)
-    I0s = np.logspace(14, 17, 10)
-    amp_spec = ["uniform", "mono"]
+    # Tes = np.linspace(2000, 4000, 3)
+    # Ls = np.linspace(200, 400, 3)
+    I0s = np.linspace(2, 10, 5)[:, None] * 10 ** np.linspace(13, 15, 3)[None, :]
+    I0s = I0s.flatten(order="F")
+    # amp_spec = ["uniform", "mono"]
+    # dws = np.linspace(0.01, 0.08, 8)
 
-    all_inputs = list(product(Tes, Ls, I0s, amp_spec))
+    # all_inputs = list(product(Tes, Ls, I0s, dws))
 
     res = []
-    for Te, L, I0, amp in all_inputs:
-        res.append(run_once(Te, L, I0, amp))
+    # for Te, L, I0, dw in all_inputs:
+    for I0 in I0s:
+        res.append(run_once(Te=2000, L=300, I0=I0, delta_omega=0.03))
 
     for r in tqdm(res):
         print(r.result())
