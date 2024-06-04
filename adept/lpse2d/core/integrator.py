@@ -85,7 +85,11 @@ class SplitStep:
         new_y["epw"] = self.landau_damping(t=t, epw=new_y["epw"], vte_sq=y["vte_sq"])
 
         # boundary damping
-        new_y["epw"] = new_y["epw"] * self.boundary_envelope
+        ex, ey = self.epw.calc_fields_from_phi(new_y["epw"])
+        ex = ex * self.boundary_envelope
+        ey = ey * self.boundary_envelope
+        new_y["epw"] = self.epw.calc_phi_from_fields(ex, ey)
+        # new_y["epw"] = new_y["epw"] * self.boundary_envelope
 
         # pack y into float64
         y, new_y = self.pack_y(y, new_y)

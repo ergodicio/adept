@@ -166,7 +166,7 @@ def get_run_fn(cfg):
                 saveat=SaveAt(**diffeqsolve_quants["saveat"]),
             )
 
-            phi_k = jnp.fft.fft2(solver_result.ys["epw"][-20:].view(jnp.complex128), axes=(1, 2))
+            phi_k = jnp.fft.fft2(solver_result.ys["epw"][-30:].view(jnp.complex128), axes=(1, 2))
             ex_k = kx[None, :, None] * phi_k
             ey_k = ky[None, None, :] * phi_k
             e_sq = jnp.sum(jnp.abs(ex_k) ** 2.0 + jnp.abs(ey_k) ** 2.0) * dx * dy * dt
