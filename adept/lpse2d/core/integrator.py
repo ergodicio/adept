@@ -32,6 +32,7 @@ class SplitStep:
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
+        self.zero_mask = cfg["grid"]["zero_mask"]
 
     def unpack_y(self, y):
         new_y = {}
@@ -51,7 +52,8 @@ class SplitStep:
 
     def light_split_step(self, t, y, args):
         t_coeff = get_envelope(0.03, 0.03, 0.1, 100.0, t)
-        y["E0"] = t_coeff * self.light.laser_update(t, y, args["E0"])
+        y["E0"] = self.boundary_envelope[..., None] * t_coeff * self.light.laser_update(t, y, args["E0"])
+
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
 
@@ -84,11 +86,14 @@ class SplitStep:
         # landau and collisional damping
         new_y["epw"] = self.landau_damping(t=t, epw=new_y["epw"], vte_sq=y["vte_sq"])
 
+        new_y["epw"] = jnp.fft.ifft2(self.zero_mask * jnp.fft.fft2(new_y["epw"]))
+
         # boundary damping
         ex, ey = self.epw.calc_fields_from_phi(new_y["epw"])
         ex = ex * self.boundary_envelope
         ey = ey * self.boundary_envelope
         new_y["epw"] = self.epw.calc_phi_from_fields(ex, ey)
+        new_y["epw"] = jnp.fft.ifft2(self.zero_mask * jnp.fft.fft2(new_y["epw"]))
         # new_y["epw"] = new_y["epw"] * self.boundary_envelope
 
         # pack y into float64

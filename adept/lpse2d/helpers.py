@@ -264,6 +264,12 @@ def get_solver_quantities(cfg: Dict) -> Dict:
         -cfg_grid["boundary_abs_coeff"] * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y)
     )
 
+    cfg_grid["zero_mask"] = np.where(cfg_grid["kx"][:, None] * cfg_grid["ky"][None, :] == 0, 0, 1)
+    # sqrt(kx**2 + ky**2) < 2/3 kmax
+    cfg_grid["low_pass_filter"] = np.where(
+        np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) < 2 / 3 * cfg_grid["kx"].max(), 1, 0
+    )
+
     return cfg_grid
 
 

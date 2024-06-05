@@ -203,10 +203,12 @@ class SpectralPotential:
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.dt = cfg["grid"]["dt"]
         self.cfg = cfg
+        self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
         self.low_pass_filter = np.where(np.sqrt(self.k_sq) < 2.0 / 3.0 * np.amax(self.kx), 1, 0)
+        zero_mask = cfg["grid"][""]
+        self.low_pass_filter = self.low_pass_filter * zero_mask
         self.nx = cfg["grid"]["nx"]
         self.ny = cfg["grid"]["ny"]
-        self.PRNGKey = jax.random.PRNGKey(42)
         # self.step_tpd = partial(
         #     diffrax.diffeqsolve,
         #     terms=diffrax.ODETerm(self.tpd),
@@ -261,12 +263,13 @@ class SpectralPotential:
         _, ey = self.calc_fields_from_phi(phi)
 
         tpd1 = E0[..., 1] * jnp.conj(ey)
+        tpd1 = jnp.fft.ifft2(jnp.fft.fft2(tpd1) * self.low_pass_filter)
         # tpd1 = E0_Ey
 
         divE_true = jnp.fft.ifft2(self.k_sq * jnp.fft.fft2(phi))
         E0_divE_k = jnp.fft.fft2(E0[..., 1] * jnp.conj(divE_true))
         tpd2 = 1j * self.ky[None, :] * self.one_over_ksq * E0_divE_k
-        tpd2 = jnp.fft.ifft2(tpd2 * self.low_pass_filter)  # * self.low_pass_filter
+        tpd2 = jnp.fft.ifft2(tpd2 * self.low_pass_filter)
 
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
 
@@ -295,8 +298,8 @@ class SpectralPotential:
         return self.tpd_const * tpd2
 
     def get_noise(self):
-        random_amps = 1.0
-        random_phases = 2 * np.pi * jax.random.uniform(self.PRNGKey, (self.nx, self.ny))
+        random_amps = jax.random.uniform(self.amp_key, (self.nx, self.ny))
+        random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
         return jnp.fft.ifft2(random_amps * jnp.exp(1j * random_phases) * self.low_pass_filter)
 
     def __call__(self, t, y, args):
