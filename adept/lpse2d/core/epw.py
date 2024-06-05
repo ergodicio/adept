@@ -205,7 +205,7 @@ class SpectralPotential:
         self.cfg = cfg
         self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
         self.low_pass_filter = np.where(np.sqrt(self.k_sq) < 2.0 / 3.0 * np.amax(self.kx), 1, 0)
-        zero_mask = cfg["grid"][""]
+        zero_mask = cfg["grid"]["zero_mask"]
         self.low_pass_filter = self.low_pass_filter * zero_mask
         self.nx = cfg["grid"]["nx"]
         self.ny = cfg["grid"]["ny"]
@@ -308,21 +308,16 @@ class SpectralPotential:
         background_density = y["background_density"]
         vte_sq = y["vte_sq"]
 
-        # linear propagation
-        phi = jnp.fft.ifft2(jnp.fft.fft2(phi) * jnp.exp(-1j * 1.5 * vte_sq[0, 0] / self.wp0 * self.k_sq * self.dt))
+        if self.cfg["terms"]["epw"]["linear"]:
+            # linear propagation
+            phi = jnp.fft.ifft2(jnp.fft.fft2(phi) * jnp.exp(-1j * 1.5 * vte_sq[0, 0] / self.wp0 * self.k_sq * self.dt))
 
         # tpd
         if self.cfg["terms"]["epw"]["source"]["tpd"]:
-            # res = self.step_tpd(y0=phi.view(jnp.float64), args={"E0": E0.view(jnp.float64)})
-            # phi = res.ys[-1].view(jnp.complex128)
             phi = phi + self.dt * self.tpd(t, phi, args={"E0": E0})
-            # phi = phi + self.dt * self.calc_tpd1(t, phi, args={"E0": E0})
-            # phi = phi + self.dt * self.calc_tpd2(t, phi, args={"E0": E0})
 
         # density gradient
         if self.cfg["terms"]["epw"]["density_gradient"]:
-            # grad_n = jnp.gradient(background_density, self.dx, axis=0) / self.envelope_density
-            # phi += -0.5 * 1j * self.wp0 * grad_n * jnp.fft.ifft2(self.kx[:, None] * jnp.fft.fft2(phi))
             ex, ey = self.calc_fields_from_phi(phi)
             ex *= jnp.exp(-1j * self.wp0 / 2.0 * (1 - background_density / self.envelope_density) * self.dt)
             ey *= jnp.exp(-1j * self.wp0 / 2.0 * (1 - background_density / self.envelope_density) * self.dt)

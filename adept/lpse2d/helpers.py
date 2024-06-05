@@ -242,8 +242,8 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     one_over_ksq[0, 0] = 0.0
     cfg_grid["one_over_ksq"] = jnp.array(one_over_ksq)
 
-    rise = _Q("4um").to("um").value
-    boundary_width = _Q("10um").to("um").value
+    boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
+    rise = boundary_width / 5
 
     if cfg["terms"]["epw"]["boundary"]["x"] == "absorbing":
         left = cfg["grid"]["xmin"] + boundary_width

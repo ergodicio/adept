@@ -1,8 +1,8 @@
 density:
   basis: linear
-  gradient scale length: 211.0um
-  max: 0.3
-  min: 0.18
+  gradient scale length: 200.0um
+  max: 0.28
+  min: 0.22
   noise:
     max: 1.0e-09
     min: 1.0e-10
@@ -21,15 +21,16 @@ grid:
   ymax: 5um
   ymin: -5um
   boundary_abs_coeff: 10000
+  boundary_width: 8um
 machine:
   calculator: gpu
 mlflow:
-  experiment: tpd-two-lines
-  run: zero-intensity
+  experiment: k0
+  run: noise-dn
 save:
   t:
     dt: 50fs
-    tmax: 10ps
+    tmax: 5ps
     tmin: 0ps
   x:
     dx: 100nm
@@ -41,16 +42,11 @@ terms:
     boundary:
       x: absorbing
       y: periodic
-    density_gradient: false
-    kinetic real part: false
+    density_gradient: true
     linear: true
     source:
-      noise: false
+      noise: true
       tpd: false
-    trapping:
-      active: false
-      kld: 0.28
-      nuee: 1.0e-07
 units:
   atomic number: 40
   envelope density: 0.25
