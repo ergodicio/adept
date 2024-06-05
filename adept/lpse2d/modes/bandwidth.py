@@ -42,9 +42,7 @@ def get_apply_func(cfg):
         these_args["drivers"]["E0"]["amplitudes"] = jnp.power(
             10.0, these_args["drivers"]["E0"]["amplitudes"]
         )  # from [-4, 0] to [1e-4, 1]
-        these_args["drivers"]["E0"]["amplitudes"] /= jnp.sqrt(
-            jnp.sum(jnp.square(these_args["drivers"]["E0"]["amplitudes"]))
-        )  # normalize
+        these_args["drivers"]["E0"]["amplitudes"] /= jnp.sum(these_args["drivers"]["E0"]["amplitudes"])
         these_args["drivers"]["E0"]["initial_phase"] *= jnp.pi  # from [-1, 1] to [-pi, pi]
 
         return these_args

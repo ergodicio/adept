@@ -56,11 +56,11 @@ def write_units(cfg, td):
     # nu_ei = calc_nuei(ne, Te, Z, ni, Ti)
     # nu_ee = calc_nuee(ne, Te)
 
-    nu_coll = 1.0  # nu_ee + nu_ei + nu_sideloss
+    nu_coll = 0.0  # nu_ee + nu_ei + nu_sideloss
 
     nc = w0**2 * me / (4 * np.pi * e**2)
 
-    E0_source = np.sqrt(8 * np.pi * I0 / 2 * 1e7 / c_cgs) / fieldScale
+    E0_source = np.sqrt(8 * np.pi * I0 * 1e7 / c_cgs) / fieldScale
 
     ne_cc = nc * envelopeDensity * 1e4**3
     Te_eV = Te * 1000
@@ -242,8 +242,8 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     one_over_ksq[0, 0] = 0.0
     cfg_grid["one_over_ksq"] = jnp.array(one_over_ksq)
 
-    rise = _Q("0.5um").to("um").value
-    boundary_width = _Q("3um").to("um").value
+    rise = _Q("4um").to("um").value
+    boundary_width = _Q("10um").to("um").value
 
     if cfg["terms"]["epw"]["boundary"]["x"] == "absorbing":
         left = cfg["grid"]["xmin"] + boundary_width
@@ -364,9 +364,7 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
         else:
             raise NotImplemented
 
-        drivers["E0"]["amplitudes"] /= np.sqrt(
-            np.sum(np.square(drivers["E0"]["amplitudes"]))
-        )  # normalize to 1 intensity
+        drivers["E0"]["amplitudes"] /= np.sum(drivers["E0"]["amplitudes"])
 
     return drivers
 
