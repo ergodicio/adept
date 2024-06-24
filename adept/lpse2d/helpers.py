@@ -56,8 +56,6 @@ def write_units(cfg, td):
     # nu_ei = calc_nuei(ne, Te, Z, ni, Ti)
     # nu_ee = calc_nuee(ne, Te)
 
-    nu_coll = 0.0  # nu_ee + nu_ei + nu_sideloss
-
     nc = w0**2 * me / (4 * np.pi * e**2)
 
     E0_source = np.sqrt(8 * np.pi * I0 * 1e7 / c_cgs) / fieldScale
@@ -70,9 +68,30 @@ def write_units(cfg, td):
         if Te_eV < 10 * Z**2
         else 24.0 - jnp.log(jnp.sqrt(ne_cc) / Te_eV)
     )
-    # NRL formulary Ti me/mi < 10 Z^2 eV < Te
-    tau_e = 3.44e11 * (Te_eV) ** 1.5 / ne_cc / coulomb_log / Z
-    nu_e = 1 / tau_e
+    fract = 1
+    Zbar = Z * fract
+    ni = fract * ne_cc / Zbar
+
+    # logLambda_ei = jnp.zeros(len(Z))
+    # for iZ in range(len(Z)):
+    if cfg["terms"]["epw"]["damping"]["collisions"]:
+        if Te_eV < 0.01 * Z**2:
+            logLambda_ei = 22.8487 - jnp.log(jnp.sqrt(ne_cc) * Z / (Te * 1000) ** (3 / 2))
+        elif Te_eV > 0.01 * Z**2:
+            logLambda_ei = 24 - jnp.log(jnp.sqrt(ne_cc) / (Te * 1000))
+
+        e_sq = 510.9896 * 2.8179e-13
+        this_me = 510.9896 / 2.99792458e10**2
+        nu_coll = (
+            float(
+                (4 * np.sqrt(2 * np.pi) / 3 * e_sq**2 / np.sqrt(this_me) * Z**2 * ni * logLambda_ei / Te**1.5)
+                / 2
+                * timeScale
+            )
+            * cfg["terms"]["epw"]["damping"]["collisions"]
+        )
+    else:
+        nu_coll = 1e-4  # nu_ee + nu_ei + nu_sideloss
 
     gradient_scale_length = _Q(cfg["density"]["gradient scale length"]).to("um").value
     I_thresh = calc_threshold_intensity(Te, Ln=gradient_scale_length, w0=w0)
@@ -261,13 +280,18 @@ def get_solver_quantities(cfg: Dict) -> Dict:
         envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
 
     cfg_grid["absorbing_boundaries"] = np.exp(
-        -cfg_grid["boundary_abs_coeff"] * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y)
+        -float(cfg_grid["boundary_abs_coeff"]) * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y)
     )
 
-    cfg_grid["zero_mask"] = np.where(cfg_grid["kx"][:, None] * cfg_grid["ky"][None, :] == 0, 0, 1)
+    cfg_grid["zero_mask"] = (
+        np.where(cfg_grid["kx"][:, None] * cfg_grid["ky"][None, :] == 0, 0, 1) if cfg["terms"]["zero_mask"] else 1
+    )
     # sqrt(kx**2 + ky**2) < 2/3 kmax
     cfg_grid["low_pass_filter"] = np.where(
-        np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) < 2 / 3 * cfg_grid["kx"].max(), 1, 0
+        np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
+        < cfg_grid["low_pass_filter"] * cfg_grid["kx"].max(),
+        1,
+        0,
     )
 
     return cfg_grid
