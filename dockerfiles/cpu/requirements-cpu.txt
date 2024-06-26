@@ -7,8 +7,13 @@ numpy
 tqdm
 xarray
 mlflow
-dm-haiku
 flatdict
 h5netcdf
 optax
+jaxopt
 boto3
+pint
+mlflow_export_import
+plasmapy
+tabulate
+interpax

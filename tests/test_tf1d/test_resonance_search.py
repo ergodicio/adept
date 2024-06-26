@@ -61,7 +61,7 @@ def test_resonance_search(gamma, adjoint):
 
         rng_key = jax.random.PRNGKey(420)
 
-        w0 = 1.1 + 0.05 * jax.random.normal(rng_key, [1], dtype=jnp.float64)
+        w0 = 1.1 + 0.05 * jax.random.normal(rng_key, [1], dtype=jnp.float64)[0]
 
         # optimizer = optax.adam(0.1)
         # opt_state = optimizer.init(w0)
@@ -120,7 +120,7 @@ def get_vg_func(gamma, adjoint):
     defaults = helpers.get_save_quantities(defaults)
 
     pulse_dict = {"drivers": defaults["drivers"]}
-    state = helpers.init_state(defaults)
+    state = helpers.init_state(defaults, td=None)
     loss_fn = get_loss(state, pulse_dict, defaults)
     vg_func = eqx.filter_jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
 
