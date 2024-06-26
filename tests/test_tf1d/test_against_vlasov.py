@@ -11,7 +11,7 @@ config.update("jax_enable_x64", True)
 import mlflow
 import xarray as xr
 
-from theory import electrostatic
+from adept.theory import electrostatic
 from utils.runner import run
 
 
@@ -47,6 +47,7 @@ def test_single_resonance():
     with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
         result, datasets = run(mod_defaults)
 
+    result, state, args = result
     vds = xr.open_dataset("tests/test_tf1d/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")
 
     nk1_fluid = result.ys["kx"]["electron"]["n"]["mag"][:, 1]

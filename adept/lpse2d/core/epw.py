@@ -6,7 +6,7 @@ import jax
 from jax import numpy as jnp
 import equinox as eqx
 import numpy as np
-from theory import electrostatic
+from adept.theory import electrostatic
 from adept.lpse2d.core.driver import Driver
 from adept.lpse2d.core.trapper import ParticleTrapper
 

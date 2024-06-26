@@ -351,8 +351,8 @@ def get_run_fn(cfg):
     def _run_(_models_, _state_, _args_, time_quantities: Dict):
 
         _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
-        # if "terms" in cfg.keys():
-        #     args["terms"] = cfg["terms"]
+        if "terms" in cfg.keys():
+            _args_["terms"] = cfg["terms"]
         solver_result = diffeqsolve(
             terms=diffeqsolve_quants["terms"],
             solver=diffeqsolve_quants["solver"],
@@ -401,7 +401,9 @@ def get_diffeqsolve_quants(cfg):
     )
 
 
-def post_process(result, cfg: Dict, td: str):
+def post_process(result, cfg: Dict, td: str, args: Dict):
+    result, _state_, _args_ = result
+
     t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)

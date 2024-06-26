@@ -126,7 +126,9 @@ def plot_xrs(which, td, xrs):
                 plt.close(fig)
 
 
-def post_process(result, cfg: Dict, td: str) -> Dict:
+def post_process(result, cfg: Dict, td: str, args: Dict) -> Dict:
+    result, state, args = result
+
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 
@@ -221,6 +223,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
 
 
 def get_diffeqsolve_quants(cfg):
+    cfg = get_save_quantities(cfg)
     return dict(
         terms=ODETerm(VectorField(cfg)),
         solver=Tsit5(),
@@ -254,7 +257,7 @@ def get_run_fn(cfg):
     return _run_
 
 
-def init_state(cfg: Dict, td) -> tuple[Dict, Dict]:
+def init_state(cfg: Dict, td=None) -> tuple[Dict, Dict]:
     """
     This function initializes the state
 

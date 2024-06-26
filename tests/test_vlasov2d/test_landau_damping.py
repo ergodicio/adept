@@ -12,7 +12,7 @@ config.update("jax_enable_x64", True)
 
 import mlflow
 
-from theory import electrostatic
+from adept.theory import electrostatic
 from utils.runner import run
 
 

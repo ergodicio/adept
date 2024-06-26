@@ -1,7 +1,7 @@
 import numpy as np
 from jax import numpy as jnp, Array
 import equinox as eqx
-from theory import electrostatic
+from adept.theory import electrostatic
 
 
 class ParticleTrapper(eqx.Module):

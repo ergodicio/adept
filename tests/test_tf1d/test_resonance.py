@@ -11,7 +11,7 @@ config.update("jax_enable_x64", True)
 from jax import numpy as jnp
 import mlflow
 
-from theory import electrostatic
+from adept.theory import electrostatic
 from utils.runner import run
 
 
@@ -49,6 +49,7 @@ def test_single_resonance(gamma):
     with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
         result, datasets = run(mod_defaults)
 
+    result, state, args = result
     kx = (
         np.fft.fftfreq(
             mod_defaults["save"]["x"]["nx"], d=mod_defaults["save"]["x"]["ax"][2] - mod_defaults["save"]["x"]["ax"][1]
