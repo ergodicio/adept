@@ -15,10 +15,6 @@ def _run_(Z, ee):
         cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
         cfg["grid"]["nv"] = 2048
 
-    if ee:
-        cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
-        cfg["grid"]["nv"] = 2048
-
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
