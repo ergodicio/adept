@@ -414,6 +414,7 @@ def init_state(cfg: Dict, td=None) -> tuple[Dict, Dict]:
 
 
 def get_diffeqsolve_quants(cfg):
+    cfg = get_save_quantities(cfg)
     return dict(
         terms=ODETerm(OSHUN1D(cfg)),
         solver=Stepper(),

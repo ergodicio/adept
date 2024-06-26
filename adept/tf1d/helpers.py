@@ -126,7 +126,7 @@ def plot_xrs(which, td, xrs):
                 plt.close(fig)
 
 
-def post_process(result, cfg: Dict, td: str, args: Dict) -> Dict:
+def post_process(result, cfg: Dict, td: str, args: Dict = None) -> Dict:
     result, state, args = result
 
     os.makedirs(os.path.join(td, "binary"))

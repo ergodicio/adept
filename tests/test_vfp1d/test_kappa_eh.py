@@ -24,6 +24,7 @@ def _run_(Z, ee):
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
         result, datasets = run(cfg)
 
+    result, state, args = result
     dataT = datasets["fields"]["fields-T keV"].data
     np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=5)
 

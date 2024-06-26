@@ -100,7 +100,7 @@ def run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state):
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
         with tempfile.TemporaryDirectory() as td:
             t0 = time.time()
-            helpers.post_process(results, mod_defaults, td)
+            helpers.post_process((results, None, None), mod_defaults, td)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4), "loss": float(loss)})
             # log artifacts
             mlflow.log_artifacts(td)
@@ -119,8 +119,8 @@ def get_vg_func(gamma, adjoint):
     defaults["grid"] = helpers.get_solver_quantities(cfg=defaults)
     defaults = helpers.get_save_quantities(defaults)
 
-    pulse_dict = {"drivers": defaults["drivers"]}
-    state = helpers.init_state(defaults, td=None)
+    # pulse_dict = {"drivers": defaults["drivers"]}
+    state, pulse_dict = helpers.init_state(defaults, td=None)
     loss_fn = get_loss(state, pulse_dict, defaults)
     vg_func = eqx.filter_jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
 
