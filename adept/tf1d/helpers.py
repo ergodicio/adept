@@ -11,7 +11,7 @@ import xarray as xr, pint, yaml
 from jax import tree_util as jtu
 from flatdict import FlatDict
 import equinox as eqx
-from diffrax import ODETerm, Tsit5, diffeqsolve, SaveAt
+from diffrax import ODETerm, Tsit5, diffeqsolve, SaveAt, Solution
 from equinox import filter_jit
 
 from jax import numpy as jnp
@@ -19,7 +19,13 @@ from adept.tf1d import pushers
 from equinox import nn
 
 
-def write_units(cfg, td):
+def write_units(cfg: Dict, td: str) -> Dict:
+    """
+    This function writes the units into the config and stores them in a yaml file
+    that gets logged by mlflow
+
+
+    """
     ureg = pint.UnitRegistry()
     _Q = ureg.Quantity
 
@@ -73,7 +79,11 @@ def write_units(cfg, td):
     return cfg
 
 
-def save_arrays(result, td, cfg, label):
+def save_arrays(result: Solution, td: str, cfg: Dict, label: str) -> xr.Dataset:
+    """
+    This function saves the arrays to an xarray netcdf file
+
+    """
     if label is None:
         label = "x"
         flattened_dict = dict(FlatDict(result.ys, delimiter="-"))
@@ -90,7 +100,12 @@ def save_arrays(result, td, cfg, label):
     return saved_arrays_xr
 
 
-def plot_xrs(which, td, xrs):
+def plot_xrs(which: str, td: str, xrs: Dict):
+    """
+    This function plots the xarray datasets
+
+
+    """
     os.makedirs(os.path.join(td, "plots", which))
     os.makedirs(os.path.join(td, "plots", which, "ion"))
     os.makedirs(os.path.join(td, "plots", which, "electron"))
@@ -127,6 +142,12 @@ def plot_xrs(which, td, xrs):
 
 
 def post_process(result, cfg: Dict, td: str, args: Dict = None) -> Dict:
+    """
+    This function is the post-processing step that is run after the simulation is complete
+
+    It relies on xarray and matplotlib to save the results to disk
+
+    """
     result, state, args = result
 
     os.makedirs(os.path.join(td, "binary"))
@@ -222,7 +243,13 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_diffeqsolve_quants(cfg):
+def get_diffeqsolve_quants(cfg: Dict) -> Dict:
+    """
+    This function returns the quantities required for the Diffrax solver
+
+    :param cfg: config dict
+    :return: modified config
+    """
     cfg = get_save_quantities(cfg)
     return dict(
         terms=ODETerm(VectorField(cfg)),
@@ -232,6 +259,13 @@ def get_diffeqsolve_quants(cfg):
 
 
 def get_run_fn(cfg):
+    """
+    This function returns the function that runs the simulation, it is required to interface with
+    `adexo`
+
+    :param cfg:
+    :return:
+    """
     diffeqsolve_quants = get_diffeqsolve_quants(cfg)
 
     @filter_jit
@@ -370,6 +404,10 @@ class VectorField(eqx.Module):
 
 
 def get_save_func(cfg):
+    """
+    This function returns the function that saves the state to disk
+
+    """
     if any(x in ["x", "kx"] for x in cfg["save"]):
         if "x" in cfg["save"].keys():
             dx = (cfg["save"]["x"]["xmax"] - cfg["save"]["x"]["xmin"]) / cfg["save"]["x"]["nx"]
@@ -405,6 +443,12 @@ def get_save_func(cfg):
 
 
 def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
+    """
+    This function returns the models as a dictionary of modules
+
+    It can also load from disk if the file is specified in the config
+
+    """
     if model_config:
         model_keys = jax.random.split(jax.random.PRNGKey(420), len(model_config.keys()))
         model_dict = defaultdict(eqx.Module)
@@ -426,4 +470,10 @@ def get_models(model_config: Dict) -> defaultdict[eqx.Module]:
 
 
 def apply_models(models, state, args, cfg):
+    """
+    This function applies the models to the state and args
+
+    It is a dummy function in this case
+
+    """
     return state, args

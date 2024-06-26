@@ -29,7 +29,6 @@ jobs:
         python -m pip install --upgrade black
         black --line-length 120 --check adept
         black --line-length 120 --check utils
-        black --line-length 120 --check theory
         python -m pip install --upgrade pytest wheel
         python -m pip install --upgrade -r requirements.txt
       
