@@ -1,3 +1,16 @@
+models:
+  bandwidth:
+    file: None
+    hyperparams:
+      input_width: 8
+      key: 42
+      decoder_width: 16
+      decoder_depth: 3
+      output_width: 8
+    type: GEN
+opt:
+  learning_rate: 0.003
+  optimizer: adam
 density:
   basis: linear
   gradient scale length: 200.0um
@@ -9,8 +22,7 @@ density:
     type: uniform
 drivers:
   E0:
-    amplitude_shape: file
-    file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
+    amplitude_shape: uniform
     delta_omega_max: 0.015
     num_colors: 8
 grid:
@@ -21,13 +33,13 @@ grid:
   dx: 20nm
   tmax: 5.0ps
   tmin: 0.0ns
-  ymax: 10um
-  ymin: -10um
+  ymax: 5um
+  ymin: -5um
 machine:
   calculator: gpu
 mlflow:
   experiment: tpd-gen-nc-8-nonu
-  run: ml
+  run: kfilt
 save:
   t:
     dt: 100fs

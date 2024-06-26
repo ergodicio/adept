@@ -181,7 +181,9 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     return f_store
 
 
-def post_process(result, cfg: Dict, td: str):
+def post_process(result, cfg: Dict, td: str, args: Dict = None) -> Dict:
+
+    result, state, args = result
     t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)

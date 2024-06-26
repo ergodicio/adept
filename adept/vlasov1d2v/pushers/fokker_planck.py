@@ -57,7 +57,9 @@ class Krook:
         f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
         self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
         self.dv = self.cfg["grid"]["dv"]
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+
+    def vx_moment(self, f_xv):
+        return jnp.sum(f_xv, axis=1) * self.dv
 
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
         nu_Kxdt = dt * nu_K[:, None]
@@ -86,13 +88,13 @@ class Dougherty:
         return jnp.gradient(f_vxvy, self.dv, axis=1)
 
     def get_init_quants_x(self, f_vxvy: jnp.ndarray):
-        vxbar = jnp.trapz(jnp.trapz(f_vxvy * self.v[:, None], dx=self.dv, axis=1), dx=self.dv, axis=0)
-        v0t_sq = jnp.trapz(jnp.trapz(f_vxvy * (self.v[:, None] - vxbar) ** 2.0, dx=self.dv, axis=1), dx=self.dv, axis=0)
+        vxbar = jnp.sum(jnp.sum(f_vxvy * self.v[:, None], axis=1), axis=0) * self.dv * self.dv
+        v0t_sq = jnp.sum(jnp.sum(f_vxvy * (self.v[:, None] - vxbar) ** 2.0, axis=1), axis=0) * self.dv * self.dv
         return vxbar, v0t_sq
 
     def get_init_quants_y(self, f_vxvy: jnp.ndarray):
-        vybar = jnp.trapz(jnp.trapz(f_vxvy * self.v[None, :], dx=self.dv, axis=1), dx=self.dv, axis=0)
-        v0t_sq = jnp.trapz(jnp.trapz(f_vxvy * (self.v[None, :] - vybar) ** 2.0, dx=self.dv, axis=1), dx=self.dv, axis=0)
+        vybar = jnp.sum(jnp.sum(f_vxvy * self.v[None, :], axis=1), axis=0) * self.dv * self.dv
+        v0t_sq = jnp.sum(jnp.sum(f_vxvy * (self.v[None, :] - vybar) ** 2.0, axis=1), axis=0) * self.dv * self.dv
 
         return vybar, v0t_sq
 

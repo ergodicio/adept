@@ -1,4 +1,4 @@
-mode: es-1d
+solver: es-1d
 
 mlflow:
   experiment: es1d-epw-test 

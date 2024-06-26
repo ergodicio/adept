@@ -1,4 +1,4 @@
-mode: sh-2d
+solver: sh-2d
 
 mlflow:
   experiment: sh2d-epw-test

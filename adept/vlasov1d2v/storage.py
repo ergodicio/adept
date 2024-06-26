@@ -128,7 +128,7 @@ def get_field_save_func(cfg, k):
     if {"t"} == set(cfg["save"][k].keys()):
 
         def _calc_moment_(inp):
-            return jnp.trapz(jnp.trapz(inp, dx=cfg["grid"]["dv"], axis=2), dx=cfg["grid"]["dv"], axis=1)
+            return jnp.sum(jnp.sum(inp, axis=2), axis=1) * cfg["grid"]["dv"] * cfg["grid"]["dv"]
 
         def fields_save_func(t, y, args):
             temp = {
@@ -221,7 +221,7 @@ def get_dist_save_func(cfg, k):
                 return fp
 
         def dist_save_func(t, y, args):
-            fxvx = jnp.trapz(y["electron"], dx=cfg["grid"]["dv"], axis=2)
+            fxvx = jnp.sum(y["electron"], axis=2) * cfg["grid"]["dv"]
             f_interp_x = interp_x(fp=fxvx)
             f_interp_xv = interp_vx(fp=f_interp_x)
             return f_interp_xv
@@ -273,7 +273,7 @@ def get_default_save_func(cfg):
     dv = cfg["grid"]["dv"]
 
     def _calc_mean_moment_(inp):
-        return jnp.mean(jnp.trapz(jnp.trapz(inp, dx=dv, axis=2), dx=dv, axis=1))
+        return jnp.mean(jnp.sum(jnp.sum(inp, axis=2), axis=1)) * dv * dv
 
     def save(t, y, args):
         scalars = {

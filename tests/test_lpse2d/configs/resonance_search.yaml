@@ -1,4 +1,4 @@
-mode: envelope-2d
+solver: envelope-2d
 
 density:
   basis: uniform

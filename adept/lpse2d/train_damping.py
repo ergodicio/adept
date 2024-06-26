@@ -73,7 +73,7 @@ def remote_run(run_id, t_or_v):
                 "weights.eqx", artifact_uri=mlflow_run.info.artifact_uri, destination_path=td
             )
             models = helpers.get_models(mod_defaults["models"])
-            vf = integrator.VectorField(mod_defaults)
+            vf = integrator.SpectralPotential(mod_defaults)
 
             loss_t = np.linspace(200, 400, 64)
             t_factor = np.exp(-2 * (1 - (loss_t / mod_defaults["grid"]["tmax"])))

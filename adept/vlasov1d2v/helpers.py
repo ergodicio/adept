@@ -1,6 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict
+from typing import Dict, Tuple
 import os
 
 from time import time
@@ -9,8 +9,9 @@ from time import time
 import numpy as np
 import xarray, mlflow, pint
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt
+from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
 from matplotlib import pyplot as plt
+from equinox import filter_jit
 
 from adept.vlasov1d2v.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d2v.storage import store_f, store_fields, get_save_quantities
@@ -289,7 +290,33 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td) -> Dict:
+def get_run_fn(cfg):
+    diffeqsolve_quants = get_diffeqsolve_quants(cfg)
+
+    @filter_jit
+    def _run_(_models_, _state_, _args_, time_quantities: Dict):
+
+        _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
+        # if "terms" in cfg.keys():
+        #     args["terms"] = cfg["terms"]
+        solver_result = diffeqsolve(
+            terms=diffeqsolve_quants["terms"],
+            solver=diffeqsolve_quants["solver"],
+            t0=time_quantities["t0"],
+            t1=time_quantities["t1"],
+            max_steps=cfg["grid"]["max_steps"],
+            dt0=cfg["grid"]["dt"],
+            y0=_state_,
+            args=_args_,
+            saveat=SaveAt(**diffeqsolve_quants["saveat"]),
+        )
+
+        return solver_result, _state_, _args_
+
+    return _run_
+
+
+def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -308,7 +335,7 @@ def init_state(cfg: Dict, td) -> Dict:
     for field in ["a", "da", "prev_a"]:
         state[field] = jnp.zeros(cfg["grid"]["nx"] + 2)  # need boundary cells
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 def get_diffeqsolve_quants(cfg):
@@ -376,3 +403,7 @@ def post_process(result, cfg: Dict, td: str):
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
     return {"fields": fields_xr, "dists": f_xr, "scalars": scalars_xr}
+
+
+def apply_models(models, state, args, cfg):
+    return state, args

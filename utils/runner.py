@@ -2,10 +2,8 @@ from typing import Dict, Tuple
 import os, time, tempfile, yaml
 
 
-from diffrax import diffeqsolve, SaveAt, Solution
-import numpy as np
-import equinox as eqx
-import mlflow, pint, jax
+from diffrax import Solution
+import mlflow, jax
 
 
 from utils import misc
@@ -16,20 +14,20 @@ else:
     BASE_TEMPDIR = None
 
 
-def get_helpers(mode):
-    if mode == "tf-1d":
+def get_helpers(solver):
+    if solver == "tf-1d":
         from adept.tf1d import helpers
-    elif mode == "sh-2d":
+    elif solver == "sh-2d":
         from adept.sh2d import helpers
-    elif mode == "vlasov-1d":
+    elif solver == "vlasov-1d":
         from adept.vlasov1d import helpers
-    elif mode == "vlasov-1d2v":
+    elif solver == "vlasov-1d2v":
         from adept.vlasov1d2v import helpers
-    elif mode == "vlasov-2d":
+    elif solver == "vlasov-2d":
         from adept.vlasov2d import helpers
-    elif mode == "envelope-2d":
+    elif solver == "envelope-2d":
         from adept.lpse2d import helpers
-    elif mode == "vfp-2d":
+    elif solver == "vfp-2d":
         from adept.vfp1d import helpers
     else:
         raise NotImplementedError("This solver approach has not been implemented yet")
@@ -58,7 +56,7 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
     """
     t__ = time.time()  # starts the timer
 
-    helpers = get_helpers(cfg["mode"])  # gets the right helper functions depending on the desired simulation
+    helpers = get_helpers(cfg["solver"])  # gets the right helper functions depending on the desired simulation
 
     with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as td:
         with open(os.path.join(td, "config.yaml"), "w") as fi:
@@ -73,69 +71,47 @@ def run(cfg: Dict) -> Tuple[Solution, Dict]:
 
         # NB - this is solver specific
         cfg["grid"] = helpers.get_solver_quantities(cfg)  # gets the solver quantities from the configuration
-        cfg = helpers.get_save_quantities(cfg)  # gets the save quantities from the configuration
 
         # create the dictionary of time quantities that is given to the time integrator and save manager
         tqs = {
-            "t0": cfg["grid"]["tmin"],
+            "t0": 0.0,
             "t1": cfg["grid"]["tmax"],
             "max_steps": cfg["grid"]["max_steps"],
-            "save_t0": cfg["grid"]["tmin"],
+            "save_t0": 0.0,  # cfg["grid"]["tmin"],
             "save_t1": cfg["grid"]["tmax"],
             "save_nt": cfg["grid"]["tmax"],
         }
 
         # in case you are using ML models
-        models = helpers.get_models(cfg["models"]) if "models" in cfg else None
+        models = helpers.get_models(cfg["models"]) if "models" in cfg else {}
 
         # initialize the state for the solver - NB - this is solver specific
-        state = helpers.init_state(cfg, td)
-
-        # NB - this is solver specific
-        # Remember that we rely on the diffrax library to provide the ODE (time, usually) integrator
-        # So we need to create the diffrax terms, solver, and save objects
-        diffeqsolve_quants = helpers.get_diffeqsolve_quants(cfg)
+        state, args = helpers.init_state(cfg, td)
 
         # run
         t0 = time.time()
+        _run_ = helpers.get_run_fn(cfg)
 
-        @eqx.filter_jit
-        def _run_(these_models, time_quantities: Dict):
-            args = {"drivers": cfg["drivers"]}
-            if these_models is not None:
-                args["models"] = these_models
-            if "terms" in cfg.keys():
-                args["terms"] = cfg["terms"]
-
-            return diffeqsolve(
-                terms=diffeqsolve_quants["terms"],
-                solver=diffeqsolve_quants["solver"],
-                t0=time_quantities["t0"],
-                t1=time_quantities["t1"],
-                max_steps=cfg["grid"]["max_steps"],  # time_quantities["max_steps"],
-                dt0=cfg["grid"]["dt"],
-                y0=state,
-                args=args,
-                saveat=SaveAt(**diffeqsolve_quants["saveat"]),
-            )
-
-        _log_flops_(_run_, models, tqs)
-        result = _run_(models, tqs)
+        try:
+            _log_flops_(_run_, models, state, args, tqs)
+        except:
+            print("Flops not logged")
+        run_output = _run_(models, state, args, tqs)
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
         t0 = time.time()
         # NB - this is solver specific
-        datasets = helpers.post_process(result, cfg, td)  # post-processes the result
+        post_processing_output = helpers.post_process(run_output, cfg, td, args)  # post-processes the result
         mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})  # logs the post-process time to mlflow
         mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
 
         mlflow.log_metrics({"total_time": round(time.time() - t__, 4)})  # logs the total time to mlflow
 
     # fin
-    return result, datasets
+    return run_output, post_processing_output
 
 
-def _log_flops_(_run_, models, tqs):
+def _log_flops_(_run_, models, state, args, tqs):
     """
     Logs the number of flops to mlflow
 
@@ -146,7 +122,7 @@ def _log_flops_(_run_, models, tqs):
 
     """
     wrapped = jax.xla_computation(_run_)
-    computation = wrapped(models, tqs)
+    computation = wrapped(models, state, args, tqs)
     module = computation.as_hlo_module()
     client = jax.lib.xla_bridge.get_backend()
     analysis = jax.lib.xla_client._xla.hlo_module_cost_analysis(client, module)

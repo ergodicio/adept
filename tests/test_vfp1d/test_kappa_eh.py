@@ -15,15 +15,12 @@ def _run_(Z, ee):
         cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
         cfg["grid"]["nv"] = 2048
 
-    if ee:
-        cfg["terms"]["fokker_planck"]["flm"]["ee"] = True
-        cfg["grid"]["nv"] = 2048
-
     mlflow.set_experiment(cfg["mlflow"]["experiment"])
     # modify config
     with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
         result, datasets = run(cfg)
 
+    result, state, args = result
     dataT = datasets["fields"]["fields-T keV"].data
     np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=5)
 

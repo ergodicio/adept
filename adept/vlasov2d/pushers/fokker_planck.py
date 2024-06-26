@@ -103,7 +103,7 @@ class Krook(eqx.Module):
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
         nu_Kxdt = dt * nu_K[:, :, None, None]
         exp_nuKxdt = jnp.exp(-nu_Kxdt)
-        n_prof = jnp.trapz(jnp.trapz(f_xv, axis=3, dx=self.dvy), axis=2, dx=self.dvx)
+        n_prof = jnp.sum(jnp.sum(f_xv, axis=3), axis=2) * self.dvy * self.dvx
 
         return f_xv * exp_nuKxdt + n_prof[:, None] * self.f_mx * (1.0 - exp_nuKxdt)
 
@@ -121,10 +121,10 @@ class LenardBernstein(eqx.Module):
         )
 
     def vx_moment(self, f):
-        return jnp.trapz(f, axis=2, dx=self.dvx)
+        return jnp.sum(f, axis=2) * self.dvx
 
     def vy_moment(self, f):
-        return jnp.trapz(f, axis=3, dx=self.dvy)
+        return jnp.sum(f, axis=3) * self.dvy
 
     def get_vx_operator(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
@@ -190,10 +190,10 @@ class Dougherty(eqx.Module):
         )
 
     def vx_moment(self, f):
-        return jnp.trapz(f, axis=2, dx=self.dvx)
+        return jnp.sum(f, axis=2) * self.dvx
 
     def vy_moment(self, f):
-        return jnp.trapz(f, axis=3, dx=self.dvy)
+        return jnp.sum(f, axis=3) * self.dvy
 
     def get_vx_operator(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
