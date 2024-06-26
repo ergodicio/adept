@@ -1,5 +1,7 @@
-Initialization Details
+The Tanh profile
 -----------------------
+
+This profile is used for spatial and temporal envelopes everywhere in this code. 
 
 This is different per simulation type but there are some consistent concepts. These are that the density can be defined
 as a function of space, the driver (antenna or ponderomotive) can be a function of time and space, and the collision frequency 

@@ -5,6 +5,8 @@ from pint import Quantity
 from mlflow.tracking import MlflowClient
 import jax
 import equinox as eqx
+
+
 from mlflow_export_import.run.export_run import RunExporter
 
 
@@ -149,7 +151,7 @@ def queue_sim(sim_request):
     return submissionResult
 
 
-def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id: str):
+def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id: str, prefix="individual", step=0):
     """
     Uploads directory to s3 bucket for ingestion into mlflow on remote / cloud side
 
@@ -177,15 +179,87 @@ def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id
     with open(os.path.join(local_directory, f"ingest-{run_id}.txt"), "w") as fi:
         fi.write("ready")
 
-    client.upload_file(os.path.join(local_directory, f"ingest-{run_id}.txt"), bucket, f"ingest-{run_id}.txt")
+    if prefix == "individual":
+        fname = f"ingest-{run_id}.txt"
+    else:
+        fname = f"{prefix}-{run_id}-{step}.txt"
+
+    client.upload_file(os.path.join(local_directory, f"ingest-{run_id}.txt"), bucket, fname)
 
 
-def export_run(run_id):
+def export_run(run_id, prefix="individual", step=0):
     t0 = time.time()
     run_exp = RunExporter(mlflow_client=mlflow.MlflowClient())
     with tempfile.TemporaryDirectory() as td2:
         run_exp.export_run(run_id, td2)
-        print(f"Export took {round(time.time() - t0, 2)} s")
+        # print(f"Export took {round(time.time() - t0, 2)} s")
         t0 = time.time()
-        upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id)
-    print(f"Uploading took {round(time.time() - t0, 2)} s")
+        upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id, prefix, step)
+    # print(f"Uploading took {round(time.time() - t0, 2)} s")
+
+
+def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
+    import parsl
+    from parsl.config import Config
+    from parsl.providers import SlurmProvider, LocalProvider
+    from parsl.launchers import SrunLauncher
+    from parsl.executors import HighThroughputExecutor
+
+    if parsl_provider == "local":
+
+        print(f"Using local provider, ignoring {max_blocks=}")
+
+        this_provider = LocalProvider
+        provider_args = dict(
+            worker_init="source /pscratch/sd/a/archis/venvs/adept-gpu/bin/activate; \
+                    module load cudnn/8.9.3_cuda12.lua; \
+                    export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
+                    export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
+                    export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow'; \
+                    export JAX_ENABLE_X64=True;\
+                    export MLFLOW_EXPORT=True",
+            init_blocks=1,
+            max_blocks=1,
+        )
+
+        htex = HighThroughputExecutor(
+            available_accelerators=num_gpus,
+            label="tpd-sweep",
+            provider=this_provider(**provider_args),
+            cpu_affinity="block",
+        )
+        print(f"{htex.workers_per_node=}")
+
+    elif parsl_provider == "gpu":
+
+        this_provider = SlurmProvider
+        sched_args = ["#SBATCH -C gpu&hbm80g", "#SBATCH --qos=regular"]
+        provider_args = dict(
+            partition=None,
+            account="m4490_g",
+            scheduler_options="\n".join(sched_args),
+            worker_init="export SLURM_CPU_BIND='cores';\
+                    source /pscratch/sd/a/archis/venvs/adept-gpu/bin/activate; \
+                    module load cudnn/8.9.3_cuda12.lua; \
+                    export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
+                    export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
+                    export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow';\
+                    export JAX_ENABLE_X64=True;\
+                    export MLFLOW_EXPORT=True",
+            launcher=SrunLauncher(overrides="--gpus-per-node 4 -c 128"),
+            walltime="1:00:00",
+            cmd_timeout=120,
+            nodes_per_block=1,
+            # init_blocks=1,
+            max_blocks=max_blocks,
+        )
+
+        htex = HighThroughputExecutor(
+            available_accelerators=4, label="tpd-learn", provider=this_provider(**provider_args), cpu_affinity="block"
+        )
+        print(f"{htex.workers_per_node=}")
+
+    config = Config(executors=[htex], retries=4)
+
+    # load the Parsl config
+    parsl.load(config)

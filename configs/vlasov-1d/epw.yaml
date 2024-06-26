@@ -45,7 +45,7 @@ save:
       tmax: 600.0
       nt: 91
 
-mode: vlasov-1d
+solver: vlasov-1d
 
 mlflow:
   experiment: basic-epw-for-plots

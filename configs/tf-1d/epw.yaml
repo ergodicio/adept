@@ -20,7 +20,7 @@ grid:
 mlflow:
   experiment: tf1d-epw-test
   run: nl-fluid-noml
-mode: tf-1d
+solver: tf-1d
 models:
   file: false
   nu_g:

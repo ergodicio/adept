@@ -81,7 +81,7 @@ krook:
 
 machine: s-t4
 
-mode: vlasov-2d
+solver: vlasov-2d
 
 mlflow:
   experiment: ld-2d2v

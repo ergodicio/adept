@@ -1,4 +1,13 @@
-mode: envelope-2d
+solver: envelope-2d
+
+density:
+  basis: uniform
+  offset: 1.0
+  slope: 0.0
+  noise:
+    min: 0.0
+    max: 0.0
+    type: uniform
 
 drivers:
   E0:
@@ -77,6 +86,6 @@ terms:
     trapping:
       kld: 0.3
       active: False
-  tpd:
-    source: False
+    source:
+        tpd: False
 

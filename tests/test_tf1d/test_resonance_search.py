@@ -5,7 +5,7 @@ from itertools import product
 
 
 import numpy as np
-from jax.config import config
+from jax import config
 
 config.update("jax_enable_x64", True)
 # config.update("jax_debug_nans", True)
@@ -21,7 +21,7 @@ import equinox as eqx
 from tqdm import tqdm
 
 from adept.tf1d import helpers
-from theory.electrostatic import get_roots_to_electrostatic_dispersion
+from adept.theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
 def load_cfg(rand_k0, gamma, adjoint):
@@ -61,7 +61,7 @@ def test_resonance_search(gamma, adjoint):
 
         rng_key = jax.random.PRNGKey(420)
 
-        w0 = 1.1 + 0.05 * jax.random.normal(rng_key, [1], dtype=jnp.float64)
+        w0 = 1.1 + 0.05 * jax.random.normal(rng_key, [1], dtype=jnp.float64)[0]
 
         # optimizer = optax.adam(0.1)
         # opt_state = optimizer.init(w0)
@@ -100,7 +100,7 @@ def run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state):
         mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})
         with tempfile.TemporaryDirectory() as td:
             t0 = time.time()
-            helpers.post_process(results, mod_defaults, td)
+            helpers.post_process((results, None, None), mod_defaults, td)
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4), "loss": float(loss)})
             # log artifacts
             mlflow.log_artifacts(td)
@@ -119,8 +119,8 @@ def get_vg_func(gamma, adjoint):
     defaults["grid"] = helpers.get_solver_quantities(cfg=defaults)
     defaults = helpers.get_save_quantities(defaults)
 
-    pulse_dict = {"drivers": defaults["drivers"]}
-    state = helpers.init_state(defaults)
+    # pulse_dict = {"drivers": defaults["drivers"]}
+    state, pulse_dict = helpers.init_state(defaults, td=None)
     loss_fn = get_loss(state, pulse_dict, defaults)
     vg_func = eqx.filter_jit(jax.value_and_grad(loss_fn, argnums=0, has_aux=True))
 

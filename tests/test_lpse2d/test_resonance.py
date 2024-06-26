@@ -5,7 +5,7 @@ from itertools import product
 
 
 import numpy as np
-from jax.config import config
+from jax import config
 
 config.update("jax_enable_x64", True)
 # config.update("jax_debug_nans", True)
@@ -22,7 +22,7 @@ import equinox as eqx
 from tqdm import tqdm
 
 from adept.lpse2d.core import integrator
-from theory.electrostatic import get_roots_to_electrostatic_dispersion
+from adept.theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
 def load_cfg(rand_k0, kinetic, adjoint):
@@ -96,7 +96,7 @@ def get_loss(state, pulse_dict, mod_defaults):
 
     def loss(w0):
         pulse_dict["drivers"]["E2"]["w0"] = w0
-        vf = integrator.VectorField(mod_defaults)
+        vf = integrator.SpectralPotential(mod_defaults)
         results = diffeqsolve(
             terms=ODETerm(vf),
             solver=integrator.Stepper(),

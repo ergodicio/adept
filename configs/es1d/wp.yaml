@@ -1,0 +1,73 @@
+drivers:
+  ex:
+    '0':
+      a0: 0.005
+      dw0: 0.0
+      k0: 0.3
+      t_c: 40.0
+      t_r: 5.0
+      t_w: 40.0
+      w0: 1.1598464805919155
+      x_c: 300.0
+      x_r: 10.0
+      x_w: 300.0
+grid:
+  nx: 4096
+  tmax: 500.0
+  tmin: 0.0
+  xmax: 4000
+  xmin: 0.0
+mlflow:
+  experiment: es1d-epw-test
+  run: wp-nl-local
+solver: es-1d
+models:
+  file: models/weights.eqx
+  nu_g:
+    activation: tanh
+    depth: 4
+    final_activation: tanh
+    in_size: 3
+    out_size: 1
+    width_size: 8
+physics:
+  electron:
+    T0: 1.0
+    charge: -1.0
+    gamma: kinetic
+    is_on: true
+    landau_damping: true
+    mass: 1.0
+    trapping:
+      is_on: true
+      kld: 0.3
+      nn: 8|8
+      nuee: 1.0e-05
+  ion:
+    T0: 1.0
+    charge: 1.0
+    gamma: 3
+    is_on: false
+    landau_damping: false
+    mass: 1836.0
+    trapping:
+      is_on: true
+      kld: 0.3
+      nuee: 1.0e-09
+save:
+  func:
+    is_on: true
+  kx:
+    is_on: true
+    kxmax: 0.9
+    kxmin: 0.3
+    nkx: 3
+  t:
+    nt: 1000
+    tmax: 500.0
+    tmin: 0.5
+  x:
+    is_on: true
+    nx: 256
+    xmax: 1000
+    xmin: 0.0

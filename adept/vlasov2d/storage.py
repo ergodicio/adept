@@ -239,7 +239,7 @@ def get_default_save_func(cfg):
     dvy = cfg["grid"]["dvx"]
 
     def _calc_mean_moment_(inp):
-        return jnp.mean(jnp.trapz(jnp.trapz(inp, dx=dvy, axis=3), dx=dvx, axis=2))
+        return jnp.mean(jnp.sum(jnp.sum(inp, axis=3), axis=2)) * dvy * dvx
 
     def save(t, y, args):
         scalars = {

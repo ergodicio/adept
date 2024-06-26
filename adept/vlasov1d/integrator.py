@@ -177,10 +177,13 @@ class VlasovMaxwell:
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
         self.wave_solver = field.WaveSolver(c=1.0 / cfg["grid"]["beta"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
-        self.compute_charges = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
+
         self.dt = self.cfg["grid"]["dt"]
         self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
         self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
+
+    def compute_charges(self, f):
+        return jnp.sum(f, axis=1) * self.cfg["grid"]["dv"]
 
     def nu_prof(self, t, nu_args):
         t_L = nu_args["time"]["center"] - nu_args["time"]["width"] * 0.5

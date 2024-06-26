@@ -10,8 +10,9 @@ ADEPT. If you are new to ADEPT, please run a few examples from the example confi
    :maxdepth: 2
    :caption: Contents:
 
+   usage/vlasov1d
+   usage/tf1d
+   usage/lpse2d
+   usage/vlasov1d2v
+   usage/vlasov2d2v
    usage/initialization
-   usage/outputs
-   usage/analysis
-   usage/visualization
-   

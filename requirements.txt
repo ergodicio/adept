@@ -1,5 +1,5 @@
-jax
-jaxlib
+jaxlib==0.4.26+cuda12.cudnn89
+jax==0.4.26
 diffrax
 matplotlib
 scipy
@@ -15,3 +15,5 @@ boto3
 pint
 mlflow_export_import
 plasmapy
+tabulate
+interpax

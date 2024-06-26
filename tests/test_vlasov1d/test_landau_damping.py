@@ -5,14 +5,14 @@ import itertools
 import yaml, pytest
 
 import numpy as np
-from jax.config import config
+from jax import config
 
 config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
 import mlflow
 
-from theory import electrostatic
+from adept.theory import electrostatic
 from utils.runner import run
 
 
@@ -65,6 +65,7 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
         # modify config
         with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
             result, datasets = run(mod_defaults)
+            result, _state_, _args_ = result
             efs = result.ys["fields"]["e"]
             ek1 = 2.0 / mod_defaults["grid"]["nx"] * np.fft.fft(efs, axis=1)[:, 1]
             ek1_mag = np.abs(ek1)

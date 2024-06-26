@@ -16,8 +16,6 @@ class FieldSolver:
         self.kx_mask = jnp.where(jnp.abs(self.kx) > 0, 1, 0)[:, None]
         self.ky = cfg["grid"]["ky"][None, :]
         self.ky_mask = jnp.where(jnp.abs(self.ky) > 0, 1, 0)[None, :]
-        self.vx_mom = partial(jnp.trapz, dx=cfg["grid"]["dvx"], axis=2)
-        self.vy_mom = partial(jnp.trapz, dx=cfg["grid"]["dvy"], axis=3)
         self.dvx = cfg["grid"]["dvx"]
         self.dvy = cfg["grid"]["dvy"]
         self.vx = cfg["grid"]["vx"][None, None, :, None]
@@ -27,11 +25,17 @@ class FieldSolver:
     def compute_charge(self, f):
         return self.vx_mom(self.vy_mom(f))
 
+    def vx_mom(self, f):
+        return jnp.sum(f, axis=2) * self.dvx
+
+    def vy_mom(self, f):
+        return jnp.sum(f, axis=3) * self.dvy
+
     def compute_jx(self, f):
-        return jnp.trapz(jnp.trapz(self.vx * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2) * self.kx_mask
+        return jnp.sum(jnp.sum(self.vx * f, axis=3), axis=2) * self.kx_mask * self.dvx * self.dvy
 
     def compute_jy(self, f):
-        return jnp.trapz(jnp.trapz(self.vy * f, dx=self.dvy, axis=3), dx=self.dvx, axis=2) * self.ky_mask
+        return jnp.sum(jnp.sum(self.vy * f, axis=3), axis=2) * self.ky_mask * self.dvx * self.dvy
 
     def ampere(self, exk, eyk, bzk, dt):
         exkp = exk  # - dt * (1j * self.ky * bzk)
@@ -43,18 +47,22 @@ class FieldSolver:
 
     def hampere_e1(self, exk, fxy, dt):
         fk = jnp.fft.fft2(fxy, axes=(0, 1))
-        return exk + self.one_over_ikx * jnp.trapz(
-            jnp.trapz(fk * (jnp.exp(-1j * self.kx[..., None, None] * dt * self.vx) - 1), dx=self.dvy, axis=3),
-            dx=self.dvx,
-            axis=2,
+        return (
+            exk
+            + self.one_over_ikx
+            * jnp.sum(jnp.sum(fk * (jnp.exp(-1j * self.kx[..., None, None] * dt * self.vx) - 1), axis=3), axis=2)
+            * self.dvx
+            * self.dvy
         )
 
     def hampere_e2(self, eyk, fxy, dt):
         fk = jnp.fft.fft2(fxy, axes=(0, 1))
-        return eyk + self.one_over_iky * jnp.trapz(
-            jnp.trapz(fk * (jnp.exp(-1j * self.ky[..., None, None] * dt * self.vy) - 1), dx=self.dvy, axis=3),
-            dx=self.dvx,
-            axis=2,
+        return (
+            eyk
+            + self.one_over_iky
+            * jnp.sum(jnp.sum(fk * (jnp.exp(-1j * self.ky[..., None, None] * dt * self.vy) - 1), axis=3), axis=2)
+            * self.dvx
+            * self.dvy
         )
 
 

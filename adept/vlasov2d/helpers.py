@@ -1,15 +1,16 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict, List
+from typing import Dict, List, Tuple
 import os
 
 from time import time
 
 import numpy as np
-import xarray, mlflow
+import xarray, mlflow, pint, yaml
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt
+from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
 from matplotlib import pyplot as plt
+from equinox import filter_jit
 
 from adept.vlasov2d.pushers import time as time_integrator
 from adept.vlasov2d.storage import store_f, store_fields, get_save_quantities
@@ -26,6 +27,60 @@ def gamma_3_over_m(m):
 
 def gamma_5_over_m(m):
     return np.interp(m, m_ax, g_5_m)
+
+
+def write_units(cfg, td):
+    ureg = pint.UnitRegistry()
+    _Q = ureg.Quantity
+
+    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
+    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
+
+    wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
+    tp0 = (1 / wp0).to("fs")
+
+    v0 = np.sqrt(2.0 * T0 / ureg.m_e).to("m/s")
+    x0 = (v0 / wp0).to("nm")
+    c_light = _Q(1.0 * ureg.c).to("m/s") / v0
+    beta = (v0 / ureg.c).to("dimensionless")
+
+    box_length = ((cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) * x0).to("microns")
+    if "ymax" in cfg["grid"].keys():
+        box_width = ((cfg["grid"]["ymax"] - cfg["grid"]["ymin"]) * x0).to("microns")
+    else:
+        box_width = "inf"
+    sim_duration = (cfg["grid"]["tmax"] * tp0).to("ps")
+
+    # collisions
+    logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
+    logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
+    nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
+    nuee_norm = nuee / wp0
+
+    all_quantities = {
+        "wp0": wp0,
+        "tp0": tp0,
+        "n0": n0,
+        "v0": v0,
+        "T0": T0,
+        "c_light": c_light,
+        "beta": beta,
+        "x0": x0,
+        "nuee": nuee,
+        "logLambda_ee": logLambda_ee,
+        "box_length": box_length,
+        "box_width": box_width,
+        "sim_duration": sim_duration,
+    }
+
+    cfg["units"]["derived"] = all_quantities
+
+    cfg["grid"]["beta"] = beta.magnitude
+
+    with open(os.path.join(td, "units.yaml"), "w") as fi:
+        yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
+
+    return cfg
 
 
 def _initialize_distribution_(
@@ -263,7 +318,33 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict) -> Dict:
+def get_run_fn(cfg):
+    diffeqsolve_quants = get_diffeqsolve_quants(cfg)
+
+    @filter_jit
+    def _run_(_models_, _state_, _args_, time_quantities: Dict):
+
+        _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
+        # if "terms" in cfg.keys():
+        #     args["terms"] = cfg["terms"]
+        solver_result = diffeqsolve(
+            terms=diffeqsolve_quants["terms"],
+            solver=diffeqsolve_quants["solver"],
+            t0=time_quantities["t0"],
+            t1=time_quantities["t1"],
+            max_steps=cfg["grid"]["max_steps"],
+            dt0=cfg["grid"]["dt"],
+            y0=_state_,
+            args=_args_,
+            saveat=SaveAt(**diffeqsolve_quants["saveat"]),
+        )
+
+        return solver_result, _state_, _args_
+
+    return _run_
+
+
+def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
     """
     This function initializes the state
 
@@ -283,7 +364,7 @@ def init_state(cfg: Dict) -> Dict:
     # for nm, quant in state.items():
     #     state[nm] = jnp.fft.fft2(quant, axes=(0, 1)).view(dtype=jnp.float64)
 
-    return state
+    return state, {"drivers": cfg["drivers"]}
 
 
 def get_diffeqsolve_quants(cfg):
@@ -346,3 +427,7 @@ def post_process(result, cfg: Dict, td: str):
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
     return {"fields": fields_xr, "dists": f_xr}
+
+
+def apply_models(models, state, args, cfg):
+    return state, args

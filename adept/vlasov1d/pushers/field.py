@@ -109,7 +109,10 @@ class SpectralPoissonSolver:
         super(SpectralPoissonSolver, self).__init__()
         self.ion_charge = ion_charge
         self.one_over_kx = one_over_kx
-        self.compute_charges = partial(jnp.trapz, dx=dv, axis=1)
+        self.dv = dv
+
+    def compute_charges(self, f):
+        return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(self.ion_charge - self.compute_charges(f))))
@@ -119,7 +122,10 @@ class AmpereSolver:
     def __init__(self, cfg):
         super(AmpereSolver, self).__init__()
         self.vx = cfg["grid"]["v"]
-        self.vx_moment = partial(jnp.trapz, dx=cfg["grid"]["dv"], axis=1)
+        self.dv = cfg["grid"]["dv"]
+
+    def vx_moment(self, f):
+        return jnp.sum(f, axis=1) * self.dv
 
     def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         return prev_ex - dt * self.vx_moment(self.vx[None, :] * f)
@@ -135,8 +141,8 @@ class HampereSolver:
     def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         prev_ek = jnp.fft.fft(prev_ex, axis=0)
         fk = jnp.fft.fft(f, axis=0)
-        new_ek = prev_ek + self.one_over_ikx * jnp.trapz(
-            fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), dx=self.dv, axis=1
+        new_ek = (
+            prev_ek + self.one_over_ikx * jnp.sum(fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), axis=1) * self.dv
         )
 
         return jnp.real(jnp.fft.ifft(new_ek))

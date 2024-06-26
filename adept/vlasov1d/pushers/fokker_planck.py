@@ -43,7 +43,9 @@ class Krook:
         f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
         self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
         self.dv = self.cfg["grid"]["dv"]
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+
+    def vx_moment(self, f_xv):
+        return jnp.sum(f_xv, axis=1) * self.dv
 
     def __call__(self, nu_K, f_xv, dt) -> jnp.ndarray:
         nu_Kxdt = dt * nu_K[:, None]
@@ -59,7 +61,9 @@ class LenardBernstein:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+
+    def vx_moment(self, f_xv):
+        return jnp.sum(f_xv, axis=1) * self.dv
 
     def __call__(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
@@ -85,7 +89,9 @@ class Dougherty:
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
-        self.vx_moment = partial(jnp.trapz, axis=1, dx=self.dv)
+
+    def vx_moment(self, f_xv):
+        return jnp.sum(f_xv, axis=1) * self.dv
 
     def __call__(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64

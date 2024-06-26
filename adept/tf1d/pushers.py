@@ -5,7 +5,7 @@ from jax import numpy as jnp
 import numpy as np
 import equinox as eqx
 
-from theory.electrostatic import get_complex_frequency_table
+from adept.theory.electrostatic import get_complex_frequency_table
 
 
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):
