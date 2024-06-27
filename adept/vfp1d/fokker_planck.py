@@ -1,11 +1,21 @@
-from jax import numpy as jnp
+from typing import Dict
+
+from jax import numpy as jnp, Array
 from jax import vmap
 import numpy as np
 import lineax as lx
 
 
 class LenardBernstein:
-    def __init__(self, cfg):
+    """
+    The Lenard-Bernstein operator serves as the collision operator for the f00 equation
+
+    It would be better to have a Chang-Cooper or Epperlein implementation here. That would
+    also support inverse bremsstrahlung
+
+    """
+
+    def __init__(self, cfg: Dict):
         self.cfg = cfg
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
@@ -18,12 +28,35 @@ class LenardBernstein:
         c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
-    def _solve_one_vslice_(self, nu: jnp.float64, f0: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+    def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
+        """
+        Solves the Lenard-Bernstein collision operator at a single location in space
+
+        the shape of f0 is (nv,)
+
+        :param nu: collision frequency
+        :param f0: the distribution function at a single location in space (nv, )
+        :param dt: the time step
+
+        :return: the distribution function after the collision operator has been applied (nv,)
+        """
         operator = self._get_operator_(nu, f0, dt)
         refl_f0 = jnp.concatenate([f0[::-1], f0])
         return lx.linear_solve(operator, refl_f0, solver=lx.Tridiagonal()).value[self.midpt :]
 
-    def _get_operator_(self, nu, f0, dt):
+    def _get_operator_(self, nu: float, f0: Array, dt: float) -> lx.TridiagonalLinearOperator:
+        """
+        Returns the tridiagonal operator for the Lenard-Bernstein collision operator
+
+        This is called at each location in space because the f0 is different
+
+        :param nu: collision frequency
+        :param f0: the distribution function at a single location in space (nv, )
+        :param dt: the time step
+
+        :return: the tridiagonal operator for the Lenard-Bernstein collision operator for use with `lineax`
+
+        """
         half_vth_sq = (
             jnp.sum(f0 * (self.v[None, :]) ** 4.0, axis=1) / jnp.sum(f0 * (self.v[None, :]) ** 2.0, axis=1) / 3.0
         )
@@ -35,20 +68,29 @@ class LenardBernstein:
             diagonal=diagonal, upper_diagonal=upper_diagonal, lower_diagonal=lower_diagonal
         )
 
-    def __call__(self, nu: jnp.float64, f0x: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+    def __call__(self, nu: float, f0x: Array, dt: float) -> Array:
         """
+        Solves the Lenard-Bernstein collision operator at all locations in space
 
-        :param nu:
-        :param f_vxvy:
-        :param dt:
-        :return:
+        :param nu: collision frequency
+        :param f_xv: the distribution function at all locations in space (nx, nv)
+        :param dt: the time step
+
+        :return: the distribution function after the collision operator has been applied (nx, nv)
         """
 
         return vmap(self._solve_one_vslice_, in_axes=(None, 0, None))(nu, f0x, dt)
 
 
 class FLMCollisions:
-    def __init__(self, cfg):
+    """
+    The FLM collision operator is as described in Tzoufras2014
+
+    It also has an implementation of electron-electron hack where the off-diagonal terms in the electron-electron collision
+    operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z
+    """
+
+    def __init__(self, cfg: Dict):
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
         self.Z = cfg["units"]["Z"]
@@ -83,10 +125,26 @@ class FLMCollisions:
             self.b3[il] = (il * (il + 1) / 2 + (il - 1)) / (2 * il + 1) / (2 * il - 1)
             self.b4[il] = (il * (il + 1) / 2 - il) / (2 * il + 1) / (2 * il - 1)
 
-    def calc_ros_i(self, flm, power):
+    def calc_ros_i(self, flm: Array, power: int) -> Array:
+        """
+        Calculates the Rosenbluth I integral
+
+        $$4 \pi v^{-i} \int_0^v' [   f(v') v'^(2+i)  ] dv'$$
+
+        :param flm: the distribution function
+        :param power: the power of v in the Rosenbluth integral
+
+        :return: the Rosenbluth integral
+        """
         return 4 * jnp.pi * self.v**-power * jnp.cumsum(self.v[None, :] ** (2.0 + power) * flm, axis=1) * self.dv
 
-    def calc_ros_j(self, flm, power):
+    def calc_ros_j(self, flm: Array, power: int) -> Array:
+        """
+        Calculates the Rosenbluth J integral
+
+        $$4 \pi v^{-j} \int_v^\infty [  f(v') v'^(2+j)  ] dv'$$
+
+        """
         return (
             4
             * jnp.pi
@@ -95,7 +153,16 @@ class FLMCollisions:
             * self.dv
         )
 
-    def get_ee_offdiagonal_contrib(self, t, y, args):
+    def get_ee_offdiagonal_contrib(self, t, y: Array, args: Dict) -> Array:
+        """
+        The off-diagonal terms in the electron-electron collision operator are calculated explicitly
+
+        :param t: time
+        :param y: the distribution function (nx, nv)
+        :param args: the dictionary of arguments
+
+        :return: the off-diagonal contribution to the electron-electron collision operator (nx, nv)
+        """
         ddv = args["ddvf0"]
         d2dv2 = args["d2dv2f0"]
         il = args["il"]
@@ -109,7 +176,14 @@ class FLMCollisions:
 
         return contrib
 
-    def get_ee_diagonal_contrib(self, f0):
+    def get_ee_diagonal_contrib(self, f0: Array) -> Array:
+        """
+        Returns the tridiagonal operator for the electron-electron collision operator
+
+        :param f0: the distribution function (nx, nv)
+
+        :return: tuple(diagonal, lower diagonal, upper diagonal) of shape (nx, nv), (nx, nv-1), (nx, nv-1)
+        """
         i0 = self.calc_ros_i(f0, power=0.0)
         jm1 = self.calc_ros_j(f0, power=-1.0)
         i2 = self.calc_ros_i(f0, power=2.0)
@@ -134,11 +208,24 @@ class FLMCollisions:
 
         return diag, lower[:, :-1], upper[:, 1:]
 
-    def _solve_one_x_tridiag_(self, diag, upper, lower, f10):
+    def _solve_one_x_tridiag_(self, diag: Array, upper: Array, lower: Array, f10: Array) -> Array:
+        """
+        Solves a tridiagonal system of equations
+        """
         op = lx.TridiagonalLinearOperator(diagonal=diag, upper_diagonal=upper, lower_diagonal=lower)
         return lx.linear_solve(op, f10, solver=lx.Tridiagonal()).value
 
     def __call__(self, Z, ni, f0, f10, dt):
+        """
+        Solves the FLM collision operator for all l and m
+
+        The solve has two options
+
+        1. The full ee + ei collision operator is used. This is done by solving the tridiagonal ee + ei implicitly and calculating the
+        off-diagonal terms in the ee collision operator explicitly
+        2. The ee collision operator is ignored and the Z* scaling is used instead
+
+        """
         ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
 
         for il in range(1, self.nl + 1):

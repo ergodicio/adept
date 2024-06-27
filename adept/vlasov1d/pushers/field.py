@@ -1,9 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 from typing import Dict
-from functools import partial
-
-
 from jax import numpy as jnp
 
 from adept.tf1d.pushers import get_envelope

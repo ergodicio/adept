@@ -1,4 +1,4 @@
-from typing import Dict
+from typing import Dict, Any
 
 import jax
 from jax import numpy as jnp
@@ -8,11 +8,22 @@ import equinox as eqx
 from adept.theory.electrostatic import get_complex_frequency_table
 
 
-def get_envelope(p_wL, p_wR, p_L, p_R, ax):
+def get_envelope(
+    p_wL: float, p_wR: float, p_L: float, p_R: float, ax: Any[float, np.ndarray]
+) -> Any[float, np.ndarray]:
+    """
+    Returns a 1D envelope function or value
+
+    """
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 
 class WaveSolver(eqx.Module):
+    """
+    A 2nd order wave equation solver with absorbing boundary conditions
+
+    """
+
     dx: float
     c: float
     c_sq: float
@@ -43,7 +54,7 @@ class WaveSolver(eqx.Module):
 
         coeff = -1.0 / (self.one_over_const + 2.0 + self.const)
 
-        # # 2nd order ABC
+        # 2nd order ABC
         a_left = (self.one_over_const - 2.0 + self.const) * (anew[1] + aold[0])
         a_left += 2.0 * (self.const - self.one_over_const) * (a[0] + a[2] - anew[0] - aold[1])
         a_left -= 4.0 * (self.one_over_const + self.const) * a[1]
@@ -57,10 +68,6 @@ class WaveSolver(eqx.Module):
         a_right *= coeff
         a_right -= aold[-3]
         a_right = jnp.array([a_right])
-
-        # commenting out first order damping
-        # a_left = jnp.array([a[1] + abc_const * (anew[0] - a[0])])
-        # a_right = jnp.array([a[-2] + abc_const * (anew[-1] - a[-1])])
 
         return jnp.concatenate([a_left, anew, a_right])
 
@@ -76,6 +83,12 @@ class WaveSolver(eqx.Module):
 
 
 class Driver(eqx.Module):
+    """
+    This Module is responsible for returning a waveform with a specific frequency, amplitude, and wavenumber
+    as a function of space and time. It also has the ability to envelope in space and time
+
+    """
+
     xax: jax.Array
 
     def __init__(self, xax):
@@ -102,6 +115,11 @@ class Driver(eqx.Module):
 
 
 class PoissonSolver(eqx.Module):
+    """
+    Solves the Poisson equation using the spectral method
+
+    """
+
     one_over_kx: jax.Array
 
     def __init__(self, one_over_kx):
@@ -112,15 +130,27 @@ class PoissonSolver(eqx.Module):
 
 
 class StepAmpere(eqx.Module):
+    """
+    This provides the current calculation for use in an Ampere solver
+    """
+
     def __call__(self, n, u):
         return n * u
 
 
 def gradient(arr, kx):
+    """
+    Spectral gradient calculation
+    """
     return jnp.real(jnp.fft.ifft(1j * kx * jnp.fft.fft(arr)))
 
 
 class DensityStepper(eqx.Module):
+    """
+    This module solves the continuity equation
+
+    """
+
     kx: jax.Array
 
     def __init__(self, kx):
@@ -131,6 +161,14 @@ class DensityStepper(eqx.Module):
 
 
 class VelocityStepper(eqx.Module):
+    """
+    This is the momentum equation solver
+
+    This is where the damping rate and oscillation frequency are established. We can modify each here.
+    This module is also where the trapping model is implemented and modifies the physics
+
+    """
+
     kx: jax.Array
     kxr: jax.Array
     wr_corr: jax.Array
@@ -174,7 +212,12 @@ class VelocityStepper(eqx.Module):
         else:
             self.wis = jnp.zeros_like(kxr)
 
-    def landau_damping_term(self, u, e, delta):
+    def landau_damping_term(self, u: jax.Array, e: jax.Array, delta: jax.Array):
+        """
+        This is the Landau damping term. It is modified by particle trapping or by the ZK relation (not working yet)
+
+
+        """
         baseline = 2 * jnp.real(jnp.fft.irfft(self.wis * jnp.fft.rfft(u)))
         if self.trapping_model == "zk":
             coeff = self.zk_coeff(e)
@@ -191,6 +234,11 @@ class VelocityStepper(eqx.Module):
         return jnp.real(jnp.fft.irfft(self.wr_corr * jnp.fft.rfft(gradp_over_nm)))
 
     def zk_coeff(self, e):
+        """
+        This is supposed to provide the Zakharov-Karpman collision frequency but it's not working yet
+
+
+        """
         beta = 3.0 * np.sqrt(2.0) * (7.0 * np.pi + 6.0) / (4.0 * np.pi**2.0)
         vt = 1.0
 
@@ -214,6 +262,13 @@ class VelocityStepper(eqx.Module):
 
 
 class EnergyStepper(eqx.Module):
+    """
+    Solves the energy equation
+
+    No heat flow yet
+
+    """
+
     kx: jax.Array
     gamma: float
 
@@ -233,6 +288,14 @@ class EnergyStepper(eqx.Module):
 
 
 class ParticleTrapper(eqx.Module):
+    """
+    This is the particle trapper module introduced in ref. [1]. Particle trapping enables the local reduction of damping. It should also influence many other quantities
+    but those are not implemented yet.
+
+    1. Joglekar, A. S. & Thomas, A. G. R. Machine learning of hidden variables in multiscale fluid simulation. Mach. Learn.: Sci. Technol. 4, 035049 (2023).
+
+    """
+
     kxr: np.ndarray
     kx: jax.Array
     model_kld: float

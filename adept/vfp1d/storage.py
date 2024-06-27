@@ -1,5 +1,4 @@
-import itertools
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Callable
 import os
 
 from matplotlib import pyplot as plt
@@ -10,7 +9,15 @@ from time import time
 import mlflow, xarray
 
 
-def calc_EH(this_Z, this_wt):
+def calc_EH(this_Z: int, this_wt: float) -> float:
+    """
+    This function calculates the Epperlein-Haines transport coefficient for a given Z and wt
+
+    :param this_Z: The atomic number
+    :param this_wt: The magnetization parameter
+
+    :return: The Epperlein-Haines transport coefficient
+    """
     Z = np.array([1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 20, 30, 60, 1e6 + 1])
     g0 = np.array(
         [3.203, 4.931, 6.115, 6.995, 7.680, 8.231, 8.685, 9.067, 9.673, 10.13, 10.5, 11.23, 11.9, 12.67, 13.58]
@@ -144,6 +151,14 @@ def calc_kappa(cfg: Dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> 
 
 
 def get_unit(k, cfg: Dict = None) -> Tuple[str, float]:
+    """
+    Returns the units and scalings for a given key
+
+    :param k: The key
+    :param cfg: The config
+    :return: The units and scalings
+
+    """
     # if k == "e":
     #     return "V/m", 1.0
     if k == "T":
@@ -181,7 +196,17 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     return f_store
 
 
-def post_process(result, cfg: Dict, td: str, args: Dict = None) -> Dict:
+def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
+    """
+    Post-processing function
+
+    :param result: The result
+    :param cfg: The config
+    :param td: The directory
+
+    :return: The fields and distributions
+
+    """
 
     result, state, args = result
     t0 = time()
@@ -194,9 +219,8 @@ def post_process(result, cfg: Dict, td: str, args: Dict = None) -> Dict:
 
     binary_dir = os.path.join(td, "binary")
     os.makedirs(binary_dir)
+
     # merge
-    # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
-    # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
     for k in result.ys.keys():
         if k.startswith("field"):
             fields_xr = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
@@ -252,45 +276,18 @@ def post_process(result, cfg: Dict, td: str, args: Dict = None) -> Dict:
     mlflow.log_metrics({"kappa_eh": round(calc_EH(cfg["units"]["Z"], 0.0), 4)})
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
-    return {"fields": fields_xr, "dists": f_xr}  # , "scalars": scalars_xr}
+    return {"fields": fields_xr, "dists": f_xr}
 
 
-# def clean_td(td):
-#     _ = [os.remove(os.path.join(td, "binary", "fields", fl)) for fl in os.listdir(os.path.join(td, "binary", "fields"))]
-#     _ = [os.remove(os.path.join(td, "binary", "f", fl)) for fl in os.listdir(os.path.join(td, "binary", "f"))]
-#
-#
-# def first_store(td, cfg):
-#     os.makedirs(os.path.join(td, "binary", "f"))
-#     os.makedirs(os.path.join(td, "binary", "fields"))
-#
-#     start_f = jnp.array(cfg["grid"]["f"])
-#     store_f(cfg, np.array([0.0]), td, start_f)
-#     fields = {
-#         "ex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "ey": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "total_ex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "total_ey": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "dex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#     }
-#     store_fields(cfg, td, fields, np.array([0.0]))
-#     mlflow.log_artifacts(td)
-#     clean_td(td)
-#
-#     return start_f
-#
-#
-# def store_everything(td, cfg, this_t, fields, this_driver, i, running_f):
-#     fields["dex"] = this_driver[:, 0]
-#     store_fields(cfg, td, fields, this_t)
-#
-#     if i % (cfg["grid"]["num_checkpoints"] // cfg["grid"]["num_fs"]) == 0:
-#         store_f(cfg, this_t[-1:], td, running_f)
-#         mlflow.log_artifacts(td)
-#         clean_td(td)
+def get_field_save_func(cfg: Dict, k: str) -> Callable:
+    """
+    This function returns the field save function
 
+    :param cfg: The config
+    :param k: The key
+    :return: The save function
 
-def get_field_save_func(cfg, k):
+    """
     if {"t"} == set(cfg["save"][k].keys()):
 
         def _calc_f0_moment_(f0):
@@ -317,7 +314,16 @@ def get_field_save_func(cfg, k):
     return fields_save_func
 
 
-def get_dist_save_func(cfg, k):
+def get_dist_save_func(cfg: Dict, k: str) -> Callable:
+    """
+    This function returns the distribution save function
+
+    :param cfg: The config
+    :param k: The key
+
+    :return: The save function
+
+    """
     if {"t"} == set(cfg["save"][k].keys()):
 
         def dist_save_func(t, y, args):
@@ -334,7 +340,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     This function updates the config with the quantities required for the diagnostics and saving routines
 
     :param cfg:
-    :return:
+    :return: The updated config
     """
     for k in cfg["save"].keys():  # this can be fields or electron or scalar?
         for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
@@ -362,7 +368,14 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_default_save_func(cfg):
+def get_default_save_func(cfg: Dict) -> Callable:
+    """
+    This function returns the default save function
+
+    :param cfg: The config
+    :return: The save function
+
+    """
     v = cfg["grid"]["v"][None, :]
     dv = cfg["grid"]["dv"]
 
