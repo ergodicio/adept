@@ -10,7 +10,6 @@ import xarray, yaml, plasmapy
 from astropy import units as u, constants as csts
 from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
-from matplotlib import pyplot as plt
 from equinox import filter_jit
 
 
@@ -137,6 +136,13 @@ def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) ->
     """
     Calculate the Coulomb logarithm
 
+    :param cfg: Dict
+    :param ne: float
+    :param Te: float
+    :param Z: int
+    :param ion_species: str
+
+    :return: Tuple[float, float]
 
     """
     if isinstance(cfg["units"]["logLambda"], str):
@@ -195,7 +201,7 @@ def _initialize_distribution_(
     :param nx: size of grid in x (single int)
     :param nv: size of grid in v (single int)
     :param vmax: maximum absolute value of v (single float)
-    :return:
+    :return: f, vax (nx, nv), (nv,)
     """
 
     # noise_generator = np.random.default_rng(seed=noise_seed)

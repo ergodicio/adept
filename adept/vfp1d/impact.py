@@ -6,7 +6,12 @@ import lineax as lx
 
 
 class IMPACT:
-    def __init__(self, cfg) -> None:
+    """
+    UNUSED
+
+    """
+
+    def __init__(self, cfg):
         self.cfg = cfg
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
