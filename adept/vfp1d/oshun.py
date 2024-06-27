@@ -1,144 +1,18 @@
-import numpy as np
 from typing import Dict
-from jax import numpy as jnp, vmap
-import lineax as lx
+from jax import numpy as jnp, Array
 import optimistix as optx
 import diffrax
-
-from adept.tf1d.pushers import PoissonSolver
 from adept.vfp1d.fokker_planck import LenardBernstein, FLMCollisions
 
 
-class IMPACT:
-    def __init__(self, cfg) -> None:
-        self.cfg = cfg
-        self.v = cfg["grid"]["v"]
-        self.dv = cfg["grid"]["dv"]
-        self.m_frac = 1.0 / 1836.0 / 10.0
-
-        self.Z = cfg["units"]["Z"]
-        self.dx = cfg["grid"]["dx"]
-        self.dt = cfg["grid"]["dt"]
-        self.nx = cfg["grid"]["nx"]
-        # self.c_squared = cfg["units"]["derived"]["c_light"].magnitude ** 2.0
-        r_e = 2.8179402894e-13
-        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
-
-        self.nuei_coeff = c_kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
-        self.nuee_coeff = 4.0 * np.pi / 3.0 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
-
-    def ddv(self, f):
-        temp = jnp.concatenate([f[:, :1], f], axis=1)
-        return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
-
-    def ddv_f1(self, f):
-        temp = jnp.concatenate([-f[:, :1], f], axis=1)
-        return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
-
-    def calc_Ij(self, this_f, j=0):
-        return 4.0 * jnp.pi / self.v**j * jnp.cumsum(this_f * self.v ** (2.0 + j), axis=1) * self.dv
-
-    def calc_Jmj(self, this_f, j=0):
-        temp = this_f * self.v ** (2.0 + j)
-        return 4.0 * jnp.pi / self.v**j * jnp.cumsum(temp[::-1], axis=1)[::-1] * self.dv
-
-    def calc_Cee0(self, f0, prev_f0, I00, I20, Jm10):
-
-        # term1 = 1 / 3 / self.v * self.ddv(self.ddv(f0)) * (I20 + Jm10)
-        # term2 = 1 / 3 / self.v**2 * self.ddv(f0) * (2 * Jm10 - I20 + 3 * I00 * self.m_frac)
-        # term3 = 4 * jnp.pi * f0 * prev_f0 * self.m_frac
-
-        # Cee0 = 0 * self.Y / 3.0 / self.v**2.0 * self.ddv(3 * f0 * I00 + self.v * (I20 + Jm10) * self.ddv(f0))
-
-        # Cee0 = self.Y * (term1 + term2 + term3)
-
-        prev_n_over_4pi = jnp.sum(self.v**2.0 * prev_f0, axis=1)
-        prev_T = jnp.sum(self.v**4.0 * prev_f0, axis=1) / 3.0 / prev_n_over_4pi
-
-        Cee0 = self.nuee_coeff * self.ddv(self.v * f0 + prev_T[:, None] * self.ddv(f0))
-
-        # Cf0 = 4 * jnp.pi * jnp.cumsum(f0 * self.v**2.0, axis=1) * self.dv
-        # Df0 = (
-        #     4
-        #     * jnp.pi
-        #     / 3.0
-        #     * (
-        #         1 / self.v * jnp.cumsum(f0 * self.v[None, :] ** 4, axis=1) * self.dv
-        #         + self.v**2 * jnp.cumsum((f0 * self.v[None, :])[::-1], axis=1)[::-1] * self.dv
-        #     )
-        # )
-        # return 1 / self.Z / self.v**2.0 * self.ddv(Cf0 * f0 + Df0 * self.ddv(f0)), None, None, None
-
-        return Cee0
-
-    def calc_C1(self, f1, f0, I00, I20, Jm10, I31, Jm21, I11):
-
-        term1 = 1.0 / 3.0 / self.v * self.ddv(self.ddv(f1)) * (I20 + Jm10)
-        term2 = 1.0 / 3.0 / self.v**2.0 * self.ddv(f1) * (3 * I00 * self.m_frac - I20 + Jm10)
-        term3 = -1.0 / 3.0 / self.v[None, :] ** 3.0 * f1 * (3 + 0 * (-I20 + 3 * I00 + 2 * Jm10))
-        term4 = 8 * jnp.pi * (f1) * self.m_frac
-        term5 = 1.0 / 5.0 / self.v * self.ddv(self.ddv(f0)) * (I31 + Jm21)
-        term6 = (
-            1.0
-            / 5.0
-            / self.v
-            * self.ddv(f0)
-            * (-3 * I31 + (7 - 5 * self.m_frac) * Jm21 + (-5 + 10 * self.m_frac) * I11)
-        )
-
-        return self.nuei_coeff * (0 * term1 + 0 * term2 + term3 + 0 * term4 + 0 * term5 + 0 * term6)
-
-    def ddx(self, f):
-        return jnp.real(jnp.ifft(jnp.fft(f, axis=0) * 1j * self.kx), axis=0)
-
-    def get_step(self, prev_f0, prev_f1):
-        """
-        This is for the linear solver
-
-        """
-
-        I00 = self.calc_Ij(prev_f0, j=0)
-        I20 = self.calc_Ij(prev_f0, j=2)
-        Jm10 = self.calc_Jmj(prev_f0, j=1)
-
-        I31 = self.calc_Ij(prev_f1, j=3)
-        Jm21 = self.calc_Jmj(prev_f1, j=2)
-        I11 = self.calc_Ij(prev_f1, j=1)
-
-        def _step_(this_y):
-            f0, f1, e = this_y["f0"], this_y["f1"], this_y["e"]
-            Cee0 = self.calc_Cee0(f0, prev_f0, I00, I20, Jm10)
-
-            prev_f0_approx = f0 + self.dt * (
-                self.v[None, :] / 3.0 * self.ddx(f1)
-                - 1.0 / 3.0 / self.v[None, :] ** 2.0 * self.ddv_f1(self.v[None, :] ** 2.0 * (e[:, None] * f1))
-                - Cee0
-            )
-            C_f1 = self.calc_C1(f1, f0, I00, I20, Jm10, I31, Jm21, I11)
-            prev_f1_approx = f1 + self.dt * (self.v[None, :] * self.ddx(f0) - e[:, None] * self.ddv(f0) - C_f1)
-
-            j = -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
-            prev_e_approx = e + self.dt * j
-
-            return {"f0": prev_f0_approx, "f1": prev_f1_approx, "e": prev_e_approx}
-
-        return _step_
-
-    def __call__(self, t, y, args) -> Dict:
-        # return y
-        f0, f1, e = y["f0"], y["f1"], y["e"]
-        operator = lx.FunctionLinearOperator(self.get_step(f0, f1), input_structure={"f0": f0, "f1": f1, "e": e})
-        rhs = {"f0": f0, "f1": f1, "e": e}
-        solver = lx.BiCGStab(
-            rtol=1e-3, atol=1e-4, max_steps=16384, norm=lx.internal.max_norm  # restart=128, stagnation_iters=128
-        )
-        sol = lx.linear_solve(operator, rhs, solver=solver, options={"y0": {"f0": f0, "f1": f1, "e": e}})
-
-        return {"f0": sol.value["f0"], "f1": sol.value["f1"], "e": sol.value["e"], "b": y["b"]}
-
-
 class OSHUN1D:
-    def __init__(self, cfg) -> None:
+    """
+    This is the OSHUN1D solver for f0, f1, and e in 1D. It uses the Lenard-Bernstein collision operator and the
+    FLM collision operator. It can solve for the electric field using the "perturbed charge" method.
+
+    """
+
+    def __init__(self, cfg: Dict):
         self.cfg = cfg
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
@@ -156,22 +30,73 @@ class OSHUN1D:
         self.large_eps = 1e-6
         self.eps = 1e-12
 
-    def ddv(self, f):
+    def ddv(self, f: Array) -> Array:
+        """
+        Calculates the derivative of f with respect to v
+
+        Args:
+            f (Array): f(x, v)
+
+        Returns:
+            Array: df/dv
+        """
         temp = jnp.concatenate([f[:, :1], f], axis=1)
         return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
 
-    def ddv_f1(self, f):
+    def ddv_f1(self, f: Array) -> Array:
+        """
+        Calculates the derivative of f1 with respect to v
+
+        Args:
+            f (Array): f(x, v)
+
+        Returns:
+            Array: df1/dv
+        """
         temp = jnp.concatenate([-f[:, :1], f], axis=1)
         return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
 
-    def ddx(self, f):
+    def ddx(self, f: Array) -> Array:
+        """
+        Calculates the derivative of f with respect to x
+
+        Args:
+            f (Array): f(x, v)
+
+        Returns:
+            Array: df/dx
+        """
         periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
         return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
 
-    def calc_j(self, f1):
+    def calc_j(self, f1: Array) -> Array:
+        """
+        Calculates the current density
+
+        Args:
+            f1 (Array): f1(x, v)
+
+        Returns:
+            Array: j(x)
+
+        """
         return -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
 
-    def implicit_e_solve(self, Z, ni, f0, f10, e):
+    def implicit_e_solve(self, Z: Array, ni: Array, f0: Array, f10: Array, e: Array) -> Array:
+        """
+        This is the implicit solve for the electric field. It uses the "perturbed charge" method and is a direct solve.
+
+        Args:
+            Z (Array): charge
+            ni (Array): number density
+            f0 (Array): f0(x, v)
+            f10 (Array): f10(x, v)
+            e (Array): e(x)
+
+        Returns:
+            Array: new_e(x)
+
+        """
 
         # calculate j without any e field
         f10_after_coll = self.ei(Z=Z, ni=ni, f0=f0, f10=f10, dt=self.dt)
@@ -203,6 +128,10 @@ class OSHUN1D:
         return new_e
 
     def linear_implicit_e_f0_f1_operator(self, this_y):
+        """
+        UNUSED
+
+        """
         f0, f1, e = this_y["f0"], this_y["f1"], this_y["e"]
 
         prev_f0_approx = f0 + self.dt * (-e[:, None] / 3 * (self.ddv_f1(f1) + 2 / self.v * f1))
@@ -215,6 +144,10 @@ class OSHUN1D:
         return {"f0": prev_f0_approx, "f1": prev_f1_approx, "e": prev_e_approx}
 
     def nonlinear_implicit_e_f0_f1_operator(self, y, args):
+        """
+        UNUSED
+
+        """
         new_f0, new_f1, new_e = y["f0"], y["f1"], y["e"]
         old_f0, old_f1, old_e = args["f0"], args["f1"], args["e"]
 
@@ -233,7 +166,8 @@ class OSHUN1D:
 
     def implicit_e_f0_f1_solve(self, f0, f1, e):
         """
-        This is a combined e dfdv and ampere's law solve
+        UNUSED
+
         """
 
         sol = optx.minimise(
@@ -269,7 +203,19 @@ class OSHUN1D:
 
         return sol.value["f0"], sol.value["f1"], sol.value["e"]
 
-    def _edfdv_(self, t, y, args):
+    def _edfdv_(self, t: float, y: Dict, args: Dict) -> Dict:
+        """
+        This is the edfdv solve for f0 and f1. It uses the `t, y, args` formulation for diffeqsolve
+        because we step it using a 5th order integrator (but can also use Euler etc.)
+
+        Args:
+            t (float): time
+            y (Dict): y0 -- just distribution functions here
+            args (Dict): args -- in this case there is just the electric field
+
+        Returns:
+            Dict: new y
+        """
         f0 = y["f0"]
         f10 = y["f10"]
         e_field = args["e"]
@@ -283,6 +229,17 @@ class OSHUN1D:
         return {"f0": df0dt_e, "f10": df10dt_e}
 
     def push_edfdv(self, f0, f10, e):
+        """
+        This is the explicit solve for f0 and f1 given the electric field.
+
+        Args:
+            f0 (Array): f0(x, v)
+            f10 (Array): f10(x, v)
+            e (Array): e(x)
+
+        Returns:
+            Tuple[Array, Array]: new f0, new f10
+        """
         result = diffrax.diffeqsolve(
             diffrax.ODETerm(self._edfdv_),
             solver=diffrax.Tsit5(),
@@ -294,7 +251,20 @@ class OSHUN1D:
         )
         return result.ys["f0"][-1], result.ys["f10"][-1]
 
-    def _vdfdx_(self, t, y, args):
+    def _vdfdx_(self, t: float, y: Dict, args: Dict) -> Dict:
+        """
+        This is the vdfdx solve for f0 and f1. It uses the `t, y, args` formulation for diffeqsolve
+        because we step it using a 5th order integrator (but can also use Euler etc.)
+
+        Args:
+            t (float): time
+            y (Dict): y0 -- just distribution functions here
+            args (Dict): args -- in this case there are no args needed or used
+
+        Returns:
+            Dict: new y
+
+        """
         f0 = y["f0"]
         f10 = y["f10"]
 
@@ -303,7 +273,18 @@ class OSHUN1D:
 
         return {"f0": df0dt_sa, "f10": df10dt_sa}
 
-    def push_vdfdx(self, f0, f10):
+    def push_vdfdx(self, f0: Array, f10: Array) -> Array:
+        """
+        This is the explicit solve for f0 and f1 given the electric field.
+
+        Args:
+            f0 (Array): f0(x, v)
+            f10 (Array): f10(x, v)
+
+        Returns:
+            Tuple[Array, Array]: new f0, new f10
+        """
+
         result = diffrax.diffeqsolve(
             diffrax.ODETerm(self._vdfdx_),
             solver=diffrax.Tsit5(),
@@ -315,6 +296,19 @@ class OSHUN1D:
         return result.ys["f0"][-1], result.ys["f10"][-1]
 
     def __call__(self, t, y, args) -> Dict:
+        """
+        This is the main function that is called by the solver. It steps the distribution functions and the electric
+        field.
+
+        Args:
+            t (float): time
+            y (Dict): y0 -- all variables
+            args (Dict): args -- in this case there are no args needed or used
+
+        Returns:
+            Dict: new y
+
+        """
 
         f0 = y["f0"]
         f10 = y["f10"]

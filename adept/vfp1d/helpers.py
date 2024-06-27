@@ -1,13 +1,11 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict
+from typing import Dict, Tuple, Callable
 import os
 
-from time import time
-
-
 import numpy as np
+from jax import Array
 import xarray, yaml, plasmapy
 from astropy import units as u, constants as csts
 from jax import numpy as jnp
@@ -19,7 +17,7 @@ from equinox import filter_jit
 from adept.vfp1d.storage import post_process, get_save_quantities
 from adept.vlasov1d.integrator import Stepper
 from adept.tf1d.pushers import get_envelope
-from adept.vfp1d.integrator import IMPACT, OSHUN1D
+from adept.vfp1d.oshun import IMPACT, OSHUN1D
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -27,15 +25,36 @@ g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
 g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
 
 
-def gamma_3_over_m(m):
+def gamma_3_over_m(m: float) -> Array:
+    """
+    Interpolates gamma(3/m) function from a previous calculation. This is used in the super gaussian initialization scheme
+
+    :param m: float between 2 and 5
+    :return: Array
+
+    """
     return np.interp(m, m_ax, g_3_m)
 
 
-def gamma_5_over_m(m):
+def gamma_5_over_m(m: float) -> Array:
+    """
+    Interpolates gamma(5/m) function from a previous calculation. This is used in the super gaussian initialization scheme
+
+    :param m: float between 2 and 5
+    :return: Array
+    """
     return np.interp(m, m_ax, g_5_m)
 
 
-def write_units(cfg, td):
+def write_units(cfg: Dict, td: str) -> Dict:
+    """
+    This function writes the units to a file and updates the config with the derived quantities
+    It is a REQUIRED function for the exoskeleton
+
+    :param cfg: Dict
+    :param td: str
+    :return: Dict
+    """
 
     ne = u.Quantity(cfg["units"]["reference electron density"]).to("1/cm^3")
     ni = ne / cfg["units"]["Z"]
@@ -114,7 +133,7 @@ def write_units(cfg, td):
     return cfg
 
 
-def calc_logLambda(cfg, ne, Te, Z, ion_species):
+def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) -> Tuple[float, float]:
     """
     Calculate the Coulomb logarithm
 
@@ -205,6 +224,14 @@ def _initialize_distribution_(
 
 
 def _initialize_total_distribution_(cfg, cfg_grid):
+    """
+    This function initializes the distribution function as a sum of the individual species
+
+    :param cfg: Dict
+    :param cfg_grid: Dict
+    :return: distribution function, density profile (nx, nv), (nx,)
+
+    """
     params = cfg["density"]
     prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
 
@@ -364,7 +391,14 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def get_run_fn(cfg):
+def get_run_fn(cfg: Dict) -> Callable:
+    """
+    This function returns the run function
+    This is a REQUIRED function for the exoskeleton
+
+    :param cfg: Dict
+    :return: Run function (Callable)
+    """
     diffeqsolve_quants = get_diffeqsolve_quants(cfg)
 
     @filter_jit
@@ -413,7 +447,13 @@ def init_state(cfg: Dict, td=None) -> tuple[Dict, Dict]:
     return state, {"drivers": cfg["drivers"]}
 
 
-def get_diffeqsolve_quants(cfg):
+def get_diffeqsolve_quants(cfg: Dict) -> Dict:
+    """
+    This function returns the quantities for the diffeqsolve function
+
+    :param cfg:
+    :return: Dict of ODETerm, Stepper, SaveAt
+    """
     cfg = get_save_quantities(cfg)
     return dict(
         terms=ODETerm(OSHUN1D(cfg)),
@@ -423,4 +463,14 @@ def get_diffeqsolve_quants(cfg):
 
 
 def apply_models(models, state, args, cfg):
+    """
+    This function applies the models to the state and args. This is a dummy function and needs more thought
+
+    :param models: List of Dict
+    :param state: Dict
+    :param args: Dict
+    :param cfg: Dict
+    :return: Dict, Dict
+    """
+
     return state, args
