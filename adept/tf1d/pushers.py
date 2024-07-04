@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict, Union
 
 import jax
 from jax import numpy as jnp
@@ -9,8 +9,8 @@ from adept.theory.electrostatic import get_complex_frequency_table
 
 
 def get_envelope(
-    p_wL: float, p_wR: float, p_L: float, p_R: float, ax: Any[float, np.ndarray]
-) -> Any[float, np.ndarray]:
+    p_wL: float, p_wR: float, p_L: float, p_R: float, ax: Union[float, np.ndarray]
+) -> Union[float, np.ndarray]:
     """
     Returns a 1D envelope function or value
 

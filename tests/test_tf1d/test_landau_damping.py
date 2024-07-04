@@ -12,7 +12,7 @@ from jax import numpy as jnp
 import mlflow
 
 from adept.theory import electrostatic
-from utils.runner import run
+from adept import ergoExo
 
 
 def _modify_defaults_(defaults, rng):
@@ -42,13 +42,12 @@ def test_single_resonance():
     rng = np.random.default_rng()
     mod_defaults, actual_damping_rate = _modify_defaults_(defaults, rng)
 
-    # run
-    mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
-    # modify config
-    with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-        result, datasets = run(mod_defaults)
-        result, state, args = result
+    exo = ergoExo()
+    exo.setup(mod_defaults)
+    result, datasets, run_id = exo(None)
+    result = result["solver result"]
 
+    with mlflow.start_run(run_id=run_id) as mlflow_run:
         kx = (
             np.fft.fftfreq(
                 mod_defaults["save"]["x"]["nx"],

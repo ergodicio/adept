@@ -1,8 +1,7 @@
-from typing import Tuple
+from typing import Tuple, Dict
 
-from functools import partial
 
-from jax import numpy as jnp
+from jax import numpy as jnp, Array
 import diffrax
 
 from adept.vlasov1d.pushers import field, fokker_planck, vlasov
@@ -11,6 +10,7 @@ from adept.tf1d.pushers import get_envelope
 
 class Stepper(diffrax.Euler):
     """
+    This is just a dummy stepper
 
     :param cfg:
     """
@@ -24,16 +24,19 @@ class Stepper(diffrax.Euler):
 
 class TimeIntegrator:
     """
+    This is the base class for all time integrators. This makes it so that we dont have to
+    load the electric field solver and the Vlasov pushers in every time integrator
 
-    :param cfg:
+    :param cfg: Dict
+
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: Dict):
         self.field_solve = field.ElectricFieldSolver(cfg)
         self.edfdv = self.get_edfdv(cfg)
         self.vdfdx = vlasov.SpaceExponential(cfg)
 
-    def get_edfdv(self, cfg):
+    def get_edfdv(self, cfg: Dict):
         if cfg["terms"]["edfdv"] == "exponential":
             return vlasov.VelocityExponential(cfg)
         elif cfg["terms"]["edfdv"] == "cubic-spline":
@@ -44,16 +47,17 @@ class TimeIntegrator:
 
 class LeapfrogIntegrator(TimeIntegrator):
     """
+    This is a leapfrog integrator
 
     :param cfg:
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: Dict):
         super().__init__(cfg)
         self.dt = cfg["grid"]["dt"]
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
 
-    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> Tuple[Array, Array]:
         f_after_v = self.vdfdx(f=f, dt=self.dt)
         if self.field_solve.hampere:
             f_for_field = f
@@ -67,6 +71,7 @@ class LeapfrogIntegrator(TimeIntegrator):
 
 class SixthOrderHamIntegrator(TimeIntegrator):
     """
+    This class contains the 6th order Hamiltonian integrator from Crousseilles
 
     :param cfg:
     """
@@ -103,7 +108,7 @@ class SixthOrderHamIntegrator(TimeIntegrator):
             ]
         )
 
-    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> Tuple[Array, Array]:
         ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[0] + self_consistent_ex
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
@@ -143,11 +148,14 @@ class SixthOrderHamIntegrator(TimeIntegrator):
 
 class VlasovPoissonFokkerPlanck:
     """
+    This class contains the Vlasov-Poisson + Fokker-Planck timestep
 
-    :param cfg:
+    :param cfg: Configuration dictionary
+
+    :return: Tuple of the electric field and the distribution function
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: Dict):
         self.dt = cfg["grid"]["dt"]
         self.v = cfg["grid"]["v"]
         if cfg["terms"]["time"] == "sixth":
@@ -160,7 +168,9 @@ class VlasovPoissonFokkerPlanck:
             raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
 
-    def __call__(self, f, a, prev_ex, dex_array, nu_fp, nu_K) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def __call__(
+        self, f: Array, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
+    ) -> Tuple[Array, Array]:
         e, f = self.vlasov_poisson(f, a, dex_array, prev_ex)
         f = self.fp(nu_fp, nu_K, f, dt=self.dt)
 
@@ -169,11 +179,12 @@ class VlasovPoissonFokkerPlanck:
 
 class VlasovMaxwell:
     """
+    This class contains the Vlasov-Poisson + Fokker-Planck timestep and the wave equation solver
 
     :param cfg:
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: Dict):
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
         self.wave_solver = field.WaveSolver(c=1.0 / cfg["grid"]["beta"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
