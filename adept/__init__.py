@@ -1,4 +1,5 @@
 from typing import Dict, Tuple, Callable
+import jax.flatten_util
 import os, time, tempfile, yaml, pickle
 
 
@@ -42,10 +43,10 @@ class ADEPTModule:
     def init_state_and_args(self) -> Dict:
         return {}
 
-    def __call__(self, params: Dict):
+    def __call__(self, params: Dict, args: Dict):
         return {}
 
-    def vg(self, params: Dict):
+    def vg(self, params: Dict, args: Dict):
         raise NotImplementedError(
             "This is the base class and does not have a gradient implemented. This is "
             + "likely because there is no metric in place. Subclass this class and implement the gradient"
@@ -62,12 +63,16 @@ class ergoExo:
 
     """
 
-    def __init__(self, mlflow_run_id: str = None, mlflow_nested: bool = False) -> None:
+    def __init__(self, mlflow_run_id: str = None, mlflow_nested: bool = None) -> None:
 
         self.mlflow_run_id = mlflow_run_id
-        if mlflow_run_id is not None:
-            assert self.mlflow_nested is not None
-        self.mlflow_nested = mlflow_nested
+        # if mlflow_run_id is not None:
+        #     assert self.mlflow_nested is not None
+        if mlflow_nested is None:
+            self.mlflow_nested = False
+        else:
+            self.mlflow_nested = mlflow_nested
+
         if "BASE_TEMPDIR" in os.environ:
             self.base_tempdir = os.environ["BASE_TEMPDIR"]
         else:
@@ -103,8 +108,12 @@ class ergoExo:
 
         return this_module(cfg)
 
-    def _setup_(self, cfg: Dict, td: str):
-        self.adept_module = self.get_adept_module(cfg)
+    def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None):
+        if adept_module is None:
+            self.adept_module = self.get_adept_module(cfg)
+        else:
+            self.adept_module = adept_module
+
         # dump raw config
         with open(os.path.join(td, "config.yaml"), "w") as fi:
             yaml.dump(self.adept_module.cfg, fi)
@@ -130,7 +139,7 @@ class ergoExo:
 
         self.ran_setup = True
 
-    def setup(self, cfg: Dict):
+    def setup(self, cfg: Dict, adept_module: ADEPTModule = None):
         """
         This function sets up the simulation by getting the helper functions for the given solver
 
@@ -142,15 +151,15 @@ class ergoExo:
         with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
             if self.mlflow_run_id is None:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
-                with mlflow.start_run(run_name=cfg["mlflow"]["run"]) as mlflow_run:
-                    self._setup_(cfg, td)
+                with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
+                    self._setup_(cfg, td, adept_module)
                 self.mlflow_run_id = mlflow_run.info.run_id
-                self.mlflow_nested = False
+
             else:
                 with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
                     with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
                         cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
-                    self._setup_(cfg, td)
+                    self._setup_(cfg, td, adept_module)
 
     def __call__(self, params: Dict = None) -> Tuple[Solution, Dict, str]:
         """
@@ -166,7 +175,7 @@ class ergoExo:
 
         with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
             t0 = time.time()
-            run_output = self.adept_module(params)
+            run_output = self.adept_module(params, None)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
@@ -190,10 +199,10 @@ class ergoExo:
         assert self.ran_setup, "You must run self.setup() before running the simulation"
         with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
             t0 = time.time()
-            (val, run_output), grad = self.adept_module.vg(params)
+            (val, run_output), grad = self.adept_module.vg(params, None)
+            flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
-
-            mlflow.log_metrics({"val": val, "l2-grad": np.linalg.norm(grad)})
+            mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})
 
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:

@@ -41,8 +41,11 @@ def test_single_resonance():
 
     # modify config
     mod_defaults, actual_damping_rate = _modify_defaults_(defaults)
-    result, datasets, run_id = ergoExo()(mod_defaults)
-    result, state, args = result
+
+    exo = ergoExo()
+    exo.setup(mod_defaults)
+    result, datasets, run_id = exo(None)
+    result = result["solver result"]
     vds = xr.open_dataset("tests/test_tf1d/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")
 
     nk1_fluid = result.ys["kx"]["electron"]["n"]["mag"][:, 1]

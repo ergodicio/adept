@@ -25,6 +25,15 @@ save:
       tmin: 0.0
       tmax: 50.0
       nt: 101
+    x:
+      xmin: 0.0
+      xmax: 20.94
+      nx: 16
+    kx:
+      kxmin: 0.0
+      kxmax: 0.3
+      nkx: 2 
+
 
 physics:
     ion:
