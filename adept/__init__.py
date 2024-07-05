@@ -3,11 +3,25 @@ import jax.flatten_util
 import os, time, tempfile, yaml, pickle
 
 
-from diffrax import Solution
+from diffrax import Solution, Euler, RESULTS
 import mlflow, jax, numpy as np
 
 
 from utils import misc
+
+
+class Stepper(Euler):
+    """
+    This is just a dummy stepper
+
+    :param cfg:
+    """
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        del solver_state, made_jump
+        y1 = terms.vf(t0, y0, args)
+        dense_info = dict(y0=y0, y1=y1)
+        return y1, None, dense_info, None, RESULTS.successful
 
 
 class ADEPTModule:
@@ -101,8 +115,8 @@ class ergoExo:
         #     from adept.vlasov2d import helpers
         # elif solver == "envelope-2d":
         #     from adept.lpse2d import helpers
-        # elif solver == "vfp-2d":
-        #     from adept.vfp1d import helpers
+        elif cfg["solver"] == "vfp-1d":
+            from adept.vfp1d.base import BaseVFP1D as this_module
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
@@ -182,6 +196,9 @@ class ergoExo:
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
                 post_processing_output = self.adept_module.post_process(run_output, td)
                 mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+
+                if "metrics" in post_processing_output:
+                    mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
 
         return run_output, post_processing_output, self.mlflow_run_id
@@ -208,6 +225,8 @@ class ergoExo:
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
                 post_processing_output = self.adept_module.post_process(run_output, td)
                 mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+                if "metrics" in post_processing_output:
+                    mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             return val, grad, (run_output, post_processing_output, self.mlflow_run_id)
 

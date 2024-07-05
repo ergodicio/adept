@@ -13,10 +13,11 @@ from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
 from equinox import filter_jit
 
 
-from adept.vfp1d.storage import post_process, get_save_quantities
-from adept.vlasov1d.integrator import Stepper
+# from adept.vfp1d.storage import post_process, get_save_quantities
+# from adept.vlasov1d.integrator import Stepper
 from adept.tf1d.pushers import get_envelope
-from adept.vfp1d.oshun import IMPACT, OSHUN1D
+
+# from adept.vfp1d.oshun import OSHUN1D
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
