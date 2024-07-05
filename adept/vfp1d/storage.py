@@ -271,10 +271,6 @@ def post_process(soln: Solution, cfg: Dict, td: str, args: Dict = None) -> Dict:
         plt.savefig(os.path.join(td, "plots", "dist", f"{k}.png"))
         plt.close()
 
-    # mlflow.log_metrics({"kappa": round(np.amax(fields_xr["fields-kappa_c"][-1].data), 4)})
-    # mlflow.log_metrics({"kappa_eh": round(calc_EH(cfg["units"]["Z"], 0.0), 4)})
-    # mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
-
     metrics = {
         "kappa": round(np.amax(fields_xr["fields-kappa_c"][-1].data), 4),
         "kappa_eh": round(calc_EH(cfg["units"]["Z"], 0.0), 4),

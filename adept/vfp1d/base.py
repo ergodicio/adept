@@ -7,46 +7,8 @@ from jax import numpy as jnp, tree_util as jtu
 
 from adept import ADEPTModule, Stepper
 from adept.vfp1d.vector_field import OSHUN1D
-from adept.vfp1d.helpers import _initialize_total_distribution_
+from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
 from adept.vfp1d.storage import get_save_quantities, post_process
-
-
-def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) -> Tuple[float, float]:
-    """
-    Calculate the Coulomb logarithm
-
-    :param cfg: Dict
-    :param ne: float
-    :param Te: float
-    :param Z: int
-    :param ion_species: str
-
-    :return: Tuple[float, float]
-
-    """
-    if isinstance(cfg["units"]["logLambda"], str):
-        # if cfg["units"]["logLambda"].casefold() == "plasmapy":
-        #     logLambda_ei = plasmapy.formulary.Coulomb_logarithm(n_e=ne, T=Te, z_mean=Z, species=("e", ion_species))
-        #     logLambda_ee = plasmapy.formulary.Coulomb_logarithm(n_e=ne, T=Te, z_mean=1.0, species=("e", "e"))
-
-        # elif cfg["units"]["logLambda"].casefold() == "nrl":
-        log_ne = np.log(ne.to("1/cm^3").value)
-        log_Te = np.log(Te.to("eV").value)
-        log_Z = np.log(Z)
-
-        logLambda_ee = max(2.0, 23.5 - 0.5 * log_ne + 1.25 * log_Te - np.sqrt(1e-5 + 0.0625 * (log_Te - 2.0) ** 2.0))
-
-        if Te.to("eV").value > 10 * Z**2.0:
-            logLambda_ei = max(2.0, 24.0 - 0.5 * log_ne + log_Te)
-        else:
-            logLambda_ei = max(2.0, 23.0 - 0.5 * log_ne + 1.5 * log_Te - log_Z)
-
-        # else:
-        #     raise NotImplementedError("This logLambda method is not implemented")
-    elif isinstance(cfg["units"]["logLambda"], (int, float)):
-        logLambda_ei = cfg["units"]["logLambda"]
-        logLambda_ee = cfg["units"]["logLambda"]
-    return logLambda_ei, logLambda_ee
 
 
 class BaseVFP1D(ADEPTModule):
@@ -135,9 +97,6 @@ class BaseVFP1D(ADEPTModule):
         self.cfg["grid"]["beta"] = beta.value
 
         return all_quantities
-
-        # with open(os.path.join(td, "units.yaml"), "w") as fi:
-        #     yaml.dump({k: str(v) for k, v in all_quantities.items()}, fi)
 
     def get_derived_quantities(self):
         """
