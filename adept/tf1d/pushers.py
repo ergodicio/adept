@@ -8,16 +8,6 @@ import equinox as eqx
 from adept.theory.electrostatic import get_complex_frequency_table
 
 
-def get_envelope(
-    p_wL: float, p_wR: float, p_L: float, p_R: float, ax: Union[float, np.ndarray]
-) -> Union[float, np.ndarray]:
-    """
-    Returns a 1D envelope function or value
-
-    """
-    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
-
-
 class WaveSolver(eqx.Module):
     """
     A 2nd order wave equation solver with absorbing boundary conditions

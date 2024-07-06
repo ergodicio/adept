@@ -2,10 +2,7 @@ from typing import Dict
 import jax
 import equinox as eqx
 from jax import numpy as jnp
-
-
-def get_envelope(p_wL, p_wR, p_L, p_R, ax):
-    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
+from adept import get_envelope
 
 
 class Driver(eqx.Module):

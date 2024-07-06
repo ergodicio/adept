@@ -9,13 +9,13 @@ from time import time
 import numpy as np
 import xarray, mlflow, pint, yaml
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
+from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt, Solution
 from matplotlib import pyplot as plt
 from equinox import filter_jit
 
-from adept.vlasov1d.integrator import VlasovMaxwell, Stepper
+from adept import Stepper, get_envelope
+from adept.vlasov1d.vector_field import VlasovMaxwell
 from adept.vlasov1d.storage import store_f, store_fields, get_save_quantities
-from adept.tf1d.pushers import get_envelope
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -401,8 +401,7 @@ def get_diffeqsolve_quants(cfg):
     )
 
 
-def post_process(result, cfg: Dict, td: str, args: Dict):
-    result, _state_, _args_ = result
+def post_process(result: Solution, cfg: Dict, td: str, args: Dict):
 
     t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)

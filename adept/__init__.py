@@ -5,9 +5,14 @@ import os, time, tempfile, yaml, pickle
 
 from diffrax import Solution, Euler, RESULTS
 import mlflow, jax, numpy as np
+from jax import numpy as jnp
 
 
 from utils import misc
+
+
+def get_envelope(p_wL, p_wR, p_L, p_R, ax):
+    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 
 class Stepper(Euler):
@@ -107,8 +112,8 @@ class ergoExo:
             from adept.tf1d.base import BaseTwoFluid1D as this_module
         # elif solver == "sh-2d":
         #     from adept.sh2d import helpers
-        # elif solver == "vlasov-1d":
-        #     from adept.vlasov1d import helpers
+        elif cfg["solver"] == "vlasov-1d":
+            from adept.vlasov1d.base import BaseVlasov1D as this_module
         # elif solver == "vlasov-1d2v":
         #     from adept.vlasov1d2v import helpers
         # elif solver == "vlasov-2d":

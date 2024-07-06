@@ -2,24 +2,9 @@ from typing import Tuple, Dict
 
 
 from jax import numpy as jnp, Array
-import diffrax
 
+from adept import get_envelope
 from adept.vlasov1d.pushers import field, fokker_planck, vlasov
-from adept.tf1d.pushers import get_envelope
-
-
-class Stepper(diffrax.Euler):
-    """
-    This is just a dummy stepper
-
-    :param cfg:
-    """
-
-    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
-        del solver_state, made_jump
-        y1 = terms.vf(t0, y0, args)
-        dense_info = dict(y0=y0, y1=y1)
-        return y1, None, dense_info, None, diffrax.RESULTS.successful
 
 
 class TimeIntegrator:
