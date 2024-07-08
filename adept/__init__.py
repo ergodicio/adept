@@ -62,15 +62,18 @@ class ADEPTModule:
     def init_state_and_args(self) -> Dict:
         return {}
 
-    def __call__(self, params: Dict, args: Dict):
+    def init_modules(self) -> Dict:
         return {}
 
-    def vg(self, params: Dict, args: Dict):
+    def __call__(self, trainable_modules: Dict, args: Dict):
+        return {}
+
+    def vg(self, trainable_modules: Dict, args: Dict):
         raise NotImplementedError(
             "This is the base class and does not have a gradient implemented. This is "
             + "likely because there is no metric in place. Subclass this class and implement the gradient"
         )
-        # return eqx.filter_value_and_grad(self.__call__)(params)
+        # return eqx.filter_value_and_grad(self.__call__)(trainable_modules)
 
 
 class ergoExo:
@@ -118,8 +121,8 @@ class ergoExo:
         #     from adept.vlasov1d2v import helpers
         # elif solver == "vlasov-2d":
         #     from adept.vlasov2d import helpers
-        # elif solver == "envelope-2d":
-        #     from adept.lpse2d import helpers
+        elif cfg["solver"] == "envelope-2d":
+            from adept.lpse2d.base import BaseLPSE2D as this_module
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
         else:
@@ -155,10 +158,13 @@ class ergoExo:
 
         self.adept_module.init_state_and_args()
         self.adept_module.init_diffeqsolve()
+        modules = self.adept_module.init_modules()
 
         self.ran_setup = True
 
-    def setup(self, cfg: Dict, adept_module: ADEPTModule = None):
+        return modules
+
+    def setup(self, cfg: Dict, adept_module: ADEPTModule = None) -> Dict:
         """
         This function sets up the simulation by getting the helper functions for the given solver
 
@@ -171,16 +177,18 @@ class ergoExo:
             if self.mlflow_run_id is None:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
                 with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
-                    self._setup_(cfg, td, adept_module)
+                    modules = self._setup_(cfg, td, adept_module)
                 self.mlflow_run_id = mlflow_run.info.run_id
 
             else:
                 with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
                     with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
                         cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
-                    self._setup_(cfg, td, adept_module)
+                    modules = self._setup_(cfg, td, adept_module)
 
-    def __call__(self, params: Dict = None) -> Tuple[Solution, Dict, str]:
+        return modules
+
+    def __call__(self, modules: Dict = None) -> Tuple[Solution, Dict, str]:
         """
         This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
         ``diffrax.Solution`` object and a dictionary of datasets.
@@ -194,7 +202,7 @@ class ergoExo:
 
         with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
             t0 = time.time()
-            run_output = self.adept_module(params, None)
+            run_output = self.adept_module(modules, None)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
@@ -208,12 +216,12 @@ class ergoExo:
 
         return run_output, post_processing_output, self.mlflow_run_id
 
-    def val_and_grad(self, params: Dict = None):
+    def val_and_grad(self, modules: Dict = None):
         """
         This function is the value and gradient of the simulation. It assumes that this function has been implemented.
 
         Args:
-            params: The parameters to run the simulation and take the gradient against. All the other parameters are
+            modules: The parameters to run the simulation and take the gradient against. All the other parameters are
             static
 
         Returns: val - The value of the simulation, grad - The gradient of the simulation with respect to the parameters, and the simulation output
@@ -221,7 +229,7 @@ class ergoExo:
         assert self.ran_setup, "You must run self.setup() before running the simulation"
         with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
             t0 = time.time()
-            (val, run_output), grad = self.adept_module.vg(params, None)
+            (val, run_output), grad = self.adept_module.vg(modules, None)
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})

@@ -245,7 +245,7 @@ class BaseTwoFluid1D(ADEPTModule):
             terms=ODETerm(VF(self.cfg)), solver=Tsit5(), saveat=dict(ts=self.cfg["save"]["t"]["ax"], fn=save_f)
         )
 
-    def __call__(self, params: Dict, args: Dict) -> Dict:
+    def __call__(self, trainable_modules: Dict, args: Dict) -> Dict:
         """
         This is the time loop solve for a two fluid 1d run
         """
@@ -266,7 +266,7 @@ class BaseTwoFluid1D(ADEPTModule):
 
         return {"solver result": solver_result}
 
-    def vg(self, params: Dict, args: Dict) -> Dict:
+    def vg(self, trainable_modules: Dict, args: Dict) -> Dict:
         raise NotImplementedError(
             "This is the base class and does not have a gradient implemented. This is "
             + "likely because there is no metric in place. Subclass this class and implement the gradient"

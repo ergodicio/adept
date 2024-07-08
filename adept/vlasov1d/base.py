@@ -206,7 +206,7 @@ class BaseVlasov1D(ADEPTModule):
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
 
-    def __call__(self, params: Dict, args: Dict = None):
+    def __call__(self, trainable_modules: Dict, args: Dict = None):
         if args is None:
             args = self.args
         solver_result = diffeqsolve(

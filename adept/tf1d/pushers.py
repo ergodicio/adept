@@ -1,4 +1,4 @@
-from typing import Dict, Union
+from typing import Dict
 
 import jax
 from jax import numpy as jnp
@@ -6,6 +6,7 @@ import numpy as np
 import equinox as eqx
 
 from adept.theory.electrostatic import get_complex_frequency_table
+from adept import get_envelope
 
 
 class WaveSolver(eqx.Module):

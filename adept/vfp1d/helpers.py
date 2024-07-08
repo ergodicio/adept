@@ -1,7 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict, Tuple, Callable
+from typing import Dict, Tuple
 import os
 
 import numpy as np
@@ -9,15 +9,7 @@ from jax import Array
 import xarray, yaml, plasmapy
 from astropy import units as u, constants as csts
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
-from equinox import filter_jit
-
-
-# from adept.vfp1d.storage import post_process, get_save_quantities
-# from adept.vlasov1d.integrator import Stepper
-from adept.tf1d.pushers import get_envelope
-
-# from adept.vfp1d.oshun import OSHUN1D
+from adept import get_envelope
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
