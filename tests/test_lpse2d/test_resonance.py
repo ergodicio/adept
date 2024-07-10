@@ -48,7 +48,7 @@ def load_cfg(rand_k0, kinetic, adjoint):
 
 
 def run_one_step(i, w0, vg_func, mod_defaults, optimizer, opt_state):
-    with mlflow.start_run(run_name=f"res-search-run-{i}", nested=True) as mlflow_run:
+    with mlflow.start_run(run_name=f"res-search-run-{i}", nested=True, log_system_metrics=True) as mlflow_run:
         mlflow.log_param("w0", w0)
         t0 = time.time()
 
@@ -120,7 +120,7 @@ def get_loss(state, pulse_dict, mod_defaults):
 @pytest.mark.parametrize("kinetic", [True, False])
 def test_resonance_search(kinetic, adjoint):
     mlflow.set_experiment("test-res-search-lpse")
-    with mlflow.start_run(run_name="res-search-opt") as mlflow_run:
+    with mlflow.start_run(run_name="res-search-opt", log_system_metrics=True) as mlflow_run:
         vg_func, sim_k0, actual_w0 = get_vg_func(kinetic, adjoint)
 
         mod_defaults, _ = load_cfg(sim_k0, kinetic, adjoint)

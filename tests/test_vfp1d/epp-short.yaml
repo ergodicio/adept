@@ -54,10 +54,10 @@ save:
       tmax: 50000.0
       nt: 6
 
-solver: vfp-2d
+solver: vfp-1d
 
 mlflow:
-  experiment: vfp2d
+  experiment: vfp1d
   run: epperlein-short
 
 drivers:

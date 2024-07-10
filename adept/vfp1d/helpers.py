@@ -1,7 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict, Tuple, Callable
+from typing import Dict, Tuple
 import os
 
 import numpy as np
@@ -9,14 +9,7 @@ from jax import Array
 import xarray, yaml, plasmapy
 from astropy import units as u, constants as csts
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
-from equinox import filter_jit
-
-
-from adept.vfp1d.storage import post_process, get_save_quantities
-from adept.vlasov1d.integrator import Stepper
-from adept.tf1d.pushers import get_envelope
-from adept.vfp1d.oshun import IMPACT, OSHUN1D
+from adept import get_envelope
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -310,173 +303,3 @@ def _initialize_total_distribution_(cfg, cfg_grid):
         raise ValueError("No species found! Check the config")
 
     return f, prof_total["n"]
-
-
-def get_derived_quantities(cfg: Dict) -> Dict:
-    """
-    This function just updates the config with the derived quantities that are only integers or strings.
-
-    This is run prior to the log params step
-
-    :param cfg_grid:
-    :return:
-    """
-    cfg_grid = cfg["grid"]
-    # cfg_grid["xmax"] = u.Quantity(cfg_grid["xmax"])
-
-    cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-
-    # sqrt(2 * k * T / m)
-    cfg_grid["vmax"] = (
-        8
-        * np.sqrt((u.Quantity(cfg["units"]["reference electron temperature"]) / (csts.m_e * csts.c**2.0)).to("")).value
-    )
-
-    cfg_grid["dv"] = cfg_grid["vmax"] / cfg_grid["nv"]
-
-    cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"]) + 1
-
-    if cfg_grid["nt"] > 1e6:
-        cfg_grid["max_steps"] = int(1e6)
-        print(r"Only running $10^6$ steps")
-    else:
-        cfg_grid["max_steps"] = cfg_grid["nt"] + 4
-
-    cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
-    cfg["grid"] = cfg_grid
-
-    return cfg
-
-
-def get_solver_quantities(cfg: Dict) -> Dict:
-    """
-    This function just updates the config with the derived quantities that are arrays
-
-    This is run after the log params step
-
-    :param cfg_grid:
-    :return:
-    """
-    cfg_grid = cfg["grid"]
-
-    cfg_grid = {
-        **cfg_grid,
-        **{
-            "x": jnp.linspace(
-                cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
-            ),
-            "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-            "v": jnp.linspace(cfg_grid["dv"] / 2, cfg_grid["vmax"] - cfg_grid["dv"] / 2, cfg_grid["nv"]),
-            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-        },
-    }
-
-    # config axes
-    one_over_kx = np.zeros_like(cfg_grid["kx"])
-    one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
-    cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
-
-    one_over_kxr = np.zeros_like(cfg_grid["kxr"])
-    one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
-    cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
-
-    cfg_grid["nuprof"] = 1.0
-    # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
-    cfg_grid["ktprof"] = 1.0
-    # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-    cfg_grid["kprof"] = np.ones_like(cfg_grid["x"])
-    # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
-    cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["x"]) + cfg_grid["x"]
-
-    cfg_grid["x_a"] = np.concatenate(
-        [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
-    )
-
-    return cfg_grid
-
-
-def get_run_fn(cfg: Dict) -> Callable:
-    """
-    This function returns the run function
-    This is a REQUIRED function for the exoskeleton
-
-    :param cfg: Dict
-    :return: Run function (Callable)
-    """
-    diffeqsolve_quants = get_diffeqsolve_quants(cfg)
-
-    @filter_jit
-    def _run_(_models_, _state_, _args_, time_quantities: Dict):
-
-        _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
-        # if "terms" in cfg.keys():
-        #     args["terms"] = cfg["terms"]
-        solver_result = diffeqsolve(
-            terms=diffeqsolve_quants["terms"],
-            solver=diffeqsolve_quants["solver"],
-            t0=time_quantities["t0"],
-            t1=time_quantities["t1"],
-            max_steps=cfg["grid"]["max_steps"],
-            dt0=cfg["grid"]["dt"],
-            y0=_state_,
-            args=_args_,
-            saveat=SaveAt(**diffeqsolve_quants["saveat"]),
-        )
-
-        return solver_result, _state_, _args_
-
-    return _run_
-
-
-def init_state(cfg: Dict, td=None) -> tuple[Dict, Dict]:
-    """
-    This function initializes the state
-
-    :param cfg:
-    :return:
-    """
-    f, ne_prof = _initialize_total_distribution_(cfg, cfg["grid"])
-
-    state = {"f0": f}
-    for il in range(1, cfg["grid"]["nl"] + 1):
-        for im in range(0, il + 1):
-            state[f"f{il}{im}"] = jnp.zeros_like(f)
-
-    for field in ["e", "b"]:
-        state[field] = jnp.zeros(cfg["grid"]["nx"])
-
-    state["Z"] = jnp.ones(cfg["grid"]["nx"])
-    state["ni"] = ne_prof / cfg["units"]["Z"]
-
-    return state, {"drivers": cfg["drivers"]}
-
-
-def get_diffeqsolve_quants(cfg: Dict) -> Dict:
-    """
-    This function returns the quantities for the diffeqsolve function
-
-    :param cfg:
-    :return: Dict of ODETerm, Stepper, SaveAt
-    """
-    cfg = get_save_quantities(cfg)
-    return dict(
-        terms=ODETerm(OSHUN1D(cfg)),
-        solver=Stepper(),
-        saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in cfg["save"].items()}),
-    )
-
-
-def apply_models(models, state, args, cfg):
-    """
-    This function applies the models to the state and args. This is a dummy function and needs more thought
-
-    :param models: List of Dict
-    :param state: Dict
-    :param args: Dict
-    :param cfg: Dict
-    :return: Dict, Dict
-    """
-
-    return state, args

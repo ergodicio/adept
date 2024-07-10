@@ -1,4 +1,4 @@
-from typing import Dict, Any
+from typing import Dict
 
 import jax
 from jax import numpy as jnp
@@ -6,16 +6,7 @@ import numpy as np
 import equinox as eqx
 
 from adept.theory.electrostatic import get_complex_frequency_table
-
-
-def get_envelope(
-    p_wL: float, p_wR: float, p_L: float, p_R: float, ax: Any[float, np.ndarray]
-) -> Any[float, np.ndarray]:
-    """
-    Returns a 1D envelope function or value
-
-    """
-    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
+from adept import get_envelope
 
 
 class WaveSolver(eqx.Module):

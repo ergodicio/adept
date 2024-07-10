@@ -6,8 +6,8 @@ import numpy as np
 import jax.numpy as jnp
 from astropy.units import Quantity as _Q
 
+from adept import Stepper
 from adept.lpse2d.core.integrator import SplitStep
-from adept.vlasov1d.integrator import Stepper
 
 
 def get_save_quantities(cfg: Dict) -> Dict:

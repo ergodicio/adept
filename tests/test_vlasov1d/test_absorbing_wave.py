@@ -9,7 +9,7 @@ from jax import jit
 from diffrax import ODETerm, diffeqsolve
 
 from adept.vlasov1d.pushers.field import Driver, WaveSolver
-from adept.vlasov1d import integrator
+from adept.vlasov1d import vector_field
 
 
 class VectorField(eqx.Module):
@@ -67,7 +67,7 @@ def test_absorbing_boundaries():
     def _run_(y, args):
         return diffeqsolve(
             terms=ODETerm(VectorField(c_light, dx, dt, xax)),
-            solver=integrator.Stepper(),
+            solver=vector_field.Stepper(),
             t0=0.0,
             t1=tmax,
             max_steps=nt + 5,

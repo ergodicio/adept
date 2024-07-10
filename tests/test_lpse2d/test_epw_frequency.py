@@ -28,7 +28,9 @@ def _real_part_(kinetic):
 
     cfg["terms"]["epw"]["kinetic real part"] = kinetic
 
-    with mlflow.start_run(run_name=f'oscillation-{round(cfg["drivers"]["E2"]["k0"], 4)}') as mlflow_run:
+    with mlflow.start_run(
+        run_name=f'oscillation-{round(cfg["drivers"]["E2"]["k0"], 4)}', log_system_metrics=True
+    ) as mlflow_run:
         result, datasets = run(cfg)
 
         kflds, flds = datasets
