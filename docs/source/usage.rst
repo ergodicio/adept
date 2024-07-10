@@ -30,7 +30,7 @@ The most common and obvious use case for ADEPT is a simple forward simulation th
 
 .. code-block:: bash
     
-    (venv) $ python3 run.py --config configs/vlasov-1d/epw
+    (venv) $ python3 run.py --cfg configs/vlasov-1d/epw
 
 The input parameters are provided in `configs/vlasov-1d/epw.yaml`.  The output will be saved and made accessible via MLFlow. To access it, 
 
