@@ -21,11 +21,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     exo = ergoExo()
+
     if args.run_id is None:
         with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml", "r") as fi:
             cfg = yaml.safe_load(fi)
+        modules = exo.setup(cfg=cfg)
+        sol, post_out, run_id = exo(modules)
 
-        _, _, _ = exo(cfg)
     else:
         exo.run_job(args.run_id, nested=None)
         run_id = args.run_id

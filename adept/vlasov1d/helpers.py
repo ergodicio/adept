@@ -158,7 +158,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 baseline = species_params["baseline"]
                 amp = species_params["amplitude"]
                 kk = species_params["wavenumber"]
-                nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
+                nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg_grid["x"]))
             else:
                 raise NotImplementedError
 

@@ -3,7 +3,7 @@ from functools import partial
 
 import diffrax
 import jax
-from jax import numpy as jnp
+from jax import numpy as jnp, Array
 import equinox as eqx
 import numpy as np
 from adept.theory import electrostatic
@@ -209,6 +209,7 @@ class SpectralPotential:
         self.low_pass_filter = self.low_pass_filter * zero_mask
         self.nx = cfg["grid"]["nx"]
         self.ny = cfg["grid"]["ny"]
+        self.driver = Driver(cfg)
         # self.step_tpd = partial(
         #     diffrax.diffeqsolve,
         #     terms=diffrax.ODETerm(self.tpd),
@@ -302,6 +303,9 @@ class SpectralPotential:
         random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
         return jnp.fft.ifft2(random_amps * jnp.exp(1j * random_phases) * self.low_pass_filter)
 
+    def drive_epw(self, t) -> Array:
+        return self.epw_driver(t)
+
     def __call__(self, t, y, args):
         phi = y["epw"]
         E0 = y["E0"]
@@ -327,130 +331,3 @@ class SpectralPotential:
             phi += self.dt * self.get_noise()
 
         return phi
-
-
-class FDChargeDensity:
-    def __init__(self, cfg):
-        self.cfg = cfg
-        self.wp0 = cfg["units"]["derived"]["wp0"]
-        self.envelope_density = cfg["units"]["envelope density"]
-        self.kx = cfg["grid"]["kx"]
-        self.ky = cfg["grid"]["ky"]
-        self.dx = cfg["grid"]["dx_norm"]
-        self.dy = cfg["grid"]["dy_norm"]
-        self.e = cfg["units"]["derived"]["e"]
-        self.me = cfg["units"]["derived"]["me"]
-        self.w0 = cfg["units"]["derived"]["w0"]
-        self.dt = cfg["grid"]["dt"]
-
-    def calc_fields_from_divE(self, divE):
-        """
-        Calculates ex(x, y) and ey(x, y) from divE.
-
-        Args:
-            divE (jnp.array): divE(x, y)
-
-        Returns:
-            ex_ey (jnp.array): Vector field e(x, y, dir)
-        """
-        phi = jnp.fft.fft2(divE)
-
-        ex_k = self.cfg["grid"]["kx"][:, None] * phi
-        ey_k = self.cfg["grid"]["ky"][None, :] * phi
-        return -1j * jnp.concatenate([jnp.fft.ifft2(ex_k)[..., None], jnp.fft.ifft2(ey_k)[..., None]], axis=-1)
-
-    def calc_divE_from_fields(self, ex_ey):
-        ex_k = jnp.fft.fft2(ex_ey[..., 0])
-        ey_k = jnp.fft.fft2(ex_ey[..., 1])
-        divE_k = 1j * (self.kx[:, None] * ex_k + self.ky[None, :] * ey_k)
-        return jnp.fft.ifft2(divE_k)
-
-    def linear_propagate(self, divE, vte_sq, background_density):
-        padded_divE = jnp.pad(divE, ((1, 1), (1, 1)), mode="wrap")
-        d_divE = (
-            1.5
-            * 1j
-            * vte_sq[0, 0]
-            / self.wp0
-            * (
-                (padded_divE[2:, 1:-1] - 2 * padded_divE[1:-1, 1:-1] + padded_divE[:-2, 1:-1]) / self.dx**2
-                + (padded_divE[1:-1, 2:] - 2 * padded_divE[1:-1, 1:-1] + padded_divE[1:-1, :-2]) / self.dy**2
-            )
-        )
-        d_divE -= 0.5 * 1j * self.wp0 * (background_density / self.envelope_density - 1) * divE
-        return d_divE
-
-    def tpd(self, t, E0, divE, ey):
-        E0_Ey = E0[..., 1] * jnp.conj(ey)
-        E0_rho = E0[..., 1] * jnp.conj(divE)
-        padded_E0_rho = jnp.pad(E0_rho, ((1, 1), (1, 1)), mode="wrap")
-        padded_E0_Ey = jnp.pad(E0_Ey, ((1, 1), (1, 1)), mode="wrap")
-        tpd = (
-            -1j
-            * self.e
-            / (8 * self.wp0 * self.me)
-            * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t)
-            * (
-                (padded_E0_Ey[2:, 1:-1] - padded_E0_Ey[1:-1, 1:-1] + padded_E0_Ey[:-2, 1:-1]) / self.dx**2.0
-                + (padded_E0_Ey[1:-1, 2:] - padded_E0_Ey[1:-1, 1:-1] + padded_E0_Ey[1:-1, :-2]) / self.dy**2.0
-                - (padded_E0_rho[1:-1, 2:] - padded_E0_rho[1:-1, :-2]) / self.dy / 2.0
-            )
-        )
-
-        return tpd
-
-    def density_gradient(self, ex, background_density):
-        grad_n = jnp.gradient(background_density, self.dx, axis=0) / self.envelope_density
-        return -0.5 * 1j * self.wp0 * grad_n * ex
-
-    def single_step(self, t, y, args) -> jnp.array:
-        """
-        Steps the epw forward in time in the form of a divE equation
-        This is a finite-difference based approach.
-        All of this mostly happens in real space.
-
-        Args:
-            t (float): time
-            y (jnp.array): divE(x,y)
-            args (Dict[str, jnp.array]): additional arguments
-
-        Returns:
-            divE (jnp.array]: updated divE(x,y)
-
-        """
-
-        # calculate ex and ey from divE
-        ex_ey = self.calc_fields_from_divE(y)
-
-        # iaw source
-
-        # apply boundary damping to e fields
-        # ex_ey *= self.cfg["grid"]["absorbing_boundaries"][..., None]
-
-        # convert fields back to divE
-        # divE = self.calc_divE_from_fields(ex_ey)
-
-        divE = y
-        # charge density linear update
-        ddivE = self.linear_propagate(divE=divE, vte_sq=args["vte_sq"], background_density=args["background_density"])
-
-        # SRS source term
-
-        # TPD source term
-        if self.cfg["terms"]["epw"]["source"]["tpd"]:
-            ddivE += self.tpd(t=t, E0=args["E0"], divE=divE, ey=ex_ey[..., 1])
-
-        # density gradient term
-        if self.cfg["terms"]["epw"]["density_gradient"]:
-            ddivE += self.density_gradient(ex_ey[..., 0], background_density=args["background_density"])
-
-        return ddivE
-
-    def __call__(self, t, y, args):
-        args = {"E0": y["E0"], "background_density": y["background_density"], "vte_sq": y["vte_sq"]}
-        divE = y["div_E"]
-
-        divE += self.dt * jnp.real(self.single_step(t, divE, args))
-        divE += 1j * self.dt * jnp.imag(self.single_step(t + self.dt * 0.5, divE, args))
-
-        return divE

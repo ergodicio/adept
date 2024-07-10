@@ -4,6 +4,8 @@ from jax import numpy as jnp, Array
 import equinox as eqx
 import numpy as np
 
+from adept.lpse2d.modules.nn import driver as driver_nn
+
 
 class BandwidthModule(eqx.Module):
     num_colors: float
@@ -44,13 +46,18 @@ class BandwidthModule(eqx.Module):
                 self.amplitudes = np.sqrt(amplitudes)
             elif self.amplitude_shape == "learned":
                 if "ml" in self.amplitude_shape:
-                    self.model = InitModel()
+                    if "gen" in self.amplitude_shape:
+                        self.model = driver_nn.GenerativeDriver(**cfg["modules"]["bandwidth"]["model"]["params"])
+                    else:
+                        raise NotImplementedError("This ")
                 else:
                     self.amplitudes = jnp.ones_like(self.delta_omega)
             else:
                 raise NotImplementedError(
                     f"Amplitude shape - {self.amplitude_shape} - not implemented. If you want monochromatic light, set num_colors to 1."
                 )
+
+        self.amplitudes /= jnp.sum(self.amplitudes)
 
     # elif self.cfg["drivers"]["E0"]["amplitude_shape"] == "file":
     #     import tempfile
@@ -80,10 +87,14 @@ class BandwidthModule(eqx.Module):
 
     # return drivers
 
-    def __call__(self, state, args):
-        if self.amplitude_shape == "learned":
-            if "ml" in self.amplitude_shape:
-                amp = self.model()
+    def __call__(self, state: Dict, args: Dict) -> tuple:
+        if "learned" in self.amplitude_shape.casefold():
+            if "ml" in self.amplitude_shape.casefold():
+                if "gen" in self.amplitude_shape.casefold():
+                    inputs = None
+                else:
+                    raise NotImplementedError(f"The -- {self.amplitude_shape} -- model type has not been implemented")
+                amp = self.model(inputs)
         else:
             amp = self.amplitudes
 

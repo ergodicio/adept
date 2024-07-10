@@ -18,7 +18,7 @@ from adept.lpse2d import nn
 from adept import get_envelope
 
 
-def write_units(cfg: Dict, td: str) -> Dict:
+def write_units(cfg: Dict) -> Dict:
     """
     Write the units to a file
 
@@ -127,10 +127,7 @@ def write_units(cfg: Dict, td: str) -> Dict:
         "fieldScale": fieldScale,
     }
 
-    with open(os.path.join(td, "units.yaml"), "w") as fi:
-        yaml.dump({k: str(v) for k, v in cfg["units"]["derived"].items()}, fi)
-
-    return cfg
+    return {k: str(v) for k, v in cfg["units"]["derived"].items()}
 
 
 def calc_threshold_intensity(Te: float, Ln: float, w0: float) -> float:
