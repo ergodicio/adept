@@ -51,9 +51,9 @@ class SplitStep:
 
         return y, new_y
 
-    def light_split_step(self, t, y, args):
+    def light_split_step(self, t, y, driver_args):
         t_coeff = get_envelope(0.03, 0.03, 0.1, 100.0, t)
-        y["E0"] = self.boundary_envelope[..., None] * t_coeff * self.light.laser_update(t, y, args["E0"])
+        y["E0"] = self.boundary_envelope[..., None] * t_coeff * self.light.laser_update(t, y, driver_args["E0"])
 
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
@@ -76,7 +76,7 @@ class SplitStep:
 
         return jnp.fft.ifft2(jnp.fft.fft2(epw) * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt))
 
-    def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
+    def __call__(self, t, y, args):
         # unpack y into complex128
         new_y = self.unpack_y(y)
 

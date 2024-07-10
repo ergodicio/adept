@@ -1,23 +1,31 @@
 import os
-from typing import Dict, Callable, Tuple, List
+from typing import Dict, Tuple
 from collections import defaultdict
+from functools import partial
 
 import matplotlib.pyplot as plt
 import yaml, mlflow
-from jax import numpy as jnp
+from jax import Array, numpy as jnp
 import numpy as np
 import equinox as eqx
-
 import xarray as xr
+import interpax
+
 from astropy.units import Quantity as _Q
 
 from adept.lpse2d import nn
-from adept.lpse2d.run_fns import get_run_fn
 
-from adept.tf1d.pushers import get_envelope
+from adept import get_envelope
 
 
-def write_units(cfg, td):
+def write_units(cfg: Dict) -> Dict:
+    """
+    Write the units to a file
+
+    :param cfg:
+    :param td:
+    :return: cfg
+    """
     timeScale = 1e-12  # cgs (ps)
     spatialScale = 1e-4  # cgs (um)
     velocityScale = spatialScale / timeScale
@@ -64,21 +72,19 @@ def write_units(cfg, td):
     Te_eV = Te * 1000
 
     coulomb_log = (
-        23.0 - jnp.log(jnp.sqrt(ne_cc) * Z / Te_eV**1.5)
-        if Te_eV < 10 * Z**2
-        else 24.0 - jnp.log(jnp.sqrt(ne_cc) / Te_eV)
+        23.0 - np.log(np.sqrt(ne_cc) * Z / Te_eV**1.5) if Te_eV < 10 * Z**2 else 24.0 - np.log(np.sqrt(ne_cc) / Te_eV)
     )
     fract = 1
     Zbar = Z * fract
     ni = fract * ne_cc / Zbar
 
-    # logLambda_ei = jnp.zeros(len(Z))
+    # logLambda_ei = np.zeros(len(Z))
     # for iZ in range(len(Z)):
     if cfg["terms"]["epw"]["damping"]["collisions"]:
         if Te_eV < 0.01 * Z**2:
-            logLambda_ei = 22.8487 - jnp.log(jnp.sqrt(ne_cc) * Z / (Te * 1000) ** (3 / 2))
+            logLambda_ei = 22.8487 - np.log(np.sqrt(ne_cc) * Z / (Te * 1000) ** (3 / 2))
         elif Te_eV > 0.01 * Z**2:
-            logLambda_ei = 24 - jnp.log(jnp.sqrt(ne_cc) / (Te * 1000))
+            logLambda_ei = 24 - np.log(np.sqrt(ne_cc) / (Te * 1000))
 
         e_sq = 510.9896 * 2.8179e-13
         this_me = 510.9896 / 2.99792458e10**2
@@ -121,13 +127,10 @@ def write_units(cfg, td):
         "fieldScale": fieldScale,
     }
 
-    with open(os.path.join(td, "units.yaml"), "w") as fi:
-        yaml.dump({k: str(v) for k, v in cfg["units"]["derived"].items()}, fi)
-
-    return cfg
+    return {k: str(v) for k, v in cfg["units"]["derived"].items()}
 
 
-def calc_threshold_intensity(Te, Ln, w0):
+def calc_threshold_intensity(Te: float, Ln: float, w0: float) -> float:
     """
     Calculate the TPD threshold intensity
 
@@ -223,43 +226,43 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     cfg_grid = {
         **cfg_grid,
         **{
-            "x": jnp.linspace(
+            "x": np.linspace(
                 cfg_grid["xmin"] + cfg_grid["dx"] / 2,
                 cfg_grid["xmax"] - cfg_grid["dx"] / 2,
                 cfg_grid["nx"],
             ),
-            "y": jnp.linspace(
+            "y": np.linspace(
                 cfg_grid["ymin"] + cfg_grid["dy"] / 2,
                 cfg_grid["ymax"] - cfg_grid["dy"] / 2,
                 cfg_grid["ny"],
             ),
-            "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
-            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
-            "ky": jnp.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
-            "kyr": jnp.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
+            "t": np.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
+            "kx": np.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
+            "kxr": np.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
+            "ky": np.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
+            "kyr": np.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
         },
     }
 
     one_over_kx = np.zeros_like(cfg_grid["kx"])
     one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
-    cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
+    cfg_grid["one_over_kx"] = np.array(one_over_kx)
 
     one_over_kxr = np.zeros_like(cfg_grid["kxr"])
     one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
-    cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
+    cfg_grid["one_over_kxr"] = np.array(one_over_kxr)
 
     one_over_ky = np.zeros_like(cfg_grid["ky"])
     one_over_ky[1:] = 1.0 / cfg_grid["ky"][1:]
-    cfg_grid["one_over_ky"] = jnp.array(one_over_ky)
+    cfg_grid["one_over_ky"] = np.array(one_over_ky)
 
     one_over_kyr = np.zeros_like(cfg_grid["kyr"])
     one_over_kyr[1:] = 1.0 / cfg_grid["kyr"][1:]
-    cfg_grid["one_over_kyr"] = jnp.array(one_over_kyr)
+    cfg_grid["one_over_kyr"] = np.array(one_over_kyr)
 
     one_over_ksq = np.array(1.0 / (cfg_grid["kx"][:, None] ** 2.0 + cfg_grid["ky"][None, :] ** 2.0))
     one_over_ksq[0, 0] = 0.0
-    cfg_grid["one_over_ksq"] = jnp.array(one_over_ksq)
+    cfg_grid["one_over_ksq"] = np.array(one_over_ksq)
 
     boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
     rise = boundary_width / 5
@@ -324,7 +327,7 @@ def init_state(cfg: Dict, td=None) -> Tuple[Dict, Dict]:
         raise NotImplementedError
 
     random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
-    phi_noise = 1 * jnp.exp(1j * random_phases)
+    phi_noise = 1 * np.exp(1j * random_phases)
     epw = 0 * phi_noise
 
     background_density = get_density_profile(cfg)
@@ -337,6 +340,13 @@ def init_state(cfg: Dict, td=None) -> Tuple[Dict, Dict]:
 
 
 def assemble_bandwidth(cfg: Dict) -> Dict:
+    """
+    Assemble the amplitudes, initial phases, and frequency shifts associated with each color
+
+    :param cfg: Dict
+    :return: drivers: Dict
+
+    """
     drivers = {"E0": {}}
     num_colors = cfg["drivers"]["E0"]["num_colors"]
 
@@ -399,7 +409,14 @@ def assemble_bandwidth(cfg: Dict) -> Dict:
     return drivers
 
 
-def get_density_profile(cfg: Dict):
+def get_density_profile(cfg: Dict) -> Array:
+    """
+    Helper function for initializing the density profile
+
+    It can be uniform, linear, exponential, tanh, or sine
+
+    :param cfg: Dict
+    """
     if cfg["density"]["basis"] == "uniform":
         nprof = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
@@ -441,7 +458,7 @@ def get_density_profile(cfg: Dict):
         baseline = cfg["density"]["baseline"]
         amp = cfg["density"]["amplitude"]
         kk = cfg["density"]["wavenumber"]
-        nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg["grid"]["x"]))
+        nprof = baseline * (1.0 + amp * np.sin(kk * cfg["grid"]["x"]))
     else:
         raise NotImplementedError
 
@@ -552,16 +569,16 @@ def plot_kt(kfields, td):
         # kx = kfields.coords["kx"].data
 
 
-def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
+def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
 
-    if isinstance(sim_out, tuple):
-        val, actual_sim_out = sim_out[0]
-        grad = sim_out[1]
-        result = actual_sim_out["solver_result"]
-        used_driver = actual_sim_out["args"]["drivers"]
-    else:
-        result = sim_out["solver_result"]
-        used_driver = sim_out["args"]["drivers"]
+    # if isinstance(sim_out, tuple):
+    #     val, actual_sim_out = sim_out[0]
+    #     grad = sim_out[1]
+    #     result = actual_sim_out["solver_result"]
+    #     used_driver = actual_sim_out["args"]["drivers"]
+    # # else:
+    # result = sim_out["solver_result"]
+    used_driver = args["drivers"]
     import pickle
 
     with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
@@ -600,14 +617,14 @@ def post_process(sim_out, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Data
     )
     metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
 
-    if isinstance(sim_out, tuple):
-        if "loss_dict" in sim_out[0][1]:
-            for k, v in sim_out[0][1]["loss_dict"].items():
-                metrics[k] = float(v)
+    # if isinstance(sim_out, tuple):
+    #     if "loss_dict" in sim_out[0][1]:
+    #         for k, v in sim_out[0][1]["loss_dict"].items():
+    #             metrics[k] = float(v)
 
-    mlflow.log_metrics(metrics)
+    # mlflow.log_metrics(metrics)
 
-    return kfields, fields
+    return {"k": kfields, "x": fields, "metrics": metrics}
 
 
 def make_xarrays(cfg, this_t, state, td):
@@ -687,3 +704,79 @@ def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
                 raise NotImplementedError
 
     return models
+
+
+def get_save_quantities(cfg: Dict) -> Dict:
+    """
+    This function updates the config with the quantities required for the diagnostics and saving routines
+
+    :param cfg:
+    :return:
+    """
+
+    # cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
+    tmin = _Q(cfg["save"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    tmax = _Q(cfg["save"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    dt = _Q(cfg["save"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    nt = int((tmax - tmin) / dt) + 1
+
+    cfg["save"]["t"]["dt"] = dt
+    cfg["save"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
+
+    if "x" in cfg["save"]:
+        xmin = cfg["grid"]["xmin"]
+        xmax = cfg["grid"]["xmax"]
+        dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
+        nx = int((xmax - xmin) / dx)
+        cfg["save"]["x"]["dx"] = dx
+        cfg["save"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
+        cfg["save"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
+
+        if "y" in cfg["save"]:
+            ymin = cfg["grid"]["ymin"]
+            ymax = cfg["grid"]["ymax"]
+            dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
+            ny = int((ymax - ymin) / dy)
+            cfg["save"]["y"]["dy"] = dy
+            cfg["save"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
+            cfg["save"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
+        else:
+            raise NotImplementedError("Must specify y in save")
+
+        xq, yq = jnp.meshgrid(cfg["save"]["x"]["ax"], cfg["save"]["y"]["ax"], indexing="ij")
+
+        interpolator = partial(
+            interpax.interp2d,
+            xq=jnp.reshape(xq, (nx * ny), order="F"),
+            yq=jnp.reshape(yq, (nx * ny), order="F"),
+            x=cfg["grid"]["x"],
+            y=cfg["grid"]["y"],
+            method="linear",
+        )
+
+        def save_func(t, y, args):
+            save_y = {}
+            for k, v in y.items():
+                if k == "E0":
+                    cmplx_fld = v.view(jnp.complex128)
+                    save_y[k] = jnp.concatenate(
+                        [
+                            jnp.reshape(interpolator(f=cmplx_fld[..., ivec]), (nx, ny), order="F")[..., None]
+                            for ivec in range(2)
+                        ],
+                        axis=-1,
+                    ).view(jnp.float64)
+                elif k == "epw":
+                    cmplx_fld = v.view(jnp.complex128)
+                    save_y[k] = jnp.reshape(interpolator(f=cmplx_fld), (nx, ny), order="F").view(jnp.float64)
+                else:
+                    save_y[k] = jnp.reshape(interpolator(f=v), (nx, ny), order="F")
+
+            return save_y
+
+    else:
+        save_func = lambda t, y, args: y
+
+    cfg["save"]["func"] = save_func
+
+    return cfg

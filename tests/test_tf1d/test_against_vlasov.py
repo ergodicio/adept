@@ -8,11 +8,12 @@ from jax import config
 config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
-import mlflow
 import xarray as xr
 
 from adept.theory import electrostatic
-from utils.runner import run
+from adept import ergoExo
+
+# from utils.runner import run
 
 
 def _modify_defaults_(defaults):
@@ -41,13 +42,10 @@ def test_single_resonance():
     # modify config
     mod_defaults, actual_damping_rate = _modify_defaults_(defaults)
 
-    # run
-    mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
-    # modify config
-    with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-        result, datasets = run(mod_defaults)
-
-    result, state, args = result
+    exo = ergoExo()
+    exo.setup(mod_defaults)
+    result, datasets, run_id = exo(None)
+    result = result["solver result"]
     vds = xr.open_dataset("tests/test_tf1d/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")
 
     nk1_fluid = result.ys["kx"]["electron"]["n"]["mag"][:, 1]

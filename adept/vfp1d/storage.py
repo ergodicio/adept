@@ -2,11 +2,11 @@ from typing import Dict, Tuple, Callable
 import os
 
 from matplotlib import pyplot as plt
+from diffrax import Solution
 from jax import numpy as jnp
 import numpy as np
 import xarray as xr
 from time import time
-import mlflow, xarray
 
 
 def calc_EH(this_Z: int, this_wt: float) -> float:
@@ -196,7 +196,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     return f_store
 
 
-def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
+def post_process(soln: Solution, cfg: Dict, td: str, args: Dict = None) -> Dict:
     """
     Post-processing function
 
@@ -208,8 +208,7 @@ def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
 
     """
 
-    result, state, args = result
-    t0 = time()
+    # t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
@@ -221,9 +220,9 @@ def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
     os.makedirs(binary_dir)
 
     # merge
-    for k in result.ys.keys():
+    for k in soln.ys.keys():
         if k.startswith("field"):
-            fields_xr = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
+            fields_xr = store_fields(cfg, binary_dir, soln.ys[k], soln.ts[k], k)
             t_skip = int(fields_xr.coords["t (ps)"].data.size // 8)
             t_skip = t_skip if t_skip > 1 else 1
             tslice = slice(0, -1, t_skip)
@@ -245,9 +244,9 @@ def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
 
         elif k.startswith("default"):
 
-            tax = result.ts["default"] * cfg["units"]["derived"]["tp0"].to("ps").value
-            scalars_xr = xarray.Dataset(
-                {k: xarray.DataArray(v, coords=(("t (ps)", tax),)) for k, v in result.ys["default"].items()}
+            tax = soln.ts["default"] * cfg["units"]["derived"]["tp0"].to("ps").value
+            scalars_xr = xr.Dataset(
+                {k: xr.DataArray(v, coords=(("t (ps)", tax),)) for k, v in soln.ys["default"].items()}
             )
             scalars_xr.to_netcdf(os.path.join(binary_dir, f"scalars-t={round(tax[-1], 4)}.nc"))
 
@@ -261,7 +260,7 @@ def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
                 fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
                 plt.close()
 
-    f_xr = store_f(cfg, result.ts, td, result.ys)
+    f_xr = store_f(cfg, soln.ts, td, soln.ys)
 
     t_skip = int(f_xr.coords["t (ps)"].data.size // 4)
     t_skip = t_skip if t_skip > 1 else 1
@@ -272,11 +271,12 @@ def post_process(result: Tuple, cfg: Dict, td: str, args: Dict = None) -> Dict:
         plt.savefig(os.path.join(td, "plots", "dist", f"{k}.png"))
         plt.close()
 
-    mlflow.log_metrics({"kappa": round(np.amax(fields_xr["fields-kappa_c"][-1].data), 4)})
-    mlflow.log_metrics({"kappa_eh": round(calc_EH(cfg["units"]["Z"], 0.0), 4)})
-    mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
+    metrics = {
+        "kappa": round(np.amax(fields_xr["fields-kappa_c"][-1].data), 4),
+        "kappa_eh": round(calc_EH(cfg["units"]["Z"], 0.0), 4),
+    }
 
-    return {"fields": fields_xr, "dists": f_xr}
+    return {"fields": fields_xr, "dists": f_xr, "metrics": metrics}
 
 
 def get_field_save_func(cfg: Dict, k: str) -> Callable:
