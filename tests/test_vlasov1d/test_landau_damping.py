@@ -58,12 +58,7 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
 
         actual_damping_rate = np.imag(root)
         actual_resonance = np.real(root)
-        # run
-        # mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
-        # # modify config
-        # with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
-        #     result, datasets = run(mod_defaults)
-        #     result, _state_, _args_ = result
+
         exo = ergoExo()
         exo.setup(mod_defaults)
         result, datasets, run_id = exo(None)
@@ -81,12 +76,6 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
                 f"measured: {np.round(measured_damping_rate, 5)}, "
                 f"actual: {np.round(actual_damping_rate, 5)}, "
             )
-            # mlflow.log_metrics(
-            #     {
-            #         "actual damping rate": float(actual_damping_rate),
-            #         "measured damping rate": float(measured_damping_rate),
-            #     }
-            # )
 
             np.testing.assert_almost_equal(measured_damping_rate, actual_damping_rate, decimal=2)
         else:
@@ -98,12 +87,6 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
                 f"desired: {np.round(actual_resonance, 5)}, "
             )
             measured_resonance = np.mean(freq[frslc])
-            # mlflow.log_metrics(
-            #     {
-            #         "actual frequency": float(actual_resonance),
-            #         "measured frequency": float(measured_resonance),
-            #     }
-            # )
             np.testing.assert_almost_equal(measured_resonance, actual_resonance, decimal=2)
 
 

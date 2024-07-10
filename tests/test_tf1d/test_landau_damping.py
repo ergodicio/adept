@@ -47,7 +47,7 @@ def test_single_resonance():
     result, datasets, run_id = exo(None)
     result = result["solver result"]
 
-    with mlflow.start_run(run_id=run_id) as mlflow_run:
+    with mlflow.start_run(run_id=run_id, log_system_metrics=True) as mlflow_run:
         kx = (
             np.fft.fftfreq(
                 mod_defaults["save"]["x"]["nx"],

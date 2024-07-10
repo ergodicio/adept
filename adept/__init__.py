@@ -200,7 +200,9 @@ class ergoExo:
 
         assert self.ran_setup, "You must run self.setup() before running the simulation"
 
-        with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
+        with mlflow.start_run(
+            run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
+        ) as mlflow_run:
             t0 = time.time()
             run_output = self.adept_module(modules, None)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
@@ -227,7 +229,9 @@ class ergoExo:
         Returns: val - The value of the simulation, grad - The gradient of the simulation with respect to the parameters, and the simulation output
         """
         assert self.ran_setup, "You must run self.setup() before running the simulation"
-        with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
+        with mlflow.start_run(
+            run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
+        ) as mlflow_run:
             t0 = time.time()
             (val, run_output), grad = self.adept_module.vg(modules, None)
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)

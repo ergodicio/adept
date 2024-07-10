@@ -66,7 +66,7 @@ def load_cfg(rand_k0, gamma, adjoint):
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
 def test_resonance_search(gamma, adjoint):
     mlflow.set_experiment("tf1d-resonance-search")
-    with mlflow.start_run(run_name="res-search-opt") as mlflow_run:
+    with mlflow.start_run(run_name="res-search-opt", log_system_metrics=True) as mlflow_run:
         # sim_k0, actual_w0 = init_w0(gamma, adjoint)
         rng = np.random.default_rng(420)
         sim_k0 = rng.uniform(0.26, 0.4)

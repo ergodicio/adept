@@ -47,7 +47,7 @@ def test_single_resonance(real_or_imag):
     # run
     mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
     # modify config
-    with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"]) as mlflow_run:
+    with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"], log_system_metrics=True) as mlflow_run:
         result, datasets = run(mod_defaults)
         efs = result.ys["fields"]["ex"]
         ek1 = 2.0 / mod_defaults["grid"]["nx"] * np.fft.fft2(efs, axes=(1, 2))[:, 1, 0]

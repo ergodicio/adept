@@ -36,7 +36,7 @@ def get_helpers(solver):
 
 
 def run_job(run_id, nested):
-    with mlflow.start_run(run_id=run_id, nested=nested) as mlflow_run:
+    with mlflow.start_run(run_id=run_id, nested=nested, log_system_metrics=True) as mlflow_run:
         with tempfile.TemporaryDirectory(dir=BASE_TEMPDIR) as temp_path:
             cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
         run(cfg)
