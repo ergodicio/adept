@@ -13,10 +13,6 @@ from adept.tf1d.storage import save_arrays, plot_xrs
 class BaseTwoFluid1D(ADEPTModule):
     def __init__(self, cfg: Dict) -> None:
         super().__init__(cfg)
-        self.state = None
-        self.args = None
-        self.diffeqsolve_quants = None
-        self.time_quantities = None
         self.ureg = pint.UnitRegistry()
 
     def post_process(self, solver_result: Dict, td: str):

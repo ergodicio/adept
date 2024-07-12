@@ -10,14 +10,8 @@ First install pytest via
     (venv) $ pip install pytest
     (venv) $ pytest
 
-.. code-block:: console
-
-    (adept) $ pip install pytest
-    (adept) $ pytest
-
 This will run all the tests, which will likely include relatively expensive 2D2V Vlasov simulations.
 If you only want to see example usage, you can choose particular tests by using the `-k` flag.
-
 
 The package is tested against
 

@@ -4,6 +4,7 @@ import os, time, tempfile, yaml, pickle
 
 
 from diffrax import Solution, Euler, RESULTS
+from equinox import Module
 import mlflow, jax, numpy as np
 from jax import numpy as jnp
 
@@ -31,7 +32,8 @@ class Stepper(Euler):
 
 class ADEPTModule:
     """
-    This class is the base class for all the ADEPT modules. It defines the interface that all the ADEPT modules must implement.
+    This class is the base class for all the ADEPT modules. It defines the interface that all the ADEPT modules must implement so that
+    the `ergoExo` class can call them in the right order.
 
     Args:
         cfg: The configuration dictionary
@@ -40,26 +42,87 @@ class ADEPTModule:
 
     def __init__(self, cfg) -> None:
         self.cfg = cfg
+        self.state = None
+        self.args = None
+        self.diffeqsolve_quants = None
+        self.time_quantities = None
 
-    def post_process(self, run_output: Dict, td: str):
-        pass
+    def post_process(self, run_output: Dict, td: str) -> Dict:
+        """
+        This function is responsible for post-processing the results of the simulation. It is called after the simulation is run and the results are available.
 
-    def write_units(self) -> Dict:
+        Args:
+            run_output (diffrax.Solution): The output of the simulation
+            td (str): The temporary directory where the results are stored
+
+        Returns:
+            A dictionary of the post-processed results. This can include the metrics, the ``xarray`` datasets, and any other information that is relevant to the simulation
+
+        """
+
         return {}
 
-    def init_diffeqsolve(self):
+    def write_units(self) -> Dict:
+        """
+        This function is responsible for writing the units, normalizing constants, and other important physical quantities to a dictionary.
+        This dictionary is then dumped to a yaml file and logged to mlflow by the ``ergoExo`` class.
+
+        Returns:
+            A dictionary of the units
+
+        """
+        return {}
+
+    def init_diffeqsolve(self) -> Dict:
+        """
+        This function is responsible for initializing the differential equation solver ``diffrax.diffeqsolve``. It sets up the time quantities, the solver quantities, and the save function.
+
+        Returns:
+            A dictionary of the differential equation solver quantities
+
+        """
         pass
 
-    def get_derived_quantities(self):
+    def get_derived_quantities(self) -> Dict:
+        """
+        This function is responsible for getting the derived quantities from the configuration dictionary. This is needed for running the simulation. These quantities do get logged to mlflow
+        by the ``ergoExo`` class.
+
+        Returns:
+            An updated configuration dictionary
+
+        """
         pass
 
     def get_solver_quantities(self):
+        """
+        This function is responsible for getting the solver quantities from the configuration dictionary. This is needed for running the simulation. These quantities do NOT get logged
+        to mlflow because they are often arrays
+
+        Returns:
+            An updated configuration dictionary
+
+        """
         pass
 
     def get_save_func(self):
+        """
+        This function is responsible for getting the save function for the differential equation solver. This is needed for running the simulation.
+        This function lets you subsample your simulation state so as to not save the entire thing at every timestep.
+
+        This dictionary is set as a class attribute for the ``ADEPTModule`` and are used in the ``__call__`` function
+
+        """
         pass
 
-    def init_state_and_args(self) -> Dict:
+    def init_state_and_args(self):
+        """
+        This function initializes the state and the arguments that are required to run the simulation. The state is the initial conditions of the simulation and
+        the arguments are often the drivers
+
+        These are set as class attributes for the ``ADEPTModule`` and are used in the ``__call__`` function
+
+        """
         return {}
 
     def init_modules(self) -> Dict:
@@ -81,7 +144,33 @@ class ergoExo:
     This class is the main interface for running a simulation. It is responsible for calling all the ADEPT modules in the right order
     and logging parameters and results to mlflow.
 
-    This helps decouple the numerical solvers from the experiment management
+    This approach helps decouple the numerical solvers from the experiment management and facilitates the addition of new solvers
+
+    Typical usage is as follows
+
+    .. code-block:: python
+
+        exoskeleton = ergoExo()
+        modules = exoskeleton.setup(cfg)
+        run_output, post_processing_output, mlflow_run_id = exoskeleton(modules, args=None)
+
+
+    If you are resuming an existing mlflow run, you can do the following
+
+    .. code-block:: python
+
+        exoskeleton = ergoExo(mlflow_run_id=mlflow_run_id)
+        modules = exoskeleton.setup(cfg)
+        run_output, post_processing_output, mlflow_run_id = exoskeleton(modules, args=None)
+
+    If you are introducing a custom `ADEPTModule`, you can do the following
+
+    .. code-block:: python
+
+        exoskeleton = ergoExo()
+        modules = exoskeleton.setup(cfg, exoskeleton_module=custom_module)
+        run_output, post_processing_output, mlflow_run_id = adept(modules, args=None)
+
 
     """
 
@@ -102,7 +191,48 @@ class ergoExo:
 
         self.ran_setup = False
 
-    def get_adept_module(self, cfg: Dict) -> ADEPTModule:
+    def setup(self, cfg: Dict, adept_module: ADEPTModule = None) -> Dict[str, Module]:
+        """
+        This function sets up the differentiable simulation by getting the chosen solver and setting it up
+        At this point in time, the setup includes
+
+        1. initializing the mlflow run and setting the runid or resuming an existing run
+        2. getting the right ``ADEPTModule`` or using the one passed in. This gets assigned to ``self.adept_module``.
+        3. updating the config, units, derived quantities, and array config as defined by the ``ADEPTModule``. It also dumps this information to the temporary directory, which will be logged later, and logging the parameters to mlflow
+        4. initializing the state and args as defined by the ``ADEPTModule``
+        5. initializing the `diffeqsolve` as defined by the ``ADEPTModule``
+        6. initializing the necessary (trainable) physics modules as defined by the ``ADEPTModule``
+
+        Args:
+            cfg: The configuration dictionary
+
+        Returns:
+            A dictionary of trainable modules (``Dict[str, eqx.Module]``)
+
+            This is a dictionary of the (trainable) modules that are required to run the simulation. These can be modules that
+            change the initial conditions, or the driver (boundary conditions), or the metric calculation. These modules are
+            ``equinox`` modules in order to play nice with ``diffrax``
+
+        """
+
+        with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
+            if self.mlflow_run_id is None:
+                mlflow.set_experiment(cfg["mlflow"]["experiment"])
+                with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
+                    modules = self._setup_(cfg, td, adept_module)
+                self.mlflow_run_id = mlflow_run.info.run_id
+
+            else:
+                with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
+                    with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
+                        cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
+                    modules = self._setup_(cfg, td, adept_module)
+
+            mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+
+        return modules
+
+    def _get_adept_module_(self, cfg: Dict) -> ADEPTModule:
         """
         This function returns the helper functions for the given solver
 
@@ -130,9 +260,9 @@ class ergoExo:
 
         return this_module(cfg)
 
-    def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None):
+    def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None) -> Dict[str, Module]:
         if adept_module is None:
-            self.adept_module = self.get_adept_module(cfg)
+            self.adept_module = self._get_adept_module_(cfg)
         else:
             self.adept_module = adept_module
 
@@ -164,37 +294,21 @@ class ergoExo:
 
         return modules
 
-    def setup(self, cfg: Dict, adept_module: ADEPTModule = None) -> Dict:
-        """
-        This function sets up the simulation by getting the helper functions for the given solver
-
-        Args:
-            cfg: The configuration dictionary
-
-        """
-
-        with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
-            if self.mlflow_run_id is None:
-                mlflow.set_experiment(cfg["mlflow"]["experiment"])
-                with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
-                    modules = self._setup_(cfg, td, adept_module)
-                self.mlflow_run_id = mlflow_run.info.run_id
-
-            else:
-                with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
-                    with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
-                        cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
-                    modules = self._setup_(cfg, td, adept_module)
-
-        return modules
-
     def __call__(self, modules: Dict = None) -> Tuple[Solution, Dict, str]:
         """
         This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
-        ``diffrax.Solution`` object and a dictionary of datasets.
+        ``diffrax.Solution`` object and a dictionary of datasets. It calls the ``self.adept_module``'s ``__call__`` function.
+
+        It is also responsible for logging the artifacts and metrics to mlflow.
+
+        Args:
+            modules (Dict(str, eqx.Module)): The trainable modules that are required to run the simulation. All the other parameters are static and initialized during the setup call
 
         Returns:
-            A tuple of a Solution object, a dictionary of ``xarray.dataset``s, and the mlflow run id
+            a tuple of the run_output (``diffrax.Solution``), post_processing_output (``Dict[str, xarray.dataset]``), and the mlflow_run_id (``str``).
+
+            The run_output comes from the ``__call__`` function of the ``self.adept_module``. The post_processing_output comes from the ``post_process`` method of the ``self.adept_module``.
+            The mlflow_run_id is the id of the mlflow run that was created during the setup call or passed in during the initialization of the class
 
         """
 
@@ -218,15 +332,21 @@ class ergoExo:
 
         return run_output, post_processing_output, self.mlflow_run_id
 
-    def val_and_grad(self, modules: Dict = None):
+    def val_and_grad(self, modules: Dict = None) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
         """
-        This function is the value and gradient of the simulation. It assumes that this function has been implemented.
+        This function is the value and gradient of the simulation. This is a very similar looking function to the ``__call__`` function but calls the ``self.adept_module.vg`` rather than the ``self.adept_module.__call__``.
+
+        It is also responsible for logging the artifacts and metrics to mlflow.
+
 
         Args:
-            modules: The parameters to run the simulation and take the gradient against. All the other parameters are
-            static
+            modules: The (trainable) modules that are required to run the simulation and take the gradient against. All the other parameters are static and initialized during the setup call
 
-        Returns: val - The value of the simulation, grad - The gradient of the simulation with respect to the parameters, and the simulation output
+        Returns:
+            a tuple of the value (``float``), gradient (``Dict``), and a tuple of the run_output (``diffrax.Solution``), post_processing_output (``Dict[str, xarray.dataset]``), and the mlflow_run_id (``str``).
+
+            The value and gradient, and run_output come from the ``adept_module.vg`` function. The run_output is the same as that from ``__call__`` function of the ``self.adept_module``. The post_processing_output comes from the ``post_process`` method of the ``self.adept_module``.
+            The mlflow_run_id is the id of the mlflow run that was created during the setup call or passed in during the initialization
         """
         assert self.ran_setup, "You must run self.setup() before running the simulation"
         with mlflow.start_run(
