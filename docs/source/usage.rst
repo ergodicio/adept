@@ -32,7 +32,11 @@ The most common and obvious use case for ADEPT is a simple forward simulation th
     
     (venv) $ python3 run.py --cfg configs/vlasov-1d/epw
 
-The input parameters are provided in `configs/vlasov-1d/epw.yaml`.  The output will be saved and made accessible via MLFlow. To access it, 
+The input parameters are provided in `configs/vlasov-1d/epw.yaml`.  
+
+**Access the output**
+
+The output will be saved and made accessible via MLFlow. To access it, 
 
 1. Launch an mlflow server via running ``mlflow ui`` from the command line
 2. Open a web browser and navigate to http://localhost:5000

@@ -10,47 +10,20 @@ ADEPT
    :alt: ADEPT
    :align: right
 
-**ADEPT** is a set of **A** utomatic **D** ifferentation **E** nabled **P** lasma **T** ransport codes.
+**ADEPT** is a set of **A** utomatic **D** ifferentation **E** nabled **P** lasma **T** ransport solvers.
 
-In some form or the other, they solve the equations of motion for a plasma.
-
-So far, we have implemented
+So far, we have implemented the following solvers
 
 1. Vlasov-Poisson-Fokker-Planck 1D1V
 2. Two fluid - Poisson system in 1D
 3. Vlasov-Poisson-Fokker-Planck 1D2V
-4. Vlasov-Poisson system in 2D
+4. Vlasov-Maxwell-Fokker-Planck 2D2V
+5. Zakharov Equations for Two Plasmon Decay in 2D
+6. Vlasov-Poisson-Fokker-Planck (spherical harmonic decomposition) 1D3V 
 
-What is novel about it?
-------------------------
-- Automatic Differentiation (AD) Enabled (bc of JAX)
-- GPU-capable (bc of XLA)
-- Experiment manager enabled (bc of mlflow)
-- Pythonic
-
-What does AD do for us?
-------------------------
-AD enables the calculation of derivatives of entire simulations, pieces of it, or anything in between. This can be used for
-- sensitivity analyses
-- parameter estimation
-- parameter optimization
-- model training
-
-A couple of implemented examples are
-
-1. Find the resonant frequency given a density and temperature
-
-      This is provided as a test in `tests/test_resonance_search.py`. Also see ref. [1]
-
-2. Fit a parameteric model for unresolved / unsolved microphysics
-
-      The gist is that there is a discrepancy in the observable between a "first-principles" and "approximate" simulation.
-      You would like for that discrepancy to decrease. To do so, you add a neural network to your "approximate" solver in a smart fashion.
-      Then, you calibrate the results of your "approximate" simulation against the "ground-truth" from the "first-principles" simulation.
-      After doing that enough times, over a diverse enough set of physical parameters, the neural network is able to help your "approximate" solver
-      recover the "correct" answer.
-
-      See ref. [2] for details and an application
+Examples
+---------- 
+Examples can be found in the tests folder or in the adept-notebooks repository - http://github.com/ergodicio/adept-notebooks. Example configuration files are also provided in `configs/`
 
 --------------------------------------------------
 
@@ -59,17 +32,10 @@ Documentation
 
 .. toctree::
    usage
-   usage/vlasov1d
-   usage/tf1d
-   usage/vlasov1d2v
    faq
-   dev_guide
-   api_documentation
-
-   :maxdepth: 2
+   api
+   :maxdepth: 1
    :caption: Contents:
-
-
 
 .. note::
 
