@@ -220,6 +220,7 @@ class ergoExo:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
                 with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
                     modules = self._setup_(cfg, td, adept_module)
+                    mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
                 self.mlflow_run_id = mlflow_run.info.run_id
 
             else:
@@ -227,8 +228,7 @@ class ergoExo:
                     with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
                         cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
-
-            mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+                    mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
 
         return modules
 

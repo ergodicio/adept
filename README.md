@@ -15,6 +15,16 @@ ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ranspor
 ## Docs
 https://adept.readthedocs.io/en/latest/
 
+## Usage
+`python3 run.py --cfg {config_path}` without the `.yaml` extension
+
+This runs the simulation defined in the config and stores the output to an `mlflow` server.
+
+Unless you have separately deployed an `mlflow` server somewhere, it simply writes files using the mlflow specification to the current working directory. 
+
+To access and visualize the results, it is easiest to use the UI from the browser by typing `mlflow ui` in the command line from the same directory.
+
+
 ## Contributing guide
 The contributing guide is in development but for now, just make an issue / pull request and we can go from there :) 
 
