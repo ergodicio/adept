@@ -13,6 +13,7 @@ class BandwidthModule(eqx.Module):
     delta_omega: np.ndarray
     initial_phase: Array
     amplitudes: Array
+    envelope: Dict
     model: eqx.Module
 
     def __init__(self, cfg: Dict):
@@ -20,6 +21,7 @@ class BandwidthModule(eqx.Module):
         self.num_colors = cfg["drivers"]["E0"]["num_colors"]
         self.amplitude_shape = cfg["drivers"]["E0"]["amplitude_shape"]
         self.model = {}
+        self.envelope = cfg["drivers"]["E0"]["envelope"]
 
         if self.num_colors == 1:
             self.delta_omega = np.zeros(1)
@@ -102,6 +104,15 @@ class BandwidthModule(eqx.Module):
             "delta_omega": self.delta_omega,
             "initial_phase": self.initial_phase,
             "amplitudes": amp,
+            "xr": self.envelope["xr"],
+            "yr": self.envelope["yr"],
+            "tr": self.envelope["tr"],
+            "tw": self.envelope["tw"],
+            "tc": self.envelope["tc"],
+            "xw": self.envelope["xw"],
+            "yw": self.envelope["yw"],
+            "xc": self.envelope["xc"],
+            "yc": self.envelope["yc"],
         }
 
         return state, args

@@ -201,7 +201,17 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     else:
         cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-    # cfg = get_more_units(cfg)
+    # change driver parameters to the right units
+    for k in cfg["drivers"].keys():
+        cfg["drivers"][k]["envelope"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
+        cfg["drivers"][k]["envelope"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
+        cfg["drivers"][k]["envelope"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
+        cfg["drivers"][k]["envelope"]["xr"] = _Q(cfg["drivers"][k]["envelope"]["xr"]).to("um").value
+        cfg["drivers"][k]["envelope"]["xc"] = _Q(cfg["drivers"][k]["envelope"]["xc"]).to("um").value
+        cfg["drivers"][k]["envelope"]["xw"] = _Q(cfg["drivers"][k]["envelope"]["xw"]).to("um").value
+        cfg["drivers"][k]["envelope"]["yw"] = _Q(cfg["drivers"][k]["envelope"]["yw"]).to("um").value
+        cfg["drivers"][k]["envelope"]["yr"] = _Q(cfg["drivers"][k]["envelope"]["yr"]).to("um").value
+        cfg["drivers"][k]["envelope"]["yc"] = _Q(cfg["drivers"][k]["envelope"]["yc"]).to("um").value
 
     cfg["grid"] = cfg_grid
 

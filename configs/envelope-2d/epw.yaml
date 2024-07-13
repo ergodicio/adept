@@ -25,21 +25,6 @@ drivers:
     k0: 140.0
     w0: 2683.0  # 1.5 k^2 vth^2 / wp0
 
-  E2:
-    w0: 0.117
-    t_c: 40.
-    t_w: 40.
-    t_r: 5.
-    x_c: 0.
-    x_w: 800.
-    x_r: 20.
-    y_c: 0.
-    y_w: 2000000.
-    y_r: 5.
-    k0: 140 
-    a0: 1.5e-3
-    intensity: 4.0e14
-
 grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 8um
