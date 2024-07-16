@@ -1,44 +1,24 @@
 density:
-  basis: linear
-  gradient scale length: 200.0um
-  max: 0.3
-  min: 0.2
+  basis: uniform
   noise:
     max: 1.0e-09
     min: 1.0e-10
     type: uniform
 drivers:
-  E0:
-    amplitude_shape: uniform
-    # file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
-    delta_omega_max: 0.015
-    num_colors: 1
-
   E2: 
-    tw: 200fs
-    tr: 25fs
-    tc: 150fs
-    xw: 2um
-    xc: 50um
-    xr: 0.2um
-    a0: 0.1
-    k0: 140.0
-    w0: 2683.0  # 1.5 k^2 vth^2 / wp0
-
-  E2:
-    w0: 0.117
-    t_c: 40.
-    t_w: 40.
-    t_r: 5.
-    x_c: 0.
-    x_w: 800.
-    x_r: 20.
-    y_c: 0.
-    y_w: 2000000.
-    y_r: 5.
-    k0: 140 
-    a0: 1.5e-3
-    intensity: 4.0e14
+    envelope:
+      tw: 200fs
+      tr: 25fs
+      tc: 150fs
+      xw: 500um
+      xc: 10um
+      xr: 0.2um
+      yr: 0.2um
+      yc: 0um
+      yw: 50um
+    a0: 1000
+    k0: -10.0
+    w0: 20.0  # 1.5 k^2 vth^2 / wp0
 
 grid:
   boundary_abs_coeff: 1.0e4
@@ -46,10 +26,11 @@ grid:
   low_pass_filter: 0.7
   dt: 0.002ps
   dx: 20nm
-  tmax: 2.0ps
+  xmax: 6.28um
+  tmax: 4.0ps
   tmin: 0.0ns
-  ymax: 4um
-  ymin: -4um
+  ymax: 1um
+  ymin: -1um
 machine:
   calculator: gpu
 mlflow:
@@ -58,12 +39,12 @@ mlflow:
 save:
   t:
     dt: 100fs
-    tmax: 2ps
+    tmax: 4ps
     tmin: 0ps
   x:
-    dx: 48nm
+    dx: 22nm
   y:
-    dy: 160nm
+    dy: 22nm
 solver: envelope-2d
 terms:
   epw:
@@ -72,13 +53,13 @@ terms:
       y: periodic
     damping:
       collisions: false
-      landau: true
+      landau: false
     density_gradient: false
-    linear: true
+    linear: True
     source:
       noise: false
       tpd: false
-  zero_mask: true
+  zero_mask: false
 units:
   atomic number: 40
   envelope density: 0.25

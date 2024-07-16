@@ -41,7 +41,12 @@ class BaseLPSE2D(ADEPTModule):
         self.cfg["grid"] = get_solver_quantities(self.cfg)
 
     def init_modules(self) -> Dict:
-        return {"bandwidth": BandwidthModule(self.cfg)}
+
+        modules = {}
+        if "E0" in self.cfg["drivers"]:
+            modules["bandwidth"] = BandwidthModule(self.cfg)
+
+        return modules
 
     def init_diffeqsolve(self):
 
@@ -88,10 +93,11 @@ class BaseLPSE2D(ADEPTModule):
 
         # drivers = assemble_bandwidth(self.cfg)
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
-        self.args = {"drivers": {"E0": {}}}
+        self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
 
     @filter_jit
     def __call__(self, trainable_modules: Dict, args: Dict = None) -> Dict:
+        state = self.state
 
         if args is None:
             args = self.args

@@ -1,91 +1,71 @@
-solver: envelope-2d
-
 density:
   basis: uniform
-  offset: 1.0
-  slope: 0.0
   noise:
-    min: 0.0
-    max: 0.0
+    max: 1.0e-09
+    min: 1.0e-10
     type: uniform
-
 drivers:
-  E0:
-    w0: 2.0
-    t_c: 500.
-    t_w: 600.
-    t_r: 20.
-    x_c: 500.
-    x_w: 600.
-    x_r: 20.
-    y_c: 500.
-    y_w: 60000000.
-    y_r: 20.
-    k0: 1.0
-    a0: 0.0
-    intensity: 4.0e14
-  E2:
-    w0: 0.1536
-    t_c: 60.
-    t_w: 80.
-    t_r: 5.
-    x_c: 0.
-    x_w: 800.
-    x_r: 20.
-    y_c: 0.
-    y_w: 2000000.
-    y_r: 5.
-    k0: 0.32
-    a0: 0.0125
-    intensity: 4.0e14
-
-save:
-  t:
-    tmin: 10.0
-    tmax: 195.0
-    nt: 384
-
-units:
-  laser wavelength: 351nm
-  normalizing temperature: 2000eV
-  normalizing density: 1.5e21/cc
-  Z: 10
-  Zp: 10
-
-plasma:
-  wp0: 1.0
-  nu_ei: 0.0
-  Z: 2
-  nb: 1.0
-  density: 2.3e27  #m^3
+  E2: 
+    envelope:
+      tw: 200fs
+      tr: 25fs
+      tc: 150fs
+      xw: 500um
+      xc: 10um
+      xr: 0.2um
+      yr: 0.2um
+      yc: 0um
+      yw: 50um
+    a0: 1000
+    k0: -10.0
+    w0: 20.0  # 1.5 k^2 vth^2 / wp0
 
 grid:
-  xmin: 000.0
-  xmax: 16.535
-  nx: 64
-  ymin: -4.0
-  ymax: 4.0
-  ny: 8
-  tmin: 0.
-  tmax: 200.0
-  dt: 0.5
-
+  boundary_abs_coeff: 1.0e4
+  boundary_width: 8um
+  low_pass_filter: 0.7
+  dt: 0.002ps
+  dx: 20nm
+  xmax: 6.28um
+  tmax: 4.0ps
+  tmin: 0.0ns
+  ymax: 1um
+  ymin: -1um
+machine:
+  calculator: gpu
 mlflow:
-  experiment: epw
-  run: compare-against-vlasov
-
+  experiment: test-lpse
+  run: epw-test
+save:
+  t:
+    dt: 100fs
+    tmax: 4ps
+    tmin: 0ps
+  x:
+    dx: 22nm
+  y:
+    dy: 22nm
+solver: envelope-2d
 terms:
   epw:
-    linear: True
-    density_gradient: False
-    kinetic real part: True
     boundary:
       x: periodic
       y: periodic
-    trapping:
-      active: False
-      kld: 0.1
-      nuee: 0.001
+    damping:
+      collisions: false
+      landau: false
+    density_gradient: false
+    linear: True
     source:
-      tpd: False
+      noise: false
+      tpd: false
+  zero_mask: false
+units:
+  atomic number: 40
+  envelope density: 0.25
+  ionization state: 6
+  laser intensity: 3.5e+14W/cm^2
+  laser wavelength: 351nm
+  reference electron temperature: 2000.0eV
+  reference ion temperature: 1000eV
 

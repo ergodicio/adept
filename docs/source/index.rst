@@ -16,10 +16,8 @@ So far, we have implemented the following solvers
 
 1. Vlasov-Poisson-Fokker-Planck 1D1V
 2. Two fluid - Poisson system in 1D
-3. Vlasov-Poisson-Fokker-Planck 1D2V
-4. Vlasov-Maxwell-Fokker-Planck 2D2V
-5. Zakharov Equations for Two Plasmon Decay in 2D
-6. Vlasov-Poisson-Fokker-Planck (spherical harmonic decomposition) 1D3V 
+3. Zakharov Equations for Two Plasmon Decay in 2D
+4. Vlasov-Poisson-Fokker-Planck (spherical harmonic decomposition) 1D3V 
 
 Examples
 ---------- 
@@ -45,14 +43,6 @@ Documentation
 Contributing guide
 ------------------------
 The contributing guide is in development but for now, just make an issue / pull request and we can go from there :)
-
-References
-------------
-
-[1] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
-
-[2] A. S. Joglekar and A. G. R. Thomas, “Unsupervised discovery of nonlinear plasma physics using differentiable kinetic simulations,” J. Plasma Phys., vol. 88, no. 6, p. 905880608, Dec. 2022, doi: 10.1017/S0022377822000939.
-
 
 Citation
 ------------

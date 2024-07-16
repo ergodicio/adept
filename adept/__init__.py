@@ -283,7 +283,7 @@ class ergoExo:
 
         # dump array config
         self.adept_module.get_solver_quantities()
-        with open(os.path.join(td, "array_config.yaml"), "wb") as fi:
+        with open(os.path.join(td, "array_config.pkl"), "wb") as fi:
             pickle.dump(self.adept_module.cfg, fi)
 
         self.adept_module.init_state_and_args()

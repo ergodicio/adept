@@ -13,9 +13,20 @@ drivers:
     # file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
     delta_omega_max: 0.015
     num_colors: 1
+    envelope:
+      tw: 20ns
+      tr: 0.5ns
+      tc: 11fs
+      xr: 0.2um
+      xw: 1000um
+      xc: 50um
+      yr: 0.2um
+      yw: 1000um
+      yc: 50um
+
 grid:
   boundary_abs_coeff: 1.0e4
-  boundary_width: 8um
+  boundary_width: 1um
   low_pass_filter: 0.7
   dt: 0.002ps
   dx: 20nm
