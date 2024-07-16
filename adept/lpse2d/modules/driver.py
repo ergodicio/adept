@@ -21,7 +21,7 @@ class BandwidthModule(eqx.Module):
         self.num_colors = cfg["drivers"]["E0"]["num_colors"]
         self.amplitude_shape = cfg["drivers"]["E0"]["amplitude_shape"]
         self.model = {}
-        self.envelope = cfg["drivers"]["E0"]["envelope"]
+        self.envelope = cfg["drivers"]["E0"]["derived"]
 
         if self.num_colors == 1:
             self.delta_omega = np.zeros(1)
@@ -46,6 +46,7 @@ class BandwidthModule(eqx.Module):
             elif self.amplitude_shape == "lorentzian":
                 amplitudes = 1 / np.pi * (delta_omega_max / 2) / (self.delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
                 self.amplitudes = np.sqrt(amplitudes)
+
             elif self.amplitude_shape == "learned":
                 if "ml" in self.amplitude_shape:
                     if "gen" in self.amplitude_shape:

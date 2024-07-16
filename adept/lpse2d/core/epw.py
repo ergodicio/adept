@@ -204,8 +204,10 @@ class SpectralPotential:
         self.dt = cfg["grid"]["dt"]
         self.cfg = cfg
         self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
-        self.low_pass_filter = np.where(np.sqrt(self.k_sq) < 2.0 / 3.0 * np.amax(self.kx), 1, 0)
-        zero_mask = cfg["grid"]["zero_mask"]
+        self.low_pass_filter = cfg["grid"][
+            "low_pass_filter"
+        ]  # np.where(np.sqrt(self.k_sq) < 2.0 / 3.0 * np.amax(self.kx), 1, 0)
+        zero_mask = 1.0  # cfg["grid"]["zero_mask"]
         self.low_pass_filter = self.low_pass_filter * zero_mask
         self.nx = cfg["grid"]["nx"]
         self.ny = cfg["grid"]["ny"]
@@ -220,17 +222,15 @@ class SpectralPotential:
         # )
         self.tpd_const = 1j * self.e / (8 * self.wp0 * self.me)
 
-    def calc_fields_from_phi(self, phi):
+    def calc_fields_from_phi(self, phi: Array) -> Tuple[Array, Array]:
         """
         Calculates ex(x, y) and ey(x, y) from phi.
 
-        checked
-
         Args:
-            phi (jnp.array): phi(x, y)
+            phi (Array): phi(x, y)
 
         Returns:
-            ex_ey (jnp.array): Vector field e(x, y, dir)
+            A Tuple containing ex(x, y) and ey(x, y)
         """
         phi_k = jnp.fft.fft2(phi)
         phi_k *= self.low_pass_filter
@@ -239,10 +239,16 @@ class SpectralPotential:
         ey_k = self.ky[None, :] * phi_k * self.low_pass_filter
         return -1j * jnp.fft.ifft2(ex_k), -1j * jnp.fft.ifft2(ey_k)
 
-    def calc_phi_from_fields(self, ex, ey):
+    def calc_phi_from_fields(self, ex: Array, ey: Array) -> Array:
         """
+        calculates phi from ex and ey
 
-        checked
+        Args:
+            ex (Array): ex(x, y)
+            ey (Array): ey(x, y)
+
+        Returns:
+            Array: phi(x, y)
 
         """
         ex_k = jnp.fft.fft2(ex)
@@ -254,13 +260,21 @@ class SpectralPotential:
 
         return phi
 
-    def tpd(self, t, y, args):
+    def tpd(self, t: float, y: Array, args: Dict) -> Array:
         """
-        checked
+        Calculates the two plasmon decay term
+
+        Args:
+            t (float): time
+            y (Array): phi(x, y)
+            args (Dict): dictionary containing E0
+
+        Returns:
+            Array: dphi(x, y)
 
         """
-        E0 = args["E0"]  # .view(jnp.complex128)
-        phi = y  # .view(jnp.complex128)
+        E0 = args["E0"]
+        phi = y
         _, ey = self.calc_fields_from_phi(phi)
 
         tpd1 = E0[..., 1] * jnp.conj(ey)
@@ -274,11 +288,22 @@ class SpectralPotential:
 
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
 
-        dphi = total_tpd  # .view(jnp.float64)
+        dphi = total_tpd
 
         return dphi
 
-    def calc_tpd1(self, t, y, args):
+    def calc_tpd1(self, t: float, y: Array, args: Dict) -> Array:
+        """
+        Calculates the first term of the two plasmon decay
+
+        Args:
+            t (float): time
+            y (Array): phi(x, y)
+            args (Dict): dictionary containing E0
+
+        Returns:
+            Array: dphi(x, y)
+        """
         E0 = args["E0"]
         phi = y
 
@@ -287,7 +312,19 @@ class SpectralPotential:
         tpd1 = E0[..., 1] * jnp.conj(ey)
         return self.tpd_const * tpd1
 
-    def calc_tpd2(self, t, y, args):
+    def calc_tpd2(self, t: float, y: Array, args: Dict) -> Array:
+        """
+        Calculates the second term of the two plasmon decay
+
+        Args:
+            t (float): time
+            y (Array): phi(x, y)
+            args (Dict): dictionary containing E0
+
+        Returns:
+            Array: dphi(x, y)
+
+        """
         phi = y
         E0 = args["E0"]
 
@@ -303,10 +340,7 @@ class SpectralPotential:
         random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
         return jnp.fft.ifft2(random_amps * jnp.exp(1j * random_phases) * self.low_pass_filter)
 
-    def drive_epw(self, t) -> Array:
-        return self.epw_driver(t)
-
-    def __call__(self, t, y, args):
+    def __call__(self, t: float, y: Dict[str, Array], args: Dict) -> Array:
         phi = y["epw"]
         E0 = y["E0"]
         background_density = y["background_density"]

@@ -58,7 +58,7 @@ def write_units(cfg: Dict) -> Dict:
     vte = c * np.sqrt(Te / 511)
     vte_sq = vte**2
     cs = c * np.sqrt((Z * Te + 3 * Ti) / (A * 511 * 1836))
-
+    ld = vte / w0
     # nu_sideloss = 1e-1
 
     # nu_ei = calc_nuei(ne, Te, Z, ni, Ti)
@@ -99,8 +99,11 @@ def write_units(cfg: Dict) -> Dict:
     else:
         nu_coll = 1e-4  # nu_ee + nu_ei + nu_sideloss
 
-    gradient_scale_length = _Q(cfg["density"]["gradient scale length"]).to("um").value
-    I_thresh = calc_threshold_intensity(Te, Ln=gradient_scale_length, w0=w0)
+    if "gradient scale length" in cfg["density"]:
+        gradient_scale_length = _Q(cfg["density"]["gradient scale length"]).to("um").value
+        I_thresh = calc_threshold_intensity(Te, Ln=gradient_scale_length, w0=w0)
+    else:
+        I_thresh = "n/a"
     # for k in ["delta_omega", "initial_phase", "amplitudes"]:
 
     # Derived units
@@ -116,6 +119,7 @@ def write_units(cfg: Dict) -> Dict:
         "vte_sq": vte_sq,
         "cs": cs,
         "nc": nc,
+        "lambda_D": ld,
         "nu_coll": nu_coll,
         "I_thresh": I_thresh,
         "E0_source": E0_source,
@@ -162,13 +166,18 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     # cfg_grid["xmax"] = _Q(cfg_grid["xmax"]).to("um").value
     # cfg_grid["xmin"] = _Q(cfg_grid["xmin"]).to("um").value
-    L = _Q(cfg["density"]["gradient scale length"]).to("um").value
-    nmax = cfg["density"]["max"]
-    nmin = cfg["density"]["min"]
-    Lgrid = L / 0.25 * (nmax - nmin)
 
-    print("Ignoring xmax and xmin and using the density gradient scale length to set the grid size")
-    print("Grid size = L / 0.25 * (nmax - nmin) = ", Lgrid, "um")
+    if "linear" in cfg["density"]["basis"]:
+        L = _Q(cfg["density"]["gradient scale length"]).to("um").value
+        nmax = cfg["density"]["max"]
+        nmin = cfg["density"]["min"]
+        Lgrid = L / 0.25 * (nmax - nmin)
+
+        print("Ignoring xmax and xmin and using the density gradient scale length to set the grid size")
+        print("Grid size = L / 0.25 * (nmax - nmin) = ", Lgrid, "um")
+    else:
+        Lgrid = _Q(cfg_grid["xmax"]).to("um").value
+
     cfg_grid["xmax"] = Lgrid
     cfg_grid["xmin"] = 0.0
 
@@ -188,7 +197,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     # max_density = cfg["density"]["val at center"] + (cfg["grid"]["xmax"] - midpt) / L
 
-    norm_n_max = np.abs(nmax / cfg["units"]["envelope density"] - 1)
+    # norm_n_max = np.abs(nmax / cfg["units"]["envelope density"] - 1)
     # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["dt"] = _Q(cfg_grid["dt"]).to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
@@ -203,15 +212,20 @@ def get_derived_quantities(cfg: Dict) -> Dict:
 
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
-        cfg["drivers"][k]["envelope"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
-        cfg["drivers"][k]["envelope"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
-        cfg["drivers"][k]["envelope"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
-        cfg["drivers"][k]["envelope"]["xr"] = _Q(cfg["drivers"][k]["envelope"]["xr"]).to("um").value
-        cfg["drivers"][k]["envelope"]["xc"] = _Q(cfg["drivers"][k]["envelope"]["xc"]).to("um").value
-        cfg["drivers"][k]["envelope"]["xw"] = _Q(cfg["drivers"][k]["envelope"]["xw"]).to("um").value
-        cfg["drivers"][k]["envelope"]["yw"] = _Q(cfg["drivers"][k]["envelope"]["yw"]).to("um").value
-        cfg["drivers"][k]["envelope"]["yr"] = _Q(cfg["drivers"][k]["envelope"]["yr"]).to("um").value
-        cfg["drivers"][k]["envelope"]["yc"] = _Q(cfg["drivers"][k]["envelope"]["yc"]).to("um").value
+        cfg["drivers"][k]["derived"] = {}
+        cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
+        cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
+        cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
+        cfg["drivers"][k]["derived"]["xr"] = _Q(cfg["drivers"][k]["envelope"]["xr"]).to("um").value
+        cfg["drivers"][k]["derived"]["xc"] = _Q(cfg["drivers"][k]["envelope"]["xc"]).to("um").value
+        cfg["drivers"][k]["derived"]["xw"] = _Q(cfg["drivers"][k]["envelope"]["xw"]).to("um").value
+        cfg["drivers"][k]["derived"]["yw"] = _Q(cfg["drivers"][k]["envelope"]["yw"]).to("um").value
+        cfg["drivers"][k]["derived"]["yr"] = _Q(cfg["drivers"][k]["envelope"]["yr"]).to("um").value
+        cfg["drivers"][k]["derived"]["yc"] = _Q(cfg["drivers"][k]["envelope"]["yc"]).to("um").value
+        if "k0" in cfg["drivers"][k]:
+            cfg["drivers"][k]["derived"]["k0"] = cfg["drivers"][k]["k0"]
+            cfg["drivers"][k]["derived"]["w0"] = cfg["drivers"][k]["w0"]
+            cfg["drivers"][k]["derived"]["a0"] = cfg["drivers"][k]["a0"]
 
     cfg["grid"] = cfg_grid
 
@@ -594,22 +608,23 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
     with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
         pickle.dump(used_driver, fi)
 
-    dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
-    fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
-    ax[0].plot(dw_over_w, used_driver["E0"]["amplitudes"], "o")
-    ax[0].grid()
-    ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-    ax[0].set_ylabel("$|E|$", fontsize=14)
-    ax[1].semilogy(dw_over_w, used_driver["E0"]["amplitudes"], "o")
-    ax[1].grid()
-    ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-    ax[1].set_ylabel("$|E|$", fontsize=14)
-    ax[2].plot(dw_over_w, used_driver["E0"]["initial_phase"], "o")
-    ax[2].grid()
-    ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-    ax[2].set_ylabel(r"$\angle E$", fontsize=14)
-    plt.savefig(os.path.join(td, "learned_bandwidth.png"), bbox_inches="tight")
-    plt.close()
+    if "E0" in used_driver:
+        dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
+        fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
+        ax[0].plot(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+        ax[0].grid()
+        ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+        ax[0].set_ylabel("$|E|$", fontsize=14)
+        ax[1].semilogy(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+        ax[1].grid()
+        ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+        ax[1].set_ylabel("$|E|$", fontsize=14)
+        ax[2].plot(dw_over_w, used_driver["E0"]["initial_phase"], "o")
+        ax[2].grid()
+        ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
+        ax[2].set_ylabel(r"$\angle E$", fontsize=14)
+        plt.savefig(os.path.join(td, "learned_bandwidth.png"), bbox_inches="tight")
+        plt.close()
 
     os.makedirs(os.path.join(td, "binary"))
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
@@ -666,9 +681,18 @@ def make_xarrays(cfg, this_t, state, td):
     ex_k_np = -1j * kx[None, :, None] * phi_k_np
     ey_k_np = -1j * ky[None, None, :] * phi_k_np
 
-    phi_k = xr.DataArray(np.fft.fftshift(phi_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
-    ex_k = xr.DataArray(np.fft.fftshift(ex_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
-    ey_k = xr.DataArray(np.fft.fftshift(ey_k_np, axes=(1, 2)), coords=(tax_tuple, ("kx", shift_kx), ("ky", shift_ky)))
+    phi_k = xr.DataArray(
+        np.fft.fftshift(phi_k_np, axes=(1, 2)),
+        coords=(tax_tuple, ("kx ($kc\omega_0^{-1}$)", shift_kx), ("ky ($kc\omega_0^{-1}$)", shift_ky)),
+    )
+    ex_k = xr.DataArray(
+        np.fft.fftshift(ex_k_np, axes=(1, 2)),
+        coords=(tax_tuple, ("kx ($kc\omega_0^{-1}$)", shift_kx), ("ky ($kc\omega_0^{-1}$)", shift_ky)),
+    )
+    ey_k = xr.DataArray(
+        np.fft.fftshift(ey_k_np, axes=(1, 2)),
+        coords=(tax_tuple, ("kx ($kc\omega_0^{-1}$)", shift_kx), ("ky ($kc\omega_0^{-1}$)", shift_ky)),
+    )
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
     ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
     ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
