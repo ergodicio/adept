@@ -16,7 +16,7 @@ drivers:
       yr: 0.2um
       yc: 0um
       yw: 50um
-    a0: 10
+    a0: 1000
     k0: -10.0
     w0: 20.0  # 1.5 k^2 vth^2 / wp0
 
@@ -27,10 +27,10 @@ grid:
   dt: 0.002ps
   dx: 20nm
   xmax: 6.28um
-  tmax: 1.0ps
+  tmax: 4.0ps
   tmin: 0.0ns
-  ymax: 4um
-  ymin: -4um
+  ymax: 1um
+  ymin: -1um
 machine:
   calculator: gpu
 mlflow:
@@ -38,13 +38,13 @@ mlflow:
   run: epw-test
 save:
   t:
-    dt: 5fs
-    tmax: 1ps
+    dt: 100fs
+    tmax: 4ps
     tmin: 0ps
   x:
-    dx: 24nm
+    dx: 22nm
   y:
-    dy: 24nm
+    dy: 22nm
 solver: envelope-2d
 terms:
   epw:

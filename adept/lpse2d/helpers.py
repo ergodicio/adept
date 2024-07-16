@@ -566,10 +566,10 @@ def plot_kt(kfields, td):
     k_min = -2.5
     k_max = 2.5
 
-    ikx_min = np.argmin(np.abs(kfields.coords["kx"].data - k_min))
-    ikx_max = np.argmin(np.abs(kfields.coords["kx"].data - k_max))
-    iky_min = np.argmin(np.abs(kfields.coords["ky"].data - k_min))
-    iky_max = np.argmin(np.abs(kfields.coords["ky"].data - k_max))
+    ikx_min = np.argmin(np.abs(kfields.coords["kx ($kc\omega_0^{-1}$)"].data - k_min))
+    ikx_max = np.argmin(np.abs(kfields.coords["kx ($kc\omega_0^{-1}$)"].data - k_max))
+    iky_min = np.argmin(np.abs(kfields.coords["ky ($kc\omega_0^{-1}$)"].data - k_min))
+    iky_max = np.argmin(np.abs(kfields.coords["ky ($kc\omega_0^{-1}$)"].data - k_max))
 
     kx_slice = slice(ikx_min, ikx_max)
     ky_slice = slice(iky_min, iky_max)
