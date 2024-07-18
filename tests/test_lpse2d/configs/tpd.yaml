@@ -15,8 +15,8 @@ drivers:
     num_colors: 1
     envelope:
       tw: 20ps
-      tr: 0.25ps
-      tc: 10.5ps
+      tr: 0.1ps
+      tc: 10.25ps
       xr: 0.2um
       xw: 1000um
       xc: 50um

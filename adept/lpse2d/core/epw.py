@@ -159,7 +159,7 @@ class SpectralPotential:
         return self.tpd_const * tpd2
 
     def get_noise(self):
-        random_amps = 1000.0  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
+        random_amps = 1.0  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
         random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
         return jnp.fft.ifft2(random_amps * jnp.exp(1j * random_phases) * self.low_pass_filter)
 
