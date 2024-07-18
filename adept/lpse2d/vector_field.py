@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import Dict
 
 from jax import numpy as jnp, Array
 import numpy as np
@@ -13,8 +13,6 @@ class SplitStep:
 
     All the pushers are chosen and initialized here and a single time-step is defined here.
 
-    Note that EPW can be either the charge density (div E) or the potential
-
     :param cfg:
     :return:
     """
@@ -24,18 +22,17 @@ class SplitStep:
         self.cfg = cfg
         self.dt = cfg["grid"]["dt"]
         self.wp0 = cfg["units"]["derived"]["wp0"]
-        # self.epw = epw.FDChargeDensity(cfg)
         self.epw = epw.SpectralPotential(cfg)
         self.light = laser.Light(cfg)
         self.complex_state_vars = ["E0", "epw"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
-        self.zero_mask = 1.0  # cfg["grid"]["zero_mask"]
+        self.zero_mask = cfg["grid"]["zero_mask"]
         self.low_pass_filter = cfg["grid"]["low_pass_filter"]
 
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
 
-    def unpack_y(self, y: Dict[str, Array]) -> Dict[str, Array]:
+    def _unpack_y_(self, y: Dict[str, Array]) -> Dict[str, Array]:
         new_y = {}
         for k in y.keys():
             if k in self.complex_state_vars:
@@ -44,7 +41,7 @@ class SplitStep:
                 new_y[k] = y[k].view(jnp.float64)
         return new_y
 
-    def pack_y(self, y: Dict[str, Array], new_y: Dict[str, Array]) -> tuple[Dict[str, Array], Dict[str, Array]]:
+    def _pack_y_(self, y: Dict[str, Array], new_y: Dict[str, Array]) -> tuple[Dict[str, Array], Dict[str, Array]]:
         for k in y.keys():
             y[k] = y[k].view(jnp.float64)
             new_y[k] = new_y[k].view(jnp.float64)
@@ -85,29 +82,27 @@ class SplitStep:
 
     def __call__(self, t, y, args):
         # unpack y into complex128
-        new_y = self.unpack_y(y)
+        new_y = self._unpack_y_(y)
 
         # split step
         new_y = self.light_split_step(t, new_y, args["drivers"])
-        new_y["epw"] = self.epw(t, new_y, args)
 
         if "E2" in args["drivers"]:
             new_y["epw"] += self.dt * self.epw.driver(args["drivers"]["E2"], t)
+        new_y["epw"] = self.epw(t, new_y, args)
 
         # landau and collisional damping
         if self.cfg["terms"]["epw"]["damping"]["landau"]:
             new_y["epw"] = self.landau_damping(epw=new_y["epw"], vte_sq=y["vte_sq"])
-
-        new_y["epw"] = jnp.fft.ifft2(self.zero_mask * jnp.fft.fft2(new_y["epw"]))
 
         # boundary damping
         ex, ey = self.epw.calc_fields_from_phi(new_y["epw"])
         ex = ex * self.boundary_envelope
         ey = ey * self.boundary_envelope
         new_y["epw"] = self.epw.calc_phi_from_fields(ex, ey)
-        # new_y["epw"] = jnp.fft.ifft2(self.zero_mask * self.low_pass_filter * jnp.fft.fft2(new_y["epw"]))
+        new_y["epw"] = jnp.fft.ifft2(self.zero_mask * self.low_pass_filter * jnp.fft.fft2(new_y["epw"]))
 
         # pack y into float64
-        y, new_y = self.pack_y(y, new_y)
+        y, new_y = self._pack_y_(y, new_y)
 
         return new_y

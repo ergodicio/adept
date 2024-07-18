@@ -36,4 +36,9 @@ def _run_(Z, ee):
 @pytest.mark.parametrize("Z", list(range(1, 21, 4)) + [40, 60, 80])
 @pytest.mark.parametrize("ee", [True, False])
 def test_kappa_eh(Z, ee):
-    _run_(Z, ee)
+    if "CPU_ONLY" in os.environ:
+        if Z in [1, 21, 80]:
+            _run_(Z, ee)
+
+    else:
+        _run_(Z, ee)

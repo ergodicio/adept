@@ -311,7 +311,9 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     )
 
     cfg_grid["zero_mask"] = (
-        np.where(cfg_grid["kx"][:, None] * cfg_grid["ky"][None, :] == 0, 0, 1) if cfg["terms"]["zero_mask"] else 1
+        np.where(cfg_grid["kx"] == 0, 0, 1)[:, None] * np.ones_like(cfg_grid["ky"])[None, :]
+        if cfg["terms"]["zero_mask"]
+        else 1
     )
     # sqrt(kx**2 + ky**2) < 2/3 kmax
     cfg_grid["low_pass_filter"] = np.where(
