@@ -39,7 +39,9 @@ def write_units(cfg: Dict) -> Dict:
     Z = cfg["units"]["ionization state"]
     A = cfg["units"]["atomic number"]
     lam0 = _Q(cfg["units"]["laser wavelength"]).to("um").value
-    I0 = _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value
+    I0 = (
+        _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value / 2
+    )  ## NB - the factor of 2 enables matching to the Short scaling
     envelopeDensity = cfg["units"]["envelope density"]
 
     # Scaled constants
