@@ -2,15 +2,15 @@ name: adept-gpu
 channels:
   - conda-forge
 dependencies:
-  - python=3.10
+  - python=3.12
   - ipython
   - ipykernel
   - pip
   - pip:
       # works for regular pip packages
       - --find-links https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-      - jaxlib==0.4.20+cuda12.cudnn89
-      - jax==0.4.20
+      - jaxlib==0.4.28+cuda12.cudnn89
+      - jax==0.4.28
       - jaxopt
       - numpy
       - scipy

@@ -3,10 +3,11 @@ from adept.lpse2d.helpers import calc_threshold_intensity
 
 import numpy as np
 from utils.misc import setup_parsl
-from parsl.app.app import python_app
+
+# from parsl.app.app import python_app
 
 
-@python_app
+# @python_app
 def run_once(L, Te, I0):
     import yaml
     from adept import ergoExo
