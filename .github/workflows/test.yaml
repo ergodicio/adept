@@ -35,4 +35,4 @@ jobs:
 
     - name: Test with pytest
       run: |
-        pytest tests/
+        CPU_ONLY=True pytest tests/

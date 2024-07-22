@@ -39,7 +39,9 @@ def write_units(cfg: Dict) -> Dict:
     Z = cfg["units"]["ionization state"]
     A = cfg["units"]["atomic number"]
     lam0 = _Q(cfg["units"]["laser wavelength"]).to("um").value
-    I0 = _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value
+    I0 = (
+        _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value / 2
+    )  ## NB - the factor of 2 enables matching to the Short scaling
     envelopeDensity = cfg["units"]["envelope density"]
 
     # Scaled constants
@@ -311,7 +313,9 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     )
 
     cfg_grid["zero_mask"] = (
-        np.where(cfg_grid["kx"][:, None] * cfg_grid["ky"][None, :] == 0, 0, 1) if cfg["terms"]["zero_mask"] else 1
+        np.where(cfg_grid["kx"] == 0, 0, 1)[:, None] * np.ones_like(cfg_grid["ky"])[None, :]
+        if cfg["terms"]["zero_mask"]
+        else 1
     )
     # sqrt(kx**2 + ky**2) < 2/3 kmax
     cfg_grid["low_pass_filter"] = np.where(

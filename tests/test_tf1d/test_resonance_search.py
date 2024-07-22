@@ -1,7 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 from typing import Dict, Tuple
-import yaml, pytest
+import yaml, pytest, os
 from itertools import product
 
 
@@ -102,4 +102,8 @@ def test_resonance_search(gamma, adjoint):
 
 if __name__ == "__main__":
     for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
-        test_resonance_search(gamma, adjoint)
+        if "CPU_ONLY" in os.environ:
+            if adjoint == "Backsolve":
+                test_resonance_search(gamma, adjoint)
+        else:
+            test_resonance_search(gamma, adjoint)
