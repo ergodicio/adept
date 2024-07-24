@@ -1,0 +1,106 @@
+units:
+  laser wavelength: 351nm
+  normalizing temperature: 2000eV
+  normalizing density: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0
+    T0: 1.
+    m: 2.0
+    basis: sine
+    baseline: 1.
+    amplitude: 1.0e-4
+    wavenumber: 0.3
+  species-beam:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 3.0
+    T0: 0.2
+    m: 2.0
+    basis: sine
+    baseline: 0.1
+    amplitude: -1.0e-4
+    wavenumber: 0.3
+
+grid:
+  dt: 0.1
+  nv: 4096
+  nx: 64
+  tmin: 0.
+  tmax: 500.0
+  vmax: 6.4
+  xmax: 20.94
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 500.0
+      nt: 1001
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 500.0
+      nt: 51
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: bump-on-tail
+  run: nonlinear-fp
+
+drivers:
+  ex: {}
+  ey: {}
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: sixth
+  fokker_planck:
+    is_on: False
+    type: Dougherty
+    time:
+      baseline: 1.0e-5
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: True
+    time:
+      baseline: 1.0e-6
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
