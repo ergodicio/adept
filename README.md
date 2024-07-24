@@ -15,6 +15,9 @@ ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ranspor
 ## Docs
 https://adept.readthedocs.io/en/latest/
 
+## Examples
+https://github.com/ergodicio/adept-notebooks
+
 ## Usage
 `python3 run.py --cfg {config_path}` without the `.yaml` extension
 
