@@ -29,8 +29,7 @@ setup(
     packages=["adept"],
     python_requires=">=3.8",
     install_requires=[
-        "jax",
-        "jaxlib",
+        "jax[cpu]",
         "diffrax",
         "matplotlib",
         "scipy",

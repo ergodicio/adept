@@ -260,31 +260,36 @@ class ergoExo:
 
         return this_module(cfg)
 
-    def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None) -> Dict[str, Module]:
+    def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> Dict[str, Module]:
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
         else:
             self.adept_module = adept_module
 
         # dump raw config
-        with open(os.path.join(td, "config.yaml"), "w") as fi:
-            yaml.dump(self.adept_module.cfg, fi)
+        if log:
+            with open(os.path.join(td, "config.yaml"), "w") as fi:
+                yaml.dump(self.adept_module.cfg, fi)
 
         # dump units
         quants_dict = self.adept_module.write_units()  # writes the units to the temporary directory
-        with open(os.path.join(td, "units.yaml"), "w") as fi:
-            yaml.dump(quants_dict, fi)
+        if log:
+            with open(os.path.join(td, "units.yaml"), "w") as fi:
+                yaml.dump(quants_dict, fi)
 
         # dump derived config
         self.adept_module.get_derived_quantities()  # gets the derived quantities
-        misc.log_params(self.adept_module.cfg)  # logs the parameters to mlflow
-        with open(os.path.join(td, "derived_config.yaml"), "w") as fi:
-            yaml.dump(self.adept_module.cfg, fi)
+
+        if log:
+            misc.log_params(self.adept_module.cfg)  # logs the parameters to mlflow
+            with open(os.path.join(td, "derived_config.yaml"), "w") as fi:
+                yaml.dump(self.adept_module.cfg, fi)
 
         # dump array config
         self.adept_module.get_solver_quantities()
-        with open(os.path.join(td, "array_config.pkl"), "wb") as fi:
-            pickle.dump(self.adept_module.cfg, fi)
+        if log:
+            with open(os.path.join(td, "array_config.pkl"), "wb") as fi:
+                pickle.dump(self.adept_module.cfg, fi)
 
         self.adept_module.init_state_and_args()
         self.adept_module.init_diffeqsolve()
