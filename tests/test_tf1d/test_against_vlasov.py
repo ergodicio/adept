@@ -13,8 +13,6 @@ import xarray as xr
 from adept.theory import electrostatic
 from adept import ergoExo
 
-# from utils.runner import run
-
 
 def _modify_defaults_(defaults):
     rand_k0 = 0.358

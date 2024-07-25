@@ -2,7 +2,7 @@ import os
 from adept.lpse2d.helpers import calc_threshold_intensity
 
 import numpy as np
-from utils.misc import setup_parsl
+from adept.utils.misc import setup_parsl
 
 # from parsl.app.app import python_app
 
@@ -11,7 +11,7 @@ from utils.misc import setup_parsl
 def run_once(L, Te, I0):
     import yaml
     from adept import ergoExo
-    from utils.misc import export_run
+    from adept.utils.misc import export_run
 
     with open("tests/test_lpse2d/configs/tpd.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)

@@ -9,9 +9,6 @@ import mlflow, jax, numpy as np
 from jax import numpy as jnp
 
 
-from utils import misc
-
-
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
@@ -224,9 +221,11 @@ class ergoExo:
                 self.mlflow_run_id = mlflow_run.info.run_id
 
             else:
+                from adept.utils.misc import get_cfg
+
                 with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
                     with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
-                        cfg = misc.get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
+                        cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
                     mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
 
@@ -261,6 +260,8 @@ class ergoExo:
         return this_module(cfg)
 
     def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> Dict[str, Module]:
+        from adept.utils.misc import log_params
+
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
         else:
@@ -281,7 +282,7 @@ class ergoExo:
         self.adept_module.get_derived_quantities()  # gets the derived quantities
 
         if log:
-            misc.log_params(self.adept_module.cfg)  # logs the parameters to mlflow
+            log_params(self.adept_module.cfg)  # logs the parameters to mlflow
             with open(os.path.join(td, "derived_config.yaml"), "w") as fi:
                 yaml.dump(self.adept_module.cfg, fi)
 
