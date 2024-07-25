@@ -2,8 +2,6 @@ import os, yaml, mlflow, numpy as np, pytest
 
 from adept import ergoExo
 
-# from utils.runner import run
-
 
 def _run_(Z, ee):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
