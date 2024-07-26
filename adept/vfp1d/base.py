@@ -37,13 +37,6 @@ class BaseVFP1D(ADEPTModule):
 
         beta = vth / csts.c
 
-        # box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * x0).to("micron")
-        # if "ymax" in self.cfg["grid"].keys():
-        #     box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * x0).to("micron")
-        # else:
-        #     box_width = "inf"
-        # sim_duration = (self.cfg["grid"]["tmax"] * tp0).to("ps")
-
         logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, ne, Te, Z, ion_species)
         logLambda_ee = logLambda_ei
 
