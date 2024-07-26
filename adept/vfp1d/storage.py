@@ -6,7 +6,7 @@ from diffrax import Solution
 from jax import numpy as jnp
 import numpy as np
 import xarray as xr
-from time import time
+from astropy.units import Quantity as _Q
 
 
 def calc_EH(this_Z: int, this_wt: float) -> float:
@@ -186,7 +186,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
         {
             dist: xr.DataArray(
                 ys["electron"][dist],
-                coords=(("t (ps)", this_t["electron"]), ("x (um)", xax), ("v (c)", cfg["grid"]["v"])),
+                coords=(("t (ps)", tax), ("x (um)", xax), ("v (c)", cfg["grid"]["v"])),
             )
             for dist in ys["electron"].keys()
         }
@@ -342,20 +342,29 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return: The updated config
     """
-    for k in cfg["save"].keys():  # this can be fields or electron or scalar?
-        for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
-            if k2 == "x":
-                dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
-                cfg["save"][k][k2]["ax"] = np.linspace(
-                    cfg["save"][k][k2][f"{k2}min"] + dx / 2.0,
-                    cfg["save"][k][k2][f"{k2}max"] - dx / 2.0,
-                    cfg["save"][k][k2][f"n{k2}"],
-                )
 
-            else:
-                cfg["save"][k][k2]["ax"] = np.linspace(
-                    cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
-                )
+    for k in cfg["save"].keys():  # this can be fields or electron or scalar?
+        # for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
+        # if k2 == "x":
+        #     dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
+        #     cfg["save"][k][k2]["ax"] = np.linspace(
+        #         cfg["save"][k][k2][f"{k2}min"] + dx / 2.0,
+        #         cfg["save"][k][k2][f"{k2}max"] - dx / 2.0,
+        #         cfg["save"][k][k2][f"n{k2}"],
+        #     )
+
+        # else:
+        #     cfg["save"][k][k2]["ax"] = np.linspace(
+        #         cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
+        #     )
+
+        tmin = (_Q(cfg["save"][k]["t"]["tmin"]) / cfg["units"]["derived"]["tp0"]).to("").value
+        tmax = (_Q(cfg["save"][k]["t"]["tmax"]) / cfg["units"]["derived"]["tp0"]).to("").value
+        # dt = (tmax - tmin) / cfg["save"][k]["t"]["nt"]
+        # nt = int((tmax - tmin) / dt) + 1
+
+        # cfg["save"][k]["t"]["dt"] = dt
+        cfg["save"][k]["t"]["ax"] = jnp.linspace(tmin, tmax, cfg["save"][k]["t"]["nt"])
 
         if k.startswith("fields"):
             cfg["save"][k]["func"] = get_field_save_func(cfg, k)

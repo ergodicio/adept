@@ -2,6 +2,7 @@ from typing import Dict, Tuple
 
 import numpy as np
 from astropy import constants as csts, units as u
+from astropy.units import Quantity as _Q
 from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from jax import numpy as jnp, tree_util as jtu
 
@@ -36,12 +37,12 @@ class BaseVFP1D(ADEPTModule):
 
         beta = vth / csts.c
 
-        box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * x0).to("micron")
-        if "ymax" in self.cfg["grid"].keys():
-            box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * x0).to("micron")
-        else:
-            box_width = "inf"
-        sim_duration = (self.cfg["grid"]["tmax"] * tp0).to("ps")
+        # box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * x0).to("micron")
+        # if "ymax" in self.cfg["grid"].keys():
+        #     box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * x0).to("micron")
+        # else:
+        #     box_width = "inf"
+        # sim_duration = (self.cfg["grid"]["tmax"] * tp0).to("ps")
 
         logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, ne, Te, Z, ion_species)
         logLambda_ee = logLambda_ei
@@ -88,15 +89,15 @@ class BaseVFP1D(ADEPTModule):
             "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
             "nD_NRL": nD_NRL,
             "nD_Shkarofsky": nD_Shkarofsky,
-            "box_length": box_length,
-            "box_width": box_width,
-            "sim_duration": sim_duration,
+            # "box_length": box_length,
+            # "box_width": box_width,
+            # "sim_duration": sim_duration,
         }
 
         self.cfg["units"]["derived"] = all_quantities
         self.cfg["grid"]["beta"] = beta.value
 
-        return all_quantities
+        return {k: str(v) for k, v in all_quantities.items()}
 
     def get_derived_quantities(self):
         """
@@ -108,19 +109,20 @@ class BaseVFP1D(ADEPTModule):
         :return:
         """
         cfg_grid = self.cfg["grid"]
-        # cfg_grid["xmax"] = u.Quantity(cfg_grid["xmax"]
-
+        cfg_grid["xmax"] = (_Q(cfg_grid["xmax"]) / _Q(self.cfg["units"]["derived"]["x0"])).to("").value
+        cfg_grid["xmin"] = (_Q(cfg_grid["xmin"]) / _Q(self.cfg["units"]["derived"]["x0"])).to("").value
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
 
         # sqrt(2 * k * T / m)
         cfg_grid["vmax"] = (
             8
-            * np.sqrt(
-                (u.Quantity(self.cfg["units"]["reference electron temperature"]) / (csts.m_e * csts.c**2.0)).to("")
-            ).value
+            * np.sqrt((_Q(self.cfg["units"]["reference electron temperature"]) / (csts.m_e * csts.c**2.0)).to("")).value
         )
 
         cfg_grid["dv"] = cfg_grid["vmax"] / cfg_grid["nv"]
+
+        cfg_grid["tmax"] = (_Q(cfg_grid["tmax"]) / self.cfg["units"]["derived"]["tp0"]).to("").value
+        cfg_grid["dt"] = (_Q(cfg_grid["dt"]) / self.cfg["units"]["derived"]["tp0"]).to("").value
 
         cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"]) + 1
 
@@ -131,6 +133,10 @@ class BaseVFP1D(ADEPTModule):
             cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
         cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
+
+        print("tmax", cfg_grid["tmax"], "dt", cfg_grid["dt"])
+        print("xmax", cfg_grid["xmax"], "dx", cfg_grid["dx"])
+
         self.cfg["grid"] = cfg_grid
 
     def get_solver_quantities(self):

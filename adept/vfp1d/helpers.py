@@ -6,8 +6,9 @@ import os
 
 import numpy as np
 from jax import Array
-import xarray, yaml, plasmapy
+import xarray, yaml
 from astropy import units as u, constants as csts
+from astropy.units import Quantity as _Q
 from jax import numpy as jnp
 from adept import get_envelope
 
@@ -139,11 +140,7 @@ def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) ->
 
     """
     if isinstance(cfg["units"]["logLambda"], str):
-        if cfg["units"]["logLambda"].casefold() == "plasmapy":
-            logLambda_ei = plasmapy.formulary.Coulomb_logarithm(n_e=ne, T=Te, z_mean=Z, species=("e", ion_species))
-            logLambda_ee = plasmapy.formulary.Coulomb_logarithm(n_e=ne, T=Te, z_mean=1.0, species=("e", "e"))
-
-        elif cfg["units"]["logLambda"].casefold() == "nrl":
+        if cfg["units"]["logLambda"].casefold() == "nrl":
             log_ne = np.log(ne.to("1/cm^3").value)
             log_Te = np.log(Te.to("eV").value)
             log_Z = np.log(Z)
@@ -257,9 +254,13 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                     profs[k] = np.ones_like(prof_total[k])
 
                 elif species_params[k]["basis"] == "tanh":
-                    left = species_params[k]["center"] - species_params[k]["width"] * 0.5
-                    right = species_params[k]["center"] + species_params[k]["width"] * 0.5
-                    rise = species_params[k]["rise"]
+                    center = (_Q(species_params[k]["center"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    width = (_Q(species_params[k]["width"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    rise = (_Q(species_params[k]["rise"]) / cfg["units"]["derived"]["x0"]).to("").value
+
+                    left = center - width * 0.5
+                    right = center + width * 0.5
+                    # rise = species_params[k]["rise"]
                     prof = get_envelope(rise, rise, left, right, cfg_grid["x"])
 
                     if species_params[k]["bump_or_trough"] == "trough":
@@ -269,7 +270,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 elif species_params[k]["basis"] == "sine":
                     baseline = species_params[k]["baseline"]
                     amp = species_params[k]["amplitude"]
-                    ll = species_params[k]["wavelength"]
+                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
 
                     profs[k] = baseline * (1.0 + amp * jnp.sin(2 * jnp.pi / ll * cfg_grid["x"]))
 

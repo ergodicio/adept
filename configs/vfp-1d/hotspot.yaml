@@ -1,7 +1,7 @@
 units:
   laser wavelength: 351nm
-  reference electron temperature: 300eV
-  reference ion temperature: 300eV
+  reference electron temperature: 500eV
+  reference ion temperature: 500eV
   reference electron density: 1.5e21/cm^3
   Z: 30
   Ion: Au+
@@ -21,24 +21,27 @@ density:
       basis: uniform
       baseline: 1.0
       bump_or_trough: bump
-      center: 0m
-      rise: 1m
+      center: 0.0um
+      rise: 25.0um
       bump_height: 0.0
-      width: 1m
+      width: 100000.0m
     T:
-      basis: sine
+      basis: tanh
       baseline: 1.0
-      amplitude: 1.0e-3
-      wavelength: 250um
+      bump_or_trough: bump
+      center: 50um
+      rise: 5um
+      bump_height: 0.1
+      width: 20um
 
 grid:
-  dt: 1fs
-  nv: 256
-  nx: 32
-  tmin: 0.ps
-  tmax: 2ps
+  dt: 2.5fs
+  nv: 512
+  nx: 512
+  tmin: 0.
+  tmax: 1ps
   vmax: 8.0
-  xmax: 500um
+  xmax: 100um
   xmin: 0.0um
   nl: 1
 
@@ -46,19 +49,19 @@ save:
   fields:
     t:
       tmin: 0.0ps
-      tmax: 0.5ps
+      tmax: 1ps
       nt: 11
   electron:
     t:
       tmin: 0.0ps
-      tmax: 0.5ps
+      tmax: 1ps
       nt: 6
 
 solver: vfp-1d
 
 mlflow:
-  experiment: vfp1d
-  run: epperlein-short
+  experiment: vfp2d
+  run: hotspot
 
 drivers:
   ex: {}
@@ -67,7 +70,8 @@ drivers:
 terms:
   fokker_planck:
     flm:
-      ee: false
+      ee: True
     f00:
       type: Dougherty
   e_solver: oshun
+    
