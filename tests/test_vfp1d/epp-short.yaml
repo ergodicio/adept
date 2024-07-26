@@ -21,37 +21,37 @@ density:
       basis: uniform
       baseline: 1.0
       bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
+      center: 0m
+      rise: 1m
       bump_height: 0.0
-      width: 100000.0
+      width: 1m
     T:
       basis: sine
       baseline: 1.0
       amplitude: 1.0e-3
-      wavelength: 50000.0
+      wavelength: 250um
 
 grid:
-  dt: 25.0
+  dt: 1fs
   nv: 256
   nx: 32
-  tmin: 0.
-  tmax: 50000.0
+  tmin: 0.ps
+  tmax: 2ps
   vmax: 8.0
-  xmax: 100000.0
-  xmin: 0.0
+  xmax: 500um
+  xmin: 0.0um
   nl: 1
 
 save:
   fields:
     t:
-      tmin: 0.0
-      tmax: 50000.0
+      tmin: 0.0ps
+      tmax: 0.5ps
       nt: 11
   electron:
     t:
-      tmin: 0.0
-      tmax: 50000.0
+      tmin: 0.0ps
+      tmax: 0.5ps
       nt: 6
 
 solver: vfp-1d
