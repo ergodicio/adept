@@ -31,3 +31,4 @@ dependencies:
       - plasmapy
       - parsl
       - interpax
+      - tabulate
