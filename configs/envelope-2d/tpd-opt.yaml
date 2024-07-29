@@ -41,14 +41,15 @@ mlflow:
   experiment: tpd-gen-nc-8-nonu
   run: kfilt
 save:
-  t:
-    dt: 100fs
-    tmax: 5ps
-    tmin: 0ps
-  x:
-    dx: 48nm
-  y:
-    dy: 160nm
+  fields:
+    t:
+      dt: 100fs
+      tmax: 5ps
+      tmin: 0ps
+    x:
+      dx: 48nm
+    y:
+      dy: 160nm
 solver: envelope-2d
 terms:
   epw:

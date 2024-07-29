@@ -328,115 +328,6 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def init_state(cfg: Dict, td=None) -> Tuple[Dict, Dict]:
-    """
-    This function initializes the state for the PDE solve
-
-    The state is initialized using
-    random seeds
-    drivers
-
-
-    :param cfg:
-    :return: state: Dict
-    """
-
-    if cfg["density"]["noise"]["type"] == "uniform":
-        random_amps = np.random.uniform(
-            cfg["density"]["noise"]["min"], cfg["density"]["noise"]["max"], (cfg["grid"]["nx"], cfg["grid"]["ny"])
-        )
-
-    elif cfg["density"]["noise"]["type"] == "normal":
-        loc = 0.5 * (cfg["density"]["noise"]["min"] + cfg["density"]["noise"]["max"])
-        scale = 1.0
-        random_amps = np.random.normal(loc, scale, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
-
-    else:
-        raise NotImplementedError
-
-    random_phases = np.random.uniform(0, 2 * np.pi, (cfg["grid"]["nx"], cfg["grid"]["ny"]))
-    phi_noise = 1 * np.exp(1j * random_phases)
-    epw = 0 * phi_noise
-
-    background_density = get_density_profile(cfg)
-    vte_sq = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"])) * cfg["units"]["derived"]["vte"] ** 2
-    E0 = np.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"], 2), dtype=np.complex128)
-    state = {"background_density": background_density, "epw": epw, "E0": E0, "vte_sq": vte_sq}
-
-    drivers = assemble_bandwidth(cfg)
-    return {k: v.view(dtype=np.float64) for k, v in state.items()}, {"drivers": drivers}
-
-
-def assemble_bandwidth(cfg: Dict) -> Dict:
-    """
-    Assemble the amplitudes, initial phases, and frequency shifts associated with each color
-
-    :param cfg: Dict
-    :return: drivers: Dict
-
-    """
-    drivers = {"E0": {}}
-    num_colors = cfg["drivers"]["E0"]["num_colors"]
-
-    if num_colors == 1:
-        drivers["E0"]["delta_omega"] = np.zeros(1)
-        drivers["E0"]["initial_phase"] = np.zeros(1)
-        drivers["E0"]["amplitudes"] = np.ones(1)
-    else:
-        delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
-        delta_omega = np.linspace(-delta_omega_max, delta_omega_max, num_colors)
-
-        drivers["E0"]["delta_omega"] = delta_omega
-        drivers["E0"]["initial_phase"] = np.random.uniform(0, 2 * np.pi, num_colors)
-
-        if cfg["drivers"]["E0"]["amplitude_shape"] == "uniform":
-            drivers["E0"]["amplitudes"] = np.ones(num_colors)
-        elif cfg["drivers"]["E0"]["amplitude_shape"] == "gaussian":
-            drivers["E0"]["amplitudes"] = (
-                2
-                * np.log(2)
-                / delta_omega_max
-                / np.sqrt(np.pi)
-                * np.exp(-4 * np.log(2) * (delta_omega / delta_omega_max) ** 2.0)
-            )
-            drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
-
-        elif cfg["drivers"]["E0"]["amplitude_shape"] == "lorentzian":
-            drivers["E0"]["amplitudes"] = (
-                1 / np.pi * (delta_omega_max / 2) / (delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
-            )
-            drivers["E0"]["amplitudes"] = np.sqrt(drivers["E0"]["amplitudes"])  # for amplitude from intensity
-        elif cfg["drivers"]["E0"]["amplitude_shape"] == "ML" or cfg["drivers"]["E0"]["amplitude_shape"] == "opt":
-            drivers["E0"]["amplitudes"] = np.ones(num_colors)  # will be modified elsewhere
-        elif cfg["drivers"]["E0"]["amplitude_shape"] == "file":
-            import tempfile
-
-            with tempfile.TemporaryDirectory() as td:
-
-                import pickle
-
-                if cfg["drivers"]["E0"]["file"].startswith("s3"):
-                    import boto3
-
-                    fname = cfg["drivers"]["E0"]["file"]
-
-                    bucket = fname.split("/")[2]
-                    key = "/".join(fname.split("/")[3:])
-                    s3 = boto3.client("s3")
-                    s3.download_file(bucket, key, local_fname := os.path.join(td, "drivers.pkl"))
-                else:
-                    local_fname = cfg["drivers"]["E0"]["file"]
-
-                with open(local_fname, "rb") as fi:
-                    drivers = pickle.load(fi)
-        else:
-            raise NotImplemented
-
-        drivers["E0"]["amplitudes"] /= np.sum(drivers["E0"]["amplitudes"])
-
-    return drivers
-
-
 def get_density_profile(cfg: Dict) -> Array:
     """
     Helper function for initializing the density profile
@@ -615,11 +506,11 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
     if "E0" in used_driver:
         dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
         fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
-        ax[0].plot(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+        ax[0].plot(dw_over_w, used_driver["E0"]["intensities"], "o")
         ax[0].grid()
         ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
         ax[0].set_ylabel("$|E|$", fontsize=14)
-        ax[1].semilogy(dw_over_w, used_driver["E0"]["amplitudes"], "o")
+        ax[1].semilogy(dw_over_w, used_driver["E0"]["intensities"], "o")
         ax[1].grid()
         ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
         ax[1].set_ylabel("$|E|$", fontsize=14)
@@ -627,7 +518,7 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
         ax[2].grid()
         ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
         ax[2].set_ylabel(r"$\angle E$", fontsize=14)
-        plt.savefig(os.path.join(td, "learned_bandwidth.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(td, "driver_that_was_used.png"), bbox_inches="tight")
         plt.close()
 
     os.makedirs(os.path.join(td, "binary"))
@@ -656,14 +547,18 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
     return {"k": kfields, "x": fields, "metrics": metrics}
 
 
-def make_xarrays(cfg, this_t, state, td):
-    if "x" in cfg["save"]:
-        kx = cfg["save"]["kx"]
-        ky = cfg["save"]["ky"]
-        xax = cfg["save"]["x"]["ax"]
-        yax = cfg["save"]["y"]["ax"]
-        nx = cfg["save"]["x"]["ax"].size
-        ny = cfg["save"]["y"]["ax"].size
+def make_xarrays(cfg, ts, ys, td):
+    this_t = ts["fields"]
+    state = ys["fields"]
+
+    fld_save = cfg["save"]["fields"]
+    if "x" in fld_save:
+        kx = fld_save["kx"]
+        ky = fld_save["ky"]
+        xax = fld_save["x"]["ax"]
+        yax = fld_save["y"]["ax"]
+        nx = fld_save["x"]["ax"].size
+        ny = fld_save["y"]["ax"].size
 
     else:
         kx = cfg["grid"]["kx"]
@@ -753,35 +648,35 @@ def get_save_quantities(cfg: Dict) -> Dict:
     """
 
     # cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
-    tmin = _Q(cfg["save"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
-    tmax = _Q(cfg["save"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
-    dt = _Q(cfg["save"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    tmin = _Q(cfg["save"]["fields"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    tmax = _Q(cfg["save"]["fields"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
+    dt = _Q(cfg["save"]["fields"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     nt = int((tmax - tmin) / dt) + 1
 
-    cfg["save"]["t"]["dt"] = dt
-    cfg["save"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
+    cfg["save"]["fields"]["t"]["dt"] = dt
+    cfg["save"]["fields"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
 
-    if "x" in cfg["save"]:
+    if "x" in cfg["save"]["fields"]:
         xmin = cfg["grid"]["xmin"]
         xmax = cfg["grid"]["xmax"]
-        dx = _Q(cfg["save"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
+        dx = _Q(cfg["save"]["fields"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
         nx = int((xmax - xmin) / dx)
-        cfg["save"]["x"]["dx"] = dx
-        cfg["save"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
-        cfg["save"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
+        cfg["save"]["fields"]["x"]["dx"] = dx
+        cfg["save"]["fields"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
+        cfg["save"]["fields"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
 
-        if "y" in cfg["save"]:
+        if "y" in cfg["save"]["fields"]:
             ymin = cfg["grid"]["ymin"]
             ymax = cfg["grid"]["ymax"]
-            dy = _Q(cfg["save"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
+            dy = _Q(cfg["save"]["fields"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
             ny = int((ymax - ymin) / dy)
-            cfg["save"]["y"]["dy"] = dy
-            cfg["save"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
-            cfg["save"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
+            cfg["save"]["fields"]["y"]["dy"] = dy
+            cfg["save"]["fields"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
+            cfg["save"]["fields"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
         else:
             raise NotImplementedError("Must specify y in save")
 
-        xq, yq = jnp.meshgrid(cfg["save"]["x"]["ax"], cfg["save"]["y"]["ax"], indexing="ij")
+        xq, yq = jnp.meshgrid(cfg["save"]["fields"]["x"]["ax"], cfg["save"]["fields"]["y"]["ax"], indexing="ij")
 
         interpolator = partial(
             interpax.interp2d,
@@ -815,6 +710,21 @@ def get_save_quantities(cfg: Dict) -> Dict:
     else:
         save_func = lambda t, y, args: y
 
-    cfg["save"]["func"] = save_func
+    cfg["save"]["fields"]["func"] = save_func
+
+    # cfg["save"]["default"] = get_default_save_func(cfg)
 
     return cfg
+
+
+def get_default_save_func(cfg):
+
+    def save_func(t, y, args):
+        phi_k = jnp.fft.fft2(y["epw"])
+        ex = -1j * cfg["grid"]["kx"][:, None] * phi_k
+        ey = -1j * cfg["grid"]["ky"][None, :] * phi_k
+        e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
+
+        return {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"])}
+
+    return {"t": {"ax": cfg["grid"]["t"]}, "func": save_func}

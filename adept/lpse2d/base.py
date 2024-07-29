@@ -1,7 +1,7 @@
 from typing import Dict
 import numpy as np
 from astropy.units import Quantity as _Q
-from diffrax import diffeqsolve, SaveAt, ODETerm
+from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from equinox import filter_jit, tree_deserialise_leaves
 
 from adept import ADEPTModule, Stepper
@@ -14,7 +14,7 @@ from adept.lpse2d.helpers import (
     get_density_profile,
 )
 from adept.lpse2d.vector_field import SplitStep
-from adept.lpse2d.modules.driver import BandwidthModule
+from adept.lpse2d.modules import driver
 
 
 class BaseLPSE2D(ADEPTModule):
@@ -45,10 +45,9 @@ class BaseLPSE2D(ADEPTModule):
         modules = {}
         if "E0" in self.cfg["drivers"]:
             if "file" in self.cfg["modules"]["bandwidth"]:
-                # with open(self.cfg["models"]["bandwidth"]["file"], "rb") as f:
                 modules["bandwidth"] = driver.load(self.cfg)
             else:
-                modules["bandwidth"] = BandwidthModule(self.cfg)
+                modules["bandwidth"] = driver.BandwidthModule(self.cfg)
 
         return modules
 
@@ -67,7 +66,11 @@ class BaseLPSE2D(ADEPTModule):
         self.diffeqsolve_quants = dict(
             terms=ODETerm(SplitStep(self.cfg)),
             solver=Stepper(),
-            saveat=dict(ts=self.cfg["save"]["t"]["ax"], fn=self.cfg["save"]["func"]),
+            saveat=dict(
+                subs={
+                    k: SubSaveAt(ts=subsave["t"]["ax"], fn=subsave["func"]) for k, subsave in self.cfg["save"].items()
+                }
+            ),
         )
 
     def init_state_and_args(self) -> Dict:
@@ -95,7 +98,6 @@ class BaseLPSE2D(ADEPTModule):
         E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
         state = {"background_density": background_density, "epw": epw, "E0": E0, "vte_sq": vte_sq}
 
-        # drivers = assemble_bandwidth(self.cfg)
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
 
