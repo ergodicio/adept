@@ -35,7 +35,7 @@ def run_one_val_and_grad(run_id, module_path):
         def __call__(self, trainable_modules, args=None):
             out_dict = super()(trainable_modules, args)
             phi_xy = out_dict["solver result"].ys["fields"]["epw"]
-            phi_k = jnp.fft.fft2(phi_xy)
+            phi_k = jnp.fft.fft2(phi_xy.view(jnp.complex128))
             ex_k = -1j * self.cfg["grid"]["kx"] * phi_k
             ey_k = -1j * self.cfg["grid"]["ky"] * phi_k
             e_sq = jnp.abs(ex_k) ** 2 + jnp.abs(ey_k) ** 2
