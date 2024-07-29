@@ -1,10 +1,31 @@
 from typing import Dict
+import json
 
 from jax import numpy as jnp, Array
+from jax.lax import stop_gradient
 import equinox as eqx
 import numpy as np
 
+
 from adept.lpse2d.modules.nn import driver as driver_nn
+
+
+def save(filename, model_cfg, model):
+    with open(filename, "wb") as f:
+        model_cfg_str = json.dumps(model_cfg)
+        f.write((model_cfg_str + "\n").encode())
+        eqx.tree_serialise_leaves(f, model)
+
+
+def load(cfg):
+    filename = cfg["modules"]["bandwidth"]["file"]
+    with open(filename, "rb") as f:
+        model_cfg = json.loads(f.readline().decode())
+        hyperparams = model_cfg["hyperparams"]
+        cfg["modules"]["bandwidth"] = cfg["modules"]["bandwidth"] | hyperparams
+        model = BandwidthModule(cfg)
+
+        return eqx.tree_deserialise_leaves(f, model)
 
 
 class BandwidthModule(eqx.Module):
@@ -62,6 +83,10 @@ class BandwidthModule(eqx.Module):
 
         self.amplitudes /= jnp.sum(self.amplitudes)
 
+    def stop_gradients(self):
+        self.num_colors = stop_gradient(self.num_colors)
+        self.delta_omega = stop_gradient(self.delta_omega)
+
     # elif self.cfg["drivers"]["E0"]["amplitude_shape"] == "file":
     #     import tempfile
 
@@ -91,6 +116,9 @@ class BandwidthModule(eqx.Module):
     # return drivers
 
     def __call__(self, state: Dict, args: Dict) -> tuple:
+
+        self.stop_gradients()
+
         if "learned" in self.amplitude_shape.casefold():
             if "ml" in self.amplitude_shape.casefold():
                 if "gen" in self.amplitude_shape.casefold():

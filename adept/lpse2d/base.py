@@ -2,7 +2,7 @@ from typing import Dict
 import numpy as np
 from astropy.units import Quantity as _Q
 from diffrax import diffeqsolve, SaveAt, ODETerm
-from equinox import filter_jit
+from equinox import filter_jit, tree_deserialise_leaves
 
 from adept import ADEPTModule, Stepper
 from adept.lpse2d.helpers import (
@@ -44,7 +44,11 @@ class BaseLPSE2D(ADEPTModule):
 
         modules = {}
         if "E0" in self.cfg["drivers"]:
-            modules["bandwidth"] = BandwidthModule(self.cfg)
+            if "file" in self.cfg["modules"]["bandwidth"]:
+                # with open(self.cfg["models"]["bandwidth"]["file"], "rb") as f:
+                modules["bandwidth"] = driver.load(self.cfg)
+            else:
+                modules["bandwidth"] = BandwidthModule(self.cfg)
 
         return modules
 
@@ -103,7 +107,7 @@ class BaseLPSE2D(ADEPTModule):
             args = self.args
 
         for name, module in trainable_modules.items():
-            state, args = module(self.state, args)
+            state, args = module(state, args)
 
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],

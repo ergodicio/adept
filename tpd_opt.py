@@ -1,7 +1,6 @@
 from parsl.app.app import python_app
 import logging, os
 import equinox as eqx
-import pickle
 
 logger = logging.getLogger(__name__)
 
@@ -10,36 +9,50 @@ if "BASE_TEMPDIR" in os.environ:
 else:
     BASE_TEMPDIR = None
 
-from utils import misc
 
-
-def run_one_val_and_grad(cfg, run_id):
-    import os
+def run_one_val_and_grad(run_id, module_path):
+    import os, yaml
 
     os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
-    from jax import config
+    from jax import config, numpy as jnp
 
     config.update("jax_enable_x64", True)
 
-    import mlflow
-    from utils.runner import run
-    from utils.misc import export_run
+    from adept import ergoExo
+    from adept.utils.misc import export_run
+    from adept.lpse2d.base import BaseLPSE2D
 
-    with mlflow.start_run(run_id=run_id) as mlflow_run:
-        solver_output, postprocessing_output = run(cfg)
-        mlflow.log_artifact(cfg["models"]["bandwidth"]["file"])
+    with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd-opt.yaml", "r") as fi:
+        cfg = yaml.safe_load(fi)
 
-    export_run(mlflow_run.info.run_id)
+    cfg["models"]["bandwidth"]["file"] = module_path
 
-    val = solver_output[0][0]
-    grad = solver_output[1]
+    class TPDModule(BaseLPSE2D):
+        def __init__(self, cfg) -> None:
+            super().__init__(cfg)
+
+        def __call__(self, trainable_modules, args=None):
+            out_dict = super()(trainable_modules, args)
+            phi_xy = out_dict["solver result"].ys["fields"]["epw"]
+            phi_k = jnp.fft.fft2(phi_xy)
+            ex_k = -1j * self.cfg["grid"]["kx"] * phi_k
+            ey_k = -1j * self.cfg["grid"]["ky"] * phi_k
+            e_sq = jnp.abs(ex_k) ** 2 + jnp.abs(ey_k) ** 2
+            return e_sq, out_dict
+
+    exo = ergoExo(mlflow_run_id=run_id, mlflow_nested=True)
+    modules = exo.setup(cfg, adept_module=TPDModule)
+    val, grad, (sol, ppo, _) = exo.val_and_grad(modules)
+    export_run(run_id)
 
     return val, grad
 
 
 if __name__ == "__main__":
     import uuid
+    from adept.utils import misc
+    from adept import ergoExo
 
     logging.basicConfig(filename=f"runlog-tpd-learn-{str(uuid.uuid4())[-4:]}.log", level=logging.INFO)
 
@@ -59,7 +72,7 @@ if __name__ == "__main__":
 
     import yaml, mlflow, tempfile, os
     import numpy as np, equinox as eqx
-    from adept.lpse2d import nn
+    from adept.lpse2d.modules.driver import save as save_driver
 
     with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd-opt.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
@@ -78,39 +91,36 @@ if __name__ == "__main__":
 
     rng = np.random.default_rng(6367)
 
-    if "hyperparams" in cfg["models"]["bandwidth"]:
-        weights = nn.GenerativeDriver(**cfg["models"]["bandwidth"]["hyperparams"])
-    else:
-        initial_amps = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
-        initial_phases = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
-        weights = {"amps": initial_amps, "phases": initial_phases}
+    exo = ergoExo()
+    modules = exo.setup(cfg)
 
-    cfg["mode"] = "optimize-bandwidth"
-    batch_size = 32
+    # if "hyperparams" in cfg["models"]["bandwidth"]:
+    #     weights = nn.GenerativeDriver(**cfg["models"]["bandwidth"]["hyperparams"])
+    # else:
+    #     initial_amps = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
+    #     initial_phases = rng.uniform(0, 1, cfg["drivers"]["E0"]["num_colors"])
+    #     weights = {"amps": initial_amps, "phases": initial_phases}
+
+    # cfg["mode"] = "optimize-bandwidth"
+    batch_size = 1
     with mlflow.start_run(run_id=parent_run_id, log_system_metrics=True) as mlflow_run:
         opt = optax.adam(learning_rate=cfg["opt"]["learning_rate"])
-        opt_state = opt.init(eqx.filter(weights, eqx.is_array))  # initialize the optimizer state
+        opt_state = opt.init(eqx.filter(modules, eqx.is_array))  # initialize the optimizer state
 
         with tempfile.TemporaryDirectory(
             dir=BASE_TEMPDIR
         ) as td:  # create a temporary directory for optimizer run artifacts
 
             os.makedirs(os.path.join(td, "weights-history"), exist_ok=True)  # create a directory for model history
-            with open(cfg_path := os.path.join(td, "config.yaml"), "w") as fi:
-                yaml.dump(cfg, fi)
+            # with open(cfg_path := os.path.join(td, "config.yaml"), "w") as fi:
+            #     yaml.dump(cfg, fi)
 
             for i in range(1000):  # 1000 epochs
-
-                if "hyperparams" in cfg["models"]["bandwidth"]:
-                    nn.save(
-                        weights_path := os.path.join(td, "weights-history", f"weights-{i}.eqx"),
-                        cfg["models"]["bandwidth"],
-                        weights,
-                    )
-                else:
-                    with open(weights_path := os.path.join(td, "weights-history", f"weights-{i}.pkl"), "wb") as fi:
-                        pickle.dump(weights, fi)
-                cfg["models"]["bandwidth"]["file"] = weights_path
+                save_driver(
+                    module_path := os.path.join(td, "weights-history", f"weights-{i}.eqx"),
+                    model_cfg=cfg["modules"]["bandwidth"]["params"],
+                    model=modules["bandwidth"],
+                )
 
                 if batch_size == 1:
                     with mlflow.start_run(nested=True, run_name=f"epoch-{i}") as nested_run:
@@ -121,7 +131,9 @@ if __name__ == "__main__":
                     for j in range(batch_size):
                         with mlflow.start_run(nested=True, run_name=f"epoch-{i}-sim-{j}") as nested_run:
                             # val, grad = run_one_val_and_grad(cfg, run_id=nested_run.info.run_id).result()
-                            val_and_grads.append(run_one_val_and_grad(cfg, run_id=nested_run.info.run_id))
+                            val_and_grads.append(
+                                run_one_val_and_grad(run_id=nested_run.info.run_id, module_path=module_path)
+                            )
 
                     vgs = [vg.result() for vg in val_and_grads]  # get the results of the futures
                     val = np.mean([v for v, _ in vgs])  # get the mean of the loss values
