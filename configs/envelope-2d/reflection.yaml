@@ -39,10 +39,11 @@ drivers:
     intensity: 4.0e14
 
 save:
-  t:
-    tmin: 0.0
-    tmax: 1000.0
-    nt: 512
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 1000.0
+      nt: 512
 
 plasma:
   wp0: 1.0

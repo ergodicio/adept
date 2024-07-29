@@ -9,60 +9,65 @@ from adept.lpse2d.modules.nn import driver as driver_nn
 
 class BandwidthModule(eqx.Module):
     num_colors: float
-    amplitude_shape: str
+    shape: str
     delta_omega: np.ndarray
     initial_phase: Array
-    amplitudes: Array
+    intensities: Array
     envelope: Dict
     model: eqx.Module
 
     def __init__(self, cfg: Dict):
         super().__init__()
         self.num_colors = cfg["drivers"]["E0"]["num_colors"]
-        self.amplitude_shape = cfg["drivers"]["E0"]["amplitude_shape"]
+        self.shape = cfg["drivers"]["E0"]["shape"]
         self.model = {}
         self.envelope = cfg["drivers"]["E0"]["derived"]
 
         if self.num_colors == 1:
             self.delta_omega = np.zeros(1)
             self.initial_phase = np.zeros(1)
-            self.amplitudes = np.ones(1)
+            self.intensities = np.ones(1)
 
         else:
-            delta_omega_max = self.cfg["drivers"]["E0"]["delta_omega_max"]
+            delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
             self.delta_omega = jnp.linspace(-delta_omega_max, delta_omega_max, self.num_colors)
             self.initial_phase = np.random.uniform(0, 2 * np.pi, self.num_colors)
-            self.amplitudes = np.ones(self.num_colors)
-            if self.amplitude_shape == "gaussian":
-                amplitudes = (
+
+            if self.shape == "uniform":
+                self.intensities = np.ones(self.num_colors)
+
+            elif self.shape == "gaussian":
+                self.intensities = (
                     2
                     * np.log(2)
                     / delta_omega_max
                     / np.sqrt(np.pi)
                     * np.exp(-4 * np.log(2) * (self.delta_omega / delta_omega_max) ** 2.0)
                 )
-                self.amplitudes = jnp.sqrt(amplitudes)
+                # self.intensities = jnp.sqrt(intensities)
 
-            elif self.amplitude_shape == "lorentzian":
-                amplitudes = 1 / np.pi * (delta_omega_max / 2) / (self.delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
-                self.amplitudes = np.sqrt(amplitudes)
+            elif self.shape == "lorentzian":
+                self.intensities = (
+                    1 / np.pi * (delta_omega_max / 2) / (self.delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
+                )
+                # self.intensities = np.sqrt(intensities)
 
-            elif self.amplitude_shape == "learned":
-                if "ml" in self.amplitude_shape:
-                    if "gen" in self.amplitude_shape:
+            elif self.shape == "learned":
+                if "ml" in self.shape:
+                    if "gen" in self.shape:
                         self.model = driver_nn.GenerativeDriver(**cfg["modules"]["bandwidth"]["model"]["params"])
                     else:
                         raise NotImplementedError("This ")
                 else:
-                    self.amplitudes = jnp.ones_like(self.delta_omega)
+                    self.intensities = jnp.ones_like(self.delta_omega)
             else:
                 raise NotImplementedError(
-                    f"Amplitude shape - {self.amplitude_shape} - not implemented. If you want monochromatic light, set num_colors to 1."
+                    f"Amplitude shape - {self.shape} - not implemented. If you want monochromatic light, set num_colors to 1."
                 )
 
-        self.amplitudes /= jnp.sum(self.amplitudes)
+        self.intensities /= jnp.sum(self.intensities)
 
-    # elif self.cfg["drivers"]["E0"]["amplitude_shape"] == "file":
+    # elif self.cfg["drivers"]["E0"]["shape"] == "file":
     #     import tempfile
 
     #     with tempfile.TemporaryDirectory() as td:
@@ -86,25 +91,25 @@ class BandwidthModule(eqx.Module):
     # else:
     #     raise NotImplemented
 
-    # drivers["E0"]["amplitudes"] /= jnp.sum(drivers["E0"]["amplitudes"])
+    # drivers["E0"]["intensities"] /= jnp.sum(drivers["E0"]["intensities"])
 
     # return drivers
 
     def __call__(self, state: Dict, args: Dict) -> tuple:
-        if "learned" in self.amplitude_shape.casefold():
-            if "ml" in self.amplitude_shape.casefold():
-                if "gen" in self.amplitude_shape.casefold():
+        if "learned" in self.shape.casefold():
+            if "ml" in self.shape.casefold():
+                if "gen" in self.shape.casefold():
                     inputs = None
                 else:
-                    raise NotImplementedError(f"The -- {self.amplitude_shape} -- model type has not been implemented")
+                    raise NotImplementedError(f"The -- {self.shape} -- model type has not been implemented")
                 amp = self.model(inputs)
         else:
-            amp = self.amplitudes
+            amp = self.intensities
 
         args["drivers"]["E0"] = {
             "delta_omega": self.delta_omega,
             "initial_phase": self.initial_phase,
-            "amplitudes": amp,
+            "intensities": amp,
             "xr": self.envelope["xr"],
             "yr": self.envelope["yr"],
             "tr": self.envelope["tr"],
