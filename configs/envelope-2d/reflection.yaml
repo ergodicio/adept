@@ -52,9 +52,9 @@ plasma:
 #  density: 2.3e27  #m^3
 
 units:
-  laser wavelength: 351nm
-  normalizing temperature: 4000eV
-  normalizing density: 2.24e21/cc
+  laser_wavelength: 351nm
+  normalizing_temperature: 4000eV
+  normalizing_density: 2.24e21/cc
   gas fill: N
   ionization state: 6
   electron temperature: 4000eV

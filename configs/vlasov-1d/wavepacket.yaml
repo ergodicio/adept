@@ -99,6 +99,6 @@ terms:
 units:
   Z: 10
   Zp: 10
-  laser wavelength: 351nm
-  normalizing density: 1.5e21/cc
-  normalizing temperature: 2000eV
+  laser_wavelength: 351nm
+  normalizing_density: 1.5e21/cc
+  normalizing_temperature: 2000eV

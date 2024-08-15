@@ -26,8 +26,8 @@ class BaseVlasov1D(ADEPTModule):
 
         _Q = self.ureg.Quantity
 
-        n0 = _Q(self.cfg["units"]["normalizing density"]).to("1/cc")
-        T0 = _Q(self.cfg["units"]["normalizing temperature"]).to("eV")
+        n0 = _Q(self.cfg["units"]["normalizing_density"]).to("1/cc")
+        T0 = _Q(self.cfg["units"]["normalizing_temperature"]).to("eV")
 
         wp0 = np.sqrt(n0 * self.ureg.e**2.0 / (self.ureg.m_e * self.ureg.epsilon_0)).to("rad/s")
         tp0 = (1 / wp0).to("fs")

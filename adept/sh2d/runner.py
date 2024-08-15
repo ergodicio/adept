@@ -16,7 +16,7 @@ def write_units(cfg, td):
     ureg = pint.UnitRegistry()
     _Q = ureg.Quantity
 
-    lambda0 = _Q(cfg["units"]["laser wavelength"])
+    lambda0 = _Q(cfg["units"]["laser_wavelength"])
     w0 = (2 * np.pi / lambda0 * ureg.c).to("rad/s")
     t0 = (1 / w0).to("fs")
     n0 = (w0**2 * ureg.m_e * ureg.epsilon_0 / ureg.e**2.0).to("1/cc")
