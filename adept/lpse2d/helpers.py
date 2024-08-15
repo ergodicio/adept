@@ -38,7 +38,7 @@ def write_units(cfg: Dict) -> Dict:
     Ti = _Q(cfg["units"]["reference ion temperature"]).to("keV").value
     Z = cfg["units"]["ionization state"]
     A = cfg["units"]["atomic number"]
-    lam0 = _Q(cfg["units"]["laser wavelength"]).to("um").value
+    lam0 = _Q(cfg["units"]["laser_wavelength"]).to("um").value
     I0 = (
         _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value / 2
     )  ## NB - the factor of 2 enables matching to the Short scaling

@@ -14,9 +14,9 @@ grid:
 models: False
 
 units:
-  laser wavelength: 351nm
-  normalizing temperature: 2000eV
-  normalizing density: 1.5e21/cc
+  laser_wavelength: 351nm
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
   Z: 10
   Zp: 10
 
