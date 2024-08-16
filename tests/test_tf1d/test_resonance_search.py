@@ -20,7 +20,7 @@ import equinox as eqx
 from tqdm import tqdm
 
 from adept import ergoExo
-from adept.tf1d.base import BaseTwoFluid1D
+from adept.tf1d.modules import BaseTwoFluid1D
 from adept.theory.electrostatic import get_roots_to_electrostatic_dispersion
 
 
@@ -103,7 +103,8 @@ def test_resonance_search(gamma, adjoint):
 if __name__ == "__main__":
     for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
         if "CPU_ONLY" in os.environ:
-            if adjoint == "Backsolve":
-                test_resonance_search(gamma, adjoint)
+            # if adjoint == "Backsolve":
+            #     test_resonance_search(gamma, adjoint)
+            pass
         else:
             test_resonance_search(gamma, adjoint)
