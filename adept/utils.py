@@ -117,40 +117,6 @@ def all_reduce_gradients(gradients, num):
     return average_gradient
 
 
-def get_jq(client: boto3.client, desired_machine: str):
-    queues = client.describe_job_queues()
-    for queue in queues["jobQueues"]:
-        if desired_machine == queue["jobQueueName"]:
-            return queue["jobQueueArn"]
-
-
-def get_jd(client: boto3.client, sim_type: str, desired_machine: str):
-    jobdefs = client.describe_job_definitions()
-    for jobdef in jobdefs["jobDefinitions"]:
-        if (
-            desired_machine in jobdef["jobDefinitionName"]
-            and jobdef["status"] == "ACTIVE"
-            and sim_type in jobdef["jobDefinitionName"]
-        ):
-            return jobdef["jobDefinitionArn"]
-
-
-def queue_sim(sim_request):
-    client = boto3.client("batch", region_name="us-east-1")
-
-    job_template = {
-        "jobQueue": get_jq(client, sim_request["machine"]),
-        "jobDefinition": get_jd(client, sim_request["sim_type"], "cpu"),
-        "jobName": sim_request["job_name"],
-        "parameters": {"run_id": sim_request["run_id"], "run_type": sim_request["run_type"]},
-        "retryStrategy": {"attempts": 10, "evaluateOnExit": [{"action": "RETRY", "onStatusReason": "Host EC2*"}]},
-    }
-
-    submissionResult = client.submit_job(**job_template)
-
-    return submissionResult
-
-
 def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id: str, prefix="individual", step=0):
     """
     Uploads directory to s3 bucket for ingestion into mlflow on remote / cloud side

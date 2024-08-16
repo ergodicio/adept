@@ -62,34 +62,6 @@ class BandwidthModule(eqx.Module):
 
         self.amplitudes /= jnp.sum(self.amplitudes)
 
-    # elif self.cfg["drivers"]["E0"]["amplitude_shape"] == "file":
-    #     import tempfile
-
-    #     with tempfile.TemporaryDirectory() as td:
-
-    #         import pickle
-
-    #         if self.cfg["drivers"]["E0"]["file"].startswith("s3"):
-    #             import boto3
-
-    #             fname = self.cfg["drivers"]["E0"]["file"]
-
-    #             bucket = fname.split("/")[2]
-    #             key = "/".join(fname.split("/")[3:])
-    #             s3 = boto3.client("s3")
-    #             s3.download_file(bucket, key, local_fname := os.path.join(td, "drivers.pkl"))
-    #         else:
-    #             local_fname = self.cfg["drivers"]["E0"]["file"]
-
-    #         with open(local_fname, "rb") as fi:
-    #             drivers = pickle.load(fi)
-    # else:
-    #     raise NotImplemented
-
-    # drivers["E0"]["amplitudes"] /= jnp.sum(drivers["E0"]["amplitudes"])
-
-    # return drivers
-
     def __call__(self, state: Dict, args: Dict) -> tuple:
         if "learned" in self.amplitude_shape.casefold():
             if "ml" in self.amplitude_shape.casefold():
