@@ -69,6 +69,6 @@ units:
   envelope density: 0.25
   ionization state: 6
   laser intensity: 2.0e+15W/cm^2
-  laser wavelength: 351nm
+  laser_wavelength: 351nm
   reference electron temperature: 2000.0eV
   reference ion temperature: 1000eV

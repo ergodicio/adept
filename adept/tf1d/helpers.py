@@ -29,8 +29,8 @@ def write_units(cfg: Dict, td: str) -> Dict:
     ureg = pint.UnitRegistry()
     _Q = ureg.Quantity
 
-    n0 = _Q(cfg["units"]["normalizing density"]).to("1/cc")
-    T0 = _Q(cfg["units"]["normalizing temperature"]).to("eV")
+    n0 = _Q(cfg["units"]["normalizing_density"]).to("1/cc")
+    T0 = _Q(cfg["units"]["normalizing_temperature"]).to("eV")
 
     wp0 = np.sqrt(n0 * ureg.e**2.0 / (ureg.m_e * ureg.epsilon_0)).to("rad/s")
     tp0 = (1 / wp0).to("fs")
