@@ -35,5 +35,4 @@ jobs:
 
     - name: Test with pytest
       run: |
-        CPU_ONLY=True pytest tests/test_lpse2d
-        CPU_ONLY=True pytest tests/test_vlasov1d
+        CPU_ONLY=True pytest tests/test_lpse2d tests/test_vlasov1d
