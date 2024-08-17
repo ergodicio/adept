@@ -8,8 +8,8 @@ config.update("jax_enable_x64", True)
 from jax import jit
 from diffrax import ODETerm, diffeqsolve
 
-from adept.vlasov1d.pushers.field import Driver, WaveSolver
-from adept.vlasov1d import vector_field
+from adept.vlasov1d.solvers.pushers.field import Driver, WaveSolver
+from adept import Stepper
 
 
 class VectorField(eqx.Module):
@@ -67,7 +67,7 @@ def test_absorbing_boundaries():
     def _run_(y, args):
         return diffeqsolve(
             terms=ODETerm(VectorField(c_light, dx, dt, xax)),
-            solver=vector_field.Stepper(),
+            solver=Stepper(),
             t0=0.0,
             t1=tmax,
             max_steps=nt + 5,

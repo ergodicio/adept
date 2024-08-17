@@ -61,9 +61,6 @@ mlflow:
   experiment: 1d2v-epw
   run: a1em2-both-exact
 
-machine:
-  calculator: gpu
-
 drivers:
   ex:
     '0':

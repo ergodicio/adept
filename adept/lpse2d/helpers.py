@@ -717,33 +717,6 @@ def make_xarrays(cfg, this_t, state, td):
     return kfields, fields
 
 
-def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
-    models = {}
-    for nm, this_models_config in all_models_config.items():
-        if "file" in this_models_config:
-            file_path = this_models_config["file"]
-            if file_path.endswith(".pkl"):
-                import pickle
-
-                with open(file_path, "rb") as fi:
-                    models[nm] = pickle.load(fi)
-                    print(models)
-                print(f"Loading {nm} weights from file {file_path} and ignoring any other specifications.")
-            elif file_path.endswith(".eqx"):
-                models[nm], _ = nn.load(file_path)
-
-                print(f"Loading {nm} model from file {file_path} and ignoring any other specifications.")
-        else:
-            if this_models_config["type"] == "MLP":
-                models[nm] = nn.DriverModel(**this_models_config["config"])
-            elif this_models_config["type"] == "VAE":
-                models[nm] = nn.VAE(**this_models_config["config"])
-            else:
-                raise NotImplementedError
-
-    return models
-
-
 def get_save_quantities(cfg: Dict) -> Dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines

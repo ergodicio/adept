@@ -31,8 +31,7 @@ grid:
   tmin: 0.0ns
   ymax: 1um
   ymin: -1um
-machine:
-  calculator: gpu
+
 mlflow:
   experiment: test-lpse
   run: epw-test

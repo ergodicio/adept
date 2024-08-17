@@ -4,7 +4,7 @@ from typing import Tuple, Dict
 from jax import numpy as jnp, Array
 
 from adept import get_envelope
-from adept.vlasov1d.pushers import field, fokker_planck, vlasov
+from adept.vlasov1d.solvers.pushers import field, fokker_planck, vlasov
 
 
 class TimeIntegrator:
