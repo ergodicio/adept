@@ -240,18 +240,25 @@ class ergoExo:
 
 
         """
+
         if cfg["solver"] == "tf-1d":
             from adept.tf1d.modules import BaseTwoFluid1D as this_module
-        # elif solver == "sh-2d":
-        #     from adept.sh2d import helpers
+            from adept.tf1d.datamodel import ConfigModel
+
+            # config = ConfigModel(**cfg)
+
         elif cfg["solver"] == "vlasov-1d":
             from adept.vlasov1d.modules import BaseVlasov1D as this_module
-        # elif solver == "vlasov-1d2v":
-        #     from adept.vlasov1d2v import helpers
-        # elif solver == "vlasov-2d":
-        #     from adept.vlasov2d import helpers
+            from adept.vlasov1d.datamodel import ConfigModel
+
+            # config = ConfigModel(**cfg)
+
         elif cfg["solver"] == "envelope-2d":
             from adept.lpse2d.modules.base import BaseLPSE2D as this_module
+            from adept.lpse2d.datamodel import ConfigModel
+
+            # config = ConfigModel(**cfg)
+
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
         else:

@@ -148,7 +148,6 @@ class ConfigModel(BaseModel):
     density: DensityModel
     drivers: DriversModel
     grid: GridModel
-    machine: MachineModel
     mlflow: MLFlowModel
     save: SaveModel
     solver: str
