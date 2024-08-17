@@ -245,13 +245,13 @@ class ergoExo:
         # elif solver == "sh-2d":
         #     from adept.sh2d import helpers
         elif cfg["solver"] == "vlasov-1d":
-            from adept.vlasov1d.base import BaseVlasov1D as this_module
+            from adept.vlasov1d.modules import BaseVlasov1D as this_module
         # elif solver == "vlasov-1d2v":
         #     from adept.vlasov1d2v import helpers
         # elif solver == "vlasov-2d":
         #     from adept.vlasov2d import helpers
         elif cfg["solver"] == "envelope-2d":
-            from adept.lpse2d.base import BaseLPSE2D as this_module
+            from adept.lpse2d.modules.base import BaseLPSE2D as this_module
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
         else:

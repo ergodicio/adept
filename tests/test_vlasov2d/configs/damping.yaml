@@ -1,5 +1,3 @@
-calculator_machine: s-t4
-
 units:
   laser_wavelength: 351nm
   normalizing_temperature: 2000eV

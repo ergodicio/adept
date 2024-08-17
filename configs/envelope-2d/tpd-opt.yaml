@@ -35,8 +35,7 @@ grid:
   tmin: 0.0ns
   ymax: 5um
   ymin: -5um
-machine:
-  calculator: gpu
+
 mlflow:
   experiment: tpd-gen-nc-8-nonu
   run: kfilt

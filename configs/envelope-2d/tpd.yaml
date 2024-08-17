@@ -34,8 +34,6 @@ grid:
   tmin: 0.0ns
   ymax: 3um
   ymin: -3um
-machine:
-  calculator: gpu
 mlflow:
   experiment: tpd
   run: 1.5e14

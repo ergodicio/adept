@@ -1,6 +1,5 @@
 from typing import Dict
 import numpy as np
-from astropy.units import Quantity as _Q
 from diffrax import diffeqsolve, SaveAt, ODETerm
 from equinox import filter_jit
 
@@ -91,7 +90,6 @@ class BaseLPSE2D(ADEPTModule):
         E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
         state = {"background_density": background_density, "epw": epw, "E0": E0, "vte_sq": vte_sq}
 
-        # drivers = assemble_bandwidth(self.cfg)
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
 
