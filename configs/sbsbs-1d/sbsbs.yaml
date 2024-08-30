@@ -1,0 +1,31 @@
+grid:
+  dz: 10um
+  zmax: 1cm
+  zmin: 0mm
+
+mlflow:
+  experiment: sbsbs
+  run: test
+
+solver: sbsbs-1d
+
+units:
+  atomic mass number: 40
+  laser_intensity: 2.0e+14W/cm^2
+  laser_wavelength: 351nm
+  reference temperature: 1000.0eV
+  reference density: nc  # or it can be a float value
+
+profiles:
+  n: 0.125
+  Te: 1.0
+  Ti: 0.1
+  flow: 0.25
+  Zeff: 12
+  omega_beat: 0.1
+  a0: 0.1
+
+
+initial conditions:
+  Ji: 1.0
+  Jr: 0.1
