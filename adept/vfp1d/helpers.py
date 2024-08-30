@@ -112,16 +112,17 @@ def _initialize_distribution_(
     dv = vmax / nv
     vax = np.linspace(dv / 2.0, vmax - dv / 2.0, nv)
 
-    # alpha = np.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
-    # cst = m / (4 * np.pi * alpha**3.0 * gamma(3.0 / m))
-
-    # single_dist = np.exp(-3 * (vax**2.0) / (2 * vth**2.0)) / (2 * np.pi * vth**2.0) ** 1.5
-    # norm = 1.0 / np.sum(4 * np.pi * single_dist * vax**2.0 * dv, axis=0)
-
     f = np.zeros([nx, nv])
     for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
         # eq 4-51b in Shkarofsky
         single_dist = (2 * np.pi * tt * (vth**2.0 / 2)) ** -1.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0 / 2)))
+
+        # from Ridgers2008
+        vth_x = np.sqrt(tt) * vth
+        alpha = np.sqrt(3.0 * gamma_3_over_m(m) / 2.0 / gamma_5_over_m(m))
+        cst = m / (4 * np.pi * alpha**3.0 * gamma_3_over_m(m))
+        single_dist = cst / vth_x**3.0 * np.exp(-((vax / alpha / vth_x) ** m))
+
         f[ix, :] = tn * single_dist
 
     # if noise_type.casefold() == "uniform":
@@ -164,7 +165,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
             for k in ["n", "T"]:
                 if species_params[k]["basis"] == "uniform":
-                    profs[k] = np.ones_like(prof_total[k])
+                    profs[k] = species_params[k]["baseline"] * np.ones_like(prof_total[k])
 
                 elif species_params[k]["basis"] == "tanh":
                     center = (_Q(species_params[k]["center"]) / cfg["units"]["derived"]["x0"]).to("").value
