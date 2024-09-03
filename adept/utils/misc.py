@@ -47,6 +47,19 @@ def get_weights(artifact_uri, temp_path, models):
         return None
 
 
+def download_from_s3(filename, target_path):
+    import boto3
+
+    bucket = filename.split("/")[2]
+    key = "/".join(filename.split("/")[3:])
+
+    s3 = boto3.client("s3")
+    with open(target_path, "wb") as f:
+        s3.download_fileobj(bucket, key, f)
+
+    return target_path
+
+
 def download_file(fname, artifact_uri, destination_path):
     file_uri = mlflow.get_artifact_uri(fname)
     dest_file_path = os.path.join(destination_path, fname)
@@ -216,7 +229,6 @@ def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
                     export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
                     export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
                     export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow'; \
-                    export JAX_ENABLE_X64=True;\
                     export MLFLOW_EXPORT=True",
             init_blocks=1,
             max_blocks=1,
@@ -233,7 +245,7 @@ def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
     elif parsl_provider == "gpu":
 
         this_provider = SlurmProvider
-        sched_args = ["#SBATCH -C gpu&hbm80g", "#SBATCH --qos=regular"]
+        sched_args = ["#SBATCH -C gpu", "#SBATCH --qos=regular"]
         provider_args = dict(
             partition=None,
             account="m4490_g",
@@ -244,7 +256,6 @@ def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
                     export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
                     export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
                     export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow';\
-                    export JAX_ENABLE_X64=True;\
                     export MLFLOW_EXPORT=True",
             launcher=SrunLauncher(overrides="--gpus-per-node 4 -c 128"),
             walltime="1:00:00",

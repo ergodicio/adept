@@ -44,10 +44,11 @@ class BaseLPSE2D(ADEPTModule):
 
         modules = {}
         if "E0" in self.cfg["drivers"]:
-            if "file" in self.cfg["modules"]["bandwidth"]:
-                modules["bandwidth"] = driver.load(self.cfg)
+            DriverModule = driver.choose_driver(self.cfg["drivers"]["E0"]["shape"])
+            if "file" in self.cfg["drivers"]["E0"]:
+                modules["driver"] = driver.load(self.cfg, DriverModule)
             else:
-                modules["bandwidth"] = driver.BandwidthModule(self.cfg)
+                modules["driver"] = DriverModule(self.cfg)
 
         return modules
 

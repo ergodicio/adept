@@ -4,7 +4,6 @@ from collections import defaultdict
 from functools import partial
 
 import matplotlib.pyplot as plt
-import yaml, mlflow
 from jax import Array, numpy as jnp
 import numpy as np
 import equinox as eqx
@@ -12,8 +11,6 @@ import xarray as xr
 import interpax
 
 from astropy.units import Quantity as _Q
-
-from adept.lpse2d import nn
 
 from adept import get_envelope
 
@@ -206,11 +203,11 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
-    if cfg_grid["nt"] > 1e6:
-        cfg_grid["max_steps"] = int(1e6)
-        print(r"Only running $10^6$ steps")
-    else:
-        cfg_grid["max_steps"] = cfg_grid["nt"] + 4
+    # if cfg_grid["nt"] > 1e6:
+    #     cfg_grid["max_steps"] = int(1e6)
+    #     print(r"Only running $10^6$ steps")
+    # else:
+    cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
@@ -437,7 +434,7 @@ def plot_fields(fields, td):
 
     # plot total electric field energy in box vs time
     fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
-    total_e_sq = np.abs(fields["ex"].data ** 2 + fields["ey"].data ** 2).sum(axis=(1, 2)) * dx * dy
+    total_e_sq = (np.abs(fields["ex"].data) ** 2 + np.abs(fields["ey"].data) ** 2).sum(axis=(1, 2)) * dx * dy
     ax[0].plot(fields.coords["t (ps)"].data, total_e_sq)
     ax[0].set_xlabel("t (ps)")
     ax[0].set_ylabel("Total E^2")
@@ -532,10 +529,14 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
     dt = fields.coords["t (ps)"].data[1] - fields.coords["t (ps)"].data[0]
 
     metrics = {}
-    metrics["total_e_sq"] = float(
-        np.sum(np.abs(fields["ex"][-20:].data) ** 2 + np.abs(fields["ey"][-20:].data ** 2) * dx * dy * dt)
+    tint = 5.0  # last 2 ps
+    it = int(tint / dt)
+    total_esq = np.abs(fields["ex"][-it:].data) ** 2 + np.abs(fields["ey"][-it:].data ** 2) * dx * dy * dt
+    metrics[f"total_e_sq_last_{tint}_ps".replace(".", "p")] = float(np.sum(total_esq))
+    metrics[f"log10_total_e_sq_last_{tint}_ps".replace(".", "p")] = float(
+        np.log10(metrics[f"total_e_sq_last_{tint}_ps".replace(".", "p")])
     )
-    metrics["log10_total_e_sq"] = float(np.log10(metrics["total_e_sq"]))
+    metrics[f"growth_rate_last_{tint}_ps".replace(".", "p")] = float(np.mean(np.gradient(np.log(total_esq), dt)))
 
     # if isinstance(sim_out, tuple):
     #     if "loss_dict" in sim_out[0][1]:
