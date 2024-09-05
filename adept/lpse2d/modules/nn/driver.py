@@ -5,6 +5,11 @@ from jax import random as jr, numpy as jnp, Array
 import equinox as eqx
 
 
+class PRNGKeyArray:
+    def __init__(self, key: Array):
+        self.key = key
+
+
 def get_activation(activation: str) -> Callable:
     """
     Get the activation function from the string name.
@@ -132,30 +137,43 @@ class DriverVAE(eqx.Module):
 
 
 class VAE2(eqx.Module):
-    gen_k: jr.PRNGKey
+    gen_k: PRNGKeyArray
     encoder: eqx.Module
-    mu: eqx.Module
-    sigma: eqx.Module
     amp_decoder: eqx.Module
     phase_decoder: eqx.Module
     latent_width: int
 
-    def __init__(self, input_width: int, output_width: int, latent_width: int, key: int, activation: str = "tanh"):
+    def __init__(
+        self,
+        input_width: int,
+        output_width: int,
+        latent_width: int,
+        encoder_depth: int,
+        decoder_depth: int,
+        encoder_width: int,
+        decoder_width: int,
+        key: int,
+        activation: str = "tanh",
+    ):
         super().__init__()
         e_k, da_k, dp_k = jr.split(jr.PRNGKey(key), 3)
-        self.gen_k = jr.PRNGKey(np.random.randint(0, 2**20))
+        self.gen_k = PRNGKeyArray(jr.PRNGKey(np.random.randint(0, 2**20)))
         act_fun = get_activation(activation)
         self.latent_width = latent_width
 
-        self.encoder = eqx.nn.MLP(input_width, latent_width, width_size=128, depth=2, key=e_k, activation=act_fun)
-        self.amp_decoder = eqx.nn.MLP(latent_width, output_width, width_size=128, depth=2, key=da_k, activation=act_fun)
+        self.encoder = eqx.nn.MLP(
+            input_width, latent_width, width_size=encoder_width, depth=encoder_depth, key=e_k, activation=act_fun
+        )
+        self.amp_decoder = eqx.nn.MLP(
+            latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=act_fun
+        )
         self.phase_decoder = eqx.nn.MLP(
-            latent_width, output_width, width_size=128, depth=2, key=dp_k, activation=act_fun
+            latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=act_fun
         )
 
     def __call__(self, x: Array) -> Dict:
         similarity = self.encoder(x)
-        perturbed_similarity = similarity + jr.normal(self.gen_k, (self.latent_width,))
+        perturbed_similarity = similarity + jr.normal(self.gen_k.key, (self.latent_width,))
 
         amps = self.amp_decoder(perturbed_similarity)
         phases = self.phase_decoder(perturbed_similarity)

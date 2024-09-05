@@ -486,14 +486,6 @@ def plot_kt(kfields, td):
 
 
 def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
-
-    # if isinstance(sim_out, tuple):
-    #     val, actual_sim_out = sim_out[0]
-    #     grad = sim_out[1]
-    #     result = actual_sim_out["solver_result"]
-    #     used_driver = actual_sim_out["args"]["drivers"]
-    # # else:
-    # result = sim_out["solver_result"]
     used_driver = args["drivers"]
     import pickle
 
@@ -518,6 +510,9 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
         plt.savefig(os.path.join(td, "driver_that_was_used.png"), bbox_inches="tight")
         plt.close()
 
+        # numerator = np.fft.ifft2(np.abs(np.fft.fft2(result.ys["fields"]["epw"], axes=(1, 2))) ** 2, axes=(1, 2))
+        # denominator = 1 / tmax * np.sum(np.abs(result.ys["fields"]["epw"]) ** 2, axis=0) * dt
+
     os.makedirs(os.path.join(td, "binary"))
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
 
@@ -529,7 +524,7 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
     dt = fields.coords["t (ps)"].data[1] - fields.coords["t (ps)"].data[0]
 
     metrics = {}
-    tint = 5.0  # last 2 ps
+    tint = 5.0  # last tint ps
     it = int(tint / dt)
     total_esq = np.abs(fields["ex"][-it:].data) ** 2 + np.abs(fields["ey"][-it:].data ** 2) * dx * dy * dt
     metrics[f"total_e_sq_last_{tint}_ps".replace(".", "p")] = float(np.sum(total_esq))
@@ -537,13 +532,6 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
         np.log10(metrics[f"total_e_sq_last_{tint}_ps".replace(".", "p")])
     )
     metrics[f"growth_rate_last_{tint}_ps".replace(".", "p")] = float(np.mean(np.gradient(np.log(total_esq), dt)))
-
-    # if isinstance(sim_out, tuple):
-    #     if "loss_dict" in sim_out[0][1]:
-    #         for k, v in sim_out[0][1]["loss_dict"].items():
-    #             metrics[k] = float(v)
-
-    # mlflow.log_metrics(metrics)
 
     return {"k": kfields, "x": fields, "metrics": metrics}
 

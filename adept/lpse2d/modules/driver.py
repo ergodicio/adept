@@ -3,7 +3,7 @@ import json, tempfile
 
 from jax import numpy as jnp, Array
 from jax.lax import stop_gradient
-from jax.random import normal, PRNGKey
+from jax.random import normal, PRNGKey, uniform
 
 import equinox as eqx
 import numpy as np
@@ -14,10 +14,13 @@ from adept.utils.misc import download_from_s3
 
 
 def save(filename: str, model_cfg: Dict, model: eqx.Module) -> None:
+    new_filter_spec = lambda f, x: (
+        None if isinstance(x, driver_nn.PRNGKeyArray) else eqx.default_serialise_filter_spec(f, x)
+    )
     with open(filename, "wb") as f:
         model_cfg_str = json.dumps(model_cfg)
         f.write((model_cfg_str + "\n").encode())
-        eqx.tree_serialise_leaves(f, model)
+        eqx.tree_serialise_leaves(f, model, filter_spec=new_filter_spec)
 
 
 def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
@@ -69,32 +72,12 @@ def choose_driver(shape: str) -> eqx.Module:
         raise NotImplementedError(f"Amplitude shape -- {shape} -- not implemented")
 
 
-def scale_ints_and_phases(amp_output: str, phase_output: str, intensities: Array, initial_phase: Array) -> tuple:
-    if amp_output == "linear":
-        ints = 0.5 * (jnp.tanh(intensities) + 1.0)
-    elif amp_output == "log":
-        ints = 3 * (jnp.tanh(intensities) + 1.0) - 6
-        ints = 10**ints
-    else:
-        raise NotImplementedError(f"Amplitude Output type -- {amp_output} -- not implemented")
-
-    if phase_output == "learned":
-        phases = jnp.tanh(initial_phase) * jnp.pi * 4
-    elif phase_output == "random":
-        phases = stop_gradient(initial_phase)
-    else:
-        raise NotImplementedError(f"Phase Output type -- {phase_output} -- not implemented")
-
-    ints /= jnp.sum(ints)
-
-    return ints, phases
-
-
 class UniformDriver(eqx.Module):
     intensities: Array
     delta_omega: Array
     initial_phase: Array
     envelope: Dict
+    phase_key: driver_nn.PRNGKeyArray
 
     def __init__(self, cfg: Dict):
         super().__init__()
@@ -104,6 +87,29 @@ class UniformDriver(eqx.Module):
         self.delta_omega = jnp.linspace(-delta_omega_max, delta_omega_max, num_colors)
         self.initial_phase = jnp.array(np.random.uniform(-np.pi, np.pi, num_colors))
         self.envelope = cfg["drivers"]["E0"]["derived"]
+        self.phase_key = driver_nn.PRNGKeyArray(PRNGKey(seed=np.random.randint(2**20)))
+
+    def scale_ints_and_phases(self, intensities, phases) -> tuple:
+        if self.amp_output == "linear":
+            ints = 0.5 * (jnp.tanh(ints) + 1.0)
+        elif self.amp_output == "log":
+            ints = 3 * (jnp.tanh(intensities) + 1.0) - 6
+            ints = 10**ints
+        else:
+            raise NotImplementedError(f"Amplitude Output type -- {self.amp_output} -- not implemented")
+
+        if self.phase_output == "learned":
+            phases = jnp.tanh(phases) * jnp.pi * 4
+        elif self.phase_output == "random":
+            phases = stop_gradient(
+                uniform(self.phase_key.key, (self.initial_phase.size,), minval=-jnp.pi, maxval=jnp.pi)
+            )
+        else:
+            raise NotImplementedError(f"Phase Output type -- {self.phase_output} -- not implemented")
+
+        ints /= jnp.sum(ints)
+
+        return ints, phases
 
     def __call__(self, state: Dict, args: Dict) -> tuple:
         ints = self.intensities / jnp.sum(self.intensities)
@@ -168,7 +174,7 @@ class FileDriver(UniformDriver):
         self.phase_output = cfg["drivers"]["E0"]["output"]["phase"]
 
     def __call__(self, state: Dict, args: Dict) -> tuple:
-        ints, phases = scale_ints_and_phases(self.amp_output, self.phase_output, self.intensities, self.initial_phase)
+        ints, phases = self.scale_ints_and_phases(self.intensities, self.initial_phase)
 
         args["drivers"]["E0"] = {
             "delta_omega": stop_gradient(self.delta_omega),
@@ -196,9 +202,7 @@ class GenerativeDriver(UniformDriver):
     def __call__(self, state: Dict, args: Dict) -> tuple:
         inputs = normal(PRNGKey(seed=np.random.randint(2**20)), shape=(self.input_width,))
         ints_and_phases = self.model(inputs)
-        ints, phases = scale_ints_and_phases(
-            self.amp_output, self.phase_output, ints_and_phases["amps"], ints_and_phases["phases"]
-        )
+        ints, phases = self.scale_ints_and_phases(ints_and_phases["amps"], ints_and_phases["phases"])
         args["drivers"]["E0"] = {
             "delta_omega": stop_gradient(self.delta_omega),
             "initial_phase": phases,
@@ -214,9 +218,10 @@ class ITLnVAE(UniformDriver):
     inputs: tuple
 
     def __init__(self, cfg: Dict):
-        super().__init__()
+        super().__init__(cfg)
         cfg["drivers"]["E0"]["params"]["output_width"] = cfg["drivers"]["E0"]["num_colors"]
-        self.model = driver_nn.GenerativeModel(**cfg["drivers"]["E0"]["params"])
+        cfg["drivers"]["E0"]["params"]["input_width"] = 3
+        self.model = driver_nn.VAE2(**cfg["drivers"]["E0"]["params"])
         self.amp_output = cfg["drivers"]["E0"]["output"]["amp"]
         self.phase_output = cfg["drivers"]["E0"]["output"]["phase"]
 
@@ -224,23 +229,21 @@ class ITLnVAE(UniformDriver):
 
         I0 = _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value
         Te = _Q(cfg["units"]["reference electron temperature"]).to("eV").value
-        Ln = _Q(cfg["units"]["gradient scale length"]).to("um").value
+        Ln = _Q(cfg["density"]["gradient scale length"]).to("um").value
 
         I00 = 1e14
         Te0 = 1000
         Ln0 = 500
 
-        rescaled_I0 = I0 / I00
+        rescaled_I0 = np.log10(I0 / I00)
         rescaled_Te = Te / Te0
         rescaled_Ln = Ln / Ln0
 
-        self.inputs = (I0, Te, Ln)
+        self.inputs = jnp.array((rescaled_I0, rescaled_Te, rescaled_Ln))
 
     def __call__(self, state: Dict, args: Dict) -> tuple:
         ints_and_phases = self.model(self.inputs)
-        ints, phases = scale_ints_and_phases(
-            self.amp_output, self.phase_output, ints_and_phases["amps"], ints_and_phases["phases"]
-        )
+        ints, phases = self.scale_ints_and_phases(ints_and_phases["amps"], ints_and_phases["phases"])
         args["drivers"]["E0"] = {
             "delta_omega": stop_gradient(self.delta_omega),
             "initial_phase": phases,
