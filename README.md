@@ -41,11 +41,13 @@ The contributing guide is in development but for now, just make an issue / pull 
 If you are using this package for your research, please cite the following
 
 ```
-A. Joglekar and A. Thomas, “ADEPT - automatic differentiation enabled plasma transport,” in ICML - SynS & ML Workshop (https://syns-ml.github.io/2023/contributions/), 2023
+A. Joglekar and A. Thomas, “ADEPT - automatic differentiation enabled plasma transport,” 
+ICML - SynS & ML Workshop (https://syns-ml.github.io/2023/contributions/), 2023
 
 ```
 
 ## References
 [1] A. S. Joglekar & A. G. R. Thomas. "Unsupervised discovery of nonlinear plasma physics using differentiable kinetic simulations." J. Plasma Phys. 88, 905880608 (2022).
+
 [2] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
 
