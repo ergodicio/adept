@@ -31,20 +31,20 @@ grid:
   tmin: 0.0ns
   ymax: 1um
   ymin: -1um
-machine:
-  calculator: gpu
+
 mlflow:
   experiment: test-lpse
   run: epw-test
 save:
-  t:
-    dt: 100fs
-    tmax: 4ps
-    tmin: 0ps
-  x:
-    dx: 22nm
-  y:
-    dy: 22nm
+  fields:
+    t:
+      dt: 100fs
+      tmax: 4ps
+      tmin: 0ps
+    x:
+      dx: 22nm
+    y:
+      dy: 22nm
 solver: envelope-2d
 terms:
   epw:

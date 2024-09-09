@@ -100,7 +100,6 @@ machine: local
 mlflow:
   experiment: landau_damping
   run: test
-solver: calculator
 nu:
   time-profile:
     baseline: 0.0001

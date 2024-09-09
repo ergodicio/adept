@@ -1,54 +1,63 @@
-models:
-  bandwidth:
-    file: None
-    hyperparams:
-      input_width: 8
-      key: 42
-      decoder_width: 16
-      decoder_depth: 3
-      output_width: 8
-    type: GEN
-opt:
-  learning_rate: 0.003
-  optimizer: adam
 density:
   basis: linear
-  gradient scale length: 200.0um
-  max: 0.35
-  min: 0.18
+  gradient scale length: 366um
+  max: 0.32
+  min: 0.23
   noise:
     max: 1.0e-09
     min: 1.0e-10
     type: uniform
 drivers:
   E0:
-    amplitude_shape: uniform
     delta_omega_max: 0.015
-    num_colors: 8
+    envelope:
+      tc: 200.25ps
+      tr: 0.1ps
+      tw: 400ps
+      xc: 50um
+      xr: 0.2um
+      xw: 1000um
+      yc: 50um
+      yr: 0.2um
+      yw: 1000um
+    num_colors: 64
+    shape: generative
+    output: 
+      amp: log       # or linear
+      phase: random  # or learned
+
+    params:
+      decoder_depth: 3
+      decoder_width: 128
+      input_width: 8
+      key: 906
+      activation: relu
+
 grid:
   boundary_abs_coeff: 1.0e4
-  boundary_width: 8um
-  low_pass_filter: 0.7
-  dt: 0.002ps
-  dx: 20nm
-  tmax: 5.0ps
+  boundary_width: 3um
+  dt: 2fs
+  dx: 30nm
+  low_pass_filter: 0.6
+  tmax: 10.0ps
   tmin: 0.0ns
-  ymax: 5um
-  ymin: -5um
+  ymax: 8um
+  ymin: -8um
 machine:
   calculator: gpu
 mlflow:
-  experiment: tpd-gen-nc-8-nonu
-  run: kfilt
+  experiment: new-lpse-modules
+  run: gen-test
 save:
-  t:
-    dt: 100fs
-    tmax: 5ps
-    tmin: 0ps
-  x:
-    dx: 48nm
-  y:
-    dy: 160nm
+  fields:
+    t:
+      dt: 1ps
+      tmax: 10ps
+      tmin: 0ps
+    x:
+      dx: 80nm
+    y:
+      dy: 128nm
 solver: envelope-2d
 terms:
   epw:
@@ -68,7 +77,11 @@ units:
   atomic number: 40
   envelope density: 0.25
   ionization state: 6
-  laser intensity: 2.0e+15W/cm^2
-  laser_wavelength: 351nm
-  reference electron temperature: 2000.0eV
+  laser intensity: 7.53e14 W/cm^2
+  laser wavelength: 351nm
+  reference electron temperature: 3.92keV
   reference ion temperature: 1000eV
+opt:
+  learning_rate: 0.001
+  batch_size: 4
+  decay_steps: 60

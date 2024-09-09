@@ -1,22 +1,65 @@
-from typing import Dict
+from typing import Dict, Callable
 
 import numpy as np
 from jax import random as jr, numpy as jnp, Array
 import equinox as eqx
 
 
-class GenerativeDriver(eqx.Module):
+class PRNGKeyArray:
+    def __init__(self, key: Array):
+        self.key = key
+
+
+def get_activation(activation: str) -> Callable:
+    """
+    Get the activation function from the string name.
+
+    Args:
+        activation (str): The name of the activation function.
+
+    Returns:
+        Callable: The activation function
+    """
+    if activation == "tanh":
+        activation = jnp.tanh
+    elif activation == "relu":
+        from jax.nn import relu as activation
+    elif activation == "sigmoid":
+        from jax.nn import sigmoid as activation
+    elif activation == "softplus":
+        from jax.nn import softplus as activation
+    elif activation == "elu":
+        from jax.nn import elu as activation
+
+    else:
+        raise NotImplementedError(f"Activation function {activation} not recognized.")
+
+    return activation
+
+
+class GenerativeModel(eqx.Module):
     amp_decoder: eqx.Module
     phase_decoder: eqx.Module
 
-    def __init__(self, decoder_width: int, decoder_depth: int, input_width: int, output_width: int, key: int):
+    def __init__(
+        self,
+        decoder_width: int,
+        decoder_depth: int,
+        input_width: int,
+        output_width: int,
+        key: int,
+        activation: str = "tanh",
+    ):
         super().__init__()
         da_k, dp_k = jr.split(jr.PRNGKey(key), 2)
+
+        act_fun = get_activation(activation)
+
         self.amp_decoder = eqx.nn.MLP(
-            input_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=jnp.tanh
+            input_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=act_fun
         )
         self.phase_decoder = eqx.nn.MLP(
-            input_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=jnp.tanh
+            input_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=act_fun
         )
 
     def __call__(self, x: Array) -> Dict:
@@ -91,3 +134,48 @@ class DriverVAE(eqx.Module):
         kl_loss = -0.5 * jnp.sum(1 + log_var - jnp.square(encoded_mu) - encoded_var)
 
         return {"amps": amps, "phases": phases, "kl_loss": kl_loss}
+
+
+class VAE2(eqx.Module):
+    gen_k: PRNGKeyArray
+    encoder: eqx.Module
+    amp_decoder: eqx.Module
+    phase_decoder: eqx.Module
+    latent_width: int
+
+    def __init__(
+        self,
+        input_width: int,
+        output_width: int,
+        latent_width: int,
+        encoder_depth: int,
+        decoder_depth: int,
+        encoder_width: int,
+        decoder_width: int,
+        key: int,
+        activation: str = "tanh",
+    ):
+        super().__init__()
+        e_k, da_k, dp_k = jr.split(jr.PRNGKey(key), 3)
+        self.gen_k = PRNGKeyArray(jr.PRNGKey(np.random.randint(0, 2**20)))
+        act_fun = get_activation(activation)
+        self.latent_width = latent_width
+
+        self.encoder = eqx.nn.MLP(
+            input_width, latent_width, width_size=encoder_width, depth=encoder_depth, key=e_k, activation=act_fun
+        )
+        self.amp_decoder = eqx.nn.MLP(
+            latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=da_k, activation=act_fun
+        )
+        self.phase_decoder = eqx.nn.MLP(
+            latent_width, output_width, width_size=decoder_width, depth=decoder_depth, key=dp_k, activation=act_fun
+        )
+
+    def __call__(self, x: Array) -> Dict:
+        similarity = self.encoder(x)
+        perturbed_similarity = similarity + jr.normal(self.gen_k.key, (self.latent_width,))
+
+        amps = self.amp_decoder(perturbed_similarity)
+        phases = self.phase_decoder(perturbed_similarity)
+
+        return {"amps": amps, "phases": phases}

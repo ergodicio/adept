@@ -26,7 +26,7 @@ class Light:
         E0_static = (
             (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][:, None, None])) ** 2) ** -0.25
             * self.E0_source
-            * light_wave["amplitudes"][:, None, None]
+            * jnp.sqrt(light_wave["intensities"][:, None, None])
             * jnp.exp(1j * k0 * self.x[None, :, None] + 1j * light_wave["initial_phase"][:, None, None])
         )
         dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][:, None, None] * self.w0 * t)
