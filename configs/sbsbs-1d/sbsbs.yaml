@@ -3,6 +3,7 @@ grid:
   zmax: 1cm
   zmin: 0mm
 
+
 mlflow:
   experiment: sbsbs
   run: test
@@ -17,12 +18,14 @@ units:
   reference density: nc  # or it can be a float value
 
 profiles:
-  n: 0.125
-  Te: 1.0
-  Ti: 0.1
-  flow: 0.25
-  Zeff: 12
-  omega_beat: 0.1
+  n: 
+    min: 0.001
+    max: 0.025
+  Te: 1.4keV
+  Ti: 450eV
+  flow: 0.0
+  Zeff: 5
+  omega_beat: 0.1nm
   a0: 0.1
 
 

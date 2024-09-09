@@ -254,6 +254,8 @@ class ergoExo:
             from adept.lpse2d.base import BaseLPSE2D as this_module
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
+        elif cfg["solver"] == "sbsbs-1d":
+            from adept.sbsbs1d.base import BaseSteadyStateBackwardStimulatedBrilloiunScattering as this_module
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 

@@ -2,9 +2,6 @@ from typing import Dict
 
 from jax import numpy as jnp, Array, random
 from jax.scipy.special import erfc
-import numpy as np
-
-from adept import get_envelope
 
 
 class ExponentialLeapfrog:
