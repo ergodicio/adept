@@ -20,8 +20,48 @@ The electric field can be "driven" using :math:`E_D` which is a user defined fun
 
 Solver Options
 ================
-This is where we should have a list of the different solvers that can be chosen including the collision operator. #TODO
 
-Configuration parameters
-========================
-This is where there should be a line by line explanation of everything in a config file... #TODO
+Velocity space advection
+=========================
+1. ``exponential`` - This solver (incorrectly) assumes periodic boundaries in the velocity direction and uses a direct exponential solve such that 
+
+.. math::
+    f^{n+1} = f^n \times \exp(A*dt) 
+
+where :math:`A` is the advection operator. This is a much faster solver than the cubic-spline solver, but is less accurate. Use this if you are confident that the distribution function will be well behaved in the tails
+
+2. ``cubic-spline`` - This is a semi-Lagrangian solver that uses a cubic-spline interpolator to advect the distribution function in velocity space. Use this if you have trouble with the exponential solver.
+
+
+Spatial advection
+=================
+1. ``exponential`` - This is the only solver that is available. We only have periodic boundaries implemented in space (for the plasma) so this is perfectly fine. It is also very fast.
+
+
+Field solver
+============
+
+1. ``poisson`` - This is the only field solver that is available. It uses a spectral solver to solve the Poisson equation. This is the fastest and most accurate solver available.
+2. ``hampere`` - This solver uses a Hamiltonian formulation of the Vlasov-Ampere system that conserves energy exactly. This is the 2nd most reliable solver.
+3. ``ampere`` - This solver uses the Ampere's law to solve for the electric field.
+
+Collisions
+==========
+1. ``none`` - No collisions are included in the simulation
+2. ``lenard-bernstein`` - This solver uses the Lenard-Bernstein collision operator to include collisions in the simulation. 
+3. ``daugherty`` - This solver uses the Daugherty collision operator to include collisions in the simulation.
+
+
+Configuration Options
+======================
+``ADEPT`` needs a ``yaml`` file with the following datamodel to run the simulation. The datamodel is defined in the following class.
+
+.. autoclass:: adept.vlasov1d.datamodel.ConfigModel
+    :members: __init__
+
+Each of the objects used to initialize this datamodel are defined in the following classes.    
+
+.. toctree::
+   datamodels/vlasov1d
+   :maxdepth: 1
+   :caption: Configuration Options:
