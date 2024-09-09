@@ -1,7 +1,7 @@
 units:
-  laser wavelength: 351nm
-  normalizing temperature: 2000eV
-  normalizing density: 1.5e21/cc
+  laser_wavelength: 351nm
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
   Z: 10
   Zp: 10
 
@@ -60,9 +60,6 @@ solver: vlasov-1d2v
 mlflow:
   experiment: 1d2v-epw
   run: a1em2-both-exact
-
-machine:
-  calculator: gpu
 
 drivers:
   ex:

@@ -1,4 +1,4 @@
-from typing import Dict, Callable
+from typing import Dict, Callable, Union
 from functools import partial
 
 import os, numpy as np, pint
@@ -6,7 +6,7 @@ from diffrax import diffeqsolve, SaveAt, ODETerm, Tsit5
 from jax import numpy as jnp, tree_util as jtu
 
 from adept import ADEPTModule
-from adept.tf1d.vector_field import VF
+from adept.tf1d.solvers.vector_field import VF
 from adept.tf1d.storage import save_arrays, plot_xrs
 
 
@@ -50,8 +50,8 @@ class BaseTwoFluid1D(ADEPTModule):
         """
         _Q = self.ureg.Quantity
 
-        n0 = _Q(self.cfg["units"]["normalizing density"]).to("1/cc")
-        T0 = _Q(self.cfg["units"]["normalizing temperature"]).to("eV")
+        n0 = _Q(self.cfg["units"]["normalizing_density"]).to("1/cc")
+        T0 = _Q(self.cfg["units"]["normalizing_temperature"]).to("eV")
 
         wp0 = np.sqrt(n0 * self.ureg.e**2.0 / (self.ureg.m_e * self.ureg.epsilon_0)).to("rad/s")
         tp0 = (1 / wp0).to("fs")

@@ -1,8 +1,6 @@
-import itertools
 from typing import Dict
 import os
 
-# import interpax
 from jax import numpy as jnp
 import numpy as np
 import xarray as xr

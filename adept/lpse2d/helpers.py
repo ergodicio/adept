@@ -35,7 +35,7 @@ def write_units(cfg: Dict) -> Dict:
     Ti = _Q(cfg["units"]["reference ion temperature"]).to("keV").value
     Z = cfg["units"]["ionization state"]
     A = cfg["units"]["atomic number"]
-    lam0 = _Q(cfg["units"]["laser wavelength"]).to("um").value
+    lam0 = _Q(cfg["units"]["laser_wavelength"]).to("um").value
     I0 = (
         _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value / 2
     )  ## NB - the factor of 2 enables matching to the Short scaling
@@ -599,33 +599,6 @@ def make_xarrays(cfg, ts, ys, td):
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
     return kfields, fields
-
-
-def get_models(all_models_config: Dict) -> defaultdict[eqx.Module]:
-    models = {}
-    for nm, this_models_config in all_models_config.items():
-        if "file" in this_models_config:
-            file_path = this_models_config["file"]
-            if file_path.endswith(".pkl"):
-                import pickle
-
-                with open(file_path, "rb") as fi:
-                    models[nm] = pickle.load(fi)
-                    print(models)
-                print(f"Loading {nm} weights from file {file_path} and ignoring any other specifications.")
-            elif file_path.endswith(".eqx"):
-                models[nm], _ = nn.load(file_path)
-
-                print(f"Loading {nm} model from file {file_path} and ignoring any other specifications.")
-        else:
-            if this_models_config["type"] == "MLP":
-                models[nm] = nn.DriverModel(**this_models_config["config"])
-            elif this_models_config["type"] == "VAE":
-                models[nm] = nn.VAE(**this_models_config["config"])
-            else:
-                raise NotImplementedError
-
-    return models
 
 
 def get_save_quantities(cfg: Dict) -> Dict:

@@ -30,6 +30,7 @@ Documentation
 
 .. toctree::
    usage
+   solvers
    faq
    api
    :maxdepth: 1

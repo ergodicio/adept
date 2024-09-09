@@ -49,7 +49,7 @@ class ADEPTModule:
         This function is responsible for post-processing the results of the simulation. It is called after the simulation is run and the results are available.
 
         Args:
-            run_output (diffrax.Solution): The output of the simulation
+            run_output (Dict): The output of the simulation
             td (str): The temporary directory where the results are stored
 
         Returns:
@@ -230,7 +230,7 @@ class ergoExo:
                 self.mlflow_run_id = mlflow_run.info.run_id
 
             else:
-                from adept.utils.misc import get_cfg
+                from adept.utils import get_cfg
 
                 with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
                     # with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
@@ -249,18 +249,25 @@ class ergoExo:
 
 
         """
+
         if cfg["solver"] == "tf-1d":
-            from adept.tf1d.base import BaseTwoFluid1D as this_module
-        # elif solver == "sh-2d":
-        #     from adept.sh2d import helpers
+            from adept.tf1d.modules import BaseTwoFluid1D as this_module
+            from adept.tf1d.datamodel import ConfigModel
+
+            # config = ConfigModel(**cfg)
+
         elif cfg["solver"] == "vlasov-1d":
-            from adept.vlasov1d.base import BaseVlasov1D as this_module
-        # elif solver == "vlasov-1d2v":
-        #     from adept.vlasov1d2v import helpers
-        # elif solver == "vlasov-2d":
-        #     from adept.vlasov2d import helpers
+            from adept.vlasov1d.modules import BaseVlasov1D as this_module
+            from adept.vlasov1d.datamodel import ConfigModel
+
+            # config = ConfigModel(**cfg)
+
         elif cfg["solver"] == "envelope-2d":
-            from adept.lpse2d.base import BaseLPSE2D as this_module
+            from adept.lpse2d.modules.base import BaseLPSE2D as this_module
+            from adept.lpse2d.datamodel import ConfigModel
+
+            # config = ConfigModel(**cfg)
+
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
         else:
@@ -269,7 +276,7 @@ class ergoExo:
         return this_module(cfg)
 
     def _setup_(self, cfg: Dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> Dict[str, Module]:
-        from adept.utils.misc import log_params
+        from adept.utils import log_params
 
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
