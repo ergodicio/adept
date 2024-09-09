@@ -9,14 +9,14 @@ density:
     type: uniform
 drivers:
   E0:
-    amplitude_shape: uniform
+    shape: uniform
     # file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
     delta_omega_max: 0.015
     num_colors: 1
     envelope:
-      tw: 20ps
+      tw: 40ps
       tr: 0.25ps
-      tc: 10.5ps
+      tc: 20.5ps
       xr: 0.2um
       xw: 1000um
       xc: 50um
@@ -30,7 +30,7 @@ grid:
   low_pass_filter: 0.3
   dt: 0.002ps
   dx: 20nm
-  tmax: 4.0ps
+  tmax: 25.0ps
   tmin: 0.0ns
   ymax: 3um
   ymin: -3um
@@ -38,14 +38,15 @@ mlflow:
   experiment: tpd
   run: 1.5e14
 save:
-  t:
-    dt: 100fs
-    tmax: 4ps
-    tmin: 0ps
-  x:
-    dx: 80nm
-  y:
-    dy: 128nm
+  fields:
+    t:
+      dt: 1ps
+      tmax: 25ps
+      tmin: 0ps
+    x:
+      dx: 80nm
+    y:
+      dy: 128nm
 solver: envelope-2d
 terms:
   epw:

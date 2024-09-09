@@ -4,7 +4,7 @@ import os, time, tempfile, yaml, pickle
 
 
 from diffrax import Solution, Euler, RESULTS
-from equinox import Module
+from equinox import Module, filter_jit
 import mlflow, jax, numpy as np
 from jax import numpy as jnp
 
@@ -122,7 +122,16 @@ class ADEPTModule:
         """
         return {}
 
-    def init_modules(self) -> Dict:
+    def init_modules(self) -> Dict[str, Module]:
+        """
+        This function initializes the necessary (trainable) physics modules that are required to run the simulation. These can be modules that
+        change the initial conditions, or the driver (boundary conditions), or the metric calculation. These modules are usually `eqx.Module`s
+        so that you can take derivatives against the (parameters of the) modules.
+
+        Returns:
+            Dict: A dictionary of the (trainable) modules that are required to run the simulation
+
+        """
         return {}
 
     def __call__(self, trainable_modules: Dict, args: Dict):
@@ -224,8 +233,8 @@ class ergoExo:
                 from adept.utils import get_cfg
 
                 with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
-                    with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
-                        cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
+                    # with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
+                    # cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
                     mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
 
@@ -255,7 +264,8 @@ class ergoExo:
 
         elif cfg["solver"] == "envelope-2d":
             from adept.lpse2d.modules.base import BaseLPSE2D as this_module
-            from adept.lpse2d.datamodel import ConfigModel
+
+            # from adept.lpse2d.datamodel import ConfigModel
 
             # config = ConfigModel(**cfg)
 
@@ -272,7 +282,7 @@ class ergoExo:
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
         else:
-            self.adept_module = adept_module
+            self.adept_module = adept_module(cfg)
 
         # dump raw config
         if log:
@@ -331,7 +341,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            run_output = self.adept_module(modules, None)
+            run_output = filter_jit(self.adept_module.__call__)(modules, None)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
@@ -366,7 +376,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            (val, run_output), grad = self.adept_module.vg(modules, None)
+            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, None)
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})

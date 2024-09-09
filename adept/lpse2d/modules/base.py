@@ -1,6 +1,6 @@
 from typing import Dict
 import numpy as np
-from diffrax import diffeqsolve, SaveAt, ODETerm
+from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from equinox import filter_jit
 
 from adept import ADEPTModule, Stepper
@@ -12,8 +12,8 @@ from adept.lpse2d.helpers import (
     get_save_quantities,
     get_density_profile,
 )
-from adept.lpse2d.vector_field import SplitStep
-from adept.lpse2d.modules.driver import BandwidthModule
+from adept.lpse2d.core.vector_field import SplitStep
+from adept.lpse2d.modules import driver
 
 
 class BaseLPSE2D(ADEPTModule):
@@ -43,7 +43,11 @@ class BaseLPSE2D(ADEPTModule):
 
         modules = {}
         if "E0" in self.cfg["drivers"]:
-            modules["bandwidth"] = BandwidthModule(self.cfg)
+            DriverModule = driver.choose_driver(self.cfg["drivers"]["E0"]["shape"])
+            if "file" in self.cfg["drivers"]["E0"]:
+                modules["driver"] = driver.load(self.cfg, DriverModule)
+            else:
+                modules["driver"] = DriverModule(self.cfg)
 
         return modules
 
@@ -62,7 +66,11 @@ class BaseLPSE2D(ADEPTModule):
         self.diffeqsolve_quants = dict(
             terms=ODETerm(SplitStep(self.cfg)),
             solver=Stepper(),
-            saveat=dict(ts=self.cfg["save"]["t"]["ax"], fn=self.cfg["save"]["func"]),
+            saveat=dict(
+                subs={
+                    k: SubSaveAt(ts=subsave["t"]["ax"], fn=subsave["func"]) for k, subsave in self.cfg["save"].items()
+                }
+            ),
         )
 
     def init_state_and_args(self) -> Dict:
@@ -101,7 +109,7 @@ class BaseLPSE2D(ADEPTModule):
             args = self.args
 
         for name, module in trainable_modules.items():
-            state, args = module(self.state, args)
+            state, args = module(state, args)
 
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],

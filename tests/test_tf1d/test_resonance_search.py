@@ -87,7 +87,7 @@ def test_resonance_search(gamma, adjoint):
         for i in tqdm(range(40)):
             exo = ergoExo(mlflow_nested=True)
             mod_defaults, _ = load_cfg(sim_k0, gamma, adjoint)
-            exo.setup(mod_defaults, Resonance(mod_defaults))
+            exo.setup(mod_defaults, Resonance)
             val, grad, results = exo.val_and_grad(params)
             updates, opt_state = optimizer.update(grad, opt_state, params)
             params = optax.apply_updates(params, updates)
@@ -103,8 +103,6 @@ def test_resonance_search(gamma, adjoint):
 if __name__ == "__main__":
     for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
         if "CPU_ONLY" in os.environ:
-            # if adjoint == "Backsolve":
-            #     test_resonance_search(gamma, adjoint)
             pass
         else:
             test_resonance_search(gamma, adjoint)
