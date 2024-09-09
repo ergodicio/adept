@@ -264,7 +264,8 @@ class ergoExo:
 
         elif cfg["solver"] == "envelope-2d":
             from adept.lpse2d.modules.base import BaseLPSE2D as this_module
-            from adept.lpse2d.datamodel import ConfigModel
+
+            # from adept.lpse2d.datamodel import ConfigModel
 
             # config = ConfigModel(**cfg)
 

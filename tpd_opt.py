@@ -19,7 +19,7 @@ def run_one_val_and_grad(run_id, cfg_path):
     from equinox import filter_value_and_grad
 
     from adept import ergoExo
-    from adept.utils.misc import export_run
+    from adept.utils import export_run
     from adept.lpse2d.base import BaseLPSE2D
 
     with open(cfg_path, "r") as fi:

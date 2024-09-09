@@ -10,7 +10,7 @@ import numpy as np
 
 
 from adept.lpse2d.modules.nn import driver as driver_nn
-from adept.utils.misc import download_from_s3
+from adept.utils import download_from_s3
 
 
 def save(filename: str, model_cfg: Dict, model: eqx.Module) -> None:
