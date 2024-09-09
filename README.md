@@ -21,6 +21,9 @@ https://adept.readthedocs.io/en/latest/
 ## Examples
 https://github.com/ergodicio/adept-notebooks
 
+There are other ways to use ADEPT, notably as part of a neural network training pipeline that leverages differentiable simulation. In reference [1], neural networks are trained to learn forcing functions that 
+drive the system towards previously unseen behavior. In reference [2], neural networks are trained to help bridge the micro-macro physics gap in multiphysics simulations.
+
 ## Usage
 `python3 run.py --cfg {config_path}` without the `.yaml` extension
 
@@ -35,5 +38,16 @@ To access and visualize the results, it is easiest to use the UI from the browse
 The contributing guide is in development but for now, just make an issue / pull request and we can go from there :) 
 
 ## Citation
+If you are using this package for your research, please cite the following
 
-[1] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
+```
+A. Joglekar and A. Thomas, “ADEPT - automatic differentiation enabled plasma transport,” 
+ICML - SynS & ML Workshop (https://syns-ml.github.io/2023/contributions/), 2023
+
+```
+
+## References
+[1] A. S. Joglekar & A. G. R. Thomas. "Unsupervised discovery of nonlinear plasma physics using differentiable kinetic simulations." J. Plasma Phys. 88, 905880608 (2022).
+
+[2] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
+
