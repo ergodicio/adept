@@ -50,6 +50,13 @@ def run_one_val_and_grad(run_id, cfg_path):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the TPD optimization.")
+    parser.add_argument("--config", type=str, help="The config file")
+    args = parser.parse_args()
+    cfg_path = args.config
+
     import uuid
     from copy import deepcopy
     from adept.utils import misc
@@ -65,7 +72,7 @@ if __name__ == "__main__":
     import numpy as np, equinox as eqx
     from adept.lpse2d.modules.driver import save as save_driver
 
-    with open(f"/global/homes/a/archis/adept/configs/envelope-2d/tpd-opt.yaml", "r") as fi:
+    with open(f"/global/homes/a/archis/adept/{cfg_path}", "r") as fi:
         cfg = yaml.safe_load(fi)
 
     if cfg["drivers"]["E0"]["shape"] != "file":
