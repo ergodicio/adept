@@ -211,7 +211,7 @@ def export_run(run_id, prefix="individual", step=0):
     # print(f"Uploading took {round(time.time() - t0, 2)} s")
 
 
-def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
+def setup_parsl(parsl_provider="local", num_gpus=4, nodes=1):
     import parsl
     from parsl.config import Config
     from parsl.providers import SlurmProvider, LocalProvider
@@ -220,27 +220,50 @@ def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
 
     if parsl_provider == "local":
 
-        print(f"Using local provider, ignoring {max_blocks=}")
+        if nodes == 1:
+            this_provider = LocalProvider
+            provider_args = dict(
+                worker_init="source /pscratch/sd/a/archis/venvs/adept-gpu/bin/activate; \
+                        module load cudnn/8.9.3_cuda12.lua; \
+                        export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
+                        export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
+                        export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow'; \
+                        export MLFLOW_EXPORT=True",
+                init_blocks=1,
+                max_blocks=1,
+                nodes_per_block=1,
+            )
+            htex = HighThroughputExecutor(
+                available_accelerators=num_gpus,
+                label="tpd",
+                provider=this_provider(**provider_args),
+                cpu_affinity="block",
+            )
+            print(f"{htex.workers_per_node=}")
+        else:
+            this_provider = LocalProvider
+            provider_args = dict(
+                worker_init="source /pscratch/sd/a/archis/venvs/adept-gpu/bin/activate; \
+                        module load cudnn/8.9.3_cuda12.lua; \
+                        export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
+                        export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
+                        export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow'; \
+                        export MLFLOW_EXPORT=True",
+                nodes_per_block=nodes,
+                launcher=SrunLauncher(overrides="-c 32 --gpus-per-node 4"),
+                cmd_timeout=120,
+                init_blocks=1,
+                max_blocks=1,
+            )
 
-        this_provider = LocalProvider
-        provider_args = dict(
-            worker_init="source /pscratch/sd/a/archis/venvs/adept-gpu/bin/activate; \
-                    module load cudnn/8.9.3_cuda12.lua; \
-                    export PYTHONPATH='$PYTHONPATH:/global/homes/a/archis/adept/'; \
-                    export BASE_TEMPDIR='/pscratch/sd/a/archis/tmp/'; \
-                    export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow'; \
-                    export MLFLOW_EXPORT=True",
-            init_blocks=1,
-            max_blocks=1,
-        )
-
-        htex = HighThroughputExecutor(
-            available_accelerators=num_gpus,
-            label="tpd-sweep",
-            provider=this_provider(**provider_args),
-            cpu_affinity="block",
-        )
-        print(f"{htex.workers_per_node=}")
+            htex = HighThroughputExecutor(
+                available_accelerators=num_gpus * nodes,
+                label="tpd",
+                provider=this_provider(**provider_args),
+                max_workers_per_node=4,
+                cpu_affinity="block",
+            )
+            print(f"{htex.workers_per_node=}")
 
     elif parsl_provider == "gpu":
 
@@ -258,11 +281,11 @@ def setup_parsl(parsl_provider="local", num_gpus=4, max_blocks=3):
                     export MLFLOW_TRACKING_URI='/pscratch/sd/a/archis/mlflow';\
                     export MLFLOW_EXPORT=True",
             launcher=SrunLauncher(overrides="--gpus-per-node 4 -c 128"),
-            walltime="1:00:00",
+            walltime="12:00:00",
             cmd_timeout=120,
             nodes_per_block=1,
             # init_blocks=1,
-            max_blocks=max_blocks,
+            max_blocks=nodes,
         )
 
         htex = HighThroughputExecutor(
