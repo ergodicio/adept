@@ -1,4 +1,7 @@
 # ADEPT
+
+![ADEPT](./docs/source/adept-logo.png)
+
 ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ransport code.
 
 ## Installation

@@ -12,6 +12,9 @@ class TimeIntegrator:
     This is the base class for all time integrators. This makes it so that we dont have to
     load the electric field solver and the Vlasov pushers in every time integrator
 
+    The available solvers for E df/dv are "exponential" and "cubic-spline"
+    The only solver for v df/dx is "exponential"
+
     :param cfg: Dict
 
     """
