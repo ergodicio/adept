@@ -1,5 +1,7 @@
 # ADEPT
 
+https://readthedocs.org/projects/adept/badge/?version=latest
+
 ![ADEPT](./docs/source/adept-logo.png)
 
 ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ransport code.
