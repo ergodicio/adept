@@ -52,7 +52,7 @@ Collisions
 3. ``daugherty`` - This solver uses the Daugherty collision operator to include collisions in the simulation.
 
 
-Configuration Options
+Configuration
 ======================
 ``ADEPT`` needs a ``yaml`` file with the following datamodel to run the simulation. The datamodel is defined in the following class.
 
@@ -62,6 +62,6 @@ Configuration Options
 Each of the objects used to initialize this datamodel are defined in the following classes.    
 
 .. toctree::
-    datamodels/vlasov1d
+   datamodels/vlasov1d
    :maxdepth: 1
-   :caption: Configuration Options:
+   :caption: Configuration Objects:
