@@ -29,7 +29,7 @@ setup(
     packages=["adept"],
     python_requires=">=3.8",
     install_requires=[
-        "jax[cpu]",
+        "jax[cuda12]",
         "diffrax",
         "matplotlib",
         "scipy",
@@ -40,13 +40,13 @@ setup(
         "flatdict",
         "h5netcdf",
         "optax",
-        "jaxopt",
         "boto3",
         "pint",
         "mlflow_export_import",
         "plasmapy",
         "tabulate",
         "interpax",
+        "tabulate",
     ],
     # extras_require={
     #     "dev": [
