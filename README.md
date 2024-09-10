@@ -1,6 +1,6 @@
 # ADEPT
 
-https://readthedocs.org/projects/adept/badge/?version=latest
+![](https://readthedocs.org/projects/adept/badge/?version=latest)
 
 ![ADEPT](./docs/source/adept-logo.png)
 
