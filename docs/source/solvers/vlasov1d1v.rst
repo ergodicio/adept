@@ -62,6 +62,6 @@ Configuration Options
 Each of the objects used to initialize this datamodel are defined in the following classes.    
 
 .. toctree::
-   datamodels/vlasov1d
+    datamodels/vlasov1d
    :maxdepth: 1
    :caption: Configuration Options:
