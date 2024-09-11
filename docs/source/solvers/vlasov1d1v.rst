@@ -1,8 +1,8 @@
 Vlasov 1D1V
------------------------------------------
+=================
 
 Equations and Quantities
-========================
+-------------------------
 We solve the following coupled set of partial differential equations
 
 .. math::
@@ -17,12 +17,14 @@ The distribution function is :math:`f = f(t, x, v)` and the electric field is :m
 These simulations can be initialized via perturbing the distribution function or the electric field.
 The electric field can be "driven" using :math:`E_D` which is a user defined function of time and space.
 
+Configuration Options
+----------------------
 
-Solver Options
-================
+As with all other solvers, the configuration is passed in via a ``yaml`` file. The datamodel for the configuration is defined in the documentation but most will first care about
+how the equations themselves are solved and what the different options are. We list those first here.
 
-Velocity space advection
-=========================
+Velocity advection
+^^^^^^^^^^^^^^^^^^^^^^^^
 1. ``exponential`` - This solver (incorrectly) assumes periodic boundaries in the velocity direction and uses a direct exponential solve such that 
 
 .. math::
@@ -34,34 +36,29 @@ where :math:`A` is the advection operator. This is a much faster solver than the
 
 
 Spatial advection
-=================
+^^^^^^^^^^^^^^^^^^^^^^^^
 1. ``exponential`` - This is the only solver that is available. We only have periodic boundaries implemented in space (for the plasma) so this is perfectly fine. It is also very fast.
 
 
 Field solver
-============
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 1. ``poisson`` - This is the only field solver that is available. It uses a spectral solver to solve the Poisson equation. This is the fastest and most accurate solver available.
 2. ``hampere`` - This solver uses a Hamiltonian formulation of the Vlasov-Ampere system that conserves energy exactly. This is the 2nd most reliable solver.
 3. ``ampere`` - This solver uses the Ampere's law to solve for the electric field.
 
 Collisions
-==========
+^^^^^^^^^^^^^^^^^^^^^^^^
 1. ``none`` - No collisions are included in the simulation
 2. ``lenard-bernstein`` - This solver uses the Lenard-Bernstein collision operator to include collisions in the simulation. 
 3. ``daugherty`` - This solver uses the Daugherty collision operator to include collisions in the simulation.
 
 
-Configuration
-======================
-``ADEPT`` needs a ``yaml`` file with the following datamodel to run the simulation. The datamodel is defined in the following class.
-
-.. autoclass:: adept._vlasov1d.datamodel.ConfigModel
-    :members: __init__
-
-Each of the objects used to initialize this datamodel are defined in the following classes.    
+Remaining Options
+^^^^^^^^^^^^^^^^^^^^^^^^
+The following pages document the configuration options for the Vlasov1D1V solver
 
 .. toctree::
-   datamodels/vlasov1d
-   :maxdepth: 1
-   :caption: Configuration Objects:
+    datamodels/vlasov1d
+    :maxdepth: 3
+    :caption: Configuration Options:
