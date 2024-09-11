@@ -1,8 +1,41 @@
-Vlasov1D Configuration Options
-==============================
+Configuration Options
+======================
+``ADEPT`` needs a ``yaml`` file with the following datamodel to run the simulation. The datamodel is defined in the following class.
 
-Each of these items is actually a dictionary.  These dictionaries, once initialized, need to be compiled into a megadictionary that is passed to the solver. This is basically the contents of the ``yaml`` files that are in the repo.
+.. autoclass:: adept._vlasov1d.datamodel.ConfigModel
+    :members: __init__
 
-.. automodule:: adept.vlasov1d.datamodel
-    :members:
+Each of the objects used to initialize this datamodel can be treated just like dictionaries.  Each dictionary needs to be compiled into a megadictionary that is passed to the solver. 
+The ``yaml`` configs accomplish this because a ``yaml`` is also a nested dictionary. The following documents those classes
+
+High Level
+-----------
+These are the high level configuration options for the Vlasov1D solver. Each of these either contains a fundamental type such as 
+``bool``, ``int``, ``float``, or ``str`` or is another nested ``datamodel`` which can be treated just like a dictionary. 
+
+.. autoclass:: adept._vlasov1d.datamodel.UnitsModel
+    :members: __init__
+
+.. autoclass:: adept._vlasov1d.datamodel.DensityModel
+    :members: __init__
+
+.. autoclass:: adept._vlasov1d.datamodel.GridModel
+    :members: __init__
+
+.. autoclass:: adept._vlasov1d.datamodel.SaveModel
+    :members: __init__
+
+.. autoclass:: adept._vlasov1d.datamodel.MLFlowModel
+    :members: __init__
+
+.. autoclass:: adept._vlasov1d.datamodel.DriverModel
+    :members: __init__
+
+.. autoclass:: adept._vlasov1d.datamodel.TermsModel
+    :members: __init__
     
+
+Low Level
+----------
+
+The documentation for the nested datamodels is still TBD. To investigate them further, go to the source code.

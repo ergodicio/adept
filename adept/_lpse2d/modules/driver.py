@@ -9,7 +9,7 @@ import equinox as eqx
 import numpy as np
 
 
-from adept.lpse2d.modules.nn import driver as driver_nn
+from adept._lpse2d.modules.nn import driver as driver_nn
 from adept.utils import download_from_s3
 
 

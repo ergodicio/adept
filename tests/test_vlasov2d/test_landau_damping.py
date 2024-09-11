@@ -11,7 +11,7 @@ config.update("jax_enable_x64", True)
 
 import mlflow
 
-from adept.theory import electrostatic
+from adept import electrostatic
 
 
 def _modify_defaults_(defaults, rng, real_or_imag):

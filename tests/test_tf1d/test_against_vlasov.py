@@ -9,9 +9,7 @@ config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
 import xarray as xr
-
-from adept.theory import electrostatic
-from adept import ergoExo
+from adept import ergoExo, electrostatic
 
 
 def _modify_defaults_(defaults):
