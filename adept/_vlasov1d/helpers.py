@@ -13,7 +13,7 @@ from diffrax import Solution
 from matplotlib import pyplot as plt
 
 from adept import get_envelope
-from adept.vlasov1d.storage import store_f, store_fields
+from adept._vlasov1d.storage import store_f, store_fields
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data

@@ -4,7 +4,7 @@ from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from equinox import filter_jit
 
 from adept import ADEPTModule, Stepper
-from adept.lpse2d.helpers import (
+from adept._lpse2d.helpers import (
     write_units,
     post_process,
     get_derived_quantities,
@@ -12,8 +12,8 @@ from adept.lpse2d.helpers import (
     get_save_quantities,
     get_density_profile,
 )
-from adept.lpse2d.core.vector_field import SplitStep
-from adept.lpse2d.modules import driver
+from adept._lpse2d.core.vector_field import SplitStep
+from adept._lpse2d.modules import driver
 
 
 class BaseLPSE2D(ADEPTModule):
