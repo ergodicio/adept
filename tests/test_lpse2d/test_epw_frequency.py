@@ -9,7 +9,7 @@ import pytest
 
 from numpy import testing
 
-from adept.theory.electrostatic import get_roots_to_electrostatic_dispersion, get_nlfs
+from adept.electrostatic import get_nlfs
 from adept import ergoExo
 
 
