@@ -56,7 +56,7 @@ Configuration
 ======================
 ``ADEPT`` needs a ``yaml`` file with the following datamodel to run the simulation. The datamodel is defined in the following class.
 
-.. autoclass:: adept.vlasov1d.datamodel.ConfigModel
+.. autoclass:: adept._vlasov1d.datamodel.ConfigModel
     :members: __init__
 
 Each of the objects used to initialize this datamodel are defined in the following classes.    
