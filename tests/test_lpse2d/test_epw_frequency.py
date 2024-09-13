@@ -9,7 +9,7 @@ import pytest
 
 from numpy import testing
 
-from adept.theory.electrostatic import get_roots_to_electrostatic_dispersion, get_nlfs
+from adept.electrostatic import get_nlfs
 from adept import ergoExo
 
 
@@ -37,8 +37,8 @@ def _real_part_():
     cfg["drivers"]["E2"]["w0"] = w0 * rand_scalar
     cfg["grid"]["xmax"] = f"{10*float(2 * np.pi / k0)}um"
     cfg["grid"]["tmax"] = "1ps"
-    cfg["save"]["t"]["tmax"] = "1ps"
-    cfg["save"]["t"]["dt"] = "5fs"
+    cfg["save"]["fields"]["t"]["tmax"] = "1ps"
+    cfg["save"]["fields"]["t"]["dt"] = "5fs"
 
     exo = ergoExo()
     modules = exo.setup(cfg)

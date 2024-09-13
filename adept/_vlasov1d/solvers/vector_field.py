@@ -4,13 +4,16 @@ from typing import Tuple, Dict
 from jax import numpy as jnp, Array
 
 from adept import get_envelope
-from adept.vlasov1d.solvers.pushers import field, fokker_planck, vlasov
+from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
 
 
 class TimeIntegrator:
     """
     This is the base class for all time integrators. This makes it so that we dont have to
     load the electric field solver and the Vlasov pushers in every time integrator
+
+    The available solvers for E df/dv are "exponential" and "cubic-spline"
+    The only solver for v df/dx is "exponential"
 
     :param cfg: Dict
 

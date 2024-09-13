@@ -9,9 +9,9 @@ from jax import numpy as jnp
 from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
 
 from adept import Stepper, ADEPTModule
-from adept.vlasov1d.storage import get_save_quantities
-from adept.vlasov1d.helpers import _initialize_total_distribution_, post_process
-from adept.vlasov1d.solvers.vector_field import VlasovMaxwell
+from adept._vlasov1d.storage import get_save_quantities
+from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
+from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 
 
 class BaseVlasov1D(ADEPTModule):

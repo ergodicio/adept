@@ -21,7 +21,7 @@ from tqdm import tqdm
 
 from adept import ergoExo
 from adept.tf1d.modules import BaseTwoFluid1D
-from adept.theory.electrostatic import get_roots_to_electrostatic_dispersion
+from adept.electrostatic import get_roots_to_electrostatic_dispersion
 
 
 class Resonance(BaseTwoFluid1D):

@@ -1,5 +1,5 @@
 import os
-from adept.lpse2d.helpers import calc_threshold_intensity
+from adept.lpse2d import calc_threshold_intensity
 
 import numpy as np
 from adept.utils import setup_parsl

@@ -1,14 +1,9 @@
 from typing import Dict, Tuple
-from functools import partial
-
-import diffrax
 import jax
 from jax import numpy as jnp, Array
-import equinox as eqx
 import numpy as np
-from adept.theory import electrostatic
-from adept.lpse2d.core.driver import Driver
-from adept.lpse2d.core.trapper import ParticleTrapper
+from adept._lpse2d.core.driver import Driver
+from adept._lpse2d.core.trapper import ParticleTrapper
 
 
 class SpectralPotential:

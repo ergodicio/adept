@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Dict, Union
+from typing import Dict
 
 
 class SpaceProfileModel(BaseModel):
