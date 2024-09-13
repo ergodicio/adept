@@ -5,13 +5,15 @@ import yaml
 import numpy as np
 from jax import config
 
+from adept import ergoExo
+
 config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
 from jax import numpy as jnp
 import mlflow
 
-from adept import ergoExo, electrostatic
+from adept import electrostatic
 
 
 def _modify_defaults_(defaults, rng):

@@ -9,7 +9,7 @@ from jax import jit
 from diffrax import ODETerm, diffeqsolve
 
 from adept._vlasov1d.solvers.pushers.field import Driver, WaveSolver
-from adept import Stepper
+from adept.base import Stepper
 
 
 class VectorField(eqx.Module):

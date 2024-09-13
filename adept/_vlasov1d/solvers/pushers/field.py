@@ -3,7 +3,7 @@
 from typing import Dict
 from jax import numpy as jnp
 
-from adept import get_envelope
+from adept.base import get_envelope
 
 
 class Driver:

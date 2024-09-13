@@ -3,7 +3,7 @@ from typing import Tuple, Dict
 
 from jax import numpy as jnp, Array
 
-from adept import get_envelope
+from adept.base import get_envelope
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
 
 

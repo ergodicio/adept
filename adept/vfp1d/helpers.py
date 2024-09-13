@@ -6,11 +6,10 @@ import os
 
 import numpy as np
 from jax import Array
-import xarray, yaml
-from astropy import units as u, constants as csts
+import xarray
 from astropy.units import Quantity as _Q
 from jax import numpy as jnp
-from adept import get_envelope
+from adept.base import get_envelope
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data

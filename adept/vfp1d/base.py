@@ -6,7 +6,7 @@ from astropy.units import Quantity as _Q
 from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from jax import numpy as jnp, tree_util as jtu
 
-from adept import ADEPTModule, Stepper
+from adept.base import ADEPTModule, Stepper
 from adept.vfp1d.vector_field import OSHUN1D
 from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
 from adept.vfp1d.storage import get_save_quantities, post_process
