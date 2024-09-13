@@ -1,6 +1,7 @@
 # ADEPT
 
-![](https://readthedocs.org/projects/adept/badge/?version=latest)
+![Docs](https://readthedocs.org/projects/adept/badge/?version=latest)
+![Tests](https://github.com/ergodicio/adept/actions/workflows/test.yaml/badge.svg)
 
 ![ADEPT](./docs/source/adept-logo.png)
 
