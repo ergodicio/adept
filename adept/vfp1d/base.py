@@ -37,7 +37,7 @@ class BaseVFP1D(ADEPTModule):
 
         beta = vth / csts.c
 
-        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, ne, Te, Z, ion_species)
+        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, ne, Te, Z)
         logLambda_ee = logLambda_ei
 
         nD_NRL = 1.72e9 * Te.value**1.5 / np.sqrt(ne.value)

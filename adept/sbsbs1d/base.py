@@ -5,6 +5,7 @@ import numpy as np
 from diffrax import diffeqsolve, SaveAt
 
 from adept import ADEPTModule
+from adept.vfp1d.helpers import calc_logLambda
 
 
 class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
@@ -25,13 +26,31 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         w0 = (2 * np.pi * c / lambda0).to("Hz")
         cs0 = np.sqrt(T0 / mi).to("m/s")
         I0 = _Q(self.cfg["units"]["reference intensity"]).to("W/cm^2")
-        a0 = None
+        a0 = 0.86 * np.sqrt(I0.to("W/cm^2").value / 1e18) * lambda0.to("um").value
         kz0 = 2 * np.pi / lambda0
-
+        omegabeat0 = kz0 * cs0
         if self.cfg["units"]["reference density"] == "nc":
             n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e**2.0
+            nc = 1.0
         else:
             n0 = _Q(self.cfg["units"]["reference density"]).to("cm-3")
+            nc = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e**2.0 / n0
+
+        Zeff0 = self.cfg["profiles"]["Zeff"]
+
+        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, n0, T0, Zeff0)
+        # logLambda_ee = logLambda_ei
+        ni0 = n0 / Zeff0
+
+        nuei_epphaines = (
+            1
+            / (
+                0.75
+                * np.sqrt(const.m_e)
+                * T0**1.5
+                / (np.sqrt(2 * np.pi) * ni0 * Zeff0**2.0 * const.e.gauss**4.0 * logLambda_ei)
+            )
+        ).to("Hz")
 
         self.cfg["units"]["derived"] = {
             "n0": n0,
@@ -40,10 +59,16 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             "vth0": vth0,
             "w0": w0,
             "kz0": kz0,
+            "flow0": cs0,
             "cs0": cs0,
             "I0": I0,
             "a0": a0,
             "mi": mi,
+            "nuei_epphaines0": nuei_epphaines,
+            "logLambda_ee0": logLambda_ee,
+            "logLambda_ei0": logLambda_ei,
+            "nc_over_n0": nc,
+            "omegabeat0": omegabeat0,
         }
 
         return {k: str(v) for k, v in self.cfg["units"]["derived"].items()}
@@ -111,14 +136,16 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             / _Q(self.cfg["profiles"]["omega_beat"]).to("um").value
             * self.cfg["units"]["derived"]["c"]
         )
+        omegabeat_over_omegabeat0 = omega_beat_prof / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
+
         self.state = {"Ji": 1.0, "Jr": 0.1}
         self.args = {
-            "n_over_nc": nprof,
-            "Te_keV": Teprof,
-            "Ti_keV": Tiprof,
-            "Zeff": Zeffprof,
-            "flow": flowprof,
-            "omega_beat": omega_beat_prof,
+            "n_over_n0": nprof,
+            "Te_over_T0": Teprof,
+            "Ti_over_T0": Tiprof,
+            "Zeff_over_Z0": Zeffprof,
+            "flow_over_flow0": flowprof,
+            "omegabeat_over_omegabeat0": omegabeat_over_omegabeat0,
         }
 
     def __call__(self, trainable_modules: Dict, args: Dict):

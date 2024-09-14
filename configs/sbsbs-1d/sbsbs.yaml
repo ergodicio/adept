@@ -19,14 +19,13 @@ units:
 
 profiles:
   n: 
-    min: 0.001
-    max: 0.025
+    min: 0.001nc
+    max: 0.025nc
   Te: 1.4keV
   Ti: 450eV
-  flow: 0.0
+  flow: 0.0m/s
   Zeff: 5
-  omega_beat: 0.1nm
-  a0: 0.1
+  omegabeat: 0.1nm
 
 
 initial conditions:
