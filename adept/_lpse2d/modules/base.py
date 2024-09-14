@@ -4,7 +4,7 @@ from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from equinox import filter_jit
 
 from adept import ADEPTModule
-from adept.base import Stepper
+from adept._base_ import Stepper
 from adept._lpse2d.helpers import (
     write_units,
     post_process,

@@ -10,7 +10,7 @@ import interpax
 
 from astropy.units import Quantity as _Q
 
-from adept.base import get_envelope
+from adept._base_ import get_envelope
 
 
 def write_units(cfg: Dict) -> Dict:

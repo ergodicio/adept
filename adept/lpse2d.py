@@ -1,3 +1,1 @@
-from adept._lpse2d.modules.base import BaseLPSE2D
-from adept._lpse2d.helpers import calc_threshold_intensity
-from adept._lpse2d.modules.driver import save as save_driver
+from ._lpse2d import BaseLPSE2D, save_driver, calc_threshold_intensity
