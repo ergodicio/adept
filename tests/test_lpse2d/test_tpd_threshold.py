@@ -2,12 +2,8 @@ import os
 from adept.lpse2d import calc_threshold_intensity
 
 import numpy as np
-from adept.utils import setup_parsl
-
-# from parsl.app.app import python_app
 
 
-# @python_app
 def run_once(L, Te, I0):
     import yaml
     from adept import ergoExo
@@ -36,7 +32,6 @@ def test_threshold():
     if "CPU_ONLY" in os.environ:
         pass
     else:
-        setup_parsl()
         ess = []
         c = 3e8
         lam0 = 351e-9

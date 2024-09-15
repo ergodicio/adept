@@ -2,20 +2,13 @@
 #  research@ergodic.io
 
 from typing import Dict, Tuple
-import os
 
 import numpy as np
 from jax import Array
-import xarray, yaml
-from astropy import units as u, constants as csts
+from scipy.special import gamma
 from astropy.units import Quantity as _Q
 from jax import numpy as jnp
-from adept import get_envelope
-
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
-m_ax = gamma_da.coords["m"].data
-g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
-g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
+from adept._base_ import get_envelope
 
 
 def gamma_3_over_m(m: float) -> Array:
@@ -26,7 +19,7 @@ def gamma_3_over_m(m: float) -> Array:
     :return: Array
 
     """
-    return np.interp(m, m_ax, g_3_m)
+    return gamma(3.0 / m)  # np.interp(m, m_ax, g_3_m)
 
 
 def gamma_5_over_m(m: float) -> Array:
@@ -36,7 +29,7 @@ def gamma_5_over_m(m: float) -> Array:
     :param m: float between 2 and 5
     :return: Array
     """
-    return np.interp(m, m_ax, g_5_m)
+    return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
 def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) -> Tuple[float, float]:

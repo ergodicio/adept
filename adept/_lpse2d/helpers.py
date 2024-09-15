@@ -1,18 +1,16 @@
 import os
 from typing import Dict, Tuple
-from collections import defaultdict
 from functools import partial
 
 import matplotlib.pyplot as plt
 from jax import Array, numpy as jnp
 import numpy as np
-import equinox as eqx
 import xarray as xr
 import interpax
 
 from astropy.units import Quantity as _Q
 
-from adept import get_envelope
+from adept._base_ import get_envelope
 
 
 def write_units(cfg: Dict) -> Dict:
