@@ -12,12 +12,6 @@ ADEPT
 
 **ADEPT** is a set of **A** utomatic **D** ifferentation **E** nabled **P** lasma **T** ransport solvers.
 
-So far, we have implemented the following solvers
-
-1. Vlasov-Poisson-Fokker-Planck 1D1V
-2. Two fluid - Poisson system in 1D
-3. Zakharov Equations for Two Plasmon Decay in 2D
-4. Vlasov-Poisson-Fokker-Planck (spherical harmonic decomposition) 1D3V 
 
 Examples
 ---------- 
