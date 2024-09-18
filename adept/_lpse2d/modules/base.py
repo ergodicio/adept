@@ -22,7 +22,7 @@ class BaseLPSE2D(ADEPTModule):
         super().__init__(cfg)
 
     def post_process(self, run_output: Dict, td: str) -> Dict:
-        return post_process(run_output["solver result"], self.cfg, td, run_output["args"])
+        return post_process(run_output["solver result"], self.cfg, td)
 
     def write_units(self) -> Dict:
         """
