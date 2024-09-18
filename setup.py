@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 
-import os
-import sys
+import os, sys, subprocess
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 here = os.path.abspath(os.path.dirname(__file__))
 sys.path.append(here)
@@ -15,6 +14,14 @@ with open(os.path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
 
 
+# get the current git commit hash
+def get_git_commit_hash():
+    try:
+        return subprocess.check_output(["git", "rev-parse", "HEAD"]).strip().decode("utf-8")
+    except subprocess.CalledProcessError:
+        return "unknown"
+
+
 setup(
     # metadata
     name="adept",
@@ -24,10 +31,10 @@ setup(
     url="https://github.com/ergodicio/adept",
     author="Archis Joglekar",
     author_email="archis@ergodic.io",
-    version=1.0,  # versioneer.get_version(),
+    version="0.0.1+" + get_git_commit_hash(),
     # cmdclass=versioneer.get_cmdclass(),
-    packages=["adept"],
-    python_requires=">=3.8",
+    packages=find_packages(),
+    python_requires=">=3.10",
     install_requires=[
         "jax[cuda12]",
         "diffrax",
@@ -48,29 +55,4 @@ setup(
         "interpax",
         "tabulate",
     ],
-    # extras_require={
-    #     "dev": [
-    #         "fastapi",
-    #         "httpx",  # required by fastapi test client
-    #         "requests",
-    #         "numpy",
-    #         "pre-commit",
-    #         "pytest",
-    #         "pytest-cov",
-    #         "sphinx",
-    #     ],
-    # },
-    # package_data={
-    #     "tesseract": [
-    #         "templates/**/*",
-    #         # Ensure tesseract_runtime folder is copied to site-packages when installing
-    #         "../tesseract_runtime/**/*",
-    #     ],
-    # },
-    # zip_safe=False,
-    # entry_points={
-    #     "console_scripts": [
-    #         "tesseract=tesseract.cli:entrypoint",
-    #     ],
-    # },
 )

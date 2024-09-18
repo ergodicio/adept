@@ -483,33 +483,7 @@ def plot_kt(kfields, td):
         # kx = kfields.coords["kx"].data
 
 
-def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Dataset]:
-    used_driver = args["drivers"]
-    import pickle
-
-    with open(os.path.join(td, "used_driver.pkl"), "wb") as fi:
-        pickle.dump(used_driver, fi)
-
-    if "E0" in used_driver:
-        dw_over_w = used_driver["E0"]["delta_omega"]  # / cfg["units"]["derived"]["w0"] - 1
-        fig, ax = plt.subplots(1, 3, figsize=(13, 5), tight_layout=True)
-        ax[0].plot(dw_over_w, used_driver["E0"]["intensities"], "o")
-        ax[0].grid()
-        ax[0].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-        ax[0].set_ylabel("$|E|$", fontsize=14)
-        ax[1].semilogy(dw_over_w, used_driver["E0"]["intensities"], "o")
-        ax[1].grid()
-        ax[1].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-        ax[1].set_ylabel("$|E|$", fontsize=14)
-        ax[2].plot(dw_over_w, used_driver["E0"]["initial_phase"], "o")
-        ax[2].grid()
-        ax[2].set_xlabel(r"$\Delta \omega / \omega_0$", fontsize=14)
-        ax[2].set_ylabel(r"$\angle E$", fontsize=14)
-        plt.savefig(os.path.join(td, "driver_that_was_used.png"), bbox_inches="tight")
-        plt.close()
-
-        # numerator = np.fft.ifft2(np.abs(np.fft.fft2(result.ys["fields"]["epw"], axes=(1, 2))) ** 2, axes=(1, 2))
-        # denominator = 1 / tmax * np.sum(np.abs(result.ys["fields"]["epw"]) ** 2, axis=0) * dt
+def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
 
     os.makedirs(os.path.join(td, "binary"))
     kfields, fields = make_xarrays(cfg, result.ts, result.ys, td)
@@ -517,21 +491,7 @@ def post_process(result, cfg: Dict, td: str, args) -> Tuple[xr.Dataset, xr.Datas
     plot_fields(fields, td)
     plot_kt(kfields, td)
 
-    dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
-    dy = fields.coords["y (um)"].data[1] - fields.coords["y (um)"].data[0]
-    dt = fields.coords["t (ps)"].data[1] - fields.coords["t (ps)"].data[0]
-
-    metrics = {}
-    tint = 5.0  # last tint ps
-    it = int(tint / dt)
-    total_esq = np.abs(fields["ex"][-it:].data) ** 2 + np.abs(fields["ey"][-it:].data ** 2) * dx * dy * dt
-    metrics[f"total_e_sq_last_{tint}_ps".replace(".", "p")] = float(np.sum(total_esq))
-    metrics[f"log10_total_e_sq_last_{tint}_ps".replace(".", "p")] = float(
-        np.log10(metrics[f"total_e_sq_last_{tint}_ps".replace(".", "p")])
-    )
-    metrics[f"growth_rate_last_{tint}_ps".replace(".", "p")] = float(np.mean(np.gradient(np.log(total_esq), dt)))
-
-    return {"k": kfields, "x": fields, "metrics": metrics}
+    return {"k": kfields, "x": fields, "metrics": {}}
 
 
 def make_xarrays(cfg, ts, ys, td):
