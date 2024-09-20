@@ -1,8 +1,6 @@
 from typing import Dict
-import jax
-import equinox as eqx
 from jax import numpy as jnp
-from adept import get_envelope
+from adept._base_ import get_envelope
 
 
 class Driver:

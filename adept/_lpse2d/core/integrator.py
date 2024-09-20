@@ -3,7 +3,7 @@ from typing import Dict, List
 from jax import numpy as jnp
 import numpy as np
 
-from adept import get_envelope
+from adept._base_ import get_envelope
 from adept._lpse2d.core import epw, laser
 
 

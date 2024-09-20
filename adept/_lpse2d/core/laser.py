@@ -1,6 +1,5 @@
 from typing import Dict, Tuple
-from jax import numpy as jnp
-import numpy as np
+from jax import numpy as jnp, Array
 
 
 class Light:
@@ -35,3 +34,23 @@ class Light:
         #     raise NotImplementedError
 
         return E0
+
+    def calc_ey_at_one_point(self, t: float, density: Array, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
+        """
+        This function is used to calculate the coherence time of the laser
+
+        :param t: time
+        :param y: state variables
+        :return: updated laser field
+        """
+
+        wpe = self.w0 * jnp.sqrt(density)[None, 0, 0]
+        k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + light_wave["delta_omega"]) ** 2 - wpe**2 / self.w0**2)
+        E0_static = (
+            (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"])) ** 2) ** -0.25
+            * self.E0_source
+            * jnp.sqrt(light_wave["intensities"])
+            * jnp.exp(1j * k0 * self.x[0] + 1j * light_wave["initial_phase"])
+        )
+        dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"] * self.w0 * t)
+        return jnp.sum(dE0y, axis=0)

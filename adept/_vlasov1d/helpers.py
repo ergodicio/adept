@@ -9,24 +9,25 @@ from time import time
 import numpy as np
 import xarray, mlflow, pint
 from jax import numpy as jnp
+from scipy.special import gamma
 from diffrax import Solution
 from matplotlib import pyplot as plt
 
-from adept import get_envelope
+from adept._base_ import get_envelope
 from adept._vlasov1d.storage import store_f, store_fields
 
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
-m_ax = gamma_da.coords["m"].data
-g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
-g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
+# gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
+# m_ax = gamma_da.coords["m"].data
+# g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
+# g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
 
 
 def gamma_3_over_m(m):
-    return np.interp(m, m_ax, g_3_m)
+    return gamma(3.0 / m)  # np.interp(m, m_ax, g_3_m)
 
 
 def gamma_5_over_m(m):
-    return np.interp(m, m_ax, g_5_m)
+    return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
 def _initialize_distribution_(

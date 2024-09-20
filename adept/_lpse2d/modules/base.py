@@ -3,7 +3,8 @@ import numpy as np
 from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
 from equinox import filter_jit
 
-from adept import ADEPTModule, Stepper
+from adept import ADEPTModule
+from adept._base_ import Stepper
 from adept._lpse2d.helpers import (
     write_units,
     post_process,
@@ -21,7 +22,7 @@ class BaseLPSE2D(ADEPTModule):
         super().__init__(cfg)
 
     def post_process(self, run_output: Dict, td: str) -> Dict:
-        return post_process(run_output["solver result"], self.cfg, td, run_output["args"])
+        return post_process(run_output["solver result"], self.cfg, td)
 
     def write_units(self) -> Dict:
         """
