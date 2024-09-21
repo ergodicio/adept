@@ -12,14 +12,14 @@ class ExponentialLeapfrog:
         self.PRNGKey = random.PRNGKey(0)
         self.dz = cfg["grid"]["dz"]
         self.zax = cfg["grid"]["z"]
-        self.nc = cfg["units"]["derived"]["nc"]
+        self.nc = cfg["units"]["derived"]["nc_over_n0"]
         self.ratio_M_m = cfg["units"]["derived"]["ratio_M_m"]
         self.nuei0 = cfg["units"]["derived"]["nuei_epphaines0"].to("Hz").value
-        self.logLambda_ei0 = cfg["units"]["derived"]["logLambda_ei0"].to("").value
-        self.nc_over_n0 = cfg["units"]["derived"]["nc_over_n0"].to("").value
-        self.vg_const = (const.c**2.0).to("m/s").value / cfg["units"]["derived"]["w0"].to("Hz").value
+        self.logLambda_ei0 = cfg["units"]["derived"]["logLambda_ei0"]
+        self.nc_over_n0 = cfg["units"]["derived"]["nc_over_n0"]
+        self.vg_const = ((const.c**2.0) / cfg["units"]["derived"]["w0"]).to("m^2/s").value
         self.a0 = cfg["units"]["derived"]["a0"]
-        self.kz0 = cfg["units"]["derived"]["kz0"]
+        self.kz0 = cfg["units"]["derived"]["kz0"].to("1/m").value
         self.n0 = cfg["units"]["derived"]["n0"].to("cm-3").value
         self.T0 = cfg["units"]["derived"]["T0"].to("eV").value
         self.Z0 = cfg["profiles"]["Zeff"]
@@ -32,7 +32,8 @@ class ExponentialLeapfrog:
         # logLambda_ee = max(2.0, 23.5 - 0.5 * log_ne + 1.25 * log_Te - np.sqrt(1e-5 + 0.0625 * (log_Te - 2.0) ** 2.0))
 
         # if Te.to("eV").value > 10 * Z**2.0:
-        logLambda_ei = max(2.0, 24.0 - 0.5 * log_ne + log_Te)
+        # logLambda_ei = max(2.0, 24.0 - 0.5 * log_ne + log_Te)
+        logLambda_ei = 24.0 - 0.5 * log_ne + log_Te
         return logLambda_ei
         # else:
         #     logLambda_ei = max(2.0, 23.0 - 0.5 * log_ne + 1.5 * log_Te - log_Z)
@@ -56,12 +57,12 @@ class ExponentialLeapfrog:
 
         # nu_ei = density * nu_ei_bar  # Local electron-ion collision frequency/omega
         logLambda_ei = self.calc_logLambda(n_over_n0, Te_over_T0, Zeff_over_Z0)
-        factor = 1 / (Te_over_T0**1.5 / (n_over_n0 * Zeff_over_Z0 * (logLambda_ei / self.logLambda0)))
+        factor = 1 / (Te_over_T0**1.5 / (n_over_n0 * Zeff_over_Z0 * (logLambda_ei / self.logLambda_ei0)))
         nuei_epphaines = factor * self.nuei0
 
         nu_IB = n_over_n0 / self.nc_over_n0 * nuei_epphaines  # Inverse Bremstrahlung absorption rate/omega
         # Electron-ion collision frequency at critical density/omega
-        kz = self.kz_vac * jnp.sqrt(1 - n_over_n0)
+        kz = self.kz0 * jnp.sqrt(1 - n_over_n0)
         kappa_ib = nu_IB / (self.vg_const * kz)
 
         return kappa_ib
@@ -76,6 +77,8 @@ class ExponentialLeapfrog:
             args["omegabeat_over_omegabeat0"](z),
         )
 
+        kz = self.kz0 * jnp.sqrt(1 - n_over_n0)
+
         omega_p2_elec = n_over_n0  # omega_pe^2/omega^2
         omega_p2_ion = Zeff_over_Z0 / self.ratio_M_m * omega_p2_elec  # omega_pi^2/omega^2
         omega_beat_plasframe = (
@@ -84,8 +87,6 @@ class ExponentialLeapfrog:
 
         v_th_e = jnp.sqrt(Te_over_T0)  ## This is a placeholder
         v_th_i = jnp.sqrt(Ti_over_T0)  ## This is a placeholder
-
-        kz = self.kz_vac * jnp.sqrt(1 - n_over_n0)
 
         # Electron susceptibility
         chi_e = -omega_p2_elec / 8 / kz**2 / v_th_e**2 * self.zprime(omega_beat_plasframe / 2**1.5 / kz / v_th_e)

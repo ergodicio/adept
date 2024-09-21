@@ -1,11 +1,15 @@
 from typing import Dict
+
 from astropy import constants as const
 from astropy.units import Quantity as _Q
 import numpy as np
-from diffrax import diffeqsolve, SaveAt
+from jax import numpy as jnp
+from diffrax import diffeqsolve, SaveAt, ODETerm
 
 from adept import ADEPTModule
 from adept.vfp1d.helpers import calc_logLambda
+from adept._base_ import Stepper
+from adept._sbsbs1d.vectorfield import ExponentialLeapfrog
 
 
 class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
@@ -25,16 +29,16 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         vth0 = np.sqrt(2 * T0 / m_e).to("m/s")
         w0 = (2 * np.pi * c / lambda0).to("Hz")
         cs0 = np.sqrt(T0 / mi).to("m/s")
-        I0 = _Q(self.cfg["units"]["reference intensity"]).to("W/cm^2")
+        I0 = _Q(self.cfg["units"]["laser_intensity"]).to("W/cm^2")
         a0 = 0.86 * np.sqrt(I0.to("W/cm^2").value / 1e18) * lambda0.to("um").value
         kz0 = 2 * np.pi / lambda0
         omegabeat0 = kz0 * cs0
         if self.cfg["units"]["reference density"] == "nc":
-            n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e**2.0
-            nc = 1.0
+            n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e.si**2.0
+            nc_over_n0 = 1.0
         else:
             n0 = _Q(self.cfg["units"]["reference density"]).to("cm-3")
-            nc = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e**2.0 / n0
+            nc_over_n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e.si**2.0 / n0
 
         Zeff0 = self.cfg["profiles"]["Zeff"]
 
@@ -67,15 +71,17 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             "nuei_epphaines0": nuei_epphaines,
             "logLambda_ee0": logLambda_ee,
             "logLambda_ei0": logLambda_ei,
-            "nc_over_n0": nc,
+            "nc_over_n0": nc_over_n0,
             "omegabeat0": omegabeat0,
+            "c": c,
+            "ratio_M_m": mi / m_e,
         }
 
         return {k: str(v) for k, v in self.cfg["units"]["derived"].items()}
 
-    def get_solver_quantities(self, cfg):
+    def get_solver_quantities(self):
 
-        cfg_grid = cfg["grid"]
+        cfg_grid = self.cfg["grid"]
 
         cfg_grid = {
             **cfg_grid,
@@ -88,9 +94,9 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             },
         }
 
-        return cfg_grid
+        self.cfg["grid"] = cfg_grid
 
-    def get_derived_quantities(self, cfg) -> Dict:
+    def get_derived_quantities(self) -> Dict:
         """
         This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -99,12 +105,13 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         :param cfg_grid:
         :return:
         """
-        cfg_grid = cfg["grid"]
+        cfg_grid = self.cfg["grid"]
 
         Lgrid = _Q(cfg_grid["zmax"]).to("um").value
 
         cfg_grid["zmax"] = Lgrid
         cfg_grid["zmin"] = 0.0
+        cfg_grid["dz"] = _Q(cfg_grid["dz"]).to("um").value
 
         cfg_grid["nz"] = int(cfg_grid["zmax"] / cfg_grid["dz"]) + 1
 
@@ -114,17 +121,28 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         else:
             cfg_grid["max_steps"] = cfg_grid["nz"] + 4
 
-        cfg["grid"] = cfg_grid
+        self.cfg["grid"] = cfg_grid
 
-        return cfg
+        return self.cfg
 
     def init_state_and_args(self):
-        nprof = (
-            self.cfg["profiles"]["n"]["min"]
-            + (self.cfg["profiles"]["n"]["max"] - self.cfg["profiles"]["n"]["min"])
-            * self.cfg["grid"]["z"]
-            / self.cfg["grid"]["zmax"]
-        )
+
+        if "nc" in self.cfg["profiles"]["n"]["min"]:
+            nmin = (
+                float(self.cfg["profiles"]["n"]["min"].strip("nc"))
+                * self.cfg["units"]["derived"]["nc_over_n0"]
+                # * self.cfg["units"]["derived"]["n0"].value
+            )
+            nmax = (
+                float(self.cfg["profiles"]["n"]["max"].strip("nc"))
+                * self.cfg["units"]["derived"]["nc_over_n0"]
+                # * self.cfg["units"]["derived"]["n0"].value
+            )
+        else:
+            nmin = (_Q(self.cfg["profiles"]["n"]["min"]) / self.cfg["units"]["derived"]["n0"]).to("").value
+            nmax = (_Q(self.cfg["profiles"]["n"]["max"]) / self.cfg["units"]["derived"]["n0"]).to("").value
+
+        nprof = nmin + (nmax - nmin) * self.cfg["grid"]["z"] / self.cfg["grid"]["zmax"]
         Teprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Te"]).to("keV").value
         Tiprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Ti"]).to("keV").value
         Zeffprof = np.ones_like(nprof) * self.cfg["profiles"]["Zeff"]
@@ -133,19 +151,40 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             np.ones_like(nprof)
             * 2
             * np.pi
-            / _Q(self.cfg["profiles"]["omega_beat"]).to("um").value
-            * self.cfg["units"]["derived"]["c"]
+            / _Q(self.cfg["profiles"]["omegabeat"]).to("um").value
+            * self.cfg["units"]["derived"]["c"].to("um/s").value
         )
         omegabeat_over_omegabeat0 = omega_beat_prof / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
 
         self.state = {"Ji": 1.0, "Jr": 0.1}
         self.args = {
-            "n_over_n0": nprof,
-            "Te_over_T0": Teprof,
-            "Ti_over_T0": Tiprof,
-            "Zeff_over_Z0": Zeffprof,
-            "flow_over_flow0": flowprof,
-            "omegabeat_over_omegabeat0": omegabeat_over_omegabeat0,
+            "n_over_n0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], nprof),
+            "Te_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Teprof),
+            "Ti_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Tiprof),
+            "Zeff_over_Z0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
+            "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
+            "omegabeat_over_omegabeat0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat_over_omegabeat0),
+        }
+
+    def init_diffeqsolve(self) -> Dict:
+
+        self.space_quantities = {
+            "z0": self.cfg["grid"]["zmin"],
+            "z1": self.cfg["grid"]["zmax"],
+            "max_steps": self.cfg["grid"]["max_steps"],
+            "save_z0": self.cfg["grid"]["zmin"],
+            "save_z1": self.cfg["grid"]["zmax"],
+            "save_nz": self.cfg["grid"]["nz"],
+        }
+
+        self.diffeqsolve_quants = {
+            "terms": ODETerm(ExponentialLeapfrog(self.cfg)),
+            "solver": Stepper(),
+            "saveat": {
+                "ts": np.linspace(
+                    self.space_quantities["z0"], self.space_quantities["z1"], self.space_quantities["save_nz"]
+                )
+            },
         }
 
     def __call__(self, trainable_modules: Dict, args: Dict):
@@ -160,10 +199,10 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],
             solver=self.diffeqsolve_quants["solver"],
-            t0=self.time_quantities["t0"],
-            t1=self.time_quantities["t1"],
+            t0=self.space_quantities["z0"],
+            t1=self.space_quantities["z1"],
             max_steps=self.cfg["grid"]["max_steps"],
-            dt0=self.cfg["grid"]["dt"],
+            dt0=self.cfg["grid"]["dz"],
             y0=state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
