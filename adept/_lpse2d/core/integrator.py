@@ -1,10 +1,42 @@
-from typing import Dict, List
+from typing import Dict
 
 from jax import numpy as jnp
 import numpy as np
 
 from adept._base_ import get_envelope
 from adept._lpse2d.core import epw, laser
+
+
+def get_laser_t_coeff(t: float, args: Dict) -> float:
+    """
+    Calculate the laser time coefficient.
+
+    This function computes the time-dependent coefficient for a laser pulse
+    based on the provided parameters.
+
+    Args:
+        t (float): The time at which to evaluate the coefficient.
+        args (dict): A dictionary containing the parameters for the laser pulse.
+            It should have the following structure:
+            {
+                "drivers": {
+                    "E0": {
+                        "tc": float,  # Center time of the pulse
+                        "tw": float,  # Full width at half maximum (FWHM) of the pulse
+                        "tr": float   # Rise time of the pulse
+                    }
+                }
+            }
+
+    Returns:
+        float: The time-dependent coefficient for the laser pulse.
+    """
+    t_L = args["drivers"]["E0"]["tc"] - args["drivers"]["E0"]["tw"] * 0.5
+    t_R = args["drivers"]["E0"]["tc"] + args["drivers"]["E0"]["tw"] * 0.5
+    t_wL = args["drivers"]["E0"]["tr"]
+    t_wR = args["drivers"]["E0"]["tr"]
+    t_coeff = get_envelope(t_wL, t_wR, t_L, t_R, t)
+    return t_coeff
 
 
 class SplitStep:
@@ -52,13 +84,12 @@ class SplitStep:
         return y, new_y
 
     def light_split_step(self, t, y, args):
-        t_coeff = get_envelope(0.03, 0.03, 0.1, 100.0, t)
+        t_coeff = get_laser_t_coeff(t, args)
         y["E0"] = self.boundary_envelope[..., None] * t_coeff * self.light.laser_update(t, y, args["E0"])
 
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
 
-        # t_coeff = get_envelope(0.1, 0.1, 0.2, 100.0, t + 0.5 * self.dt)
         # y["E0"] = t_coeff * self.light.laser_update(t + 0.5 * self.dt, y, args["E0"])
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + 1j * self.dt * jnp.imag(k1_E0)
