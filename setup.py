@@ -54,5 +54,6 @@ setup(
         "tabulate",
         "interpax",
         "tabulate",
+        "pydantic",
     ],
 )

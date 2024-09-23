@@ -7,6 +7,7 @@ from diffrax import Solution, Euler, RESULTS
 from equinox import Module, filter_jit
 import mlflow, jax, numpy as np
 from jax import numpy as jnp
+from .utils import robust_log_artifacts
 
 
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):
@@ -226,7 +227,7 @@ class ergoExo:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
                 with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
                     modules = self._setup_(cfg, td, adept_module)
-                    mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
                 self.mlflow_run_id = mlflow_run.info.run_id
 
             else:
@@ -236,7 +237,7 @@ class ergoExo:
                     # with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
                     # cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
-                    mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
 
         return modules
 
@@ -347,7 +348,7 @@ class ergoExo:
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
                 post_processing_output = self.adept_module.post_process(run_output, td)
-                mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+                robust_log_artifacts(td)  # logs the temporary directory to mlflow
 
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
@@ -384,7 +385,7 @@ class ergoExo:
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
                 post_processing_output = self.adept_module.post_process(run_output, td)
-                mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
+                robust_log_artifacts(td)  # logs the temporary directory to mlflow
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})

@@ -175,3 +175,18 @@ def export_run(run_id, prefix="individual", step=0):
         t0 = time.time()
         upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id, prefix, step)
     # print(f"Uploading took {round(time.time() - t0, 2)} s")
+
+
+def robust_log_artifacts(directory, retries=5, delay=5):
+    for attempt in range(retries):
+        try:
+            mlflow.log_artifacts(directory)
+            print(f"Successfully removed {directory}")
+            break
+        except Exception as e:
+            # if e.errno == 5:  # Input/output error
+            print(f"Attempt {attempt + 1} failed: {e}")
+            time.sleep(delay)  # Wait before retrying
+
+    else:
+        print(f"Failed to log artifacts after {retries} attempts.")
