@@ -6,7 +6,7 @@ from functools import partial
 
 from jax import numpy as jnp
 
-from adept.tf1d.pushers import get_envelope
+from adept._base_ import get_envelope
 
 
 class Driver:

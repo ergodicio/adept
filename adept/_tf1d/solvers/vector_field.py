@@ -2,7 +2,7 @@ from typing import Dict, Callable
 import jax.numpy as jnp
 import equinox as eqx
 
-from adept.tf1d.solvers import pushers
+from adept._tf1d.solvers import pushers
 
 
 class VF(eqx.Module):

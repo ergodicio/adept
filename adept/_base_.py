@@ -252,8 +252,7 @@ class ergoExo:
         """
 
         if cfg["solver"] == "tf-1d":
-            from adept.tf1d.modules import BaseTwoFluid1D as this_module
-            from adept.tf1d.datamodel import ConfigModel
+            from adept.tf1d import BaseTwoFluid1D as this_module, ConfigModel
 
             # config = ConfigModel(**cfg)
 

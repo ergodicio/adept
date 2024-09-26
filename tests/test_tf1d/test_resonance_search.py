@@ -20,7 +20,7 @@ import equinox as eqx
 from tqdm import tqdm
 
 from adept import ergoExo
-from adept.tf1d.modules import BaseTwoFluid1D
+from adept.tf1d import BaseTwoFluid1D
 from adept.electrostatic import get_roots_to_electrostatic_dispersion
 
 
