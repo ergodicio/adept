@@ -6,8 +6,8 @@ from diffrax import diffeqsolve, SaveAt, ODETerm, Tsit5
 from jax import numpy as jnp, tree_util as jtu
 
 from adept import ADEPTModule
-from adept.tf1d.solvers.vector_field import VF
-from adept.tf1d.storage import save_arrays, plot_xrs
+from adept._tf1d.solvers.vector_field import VF
+from adept._tf1d.storage import save_arrays, plot_xrs
 
 
 class BaseTwoFluid1D(ADEPTModule):

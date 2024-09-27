@@ -18,7 +18,7 @@ import mlflow, optax
 import equinox as eqx
 from tqdm import tqdm
 
-from adept.tf1d import helpers
+from adept._tf1d import helpers
 from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
 from utils import misc, plotters
 
