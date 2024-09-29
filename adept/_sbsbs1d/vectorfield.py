@@ -2,7 +2,7 @@ from typing import Dict, Union
 from astropy import constants as const
 
 from jax import numpy as jnp, Array, random
-from jax.scipy.special import erfc
+from tensorflow_probability.substrates import jax as tfpj
 
 
 class ExponentialLeapfrog:
@@ -38,9 +38,9 @@ class ExponentialLeapfrog:
         # else:
         #     logLambda_ei = max(2.0, 23.0 - 0.5 * log_ne + 1.5 * log_Te - log_Z)
 
-    def zprime(self, z: Union[complex, float]) -> complex:
-        wofz = jnp.exp(-(z**2.0)) * erfc(-1j * z)
-        return (2j / jnp.sqrt(jnp.pi) - 2 * z * wofz) * 1j * jnp.sqrt(jnp.pi)
+    def zprime(self, x: Union[complex, float]) -> complex:
+        Zx = 1j * jnp.sqrt(jnp.pi) * jnp.exp(-(x**2.0)) - 2.0 * tfpj.math.dawsn(x)
+        return -2 * (1 + x * Zx)
 
     def calculate_noise(self, args: Dict[str, float]) -> float:
         return 0.0  # * random.uniform(self.PRNGKey, (1,))
@@ -65,7 +65,7 @@ class ExponentialLeapfrog:
         kz = self.kz0 * jnp.sqrt(1 - n_over_n0)
         kappa_ib = nu_IB / (self.vg_const * kz)
 
-        return kappa_ib
+        return 1e-5 * kappa_ib
 
     def calc_imfx0(self, z: float, args: Dict[str, float]) -> float:
         n_over_n0, Te_over_T0, Ti_over_T0, Zeff_over_Z0, flow_over_flow0, omegabeat_over_omegabeat0 = (
@@ -92,7 +92,7 @@ class ExponentialLeapfrog:
         chi_e = -omega_p2_elec / 8 / kz**2 / v_th_e**2 * self.zprime(omega_beat_plasframe / 2**1.5 / kz / v_th_e)
 
         # Ion susceptibility
-        chi_i = -omega_p2_ion / 8 / self.kz**2 / v_th_i**2 * self.zprime(omega_beat_plasframe / 2**1.5 / kz / v_th_i)
+        chi_i = -omega_p2_ion / 8 / kz**2 / v_th_i**2 * self.zprime(omega_beat_plasframe / 2**1.5 / kz / v_th_i)
 
         F_chi = chi_e * (1.0 + chi_i) / (1.0 + chi_e + chi_i)
         return jnp.imag(F_chi)
@@ -113,13 +113,13 @@ class ExponentialLeapfrog:
         return {"Ji": new_Ji, "Jr": new_Jr}
 
     def calculate_dJidz(self, z: float, Ji: float, Jr: float, args: Dict[str, float]) -> float:
-        kappaIB = self.calc_kappa(z, args)
+        kappaIB = -self.calc_kappa(z, args)
         imfx0 = self.calc_imfx0(z, args)
 
         return kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Jr
 
     def calculate_dJrdz(self, z: float, Ji: float, Jr: float, args: Dict[str, float]) -> float:
-        kappaIB = self.calc_kappa(z, args)
+        kappaIB = -self.calc_kappa(z, args)
         imfx0 = self.calc_imfx0(z, args)
 
         return -kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Ji
