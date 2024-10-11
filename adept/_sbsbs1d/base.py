@@ -1,10 +1,13 @@
 from typing import Dict
+import os
 
 from astropy import constants as const
 from astropy.units import Quantity as _Q
 import numpy as np
 from jax import numpy as jnp
 from diffrax import diffeqsolve, SaveAt, ODETerm
+import xarray as xr
+import matplotlib.pyplot as plt
 
 from adept import ADEPTModule
 from adept.vfp1d.helpers import calc_logLambda
@@ -156,7 +159,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         )
         omegabeat_over_omegabeat0 = omega_beat_prof / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
 
-        self.state = {"Ji": 1.0, "Jr": 0.1}
+        self.state = {"Ji": 1.0, "Jr": 0.1, "imfx0": 0.0, "kappaIB": 0.0}
         self.args = {
             "n_over_n0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], nprof),
             "Te_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Teprof),
@@ -209,3 +212,30 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         )
 
         return {"solver result": solver_result, "args": args}
+
+    def post_process(self, run_output: Dict, td: str) -> Dict:
+        result = run_output["solver result"]
+        os.makedirs(os.path.join(td, "binary"))
+        os.makedirs(os.path.join(td, "plots"))
+        Ji, Jr, imfx0, kappaIB = result.ys["Ji"], result.ys["Jr"], result.ys["imfx0"], result.ys["kappaIB"]
+        zs = result.ts
+
+        Ji = xr.DataArray(Ji, coords=[("z", zs)], dims=["z (um)"])
+        Jr = xr.DataArray(Jr, coords=[("z", zs)], dims=["z (um)"])
+        imfx0 = xr.DataArray(imfx0, coords=[("z", zs)], dims=["z (um)"])
+        kappaIB = xr.DataArray(kappaIB, coords=[("z", zs)], dims=["z (um)"])
+
+        ds = xr.Dataset({"Ji": Ji, "Jr": Jr, "imfx0": imfx0, "kappaIB": kappaIB})
+
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+        ds["Ji"].plot(ax=ax[0])
+        ds["Jr"].plot(ax=ax[1])
+        fig.savefig(os.path.join(td, "plots", "Ji_Jr.png"), bbox_inches="tight")
+
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+        ds["imfx0"].plot(ax=ax[0])
+        ds["kappaIB"].plot(ax=ax[1])
+        fig.savefig(os.path.join(td, "plots", "imfx0_kappaIB.png"), bbox_inches="tight")
+
+        ds.to_netcdf(os.path.join(td, "binary", "datasets.nc"))
+        return {"ds": ds}
