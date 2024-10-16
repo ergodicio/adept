@@ -13,24 +13,24 @@ from adept._lpse2d.modules.nn import driver as driver_nn
 from adept.utils import download_from_s3
 
 
-def load(self, DriverModule: eqx.Module) -> eqx.Module:
-    filename = self.cfg["drivers"]["E0"]["file"]
+def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
+    filename = cfg["drivers"]["E0"]["file"]
     with tempfile.TemporaryDirectory() as td:
         if "s3" in filename:
             from os.path import join
 
-            self.cfg["drivers"]["E0"]["file"] = join(td, filename.split("/")[-1])
-            self.cfg["drivers"]["E0"]["file"] = download_from_s3(filename, self.cfg["drivers"]["E0"]["file"])
+            cfg["drivers"]["E0"]["file"] = join(td, filename.split("/")[-1])
+            cfg["drivers"]["E0"]["file"] = download_from_s3(filename, cfg["drivers"]["E0"]["file"])
         else:
-            self.cfg["drivers"]["E0"]["file"] = filename
+            cfg["drivers"]["E0"]["file"] = filename
 
-        if "pkl" in self.cfg["drivers"]["E0"]["file"]:
-            loaded_model = DriverModule(self.cfg)
-        elif "eqx" in self.cfg["drivers"]["E0"]["file"]:
-            with open(self.cfg["drivers"]["E0"]["file"], "rb") as f:
+        if "pkl" in cfg["drivers"]["E0"]["file"]:
+            loaded_model = DriverModule(cfg)
+        elif "eqx" in cfg["drivers"]["E0"]["file"]:
+            with open(cfg["drivers"]["E0"]["file"], "rb") as f:
                 model_cfg = json.loads(f.readline().decode())
-                self.cfg["drivers"]["E0"]["params"] = model_cfg
-                model = DriverModule(self.cfg)
+                cfg["drivers"]["E0"]["params"] = model_cfg
+                model = DriverModule(cfg)
 
                 loaded_model = eqx.tree_deserialise_leaves(f, model)
         else:
@@ -69,10 +69,11 @@ class ArbitraryDriver(eqx.Module):
     envelope: Dict
     amp_output: str
     phase_output: str
+    model_cfg: Dict
 
     def __init__(self, cfg: Dict):
         super().__init__()
-        self.cfg = cfg
+        self.model_cfg = cfg["drivers"]["E0"]["params"]
         self.intensities = np.ones(cfg["drivers"]["E0"]["num_colors"])
         self.delta_omega = np.linspace(
             -cfg["drivers"]["E0"]["delta_omega_max"],
@@ -106,13 +107,21 @@ class ArbitraryDriver(eqx.Module):
 
         return ints, phases
 
-    # @staticmethod
     def save(self, filename: str) -> None:
+        """
+        Save the model to a file
+
+        Parameters
+        ----------
+        filename : str
+            The name of the file to save the model to
+
+        """
         new_filter_spec = lambda f, x: (
             None if isinstance(x, driver_nn.PRNGKeyArray) else eqx.default_serialise_filter_spec(f, x)
         )
         with open(filename, "wb") as f:
-            model_cfg_str = json.dumps(self.cfg["drivers"]["E0"]["params"])
+            model_cfg_str = json.dumps(self.model_cfg)
             f.write((model_cfg_str + "\n").encode())
             eqx.tree_serialise_leaves(f, self, filter_spec=new_filter_spec)
 
@@ -131,7 +140,7 @@ class UniformDriver(ArbitraryDriver):
     phase_key: driver_nn.PRNGKeyArray
 
     def __init__(self, cfg: Dict):
-        super().__init__()
+        super().__init__(cfg)
         num_colors = cfg["drivers"]["E0"]["num_colors"]
         self.intensities = jnp.array(np.ones(num_colors))
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
