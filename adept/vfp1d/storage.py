@@ -272,8 +272,8 @@ def post_process(soln: Solution, cfg: Dict, td: str, args: Dict = None) -> Dict:
         plt.close()
 
     metrics = {
-        "kappa": round(np.amax(fields_xr["fields-kappa_c"][-1].data), 4),
-        "kappa_eh": round(calc_EH(cfg["units"]["Z"], 0.0), 4),
+        "kappa": float(round(np.amax(fields_xr["fields-kappa_c"][-1].data), 4)),
+        "kappa_eh": float(round(calc_EH(cfg["units"]["Z"], 0.0), 4)),
     }
 
     return {"fields": fields_xr, "dists": f_xr, "metrics": metrics}
