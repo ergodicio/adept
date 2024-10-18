@@ -6,7 +6,7 @@ from jax import numpy as jnp
 import diffrax
 
 from adept.vlasov1d2v.pushers import field, fokker_planck, vlasov
-from adept.tf1d.pushers import get_envelope
+from adept._base_ import get_envelope
 
 
 class Stepper(diffrax.Euler):

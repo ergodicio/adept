@@ -15,7 +15,7 @@ from equinox import filter_jit
 
 from adept.vlasov1d2v.integrator import VlasovMaxwell, Stepper
 from adept.vlasov1d2v.storage import store_f, store_fields, get_save_quantities
-from adept.tf1d.pushers import get_envelope
+from adept._base_ import get_envelope
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data

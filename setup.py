@@ -36,7 +36,6 @@ setup(
     packages=find_packages(),
     python_requires=">=3.10",
     install_requires=[
-        "jax[cuda12]",
         "diffrax",
         "matplotlib",
         "scipy",
@@ -56,4 +55,8 @@ setup(
         "tabulate",
         "pydantic",
     ],
+    extras_require={
+        "cpu": ["jax"],
+        "gpu": ["jax[cuda12]"],
+    },
 )
