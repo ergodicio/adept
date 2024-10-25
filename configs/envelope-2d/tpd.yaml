@@ -69,7 +69,7 @@ units:
   atomic number: 40
   envelope density: 0.25
   ionization state: 6
-  laser intensity: 2.4e+15W/cm^2
+  laser intensity: 1.2e+15W/cm^2
   laser_wavelength: 351nm
   reference electron temperature: 2000.0eV
   reference ion temperature: 1000eV
