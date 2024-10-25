@@ -25,6 +25,8 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         e = const.e
         c = const.c
         eps_0 = const.eps0
+        Zeff = self.cfg["profiles"]["Zeff"]
+
         mi = self.cfg["units"]["atomic mass number"] * const.m_p
 
         lambda0 = _Q(self.cfg["units"]["laser_wavelength"]).to("um")
@@ -43,11 +45,9 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             n0 = _Q(self.cfg["units"]["reference density"]).to("cm-3")
             nc_over_n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e.si**2.0 / n0
 
-        Zeff0 = self.cfg["profiles"]["Zeff"]
-
-        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, n0, T0, Zeff0)
+        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, n0, T0, Zeff)
         # logLambda_ee = logLambda_ei
-        ni0 = n0 / Zeff0
+        ni0 = n0 / Zeff
 
         nuei_epphaines = (
             1
@@ -55,7 +55,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
                 0.75
                 * np.sqrt(const.m_e)
                 * T0**1.5
-                / (np.sqrt(2 * np.pi) * ni0 * Zeff0**2.0 * const.e.gauss**4.0 * logLambda_ei)
+                / (np.sqrt(2 * np.pi) * ni0 * Zeff**2.0 * const.e.gauss**4.0 * logLambda_ei)
             )
         ).to("Hz")
 
@@ -159,15 +159,24 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         )
         omegabeat_over_omegabeat0 = omega_beat_prof / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
 
-        self.state = {"Ji": 1.0, "Jr": 0.1, "imfx0": 0.0, "kappaIB": 0.0}
         self.args = {
             "n_over_n0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], nprof),
             "Te_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Teprof),
             "Ti_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Tiprof),
-            "Zeff_over_Z0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
+            "Zeff": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
             "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
             "omegabeat_over_omegabeat0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat_over_omegabeat0),
         }
+        self.state = {
+            "Ji": 1.0,
+            "Jr": 0.1,
+            "imfx0": 0.0,
+            "kappaIB": 0.0,
+            "omega_beat_plasframe": 0.0,
+            "cs": 0.0,
+            "kz": 0.0,
+            "res_cond": 0.0,
+        } | {k: 0.0 for k in self.args.keys()}
 
     def init_diffeqsolve(self) -> Dict:
 
@@ -224,18 +233,81 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         Jr = xr.DataArray(Jr, coords=[("z", zs)], dims=["z (um)"])
         imfx0 = xr.DataArray(imfx0, coords=[("z", zs)], dims=["z (um)"])
         kappaIB = xr.DataArray(kappaIB, coords=[("z", zs)], dims=["z (um)"])
+        n_over_n0 = xr.DataArray(result.ys["n_over_n0"], coords=[("z", zs)], dims=["z (um)"])
+        Te_over_T0 = xr.DataArray(result.ys["Te_over_T0"], coords=[("z", zs)], dims=["z (um)"])
+        Ti_over_T0 = xr.DataArray(result.ys["Ti_over_T0"], coords=[("z", zs)], dims=["z (um)"])
+        Zeff = xr.DataArray(result.ys["Zeff"], coords=[("z", zs)], dims=["z (um)"])
+        flow_over_flow0 = xr.DataArray(result.ys["flow_over_flow0"], coords=[("z", zs)], dims=["z (um)"])
+        omegabeat_over_omegabeat0 = xr.DataArray(
+            result.ys["omegabeat_over_omegabeat0"], coords=[("z", zs)], dims=["z (um)"]
+        )
 
-        ds = xr.Dataset({"Ji": Ji, "Jr": Jr, "imfx0": imfx0, "kappaIB": kappaIB})
+        ds = xr.Dataset(
+            {
+                "Ji": Ji,
+                "Jr": Jr,
+                "imfx0": imfx0,
+                "kappaIB": kappaIB,
+                "n_over_n0": n_over_n0,
+                "Te_over_T0": Te_over_T0,
+                "Ti_over_T0": Ti_over_T0,
+                "Zeff": Zeff,
+                "flow_over_flow0": flow_over_flow0,
+                "omegabeat_over_omegabeat0": omegabeat_over_omegabeat0,
+                "omega_beat_plasframe": xr.DataArray(
+                    result.ys["omega_beat_plasframe"], coords=[("z", zs)], dims=["z (um)"]
+                ),
+                "cs": xr.DataArray(result.ys["cs"], coords=[("z", zs)], dims=["z (um)"]),
+                "kz": xr.DataArray(result.ys["kz"], coords=[("z", zs)], dims=["z (um)"]),
+                "res_cond": xr.DataArray(result.ys["res_cond"], coords=[("z", zs)], dims=["z (um)"]),
+            }
+        )
 
-        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-        ds["Ji"].plot(ax=ax[0])
-        ds["Jr"].plot(ax=ax[1])
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+        ds["Ji"][1:].plot(ax=ax[0])
+        ds["Jr"][1:].plot(ax=ax[1])
+        ax[0].grid()
+        ax[1].grid()
         fig.savefig(os.path.join(td, "plots", "Ji_Jr.png"), bbox_inches="tight")
 
-        fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-        ds["imfx0"].plot(ax=ax[0])
-        ds["kappaIB"].plot(ax=ax[1])
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+        ds["imfx0"][1:].plot(ax=ax[0])
+        ds["kappaIB"][1:].plot(ax=ax[1])
+        ax[0].grid()
+        ax[1].grid()
         fig.savefig(os.path.join(td, "plots", "imfx0_kappaIB.png"), bbox_inches="tight")
+
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+        ds["n_over_n0"][1:].plot(ax=ax[0])
+        ds["Te_over_T0"][1:].plot(ax=ax[1])
+        ax[0].grid()
+        ax[1].grid()
+        fig.savefig(os.path.join(td, "plots", "n_Te.png"), bbox_inches="tight")
+
+        fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+        ds["Ti_over_T0"][1:].plot(ax=ax[0])
+        ds["Zeff"][1:].plot(ax=ax[1])
+        ax[0].grid()
+        ax[1].grid()
+        fig.savefig(os.path.join(td, "plots", "Ti_Zeff.png"), bbox_inches="tight")
+
+        fig, ax = plt.subplots(1, 3, figsize=(12, 4), tight_layout=True)
+        ds["flow_over_flow0"][1:].plot(ax=ax[0])
+        ds["omegabeat_over_omegabeat0"][1:].plot(ax=ax[1])
+        ds["omega_beat_plasframe"][1:].plot(ax=ax[2])
+        ax[0].grid()
+        ax[1].grid()
+        ax[2].grid()
+        fig.savefig(os.path.join(td, "plots", "flow_omegabeat.png"), bbox_inches="tight")
+
+        fig, ax = plt.subplots(1, 3, figsize=(12, 4), tight_layout=True)
+        ds["cs"][1:].plot(ax=ax[0])
+        ds["kz"][1:].plot(ax=ax[1])
+        ds["res_cond"][1:].plot(ax=ax[2])
+        ax[0].grid()
+        ax[1].grid()
+        ax[2].grid()
+        fig.savefig(os.path.join(td, "plots", "cs_kz_res_cond.png"), bbox_inches="tight")
 
         ds.to_netcdf(os.path.join(td, "binary", "datasets.nc"))
         return {"ds": ds}
