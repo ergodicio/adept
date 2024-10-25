@@ -34,9 +34,7 @@ def write_units(cfg: Dict) -> Dict:
     Z = cfg["units"]["ionization state"]
     A = cfg["units"]["atomic number"]
     lam0 = _Q(cfg["units"]["laser_wavelength"]).to("um").value
-    I0 = (
-        _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value / 2
-    )  ## NB - the factor of 2 enables matching to the Short scaling
+    I0 = _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value
     envelopeDensity = cfg["units"]["envelope density"]
 
     # Scaled constants
@@ -185,26 +183,16 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
     cfg_grid["dx"] = _Q(cfg_grid["dx"]).to("um").value
 
-    cfg_grid["nx"] = int(cfg_grid["xmax"] / cfg_grid["dx"]) + 1
-    # cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-    cfg_grid["dy"] = cfg_grid["dx"]  # cfg_grid["ymax"] / cfg_grid["ny"]
-    cfg_grid["ny"] = int(cfg_grid["ymax"] / cfg_grid["dy"]) + 1
+    cfg_grid["nx"] = int((cfg_grid["xmax"] - cfg_grid["xmin"]) / cfg_grid["dx"]) + 1
 
-    # midpt = (cfg_grid["xmax"] + cfg_grid["xmin"]) / 2
+    cfg_grid["dy"] = cfg_grid["dx"]
+    cfg_grid["ny"] = int((cfg_grid["ymax"] - cfg_grid["ymin"]) / cfg_grid["dy"]) + 1
 
-    # max_density = cfg["density"]["val at center"] + (cfg["grid"]["xmax"] - midpt) / L
-
-    # norm_n_max = np.abs(nmax / cfg["units"]["envelope density"] - 1)
-    # cfg_grid["dt"] = 0.05 * cfg_grid["dx"]
     cfg_grid["dt"] = _Q(cfg_grid["dt"]).to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
-    # if cfg_grid["nt"] > 1e6:
-    #     cfg_grid["max_steps"] = int(1e6)
-    #     print(r"Only running $10^6$ steps")
-    # else:
     cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
     # change driver parameters to the right units
@@ -308,7 +296,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     )
 
     cfg_grid["zero_mask"] = (
-        np.where(cfg_grid["kx"] == 0, 0, 1)[:, None] * np.ones_like(cfg_grid["ky"])[None, :]
+        np.where(np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) == 0, 0, 1)
         if cfg["terms"]["zero_mask"]
         else 1
     )
