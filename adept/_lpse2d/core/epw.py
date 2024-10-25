@@ -97,7 +97,6 @@ class SpectralPotential:
 
         tpd1 = E0[..., 1] * jnp.conj(ey)
         tpd1 = jnp.fft.ifft2(jnp.fft.fft2(tpd1) * self.low_pass_filter)
-        # tpd1 = E0_Ey
 
         divE_true = jnp.fft.ifft2(self.k_sq * jnp.fft.fft2(phi))
         E0_divE_k = jnp.fft.fft2(E0[..., 1] * jnp.conj(divE_true))
@@ -109,49 +108,6 @@ class SpectralPotential:
         dphi = total_tpd
 
         return dphi
-
-    def calc_tpd1(self, t: float, y: Array, args: Dict) -> Array:
-        """
-        Calculates the first term of the two plasmon decay
-
-        Args:
-            t (float): time
-            y (Array): phi(x, y)
-            args (Dict): dictionary containing E0
-
-        Returns:
-            Array: dphi(x, y)
-        """
-        E0 = args["E0"]
-        phi = y
-
-        _, ey = self.calc_fields_from_phi(phi)
-
-        tpd1 = E0[..., 1] * jnp.conj(ey)
-        return self.tpd_const * tpd1
-
-    def calc_tpd2(self, t: float, y: Array, args: Dict) -> Array:
-        """
-        Calculates the second term of the two plasmon decay
-
-        Args:
-            t (float): time
-            y (Array): phi(x, y)
-            args (Dict): dictionary containing E0
-
-        Returns:
-            Array: dphi(x, y)
-
-        """
-        phi = y
-        E0 = args["E0"]
-
-        divE_true = jnp.fft.ifft2(self.k_sq * jnp.fft.fft2(phi))
-        E0_divE_k = jnp.fft.fft2(E0[..., 1] * jnp.conj(divE_true))
-
-        tpd2 = 1j * self.ky[None, :] * self.one_over_ksq * E0_divE_k
-        tpd2 = jnp.fft.ifft2(tpd2)
-        return self.tpd_const * tpd2
 
     def get_noise(self):
         random_amps = 1.0  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
@@ -175,8 +131,8 @@ class SpectralPotential:
         # density gradient
         if self.cfg["terms"]["epw"]["density_gradient"]:
             ex, ey = self.calc_fields_from_phi(phi)
-            ex *= jnp.exp(-1j * self.wp0 / 2.0 * (1 - background_density / self.envelope_density) * self.dt)
-            ey *= jnp.exp(-1j * self.wp0 / 2.0 * (1 - background_density / self.envelope_density) * self.dt)
+            ex *= jnp.exp(-1j * self.wp0 / 2.0 * (background_density / self.envelope_density - 1) * self.dt)
+            ey *= jnp.exp(-1j * self.wp0 / 2.0 * (background_density / self.envelope_density - 1) * self.dt)
             phi = self.calc_phi_from_fields(ex, ey)
 
         if self.cfg["terms"]["epw"]["source"]["noise"]:
