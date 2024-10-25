@@ -8,6 +8,10 @@
 ADEPT is an **A**utomatic **D**ifferentation **E**nabled **P**lasma **T**ransport code.
 
 ## Installation
+### User
+`pip install git+https://github.com/ergodicio/adept.git`
+
+### Developer
 ### Conda
 1. Install `conda` (we recommend `mamba`)
 2. `mamba env create -f env.yaml` or `mamba env create -f env_gpu.yaml`
