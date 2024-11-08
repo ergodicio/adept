@@ -30,9 +30,9 @@ grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 1.5um
   low_pass_filter: 0.66
-  dt: 0.0005ps
-  dx: 40nm
-  tmax: 1.5ps
+  dt: 0.0025ps
+  dx: 20nm
+  tmax: 2ps
   tmin: 0.0ns
   ymax: 3um
   ymin: -3um
@@ -42,13 +42,13 @@ mlflow:
 save:
   fields:
     t:
-      dt: 0.1ps
-      tmax: 1.5ps
+      dt: 0.2ps
+      tmax: 2ps
       tmin: 0ps
     x:
-      dx: 50nm
+      dx: 22nm
     y:
-      dy: 50nm
+      dy: 22nm
 solver: envelope-2d
 terms:
   epw:
