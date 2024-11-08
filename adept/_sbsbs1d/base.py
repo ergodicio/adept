@@ -149,15 +149,17 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         Teprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Te"]).to("keV").value
         Tiprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Ti"]).to("keV").value
         Zeffprof = np.ones_like(nprof) * self.cfg["profiles"]["Zeff"]
-        flowprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["flow"]).to("um/ns").value
-        omega_beat_prof = (
-            np.ones_like(nprof)
-            * 2
-            * np.pi
-            / _Q(self.cfg["profiles"]["omegabeat"]).to("um").value
-            * self.cfg["units"]["derived"]["c"].to("um/s").value
+        flowprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["flow"]).to("um/s").value
+        omega_beat_prof = np.ones_like(nprof) * (
+            self.cfg["units"]["derived"]["w0"].to("Hz").value
+            - (
+                (2 * np.pi * self.cfg["units"]["derived"]["c"])
+                / (self.cfg["units"]["derived"]["lambda0"] + _Q(self.cfg["profiles"]["lambdabeat"]))
+            )
+            .to("Hz")
+            .value
         )
-        omegabeat_over_omegabeat0 = omega_beat_prof / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
+        omegabeat = omega_beat_prof  # / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
 
         self.args = {
             "n_over_n0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], nprof),
@@ -165,7 +167,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             "Ti_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Tiprof),
             "Zeff": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
             "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
-            "omegabeat_over_omegabeat0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat_over_omegabeat0),
+            "omegabeat": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat),
         }
         self.state = {
             "Ji": 1.0,
@@ -238,9 +240,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         Ti_over_T0 = xr.DataArray(result.ys["Ti_over_T0"], coords=[("z", zs)], dims=["z (um)"])
         Zeff = xr.DataArray(result.ys["Zeff"], coords=[("z", zs)], dims=["z (um)"])
         flow_over_flow0 = xr.DataArray(result.ys["flow_over_flow0"], coords=[("z", zs)], dims=["z (um)"])
-        omegabeat_over_omegabeat0 = xr.DataArray(
-            result.ys["omegabeat_over_omegabeat0"], coords=[("z", zs)], dims=["z (um)"]
-        )
+        omegabeat = xr.DataArray(result.ys["omegabeat"], coords=[("z", zs)], dims=["z (um)"])
 
         ds = xr.Dataset(
             {
@@ -253,7 +253,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
                 "Ti_over_T0": Ti_over_T0,
                 "Zeff": Zeff,
                 "flow_over_flow0": flow_over_flow0,
-                "omegabeat_over_omegabeat0": omegabeat_over_omegabeat0,
+                "omegabeat": omegabeat,
                 "omega_beat_plasframe": xr.DataArray(
                     result.ys["omega_beat_plasframe"], coords=[("z", zs)], dims=["z (um)"]
                 ),
@@ -293,7 +293,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
 
         fig, ax = plt.subplots(1, 3, figsize=(12, 4), tight_layout=True)
         ds["flow_over_flow0"][1:].plot(ax=ax[0])
-        ds["omegabeat_over_omegabeat0"][1:].plot(ax=ax[1])
+        ds["omegabeat"][1:].plot(ax=ax[1])
         ds["omega_beat_plasframe"][1:].plot(ax=ax[2])
         ax[0].grid()
         ax[1].grid()

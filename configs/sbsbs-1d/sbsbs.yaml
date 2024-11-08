@@ -11,7 +11,7 @@ solver: sbsbs-1d
 
 units:
   atomic mass number: 13.0
-  laser_intensity: 2.0e+14W/cm^2
+  laser_intensity: 8.0e+15W/cm^2
   laser_wavelength: 351nm
   reference temperature: 1000.0eV
   reference density: nc  # or it can be a float value
@@ -25,7 +25,7 @@ profiles:
   Ti: 450eV
   flow: 0.0m/s
   Zeff: 5
-  omegabeat: 0.1nm
+  lambdabeat: 5.293519e-10m
 
 
 initial conditions:

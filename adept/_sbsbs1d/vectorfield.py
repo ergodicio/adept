@@ -20,6 +20,7 @@ class ExponentialLeapfrog:
         self.vg_const = ((const.c**2.0) / cfg["units"]["derived"]["w0"]).to("um^2/s").value
         self.a0 = cfg["units"]["derived"]["a0"]
         self.kz0 = cfg["units"]["derived"]["kz0"].to("1/um").value
+        self.w0 = cfg["units"]["derived"]["w0"].to("Hz").value
         self.n0 = cfg["units"]["derived"]["n0"].to("cm-3").value
         self.T0 = cfg["units"]["derived"]["T0"].to("eV").value
         self.Zeff = cfg["profiles"]["Zeff"]
@@ -48,13 +49,13 @@ class ExponentialLeapfrog:
         return 0.0  # * random.uniform(self.PRNGKey, (1,))
 
     def calc_kappa(self, z: float, profiles) -> float:
-        # n_over_n0, Te_over_T0, Ti_over_T0, Zeff, flow_over_flow0, omegabeat_over_omegabeat0 = (
+        # n_over_n0, Te_over_T0, Ti_over_T0, Zeff, flow_over_flow0, omegabeat = (
         #     args["n_over_n0"](z),
         #     args["Te_over_T0"](z),
         #     args["Ti_over_T0"](z),
         #     args["Zeff"](z),
         #     args["flow_over_flow0"](z),
-        #     args["omegabeat_over_omegabeat0"](z),
+        #     args["omegabeat"](z),
         # )
 
         n_over_n0 = profiles["n_over_n0"]
@@ -68,7 +69,7 @@ class ExponentialLeapfrog:
 
         nu_IB = n_over_n0 / self.nc_over_n0 * nuei_epphaines  # Inverse Bremstrahlung absorption rate/omega
         # Electron-ion collision frequency at critical density/omega
-        kz = self.kz0 * jnp.sqrt(1 - n_over_n0)
+        kz = self.kz0 * jnp.sqrt(1 - n_over_n0 / self.nc_over_n0)
         kappa_ib = nu_IB / (self.vg_const * kz)
 
         return kappa_ib
@@ -80,18 +81,16 @@ class ExponentialLeapfrog:
         Ti_over_T0 = profiles["Ti_over_T0"]
         Zeff = profiles["Zeff"]
         flow_over_flow0 = profiles["flow_over_flow0"]
-        omegabeat_over_omegabeat0 = profiles["omegabeat_over_omegabeat0"]
+        omegabeat = profiles["omegabeat"]
 
-        kz = self.kz0 * jnp.sqrt(1 - n_over_n0)
+        kz = self.kz0 * jnp.sqrt(1 - n_over_n0 / self.nc_over_n0)
 
-        omega_p2_elec = n_over_n0  # omega_pe^2/omega^2
-        omega_p2_ion = Zeff / self.ratio_M_m * omega_p2_elec  # omega_pi^2/omega^2
-        omega_beat_plasframe = (
-            omegabeat_over_omegabeat0 + 2 * kz * flow_over_flow0
-        )  # Beat frequency in plasma frame/omega
+        omega_p2_elec = n_over_n0 * self.w0**2.0  # omega_pe^2
+        omega_p2_ion = Zeff / self.ratio_M_m * omega_p2_elec  # omega_pi^2
+        omega_beat_plasframe = omegabeat + 2 * kz * flow_over_flow0  # Beat frequency in plasma frame/omega
 
-        v_th_e = self.vth0 * jnp.sqrt(Te_over_T0)  ## This is a placeholder
-        v_th_i = self.vth0 * jnp.sqrt(Ti_over_T0)  ## This is a placeholder
+        v_th_e = self.vth0 * jnp.sqrt(Te_over_T0)
+        v_th_i = self.vth0 * jnp.sqrt(Ti_over_T0)
 
         # Electron susceptibility
         chi_e = -omega_p2_elec / 8 / kz**2 / v_th_e**2 * self.zprime(omega_beat_plasframe / 2**1.5 / kz / v_th_e)
@@ -112,24 +111,24 @@ class ExponentialLeapfrog:
         # args: Dict[str, float]
 
         profiles = {k: func(z) for k, func in args.items()}
-        # n_over_n0, Te_over_T0, Ti_over_T0, Zeff, flow_over_flow0, omegabeat_over_omegabeat0 = (
+        # n_over_n0, Te_over_T0, Ti_over_T0, Zeff, flow_over_flow0, omegabeat = (
         #     args["n_over_n0"](z),
         #     args["Te_over_T0"](z),
         #     args["Ti_over_T0"](z),
         #     args["Zeff"](z),
         #     args["flow_over_flow0"](z),
-        #     args["omegabeat_over_omegabeat0"](z),
+        #     args["omegabeat"](z),
         # )
 
         noise = self.calculate_noise(args)
-        kappaIB = -self.calc_kappa(z, profiles)
+        kappaIB = self.calc_kappa(z, profiles)
         imfx0, omega_beat_plasframe, cs, kz, res_cond = self.calc_imfx0(z, profiles)
 
-        dJidz = kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Jr  # self.calculate_dJidz(z, Ji, Jr, args)
-        dJrdz = -kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Ji  # self.calculate_dJrdz(z, Ji, Jr, args)
+        dlogJidz = -kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Jr  # self.calculate_dlogJidz(z, Ji, Jr, args)
+        dlogJrdz = kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Ji  # self.calculate_dlogJrdz(z, Ji, Jr, args)
 
-        new_Ji = jnp.exp(self.dz * dJidz) * Ji
-        new_Jr = jnp.exp(self.dz * dJrdz) * Jr - noise
+        new_Ji = jnp.exp(self.dz * dlogJidz) * Ji
+        new_Jr = jnp.exp(self.dz * dlogJrdz) * Jr - noise
 
         return {
             "Ji": new_Ji,
