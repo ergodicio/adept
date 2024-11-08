@@ -1,1 +1,1 @@
-from adept._vlasov1d.modules import BaseVlasov1D
+from ._vlasov1d.modules import BaseVlasov1D

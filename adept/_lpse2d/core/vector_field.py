@@ -57,7 +57,7 @@ class SplitStep:
                 driver_args["E0"]["tc"] + driver_args["E0"]["tw"] / 2,
                 t,
             )
-            y["E0"] = self.boundary_envelope[..., None] * t_coeff * self.light.laser_update(t, y, driver_args["E0"])
+            y["E0"] = t_coeff * self.light.laser_update(t, y, driver_args["E0"])
 
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
@@ -78,11 +78,16 @@ class SplitStep:
             * jnp.exp(-self.wp0**2.0 * self.one_over_ksq / (2 * vte_sq))
         )
 
-        return jnp.fft.ifft2(jnp.fft.fft2(epw) * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt))
+        return jnp.fft.ifft2(
+            jnp.fft.fft2(epw) * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt) * self.low_pass_filter
+        )
 
     def __call__(self, t, y, args):
         # unpack y into complex128
         new_y = self._unpack_y_(y)
+
+        if self.cfg["terms"]["epw"]["damping"]["landau"]:
+            new_y["epw"] = self.landau_damping(epw=new_y["epw"], vte_sq=y["vte_sq"])
 
         # split step
         new_y = self.light_split_step(t, new_y, args["drivers"])
@@ -92,15 +97,13 @@ class SplitStep:
         new_y["epw"] = self.epw(t, new_y, args)
 
         # landau and collisional damping
-        if self.cfg["terms"]["epw"]["damping"]["landau"]:
-            new_y["epw"] = self.landau_damping(epw=new_y["epw"], vte_sq=y["vte_sq"])
 
         # boundary damping
         ex, ey = self.epw.calc_fields_from_phi(new_y["epw"])
         ex = ex * self.boundary_envelope
         ey = ey * self.boundary_envelope
         new_y["epw"] = self.epw.calc_phi_from_fields(ex, ey)
-        new_y["epw"] = jnp.fft.ifft2(self.zero_mask * self.low_pass_filter * jnp.fft.fft2(new_y["epw"]))
+        # new_y["epw"] = jnp.fft.ifft2(self.zero_mask * self.low_pass_filter * jnp.fft.fft2(new_y["epw"]))
 
         # pack y into float64
         y, new_y = self._pack_y_(y, new_y)
