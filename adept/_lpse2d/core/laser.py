@@ -1,5 +1,6 @@
 from typing import Dict, Tuple
 from jax import numpy as jnp, Array
+from jax.lax import scan
 
 
 class Light:
@@ -11,6 +12,32 @@ class Light:
         self.dE0x = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
         self.x = cfg["grid"]["x"]
 
+    def calc_static_E(self, t: float, y: jnp.ndarray, light_wave: Dict) -> jnp.ndarray:
+        """
+        This function calculates the static electric field
+
+        :param y: state variables
+        :return: static electric field
+        """
+        wpe = self.w0 * jnp.sqrt(y["background_density"])
+
+        def scan_fn(E0_static, light_wave_item):
+
+            delta_omega, intensity, initial_phase = light_wave_item
+            k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + delta_omega) ** 2 - wpe**2 / self.w0**2)
+            E0_static += (
+                (1 + 0j - wpe**2.0 / (self.w0 * (1 + delta_omega)) ** 2) ** -0.25
+                * self.E0_source
+                * jnp.sqrt(intensity)
+                * jnp.exp(1j * k0 * self.x[:, None] + 1j * initial_phase)
+            ) * jnp.exp(-1j * delta_omega * self.w0 * t)
+            return E0_static, None
+
+        light_wave_items = zip(light_wave["delta_omega"], light_wave["intensities"], light_wave["initial_phase"])
+        E0_static, _ = scan(scan_fn, jnp.zeros_like(self.dE0x), light_wave_items)
+
+        return E0_static
+
     def laser_update(self, t: float, y: jnp.ndarray, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field at time t
@@ -20,20 +47,22 @@ class Light:
         :return: updated laser field
         """
         # if self.cfg["laser"]["time"] == "static":
-        wpe = self.w0 * jnp.sqrt(y["background_density"])[None]
-        k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + light_wave["delta_omega"][:, None, None]) ** 2 - wpe**2 / self.w0**2)
-        E0_static = (
-            (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][:, None, None])) ** 2) ** -0.25
-            * self.E0_source
-            * jnp.sqrt(light_wave["intensities"][:, None, None])
-            * jnp.exp(1j * k0 * self.x[None, :, None] + 1j * light_wave["initial_phase"][:, None, None])
-        )
-        dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][:, None, None] * self.w0 * t)
-        E0 = jnp.stack([self.dE0x, jnp.sum(dE0y, axis=0)], axis=-1)
+        # wpe = self.w0 * jnp.sqrt(y["background_density"])[None]
+        # k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + light_wave["delta_omega"][:, None, None]) ** 2 - wpe**2 / self.w0**2)
+
+        # E0_static = (
+        #     (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][:, None, None])) ** 2) ** -0.25
+        #     * self.E0_source
+        #     * jnp.sqrt(light_wave["intensities"][:, None, None])
+        #     * jnp.exp(1j * k0 * self.x[None, :, None] + 1j * light_wave["initial_phase"][:, None, None])
+        # )
+        # dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][:, None, None] * self.w0 * t)
+        # dE0y = jnp.sum(dE0y, axis=0)
+
+        dE0y = self.calc_static_E(t, y, light_wave)
+        return jnp.stack([self.dE0x, dE0y], axis=-1)
         # else:
         #     raise NotImplementedError
-
-        return E0
 
     def calc_ey_at_one_point(self, t: float, density: Array, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
         """
