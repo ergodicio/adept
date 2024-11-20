@@ -11,8 +11,8 @@ drivers:
   E0:
     shape: uniform
     # file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
-    delta_omega_max: 0.015
-    num_colors: 1
+    delta_omega_max: 0.025
+    num_colors: 8
     envelope:
       tw: 50ps
       tr: 0.25ps
@@ -30,9 +30,9 @@ grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 1.5um
   low_pass_filter: 0.66
-  dt: 0.0025ps
-  dx: 20nm
-  tmax: 2ps
+  dt: 0.01ps
+  dx: 50nm
+  tmax: 5ps
   tmin: 0.0ns
   ymax: 3um
   ymin: -3um
@@ -43,12 +43,12 @@ save:
   fields:
     t:
       dt: 0.2ps
-      tmax: 2ps
+      tmax: 5ps
       tmin: 0ps
     x:
-      dx: 22nm
+      dx: 52nm
     y:
-      dy: 22nm
+      dy: 52nm
 solver: envelope-2d
 terms:
   epw:
@@ -56,7 +56,7 @@ terms:
       x: absorbing
       y: periodic
     damping:
-      collisions: false
+      collisions: 1.0
       landau: true
     density_gradient: true
     linear: true
