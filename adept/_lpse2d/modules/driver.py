@@ -8,9 +8,12 @@ from jax.random import normal, PRNGKey, uniform
 import equinox as eqx
 import numpy as np
 
-
-from adept._lpse2d.modules.nn import driver as driver_nn
 from adept.utils import download_from_s3
+
+
+class PRNGKeyArray:
+    def __init__(self, key: Array):
+        self.key = key
 
 
 def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
@@ -51,12 +54,6 @@ def choose_driver(shape: str) -> eqx.Module:
 
     elif shape == "arbitrary":
         return ArbitraryDriver
-
-    elif shape == "vae":
-        return ITLnVAE
-
-    elif shape == "generative":
-        return GenerativeDriver
 
     else:
         raise NotImplementedError(f"Amplitude shape -- {shape} -- not implemented")
@@ -118,7 +115,7 @@ class ArbitraryDriver(eqx.Module):
 
         """
         new_filter_spec = lambda f, x: (
-            None if isinstance(x, driver_nn.PRNGKeyArray) else eqx.default_serialise_filter_spec(f, x)
+            None if isinstance(x, PRNGKeyArray) else eqx.default_serialise_filter_spec(f, x)
         )
         with open(filename, "wb") as f:
             model_cfg_str = json.dumps(self.model_cfg)
@@ -137,7 +134,7 @@ class ArbitraryDriver(eqx.Module):
 
 class UniformDriver(ArbitraryDriver):
 
-    phase_key: driver_nn.PRNGKeyArray
+    phase_key: PRNGKeyArray
 
     def __init__(self, cfg: Dict):
         super().__init__(cfg)
@@ -146,7 +143,7 @@ class UniformDriver(ArbitraryDriver):
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         self.delta_omega = jnp.linspace(-delta_omega_max, delta_omega_max, num_colors)
         self.initial_phase = jnp.array(np.random.uniform(-np.pi, np.pi, num_colors))
-        self.phase_key = driver_nn.PRNGKeyArray(PRNGKey(seed=np.random.randint(2**20)))
+        self.phase_key = PRNGKeyArray(PRNGKey(seed=np.random.randint(2**20)))
 
 
 class GaussianDriver(UniformDriver):
@@ -171,93 +168,3 @@ class LorentzianDriver(UniformDriver):
         self.intensities = jnp.array(
             1 / np.pi * (delta_omega_max / 2) / (self.delta_omega**2.0 + (delta_omega_max / 2) ** 2.0)
         )
-
-
-class GenerativeDriver(UniformDriver):
-    input_width: int
-    model: eqx.Module
-    amp_output: str
-    phase_output: str
-
-    def __init__(self, cfg: Dict):
-        super().__init__(cfg)
-
-        self.input_width = cfg["drivers"]["E0"]["params"]["input_width"]
-        cfg["drivers"]["E0"]["params"]["output_width"] = cfg["drivers"]["E0"]["num_colors"]
-        self.model = driver_nn.GenerativeModel(**cfg["drivers"]["E0"]["params"])
-        self.amp_output = cfg["drivers"]["E0"]["output"]["amp"]
-        self.phase_output = cfg["drivers"]["E0"]["output"]["phase"]
-
-    def __call__(self, state: Dict, args: Dict) -> tuple:
-        inputs = normal(PRNGKey(seed=np.random.randint(2**20)), shape=(self.input_width,))
-        ints_and_phases = self.model(inputs)
-        ints, phases = self.scale_ints_and_phases(ints_and_phases["amps"], ints_and_phases["phases"])
-        args["drivers"]["E0"] = {
-            "delta_omega": stop_gradient(self.delta_omega),
-            "initial_phase": phases,
-            "intensities": ints,
-        } | {k: stop_gradient(v) for k, v in self.envelope.items()}
-        return state, args
-
-
-class ITLnVAE(UniformDriver):
-    model: eqx.Module
-    amp_output: str
-    phase_output: str
-    inputs: tuple
-
-    def __init__(self, cfg: Dict):
-        super().__init__(cfg)
-        cfg["drivers"]["E0"]["params"]["output_width"] = cfg["drivers"]["E0"]["num_colors"]
-        cfg["drivers"]["E0"]["params"]["input_width"] = 3
-        self.model = driver_nn.VAE2(**cfg["drivers"]["E0"]["params"])
-        self.amp_output = cfg["drivers"]["E0"]["output"]["amp"]
-        self.phase_output = cfg["drivers"]["E0"]["output"]["phase"]
-
-        from astropy.units import Quantity as _Q
-
-        I0 = _Q(cfg["units"]["laser intensity"]).to("W/cm^2").value
-        Te = _Q(cfg["units"]["reference electron temperature"]).to("eV").value
-        Ln = _Q(cfg["density"]["gradient scale length"]).to("um").value
-
-        I00 = 1e14
-        Te0 = 1000
-        Ln0 = 500
-
-        rescaled_I0 = np.log10(I0 / I00)
-        rescaled_Te = Te / Te0
-        rescaled_Ln = Ln / Ln0
-
-        self.inputs = jnp.array((rescaled_I0, rescaled_Te, rescaled_Ln))
-
-    def scale_ints_and_phases(self, intensities, phases) -> tuple:
-        if self.amp_output == "linear":
-            ints = 0.5 * (jnp.tanh(ints) + 1.0)
-        elif self.amp_output == "log":
-            ints = 3 * (jnp.tanh(intensities) + 1.0) - 6
-            ints = 10**ints
-        else:
-            raise NotImplementedError(f"Amplitude Output type -- {self.amp_output} -- not implemented")
-
-        if self.phase_output == "learned":
-            phases = jnp.tanh(phases) * jnp.pi * 4
-        elif self.phase_output == "random":
-            phases = stop_gradient(
-                uniform(self.phase_key.key, (self.initial_phase.size,), minval=-jnp.pi, maxval=jnp.pi)
-            )
-        else:
-            raise NotImplementedError(f"Phase Output type -- {self.phase_output} -- not implemented")
-
-        ints /= jnp.sum(ints)
-
-        return ints, phases
-
-    def __call__(self, state: Dict, args: Dict) -> tuple:
-        ints_and_phases = self.model(self.inputs)
-        ints, phases = self.scale_ints_and_phases(ints_and_phases["amps"], ints_and_phases["phases"])
-        args["drivers"]["E0"] = {
-            "delta_omega": stop_gradient(self.delta_omega),
-            "initial_phase": phases,
-            "intensities": ints,
-        } | {k: stop_gradient(v) for k, v in self.envelope.items()}
-        return state, args
