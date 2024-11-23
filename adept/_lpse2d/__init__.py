@@ -4,6 +4,5 @@ from .modules import (
     UniformDriver,
     GaussianDriver,
     LorentzianDriver,
-    GenerativeDriver,
 )
 from .helpers import calc_threshold_intensity as calc_threshold_intensity

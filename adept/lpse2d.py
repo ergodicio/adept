@@ -5,5 +5,4 @@ from ._lpse2d import (
     UniformDriver,
     GaussianDriver,
     LorentzianDriver,
-    GenerativeDriver,
 )
