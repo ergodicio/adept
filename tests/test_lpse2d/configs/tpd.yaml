@@ -9,6 +9,7 @@ density:
     type: uniform
 drivers:
   E0:
+    params: {}
     shape: uniform
     # file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
     delta_omega_max: 0.015
