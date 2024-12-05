@@ -9,6 +9,8 @@ from scipy.special import gamma
 from astropy.units import Quantity as _Q
 from jax import numpy as jnp
 from adept._base_ import get_envelope
+# ideally this should be passed as as an argument and not re-initialised
+from adept.vfp1d.vector_field import OSHUN1D
 
 
 def gamma_3_over_m(m: float) -> Array:
@@ -92,7 +94,7 @@ def _initialize_distribution_(
     """
     Initializes a Maxwell-Boltzmann distribution
 
-    TODO: temperature and density pertubations
+    TODO: temperature and density pertubations (JPB - this is done right so can delete this line?)
 
     :param nx: size of grid in x (single int)
     :param nv: size of grid in v (single int)
@@ -106,11 +108,13 @@ def _initialize_distribution_(
     vax = np.linspace(dv / 2.0, vmax - dv / 2.0, nv)
 
     f = np.zeros([nx, nv])
+    # obviously not a bottleneck as initialisation, but this should be trivial to vectorize
     for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
         # eq 4-51b in Shkarofsky
-        single_dist = (2 * np.pi * tt * (vth**2.0 / 2)) ** -1.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0 / 2)))
+        # redundant
+        #single_dist = (2 * np.pi * tt * (vth**2.0 / 2)) ** -1.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0 / 2)))
 
-        # from Ridgers2008
+        # from Ridgers2008, allows initialisation as a super-Gaussian with temperature tt
         vth_x = np.sqrt(tt) * vth
         alpha = np.sqrt(3.0 * gamma_3_over_m(m) / 2.0 / gamma_5_over_m(m))
         cst = m / (4 * np.pi * alpha**3.0 * gamma_3_over_m(m))
@@ -138,7 +142,8 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     params = cfg["density"]
     prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
 
-    f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
+    f0 = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
+    f10 = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
     species_found = False
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
@@ -189,7 +194,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             prof_total["n"] += profs["n"]
 
             # Distribution function
-            temp_f, _ = _initialize_distribution_(
+            temp_f0, _ = _initialize_distribution_(
                 nx=int(cfg_grid["nx"]),
                 nv=int(cfg_grid["nv"]),
                 v0=v0,
@@ -202,7 +207,26 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 noise_seed=int(species_params["noise_seed"]),
                 noise_type=species_params["noise_type"],
             )
-            f += temp_f
+            f0 += temp_f0
+
+            # initialize f1 by taking a big time step while keeping f0 fix (essentailly sets electron inertia to 0)
+            # I don't like having to reinitialise oshun to get helper functions, either we pass as an argument or refactor
+            oshun = OSHUN1D(cfg)
+            big_dt = 1E12
+            ni = prof_total["n"] / cfg["units"]["Z"]
+            f10_star = -big_dt * oshun.v[None, :] * oshun.ddx(f0)
+            f10_from_adv = oshun.ei(Z= jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=f10_star, dt=big_dt)
+            jx_from_adv = oshun.calc_j(f10_from_adv)
+
+            df0dv = oshun.ddv(f0)
+            f10_from_df0dv = oshun.ei(Z= jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=df0dv, dt=big_dt)
+            jx_from_df0dv = oshun.calc_j(f10_from_df0dv)
+
+            # directly solve for ex field
+            e_tmp = - jx_from_adv / jx_from_df0dv
+
+            f10 += f10_from_adv + e_tmp[:, None] * f10_from_df0dv
+
             species_found = True
         else:
             pass
@@ -210,4 +234,4 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     if not species_found:
         raise ValueError("No species found! Check the config")
 
-    return f, prof_total["n"]
+    return f0, f10, prof_total["n"]

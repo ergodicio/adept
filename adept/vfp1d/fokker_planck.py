@@ -28,6 +28,13 @@ class LenardBernstein:
         c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
+        # For debugging/experimentation, boosting/reducing isotropic ee collisions has no impact on LOCAL fields
+        # i.e. this is a way to artificially tune dgree of nonlocality without affecting anything else
+        # collision_boost = 50
+        # print('isotropic ee collisions boosted by factor of {}, '.format(collision_boost)
+        #     + 'note this has no impact on the effect on nonlocality from electron inertia')
+        # self.nu_ee_coeff = collision_boost*self.nu_ee_coeff
+
     def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
         """
         Solves the Lenard-Bernstein collision operator at a single location in space
@@ -47,6 +54,7 @@ class LenardBernstein:
     def _get_operator_(self, nu: float, f0: Array, dt: float) -> lx.TridiagonalLinearOperator:
         """
         Returns the tridiagonal operator for the Lenard-Bernstein collision operator
+        Cee0 = - nuee0 (kb Te d2fdv + v dfdv)
 
         This is called at each location in space because the f0 is different
 
@@ -226,12 +234,12 @@ class FLMCollisions:
         2. The ee collision operator is ignored and the Z* scaling is used instead
 
         """
-        ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
 
         for il in range(1, self.nl + 1):
             ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / self.v[None, :] ** 3.0
 
             if self.ee:
+                ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
                 #
                 d2dv2 = (
