@@ -22,7 +22,7 @@ class WaveSolver(eqx.Module):
     const: float
     one_over_const: float
 
-    def __init__(self, c: jnp.float64, dx: jnp.float64, dt: jnp.float64):
+    def __init__(self, c: float, dx: float, dt: float):
         self.dx = dx
         self.c = c
         self.c_sq = c**2.0
@@ -85,7 +85,7 @@ class Driver(eqx.Module):
     def __init__(self, xax):
         self.xax = xax
 
-    def __call__(self, this_pulse: Dict, current_time: jnp.float64):
+    def __call__(self, this_pulse: Dict, current_time: float):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
         dw = this_pulse["dw0"]
@@ -164,9 +164,9 @@ class VelocityStepper(eqx.Module):
     kxr: jax.Array
     wr_corr: jax.Array
     wis: jax.Array
-    nuee: jnp.float64
-    vph: jnp.float64
-    model_kld: jnp.float64
+    nuee: float
+    vph: float
+    model_kld: float
     trapping_model: str
 
     def __init__(self, kx, kxr, one_over_kxr, physics):
@@ -293,9 +293,9 @@ class ParticleTrapper(eqx.Module):
     wrs: jax.Array
     wis: jax.Array
     table_klds: jax.Array
-    norm_kld: jnp.float64
-    norm_nuee: jnp.float64
-    vph: jnp.float64
+    norm_kld: float
+    norm_nuee: float
+    vph: float
     nu_g_model: eqx.Module
     # nu_d_model: eqx.Module
 

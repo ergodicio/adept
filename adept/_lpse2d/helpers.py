@@ -76,23 +76,23 @@ def write_units(cfg: Dict) -> Dict:
     # logLambda_ei = np.zeros(len(Z))
     # for iZ in range(len(Z)):
     if cfg["terms"]["epw"]["damping"]["collisions"]:
-        if Te_eV < 0.01 * Z**2:
-            logLambda_ei = 22.8487 - np.log(np.sqrt(ne_cc) * Z / (Te * 1000) ** (3 / 2))
-        elif Te_eV > 0.01 * Z**2:
-            logLambda_ei = 24 - np.log(np.sqrt(ne_cc) / (Te * 1000))
+        if isinstance(cfg["terms"]["epw"]["damping"]["collisions"], bool):
+            if Te_eV < 0.01 * Z**2:
+                logLambda_ei = 22.8487 - np.log(np.sqrt(ne_cc) * Z / (Te * 1000) ** (3 / 2))
+            elif Te_eV > 0.01 * Z**2:
+                logLambda_ei = 24 - np.log(np.sqrt(ne_cc) / (Te * 1000))
 
-        e_sq = 510.9896 * 2.8179e-13
-        this_me = 510.9896 / 2.99792458e10**2
-        nu_coll = (
-            float(
+            e_sq = 510.9896 * 2.8179e-13
+            this_me = 510.9896 / 2.99792458e10**2
+            nu_coll = float(
                 (4 * np.sqrt(2 * np.pi) / 3 * e_sq**2 / np.sqrt(this_me) * Z**2 * ni * logLambda_ei / Te**1.5)
                 / 2
                 * timeScale
             )
-            * cfg["terms"]["epw"]["damping"]["collisions"]
-        )
+        elif isinstance(cfg["terms"]["epw"]["damping"]["collisions"], float):
+            nu_coll = cfg["terms"]["epw"]["damping"]["collisions"]
     else:
-        nu_coll = 1e-4  # nu_ee + nu_ei + nu_sideloss
+        nu_coll = 0.0  # nu_ee + nu_ei + nu_sideloss
 
     if "gradient scale length" in cfg["density"]:
         gradient_scale_length = _Q(cfg["density"]["gradient scale length"]).to("um").value

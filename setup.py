@@ -31,7 +31,7 @@ setup(
     url="https://github.com/ergodicio/adept",
     author="Archis Joglekar",
     author_email="archis@ergodic.io",
-    version="0.0.3",
+    version="0.0.5",
     # cmdclass=versioneer.get_cmdclass(),
     packages=find_packages(),
     python_requires=">=3.10",

@@ -49,11 +49,10 @@ class SpectralPotential:
             A Tuple containing ex(x, y) and ey(x, y)
         """
 
-        phi_k = jnp.fft.fft2(phi)
-        phi_k *= self.low_pass_filter
+        phi_k = jnp.fft.fft2(phi) * self.low_pass_filter
 
-        ex_k = self.kx[:, None] * phi_k * self.low_pass_filter
-        ey_k = self.ky[None, :] * phi_k * self.low_pass_filter
+        ex_k = self.kx[:, None] * phi_k
+        ey_k = self.ky[None, :] * phi_k
         return -1j * jnp.fft.ifft2(ex_k), -1j * jnp.fft.ifft2(ey_k)
 
     def calc_phi_from_fields(self, ex: Array, ey: Array) -> Array:
@@ -78,7 +77,7 @@ class SpectralPotential:
 
         return phi
 
-    def tpd(self, t: float, y: Array, args: Dict) -> Array:
+    def tpd(self, t: float, phi: Array, ey: Array, args: Dict) -> Array:
         """
         Calculates the two plasmon decay term
 
@@ -92,11 +91,7 @@ class SpectralPotential:
 
         """
         E0 = args["E0"]
-        phi = y
-        _, ey = self.calc_fields_from_phi(phi)
-
         tpd1 = E0[..., 1] * jnp.conj(ey)
-        tpd1 = jnp.fft.ifft2(jnp.fft.fft2(tpd1) * self.low_pass_filter)
 
         divE_true = jnp.fft.ifft2(self.k_sq * jnp.fft.fft2(phi))
         E0_divE_k = jnp.fft.fft2(E0[..., 1] * jnp.conj(divE_true))
@@ -105,9 +100,7 @@ class SpectralPotential:
 
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
 
-        dphi = total_tpd
-
-        return dphi
+        return total_tpd
 
     def get_noise(self):
         random_amps = 1.0  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
@@ -119,22 +112,32 @@ class SpectralPotential:
         E0 = y["E0"]
         background_density = y["background_density"]
         vte_sq = y["vte_sq"]
+        ex, ey = self.calc_fields_from_phi(phi)
 
+        # linear propagation
         if self.cfg["terms"]["epw"]["linear"]:
-            # linear propagation
             phi = jnp.fft.ifft2(jnp.fft.fft2(phi) * jnp.exp(-1j * 1.5 * vte_sq[0, 0] / self.wp0 * self.k_sq * self.dt))
 
-        # tpd
+        ex, ey = self.calc_fields_from_phi(phi)
+
         if self.cfg["terms"]["epw"]["source"]["tpd"]:
-            phi = phi + self.dt * self.tpd(t, phi, args={"E0": E0})
+            tpd_term = self.tpd(t, phi, ey, args={"E0": E0})
 
         # density gradient
         if self.cfg["terms"]["epw"]["density_gradient"]:
-            ex, ey = self.calc_fields_from_phi(phi)
             ex *= jnp.exp(-1j * self.wp0 / 2.0 * (background_density / self.envelope_density - 1) * self.dt)
             ey *= jnp.exp(-1j * self.wp0 / 2.0 * (background_density / self.envelope_density - 1) * self.dt)
-            phi = self.calc_phi_from_fields(ex, ey)
 
+        # if boundary_damping:
+        ex = ex * self.boundary_envelope
+        ey = ey * self.boundary_envelope
+        phi = self.calc_phi_from_fields(ex, ey)
+
+        # tpd
+        if self.cfg["terms"]["epw"]["source"]["tpd"]:
+            phi += self.dt * tpd_term
+
+        # noise
         if self.cfg["terms"]["epw"]["source"]["noise"]:
             phi += self.dt * self.get_noise()
 
