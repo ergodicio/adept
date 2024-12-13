@@ -5,9 +5,8 @@ from jax import numpy as jnp, Array, random
 from tensorflow_probability.substrates import jax as tfpj
 
 
-class ExponentialLeapfrog:
-
-    def __init__(self, cfg: Dict) -> None:
+class BaseLPIVectorField:
+    def __init__(self, cfg):
         self.cfg = cfg
         self.PRNGKey = random.PRNGKey(0)
         self.dz = cfg["grid"]["dz"]
@@ -27,6 +26,16 @@ class ExponentialLeapfrog:
         self.vth0 = cfg["units"]["derived"]["vth0"].to("um/s").value
         self.cs0 = cfg["units"]["derived"]["cs0"].to("um/s").value
 
+    def zprime(self, x: Union[complex, float]) -> complex:
+        Zx = 1j * jnp.sqrt(jnp.pi) * jnp.exp(-(x**2.0)) - 2.0 * tfpj.math.dawsn(x)
+        return -2 * (1 + x * Zx)
+
+
+class ExponentialLeapfrog(BaseLPIVectorField):
+
+    def __init__(self, cfg: Dict) -> None:
+        super().__init__(cfg)
+
     def calc_logLambda(self, n_over_n0: float, Te_over_T0: float, Zeff: int) -> float:
         log_ne = jnp.log(n_over_n0 * self.n0)
         log_Te = jnp.log(Te_over_T0 * self.T0)
@@ -41,23 +50,10 @@ class ExponentialLeapfrog:
         # else:
         #     logLambda_ei = max(2.0, 23.0 - 0.5 * log_ne + 1.5 * log_Te - log_Z)
 
-    def zprime(self, x: Union[complex, float]) -> complex:
-        Zx = 1j * jnp.sqrt(jnp.pi) * jnp.exp(-(x**2.0)) - 2.0 * tfpj.math.dawsn(x)
-        return -2 * (1 + x * Zx)
-
     def calculate_noise(self, args: Dict[str, float]) -> float:
         return 0.0  # * random.uniform(self.PRNGKey, (1,))
 
     def calc_kappa(self, z: float, profiles) -> float:
-        # n_over_n0, Te_over_T0, Ti_over_T0, Zeff, flow_over_flow0, omegabeat = (
-        #     args["n_over_n0"](z),
-        #     args["Te_over_T0"](z),
-        #     args["Ti_over_T0"](z),
-        #     args["Zeff"](z),
-        #     args["flow_over_flow0"](z),
-        #     args["omegabeat"](z),
-        # )
-
         n_over_n0 = profiles["n_over_n0"]
         Te_over_T0 = profiles["Te_over_T0"]
         Zeff = profiles["Zeff"]
@@ -74,14 +70,14 @@ class ExponentialLeapfrog:
 
         return kappa_ib
 
-    def calc_imfx0(self, z: float, profiles: Dict[str, float]) -> tuple[float, float, float]:
+    def calc_imfx0_sbs(self, plasma_conditions_at_z: Dict[str, float]) -> tuple[float, float, float, float, float]:
 
-        n_over_n0 = profiles["n_over_n0"]
-        Te_over_T0 = profiles["Te_over_T0"]
-        Ti_over_T0 = profiles["Ti_over_T0"]
-        Zeff = profiles["Zeff"]
-        flow_over_flow0 = profiles["flow_over_flow0"]
-        omegabeat = profiles["omegabeat"]
+        n_over_n0 = plasma_conditions_at_z["n_over_n0"]
+        Te_over_T0 = plasma_conditions_at_z["Te_over_T0"]
+        Ti_over_T0 = plasma_conditions_at_z["Ti_over_T0"]
+        Zeff = plasma_conditions_at_z["Zeff"]
+        flow_over_flow0 = plasma_conditions_at_z["flow_over_flow0"]
+        omegabeat = plasma_conditions_at_z["omegabeat"]
 
         kz = self.kz0 * jnp.sqrt(1 - n_over_n0 / self.nc_over_n0)
 
@@ -108,24 +104,14 @@ class ExponentialLeapfrog:
         Jr = y["Jr"]
         z = t
 
-        # args: Dict[str, float]
-
-        profiles = {k: func(z) for k, func in args.items()}
-        # n_over_n0, Te_over_T0, Ti_over_T0, Zeff, flow_over_flow0, omegabeat = (
-        #     args["n_over_n0"](z),
-        #     args["Te_over_T0"](z),
-        #     args["Ti_over_T0"](z),
-        #     args["Zeff"](z),
-        #     args["flow_over_flow0"](z),
-        #     args["omegabeat"](z),
-        # )
+        plasma_conditions_at_z = {k: func(z) for k, func in args.items()}
 
         noise = self.calculate_noise(args)
-        kappaIB = self.calc_kappa(z, profiles)
-        imfx0, omega_beat_plasframe, cs, kz, res_cond = self.calc_imfx0(z, profiles)
+        kappaIB = self.calc_kappa(z, plasma_conditions_at_z)
+        imfx0, omega_beat_plasframe, cs, kz, res_cond = self.calc_imfx0_sbs(plasma_conditions_at_z)
 
-        dlogJidz = -kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Jr  # self.calculate_dlogJidz(z, Ji, Jr, args)
-        dlogJrdz = kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Ji  # self.calculate_dlogJrdz(z, Ji, Jr, args)
+        dlogJidz = -kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Jr
+        dlogJrdz = kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Ji
 
         new_Ji = jnp.exp(self.dz * dlogJidz) * Ji
         new_Jr = jnp.exp(self.dz * dlogJrdz) * Jr - noise
@@ -139,13 +125,40 @@ class ExponentialLeapfrog:
             "cs": cs,
             "kz": kz,
             "res_cond": res_cond,
-        } | profiles
+        } | plasma_conditions_at_z
 
-    # def calculate_dJidz(self, z: float, imfx0, Ji: float, Jr: float, args: Dict[str, float]) -> float:
-    #     kappaIB = -self.calc_kappa(z, args)
 
-    #     return kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Jr, imfx0
+class CBET(BaseLPIVectorField):
 
-    # def calculate_dJrdz(self, z: float, Ji: float, Jr: float, args: Dict[str, float]) -> float:
+    def __init__(self, cfg):
+        super().__init__(cfg)
 
-    #     return -kappaIB - self.a0**2.0 * self.kz0 * imfx0 * Ji, imfx0
+        self.num_beams = None
+        self.delta_psi_ij = None
+        self.delta_k_ij = (
+            ki[:, None] ** 2.0 + ki[None, :] ** 2.0 - 2.0 * ki[:, None] * ki[None, :] * jnp.cos(self.delta_psi_ij)
+        )
+        self.delta_omega_ij = None
+        self.th_i = None
+
+    def calc_gamma(self, args):
+
+        plasma_conditions_at_LEH = {k: func(0.0) for k, func in args.items()}
+        imfx0, omega_beat_plasframe, cs, kz, res_cond = self.calc_imfx0(plasma_conditions_at_LEH)
+        gammaij = -imfx0 * self.delta_k_ij**2.0 / 4.0 * (1 + jnp.cos(self.delta_psi_ij) ** 2.0) / 2
+
+    def __call__(self, t, y, args):
+        """
+
+        t: independent coordinate of integration - physically, it is z in this case
+        y: dependent variables of the system. For this problem, the dependent variables are the interacting beams
+        args: parameters of the system. For this problem, the parameters are the profiles of the plasma
+
+        """
+        z = t
+
+        gamma_ij = self.calc_gamma(args)
+
+        dIidz = 1 / jnp.cos(th_i) * (gamma_ij @ y["I"]) * y["I"]
+
+        pass
