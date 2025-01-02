@@ -106,7 +106,9 @@ class BaseLPSE2D(ADEPTModule):
     def __call__(self, trainable_modules: Dict, args: Dict = None) -> Dict:
         state = self.state
 
-        if args is None:
+        if args is not None:
+            args = self.args | args
+        else:
             args = self.args
 
         for name, module in trainable_modules.items():
