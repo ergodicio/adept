@@ -64,8 +64,6 @@ class ArbitraryDriver(eqx.Module):
     delta_omega: Array
     initial_phase: Array
     envelope: Dict
-    amp_output: str
-    phase_output: str
     phase_key: PRNGKeyArray
     model_cfg: Dict
 
@@ -85,27 +83,27 @@ class ArbitraryDriver(eqx.Module):
         )
         self.initial_phase = jnp.array(np.random.uniform(-1, 1, driver_cfg["num_colors"]))
         self.envelope = driver_cfg["derived"]
-        self.amp_output = driver_cfg["output"]["amp"]
-        self.phase_output = driver_cfg["output"]["phase"]
+        # self.amp_output = driver_cfg["output"]["amp"]
+        # self.phase_output = driver_cfg["output"]["phase"]
         self.phase_key = PRNGKeyArray(PRNGKey(seed=np.random.randint(2**20)))
 
     def scale_phases(self, phases):
-        if self.phase_output == "learned":
+        if self.model_cfg["phase"]["learned"]:
             phases = jnp.tanh(phases) * jnp.pi
-        elif self.phase_output == "random":
+        else:  # self.model_cfg["phase"]["learned"]:
             phases = stop_gradient(jnp.tanh(phases) * jnp.pi)
-        elif self.phase_output == "random-all":
-            phases = stop_gradient(
-                uniform(self.phase_key.key, (self.initial_phase.size,), minval=-jnp.pi, maxval=jnp.pi)
-            )
-        else:
-            raise NotImplementedError(f"Phase Output type -- {self.phase_output} -- not implemented")
+        # elif self.phase_output == "random-all":
+        #     phases = stop_gradient(
+        #         uniform(self.phase_key.key, (self.initial_phase.size,), minval=-jnp.pi, maxval=jnp.pi)
+        #     )
+        # else:
+        #     raise NotImplementedError(f"Phase Output type -- {self.phase_output} -- not implemented")
         return phases
 
     def scale_intensities(self, intensities):
-        if self.amp_output == "linear":
+        if self.model_cfg["amplitudes"]["activation"] == "linear":
             ints = 0.5 * (jnp.tanh(intensities) + 1.0)
-        elif self.amp_output == "log":
+        elif self.model_cfg["amplitudes"]["activation"] == "log":
             ints = 3 * (jnp.tanh(intensities) + 1.0) - 3
             ints = 10**ints
         else:
