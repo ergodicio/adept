@@ -10,11 +10,6 @@ import numpy as np
 from adept.utils import download_from_s3
 
 
-class PRNGKeyArray:
-    def __init__(self, key: Array):
-        self.key = key
-
-
 def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
     filename = cfg["drivers"]["E0"]["file"]
     with tempfile.TemporaryDirectory() as td:
