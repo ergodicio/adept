@@ -99,7 +99,6 @@ def write_units(cfg: Dict) -> Dict:
         I_thresh = calc_threshold_intensity(Te, Ln=gradient_scale_length, w0=w0)
     else:
         I_thresh = "n/a"
-    # for k in ["delta_omega", "initial_phase", "amplitudes"]:
 
     # Derived units
     cfg["units"]["derived"] = {
