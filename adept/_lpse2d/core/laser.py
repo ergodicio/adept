@@ -28,7 +28,7 @@ class Light:
             (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][None, None])) ** 2) ** -0.25
             * self.E0_source
             * jnp.sqrt(light_wave["intensities"][None, None])
-            * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["initial_phase"][None, None])
+            * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["phases"][None, None])
         )
         dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][None, None] * self.w0 * t)
         dE0y = jnp.sum(dE0y, axis=-1)
@@ -76,7 +76,7 @@ class Light:
             (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"])) ** 2) ** -0.25
             * self.E0_source
             * jnp.sqrt(light_wave["intensities"])
-            * jnp.exp(1j * k0 * self.x[0] + 1j * light_wave["initial_phase"])
+            * jnp.exp(1j * k0 * self.x[0] + 1j * light_wave["phases"])
         )
         dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"] * self.w0 * t)
         return jnp.sum(dE0y, axis=0)

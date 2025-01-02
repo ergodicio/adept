@@ -355,7 +355,7 @@ class ergoExo:
 
         return run_output, post_processing_output, self.mlflow_run_id
 
-    def val_and_grad(self, modules: Dict = None) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
+    def val_and_grad(self, modules: Dict = None, args: Dict = None) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
         """
         This function is the value and gradient of the simulation. This is a very similar looking function to the ``__call__`` function but calls the ``self.adept_module.vg`` rather than the ``self.adept_module.__call__``.
 
@@ -376,7 +376,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, None)
+            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, args)
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})
