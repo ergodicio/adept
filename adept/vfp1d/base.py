@@ -25,8 +25,7 @@ class BaseVFP1D(ADEPTModule):
         Te = u.Quantity(self.cfg["units"]["reference electron temperature"]).to("eV")
         Ti = u.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV")
         Z = self.cfg["units"]["Z"]
-        # Should we change this to reference electron density? or allow it to be user set?
-        n0 = u.Quantity("9.0663e21/cm^3")
+        n0 = u.Quantity(self.cfg["units"]["reference electron density"]).to("1/cm^3")
         ion_species = self.cfg["units"]["Ion"]
 
         wp0 = np.sqrt(n0 * csts.e.to("C") ** 2.0 / (csts.m_e * csts.eps0)).to("Hz")

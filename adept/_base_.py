@@ -317,7 +317,7 @@ class ergoExo:
 
         return modules
 
-    def __call__(self, modules: Dict = None) -> Tuple[Solution, Dict, str]:
+    def __call__(self, modules: Dict = None, args: Dict = None) -> Tuple[Solution, Dict, str]:
         """
         This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
         ``diffrax.Solution`` object and a dictionary of datasets. It calls the ``self.adept_module``'s ``__call__`` function.
@@ -335,27 +335,9 @@ class ergoExo:
 
         """
 
-        assert self.ran_setup, "You must run self.setup() before running the simulation"
+        return self._mlflow_func(filter_jit(self.adept_module.__call__), modules, args)
 
-        with mlflow.start_run(
-            run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
-        ) as mlflow_run:
-            t0 = time.time()
-            run_output = filter_jit(self.adept_module.__call__)(modules, None)
-            mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
-
-            t0 = time.time()
-            with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
-                post_processing_output = self.adept_module.post_process(run_output, td)
-                robust_log_artifacts(td)  # logs the temporary directory to mlflow
-
-                if "metrics" in post_processing_output:
-                    mlflow.log_metrics(post_processing_output["metrics"])
-            mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
-
-        return run_output, post_processing_output, self.mlflow_run_id
-
-    def val_and_grad(self, modules: Dict = None) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
+    def val_and_grad(self, modules: Dict = None, args: Dict = None) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
         """
         This function is the value and gradient of the simulation. This is a very similar looking function to the ``__call__`` function but calls the ``self.adept_module.vg`` rather than the ``self.adept_module.__call__``.
 
@@ -376,7 +358,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, None)
+            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, args)
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})
@@ -389,6 +371,27 @@ class ergoExo:
                     mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
             return val, grad, (run_output, post_processing_output, self.mlflow_run_id)
+
+    def _mlflow_func(self, func: Callable, modules: Dict = None, args: Dict = None):
+        assert self.ran_setup, "You must run self.setup() before running the simulation"
+
+        with mlflow.start_run(
+            run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
+        ) as mlflow_run:
+            t0 = time.time()
+            run_output = func(modules, args)
+            mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
+
+            t0 = time.time()
+            with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
+                post_processing_output = self.adept_module.post_process(run_output, td)
+                robust_log_artifacts(td)  # logs the temporary directory to mlflow
+
+                if "metrics" in post_processing_output:
+                    mlflow.log_metrics(post_processing_output["metrics"])
+            mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
+
+        return run_output, post_processing_output, self.mlflow_run_id
 
     def _log_flops_(_run_: Callable, models: Dict, state: Dict, args: Dict, tqs):
         """
