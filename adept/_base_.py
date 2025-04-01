@@ -1,7 +1,7 @@
 from typing import Dict, Tuple, Callable
 import jax.flatten_util
 import os, time, tempfile, yaml, pickle
-
+from copy import deepcopy
 
 from diffrax import Solution, Euler, RESULTS
 from equinox import Module, filter_jit
@@ -221,6 +221,8 @@ class ergoExo:
             ``equinox`` modules in order to play nice with ``diffrax``
 
         """
+
+        cfg = deepcopy(cfg)
 
         with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
             if self.mlflow_run_id is None:
