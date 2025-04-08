@@ -55,11 +55,15 @@ save:
       nt: 1001
       tmax: 1000.0
       tmin: 0.0
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+  
 terms:
   field: poisson
   edfdv: cubic-spline
   time: leapfrog
-  diags: false
   fokker_planck:
     is_on: true
     space:

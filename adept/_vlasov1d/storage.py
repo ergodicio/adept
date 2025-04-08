@@ -77,7 +77,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
 
 def store_diags(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     """
-    Stores f to netcdf
+    Stores diagnostics to netcdf
 
     :param cfg:
     :param this_t:
@@ -85,22 +85,23 @@ def store_diags(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     :param ys:
     :return:
     """
+    assert cfg["save"]["diag-vlasov-dfdt"] == cfg["diagnostics"]["diag-fp-dfdt"]
 
     if {"t"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
     elif {"t", "x", "v"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
     elif {"t", "kx", "v"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov"]), ("kx", cfg["grid"]["kx"]), ("v", cfg["grid"]["v"]))
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("kx", cfg["grid"]["kx"]), ("v", cfg["grid"]["v"]))
     elif {"t", "x", "kv"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov"]), ("x", cfg["grid"]["x"]), ("kv", cfg["grid"]["kv"]))
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("kv", cfg["grid"]["kv"]))
     elif {"t", "kx", "kv"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov"]), ("kx", cfg["grid"]["kx"]), ("kv", cfg["grid"]["kv"]))
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("kx", cfg["grid"]["kx"]), ("kv", cfg["grid"]["kv"]))
     else:
         raise NotImplementedError
 
-    diags_store = xr.Dataset({spc: xr.DataArray(ys[spc], coords=axes) for spc in ["diag-vlasov", "diag-fp"]})
-    diags_store.to_netcdf(os.path.join(td, "binary", "diags.nc"))
+    diags_store = xr.Dataset({spc: xr.DataArray(ys[spc], coords=axes) for spc in ["diag-vlasov-dfdt", "diag-fp-dfdt"]})
+    diags_store.to_netcdf(os.path.join(td, "binary", "diagnostics.nc"))
 
     return diags_store
 
@@ -175,71 +176,6 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
     return dist_save_func
 
 
-def get_diag_save_func(axes, dist_save_config, dist_key):
-    if {"t"} == set(dist_save_config.keys()):
-
-        def dist_save_func(t, y, args):
-            return {"diag-vlasov": y["diag-vlasov"], "diag-fp": y["diag-fp"]}
-
-    elif {"t", "x", "v"} == set(dist_save_config.keys()):
-
-        def dist_save_func(t, y, args):
-            diags = {}
-            diags["diag-vlasov"] = interp2d(
-                dist_save_config["x"]["ax"],
-                dist_save_config["v"]["ax"],
-                axes["x"],
-                axes["v"],
-                y["diag-vlasov"],
-                kind="linear",
-            )
-
-            diags["diag-fp"] = interp2d(
-                dist_save_config["x"]["ax"],
-                dist_save_config["v"]["ax"],
-                axes["x"],
-                axes["v"],
-                y["diag-fp"],
-                kind="linear",
-            )
-            return diags
-
-    elif {"t", "kx", "v"} == set(dist_save_config.keys()):
-
-        def dist_save_func(t, y, args):
-            diags = {}
-            fkx = jnp.fft.rfft(y["diag-vlasov"], axes=0)
-            diags["diag-vlasov"] = interp2d(
-                dist_save_config["x"]["ax"],
-                dist_save_config["v"]["ax"],
-                axes["x"],
-                axes["v"],
-                fkx,
-                kind="linear",
-            )
-
-            fkx = jnp.fft.rfft(y["diag-fp"], axes=0)
-            diags["diag-fp"] = interp2d(
-                dist_save_config["x"]["ax"],
-                dist_save_config["v"]["ax"],
-                axes["x"],
-                axes["v"],
-                fkx,
-                kind="linear",
-            )
-            return diags
-
-    elif {"t", "x", "kv"} == set(dist_save_config.keys()):
-        pass
-
-    elif {"t", "kx", "kv"} == set(dist_save_config.keys()):
-        pass
-    else:
-        raise NotImplementedError
-
-    return dist_save_func
-
-
 def get_save_quantities(cfg: Dict) -> Dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
@@ -263,19 +199,13 @@ def get_save_quantities(cfg: Dict) -> Dict:
         if save_type.startswith("fields"):
             save_config["func"] = get_field_save_func(cfg)
 
-        elif save_type.casefold() == "electron":
+        elif save_type.casefold() in ["electron", "diag-vlasov-dfdt", "diag-fp-dfdt"]:
             save_config["func"] = get_dist_save_func(
-                axes={"x": cfg["grid"]["x"], "v": cfg["grid"]["v"], "kx": cfg["grid"]["kx"]},
+                axes={dim: cfg["grid"][dim] for dim in ("x", "v", "kx")},
                 dist_save_config=save_config,
                 dist_key=save_type,
             )
 
-        elif save_type.casefold() == "diags":
-            save_config["func"] = get_diag_save_func(
-                axes={"x": cfg["grid"]["x"], "v": cfg["grid"]["v"], "kx": cfg["grid"]["kx"]},
-                dist_save_config=save_config,
-                dist_key=save_type,
-            )
         else:
             raise NotImplementedError(f"Unknown save type: {save_type}")
 

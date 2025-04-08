@@ -76,12 +76,15 @@ drivers:
       x_center: 3950.0
       x_rise: 0.1
       x_width: 1.0
+  
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
 
 terms:
   field: poisson
   edfdv: exponential
   time: leapfrog
-  diags: false
   fokker_planck:
     is_on: false
     type: Dougherty

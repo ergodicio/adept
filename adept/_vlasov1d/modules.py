@@ -188,9 +188,9 @@ class BaseVlasov1D(ADEPTModule):
         for field in ["a", "da", "prev_a"]:
             state[field] = jnp.zeros(self.cfg["grid"]["nx"] + 2)  # need boundary cells
 
-        if self.cfg["terms"]["diags"]:
-            state["diag-vlasov"] = jnp.zeros_like(f)
-            state["diag-fp"] = jnp.zeros_like(f)
+        for k in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
+            if self.cfg["diagnostics"][k]:
+                state[k] = jnp.zeros_like(f)
 
         self.state = state
         self.args = {"drivers": self.cfg["drivers"], "terms": self.cfg["terms"]}

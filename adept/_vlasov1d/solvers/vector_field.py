@@ -155,7 +155,8 @@ class VlasovPoissonFokkerPlanck:
         else:
             raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
-        self.diags = cfg["terms"]["diags"]
+        self.vlasov_dfdt = cfg["diagnostics"]["diag-vlasov-dfdt"]
+        self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
 
     def __call__(
         self, f: Array, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
@@ -165,11 +166,10 @@ class VlasovPoissonFokkerPlanck:
         f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=self.dt)
         diags = {}
 
-        if self.diags:
-            diags["vlasov"] = (f_vlasov - f) / self.dt
-            diags["fp"] = (f_fp - f_vlasov) / self.dt
-        else:
-            diags = {}
+        if self.vlasov_dfdt:
+            diags["diag-vlasov-dfdt"] = (f_vlasov - f) / self.dt
+        if self.fp_dfdt:
+            diags["diag-fp-dfdt"] = (f_fp - f_vlasov) / self.dt
 
         return e, f_fp, diags
 
@@ -189,7 +189,6 @@ class VlasovMaxwell:
         self.dt = self.cfg["grid"]["dt"]
         self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
         self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
-        self.diags = cfg["terms"]["diags"]
 
     def compute_charges(self, f):
         return jnp.sum(f, axis=1) * self.cfg["grid"]["dv"]
@@ -250,17 +249,11 @@ class VlasovMaxwell:
             a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
         )
 
-        return_state_dict = {
+        return {
             "electron": f,
             "a": a["a"],
             "prev_a": a["prev_a"],
             "da": djy,
             "de": dex[self.vpfp.dex_save],
             "e": e,
-        }
-
-        if self.diags:
-            return_state_dict["diag-vlasov"] = diags["vlasov"]
-            return_state_dict["diag-fp"] = diags["fp"]
-
-        return return_state_dict
+        } | diags

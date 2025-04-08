@@ -44,19 +44,19 @@ physics:
     landau_damping: true
     mass: 1.0
     trapping:
-      is_on: true
+      is_on: false
       kld: 0.3
       nn: 8|8
       nuee: 1.0e-05
   ion:
-    T0: 1.0
+    T0: 0.1
     charge: 1.0
     gamma: 3
-    is_on: false
+    is_on: true
     landau_damping: false
     mass: 1836.0
     trapping:
-      is_on: true
+      is_on: false
       kld: 0.3
       nuee: 1.0e-09
 

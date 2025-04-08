@@ -44,7 +44,12 @@ save:
       tmin: 0.0
       tmax: 100.0
       nt: 11
-  diags:
+  diag-vlasov-dfdt:
+    t:
+      tmin: 0.0
+      tmax: 100.0
+      nt: 91
+  diag-fp-dfdt:
     t:
       tmin: 0.0
       tmax: 100.0
@@ -71,11 +76,14 @@ drivers:
       x_width: 4000000.0
   ey: {}
 
+diagnostics:
+  diag-vlasov-dfdt: True
+  diag-fp-dfdt: True
+
 terms:
   field: poisson
   edfdv: cubic-spline
   time: sixth
-  diags: false
   fokker_planck:
     is_on: True
     type: Dougherty
