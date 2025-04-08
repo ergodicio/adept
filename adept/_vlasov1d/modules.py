@@ -198,8 +198,6 @@ class BaseVlasov1D(ADEPTModule):
     def init_diffeqsolve(self):
         self.cfg = get_save_quantities(self.cfg)
         self.time_quantities = {"t0": 0.0, "t1": self.cfg["grid"]["tmax"], "max_steps": self.cfg["grid"]["max_steps"]}
-        # print(self.cfg["save"])
-
         self.diffeqsolve_quants = dict(
             terms=ODETerm(VlasovMaxwell(self.cfg)),
             solver=Stepper(),
