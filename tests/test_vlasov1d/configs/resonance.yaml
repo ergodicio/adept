@@ -72,6 +72,7 @@ terms:
   field: poisson
   edfdv: cubic-spline
   time: leapfrog
+  diags: false
   fokker_planck:
     is_on: True
     type: Dougherty
