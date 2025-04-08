@@ -81,6 +81,7 @@ terms:
   field: poisson
   edfdv: exponential
   time: leapfrog
+  diags: false
   fokker_planck:
     is_on: false
     type: Dougherty

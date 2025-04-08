@@ -25,10 +25,10 @@ density:
 
 grid:
   dt: 0.1
-  nv: 4096
-  nx: 128
+  nv: 256
+  nx: 32
   tmin: 0.
-  tmax: 600.0
+  tmax: 100.0
   vmax: 6.4
   xmax: 20.94
   xmin: 0.0
@@ -37,12 +37,17 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 600.0
-      nt: 91
+      tmax: 100.0
+      nt: 601
   electron:
     t:
       tmin: 0.0
-      tmax: 600.0
+      tmax: 100.0
+      nt: 11
+  diags:
+    t:
+      tmin: 0.0
+      tmax: 100.0
       nt: 91
 
 solver: vlasov-1d
@@ -70,6 +75,7 @@ terms:
   field: poisson
   edfdv: cubic-spline
   time: sixth
+  diags: false
   fokker_planck:
     is_on: True
     type: Dougherty

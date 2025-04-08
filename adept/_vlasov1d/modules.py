@@ -188,19 +188,18 @@ class BaseVlasov1D(ADEPTModule):
         for field in ["a", "da", "prev_a"]:
             state[field] = jnp.zeros(self.cfg["grid"]["nx"] + 2)  # need boundary cells
 
+        if self.cfg["terms"]["diags"]:
+            state["diag-vlasov"] = jnp.zeros_like(f)
+            state["diag-fp"] = jnp.zeros_like(f)
+
         self.state = state
         self.args = {"drivers": self.cfg["drivers"], "terms": self.cfg["terms"]}
 
     def init_diffeqsolve(self):
         self.cfg = get_save_quantities(self.cfg)
-        self.time_quantities = {
-            "t0": 0.0,
-            "t1": self.cfg["grid"]["tmax"],
-            "max_steps": self.cfg["grid"]["max_steps"],
-            "save_t0": 0.0,
-            "save_t1": self.cfg["grid"]["tmax"],
-            "save_nt": self.cfg["grid"]["tmax"],
-        }
+        self.time_quantities = {"t0": 0.0, "t1": self.cfg["grid"]["tmax"], "max_steps": self.cfg["grid"]["max_steps"]}
+        # print(self.cfg["save"])
+
         self.diffeqsolve_quants = dict(
             terms=ODETerm(VlasovMaxwell(self.cfg)),
             solver=Stepper(),

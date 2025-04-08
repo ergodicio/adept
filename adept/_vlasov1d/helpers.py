@@ -243,6 +243,17 @@ def post_process(result: Solution, cfg: Dict, td: str, args: Dict):
                 plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)
+    if cfg["terms"]["diags"]:
+        diags_xr = xarray.Dataset(
+            {
+                spc: xarray.DataArray(
+                    result.ys["diags"][spc],
+                    coords=(("t", result.ts["diags"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"])),
+                )
+                for spc in ["diag-vlasov", "diag-fp"]
+            }
+        )
+        diags_xr.to_netcdf(os.path.join(td, "binary", "diags.nc"))
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 

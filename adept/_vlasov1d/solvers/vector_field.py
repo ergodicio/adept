@@ -155,14 +155,23 @@ class VlasovPoissonFokkerPlanck:
         else:
             raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
+        self.diags = cfg["terms"]["diags"]
 
     def __call__(
         self, f: Array, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
     ) -> Tuple[Array, Array]:
-        e, f = self.vlasov_poisson(f, a, dex_array, prev_ex)
-        f = self.fp(nu_fp, nu_K, f, dt=self.dt)
+        e, f_vlasov = self.vlasov_poisson(f, a, dex_array, prev_ex)
 
-        return e, f
+        f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=self.dt)
+        diags = {}
+
+        if self.diags:
+            diags["vlasov"] = (f_vlasov - f) / self.dt
+            diags["fp"] = (f_fp - f_vlasov) / self.dt
+        else:
+            diags = {}
+
+        return e, f_fp, diags
 
 
 class VlasovMaxwell:
@@ -180,6 +189,7 @@ class VlasovMaxwell:
         self.dt = self.cfg["grid"]["dt"]
         self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
         self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
+        self.diags = cfg["terms"]["diags"]
 
     def compute_charges(self, f):
         return jnp.sum(f, axis=1) * self.cfg["grid"]["dv"]
@@ -231,11 +241,26 @@ class VlasovMaxwell:
             nu_K_prof = None
 
         electron_density_n = self.compute_charges(y["electron"])
-        e, f = self.vpfp(f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof)
+        e, f, diags = self.vpfp(
+            f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof
+        )
         electron_density_np1 = self.compute_charges(f)
 
         a = self.wave_solver(
             a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
         )
 
-        return {"electron": f, "a": a["a"], "prev_a": a["prev_a"], "da": djy, "de": dex[self.vpfp.dex_save], "e": e}
+        return_state_dict = {
+            "electron": f,
+            "a": a["a"],
+            "prev_a": a["prev_a"],
+            "da": djy,
+            "de": dex[self.vpfp.dex_save],
+            "e": e,
+        }
+
+        if self.diags:
+            return_state_dict["diag-vlasov"] = diags["vlasov"]
+            return_state_dict["diag-fp"] = diags["fp"]
+
+        return return_state_dict

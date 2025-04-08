@@ -67,6 +67,7 @@ terms:
   field: poisson
   edfdv: exponential
   time: sixth
+  diags: false
   fokker_planck:
     is_on: True
     type: Dougherty
