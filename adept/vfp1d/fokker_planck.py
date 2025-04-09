@@ -103,7 +103,7 @@ class FLMCollisions:
         self.dv = cfg["grid"]["dv"]
         self.Z = cfg["units"]["Z"]
 
-        r_e = 2.8179402894e-13
+        r_e = 2.8179402894e-13  # cm
         kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         kpre = r_e * kp
         self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
