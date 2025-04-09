@@ -317,7 +317,7 @@ class ergoExo:
 
         return modules
 
-    def __call__(self, modules: Dict = None) -> Tuple[Solution, Dict, str]:
+    def __call__(self, modules: Dict = None, args: Dict = None) -> Tuple[Solution, Dict, str]:
         """
         This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
         ``diffrax.Solution`` object and a dictionary of datasets. It calls the ``self.adept_module``'s ``__call__`` function.
@@ -341,7 +341,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            run_output = filter_jit(self.adept_module.__call__)(modules, None)
+            run_output = filter_jit(self.adept_module.__call__)(modules, args)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()

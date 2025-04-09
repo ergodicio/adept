@@ -17,6 +17,8 @@ def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
         if "s3" in filename:
             from os.path import join
 
+            print(filename)
+
             cfg["drivers"]["E0"]["file"] = join(td, filename.split("/")[-1])
             cfg["drivers"]["E0"]["file"] = download_from_s3(filename, cfg["drivers"]["E0"]["file"])
         else:
@@ -25,6 +27,16 @@ def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
         # load the model
         if "pkl" in cfg["drivers"]["E0"]["file"]:
             loaded_model = DriverModule(cfg)
+            with open(cfg["drivers"]["E0"]["file"], "rb") as f:
+                import pickle
+
+                _loaded_pickle_ = pickle.load(f)
+                loaded_model = eqx.tree_at(
+                    lambda tree: tree.intensities, loaded_model, replace=_loaded_pickle_["E0"]["intensities"]
+                )
+                loaded_model = eqx.tree_at(
+                    lambda tree: tree.phases, loaded_model, replace=_loaded_pickle_["E0"]["phases"]
+                )
         elif "eqx" in cfg["drivers"]["E0"]["file"]:
             with open(cfg["drivers"]["E0"]["file"], "rb") as f:
                 # read the model config
@@ -120,6 +132,9 @@ class ArbitraryDriver(UniformDriver):
             ints = 0.5 * (jnp.tanh(intensities) + 1.0)
         elif self.model_cfg["amplitudes"]["activation"] == "log":
             ints = 3 * (jnp.tanh(intensities) + 1.0) - 3
+            ints = 10**ints
+        elif self.model_cfg["amplitudes"]["activation"] == "log-3wide":
+            ints = -1.5 * (jnp.tanh(intensities) + 1.0)  # from 0 to -3
             ints = 10**ints
         else:
             raise NotImplementedError(
