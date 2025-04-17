@@ -31,6 +31,3 @@ if __name__ == "__main__":
     else:
         exo.run_job(args.run_id, nested=None)
         run_id = args.run_id
-
-    if "MLFLOW_EXPORT" in os.environ:
-        export_run(run_id)
