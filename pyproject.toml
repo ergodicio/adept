@@ -1,0 +1,86 @@
+[project]
+name = "adept"
+description = "Automatic-Differentiation-Enabled Plasma Transport in JAX"
+readme = "README.md"
+authors = [
+    {name = "Archis Joglekar/Ergodic LLC", email="archis@ergodic.io"},
+]
+license = "MIT"
+license-files = ["LICENSE*"]
+requires-python = ">=3.10"
+dependencies = [
+        "diffrax",
+        "matplotlib",
+        "scipy",
+        "numpy",
+        "tqdm",
+        "xarray",
+        "mlflow",
+        "flatdict",
+        "h5netcdf",
+        "optax",
+        "boto3",
+        "pint",
+        "mlflow_export_import",
+        "plasmapy",
+        "tabulate",
+        "interpax",
+        "tabulate",
+        "pydantic",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/ergodicio/adept"
+Documentation = "https://adept.readthedocs.io/en/latest/"
+
+[project.optional-dependencies]
+cpu = ["jax"]
+gpu = ["jax[cuda12]"]
+docs = [
+    "sphinx",
+    "sphinx_autodoc_typehints",
+    "sphinx_copybutton",
+    "sphinx-rtd-theme",
+    "sphinx-github-style",
+    adept[cpu]
+]
+dev = [
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "typeguard",
+    "adept[docs]",
+]
+
+[build-system]
+requires = ["setuptools", "versioneer[toml]==0.29"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["adept", "adept.*"]
+
+[tool.versioneer]
+VCS = "git"
+style = "pep440"
+versionfile_source = "adept/_version.py"
+versionfile_build = "adept/_version.py"
+tag_prefix = "v"
+parentdir_prefix = "adept-"
+
+[tool.pytest.ini_options]
+# Test type hints w/ typeguard - currently disabled
+# addopts = ["--typeguard-packages=adept"]
+testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    # ignored by default
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::ImportWarning",
+    # raised by Cython, usually harmless
+    "ignore:numpy.dtype size changed",
+    "ignore:numpy.ufunc size changed",
+    # sometimes, dependencies leak resources
+    "ignore:.*socket\\.socket.*:pytest.PytestUnraisableExceptionWarning",
+]
