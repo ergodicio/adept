@@ -42,7 +42,7 @@ docs = [
     "sphinx_copybutton",
     "sphinx-rtd-theme",
     "sphinx-github-style",
-    adept[cpu]
+    "adept[cpu]"
 ]
 dev = [
     "pre-commit",
