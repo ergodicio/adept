@@ -53,7 +53,7 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools", "versioneer[toml]==0.29"]
+requires = ["setuptools", "wheel", "versioneer[toml]==0.29"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
