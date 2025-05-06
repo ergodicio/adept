@@ -4,6 +4,7 @@ import os
 from jax import numpy as jnp
 import numpy as np
 import xarray as xr
+from interpax import interp2d
 
 
 def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
@@ -74,43 +75,39 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     return f_store
 
 
-# def clean_td(td):
-#     _ = [os.remove(os.path.join(td, "binary", "fields", fl)) for fl in os.listdir(os.path.join(td, "binary", "fields"))]
-#     _ = [os.remove(os.path.join(td, "binary", "f", fl)) for fl in os.listdir(os.path.join(td, "binary", "f"))]
-#
-#
-# def first_store(td, cfg):
-#     os.makedirs(os.path.join(td, "binary", "f"))
-#     os.makedirs(os.path.join(td, "binary", "fields"))
-#
-#     start_f = jnp.array(cfg["grid"]["f"])
-#     store_f(cfg, np.array([0.0]), td, start_f)
-#     fields = {
-#         "ex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "ey": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "total_ex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "total_ey": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#         "dex": np.zeros((1, cfg["grid"]["nx"], cfg["grid"]["ny"])),
-#     }
-#     store_fields(cfg, td, fields, np.array([0.0]))
-#     mlflow.log_artifacts(td)
-#     clean_td(td)
-#
-#     return start_f
-#
-#
-# def store_everything(td, cfg, this_t, fields, this_driver, i, running_f):
-#     fields["dex"] = this_driver[:, 0]
-#     store_fields(cfg, td, fields, this_t)
-#
-#     if i % (cfg["grid"]["num_checkpoints"] // cfg["grid"]["num_fs"]) == 0:
-#         store_f(cfg, this_t[-1:], td, running_f)
-#         mlflow.log_artifacts(td)
-#         clean_td(td)
+def store_diags(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
+    """
+    Stores diagnostics to netcdf
+
+    :param cfg:
+    :param this_t:
+    :param td:
+    :param ys:
+    :return:
+    """
+    assert cfg["save"]["diag-vlasov-dfdt"] == cfg["diagnostics"]["diag-fp-dfdt"]
+
+    if {"t"} == set(cfg["save"]["diags"].keys()):
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
+    elif {"t", "x", "v"} == set(cfg["save"]["diags"].keys()):
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
+    elif {"t", "kx", "v"} == set(cfg["save"]["diags"].keys()):
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("kx", cfg["grid"]["kx"]), ("v", cfg["grid"]["v"]))
+    elif {"t", "x", "kv"} == set(cfg["save"]["diags"].keys()):
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("kv", cfg["grid"]["kv"]))
+    elif {"t", "kx", "kv"} == set(cfg["save"]["diags"].keys()):
+        axes = (("t", this_t["diag-vlasov-dfdt"]), ("kx", cfg["grid"]["kx"]), ("kv", cfg["grid"]["kv"]))
+    else:
+        raise NotImplementedError
+
+    diags_store = xr.Dataset({spc: xr.DataArray(ys[spc], coords=axes) for spc in ["diag-vlasov-dfdt", "diag-fp-dfdt"]})
+    diags_store.to_netcdf(os.path.join(td, "binary", "diagnostics.nc"))
+
+    return diags_store
 
 
-def get_field_save_func(cfg, k):
-    if {"t"} == set(cfg["save"][k].keys()):
+def get_field_save_func(cfg):
+    if {"t"} == set(cfg["save"]["fields"].keys()):
 
         def _calc_moment_(inp):
             return jnp.sum(inp, axis=1) * cfg["grid"]["dv"]
@@ -136,21 +133,42 @@ def get_field_save_func(cfg, k):
     return fields_save_func
 
 
-def get_dist_save_func(cfg, k):
-    if {"t"} == set(cfg["save"][k].keys()):
+def get_dist_save_func(axes, dist_save_config, dist_key):
+    if {"t"} == set(dist_save_config.keys()):
 
         def dist_save_func(t, y, args):
-            return y["electron"]
+            return y[dist_key]
 
-    elif {"t", "x", "y"} == set(cfg["save"][k].keys()):
-        pass
-    elif {"t", "kx", "y"} == set(cfg["save"][k].keys()):
+    elif {"t", "x", "v"} == set(dist_save_config.keys()):
+
+        def dist_save_func(t, y, args):
+            fkx = jnp.fft.rfft(y[dist_key], axes=0)
+            return interp2d(
+                dist_save_config["x"]["ax"],
+                dist_save_config["v"]["ax"],
+                axes["x"],
+                axes["v"],
+                fkx,
+                kind="linear",
+            )
+
+    elif {"t", "kx", "v"} == set(dist_save_config.keys()):
+
+        def dist_save_func(t, y, args):
+            fkx = jnp.fft.rfft(y[dist_key], axes=0)
+            return interp2d(
+                dist_save_config["kx"]["ax"],
+                dist_save_config["v"]["ax"],
+                axes["kx"],
+                axes["v"],
+                fkx,
+                kind="linear",
+            )
+
+    elif {"t", "x", "kv"} == set(dist_save_config.keys()):
         pass
 
-    elif {"t", "x", "ky"} == set(cfg["save"][k].keys()):
-        pass
-
-    elif {"t", "kx", "ky"} == set(cfg["save"][k].keys()):
+    elif {"t", "kx", "kv"} == set(dist_save_config.keys()):
         pass
     else:
         raise NotImplementedError
@@ -165,29 +183,33 @@ def get_save_quantities(cfg: Dict) -> Dict:
     :param cfg:
     :return:
     """
-    for k in cfg["save"].keys():  # this can be fields or electron or scalar?
-        for k2 in cfg["save"][k].keys():  # this can be t, x, y, kx, ky (eventually)
-            if k2 == "x":
-                dx = (cfg["save"][k][k2][f"{k2}max"] - cfg["save"][k][k2][f"{k2}min"]) / cfg["save"][k][k2][f"n{k2}"]
-                cfg["save"][k][k2]["ax"] = np.linspace(
-                    cfg["save"][k][k2][f"{k2}min"] + dx / 2.0,
-                    cfg["save"][k][k2][f"{k2}max"] - dx / 2.0,
-                    cfg["save"][k][k2][f"n{k2}"],
-                )
-
+    for save_type, save_config in cfg["save"].items():  # this can be fields or electron or diags?
+        for dim_key, dim_config in save_config.items():  # this can be t, x, y, kx, ky (eventually)
+            if dim_key == "x":
+                dx = (dim_config[f"{dim_key}max"] - dim_config[f"{dim_key}min"]) / dim_config[f"n{dim_key}"]
             else:
-                cfg["save"][k][k2]["ax"] = np.linspace(
-                    cfg["save"][k][k2][f"{k2}min"], cfg["save"][k][k2][f"{k2}max"], cfg["save"][k][k2][f"n{k2}"]
-                )
+                dx = 0.0
 
-        if k.startswith("fields"):
-            cfg["save"][k]["func"] = get_field_save_func(cfg, k)
+            dim_config["ax"] = np.linspace(
+                dim_config[f"{dim_key}min"] + dx / 2.0,
+                dim_config[f"{dim_key}max"] - dx / 2.0,
+                dim_config[f"n{dim_key}"],
+            )
 
-        elif k.startswith("electron"):
-            cfg["save"][k]["func"] = get_dist_save_func(cfg, k)
+        if save_type.startswith("fields"):
+            save_config["func"] = get_field_save_func(cfg)
+
+        elif save_type.casefold() in ["electron", "diag-vlasov-dfdt", "diag-fp-dfdt"]:
+            save_config["func"] = get_dist_save_func(
+                axes={dim: cfg["grid"][dim] for dim in ("x", "v", "kx")},
+                dist_save_config=save_config,
+                dist_key=save_type,
+            )
+
+        else:
+            raise NotImplementedError(f"Unknown save type: {save_type}")
 
     cfg["save"]["default"] = {"t": {"ax": cfg["grid"]["t"]}, "func": get_default_save_func(cfg)}
-
     return cfg
 
 

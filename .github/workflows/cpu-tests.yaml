@@ -18,10 +18,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v2
-    - name: Set up Python 3.10
+    - name: Set up Python 3.11
       uses: actions/setup-python@v2
       with:
-        python-version: '3.10'
+        python-version: '3.11'
 
     - name: Install dependencies
       run: |
@@ -34,4 +34,4 @@ jobs:
 
     - name: Test with pytest
       run: |
-        CPU_ONLY=True pytest tests/test_lpse2d tests/test_vlasov1d tests/test_vfp1d
+        pytest tests/test_base tests/test_lpse2d tests/test_vlasov1d tests/test_vfp1d

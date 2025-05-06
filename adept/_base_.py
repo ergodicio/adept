@@ -1,7 +1,7 @@
 from typing import Dict, Tuple, Callable
 import jax.flatten_util
 import os, time, tempfile, yaml, pickle
-
+from copy import deepcopy
 
 from diffrax import Solution, Euler, RESULTS
 from equinox import Module, filter_jit
@@ -197,6 +197,7 @@ class ergoExo:
             self.base_tempdir = None
 
         self.ran_setup = False
+        self.cfg = None
 
     def setup(self, cfg: Dict, adept_module: ADEPTModule = None) -> Dict[str, Module]:
         """
@@ -222,6 +223,8 @@ class ergoExo:
 
         """
 
+        cfg = deepcopy(cfg)
+
         with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
             if self.mlflow_run_id is None:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
@@ -238,6 +241,8 @@ class ergoExo:
                     # cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
                     robust_log_artifacts(td)  # logs the temporary directory to mlflow
+
+        self.cfg = cfg
 
         return modules
 
@@ -317,7 +322,7 @@ class ergoExo:
 
         return modules
 
-    def __call__(self, modules: Dict = None) -> Tuple[Solution, Dict, str]:
+    def __call__(self, modules: Dict = None, export=True) -> Tuple[Solution, Dict, str]:
         """
         This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
         ``diffrax.Solution`` object and a dictionary of datasets. It calls the ``self.adept_module``'s ``__call__`` function.
@@ -347,7 +352,8 @@ class ergoExo:
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
                 post_processing_output = self.adept_module.post_process(run_output, td)
-                robust_log_artifacts(td)  # logs the temporary directory to mlflow
+                if export:
+                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
 
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
@@ -355,7 +361,7 @@ class ergoExo:
 
         return run_output, post_processing_output, self.mlflow_run_id
 
-    def val_and_grad(self, modules: Dict = None) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
+    def val_and_grad(self, modules: Dict = None, export=True) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
         """
         This function is the value and gradient of the simulation. This is a very similar looking function to the ``__call__`` function but calls the ``self.adept_module.vg`` rather than the ``self.adept_module.__call__``.
 
@@ -384,7 +390,8 @@ class ergoExo:
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
                 post_processing_output = self.adept_module.post_process(run_output, td)
-                robust_log_artifacts(td)  # logs the temporary directory to mlflow
+                if export:
+                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})

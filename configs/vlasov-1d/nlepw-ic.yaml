@@ -21,8 +21,8 @@ density:
     wavenumber: 0.3
 
 grid:
-  dt: 0.1
-  nv: 4096
+  dt: 0.2
+  nv: 512
   nx: 64
   tmin: 0.
   tmax: 1000.0
@@ -52,6 +52,10 @@ drivers:
   ex: {}
   ey: {}
 
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
 terms:
   field: poisson
   edfdv: exponential
@@ -76,7 +80,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
   krook:
-    is_on: True
+    is_on: false
     time:
       baseline: 1.0e-6
       bump_or_trough: bump

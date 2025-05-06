@@ -85,10 +85,10 @@ def _imaginary_part_():
 
     desired = (
         np.sqrt(np.pi / 8)
-        * cfg["units"]["derived"]["wp0"] ** 4
+        * exo.cfg["units"]["derived"]["wp0"] ** 4
         * k0**-3.0
-        / (cfg["units"]["derived"]["vte_sq"] ** 1.5)
-        * np.exp(-(cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * cfg["units"]["derived"]["vte_sq"]))
+        / (exo.cfg["units"]["derived"]["vte_sq"] ** 1.5)
+        * np.exp(-(exo.cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * exo.cfg["units"]["derived"]["vte_sq"]))
     )
     # get damping rate out of ppo
     flds = ppo["x"]
