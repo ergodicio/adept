@@ -7,7 +7,6 @@ import numpy as np
 def run_once(L, Te, I0):
     import yaml
     from adept import ergoExo
-    from adept.utils import export_run
 
     with open("tests/test_lpse2d/configs/tpd.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
@@ -22,8 +21,6 @@ def run_once(L, Te, I0):
     modules = exo.setup(cfg)
     sol, ppo, mlrunid = exo(modules)
     es = ppo["metrics"]["log10_total_e_sq"]
-
-    export_run(mlrunid)
 
     return es
 

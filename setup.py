@@ -48,7 +48,6 @@ setup(
         "optax",
         "boto3",
         "pint",
-        "mlflow_export_import",
         "plasmapy",
         "tabulate",
         "interpax",
