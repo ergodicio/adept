@@ -109,3 +109,7 @@ terms:
       slope: 0.0
       bump_height: 0.0
       width: 100000.0
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
