@@ -1,7 +1,8 @@
-import os
 from adept.lpse2d import calc_threshold_intensity
 
 import numpy as np
+import pytest
+from jax import devices
 
 
 def run_once(L, Te, I0):
@@ -26,8 +27,8 @@ def run_once(L, Te, I0):
 
 
 def test_threshold():
-    if "CPU_ONLY" in os.environ:
-        pass
+    if not any(["gpu" == device.platform for device in devices()]):
+        pytest.skip("Takes too long without a GPU")
     else:
         ess = []
         c = 3e8

@@ -10,6 +10,8 @@ config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
 import mlflow
+import pytest
+from jax import devices
 
 from adept import electrostatic
 
@@ -33,8 +35,10 @@ def _modify_defaults_(defaults, rng, real_or_imag):
 
 @pytest.mark.parametrize("real_or_imag", ["real", "imag"])
 def test_single_resonance(real_or_imag):
-    if "CPU_ONLY" in os.environ:
-        pass
+
+    if not any(["gpu" == device.platform for device in devices()]):
+        pytest.skip("Skipping test on CPU")
+
     else:
         with open("tests/test_vlasov2d/configs/damping.yaml", "r") as file:
             defaults = yaml.safe_load(file)
