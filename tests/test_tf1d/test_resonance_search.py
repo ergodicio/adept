@@ -13,7 +13,9 @@ config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
 import mlflow, optax
-from jax import numpy as jnp, Array, random as jr
+import pytest
+
+from jax import numpy as jnp, Array, random as jr, devices
 import time
 
 import equinox as eqx
@@ -102,7 +104,8 @@ def test_resonance_search(gamma, adjoint):
 
 if __name__ == "__main__":
     for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
-        if "CPU_ONLY" in os.environ:
-            pass
+
+        if not any(["gpu" == device.platform for device in devices()]):
+            pytest.skip("Takes too long without a GPU")
         else:
             test_resonance_search(gamma, adjoint)
