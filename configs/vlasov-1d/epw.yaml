@@ -25,10 +25,10 @@ density:
 
 grid:
   dt: 0.1
-  nv: 4096
-  nx: 128
+  nv: 256
+  nx: 32
   tmin: 0.
-  tmax: 600.0
+  tmax: 100.0
   vmax: 6.4
   xmax: 20.94
   xmin: 0.0
@@ -37,12 +37,22 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 600.0
-      nt: 91
+      tmax: 100.0
+      nt: 601
   electron:
     t:
       tmin: 0.0
-      tmax: 600.0
+      tmax: 100.0
+      nt: 11
+  diag-vlasov-dfdt:
+    t:
+      tmin: 0.0
+      tmax: 100.0
+      nt: 91
+  diag-fp-dfdt:
+    t:
+      tmin: 0.0
+      tmax: 100.0
       nt: 91
 
 solver: vlasov-1d
@@ -65,6 +75,10 @@ drivers:
       x_rise: 10.0
       x_width: 4000000.0
   ey: {}
+
+diagnostics:
+  diag-vlasov-dfdt: True
+  diag-fp-dfdt: True
 
 terms:
   field: poisson
