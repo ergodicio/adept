@@ -3,6 +3,10 @@ from typing import Dict, Tuple
 from functools import partial
 
 import matplotlib.pyplot as plt
+import scienceplots
+
+plt.style.use(["science", "grid", "no-latex"])
+
 from jax import Array, numpy as jnp
 import numpy as np
 import xarray as xr
@@ -469,11 +473,12 @@ def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
 
 
 def plot_series(series, td):
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    fig, ax = plt.subplots(1, 2, figsize=(8, 3))
     series["e_sq"].plot(ax=ax[0])
     series["e_sq"].plot(ax=ax[1])
     ax[1].set_yscale("log")
     fig.savefig(os.path.join(td, "plots", "e_sq_vs_t.png"), bbox_inches="tight")
+    fig.savefig(os.path.join(td, "plots", "e_sq_vs_t.pdf"), bbox_inches="tight")
     plt.close()
 
 
