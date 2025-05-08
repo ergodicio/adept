@@ -21,11 +21,11 @@ dependencies = [
     "optax",
     "boto3",
     "pint",
-    "mlflow_export_import",
     "plasmapy",
-    "tabulate",
     "interpax",
     "tabulate",
+    "pydantic",
+    "jax"
 ]
 dynamic = ["version"]
 
@@ -34,7 +34,7 @@ Homepage = "https://github.com/ergodicio/adept"
 Documentation = "https://adept.readthedocs.io/en/latest/"
 
 [project.optional-dependencies]
-cpu = ["jax"]
+cpu = []
 gpu = ["jax[cuda12]"]
 docs = [
     "sphinx",
@@ -42,7 +42,7 @@ docs = [
     "sphinx_copybutton",
     "sphinx-rtd-theme",
     "sphinx-github-style",
-    "adept[cpu]"
+    "adept"
 ]
 dev = [
     "pre-commit",
