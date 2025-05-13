@@ -200,6 +200,7 @@ class ergoExo:
             self.base_tempdir = None
 
         self.ran_setup = False
+        self.cfg = None
 
     def setup(self, cfg: Dict, adept_module: ADEPTModule = None) -> Dict[str, Module]:
         """
@@ -247,6 +248,8 @@ class ergoExo:
                     # cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
                     robust_log_artifacts(td)  # logs the temporary directory to mlflow
+
+        self.cfg = cfg
 
         return modules
 

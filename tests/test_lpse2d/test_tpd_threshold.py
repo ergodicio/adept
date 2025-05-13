@@ -1,13 +1,13 @@
-import os
 from adept.lpse2d import calc_threshold_intensity
 
 import numpy as np
+import pytest
+from jax import devices
 
 
 def run_once(L, Te, I0):
     import yaml
     from adept import ergoExo
-    from adept.utils import export_run
 
     with open("tests/test_lpse2d/configs/tpd.yaml", "r") as fi:
         cfg = yaml.safe_load(fi)
@@ -23,14 +23,12 @@ def run_once(L, Te, I0):
     sol, ppo, mlrunid = exo(modules)
     es = ppo["metrics"]["log10_total_e_sq"]
 
-    export_run(mlrunid)
-
     return es
 
 
 def test_threshold():
-    if "CPU_ONLY" in os.environ:
-        pass
+    if not any(["gpu" == device.platform for device in devices()]):
+        pytest.skip("Takes too long without a GPU")
     else:
         ess = []
         c = 3e8

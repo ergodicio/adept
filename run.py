@@ -11,7 +11,6 @@ config.update("jax_enable_x64", True)
 import yaml
 
 from adept import ergoExo
-from adept.utils import export_run
 
 
 if __name__ == "__main__":

@@ -7,9 +7,6 @@ import jax
 import equinox as eqx
 
 
-from mlflow_export_import.run.export_run import RunExporter
-
-
 def log_params(cfg):
     flattened_dict = dict(flatdict.FlatDict(cfg, delimiter="."))
     num_entries = len(flattened_dict.keys())
@@ -164,17 +161,6 @@ def upload_dir_to_s3(local_directory: str, bucket: str, destination: str, run_id
         fname = f"{prefix}-{run_id}-{step}.txt"
 
     client.upload_file(os.path.join(local_directory, f"ingest-{run_id}.txt"), bucket, fname)
-
-
-def export_run(run_id, prefix="individual", step=0):
-    t0 = time.time()
-    run_exp = RunExporter(mlflow_client=mlflow.MlflowClient())
-    with tempfile.TemporaryDirectory() as td2:
-        run_exp.export_run(run_id, td2)
-        # print(f"Export took {round(time.time() - t0, 2)} s")
-        t0 = time.time()
-        upload_dir_to_s3(td2, "remote-mlflow-staging", f"artifacts/{run_id}", run_id, prefix, step)
-    # print(f"Uploading took {round(time.time() - t0, 2)} s")
 
 
 def robust_log_artifacts(directory, retries=5, delay=5):
