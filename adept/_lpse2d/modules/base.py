@@ -106,7 +106,9 @@ class BaseLPSE2D(ADEPTModule):
     def __call__(self, trainable_modules: Dict, args: Dict = None) -> Dict:
         state = self.state
 
-        if args is None:
+        if args is not None:
+            args = self.args | args
+        else:
             args = self.args
 
         for name, module in trainable_modules.items():
@@ -117,7 +119,7 @@ class BaseLPSE2D(ADEPTModule):
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=self.cfg["grid"]["max_steps"],
+            max_steps=None,  # self.cfg["grid"]["max_steps"],
             dt0=self.cfg["grid"]["dt"],
             y0=state,
             args=args,
