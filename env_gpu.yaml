@@ -24,7 +24,6 @@ dependencies:
       - optax
       - tqdm
       - xarray
-      - mlflow_export_import
       - pint
       - diffrax
       - flatdict
@@ -32,3 +31,4 @@ dependencies:
       - parsl
       - interpax
       - tabulate
+      - scienceplots

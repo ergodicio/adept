@@ -31,7 +31,7 @@ setup(
     url="https://github.com/ergodicio/adept",
     author="Archis Joglekar",
     author_email="archis@ergodic.io",
-    version="0.0.6",
+    version="0.0.7",
     # cmdclass=versioneer.get_cmdclass(),
     packages=find_packages(),
     python_requires=">=3.11",
@@ -53,6 +53,7 @@ setup(
         "interpax",
         "tabulate",
         "pydantic",
+        "scienceplots",
     ],
     extras_require={
         "cpu": ["jax"],
