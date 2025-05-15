@@ -16,3 +16,4 @@ plasmapy
 tabulate
 interpax
 pydantic
+scienceplots
