@@ -181,15 +181,18 @@ class ergoExo:
 
     """
 
-    def __init__(self, mlflow_run_id: str = None, mlflow_nested: bool = None) -> None:
+    def __init__(self, mlflow_run_id: str = None, mlflow_nested: bool = None, parent_run_id: str = None) -> None:
 
         self.mlflow_run_id = mlflow_run_id
         # if mlflow_run_id is not None:
         #     assert self.mlflow_nested is not None
+        self.parent_run_id = None
         if mlflow_nested is None:
             self.mlflow_nested = False
         else:
             self.mlflow_nested = mlflow_nested
+            if mlflow_nested:
+                self.parent_run_id = parent_run_id
 
         if "BASE_TEMPDIR" in os.environ:
             self.base_tempdir = os.environ["BASE_TEMPDIR"]
@@ -228,7 +231,9 @@ class ergoExo:
         with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
             if self.mlflow_run_id is None:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
-                with mlflow.start_run(run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested) as mlflow_run:
+                with mlflow.start_run(
+                    run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested, parent_run_id=self.parent_run_id
+                ) as mlflow_run:
                     modules = self._setup_(cfg, td, adept_module)
                     robust_log_artifacts(td)  # logs the temporary directory to mlflow
                 self.mlflow_run_id = mlflow_run.info.run_id
@@ -236,7 +241,9 @@ class ergoExo:
             else:
                 from adept.utils import get_cfg
 
-                with mlflow.start_run(run_id=self.mlflow_run_id, nested=self.mlflow_nested) as mlflow_run:
+                with mlflow.start_run(
+                    run_id=self.mlflow_run_id, nested=self.mlflow_nested, parent_run_id=self.parent_run_id
+                ) as mlflow_run:
                     # with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
                     # cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
@@ -322,7 +329,7 @@ class ergoExo:
 
         return modules
 
-    def __call__(self, modules: Dict = None, export=True) -> Tuple[Solution, Dict, str]:
+    def __call__(self, modules: Dict = None, args: Dict = None, export=True) -> Tuple[Solution, Dict, str]:
         """
         This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
         ``diffrax.Solution`` object and a dictionary of datasets. It calls the ``self.adept_module``'s ``__call__`` function.
@@ -346,7 +353,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            run_output = filter_jit(self.adept_module.__call__)(modules, None)
+            run_output = filter_jit(self.adept_module.__call__)(modules, args)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
@@ -361,7 +368,9 @@ class ergoExo:
 
         return run_output, post_processing_output, self.mlflow_run_id
 
-    def val_and_grad(self, modules: Dict = None, export=True) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
+    def val_and_grad(
+        self, modules: Dict = None, args: Dict = None, export=True
+    ) -> Tuple[float, Dict, Tuple[Solution, Dict, str]]:
         """
         This function is the value and gradient of the simulation. This is a very similar looking function to the ``__call__`` function but calls the ``self.adept_module.vg`` rather than the ``self.adept_module.__call__``.
 
@@ -382,7 +391,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, None)
+            (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, args)
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})
