@@ -25,6 +25,7 @@ dependencies = [
     "interpax",
     "tabulate",
     "pydantic",
+    "scienceplots",
     "jax"
 ]
 dynamic = ["version"]
