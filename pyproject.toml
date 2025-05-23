@@ -54,19 +54,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["setuptools", "wheel", "versioneer[toml]==0.29"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling", "hatch-vcs", "toml"]
+build-backend = "hatchling.build"
 
-[tool.setuptools.packages.find]
-include = ["adept", "adept.*"]
+[tool.hatch.version]
+source = "vcs"
 
-[tool.versioneer]
-VCS = "git"
-style = "pep440"
-versionfile_source = "adept/_version.py"
-versionfile_build = "adept/_version.py"
-tag_prefix = "v"
-parentdir_prefix = "adept-"
+[tool.hatch.build.hooks.vcs]
+version-file = "adept/_version.py"
 
 [tool.pytest.ini_options]
 # Test type hints w/ typeguard - currently disabled
