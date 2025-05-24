@@ -1,8 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-import yaml
-
 import numpy as np
+import yaml
 from jax import config
 
 from adept import ergoExo
@@ -10,8 +9,8 @@ from adept import ergoExo
 config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
-from jax import numpy as jnp
 import mlflow
+from jax import numpy as jnp
 
 from adept import electrostatic
 
@@ -36,7 +35,7 @@ def _modify_defaults_(defaults, rng):
 
 
 def test_single_resonance():
-    with open("tests/test_tf1d/configs/resonance.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance.yaml") as file:
         defaults = yaml.safe_load(file)
 
     # modify config
@@ -66,7 +65,7 @@ def test_single_resonance():
         print(
             f"Landau Damping rate check \n"
             f"measured: {np.round(measured_damping_rate, 5)}, "
-            f"actual: {np.round(2*actual_damping_rate, 5)}, "
+            f"actual: {np.round(2 * actual_damping_rate, 5)}, "
         )
         mlflow.log_metrics(
             {"actual damping rate": float(actual_damping_rate), "measured damping rate": float(measured_damping_rate)}
