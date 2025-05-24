@@ -1,13 +1,12 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 from functools import partial
-from typing import Dict, Tuple
 
-import numpy as np
-from jax import numpy as jnp, vmap
-from jax.scipy.ndimage import map_coordinates as mp
 import lineax as lx
+import numpy as np
 from interpax import interp2d
+from jax import numpy as jnp
+from jax import vmap
 
 
 class Collisions:
@@ -54,7 +53,7 @@ class Collisions:
 class Krook:
     def __init__(self, cfg):
         self.cfg = cfg
-        f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
+        f_mx = np.exp(-(self.cfg["grid"]["v"][None, :] ** 2.0) / 2.0)
         self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
         self.dv = self.cfg["grid"]["dv"]
 
@@ -152,12 +151,13 @@ class Banks:
     """
     Electron-ion collision operator from Banks et al. [1].
 
-    1. Banks, J. W., Brunner, S., Berger, R. L. & Tran, T. M. Vlasov simulations of electron-ion collision effects on damping of electron plasma waves.
-    Physics of Plasmas 23, 032108 (2016).
+    1. Banks, J. W., Brunner, S., Berger, R. L. & Tran, T. M.
+       Vlasov simulations of electron-ion collision effects on damping of electron plasma waves.
+       Physics of Plasmas 23, 032108 (2016).
 
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.cfg = cfg
         self.v = self.cfg["grid"]["v"]
         # self.dv = self.cfg["grid"]["dv"]
@@ -253,7 +253,6 @@ class Banks:
         return lx.linear_solve(op, rhs, lx.Tridiagonal()).value
 
     def solve_azimuthal(self, f_vxvy, nu, dt):
-
         # interpolate to polar axes
         fth = self.cart2pol(f=f_vxvy).reshape(self.vr.size, self.th.size, order="C")
 

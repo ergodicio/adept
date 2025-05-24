@@ -12,7 +12,6 @@ import yaml
 
 from adept import ergoExo
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automatic Differentiation Enabled Plasma Transport")
     parser.add_argument("--cfg", help="enter path to cfg")
@@ -22,7 +21,7 @@ if __name__ == "__main__":
     exo = ergoExo()
 
     if args.run_id is None:
-        with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml", "r") as fi:
+        with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml") as fi:
             cfg = yaml.safe_load(fi)
         modules = exo.setup(cfg=cfg)
         sol, post_out, run_id = exo(modules)

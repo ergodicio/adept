@@ -1,4 +1,3 @@
-from typing import Dict, Tuple
 from collections import defaultdict
 
 import equinox as eqx
@@ -18,7 +17,7 @@ class Driver(eqx.Module):
         self.xax = xax
         self.yax = yax
 
-    def __call__(self, this_pulse: Dict, current_time: jnp.float64):
+    def __call__(self, this_pulse: dict, current_time: jnp.float64):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
         dw = this_pulse["dw0"]
@@ -73,16 +72,16 @@ class Edfdv(eqx.Module):
     nl: int
     ny: int
     dv: float
-    a1: Dict
-    c1: Dict
-    c2: Dict
-    b1: Dict
-    a2: Dict
-    c3: Dict
-    c4: Dict
-    b2: Dict
+    a1: dict
+    c1: dict
+    c2: dict
+    b1: dict
+    a2: dict
+    c3: dict
+    c4: dict
+    b2: dict
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.v = cfg["grid"]["v"]
         self.nl = cfg["grid"]["nl"]
         self.ny = cfg["grid"]["ny"]
@@ -120,7 +119,7 @@ class Edfdv(eqx.Module):
             jnp.gradient(jnp.concatenate([-f[..., 0:1], f, 0.0 * f[..., 0:1]], axis=-1), axis=-1)[..., 1:-1] / self.dv
         )
 
-    def calc_gh(self, prev_f: Dict) -> Tuple[Dict, Dict]:
+    def calc_gh(self, prev_f: dict) -> tuple[dict, dict]:
         g = {}
         h = {}
         for il, m_dict in prev_f.items():
@@ -212,7 +211,7 @@ class Bdfdv(eqx.Module):
     v: jax.Array
     nl: int
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.v = cfg["grid"]["v"]
         self.nl = cfg["grid"]["nl"]
 
@@ -239,7 +238,7 @@ class Vdfdx(eqx.Module):
     dx: float
     dy: float
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.v = cfg["grid"]["v"]
         self.nl = cfg["grid"]["nl"]
         self.ny = cfg["grid"]["ny"]

@@ -1,7 +1,5 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from functools import partial
-from typing import Dict, Tuple
 
 import numpy as np
 from jax import numpy as jnp
@@ -40,7 +38,7 @@ class Collisions:
 class Krook:
     def __init__(self, cfg):
         self.cfg = cfg
-        f_mx = np.exp(-self.cfg["grid"]["v"][None, :] ** 2.0 / 2.0)
+        f_mx = np.exp(-(self.cfg["grid"]["v"][None, :] ** 2.0) / 2.0)
         self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
         self.dv = self.cfg["grid"]["dv"]
 
@@ -67,7 +65,7 @@ class LenardBernstein:
 
     def __call__(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
 
         :param nu:
@@ -95,7 +93,7 @@ class Dougherty:
 
     def __call__(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
 
         :param nu:

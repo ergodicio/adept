@@ -1,5 +1,5 @@
-from typing import Dict, Tuple
-from jax import numpy as jnp, Array
+from jax import Array
+from jax import numpy as jnp
 
 
 class Light:
@@ -11,7 +11,7 @@ class Light:
         self.dE0x = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
         self.x = cfg["grid"]["x"]
 
-    def laser_update(self, t: float, y: jnp.ndarray, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field at time t
 
@@ -61,7 +61,7 @@ class Light:
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)
 
-    def calc_ey_at_one_point(self, t: float, density: Array, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def calc_ey_at_one_point(self, t: float, density: Array, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function is used to calculate the coherence time of the laser
 

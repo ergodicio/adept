@@ -1,25 +1,24 @@
-from typing import Dict, Tuple
-
 import numpy as np
-from astropy import constants as csts, units as u
+from astropy import constants as csts
+from astropy import units as u
 from astropy.units import Quantity as _Q
-from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
-from jax import numpy as jnp, tree_util as jtu
+from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
+from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule, Stepper
-from adept.vfp1d.vector_field import OSHUN1D
 from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
 from adept.vfp1d.storage import get_save_quantities, post_process
+from adept.vfp1d.vector_field import OSHUN1D
 
 
 class BaseVFP1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 
-    def post_process(self, solver_result: Dict, td: str) -> Dict:
+    def post_process(self, solver_result: dict, td: str) -> dict:
         return post_process(solver_result["solver result"], cfg=self.cfg, td=td, args=self.args)
 
-    def write_units(self) -> Dict:
+    def write_units(self) -> dict:
         ne = u.Quantity(self.cfg["units"]["reference electron density"]).to("1/cm^3")
         ni = ne / self.cfg["units"]["Z"]
         Te = u.Quantity(self.cfg["units"]["reference electron temperature"]).to("eV")
@@ -183,7 +182,7 @@ class BaseVFP1D(ADEPTModule):
 
         self.cfg["grid"] = cfg_grid
 
-    def init_state_and_args(self) -> Dict:
+    def init_state_and_args(self) -> dict:
         """
         This function initializes the state
 
@@ -225,7 +224,7 @@ class BaseVFP1D(ADEPTModule):
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
 
-    def __call__(self, trainable_modules: Dict, args: Dict):
+    def __call__(self, trainable_modules: dict, args: dict):
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],
             solver=self.diffeqsolve_quants["solver"],

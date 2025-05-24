@@ -14,7 +14,7 @@ ADEPT
 
 
 Examples
----------- 
+----------
 Examples can be found in the tests folder or in the adept-notebooks repository - http://github.com/ergodicio/adept-notebooks. Example configuration files are also provided in `configs/`
 
 --------------------------------------------------
@@ -34,7 +34,7 @@ Documentation
 
    This project is under active development.
 
-      
+
 Contributing guide
 ------------------------
 The contributing guide is in development but for now, just make an issue / pull request and we can go from there :)

@@ -1,11 +1,12 @@
-from typing import Dict, Callable
-from collections import defaultdict
 import functools
+from collections import defaultdict
+from collections.abc import Callable
 
 import equinox as eqx
 import jax
-from jax import numpy as jnp
 import numpy as np
+from jax import numpy as jnp
+
 from adept.sh2d.solvers.tridiagonal import TridiagonalSolver
 
 
@@ -14,9 +15,10 @@ class IsotropicCollisions(eqx.Module):
 
     def __init__(self, cfg):
         # self.v = cfg["grid"]["v"]
-        if cfg["terms"]["fokker-planck"]["f00"] == "lenard_bernstein":
-            self.coll_opp = LenardBernstein()
-        elif cfg["terms"]["fokker-planck"]["f00"] == "chang_cooper":
+        # Lenard Bernstein not implemented for sh2
+        # if cfg["terms"]["fokker-planck"]["f00"] == "lenard_bernstein":
+        #     self.coll_opp = LenardBernstein()
+        if cfg["terms"]["fokker-planck"]["f00"] == "chang_cooper":
             self.coll_opp = ChangCooper(cfg)
         elif cfg["terms"]["fokker-planck"]["f00"] == "shkarofsky":
             self.coll_opp = Shkarofsky(cfg)
@@ -152,7 +154,7 @@ class AnisotropicCollisions(eqx.Module):
     nl: int
     dv: float
     dv_sq: float
-    lms: Dict
+    lms: dict
     td_solve: eqx.Module
     Y_dt: float
     calc_i2: Callable

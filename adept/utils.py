@@ -1,10 +1,18 @@
-import flatdict, mlflow, os, boto3, botocore, shutil, pickle, yaml, time, tempfile
+import os
+import pickle
+import shutil
+import time
 from urllib.parse import urlparse
 
-from pint import Quantity
-from mlflow.tracking import MlflowClient
-import jax
+import boto3
+import botocore
 import equinox as eqx
+import flatdict
+import jax
+import mlflow
+import yaml
+from mlflow.tracking import MlflowClient
+from pint import Quantity
 
 
 def log_params(cfg):
@@ -26,7 +34,7 @@ def log_params(cfg):
 
 def get_cfg(artifact_uri, temp_path):
     dest_file_path = download_file("config.yaml", artifact_uri, temp_path)
-    with open(dest_file_path, "r") as file:
+    with open(dest_file_path) as file:
         cfg = yaml.safe_load(file)
 
     return cfg
@@ -68,7 +76,7 @@ def download_file(fname, artifact_uri, destination_path):
         rest_of_path = out.path
         try:
             s3.download_file(bucket_name, rest_of_path[1:], dest_file_path)
-        except botocore.exceptions.ClientError as e:
+        except botocore.exceptions.ClientError:
             return None
     else:
         if "file" in artifact_uri:

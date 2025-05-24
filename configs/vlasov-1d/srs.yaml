@@ -53,7 +53,7 @@ mlflow:
 
 drivers:
   ex: {}
-  ey: 
+  ey:
     '0':
       a0: 1.0
       k0: 1.0
@@ -76,7 +76,7 @@ drivers:
       x_center: 3950.0
       x_rise: 0.1
       x_width: 1.0
-  
+
 diagnostics:
   diag-vlasov-dfdt: False
   diag-fp-dfdt: False
