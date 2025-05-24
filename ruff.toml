@@ -1,0 +1,47 @@
+# Set to the lowest supported Python version.
+target-version = "py311"
+
+# Set the target line length for formatting.
+line-length = 120
+
+# Exclude a variety of commonly ignored directories.
+extend-exclude = [
+    "_version.py"
+]
+
+src = ["."]
+
+[lint]
+# Select and/or ignore rules for linting.
+# Full list of available rules: https://docs.astral.sh/ruff/rules/
+extend-select = [
+    "B", # Flake8 bugbear
+    "E", # Pycodestyle errors
+    "F", # Pyflakes
+    "I", # Isort
+    "NPY", # Numpy
+    "RUF", # Ruff-specific rules
+    "UP", # Pyupgrade
+    "W", # Pycodestyle warnings
+]
+ignore = [
+    "E731", # Do not assign a lambda expression, use a def
+    #"F403", # * import used; unable to detect undefined names
+    #"F405", # x may be undefined, or defined from star imports
+    #"B007", # Loop control variable `i` not used within loop body
+    #"UP006", # tuple, dict instead of Tuple, Dict
+    #"UP015", # Unnecessary mode argument in open
+    #"UP035", # typing.Tuple/Dict deprecated
+]
+
+[lint.extend-per-file-ignores]
+# Allow use of \int string and I variable name in SNB model for now, can address later
+"lagradept/lrh1d/pushers/utils/transport_coeffs.py" = ["E741", "W605"]
+
+[lint.pycodestyle]
+max-line-length = 120
+max-doc-length = 120
+
+[format]
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
