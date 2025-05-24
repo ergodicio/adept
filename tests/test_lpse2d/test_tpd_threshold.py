@@ -1,15 +1,16 @@
-from adept.lpse2d import calc_threshold_intensity
-
 import numpy as np
 import pytest
 from jax import devices
 
+from adept.lpse2d import calc_threshold_intensity
+
 
 def run_once(L, Te, I0):
     import yaml
+
     from adept import ergoExo
 
-    with open("tests/test_lpse2d/configs/tpd.yaml", "r") as fi:
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
     cfg["units"]["laser intensity"] = f"{I0}e14 W/cm^2"
@@ -55,7 +56,8 @@ def test_threshold():
             # max_loc = np.argmax(desdi2)
             # actual = I_scan[1 + max_loc]
         # np.testing.assert_allclose(actual, desired=It, rtol=0.25)  # it is 25% because of the resolution of the scan.
-        # The test itself is not quite working but you can examine the results visually and they make sense, so we are leaving it this way for now
+        # The test itself is not quite working but you can examine the results visually and they make sense,
+        # so we are leaving it this way for now
 
 
 if __name__ == "__main__":

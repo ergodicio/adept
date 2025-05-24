@@ -2,17 +2,11 @@
 #  research@ergodic.io
 import itertools
 
-import yaml, pytest
-
 import numpy as np
-from jax import config
+import pytest
+import yaml
 
-from adept import ergoExo
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
-
-from adept import electrostatic
+from adept import electrostatic, ergoExo
 
 
 def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
@@ -50,7 +44,7 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
     elif (time == "sixth") and (field == "hampere"):
         print("not implemented - skipping test")
     else:
-        with open("tests/test_vlasov1d/configs/resonance.yaml", "r") as file:
+        with open("tests/test_vlasov1d/configs/resonance.yaml") as file:
             defaults = yaml.safe_load(file)
 
         # modify config
@@ -92,5 +86,4 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
 
 
 if __name__ == "__main__":
-
     test_single_resonance(real_or_imag="real")
