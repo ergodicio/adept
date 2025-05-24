@@ -1,15 +1,17 @@
-from typing import Dict
-import os, time, tempfile, yaml
+import os
+import tempfile
+import time
 
 import diffrax
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5, Solution
-import numpy as np
 import equinox as eqx
-
-import mlflow, pint
+import mlflow
+import numpy as np
+import pint
+import yaml
+from diffrax import ODETerm, SaveAt, Solution, diffeqsolve
+from utils import misc
 
 from adept.sh2d.utils import helpers, save
-from utils import misc
 
 
 def write_units(cfg, td):
@@ -71,7 +73,7 @@ def write_units(cfg, td):
     return all_quantities
 
 
-def run(cfg: Dict) -> Solution:
+def run(cfg: dict) -> Solution:
     with tempfile.TemporaryDirectory() as td:
         with open(os.path.join(td, "config.yaml"), "w") as fi:
             yaml.dump(cfg, fi)
@@ -124,7 +126,7 @@ def run(cfg: Dict) -> Solution:
     return result
 
 
-def post_process(result, cfg: Dict, td: str) -> None:
+def post_process(result, cfg: dict, td: str) -> None:
     os.makedirs(os.path.join(td, "binary"))
     os.makedirs(os.path.join(td, "plots"))
 

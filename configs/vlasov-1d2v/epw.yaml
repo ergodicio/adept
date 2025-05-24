@@ -81,7 +81,7 @@ terms:
   edfdv: exponential
   time: sixth
   fokker_planck:
-    nu_ee: 
+    nu_ee:
       is_on: true
       time:
         baseline: 1.0e-4
@@ -99,7 +99,7 @@ terms:
         slope: 0.0
         bump_height: 0.0
         width: 100000.0
-    nu_ei: 
+    nu_ei:
       nr: 384
       nth: 2048
       solver: exact-fft
@@ -120,4 +120,3 @@ terms:
         slope: 0.0
         bump_height: 0.0
         width: 100000.0
-    

@@ -80,7 +80,7 @@ krook:
 
 machine: s-t4
 
-solver: vlasov-2d
+# solver: vlasov-2d
 
 mlflow:
   experiment: ld-2d2v

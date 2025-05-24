@@ -1,16 +1,16 @@
-from typing import Dict
-import json, tempfile
-
-from jax import numpy as jnp, Array, tree_util as jtu
-from jax.random import PRNGKey
+import json
+import tempfile
 
 import equinox as eqx
 import numpy as np
+from jax import Array
+from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from adept.utils import download_from_s3
 
 
-def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
+def load(cfg: dict, DriverModule: eqx.Module) -> eqx.Module:
     filename = cfg["drivers"]["E0"]["file"]
     with tempfile.TemporaryDirectory() as td:
         # download the file if it is on s3
@@ -72,9 +72,9 @@ class UniformDriver(eqx.Module):
     intensities: Array
     delta_omega: Array
     phases: Array
-    envelope: Dict
+    envelope: dict
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__()
         driver_cfg = cfg["drivers"]["E0"]
         self.intensities = jnp.array(np.ones(cfg["drivers"]["E0"]["num_colors"]))
@@ -101,7 +101,7 @@ class UniformDriver(eqx.Module):
             f.write((model_cfg_str + "\n").encode())
             eqx.tree_serialise_leaves(f, self)
 
-    def __call__(self, state: Dict, args: Dict) -> tuple:
+    def __call__(self, state: dict, args: dict) -> tuple:
         intensities = self.intensities / jnp.sum(self.intensities)
         args["drivers"]["E0"] = {
             "delta_omega": self.delta_omega,
@@ -112,9 +112,9 @@ class UniformDriver(eqx.Module):
 
 
 class ArbitraryDriver(UniformDriver):
-    model_cfg: Dict
+    model_cfg: dict
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
         driver_cfg = cfg["drivers"]["E0"]
         self.model_cfg = cfg["drivers"]["E0"]["params"]
@@ -164,7 +164,7 @@ class ArbitraryDriver(UniformDriver):
 
         return filter_spec
 
-    def __call__(self, state: Dict, args: Dict) -> tuple:
+    def __call__(self, state: dict, args: dict) -> tuple:
         intensities = self.scale_intensities(self.intensities)
         intensities = intensities / jnp.sum(intensities)
 
@@ -177,8 +177,7 @@ class ArbitraryDriver(UniformDriver):
 
 
 class GaussianDriver(UniformDriver):
-
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         self.intensities = jnp.array(
@@ -191,8 +190,7 @@ class GaussianDriver(UniformDriver):
 
 
 class LorentzianDriver(UniformDriver):
-
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         self.intensities = jnp.array(

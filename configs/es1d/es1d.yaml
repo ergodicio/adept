@@ -7,7 +7,7 @@ mlflow:
 grid:
     nx: 6144
     xmin: 0.0
-    xmax: 6000 
+    xmax: 6000
     tmin: 0.0
     tmax: 1000.0
 
@@ -95,4 +95,3 @@ drivers:
       "x_w": 800
       "x_r": 80
       "a0": 0.e-2
-

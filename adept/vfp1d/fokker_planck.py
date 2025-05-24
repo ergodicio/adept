@@ -1,9 +1,7 @@
-from typing import Dict
-
-from jax import numpy as jnp, Array
-from jax import vmap
-import numpy as np
 import lineax as lx
+import numpy as np
+from jax import Array, vmap
+from jax import numpy as jnp
 
 
 class LenardBernstein:
@@ -15,7 +13,7 @@ class LenardBernstein:
 
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.cfg = cfg
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
@@ -94,11 +92,12 @@ class FLMCollisions:
     """
     The FLM collision operator is as described in Tzoufras2014
 
-    It also has an implementation of electron-electron hack where the off-diagonal terms in the electron-electron collision
+    It also has an implementation of electron-electron hack
+    where the off-diagonal terms in the electron-electron collision
     operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
         self.Z = cfg["units"]["Z"]
@@ -134,7 +133,7 @@ class FLMCollisions:
             self.b4[il] = (il * (il + 1) / 2 - il) / (2 * il + 1) / (2 * il - 1)
 
     def calc_ros_i(self, flm: Array, power: int) -> Array:
-        """
+        r"""
         Calculates the Rosenbluth I integral
 
         $$4 \pi v^{-i} \int_0^v' [   f(v') v'^(2+i)  ] dv'$$
@@ -147,7 +146,7 @@ class FLMCollisions:
         return 4 * jnp.pi * self.v**-power * jnp.cumsum(self.v[None, :] ** (2.0 + power) * flm, axis=1) * self.dv
 
     def calc_ros_j(self, flm: Array, power: int) -> Array:
-        """
+        r"""
         Calculates the Rosenbluth J integral
 
         $$4 \pi v^{-j} \int_v^\infty [  f(v') v'^(2+j)  ] dv'$$
@@ -161,7 +160,7 @@ class FLMCollisions:
             * self.dv
         )
 
-    def get_ee_offdiagonal_contrib(self, t, y: Array, args: Dict) -> Array:
+    def get_ee_offdiagonal_contrib(self, t, y: Array, args: dict) -> Array:
         """
         The off-diagonal terms in the electron-electron collision operator are calculated explicitly
 
@@ -229,7 +228,8 @@ class FLMCollisions:
 
         The solve has two options
 
-        1. The full ee + ei collision operator is used. This is done by solving the tridiagonal ee + ei implicitly and calculating the
+        1. The full ee + ei collision operator is used.
+        This is done by solving the tridiagonal ee + ei implicitly and calculating the
         off-diagonal terms in the ee collision operator explicitly
         2. The ee collision operator is ignored and the Z* scaling is used instead
 

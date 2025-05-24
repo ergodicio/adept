@@ -1,12 +1,12 @@
-from typing import Dict, Tuple, Callable
 import os
+from collections.abc import Callable
 
-from matplotlib import pyplot as plt
-from diffrax import Solution
-from jax import numpy as jnp
 import numpy as np
 import xarray as xr
 from astropy.units import Quantity as _Q
+from diffrax import Solution
+from jax import numpy as jnp
+from matplotlib import pyplot as plt
 
 
 def calc_EH(this_Z: int, this_wt: float) -> float:
@@ -84,7 +84,7 @@ def calc_EH(this_Z: int, this_wt: float) -> float:
     return eh
 
 
-def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
+def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
     """
     Stores fields to netcdf
 
@@ -116,18 +116,18 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
         for k, v in fields.items():
             units, scalings = get_unit(k, cfg)
 
-            for unit, scaling in zip(units, scalings):
+            for unit, scaling in zip(units, scalings, strict=False):
                 das[f"{prefix}-{k} {unit}"] = xr.DataArray(v * scaling, coords=(("t (ps)", tax), ("x (um)", xax)))
 
     das[f"{prefix}-kappa_c"] = calc_kappa(cfg, das[f"{prefix}-T a.u."], das[f"{prefix}-q a.u."], das[f"{prefix}-n n_c"])
 
     fields_xr = xr.Dataset(das)
-    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(tax[-1],4)}.nc"))
+    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(tax[-1], 4)}.nc"))
 
     return fields_xr
 
 
-def calc_kappa(cfg: Dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> xr.DataArray:
+def calc_kappa(cfg: dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> xr.DataArray:
     """
     This rescales using the EH tau ei.
 
@@ -135,7 +135,9 @@ def calc_kappa(cfg: Dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> 
 
     It needs a Z dependence which those other two do not have except maybe through the log Lambda.
 
-    1. Epperlein, E. M. & Haines, M. G. Plasma transport coefficients in a magnetic field by direct numerical solution of the Fokker–Planck equation. Physics of Fluids 29, 1029 (1986).
+    1. Epperlein, E. M. & Haines, M. G.
+       Plasma transport coefficients in a magnetic field by direct numerical solution of the Fokker–Planck equation.
+       Physics of Fluids 29, 1029 (1986).
 
     """
 
@@ -150,7 +152,7 @@ def calc_kappa(cfg: Dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> 
     return xr.DataArray(kappa, coords=(("t (ps)", T.coords["t (ps)"].data), ("x (um)", T.coords["x (um)"].data)))
 
 
-def get_unit(k, cfg: Dict = None) -> Tuple[str, float]:
+def get_unit(k, cfg: dict | None = None) -> tuple[str, float]:
     """
     Returns the units and scalings for a given key
 
@@ -169,7 +171,7 @@ def get_unit(k, cfg: Dict = None) -> Tuple[str, float]:
         return ("a.u.",), (1.0,)
 
 
-def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
+def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     """
     Stores f to netcdf
 
@@ -196,7 +198,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     return f_store
 
 
-def post_process(soln: Solution, cfg: Dict, td: str, args: Dict = None) -> Dict:
+def post_process(soln: Solution, cfg: dict, td: str, args: dict | None = None) -> dict:
     """
     Post-processing function
 
@@ -243,7 +245,6 @@ def post_process(soln: Solution, cfg: Dict, td: str, args: Dict = None) -> Dict:
                 plt.close()
 
         elif k.startswith("default"):
-
             tax = soln.ts["default"] * cfg["units"]["derived"]["tp0"].to("ps").value
             scalars_xr = xr.Dataset(
                 {k: xr.DataArray(v, coords=(("t (ps)", tax),)) for k, v in soln.ys["default"].items()}
@@ -279,7 +280,7 @@ def post_process(soln: Solution, cfg: Dict, td: str, args: Dict = None) -> Dict:
     return {"fields": fields_xr, "dists": f_xr, "metrics": metrics}
 
 
-def get_field_save_func(cfg: Dict, k: str) -> Callable:
+def get_field_save_func(cfg: dict, k: str) -> Callable:
     """
     This function returns the field save function
 
@@ -314,7 +315,7 @@ def get_field_save_func(cfg: Dict, k: str) -> Callable:
     return fields_save_func
 
 
-def get_dist_save_func(cfg: Dict, k: str) -> Callable:
+def get_dist_save_func(cfg: dict, k: str) -> Callable:
     """
     This function returns the distribution save function
 
@@ -335,7 +336,7 @@ def get_dist_save_func(cfg: Dict, k: str) -> Callable:
     return dist_save_func
 
 
-def get_save_quantities(cfg: Dict) -> Dict:
+def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
 
@@ -344,7 +345,6 @@ def get_save_quantities(cfg: Dict) -> Dict:
     """
 
     for k in cfg["save"].keys():  # this can be fields or electron or scalar?
-
         tmin = (_Q(cfg["save"][k]["t"]["tmin"]) / cfg["units"]["derived"]["tp0"]).to("").value
         tmax = (_Q(cfg["save"][k]["t"]["tmax"]) / cfg["units"]["derived"]["tp0"]).to("").value
         cfg["save"][k]["t"]["ax"] = jnp.linspace(tmin, tmax, cfg["save"][k]["t"]["nt"])
@@ -360,7 +360,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_default_save_func(cfg: Dict) -> Callable:
+def get_default_save_func(cfg: dict) -> Callable:
     """
     This function returns the default save function
 

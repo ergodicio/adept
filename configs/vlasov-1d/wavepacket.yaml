@@ -59,7 +59,7 @@ save:
 diagnostics:
   diag-vlasov-dfdt: False
   diag-fp-dfdt: False
-  
+
 terms:
   field: poisson
   edfdv: cubic-spline

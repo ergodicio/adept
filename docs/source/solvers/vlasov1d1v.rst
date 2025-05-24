@@ -8,7 +8,7 @@ We solve the following coupled set of partial differential equations
 .. math::
     \frac{\partial f}{\partial t} + v \frac{\partial f}{\partial x} + \frac{q}{m} (E + E_D) \frac{\partial f}{\partial v} &= \nu \partial_v (v f + v_0^2 \partial_v f)
 
-    \partial_x E &= 1 - \int f dv 
+    \partial_x E &= 1 - \int f dv
 
 where :math:`f` is the distribution function, :math:`E` is the electric field, :math:`C(f)` is the collision operator, :math:`q` is the charge, :math:`m` is the mass, and :math:`v` is the velocity.
 
@@ -25,10 +25,10 @@ how the equations themselves are solved and what the different options are. We l
 
 Velocity advection
 ^^^^^^^^^^^^^^^^^^^^^^^^
-1. ``exponential`` - This solver (incorrectly) assumes periodic boundaries in the velocity direction and uses a direct exponential solve such that 
+1. ``exponential`` - This solver (incorrectly) assumes periodic boundaries in the velocity direction and uses a direct exponential solve such that
 
 .. math::
-    f^{n+1} = f^n \times \exp(A*dt) 
+    f^{n+1} = f^n \times \exp(A*dt)
 
 where :math:`A` is the advection operator. This is a much faster solver than the cubic-spline solver, but is less accurate. Use this if you are confident that the distribution function will be well behaved in the tails
 
@@ -50,7 +50,7 @@ Field solver
 Collisions
 ^^^^^^^^^^^^^^^^^^^^^^^^
 1. ``none`` - No collisions are included in the simulation
-2. ``lenard-bernstein`` - This solver uses the Lenard-Bernstein collision operator to include collisions in the simulation. 
+2. ``lenard-bernstein`` - This solver uses the Lenard-Bernstein collision operator to include collisions in the simulation.
 3. ``daugherty`` - This solver uses the Daugherty collision operator to include collisions in the simulation.
 
 

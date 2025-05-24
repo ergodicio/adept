@@ -1,6 +1,7 @@
-from typing import Dict, Callable
-import jax.numpy as jnp
+from collections.abc import Callable
+
 import equinox as eqx
+import jax.numpy as jnp
 
 from adept._tf1d.solvers import pushers
 
@@ -17,8 +18,8 @@ class VF(eqx.Module):
     :return:
     """
 
-    cfg: Dict
-    pusher_dict: Dict
+    cfg: dict
+    pusher_dict: dict
     push_driver: Callable
     poisson_solver: Callable
 
@@ -42,7 +43,7 @@ class VF(eqx.Module):
         #     self.wave_solver = pushers.WaveSolver(cfg["grid"]["c"], cfg["grid"]["dx"], cfg["grid"]["dt"])
         self.poisson_solver = pushers.PoissonSolver(cfg["grid"]["one_over_kx"])
 
-    def __call__(self, t: float, y: Dict, args: Dict):
+    def __call__(self, t: float, y: dict, args: dict):
         """
         This function is used by the time integrators specified in diffrax
 

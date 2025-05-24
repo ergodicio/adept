@@ -1,17 +1,11 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-import yaml, pytest
-
 import numpy as np
-from jax import config
-
-from adept import ergoExo
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
-
+import pytest
+import yaml
 from jax import numpy as jnp
-from adept import electrostatic
+
+from adept import electrostatic, ergoExo
 
 
 def _modify_defaults_(defaults, rng, gamma):
@@ -35,7 +29,7 @@ def _modify_defaults_(defaults, rng, gamma):
 
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
 def test_single_resonance(gamma):
-    with open("tests/test_tf1d/configs/resonance.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance.yaml") as file:
         defaults = yaml.safe_load(file)
 
     # modify config
@@ -68,9 +62,7 @@ def test_single_resonance(gamma):
     env, freq = electrostatic.get_nlfs(ek1, result.ts[1] - result.ts[0])
     frslc = slice(-80, -10)
     print(
-        f"Frequency check \n"
-        f"measured: {np.round(np.mean(freq[frslc]), 5)}, "
-        f"desired: {np.round(actual_resonance, 5)}, "
+        f"Frequency check \nmeasured: {np.round(np.mean(freq[frslc]), 5)}, desired: {np.round(actual_resonance, 5)}, "
     )
     measured_resonance = np.mean(freq[frslc])
     np.testing.assert_almost_equal(measured_resonance, actual_resonance, decimal=2)

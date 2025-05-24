@@ -6,11 +6,11 @@ There is a `mode` option in the config file which tells `ADEPT` which solver to 
 
 The normalized 1D Fluid-Poisson system is given by:
 
-.. note:: 
+.. note::
 
     Work in progress
 
-.. math:: 
+.. math::
 
     \partial_t n_e + \partial_x (n_e u_e) = 0
 
@@ -23,11 +23,11 @@ The ions are static but all the functionality is in place if someone wants to ge
 **Things you might care about**
 
 1. Infinite length (Single mode) plasma waves (Landau damping, trapping)
-   
+
 2. Finite length plasma waves (everything in 1. + Wavepackets)
-   
+
 3. Wave dynamics on density gradients (2 + density gradients)
-   
+
 4. Machine-learned fluid closures
 
 
@@ -39,9 +39,9 @@ Things you can change in the config file
 
 Density profile
 ^^^^^^^^^^^^^^^
-Uniform is easy. For a non-uniform profile, you have to specify the parameters of the profile. 
+Uniform is easy. For a non-uniform profile, you have to specify the parameters of the profile.
 
-The density profile can be parameterized as a sinusoidal perturbation or a tanh flat top. The parameters to the tanh flat-top are referred to in 
+The density profile can be parameterized as a sinusoidal perturbation or a tanh flat top. The parameters to the tanh flat-top are referred to in
 
 Ponderomotive Driver
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
