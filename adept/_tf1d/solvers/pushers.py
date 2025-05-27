@@ -1,12 +1,10 @@
-from typing import Dict
-
-import jax
-from jax import numpy as jnp
-import numpy as np
 import equinox as eqx
+import jax
+import numpy as np
+from jax import numpy as jnp
 
-from adept.electrostatic import get_complex_frequency_table
 from adept._base_ import get_envelope
+from adept.electrostatic import get_complex_frequency_table
 
 
 class WaveSolver(eqx.Module):
@@ -85,7 +83,7 @@ class Driver(eqx.Module):
     def __init__(self, xax):
         self.xax = xax
 
-    def __call__(self, this_pulse: Dict, current_time: float):
+    def __call__(self, this_pulse: dict, current_time: float):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
         dw = this_pulse["dw0"]
@@ -280,10 +278,12 @@ class EnergyStepper(eqx.Module):
 
 class ParticleTrapper(eqx.Module):
     """
-    This is the particle trapper module introduced in ref. [1]. Particle trapping enables the local reduction of damping. It should also influence many other quantities
-    but those are not implemented yet.
+    This is the particle trapper module introduced in ref. [1].
+    Particle trapping enables the local reduction of damping.
+    It should also influence many other quantities but those are not implemented yet.
 
-    1. Joglekar, A. S. & Thomas, A. G. R. Machine learning of hidden variables in multiscale fluid simulation. Mach. Learn.: Sci. Technol. 4, 035049 (2023).
+    1. Joglekar, A. S. & Thomas, A. G. R. Machine learning of hidden variables in multiscale fluid simulation.
+       Mach. Learn.: Sci. Technol. 4, 035049 (2023).
 
     """
 

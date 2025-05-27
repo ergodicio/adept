@@ -9,7 +9,7 @@ These equations model the evolution and interaction of the complex envelopes of 
 
 Note on pump depletion
 ^^^^^^^^^^^^^^^^^^^^^^^^
-One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. We do not currently have this implemented, so we have light waves that behave as external drivers for the plasma waves and we only model the plasma wave response. 
+One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. We do not currently have this implemented, so we have light waves that behave as external drivers for the plasma waves and we only model the plasma wave response.
 This approach is adequate for modeling laser plasma instabilities below the absolute instability threshold.
 
 Electron Plasma Waves

@@ -1,17 +1,16 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict
 import os
-
 from time import time
 
-
+import mlflow
 import numpy as np
-import xarray, mlflow, pint
-from jax import numpy as jnp
-from scipy.special import gamma
+import pint
+import xarray
 from diffrax import Solution
+from jax import numpy as jnp
 from matplotlib import pyplot as plt
+from scipy.special import gamma
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.storage import store_f, store_fields
@@ -189,8 +188,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     return n_prof_total, f
 
 
-def post_process(result: Solution, cfg: Dict, td: str, args: Dict):
-
+def post_process(result: Solution, cfg: dict, td: str, args: dict):
     t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)

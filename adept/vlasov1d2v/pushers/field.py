@@ -1,8 +1,5 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict
-from functools import partial
-
 
 from jax import numpy as jnp
 
@@ -14,7 +11,7 @@ class Driver:
         self.xax = xax
         self.driver_key = driver_key
 
-    def get_this_pulse(self, this_pulse: Dict, current_time: jnp.float64):
+    def get_this_pulse(self, this_pulse: dict, current_time: jnp.float64):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
         dw = this_pulse["dw0"]
@@ -44,7 +41,7 @@ class Driver:
 
 class WaveSolver:
     def __init__(self, c: jnp.float64, dx: jnp.float64, dt: jnp.float64):
-        super(WaveSolver, self).__init__()
+        super().__init__()
         self.dx = dx
         self.c = c
         self.c_sq = c**2.0
@@ -106,7 +103,7 @@ class WaveSolver:
 
 class SpectralPoissonSolver:
     def __init__(self, ion_charge, one_over_kx, dv):
-        super(SpectralPoissonSolver, self).__init__()
+        super().__init__()
         self.ion_charge = ion_charge
         self.one_over_kx = one_over_kx
         self.dv = dv
@@ -120,7 +117,7 @@ class SpectralPoissonSolver:
 
 class AmpereSolver:
     def __init__(self, cfg):
-        super(AmpereSolver, self).__init__()
+        super().__init__()
         self.vx = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
 
@@ -150,7 +147,7 @@ class HampereSolver:
 
 class ElectricFieldSolver:
     def __init__(self, cfg):
-        super(ElectricFieldSolver, self).__init__()
+        super().__init__()
 
         if cfg["terms"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(

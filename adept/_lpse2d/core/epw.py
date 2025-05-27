@@ -1,14 +1,13 @@
-from typing import Dict, Tuple
 import jax
-from jax import numpy as jnp, Array
 import numpy as np
+from jax import Array
+from jax import numpy as jnp
+
 from adept._lpse2d.core.driver import Driver
-from adept._lpse2d.core.trapper import ParticleTrapper
 
 
 class SpectralPotential:
     def __init__(self, cfg) -> None:
-
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
         self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
@@ -38,7 +37,7 @@ class SpectralPotential:
         # )
         self.tpd_const = 1j * self.e / (8 * self.wp0 * self.me)
 
-    def calc_fields_from_phi(self, phi: Array) -> Tuple[Array, Array]:
+    def calc_fields_from_phi(self, phi: Array) -> tuple[Array, Array]:
         """
         Calculates ex(x, y) and ey(x, y) from phi.
 
@@ -77,7 +76,7 @@ class SpectralPotential:
 
         return phi
 
-    def tpd(self, t: float, phi: Array, ey: Array, args: Dict) -> Array:
+    def tpd(self, t: float, phi: Array, ey: Array, args: dict) -> Array:
         """
         Calculates the two plasmon decay term
 
@@ -107,7 +106,7 @@ class SpectralPotential:
         random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
         return jnp.fft.ifft2(random_amps * jnp.exp(1j * random_phases) * self.low_pass_filter)
 
-    def __call__(self, t: float, y: Dict[str, Array], args: Dict) -> Array:
+    def __call__(self, t: float, y: dict[str, Array], args: dict) -> Array:
         phi = y["epw"]
         E0 = y["E0"]
         background_density = y["background_density"]

@@ -1,12 +1,12 @@
-from typing import Dict
+import os
 
-import os, xarray as xr
-from flatdict import FlatDict
+import xarray as xr
 from diffrax import Solution
+from flatdict import FlatDict
 from matplotlib import pyplot as plt
 
 
-def save_arrays(result: Solution, td: str, cfg: Dict, label: str) -> xr.Dataset:
+def save_arrays(result: Solution, td: str, cfg: dict, label: str) -> xr.Dataset:
     """
     This function saves the arrays to an xarray netcdf file
 
@@ -27,7 +27,7 @@ def save_arrays(result: Solution, td: str, cfg: Dict, label: str) -> xr.Dataset:
     return saved_arrays_xr
 
 
-def plot_xrs(which: str, td: str, xrs: Dict):
+def plot_xrs(which: str, td: str, xrs: dict):
     """
     This function plots the xarray datasets
 
@@ -61,7 +61,7 @@ def plot_xrs(which: str, td: str, xrs: Dict):
                 ax.grid()
                 fig.savefig(
                     os.path.join(
-                        td, "plots", which, k.split("-")[0], f"hue", f"{'-'.join(k.split('-')[1:])}-log-{log}.png"
+                        td, "plots", which, k.split("-")[0], "hue", f"{'-'.join(k.split('-')[1:])}-log-{log}.png"
                     ),
                     bbox_inches="tight",
                 )

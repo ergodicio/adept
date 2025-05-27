@@ -15,13 +15,13 @@ If you wanted to create your own differentiable program that uses the ADEPT solv
    exo = ergoExo()
    modules = exo.setup(cfg)
 
-and 
+and
 
 .. code-block:: python
 
    sol, ppo, run_id = exo(modules)
 
-or 
+or
 
 .. code-block:: python
 

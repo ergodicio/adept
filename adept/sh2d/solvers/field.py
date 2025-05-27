@@ -1,7 +1,7 @@
-import jax
-from jax import numpy as jnp
 import equinox as eqx
+import jax
 import numpy as np
+from jax import numpy as jnp
 
 
 class SpectralPoissonSolver(eqx.Module):
@@ -12,7 +12,7 @@ class SpectralPoissonSolver(eqx.Module):
     v: jax.Array
 
     def __init__(self, ion_charge, one_over_kx, one_over_ky, dv, v):
-        super(SpectralPoissonSolver, self).__init__()
+        super().__init__()
         self.ion_charge = jnp.array(ion_charge)
         self.one_over_kx = jnp.array(one_over_kx)
         self.one_over_ky = jnp.array(one_over_ky)
@@ -48,7 +48,7 @@ class AmpereSolver(eqx.Module):
     v: jax.Array
 
     def __init__(self, cfg):
-        super(AmpereSolver, self).__init__()
+        super().__init__()
         self.dv = cfg["grid"]["dv"]
         self.v = cfg["grid"]["v"]
 

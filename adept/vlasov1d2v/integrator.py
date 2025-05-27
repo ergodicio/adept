@@ -1,12 +1,8 @@
-from typing import Tuple
-
-from functools import partial
-
-from jax import numpy as jnp
 import diffrax
+from jax import numpy as jnp
 
-from adept.vlasov1d2v.pushers import field, fokker_planck, vlasov
 from adept._base_ import get_envelope
+from adept.vlasov1d2v.pushers import field, fokker_planck, vlasov
 
 
 class Stepper(diffrax.Euler):
@@ -53,7 +49,7 @@ class LeapfrogIntegrator(TimeIntegrator):
         self.dt = cfg["grid"]["dt"]
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
 
-    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def __call__(self, f, a, dex_array, prev_ex) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         f_after_v = self.vdfdx(f=f, dt=self.dt)
         if self.field_solve.hampere:
             f_for_field = f
@@ -103,7 +99,7 @@ class SixthOrderHamIntegrator(TimeIntegrator):
             ]
         )
 
-    def __call__(self, f, a, dex_array, prev_ex) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def __call__(self, f, a, dex_array, prev_ex) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[0] + self_consistent_ex
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
@@ -169,7 +165,7 @@ class VlasovPoissonFokkerPlanck:
         nu_ee: jnp.ndarray,
         nu_ei: jnp.ndarray,
         nu_K: jnp.ndarray,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         e, f = self.vlasov_poisson(f, a, dex_array, prev_ex)
         f = self.fp(nu_ee, nu_ei, nu_K, f, dt=self.dt)
 

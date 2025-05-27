@@ -1,16 +1,11 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-import yaml, pytest, os
-
-import numpy as np
-from jax import config
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
 
 import mlflow
+import numpy as np
 import pytest
+import yaml
 from jax import devices
 
 from adept import electrostatic
@@ -35,12 +30,11 @@ def _modify_defaults_(defaults, rng, real_or_imag):
 
 @pytest.mark.parametrize("real_or_imag", ["real", "imag"])
 def test_single_resonance(real_or_imag):
-
     if not any(["gpu" == device.platform for device in devices()]):
         pytest.skip("Skipping test on CPU")
 
     else:
-        with open("tests/test_vlasov2d/configs/damping.yaml", "r") as file:
+        with open("tests/test_vlasov2d/configs/damping.yaml") as file:
             defaults = yaml.safe_load(file)
 
         # modify config
@@ -53,7 +47,8 @@ def test_single_resonance(real_or_imag):
         mlflow.set_experiment(mod_defaults["mlflow"]["experiment"])
         # modify config
         with mlflow.start_run(run_name=mod_defaults["mlflow"]["run"], log_system_metrics=True) as mlflow_run:
-            result, datasets = run(mod_defaults)
+            # This will fail as run not defined
+            result, datasets = run(mod_defaults)  # noqa: F821
             efs = result.ys["fields"]["ex"]
             ek1 = 2.0 / mod_defaults["grid"]["nx"] * np.fft.fft2(efs, axes=(1, 2))[:, 1, 0]
             ek1_mag = np.abs(ek1)

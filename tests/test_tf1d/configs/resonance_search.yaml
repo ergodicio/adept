@@ -32,7 +32,7 @@ save:
     kx:
       kxmin: 0.0
       kxmax: 0.3
-      nkx: 2 
+      nkx: 2
 
 
 physics:

@@ -1,5 +1,4 @@
 import os
-from typing import Dict, Tuple
 from functools import partial
 
 import matplotlib.pyplot as plt
@@ -7,17 +6,17 @@ import scienceplots
 
 plt.style.use(["science", "grid", "no-latex"])
 
-from jax import Array, numpy as jnp
+import interpax
 import numpy as np
 import xarray as xr
-import interpax
-
 from astropy.units import Quantity as _Q
+from jax import Array
+from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 
 
-def write_units(cfg: Dict) -> Dict:
+def write_units(cfg: dict) -> dict:
     """
     Write the units to a file
 
@@ -151,7 +150,7 @@ def calc_threshold_intensity(Te: float, Ln: float, w0: float) -> float:
     return I_threshold
 
 
-def get_derived_quantities(cfg: Dict) -> Dict:
+def get_derived_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -220,7 +219,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_solver_quantities(cfg: Dict) -> Dict:
+def get_solver_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are arrays
 
@@ -314,7 +313,7 @@ def get_solver_quantities(cfg: Dict) -> Dict:
     return cfg_grid
 
 
-def get_density_profile(cfg: Dict) -> Array:
+def get_density_profile(cfg: dict) -> Array:
     """
     Helper function for initializing the density profile
 
@@ -430,10 +429,10 @@ def plot_kt(kfields, td):
     k_min = -2.5
     k_max = 2.5
 
-    ikx_min = np.argmin(np.abs(kfields.coords["kx ($kc\omega_0^{-1}$)"].data - k_min))
-    ikx_max = np.argmin(np.abs(kfields.coords["kx ($kc\omega_0^{-1}$)"].data - k_max))
-    iky_min = np.argmin(np.abs(kfields.coords["ky ($kc\omega_0^{-1}$)"].data - k_min))
-    iky_max = np.argmin(np.abs(kfields.coords["ky ($kc\omega_0^{-1}$)"].data - k_max))
+    ikx_min = np.argmin(np.abs(kfields.coords[r"kx ($kc\omega_0^{-1}$)"].data - k_min))
+    ikx_max = np.argmin(np.abs(kfields.coords[r"kx ($kc\omega_0^{-1}$)"].data - k_max))
+    iky_min = np.argmin(np.abs(kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data - k_min))
+    iky_max = np.argmin(np.abs(kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data - k_max))
 
     kx_slice = slice(ikx_min, ikx_max)
     ky_slice = slice(iky_min, iky_max)
@@ -457,8 +456,7 @@ def plot_kt(kfields, td):
         # kx = kfields.coords["kx"].data
 
 
-def post_process(result, cfg: Dict, td: str) -> Tuple[xr.Dataset, xr.Dataset]:
-
+def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     os.makedirs(os.path.join(td, "binary"))
 
     kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
@@ -490,7 +488,6 @@ def make_series_xarrays(cfg, this_t, state, td):
 
 
 def make_field_xarrays(cfg, this_t, state, td):
-
     fld_save = cfg["save"]["fields"]
     if "x" in fld_save:
         kx = fld_save["kx"]
@@ -522,15 +519,15 @@ def make_field_xarrays(cfg, this_t, state, td):
 
     phi_k = xr.DataArray(
         np.fft.fftshift(phi_k_np, axes=(1, 2)),
-        coords=(tax_tuple, ("kx ($kc\omega_0^{-1}$)", shift_kx), ("ky ($kc\omega_0^{-1}$)", shift_ky)),
+        coords=(tax_tuple, (r"kx ($kc\omega_0^{-1}$)", shift_kx), (r"ky ($kc\omega_0^{-1}$)", shift_ky)),
     )
     ex_k = xr.DataArray(
         np.fft.fftshift(ex_k_np, axes=(1, 2)),
-        coords=(tax_tuple, ("kx ($kc\omega_0^{-1}$)", shift_kx), ("ky ($kc\omega_0^{-1}$)", shift_ky)),
+        coords=(tax_tuple, (r"kx ($kc\omega_0^{-1}$)", shift_kx), (r"ky ($kc\omega_0^{-1}$)", shift_ky)),
     )
     ey_k = xr.DataArray(
         np.fft.fftshift(ey_k_np, axes=(1, 2)),
-        coords=(tax_tuple, ("kx ($kc\omega_0^{-1}$)", shift_kx), ("ky ($kc\omega_0^{-1}$)", shift_ky)),
+        coords=(tax_tuple, (r"kx ($kc\omega_0^{-1}$)", shift_kx), (r"ky ($kc\omega_0^{-1}$)", shift_ky)),
     )
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
     ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
@@ -552,7 +549,7 @@ def make_field_xarrays(cfg, this_t, state, td):
     return kfields, fields
 
 
-def get_save_quantities(cfg: Dict) -> Dict:
+def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
 
@@ -631,7 +628,6 @@ def get_save_quantities(cfg: Dict) -> Dict:
 
 
 def get_default_save_func(cfg):
-
     def save_func(t, y, args):
         phi_k = jnp.fft.fft2(y["epw"].view(jnp.complex128), norm="ortho")
         ex = -1j * cfg["grid"]["kx"][:, None] * phi_k

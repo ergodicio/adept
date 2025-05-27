@@ -1,7 +1,7 @@
 solver: es-1d
 
 mlflow:
-  experiment: es1d-epw-test 
+  experiment: es1d-epw-test
   run: test
 
 models:

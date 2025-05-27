@@ -3,12 +3,11 @@
 
 from jax import numpy as jnp
 from jax.lax import scan
-import equinox as eqx
 
 
 class TridiagonalSolver:
     def __init__(self, cfg):
-        super(TridiagonalSolver, self).__init__()
+        super().__init__()
         self.num_unroll = 128  # cfg["solver"]["num_unroll"]
 
     @staticmethod

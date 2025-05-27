@@ -1,20 +1,14 @@
-from typing import Dict
-
-
-import os
-
 import diffrax
-import numpy as np
 import equinox as eqx
-from equinox.internal import ω
+import numpy as np
 from diffrax import Euler
-
+from equinox.internal import ω
 from jax import numpy as jnp
 
-from adept.sh2d.solvers import vlasov, field, fokker_planck
+from adept.sh2d.solvers import field, fokker_planck, vlasov
 
 
-def get_derived_quantities(cfg_grid: Dict) -> Dict:
+def get_derived_quantities(cfg_grid: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -39,7 +33,7 @@ def get_derived_quantities(cfg_grid: Dict) -> Dict:
     return cfg_grid
 
 
-def get_solver_quantities(cfg_grid: Dict) -> Dict:
+def get_solver_quantities(cfg_grid: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are arrays
 
@@ -96,7 +90,7 @@ def get_solver_quantities(cfg_grid: Dict) -> Dict:
     return cfg_grid
 
 
-def get_save_quantities(cfg: Dict) -> Dict:
+def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
 
@@ -111,7 +105,7 @@ def get_save_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def init_state(cfg: Dict) -> tuple[Dict, Dict]:
+def init_state(cfg: dict) -> tuple[dict, dict]:
     """
     This function initializes the state
 
@@ -123,7 +117,7 @@ def init_state(cfg: Dict) -> tuple[Dict, Dict]:
     ny = cfg["grid"]["ny"]
     nv = cfg["grid"]["nv"]
     norm = 1.0 / (
-        4.0 * jnp.pi * cfg["grid"]["dv"] * jnp.sum(cfg["grid"]["v"] ** 2.0 * jnp.exp(-cfg["grid"]["v"] ** 2.0 / 2.0))
+        4.0 * jnp.pi * cfg["grid"]["dv"] * jnp.sum(cfg["grid"]["v"] ** 2.0 * jnp.exp(-(cfg["grid"]["v"] ** 2.0) / 2.0))
     )
 
     density_profile = jnp.ones((nx, ny))  # cfg["profile"]["density"]
@@ -134,7 +128,7 @@ def init_state(cfg: Dict) -> tuple[Dict, Dict]:
     state["flm"][0][0] = (
         norm
         * density_profile[:, :, None]
-        * jnp.exp(-cfg["grid"]["v"][None, None, :] ** 2.0 / 2.0 / temperature_profile[:, :, None])
+        * jnp.exp(-(cfg["grid"]["v"][None, None, :] ** 2.0) / 2.0 / temperature_profile[:, :, None])
     )
     state["flm"][0][0] = jnp.array(state["flm"][0][0], dtype=jnp.complex128).view(dtype=jnp.float64)
 
@@ -157,7 +151,7 @@ class FokkerPlanckVectorField(eqx.Module):
     :return:
     """
 
-    cfg: Dict
+    cfg: dict
     fp_flm: eqx.Module
     fp_f00: eqx.Module
 
@@ -167,7 +161,7 @@ class FokkerPlanckVectorField(eqx.Module):
         self.fp_flm = fokker_planck.AnisotropicCollisions(cfg)
         self.fp_f00 = fokker_planck.IsotropicCollisions(cfg)
 
-    def __call__(self, t: float, y: Dict, args: Dict):
+    def __call__(self, t: float, y: dict, args: dict):
         """
         :param t:
         :param y:
@@ -202,7 +196,7 @@ class VlasovVectorField(eqx.Module):
     :return:
     """
 
-    cfg: Dict
+    cfg: dict
 
     push_vlasov: eqx.Module
     push_driver: eqx.Module
@@ -224,7 +218,7 @@ class VlasovVectorField(eqx.Module):
         # )
         self.ampere_solver = field.AmpereSolver(cfg)
 
-    def __call__(self, t: float, y: Dict, args: Dict):
+    def __call__(self, t: float, y: dict, args: dict):
         """
         This function is used by the time integrators specified in diffrax
 
@@ -316,5 +310,5 @@ class ImplicitEStepper(Euler):
         # solve 3x3 systems
         # y["e"] = implicit_e_solve.vf_prod()
 
-        dense_info = dict(y0=y0, y1=y1)
-        return y1, None, dense_info, None, diffrax.RESULTS.successful
+        dense_info = dict(y0=y0, y1=y_after_vlasov_part_a)
+        return y_after_vlasov_part_a, None, dense_info, None, diffrax.RESULTS.successful

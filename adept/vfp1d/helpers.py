@@ -1,13 +1,13 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict, Tuple
 
 import numpy as np
-from jax import Array
-from scipy.special import gamma
 from astropy.units import Quantity as _Q
+from jax import Array
 from jax import numpy as jnp
+from scipy.special import gamma
+
 from adept._base_ import get_envelope
 
 # ideally this should be passed as as an argument and not re-initialised
@@ -16,7 +16,9 @@ from adept.vfp1d.vector_field import OSHUN1D
 
 def gamma_3_over_m(m: float) -> Array:
     """
-    Interpolates gamma(3/m) function from a previous calculation. This is used in the super gaussian initialization scheme
+    Interpolates gamma(3/m) function from a previous calculation.
+
+    This is used in the super gaussian initialization scheme
 
     :param m: float between 2 and 5
     :return: Array
@@ -27,7 +29,9 @@ def gamma_3_over_m(m: float) -> Array:
 
 def gamma_5_over_m(m: float) -> Array:
     """
-    Interpolates gamma(5/m) function from a previous calculation. This is used in the super gaussian initialization scheme
+    Interpolates gamma(5/m) function from a previous calculation.
+
+    This is used in the super gaussian initialization scheme
 
     :param m: float between 2 and 5
     :return: Array
@@ -35,7 +39,7 @@ def gamma_5_over_m(m: float) -> Array:
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
-def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) -> Tuple[float, float]:
+def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int, ion_species: str) -> tuple[float, float]:
     """
     Calculate the Coulomb logarithm
 
@@ -65,7 +69,7 @@ def calc_logLambda(cfg: Dict, ne: float, Te: float, Z: int, ion_species: str) ->
 
         else:
             raise NotImplementedError("This logLambda method is not implemented")
-    elif isinstance(cfg["units"]["logLambda"], (int, float)):
+    elif isinstance(cfg["units"]["logLambda"], int | float):
         logLambda_ei = cfg["units"]["logLambda"]
         logLambda_ee = cfg["units"]["logLambda"]
     return logLambda_ei, logLambda_ee
@@ -110,7 +114,7 @@ def _initialize_distribution_(
 
     f = np.zeros([nx, nv])
     # obviously not a bottleneck as initialisation, but this should be trivial to vectorize
-    for ix, (tn, tt) in enumerate(zip(n_prof, T_prof)):
+    for ix, (tn, tt) in enumerate(zip(n_prof, T_prof, strict=False)):
         # eq 4-51b in Shkarofsky
         # redundant
         # single_dist = (2 * np.pi * tt * (vth**2.0 / 2)) ** -1.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0 / 2)))
@@ -211,7 +215,8 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             f0 += temp_f0
 
             # initialize f1 by taking a big time step while keeping f0 fix (essentailly sets electron inertia to 0)
-            # I don't like having to reinitialise oshun to get helper functions, either we pass as an argument or refactor
+            # I don't like having to reinitialise oshun to get helper functions,
+            # either we pass as an argument or refactor
             oshun = OSHUN1D(cfg)
             big_dt = 1e12
             ni = prof_total["n"] / cfg["units"]["Z"]

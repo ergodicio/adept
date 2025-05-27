@@ -1,0 +1,60 @@
+# Set to the lowest supported Python version.
+target-version = "py311"
+
+# Set the target line length for formatting.
+line-length = 120
+
+# Exclude a variety of commonly ignored directories.
+extend-exclude = [
+    "_version.py",
+    "lpse2d.py",
+    "tf1d.py",
+    "vlasov1d.py"
+]
+
+src = ["."]
+
+[lint]
+# Select and/or ignore rules for linting.
+# Full list of available rules: https://docs.astral.sh/ruff/rules/
+extend-select = [
+    "B", # Flake8 bugbear
+    "E", # Pycodestyle errors
+    "F", # Pyflakes
+    "I", # Isort
+    "NPY", # Numpy
+    "RUF", # Ruff-specific rules
+    "UP", # Pyupgrade
+    "W", # Pycodestyle warnings
+]
+
+# Below fix only unsafe as could remove comments
+extend-safe-fixes = ["UP008"] # Use `super()` instead of `super(__class__, self)`
+
+ignore = [
+    "B007", # Loop control variable (e.g. `i` or `key`) not used within loop body
+    "B008", # Do not perform function call `np.ones` in argument defaults; instead,
+            # perform the call within the function, or read the default from a module-level singleton variable
+    "E402", # Module level import not at top of file
+    "E731", # Do not assign a lambda expression, use a def
+    "F401", # module imported in `__init__.py` but unused; consider removing or adding to `__all__`
+    "F841", # Local variable (e.g. mlflow_run) is assigned to but never used
+    "NPY002", # Replace legacy `np.random.uniform` call with `np.random.Generator`
+    "NPY201", # `np.trapz` will be removed in NumPy 2.0. Use `numpy.trapezoid` on NumPy 2.0
+    "RUF005", # Consider unpacking instad of concatenation
+]
+allowed-confusables = [
+    "–", # EN DASH
+]
+
+[lint.extend-per-file-ignores]
+# Allow use of \int string and I variable name in SNB model for now, can address later
+"lagradept/lrh1d/pushers/utils/transport_coeffs.py" = ["E741", "W605"]
+
+[lint.pycodestyle]
+max-line-length = 120
+max-doc-length = 140 # Feel free to shorten but this required a lot of manual work to fully address
+
+[format]
+# Enable reformatting of code snippets in docstrings.
+docstring-code-format = true
