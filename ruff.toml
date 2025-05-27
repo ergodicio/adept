@@ -6,7 +6,10 @@ line-length = 120
 
 # Exclude a variety of commonly ignored directories.
 extend-exclude = [
-    "_version.py"
+    "_version.py",
+    "lpse2d.py",
+    "tf1d.py",
+    "vlasov1d.py"
 ]
 
 src = ["."]
