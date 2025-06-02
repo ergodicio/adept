@@ -1,16 +1,16 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
+import equinox as eqx
 from jax import numpy as jnp
 from jax.lax import scan
-import equinox as eqx
 
 
 class TridiagonalSolver(eqx.Module):
     num_unroll: int
 
     def __init__(self, cfg):
-        super(TridiagonalSolver, self).__init__()
+        super().__init__()
         self.num_unroll = 16
 
     @staticmethod

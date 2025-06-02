@@ -1,7 +1,6 @@
-from typing import Dict
-
-from jax import numpy as jnp, Array
 import numpy as np
+from jax import Array
+from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._lpse2d.core import epw, laser
@@ -32,7 +31,7 @@ class SplitStep:
 
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
 
-    def _unpack_y_(self, y: Dict[str, Array]) -> Dict[str, Array]:
+    def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
         for k in y.keys():
             if k in self.complex_state_vars:
@@ -41,7 +40,7 @@ class SplitStep:
                 new_y[k] = y[k].view(jnp.float64)
         return new_y
 
-    def _pack_y_(self, y: Dict[str, Array], new_y: Dict[str, Array]) -> tuple[Dict[str, Array], Dict[str, Array]]:
+    def _pack_y_(self, y: dict[str, Array], new_y: dict[str, Array]) -> tuple[dict[str, Array], dict[str, Array]]:
         for k in y.keys():
             y[k] = y[k].view(jnp.float64)
             new_y[k] = new_y[k].view(jnp.float64)
@@ -75,7 +74,7 @@ class SplitStep:
             * self.wp0**4
             * self.one_over_ksq**1.5
             / (vte_sq**1.5)
-            * jnp.exp(-self.wp0**2.0 * self.one_over_ksq / (2 * vte_sq))
+            * jnp.exp(-(self.wp0**2.0) * self.one_over_ksq / (2 * vte_sq))
         )
 
         return jnp.fft.ifft2(

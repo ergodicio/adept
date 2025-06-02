@@ -20,7 +20,7 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-from typing import Tuple
+
 import numpy as np
 import scipy
 from scipy import signal
@@ -151,8 +151,8 @@ def calc_depsdw(kld):
     return depsdw["exact"][iw], depsdw["approx"][iw]
 
 
-def get_complex_frequency_table(num: int, kinetic_real_epw: bool) -> Tuple[np.array, np.array, np.array]:
-    """
+def get_complex_frequency_table(num: int, kinetic_real_epw: bool) -> tuple[np.array, np.array, np.array]:
+    r"""
     This function creates a table of the complex plasma frequency for $0.2 < k \lambda_D < 0.4$ in `num` steps
 
     :param kinetic_real_epw:

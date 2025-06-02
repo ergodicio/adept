@@ -1,6 +1,8 @@
-import numpy as np
-from jax import numpy as jnp, Array
 import equinox as eqx
+import numpy as np
+from jax import Array
+from jax import numpy as jnp
+
 from adept import electrostatic
 
 

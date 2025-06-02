@@ -1,21 +1,24 @@
-from typing import Dict, Callable, Union
+import os
+from collections.abc import Callable
 from functools import partial
 
-import os, numpy as np, pint
-from diffrax import diffeqsolve, SaveAt, ODETerm, Tsit5
-from jax import numpy as jnp, tree_util as jtu
+import numpy as np
+import pint
+from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
+from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from adept import ADEPTModule
 from adept._tf1d.solvers.vector_field import VF
-from adept._tf1d.storage import save_arrays, plot_xrs
+from adept._tf1d.storage import plot_xrs, save_arrays
 
 
 class BaseTwoFluid1D(ADEPTModule):
-    def __init__(self, cfg: Dict) -> None:
+    def __init__(self, cfg: dict) -> None:
         super().__init__(cfg)
         self.ureg = pint.UnitRegistry()
 
-    def post_process(self, solver_result: Dict, td: str):
+    def post_process(self, solver_result: dict, td: str):
         """
         This function is the post-processing step that is run after the simulation is complete
 
@@ -163,9 +166,9 @@ class BaseTwoFluid1D(ADEPTModule):
 
     def init_state_and_args(self):
         """
-        This function initializes the static state and args. By static we mean that these quantities are not differentiable
-        Any modifications that need to be differentiable (e.g. parameterized density/driver profile) need to be done in the
-        `__call__` function
+        This function initializes the static state and args. By static we mean that these quantities are
+        not differentiable. Any modifications that need to be differentiable (e.g. parameterized density/driver profile)
+        need to be done in the `__call__` function
 
         """
 
@@ -241,7 +244,7 @@ class BaseTwoFluid1D(ADEPTModule):
             terms=ODETerm(VF(self.cfg)), solver=Tsit5(), saveat=dict(ts=self.cfg["save"]["t"]["ax"], fn=save_f)
         )
 
-    def __call__(self, trainable_modules: Dict, args: Dict) -> Dict:
+    def __call__(self, trainable_modules: dict, args: dict) -> dict:
         """
         This is the time loop solve for a two fluid 1d run
         """
@@ -262,7 +265,7 @@ class BaseTwoFluid1D(ADEPTModule):
 
         return {"solver result": solver_result}
 
-    def vg(self, trainable_modules: Dict, args: Dict) -> Dict:
+    def vg(self, trainable_modules: dict, args: dict) -> dict:
         raise NotImplementedError(
             "This is the base class and does not have a gradient implemented. This is "
             + "likely because there is no metric in place. Subclass this class and implement the gradient"

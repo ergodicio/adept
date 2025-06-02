@@ -5,13 +5,13 @@ Configuration Options
 .. autoclass:: adept._vlasov1d.datamodel.ConfigModel
     :members: __init__
 
-Each of the objects used to initialize this datamodel can be treated just like dictionaries.  Each dictionary needs to be compiled into a megadictionary that is passed to the solver. 
+Each of the objects used to initialize this datamodel can be treated just like dictionaries.  Each dictionary needs to be compiled into a megadictionary that is passed to the solver.
 The ``yaml`` configs accomplish this because a ``yaml`` is also a nested dictionary. The following documents those classes
 
 High Level
 -----------
-These are the high level configuration options for the Vlasov1D solver. Each of these either contains a fundamental type such as 
-``bool``, ``int``, ``float``, or ``str`` or is another nested ``datamodel`` which can be treated just like a dictionary. 
+These are the high level configuration options for the Vlasov1D solver. Each of these either contains a fundamental type such as
+``bool``, ``int``, ``float``, or ``str`` or is another nested ``datamodel`` which can be treated just like a dictionary.
 
 .. autoclass:: adept._vlasov1d.datamodel.UnitsModel
     :members: __init__
@@ -33,7 +33,7 @@ These are the high level configuration options for the Vlasov1D solver. Each of 
 
 .. autoclass:: adept._vlasov1d.datamodel.TermsModel
     :members: __init__
-    
+
 
 Low Level
 ----------

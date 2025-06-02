@@ -1,26 +1,35 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-import yaml, os
+import os
 from itertools import product
 
 import numpy as np
+import yaml
 from jax import config
 
 config.update("jax_enable_x64", True)
 # config.update("jax_debug_nans", True)
 # config.update("jax_disable_jit", True)
 
-from jax import numpy as jnp
-import xarray as xr
-import tempfile, time
-import mlflow, optax
+import tempfile
+import time
+
 import equinox as eqx
+import mlflow
+import optax
+import xarray as xr
+from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
+from jax import numpy as jnp
 from tqdm import tqdm
+from utils import misc, plotters
 
 from adept._tf1d import helpers
-from diffrax import diffeqsolve, ODETerm, SaveAt, Tsit5
-from utils import misc, plotters
+
+# This happens a lot in this file, don't think there's another way to do it
+# but also don't feel confiident to disable this check repo wide
+# ruff: noqa: B023
+# Function definition does not bind loop variable
 
 
 def _modify_defaults_(defaults, k0, a0, nuee):
@@ -52,7 +61,7 @@ def train_loop():
 
     mlflow.set_experiment("train-damping-rates-epw")
     with mlflow.start_run(run_name="damping-opt", nested=True) as mlflow_run:
-        with open("./damping.yaml", "r") as file:
+        with open("./damping.yaml") as file:
             defaults = yaml.safe_load(file)
         trapping_models = helpers.get_models(defaults["models"])
         optimizer = optax.adam(0.1)
@@ -64,7 +73,7 @@ def train_loop():
             rng.shuffle(a0s)
             epoch_loss = 0.0
             for sim, (nuee, k0, a0) in (pbar := tqdm(enumerate(product(nus, k0s, a0s)))):
-                with open("./damping.yaml", "r") as file:
+                with open("./damping.yaml") as file:
                     defaults = yaml.safe_load(file)
 
                 mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
@@ -128,7 +137,7 @@ def train_loop():
 
 
 def remote_train_loop():
-    with open("./damping.yaml", "r") as file:
+    with open("./damping.yaml") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
     optimizer = optax.adam(0.004)
@@ -215,7 +224,7 @@ def update_w_and_b(job_done, run_ids, optimizer, opt_state, w_and_b):
 
 
 def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim, t_or_v="grad"):
-    with open("../../configs/tf-1d/damping.yaml", "r") as file:
+    with open("../../configs/tf-1d/damping.yaml") as file:
         defaults = yaml.safe_load(file)
 
     mod_defaults = _modify_defaults_(defaults, float(k0), float(a0), float(nuee))
@@ -248,7 +257,7 @@ def queue_sim(fks, nuee, k0, a0, run_ids, job_done, w_and_b, epoch, i_batch, sim
 
 
 def eval_over_all():
-    with open("../../configs/tf-1d/damping.yaml", "r") as file:
+    with open("../../configs/tf-1d/damping.yaml") as file:
         defaults = yaml.safe_load(file)
     trapping_models = helpers.get_models(defaults["models"])
 

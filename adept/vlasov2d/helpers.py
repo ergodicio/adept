@@ -1,19 +1,20 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict, List, Tuple
 import os
-
 from time import time
 
+import mlflow
 import numpy as np
-import xarray, mlflow, pint, yaml
-from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
-from matplotlib import pyplot as plt
+import pint
+import xarray
+import yaml
+from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from equinox import filter_jit
+from jax import numpy as jnp
+from matplotlib import pyplot as plt
 
 from adept.vlasov2d.pushers import time as time_integrator
-from adept.vlasov2d.storage import store_f, store_fields, get_save_quantities
+from adept.vlasov2d.storage import store_f, store_fields
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
@@ -84,8 +85,8 @@ def write_units(cfg, td):
 
 
 def _initialize_distribution_(
-    nxs: List,
-    nvs: List,
+    nxs: list,
+    nvs: list,
     v0=0.0,
     m=2.0,
     T0=1.0,
@@ -117,7 +118,7 @@ def _initialize_distribution_(
     # noise_generator = np.random.default_rng(seed=noise_seed)
 
     dvs = [2.0 * vmax / nv for nv in nvs]
-    vaxs = [np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv) for dv, nv in zip(dvs, nvs)]
+    vaxs = [np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv) for dv, nv in zip(dvs, nvs, strict=False)]
 
     alpha = np.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
     # cst = m / (4 * np.pi * alpha**3.0 * gamma(3.0 / m))
@@ -199,7 +200,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     return n_prof_total, f
 
 
-def get_derived_quantities(cfg: Dict) -> Dict:
+def get_derived_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
 
@@ -232,7 +233,7 @@ def get_derived_quantities(cfg: Dict) -> Dict:
     return cfg
 
 
-def get_solver_quantities(cfg: Dict) -> Dict:
+def get_solver_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are arrays
 
@@ -322,8 +323,7 @@ def get_run_fn(cfg):
     diffeqsolve_quants = get_diffeqsolve_quants(cfg)
 
     @filter_jit
-    def _run_(_models_, _state_, _args_, time_quantities: Dict):
-
+    def _run_(_models_, _state_, _args_, time_quantities: dict):
         _state_, _args_ = apply_models(_models_, _state_, _args_, cfg)
         # if "terms" in cfg.keys():
         #     args["terms"] = cfg["terms"]
@@ -344,7 +344,7 @@ def get_run_fn(cfg):
     return _run_
 
 
-def init_state(cfg: Dict, td) -> Tuple[Dict, Dict]:
+def init_state(cfg: dict, td) -> tuple[dict, dict]:
     """
     This function initializes the state
 
@@ -382,7 +382,7 @@ def get_diffeqsolve_quants(cfg):
     )
 
 
-def post_process(result, cfg: Dict, td: str):
+def post_process(result, cfg: dict, td: str):
     t0 = time()
     binary_dir = os.path.join(td, "binary")
     os.makedirs(binary_dir, exist_ok=True)

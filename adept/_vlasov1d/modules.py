@@ -1,18 +1,16 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict
-
 
 import numpy as np
 import pint
+from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from jax import numpy as jnp
-from diffrax import ODETerm, SubSaveAt, diffeqsolve, SaveAt
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.storage import get_save_quantities
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
+from adept._vlasov1d.storage import get_save_quantities
 
 
 class BaseVlasov1D(ADEPTModule):
@@ -20,11 +18,10 @@ class BaseVlasov1D(ADEPTModule):
         super().__init__(cfg)
         self.ureg = pint.UnitRegistry()
 
-    def post_process(self, run_output: Dict, td: str):
+    def post_process(self, run_output: dict, td: str):
         return post_process(run_output["solver result"], self.cfg, td, self.args)
 
-    def write_units(self) -> Dict:
-
+    def write_units(self) -> dict:
         _Q = self.ureg.Quantity
 
         n0 = _Q(self.cfg["units"]["normalizing_density"]).to("1/cc")
@@ -102,7 +99,7 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
         self.cfg["grid"] = cfg_grid
 
-    def get_solver_quantities(self) -> Dict:
+    def get_solver_quantities(self) -> dict:
         """
         This function just updates the config with the derived quantities that are arrays
 
@@ -169,7 +166,7 @@ class BaseVlasov1D(ADEPTModule):
 
         self.cfg["grid"] = cfg_grid
 
-    def init_state_and_args(self) -> Dict:
+    def init_state_and_args(self) -> dict:
         """
         This function initializes the state
 
@@ -204,7 +201,7 @@ class BaseVlasov1D(ADEPTModule):
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
 
-    def __call__(self, trainable_modules: Dict, args: Dict = None):
+    def __call__(self, trainable_modules: dict, args: dict | None = None):
         if args is None:
             args = self.args
         solver_result = diffeqsolve(

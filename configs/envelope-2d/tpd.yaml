@@ -64,7 +64,7 @@ terms:
       noise: true
       tpd: true
   zero_mask: true
-  
+
 units:
   atomic number: 40
   envelope density: 0.25

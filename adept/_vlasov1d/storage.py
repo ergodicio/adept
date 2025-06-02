@@ -1,13 +1,12 @@
-from typing import Dict
 import os
 
-from jax import numpy as jnp
 import numpy as np
 import xarray as xr
 from interpax import interp2d
+from jax import numpy as jnp
 
 
-def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
+def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
     """
     Stores fields to netcdf
 
@@ -49,12 +48,12 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
             das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
 
     fields_xr = xr.Dataset(das)
-    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(this_t[-1],4)}.nc"))
+    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(this_t[-1], 4)}.nc"))
 
     return fields_xr
 
 
-def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
+def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     """
     Stores f to netcdf
 
@@ -75,7 +74,7 @@ def store_f(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
     return f_store
 
 
-def store_diags(cfg: Dict, this_t: Dict, td: str, ys: Dict) -> xr.Dataset:
+def store_diags(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     """
     Stores diagnostics to netcdf
 
@@ -176,7 +175,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
     return dist_save_func
 
 
-def get_save_quantities(cfg: Dict) -> Dict:
+def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
 

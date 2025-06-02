@@ -1,15 +1,15 @@
-import itertools
-from typing import Dict
 import os
 
 # import interpax
 from functools import partial
-from jax import numpy as jnp, vmap
+
 import numpy as np
 import xarray as xr
+from jax import numpy as jnp
+from jax import vmap
 
 
-def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
+def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str) -> xr.Dataset:
     """
     Stores fields to netcdf
 
@@ -51,12 +51,12 @@ def store_fields(cfg: Dict, binary_dir: str, fields: Dict, this_t: np.ndarray, p
             das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
 
     fields_xr = xr.Dataset(das)
-    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(this_t[-1],4)}.nc"))
+    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-t={round(this_t[-1], 4)}.nc"))
 
     return fields_xr
 
 
-def store_f(cfg: Dict, this_t: Dict, binary_dir: str, ys: Dict) -> Dict:
+def store_f(cfg: dict, this_t: dict, binary_dir: str, ys: dict) -> dict:
     """
     Stores f to netcdf
 
@@ -90,8 +90,14 @@ def store_f(cfg: Dict, this_t: Dict, binary_dir: str, ys: Dict) -> Dict:
 
 
 # def clean_td(td):
-#     _ = [os.remove(os.path.join(td, "binary", "fields", fl)) for fl in os.listdir(os.path.join(td, "binary", "fields"))]
-#     _ = [os.remove(os.path.join(td, "binary", "f", fl)) for fl in os.listdir(os.path.join(td, "binary", "f"))]
+#     _ = [
+#         os.remove(os.path.join(td, "binary", "fields", fl)) for fl in os.listdir(os.path.join(td, "binary", "fields"))
+#     ]
+#     _ = [
+#         os.remove(os.path.join(td, "binary", "f", fl)) for fl in os.listdir(os.path.join(td, "binary", "f"))
+#         ]
+
+
 #
 #
 # def first_store(td, cfg):
@@ -203,7 +209,6 @@ def get_dist_save_func(cfg, k):
             return y["electron"]
 
     elif {"t", "x", "vx"} == set(cfg["save"][k].keys()):
-
         if "nx" in cfg["save"][k]["x"]:
             cfg["save"][k]["x"]["ax"], interp_x = _get_x_save_func_(cfg["save"][k]["x"], cfg["grid"])
         else:
@@ -234,7 +239,7 @@ def get_dist_save_func(cfg, k):
     return cfg["save"][k]
 
 
-def get_save_quantities(cfg: Dict) -> Dict:
+def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
 

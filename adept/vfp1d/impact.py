@@ -1,8 +1,6 @@
-from typing import Dict
-
+import lineax as lx
 import numpy as np
 from jax import numpy as jnp
-import lineax as lx
 
 
 class IMPACT:
@@ -44,7 +42,6 @@ class IMPACT:
         return 4.0 * jnp.pi / self.v**j * jnp.cumsum(temp[::-1], axis=1)[::-1] * self.dv
 
     def calc_Cee0(self, f0, prev_f0, I00, I20, Jm10):
-
         # term1 = 1 / 3 / self.v * self.ddv(self.ddv(f0)) * (I20 + Jm10)
         # term2 = 1 / 3 / self.v**2 * self.ddv(f0) * (2 * Jm10 - I20 + 3 * I00 * self.m_frac)
         # term3 = 4 * jnp.pi * f0 * prev_f0 * self.m_frac
@@ -73,7 +70,6 @@ class IMPACT:
         return Cee0
 
     def calc_C1(self, f1, f0, I00, I20, Jm10, I31, Jm21, I11):
-
         term1 = 1.0 / 3.0 / self.v * self.ddv(self.ddv(f1)) * (I20 + Jm10)
         term2 = 1.0 / 3.0 / self.v**2.0 * self.ddv(f1) * (3 * I00 * self.m_frac - I20 + Jm10)
         term3 = -1.0 / 3.0 / self.v[None, :] ** 3.0 * f1 * (3 + 0 * (-I20 + 3 * I00 + 2 * Jm10))
@@ -125,13 +121,16 @@ class IMPACT:
 
         return _step_
 
-    def __call__(self, t, y, args) -> Dict:
+    def __call__(self, t, y, args) -> dict:
         # return y
         f0, f1, e = y["f0"], y["f1"], y["e"]
         operator = lx.FunctionLinearOperator(self.get_step(f0, f1), input_structure={"f0": f0, "f1": f1, "e": e})
         rhs = {"f0": f0, "f1": f1, "e": e}
         solver = lx.BiCGStab(
-            rtol=1e-3, atol=1e-4, max_steps=16384, norm=lx.internal.max_norm  # restart=128, stagnation_iters=128
+            rtol=1e-3,
+            atol=1e-4,
+            max_steps=16384,
+            norm=lx.internal.max_norm,  # restart=128, stagnation_iters=128
         )
         sol = lx.linear_solve(operator, rhs, solver=solver, options={"y0": {"f0": f0, "f1": f1, "e": e}})
 
