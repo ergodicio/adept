@@ -5,7 +5,7 @@ density:
     min: 1.0e-10
     type: uniform
 drivers:
-  E2: 
+  E2:
     envelope:
       tw: 200fs
       tr: 25fs
@@ -68,4 +68,3 @@ units:
   laser_wavelength: 351nm
   reference electron temperature: 2000.0eV
   reference ion temperature: 1000eV
-

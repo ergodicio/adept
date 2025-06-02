@@ -1,17 +1,10 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
+import numpy as np
+import xarray as xr
 import yaml
 
-import numpy as np
-from jax import config
-
-from adept import ergoExo
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
-
-import xarray as xr
-from adept import electrostatic
+from adept import electrostatic, ergoExo
 
 
 def _modify_defaults_(defaults):
@@ -34,7 +27,7 @@ def _modify_defaults_(defaults):
 
 
 def test_single_resonance():
-    with open("tests/test_tf1d/configs/vlasov_comparison.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/vlasov_comparison.yaml") as file:
         defaults = yaml.safe_load(file)
 
     # modify config

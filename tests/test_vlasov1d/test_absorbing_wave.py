@@ -1,15 +1,10 @@
-import numpy as np
-from jax import config
 import equinox as eqx
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
-
-from jax import jit
+import numpy as np
 from diffrax import ODETerm, diffeqsolve
+from jax import jit
 
-from adept._vlasov1d.solvers.pushers.field import Driver, WaveSolver
 from adept._base_ import Stepper
+from adept._vlasov1d.solvers.pushers.field import Driver, WaveSolver
 
 
 class VectorField(eqx.Module):
