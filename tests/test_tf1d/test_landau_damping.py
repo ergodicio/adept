@@ -1,18 +1,11 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
+import mlflow
 import numpy as np
 import yaml
-from jax import config
-
-from adept import ergoExo
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
-
-import mlflow
 from jax import numpy as jnp
 
-from adept import electrostatic
+from adept import electrostatic, ergoExo
 
 
 def _modify_defaults_(defaults, rng):
