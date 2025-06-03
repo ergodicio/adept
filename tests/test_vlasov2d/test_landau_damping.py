@@ -86,7 +86,3 @@ def test_single_resonance(real_or_imag):
                     }
                 )
                 np.testing.assert_almost_equal(measured_resonance, actual_resonance, decimal=2)
-
-
-if __name__ == "__main__":
-    test_single_resonance(real_or_imag="real")

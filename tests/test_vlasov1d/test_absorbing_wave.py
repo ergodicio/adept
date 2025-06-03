@@ -74,7 +74,3 @@ def test_absorbing_boundaries():
     test_a = _run_({"a": a, "prev_a": a_old}, args)
 
     np.testing.assert_almost_equal(np.sum(np.square(test_a.ys["a"])), 0.0, decimal=8)
-
-
-if __name__ == "__main__":
-    test_absorbing_boundaries()

@@ -99,8 +99,3 @@ def _imaginary_part_():
 @pytest.mark.parametrize("test_func", [_real_part_, _imaginary_part_])
 def test_epw_frequency(test_func):
     test_func()
-
-
-if __name__ == "__main__":
-    test_epw_frequency(_real_part_)
-    test_epw_frequency(_imaginary_part_)

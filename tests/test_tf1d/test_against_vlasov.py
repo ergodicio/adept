@@ -56,7 +56,3 @@ def test_single_resonance():
 
     np.testing.assert_almost_equal(vlasov_damping_rate, fluid_damping_rate, decimal=2)
     np.testing.assert_allclose(np.amax(nk1_fluid), np.amax(nk1_vlasov), rtol=0.05)
-
-
-if __name__ == "__main__":
-    test_single_resonance()

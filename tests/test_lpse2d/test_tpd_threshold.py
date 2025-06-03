@@ -58,7 +58,3 @@ def test_threshold():
         # np.testing.assert_allclose(actual, desired=It, rtol=0.25)  # it is 25% because of the resolution of the scan.
         # The test itself is not quite working but you can examine the results visually and they make sense,
         # so we are leaving it this way for now
-
-
-if __name__ == "__main__":
-    test_threshold()
