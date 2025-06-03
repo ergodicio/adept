@@ -65,7 +65,3 @@ def test_single_resonance():
         )
 
         np.testing.assert_almost_equal(measured_damping_rate, 2 * actual_damping_rate, decimal=2)
-
-
-if __name__ == "__main__":
-    test_single_resonance()

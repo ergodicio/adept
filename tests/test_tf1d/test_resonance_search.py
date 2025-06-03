@@ -60,6 +60,8 @@ def load_cfg(rand_k0, gamma, adjoint):
 @pytest.mark.parametrize("adjoint", ["Recursive", "Backsolve"])
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
 def test_resonance_search(gamma, adjoint):
+    if not any(["gpu" == device.platform for device in devices()]):
+        pytest.skip("Takes too long without a GPU")
     mlflow.set_experiment("tf1d-resonance-search")
     with mlflow.start_run(run_name="res-search-opt", log_system_metrics=True) as mlflow_run:
         # sim_k0, actual_w0 = init_w0(gamma, adjoint)
@@ -93,11 +95,3 @@ def test_resonance_search(gamma, adjoint):
         print(f"{actual_w0=}, {float(params['w0'])=}")
 
         np.testing.assert_allclose(actual_w0, float(params["w0"]), rtol=0.03)
-
-
-if __name__ == "__main__":
-    for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
-        if not any(["gpu" == device.platform for device in devices()]):
-            pytest.skip("Takes too long without a GPU")
-        else:
-            test_resonance_search(gamma, adjoint)
