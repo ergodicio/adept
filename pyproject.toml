@@ -66,6 +66,8 @@ version-file = "adept/_version.py"
 [tool.pytest.ini_options]
 # Test type hints w/ typeguard - currently disabled
 # addopts = ["--typeguard-packages=adept"]
+addopts = "--import-mode=importlib --strict-markers"
+pythonpath = "."
 testpaths = ["tests"]
 filterwarnings = [
     "error",
