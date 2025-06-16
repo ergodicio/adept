@@ -28,7 +28,7 @@ repos:
 
 
 - repo: https://github.com/henryiii/validate-pyproject-schema-store
-  rev: 2025.05.12
+  rev: 2025.06.13
   hooks:
   - id: validate-pyproject
 
