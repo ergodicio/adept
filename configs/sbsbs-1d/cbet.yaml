@@ -1,0 +1,23 @@
+profiles: 
+  ne_over_nc: 0.05
+  T_e: 0.5  # keV
+  T_i: 0.165  # keV
+  Z_eff: 4.0
+  A_ion: 4.0
+  flow_magnitude: 1e-4  # u/c
+  flow_theta: 0.0
+  flow_phi: 0.0
+  L_p: 600.0  # 2*pi*plasma_length/lambda
+
+laser:
+  wavelength: 3510  # Angstrom
+  # beam_file: /path/to/beam_file.txt  # path to the beam file
+  # a0_sq: 1e-6  # initial a_0^2, assuming all beams have same initial intensity
+  num_beams: 4
+  thetas: [23.5, 30, 44.5, 50] # polar angles in degrees
+  phis: [0, 0, 0, 0]  # azimuthal angles in radians
+  dls: [0, 0, 1.8, 1.8]  # dlambda/lambda
+
+grid:
+  n_steps: 10000
+

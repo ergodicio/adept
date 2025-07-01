@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from adept import ADEPTModule
 from adept.vfp1d.helpers import calc_logLambda
 from adept._base_ import Stepper
-from adept._sbsbs1d.vectorfield import ExponentialLeapfrog
+from adept._sbsbs1d.vectorfield import SBSVectorField, CBETVectorField
 
 
 class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
@@ -83,7 +83,6 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         return {k: str(v) for k, v in self.cfg["units"]["derived"].items()}
 
     def get_solver_quantities(self):
-
         cfg_grid = self.cfg["grid"]
 
         cfg_grid = {
@@ -129,16 +128,13 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         return self.cfg
 
     def init_state_and_args(self):
-
         if "nc" in self.cfg["profiles"]["n"]["min"]:
             nmin = (
-                float(self.cfg["profiles"]["n"]["min"].strip("nc"))
-                * self.cfg["units"]["derived"]["nc_over_n0"]
+                float(self.cfg["profiles"]["n"]["min"].strip("nc")) * self.cfg["units"]["derived"]["nc_over_n0"]
                 # * self.cfg["units"]["derived"]["n0"].value
             )
             nmax = (
-                float(self.cfg["profiles"]["n"]["max"].strip("nc"))
-                * self.cfg["units"]["derived"]["nc_over_n0"]
+                float(self.cfg["profiles"]["n"]["max"].strip("nc")) * self.cfg["units"]["derived"]["nc_over_n0"]
                 # * self.cfg["units"]["derived"]["n0"].value
             )
         else:
@@ -181,7 +177,6 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         } | {k: 0.0 for k in self.args.keys()}
 
     def init_diffeqsolve(self) -> Dict:
-
         self.space_quantities = {
             "z0": self.cfg["grid"]["zmin"],
             "z1": self.cfg["grid"]["zmax"],
@@ -192,7 +187,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         }
 
         self.diffeqsolve_quants = {
-            "terms": ODETerm(ExponentialLeapfrog(self.cfg)),
+            "terms": ODETerm(SBSVectorField(self.cfg)),
             "solver": Stepper(),
             "saveat": {
                 "ts": np.linspace(
@@ -311,3 +306,381 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
 
         ds.to_netcdf(os.path.join(td, "binary", "datasets.nc"))
         return {"ds": ds}
+
+
+class BaseSteadyStateCBET(ADEPTModule):
+    def __init__(self, cfg):
+        super().__init__(cfg)
+
+    def write_units(self) -> Dict:
+        pass
+
+    def get_solver_quantities(self):
+        pass
+
+    def get_derived_quantities(self) -> Dict:
+        self.cfg["grid"]["dz"] = 1.0 / self.cfg["grid"]["n_steps"]
+
+    def init_state_and_args(self):
+        self.state = jnp.ones(self.cfg["laser"]["num_beams"])  # Initial state vector
+        self.args = {"plasma": self.cfg["profiles"]}
+
+    def init_diffeqsolve(self) -> Dict:
+        self.space_quantities = {
+            "z0": 0.0,
+            "z1": 1.0,
+            "max_steps": self.cfg["grid"]["n_steps"],
+            "save_z0": 0.0,
+            "save_z1": 1.0,
+            "save_nz": self.cfg["grid"]["n_steps"],
+        }
+
+        self.diffeqsolve_quants = {
+            "terms": ODETerm(CBETVectorField(self.cfg)),
+            "solver": Stepper(),
+            "saveat": {
+                "ts": np.linspace(
+                    self.space_quantities["z0"], self.space_quantities["z1"], self.space_quantities["save_nz"]
+                )
+            },
+        }
+
+    def __call__(self, trainable_modules: Dict, args: Dict):
+        state = self.state
+
+        if args is None:
+            args = self.args
+
+        for name, module in trainable_modules.items():
+            state, args = module(self.state, args)
+
+        solver_result = diffeqsolve(
+            terms=self.diffeqsolve_quants["terms"],
+            solver=self.diffeqsolve_quants["solver"],
+            t0=self.space_quantities["z0"],
+            t1=self.space_quantities["z1"],
+            max_steps=self.cfg["grid"]["max_steps"],
+            dt0=self.cfg["grid"]["dz"],
+            y0=state,
+            args=args,
+            saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+        )
+
+        # result = diffeqsolve(
+        # term,
+        # solver=Stepper(),
+        # t0=0.0,
+        # t1=1.0,
+        # args=args,
+        # y0=jnp.ones(4),
+        # dt0=dz,
+        # max_steps=integrator_params["n_steps"] + 4,
+        # )
+
+        return solver_result, args
+    
+
+class SBSBS_CBET(ADEPTModule):
+    def __init__(self, cfg):
+        self.sbs_solvers = [SBSVectorField(cfg) for _ in range(cfg["laser"]["num_beams"])]
+        self.cbet = CBETVectorField(cfg)
+        self.cbet_steps = cfg["cbet"]["grid"]["n_steps"]
+        self.cbet_dz = 1.0 / self.cbet_steps
+
+
+    def init_modules(self):
+
+        if self.cfg["profiles"]["type"] == "user":
+            nprof, Teprof, Tiprof, Zeffprof, flowprof, omegabeat = self.make_cbet_profiles() 
+            profile_functions = {
+                "cbet": {
+                    "n_over_n0": lambda: self.cfg["profiles"]["cbet"]["n_over_n0"],
+                    "Te_over_T0": lambda: self.cfg["profiles"]["cbet"]["Te_over_T0"],
+                    "Ti_over_T0": lambda: self.cfg["profiles"]["cbet"]["Ti_over_T0"],
+                    "Zeff": lambda: self.cfg["profiles"]["cbet"]["Zeff"],
+                    "flow_over_flow0": lambda: self.cfg["profiles"]["cbet"]["flow_over_flow0"],
+                    "omegabeat": lambda: self.cfg["profiles"]["cbet"]["omegabeat"]
+                },
+                "sbs": {
+                    "n_over_n0": lambda i, z: jnp.interp(z, self.cfg["grid"]["z"], nprof[i]),
+                    "Te_over_T0": lambda i, z: jnp.interp(z, self.cfg["grid"]["z"], Teprof[i]),
+                    "Ti_over_T0": lambda i, z: jnp.interp(z, self.cfg["grid"]["z"], Tiprof[i]),
+                    "Zeff": lambda i, z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof[i]),
+                    "flow_over_flow0": lambda i, z: jnp.interp(z, self.cfg["grid"]["z"], flowprof[i]),
+                    "omegabeat": lambda i, z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat[i])
+                }
+            }
+        elif self.cfg["profiles"]["type"] == "nn":
+            raise NotImplementedError("Neural network profiles are not implemented yet.")
+        else:
+            raise NotImplementedError("Unknown profile type. Please use 'user' or 'nn'.")
+
+        return profile_functions
+
+    
+    def write_units(self) -> Dict:
+        """ """
+        m_e = const.m_e
+        e = const.e
+        c = const.c
+        eps_0 = const.eps0
+        Zeff = self.cfg["profiles"]["Zeff"]
+
+        mi = self.cfg["units"]["atomic mass number"] * const.m_p
+
+        lambda0 = _Q(self.cfg["units"]["laser_wavelength"]).to("um")
+        T0 = _Q(self.cfg["units"]["reference temperature"]).to("keV")
+        vth0 = np.sqrt(2 * T0 / m_e).to("m/s")
+        w0 = (2 * np.pi * c / lambda0).to("Hz")
+        cs0 = np.sqrt(T0 / mi).to("m/s")
+        I0 = _Q(self.cfg["units"]["laser_intensity"]).to("W/cm^2")
+        a0 = 0.86 * np.sqrt(I0.to("W/cm^2").value / 1e18) * lambda0.to("um").value
+        kz0 = 2 * np.pi / lambda0
+        omegabeat0 = kz0 * cs0
+        if self.cfg["units"]["reference density"] == "nc":
+            n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e.si**2.0
+            nc_over_n0 = 1.0
+        else:
+            n0 = _Q(self.cfg["units"]["reference density"]).to("cm-3")
+            nc_over_n0 = (2 * np.pi * c / self.cfg["units"]["laser_wavelength"]) ** 2.0 * m_e * eps_0 / e.si**2.0 / n0
+
+        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, n0, T0, Zeff)
+        # logLambda_ee = logLambda_ei
+        ni0 = n0 / Zeff
+
+        nuei_epphaines = (
+            1
+            / (
+                0.75
+                * np.sqrt(const.m_e)
+                * T0**1.5
+                / (np.sqrt(2 * np.pi) * ni0 * Zeff**2.0 * const.e.gauss**4.0 * logLambda_ei)
+            )
+        ).to("Hz")
+
+        self.cfg["units"]["derived"] = {
+            "n0": n0,
+            "lambda0": lambda0,
+            "T0": T0,
+            "vth0": vth0,
+            "w0": w0,
+            "kz0": kz0,
+            "flow0": cs0,
+            "cs0": cs0,
+            "I0": I0,
+            "a0": a0,
+            "mi": mi,
+            "nuei_epphaines0": nuei_epphaines,
+            "logLambda_ee0": logLambda_ee,
+            "logLambda_ei0": logLambda_ei,
+            "nc_over_n0": nc_over_n0,
+            "omegabeat0": omegabeat0,
+            "c": c,
+            "ratio_M_m": mi / m_e,
+        }
+
+        return {k: str(v) for k, v in self.cfg["units"]["derived"].items()}
+
+    def get_solver_quantities(self):
+        cfg_grid = self.cfg["grid"]
+
+        cfg_grid = {
+            **cfg_grid,
+            **{
+                "z": np.linspace(
+                    cfg_grid["zmin"] + cfg_grid["dz"] / 2,
+                    cfg_grid["zmax"] - cfg_grid["dz"] / 2,
+                    cfg_grid["nz"],
+                ),
+            },
+        }
+
+        self.cfg["grid"] = cfg_grid
+
+    def get_derived_quantities(self) -> Dict:
+        """
+        This function just updates the config with the derived quantities that are only integers or strings.
+
+        This is run prior to the log params step
+
+        :param cfg_grid:
+        :return:
+        """
+        cfg_grid = self.cfg["grid"]
+
+        Lgrid = _Q(cfg_grid["zmax"]).to("um").value
+
+        cfg_grid["zmax"] = Lgrid
+        cfg_grid["zmin"] = 0.0
+        cfg_grid["dz"] = _Q(cfg_grid["dz"]).to("um").value
+
+        cfg_grid["nz"] = int(cfg_grid["zmax"] / cfg_grid["dz"]) + 1
+
+        if cfg_grid["nz"] > 1e6:
+            cfg_grid["max_steps"] = int(1e6)
+            print(r"Only running $10^6$ steps")
+        else:
+            cfg_grid["max_steps"] = cfg_grid["nz"] + 4
+
+        self.cfg["grid"] = cfg_grid
+
+        return self.cfg
+
+    def init_state_and_args(self):
+        
+
+        # nprof, Teprof, Tiprof, Zeffprof, flowprof, omegabeat = self.make_cbet_profiles(nmin, nmax)  # / self.cfg["units"]["derived"]["omegabeat0"].to("Hz").value
+
+        # self.args = {
+        #     "n_over_n0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], nprof),
+        #     "Te_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Teprof),
+        #     "Ti_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Tiprof),
+        #     "Zeff": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
+        #     "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
+        #     "omegabeat": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat),
+        # }
+        self.args = {}
+        self.state = {
+            "Ji": 1.0,
+            "Jr": 0.1,
+            "imfx0": 0.0,
+            "kappaIB": 0.0,
+            "omega_beat_plasframe": 0.0,
+            "cs": 0.0,
+            "kz": 0.0,
+            "res_cond": 0.0,
+        } | {k: 0.0 for k in self.args.keys()}
+
+    def make_cbet_profiles(self):
+        if "nc" in self.cfg["profiles"]["n"]["min"]:
+            nmin = (
+                float(self.cfg["profiles"]["n"]["min"].strip("nc")) * self.cfg["units"]["derived"]["nc_over_n0"]
+                # * self.cfg["units"]["derived"]["n0"].value
+            )
+            nmax = (
+                float(self.cfg["profiles"]["n"]["max"].strip("nc")) * self.cfg["units"]["derived"]["nc_over_n0"]
+                # * self.cfg["units"]["derived"]["n0"].value
+            )
+        else:
+            nmin = (_Q(self.cfg["profiles"]["n"]["min"]) / self.cfg["units"]["derived"]["n0"]).to("").value
+            nmax = (_Q(self.cfg["profiles"]["n"]["max"]) / self.cfg["units"]["derived"]["n0"]).to("").value
+
+        nprof = nmin + (nmax - nmin) * self.cfg["grid"]["z"] / self.cfg["grid"]["zmax"]
+        Teprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Te"]).to("keV").value
+        Tiprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Ti"]).to("keV").value
+        Zeffprof = np.ones_like(nprof) * self.cfg["profiles"]["Zeff"]
+        flowprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["flow"]).to("um/s").value
+        omega_beat_prof = np.ones_like(nprof) * (
+            self.cfg["units"]["derived"]["w0"].to("Hz").value
+            - (
+                (2 * np.pi * self.cfg["units"]["derived"]["c"])
+                / (self.cfg["units"]["derived"]["lambda0"] + _Q(self.cfg["profiles"]["lambdabeat"]))
+            )
+            .to("Hz")
+            .value
+        )
+        omegabeat = omega_beat_prof
+
+
+        return nprof, Teprof, Tiprof, Zeffprof, flowprof, omegabeat
+
+    def init_diffeqsolve(self) -> Dict:
+        self.space_quantities = {
+            "z0": self.cfg["grid"]["zmin"],
+            "z1": self.cfg["grid"]["zmax"],
+            "max_steps": self.cfg["grid"]["max_steps"],
+            "save_z0": self.cfg["grid"]["zmin"],
+            "save_z1": self.cfg["grid"]["zmax"],
+            "save_nz": self.cfg["grid"]["nz"],
+        }
+
+        self.diffeqsolve_quants = {
+            "terms": ODETerm(SBSVectorField(self.cfg)),
+            "solver": Stepper(),
+            "saveat": {
+                "ts": np.linspace(
+                    self.space_quantities["z0"], self.space_quantities["z1"], self.space_quantities["save_nz"]
+                )
+            },
+        }
+
+    def __call__(self, trainable_modules, args):
+        cbet_result, args = self.perform_cbet(trainable_modules, args)
+        solver_results = []
+
+        # loop over beams / quads / rays
+        for _cbet_light, sbs_term, _ray_coords in zip(
+            cbet_result.ys, self.diffeqsolve_quants["terms"]["sbs"], self.all_ray_coords
+        ):
+            solver_results, args = self.perform_sbs(
+                trainable_modules, args, cbet_result, solver_results, _cbet_light, sbs_term, _ray_coords
+            )
+
+        return {"solver results": solver_results, "args": args}
+
+    def perform_sbs(self, trainable_modules, args, cbet_result, solver_results, _cbet_light, sbs_term, _ray_coords):
+        nprof = trainable_modules["n_over_n0"](_ray_coords)
+        Teprof = trainable_modules["Te_over_T0"](_ray_coords)
+        Tiprof = trainable_modules["Ti_over_T0"](_ray_coords)
+        Zeffprof = trainable_modules["Zeff"](_ray_coords)
+        flowprof = trainable_modules["flow_over_flow0"](_ray_coords)
+        omegabeat = trainable_modules["omegabeat"](_ray_coords)
+
+        args = {
+            "n_over_n0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], nprof),
+            "Te_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Teprof),
+            "Ti_over_T0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Tiprof),
+            "Zeff": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
+            "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
+            "omegabeat": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat),
+        } | args
+
+        sbs_sources = cbet_result.ys  # array of len(num_beams)
+        sbs_sources["Ji"] = _cbet_light
+        solver_result = diffeqsolve(
+            terms=sbs_term,
+            solver=self.diffeqsolve_quants["solver"],
+            t0=self.space_quantities["z0"],
+            t1=self.space_quantities["z1"],
+            max_steps=self.cfg["grid"]["max_steps"],
+            dt0=self.cfg["grid"]["dz"],
+            y0=sbs_sources,
+            args=args,
+            saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+        )
+        solver_results.append(solver_result)
+        return solver_results, args
+
+    def perform_cbet(self, trainable_modules, args):
+        cbet_nprof = trainable_modules["cbet"]["n_over_n0"]()
+        cbet_Teprof = trainable_modules["cbet"]["Te_over_T0"]()
+        cbet_Tiprof = trainable_modules["cbet"]["Ti_over_T0"]()
+        cbet_Zeffprof = trainable_modules["cbet"]["Zeff"]()
+        cbet_flowprof = trainable_modules["cbet"]["flow_over_flow0"]()
+        cbet_omegabeat = trainable_modules["cbet"]["omegabeat"]()
+
+        if args is None:
+            args = {}
+        else:
+            args = {
+                "n_over_n0": cbet_nprof,
+                "Te_over_T0": cbet_Teprof,
+                "Ti_over_T0": cbet_Tiprof,
+                "Zeff": cbet_Zeffprof,
+                "flow_over_flow0": cbet_flowprof,
+                "omegabeat": cbet_omegabeat,
+            } | args
+
+        cbet_result = diffeqsolve(
+            terms=self.diffeqsolve_quants["terms"]["cbet"],
+            solver=self.diffeqsolve_quants["solver"],
+            t0=0.0,
+            t1=1.0,
+            max_steps=self.cbet_steps + 4,
+            dt0=self.cbet_dz,
+            y0=self.state,
+            args=args,
+            saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+        )
+
+        return cbet_result, args
