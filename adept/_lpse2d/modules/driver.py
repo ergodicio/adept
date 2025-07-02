@@ -1,36 +1,45 @@
-from typing import Dict
-import json, tempfile
-
-from jax import numpy as jnp, Array
-from jax.lax import stop_gradient
-from jax.random import normal, PRNGKey, uniform
+import json
+import tempfile
 
 import equinox as eqx
 import numpy as np
+from jax import Array
+from jax import numpy as jnp
+from jax import tree_util as jtu
 
 from adept.utils import download_from_s3
 
 
-class PRNGKeyArray:
-    def __init__(self, key: Array):
-        self.key = key
-
-
-def load(cfg: Dict, DriverModule: eqx.Module) -> eqx.Module:
+def load(cfg: dict, DriverModule: eqx.Module) -> eqx.Module:
     filename = cfg["drivers"]["E0"]["file"]
     with tempfile.TemporaryDirectory() as td:
+        # download the file if it is on s3
         if "s3" in filename:
             from os.path import join
+
+            print(filename)
 
             cfg["drivers"]["E0"]["file"] = join(td, filename.split("/")[-1])
             cfg["drivers"]["E0"]["file"] = download_from_s3(filename, cfg["drivers"]["E0"]["file"])
         else:
             cfg["drivers"]["E0"]["file"] = filename
 
+        # load the model
         if "pkl" in cfg["drivers"]["E0"]["file"]:
             loaded_model = DriverModule(cfg)
+            with open(cfg["drivers"]["E0"]["file"], "rb") as f:
+                import pickle
+
+                _loaded_pickle_ = pickle.load(f)
+                loaded_model = eqx.tree_at(
+                    lambda tree: tree.intensities, loaded_model, replace=_loaded_pickle_["E0"]["intensities"]
+                )
+                loaded_model = eqx.tree_at(
+                    lambda tree: tree.phases, loaded_model, replace=_loaded_pickle_["E0"]["phases"]
+                )
         elif "eqx" in cfg["drivers"]["E0"]["file"]:
             with open(cfg["drivers"]["E0"]["file"], "rb") as f:
+                # read the model config
                 model_cfg = json.loads(f.readline().decode())
                 cfg["drivers"]["E0"]["params"] = model_cfg
                 model = DriverModule(cfg)
@@ -59,50 +68,22 @@ def choose_driver(shape: str) -> eqx.Module:
         raise NotImplementedError(f"Amplitude shape -- {shape} -- not implemented")
 
 
-class ArbitraryDriver(eqx.Module):
+class UniformDriver(eqx.Module):
     intensities: Array
     delta_omega: Array
-    initial_phase: Array
-    envelope: Dict
-    amp_output: str
-    phase_output: str
-    model_cfg: Dict
+    phases: Array
+    envelope: dict
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__()
-        self.model_cfg = cfg["drivers"]["E0"]["params"]
-        self.intensities = np.ones(cfg["drivers"]["E0"]["num_colors"])
-        self.delta_omega = np.linspace(
-            -cfg["drivers"]["E0"]["delta_omega_max"],
-            cfg["drivers"]["E0"]["delta_omega_max"],
-            cfg["drivers"]["E0"]["num_colors"],
+        driver_cfg = cfg["drivers"]["E0"]
+        self.intensities = jnp.array(np.ones(cfg["drivers"]["E0"]["num_colors"]))
+        self.delta_omega = jnp.linspace(
+            -driver_cfg["delta_omega_max"], driver_cfg["delta_omega_max"], driver_cfg["num_colors"]
         )
-        self.initial_phase = jnp.array(np.random.uniform(-np.pi, np.pi, cfg["drivers"]["E0"]["num_colors"]))
-        self.envelope = cfg["drivers"]["E0"]["derived"]
-        self.amp_output = "none"
-        self.phase_output = "none"
-
-    def scale_ints_and_phases(self, intensities, phases) -> tuple:
-        if self.amp_output == "linear":
-            ints = 0.5 * (jnp.tanh(ints) + 1.0)
-        elif self.amp_output == "log":
-            ints = 3 * (jnp.tanh(intensities) + 1.0) - 6
-            ints = 10**ints
-        else:
-            raise NotImplementedError(f"Amplitude Output type -- {self.amp_output} -- not implemented")
-
-        if self.phase_output == "learned":
-            phases = jnp.tanh(phases) * jnp.pi * 4
-        elif self.phase_output == "random":
-            phases = stop_gradient(
-                uniform(self.phase_key.key, (self.initial_phase.size,), minval=-jnp.pi, maxval=jnp.pi)
-            )
-        else:
-            raise NotImplementedError(f"Phase Output type -- {self.phase_output} -- not implemented")
-
-        ints /= jnp.sum(ints)
-
-        return ints, phases
+        phase_rng = np.random.default_rng(seed=cfg["drivers"]["E0"]["params"]["phases"]["seed"])
+        self.phases = jnp.array(phase_rng.uniform(-1, 1, driver_cfg["num_colors"]))
+        self.envelope = driver_cfg["derived"]
 
     def save(self, filename: str) -> None:
         """
@@ -114,41 +95,89 @@ class ArbitraryDriver(eqx.Module):
             The name of the file to save the model to
 
         """
-        new_filter_spec = lambda f, x: (
-            None if isinstance(x, PRNGKeyArray) else eqx.default_serialise_filter_spec(f, x)
-        )
+
         with open(filename, "wb") as f:
             model_cfg_str = json.dumps(self.model_cfg)
             f.write((model_cfg_str + "\n").encode())
-            eqx.tree_serialise_leaves(f, self, filter_spec=new_filter_spec)
+            eqx.tree_serialise_leaves(f, self)
 
-    def __call__(self, state: Dict, args: Dict) -> tuple:
-        ints = self.intensities / jnp.sum(self.intensities)
+    def __call__(self, state: dict, args: dict) -> tuple:
+        intensities = self.intensities / jnp.sum(self.intensities)
         args["drivers"]["E0"] = {
-            "delta_omega": stop_gradient(self.delta_omega),
-            "initial_phase": self.initial_phase,
-            "intensities": ints,
-        } | {k: stop_gradient(v) for k, v in self.envelope.items()}
+            "delta_omega": self.delta_omega,
+            "phases": jnp.tanh(self.phases) * jnp.pi,
+            "intensities": intensities,
+        } | self.envelope
         return state, args
 
 
-class UniformDriver(ArbitraryDriver):
+class ArbitraryDriver(UniformDriver):
+    model_cfg: dict
 
-    phase_key: PRNGKeyArray
-
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
-        num_colors = cfg["drivers"]["E0"]["num_colors"]
-        self.intensities = jnp.array(np.ones(num_colors))
-        delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
-        self.delta_omega = jnp.linspace(-delta_omega_max, delta_omega_max, num_colors)
-        self.initial_phase = jnp.array(np.random.uniform(-np.pi, np.pi, num_colors))
-        self.phase_key = PRNGKeyArray(PRNGKey(seed=np.random.randint(2**20)))
+        driver_cfg = cfg["drivers"]["E0"]
+        self.model_cfg = cfg["drivers"]["E0"]["params"]
+        if self.model_cfg["amplitudes"]["init"] == "random":
+            self.intensities = jnp.array(np.random.uniform(-1, 1, driver_cfg["num_colors"]))
+        elif self.model_cfg["amplitudes"]["init"] == "uniform":
+            self.intensities = jnp.ones(driver_cfg["num_colors"])
+        else:
+            raise NotImplementedError(
+                f"Initialization type -- {self.model_cfg['amplitudes']['init']} -- not implemented"
+            )
+
+    def scale_intensities(self, intensities):
+        if self.model_cfg["amplitudes"]["activation"] == "linear":
+            ints = 0.5 * (jnp.tanh(intensities) + 1.0)
+        elif self.model_cfg["amplitudes"]["activation"] == "log":
+            ints = 3 * (jnp.tanh(intensities) + 1.0) - 3
+            ints = 10**ints
+        elif self.model_cfg["amplitudes"]["activation"] == "log-3wide":
+            ints = -1.5 * (jnp.tanh(intensities) + 1.0)  # from 0 to -3
+            ints = 10**ints
+        else:
+            raise NotImplementedError(
+                f"Amplitude Output type -- {self.model_cfg['amplitudes']['activation']} -- not implemented"
+            )
+
+        return ints
+
+    def get_partition_spec(self):
+        """
+        Get the partition spec for the model
+
+        Only amplitudes and phases can be learned
+
+        Returns
+        -------
+        filter_spec : pytree with the same structure as the model
+
+        """
+        filter_spec = jtu.tree_map(lambda _: False, self)
+
+        if self.model_cfg["amplitudes"]["learned"]:
+            filter_spec = eqx.tree_at(lambda tree: tree.intensities, filter_spec, replace=True)
+
+        if self.model_cfg["phases"]["learned"]:
+            filter_spec = eqx.tree_at(lambda tree: tree.phases, filter_spec, replace=True)
+
+        return filter_spec
+
+    def __call__(self, state: dict, args: dict) -> tuple:
+        intensities = self.scale_intensities(self.intensities)
+        intensities = intensities / jnp.sum(intensities)
+
+        args["drivers"]["E0"] = {
+            "delta_omega": self.delta_omega,
+            "phases": jnp.tanh(self.phases) * jnp.pi,
+            "intensities": intensities,
+        } | self.envelope
+        return state, args
 
 
 class GaussianDriver(UniformDriver):
-
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         self.intensities = jnp.array(
@@ -161,8 +190,7 @@ class GaussianDriver(UniformDriver):
 
 
 class LorentzianDriver(UniformDriver):
-
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
         delta_omega_max = cfg["drivers"]["E0"]["delta_omega_max"]
         self.intensities = jnp.array(

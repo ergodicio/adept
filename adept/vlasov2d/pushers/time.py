@@ -1,9 +1,7 @@
-from typing import Dict, Tuple
-
-from jax import numpy as jnp
 import diffrax
+from jax import numpy as jnp
 
-from adept.vlasov2d.pushers import vlasov, field
+from adept.vlasov2d.pushers import field, vlasov
 
 
 class Stepper(diffrax.Euler):
@@ -51,7 +49,8 @@ class ChargeConservingMaxwell(VlasovFieldBase):
 
     All the pushers are chosen and initialized here and a single time-step is defined here.
 
-    1. Li, Y. et al. Solving the Vlasov–Maxwell equations using Hamiltonian splitting. Journal of Computational Physics 396, 381–399 (2019).
+    1. Li, Y. et al. Solving the Vlasov–Maxwell equations using Hamiltonian splitting.
+       Journal of Computational Physics 396, 381–399 (2019).
 
 
 
@@ -59,8 +58,8 @@ class ChargeConservingMaxwell(VlasovFieldBase):
     :return:
     """
 
-    def __init__(self, cfg: Dict):
-        super(ChargeConservingMaxwell, self).__init__(cfg)
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
         self.push = cfg["solver"]["push_f"]
         self.dth = 0.5 * self.dt
         self.kx = cfg["grid"]["kx"]
@@ -80,7 +79,7 @@ class ChargeConservingMaxwell(VlasovFieldBase):
         new_fxykvy = fxykvy * jnp.exp(1j * dt * self.kvy * self.vx * bz[..., None, None])
         return jnp.fft.ifft(new_fxykvy, axis=3)
 
-    def __call__(self, t: float, y: Dict, args: Dict) -> Dict:
+    def __call__(self, t: float, y: dict, args: dict) -> dict:
         ex, ey, bz, f = y["ex"], y["ey"], y["bz"], y["electron"]
 
         dex, dey = self.driver(t, args)

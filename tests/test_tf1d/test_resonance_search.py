@@ -1,34 +1,29 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict, Tuple
-import yaml, pytest, os
+import time
 from itertools import product
 
-
-import numpy as np
-from jax import config
-
-config.update("jax_enable_x64", True)
-# config.update("jax_debug_nans", True)
-# config.update("jax_disable_jit", True)
-
-import mlflow, optax
-from jax import numpy as jnp, Array, random as jr
-import time
-
 import equinox as eqx
+import mlflow
+import numpy as np
+import optax
+import pytest
+import yaml
+from jax import Array, devices
+from jax import numpy as jnp
+from jax import random as jr
 from tqdm import tqdm
 
 from adept import ergoExo
-from adept.tf1d import BaseTwoFluid1D
 from adept.electrostatic import get_roots_to_electrostatic_dispersion
+from adept.tf1d import BaseTwoFluid1D
 
 
 class Resonance(BaseTwoFluid1D):
     def __init__(self, cfg):
         super().__init__(cfg)
 
-    def __call__(self, params: Dict, args: Dict) -> Dict:
+    def __call__(self, params: dict, args: dict) -> dict:
         args = self.args
         args["drivers"]["ex"]["0"]["w0"] = params["w0"]
         solver_result = super().__call__(params, args)
@@ -36,12 +31,12 @@ class Resonance(BaseTwoFluid1D):
         nk1 = jnp.abs(jnp.fft.fft(soln.ys["x"]["electron"]["n"], axis=1)[:, 1])
         return -jnp.amax(nk1), solver_result
 
-    def vg(self, params: Dict, args: Dict) -> Tuple[float, Array, Dict]:
+    def vg(self, params: dict, args: dict) -> tuple[float, Array, dict]:
         return eqx.filter_jit(eqx.filter_value_and_grad(self.__call__, has_aux=True))(params, args)
 
 
 def load_cfg(rand_k0, gamma, adjoint):
-    with open("tests/test_tf1d/configs/resonance_search.yaml", "r") as file:
+    with open("tests/test_tf1d/configs/resonance_search.yaml") as file:
         defaults = yaml.safe_load(file)
 
     defaults["drivers"]["ex"]["0"]["k0"] = float(rand_k0)
@@ -102,7 +97,7 @@ def test_resonance_search(gamma, adjoint):
 
 if __name__ == "__main__":
     for gamma, adjoint in product(["kinetic", 3.0], ["Recursive", "Backsolve"]):
-        if "CPU_ONLY" in os.environ:
-            pass
+        if not any(["gpu" == device.platform for device in devices()]):
+            pytest.skip("Takes too long without a GPU")
         else:
             test_resonance_search(gamma, adjoint)

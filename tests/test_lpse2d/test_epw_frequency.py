@@ -1,26 +1,20 @@
-from jax import config
-
-config.update("jax_enable_x64", True)
-# config.update("jax_disable_jit", True)
-
-import yaml, mlflow
 import numpy as np
 import pytest
-
+import yaml
 from numpy import testing
 
-from adept.electrostatic import get_nlfs
 from adept import ergoExo
+from adept.electrostatic import get_nlfs
 
 
 def _real_part_():
-    with open("tests/test_lpse2d/configs/epw.yaml", "r") as fi:
+    with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
     exo = ergoExo()
     _ = exo.setup(cfg)
 
-    with open("tests/test_lpse2d/configs/epw.yaml", "r") as fi:
+    with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
     # modify config
     rand_k0 = np.random.uniform(10, 30)
@@ -35,7 +29,7 @@ def _real_part_():
     )
     cfg["drivers"]["E2"]["k0"] = float(k0)
     cfg["drivers"]["E2"]["w0"] = w0 * rand_scalar
-    cfg["grid"]["xmax"] = f"{10*float(2 * np.pi / k0)}um"
+    cfg["grid"]["xmax"] = f"{10 * float(2 * np.pi / k0)}um"
     cfg["grid"]["tmax"] = "1ps"
     cfg["save"]["fields"]["t"]["tmax"] = "1ps"
     cfg["save"]["fields"]["t"]["dt"] = "5fs"
@@ -57,13 +51,13 @@ def _real_part_():
 
 
 def _imaginary_part_():
-    with open("tests/test_lpse2d/configs/epw.yaml", "r") as fi:
+    with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
     exo = ergoExo()
     _ = exo.setup(cfg)
 
-    with open("tests/test_lpse2d/configs/epw.yaml", "r") as fi:
+    with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
     # modify config
     rand_k0 = np.random.uniform(22, 28)
@@ -76,7 +70,7 @@ def _imaginary_part_():
         * exo.adept_module.cfg["units"]["derived"]["vte_sq"]
         / exo.adept_module.cfg["units"]["derived"]["wp0"]
     )
-    cfg["grid"]["xmax"] = f"{10*float(2 * np.pi / k0)}um"
+    cfg["grid"]["xmax"] = f"{10 * float(2 * np.pi / k0)}um"
     cfg["terms"]["epw"]["damping"]["landau"] = True
 
     exo = ergoExo()
@@ -85,10 +79,10 @@ def _imaginary_part_():
 
     desired = (
         np.sqrt(np.pi / 8)
-        * cfg["units"]["derived"]["wp0"] ** 4
+        * exo.cfg["units"]["derived"]["wp0"] ** 4
         * k0**-3.0
-        / (cfg["units"]["derived"]["vte_sq"] ** 1.5)
-        * np.exp(-(cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * cfg["units"]["derived"]["vte_sq"]))
+        / (exo.cfg["units"]["derived"]["vte_sq"] ** 1.5)
+        * np.exp(-(exo.cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * exo.cfg["units"]["derived"]["vte_sq"]))
     )
     # get damping rate out of ppo
     flds = ppo["x"]

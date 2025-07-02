@@ -125,6 +125,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# mflow
+*mlruns/
+
 # Pyre type checker
 .pyre/
 
@@ -134,3 +137,6 @@ mlruns
 # VS Code settings
 .vscode
 .idea
+
+# hatchling-generated version file
+_version.py

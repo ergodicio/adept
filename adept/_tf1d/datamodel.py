@@ -1,4 +1,3 @@
-from typing import Dict, Union
 from pydantic import BaseModel
 
 
@@ -58,7 +57,7 @@ class IonModel(BaseModel):
     mass: float
     T0: float
     charge: float
-    gamma: Union[int, str]
+    gamma: int | str
     trapping: TrappingModel
 
 
@@ -68,7 +67,7 @@ class ElectronModel(BaseModel):
     T0: float
     mass: float
     charge: float
-    gamma: Union[int, str]
+    gamma: int | str
     trapping: TrappingModel
 
 
@@ -91,7 +90,7 @@ class ExDriverModel(BaseModel):
 
 
 class DriversModel(BaseModel):
-    ex: Dict[str, ExDriverModel]
+    ex: dict[str, ExDriverModel]
 
 
 class ConfigModel(BaseModel):

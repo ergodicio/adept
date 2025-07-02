@@ -1,0 +1,115 @@
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    space-profile:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+
+grid:
+  dt: 0.25
+  nv: 512
+  nx: 32
+  tmin: 0.
+  tmax: 480.0
+  vmax: 6.4
+  xmax: 20.94
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 480.0
+      nt: 961
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 480.0
+      nt: 9
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: vlasov1d
+  run: test
+
+drivers:
+  ex:
+    '0':
+      a0: 1.e-6
+      k0: 0.3
+      t_center: 40.0
+      t_rise: 5.0
+      t_width: 30.0
+      w0: 1.1598
+      dw0: 0.
+      x_center: 0.0
+      x_rise: 10.0
+      x_width: 4000000.0
+  ey: {}
+
+terms:
+  field: poisson
+  edfdv: cubic-spline
+  time: leapfrog
+  fokker_planck:
+    is_on: True
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0e-6
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: True
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0e-6
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False

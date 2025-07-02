@@ -17,7 +17,7 @@ density:
     v0: 0.0
     T0: 1.0
     m: 2.0
-    n: 
+    n:
       basis: uniform
       baseline: 1.0
       bump_or_trough: bump
@@ -74,4 +74,3 @@ terms:
     f00:
       type: Dougherty
   e_solver: oshun
-    

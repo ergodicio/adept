@@ -1,9 +1,10 @@
+from collections.abc import Callable
 from functools import partial
-from typing import Callable
 
 import equinox as eqx
-from jax import numpy as jnp, vmap
-from interpax import interp2d, interp1d
+from interpax import interp1d, interp2d
+from jax import numpy as jnp
+from jax import vmap
 
 
 class VlasovExternalE(eqx.Module):

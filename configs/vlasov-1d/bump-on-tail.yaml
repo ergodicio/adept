@@ -63,6 +63,10 @@ drivers:
   ex: {}
   ey: {}
 
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
 terms:
   field: poisson
   edfdv: exponential

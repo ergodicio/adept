@@ -1,8 +1,9 @@
-from typing import Dict
-from jax import numpy as jnp, Array
-import optimistix as optx
 import diffrax
-from adept.vfp1d.fokker_planck import LenardBernstein, FLMCollisions
+import optimistix as optx
+from jax import Array
+from jax import numpy as jnp
+
+from adept.vfp1d.fokker_planck import FLMCollisions, LenardBernstein
 
 
 class OSHUN1D:
@@ -12,7 +13,7 @@ class OSHUN1D:
 
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.cfg = cfg
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
@@ -98,6 +99,11 @@ class OSHUN1D:
 
         """
 
+        # Questions:
+        # Is there a better way to get ∆J/∆E? e.g. using jvp
+        # or at least reusing the two self.ei calls rather than running for a third time after?
+        # Also note that second order effects only come from v df0dx and f2 terms.
+
         # calculate j without any e field
         f10_after_coll = self.ei(Z=Z, ni=ni, f0=f0, f10=f10, dt=self.dt)
         j0 = self.calc_j(f10_after_coll)
@@ -105,7 +111,7 @@ class OSHUN1D:
         # get perturbation
         de = jnp.abs(e) * self.large_eps + self.eps
 
-        # calculate effect of dex
+        # calculate effect of dex (if we are doing it this way, would there be any harm using f0_after_dex too?)
         _, f10_after_dex = self.push_edfdv(f0, f10, de)
         f10_after_dex = self.ei(Z=Z, ni=ni, f0=f0, f10=f10_after_dex, dt=self.dt)
         jx_dx = self.calc_j(f10_after_dex)
@@ -203,7 +209,7 @@ class OSHUN1D:
 
         return sol.value["f0"], sol.value["f1"], sol.value["e"]
 
-    def _edfdv_(self, t: float, y: Dict, args: Dict) -> Dict:
+    def _edfdv_(self, t: float, y: dict, args: dict) -> dict:
         """
         This is the edfdv solve for f0 and f1. It uses the `t, y, args` formulation for diffeqsolve
         because we step it using a 5th order integrator (but can also use Euler etc.)
@@ -251,7 +257,7 @@ class OSHUN1D:
         )
         return result.ys["f0"][-1], result.ys["f10"][-1]
 
-    def _vdfdx_(self, t: float, y: Dict, args: Dict) -> Dict:
+    def _vdfdx_(self, t: float, y: dict, args: dict) -> dict:
         """
         This is the vdfdx solve for f0 and f1. It uses the `t, y, args` formulation for diffeqsolve
         because we step it using a 5th order integrator (but can also use Euler etc.)
@@ -295,7 +301,7 @@ class OSHUN1D:
         )
         return result.ys["f0"][-1], result.ys["f10"][-1]
 
-    def __call__(self, t, y, args) -> Dict:
+    def __call__(self, t, y, args) -> dict:
         """
         This is the main function that is called by the solver. It steps the distribution functions and the electric
         field.

@@ -1,17 +1,16 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from typing import Dict
 import os
-
 from time import time
 
-
+import mlflow
 import numpy as np
-import xarray, mlflow, pint
-from jax import numpy as jnp
-from scipy.special import gamma
+import pint
+import xarray
 from diffrax import Solution
+from jax import numpy as jnp
 from matplotlib import pyplot as plt
+from scipy.special import gamma
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.storage import store_f, store_fields
@@ -189,8 +188,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     return n_prof_total, f
 
 
-def post_process(result: Solution, cfg: Dict, td: str, args: Dict):
-
+def post_process(result: Solution, cfg: dict, td: str, args: dict):
     t0 = time()
     os.makedirs(os.path.join(td, "plots"), exist_ok=True)
     os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
@@ -243,6 +241,17 @@ def post_process(result: Solution, cfg: Dict, td: str, args: Dict):
                 plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)
+
+    diags_dict = {}
+    for k in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
+        if cfg["diagnostics"][k]:
+            diags_dict[k] = xarray.DataArray(
+                result.ys[k], coords=(("t", result.ts[k]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
+            )
+
+    if len(diags_dict.keys()):
+        diags_xr = xarray.Dataset(diags_dict)
+        diags_xr.to_netcdf(os.path.join(td, "binary", "diags.nc"))
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 

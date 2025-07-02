@@ -1,15 +1,16 @@
-import os
-from adept.lpse2d import calc_threshold_intensity
-
 import numpy as np
+import pytest
+from jax import devices
+
+from adept.lpse2d import calc_threshold_intensity
 
 
 def run_once(L, Te, I0):
     import yaml
-    from adept import ergoExo
-    from adept.utils import export_run
 
-    with open("tests/test_lpse2d/configs/tpd.yaml", "r") as fi:
+    from adept import ergoExo
+
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
     cfg["units"]["laser intensity"] = f"{I0}e14 W/cm^2"
@@ -23,14 +24,12 @@ def run_once(L, Te, I0):
     sol, ppo, mlrunid = exo(modules)
     es = ppo["metrics"]["log10_total_e_sq"]
 
-    export_run(mlrunid)
-
     return es
 
 
 def test_threshold():
-    if "CPU_ONLY" in os.environ:
-        pass
+    if not any(["gpu" == device.platform for device in devices()]):
+        pytest.skip("Takes too long without a GPU")
     else:
         ess = []
         c = 3e8
@@ -57,7 +56,8 @@ def test_threshold():
             # max_loc = np.argmax(desdi2)
             # actual = I_scan[1 + max_loc]
         # np.testing.assert_allclose(actual, desired=It, rtol=0.25)  # it is 25% because of the resolution of the scan.
-        # The test itself is not quite working but you can examine the results visually and they make sense, so we are leaving it this way for now
+        # The test itself is not quite working but you can examine the results visually and they make sense,
+        # so we are leaving it this way for now
 
 
 if __name__ == "__main__":

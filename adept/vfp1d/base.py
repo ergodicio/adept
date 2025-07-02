@@ -1,30 +1,30 @@
-from typing import Dict, Tuple
-
 import numpy as np
-from astropy import constants as csts, units as u
+from astropy import constants as csts
+from astropy import units as u
 from astropy.units import Quantity as _Q
-from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
-from jax import numpy as jnp, tree_util as jtu
+from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
+from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule, Stepper
-from adept.vfp1d.vector_field import OSHUN1D
 from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
 from adept.vfp1d.storage import get_save_quantities, post_process
+from adept.vfp1d.vector_field import OSHUN1D
 
 
 class BaseVFP1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 
-    def post_process(self, solver_result: Dict, td: str) -> Dict:
+    def post_process(self, solver_result: dict, td: str) -> dict:
         return post_process(solver_result["solver result"], cfg=self.cfg, td=td, args=self.args)
 
-    def write_units(self) -> Dict:
+    def write_units(self) -> dict:
         ne = u.Quantity(self.cfg["units"]["reference electron density"]).to("1/cm^3")
         ni = ne / self.cfg["units"]["Z"]
         Te = u.Quantity(self.cfg["units"]["reference electron temperature"]).to("eV")
         Ti = u.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV")
         Z = self.cfg["units"]["Z"]
+        # Should we change this to reference electron density? or allow it to be user set?
         n0 = u.Quantity("9.0663e21/cm^3")
         ion_species = self.cfg["units"]["Ion"]
 
@@ -44,6 +44,8 @@ class BaseVFP1D(ADEPTModule):
         nD_Shkarofsky = np.exp(logLambda_ei) * Z / 9
 
         nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
+        # JPB - Maybe comment which page/eq this is from? There are lots of collision times in NRL
+        # For example, nu_ei on page 32 does include Z^2
         nuei_nrl = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / nD_NRL
 
         lambda_mfp_shk = (vth / nuei_shk).to("micron")
@@ -180,19 +182,22 @@ class BaseVFP1D(ADEPTModule):
 
         self.cfg["grid"] = cfg_grid
 
-    def init_state_and_args(self) -> Dict:
+    def init_state_and_args(self) -> dict:
         """
         This function initializes the state
 
         :param cfg:
         :return:
         """
-        f, ne_prof = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
+        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
 
-        state = {"f0": f}
+        state = {"f0": f0}
+        # not currently necessary but kept for completeness
         for il in range(1, self.cfg["grid"]["nl"] + 1):
             for im in range(0, il + 1):
-                state[f"f{il}{im}"] = jnp.zeros_like(f)
+                state[f"f{il}{im}"] = jnp.zeros_like(f0)
+
+        state["f10"] = f10
 
         for field in ["e", "b"]:
             state[field] = jnp.zeros(self.cfg["grid"]["nx"])
@@ -219,7 +224,7 @@ class BaseVFP1D(ADEPTModule):
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
 
-    def __call__(self, trainable_modules: Dict, args: Dict):
+    def __call__(self, trainable_modules: dict, args: dict):
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],
             solver=self.diffeqsolve_quants["solver"],

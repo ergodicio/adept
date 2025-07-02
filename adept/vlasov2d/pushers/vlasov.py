@@ -1,8 +1,10 @@
 from functools import partial
-import numpy as np
-from jax import numpy as jnp, vmap
 
+import lineax as lx
+import numpy as np
 from interpax import interp1d
+from jax import numpy as jnp
+from jax import vmap
 
 
 class ExponentialSpatialAdvection:

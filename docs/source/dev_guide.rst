@@ -1,7 +1,7 @@
 Developer Guide
 ---------------
 
-In case you are interested in looking past the forward simulation use case, that is, if you are interested in running a program which is not just 
+In case you are interested in looking past the forward simulation use case, that is, if you are interested in running a program which is not just
 
 .. code-block:: bash
 

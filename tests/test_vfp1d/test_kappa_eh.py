@@ -1,11 +1,17 @@
-import os, yaml, mlflow, numpy as np, pytest
+import os
+
+import mlflow
+import numpy as np
+import pytest
+import yaml
+from jax import devices
 
 from adept import ergoExo
 
 
 def _run_(Z, ee):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
-    with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d/epp-short')}.yaml", "r") as fi:
+    with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d/epp-short')}.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
     cfg["units"]["Z"] = Z
@@ -34,7 +40,8 @@ def _run_(Z, ee):
 @pytest.mark.parametrize("Z", list(range(1, 21, 4)) + [40, 60, 80])
 @pytest.mark.parametrize("ee", [True, False])
 def test_kappa_eh(Z, ee):
-    if "CPU_ONLY" in os.environ:
+    if not any(["gpu" == device.platform for device in devices()]):
+        pytest.skip(f"Skipping Z={Z} to save time because no GPU is available")
         if Z in [1, 21, 80]:
             _run_(Z, ee)
 

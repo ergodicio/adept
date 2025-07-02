@@ -1,11 +1,11 @@
 import os
 from functools import partial
-from jax import tree_util as jtu
 
+import numpy as np
 import xarray as xr
 from flatdict import FlatDict
-import numpy as np
 from jax import numpy as jnp
+from jax import tree_util as jtu
 from matplotlib import pyplot as plt
 
 
@@ -116,7 +116,7 @@ def save_vector_fields(result, cfg, td):
     )
 
     saved_arrays_xr = xr.Dataset(data_vars)
-    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"vector-fields.nc"))
+    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", "vector-fields.nc"))
 
     num_plots = 8
     t_skip = int(saved_arrays_xr.coords["t"].size // num_plots)
@@ -191,11 +191,11 @@ def save_scalar_fields(result, cfg, td):
                 ("y", cfg["grid"]["y"]),
             ),
         )
-        for k, func in zip(["n", "T"], [calc_n, calc_T])
+        for k, func in zip(["n", "T"], [calc_n, calc_T], strict=False)
     }
 
     saved_arrays_xr = xr.Dataset(data_vars)
-    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"scalar-fields.nc"))
+    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", "scalar-fields.nc"))
 
     num_plots = 8
     t_skip = int(saved_arrays_xr.coords["t"].size // num_plots)
@@ -246,7 +246,7 @@ def save_dists(result, cfg, td):
     }
 
     saved_arrays_xr = xr.Dataset(data_vars)
-    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", f"flm_xyv.nc"), engine="h5netcdf", invalid_netcdf=True)
+    saved_arrays_xr.to_netcdf(os.path.join(td, "binary", "flm_xyv.nc"), engine="h5netcdf", invalid_netcdf=True)
 
     return saved_arrays_xr
 

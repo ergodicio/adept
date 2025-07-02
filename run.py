@@ -11,8 +11,6 @@ config.update("jax_enable_x64", True)
 import yaml
 
 from adept import ergoExo
-from adept.utils import export_run
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automatic Differentiation Enabled Plasma Transport")
@@ -23,7 +21,7 @@ if __name__ == "__main__":
     exo = ergoExo()
 
     if args.run_id is None:
-        with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml", "r") as fi:
+        with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml") as fi:
             cfg = yaml.safe_load(fi)
         modules = exo.setup(cfg=cfg)
         sol, post_out, run_id = exo(modules)
@@ -31,6 +29,3 @@ if __name__ == "__main__":
     else:
         exo.run_job(args.run_id, nested=None)
         run_id = args.run_id
-
-    if "MLFLOW_EXPORT" in os.environ:
-        export_run(run_id)

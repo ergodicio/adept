@@ -1,9 +1,7 @@
-from typing import Dict
-
-from jax import numpy as jnp, Array
-from jax import vmap
-import numpy as np
 import lineax as lx
+import numpy as np
+from jax import Array, vmap
+from jax import numpy as jnp
 
 
 class LenardBernstein:
@@ -15,7 +13,7 @@ class LenardBernstein:
 
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.cfg = cfg
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
@@ -27,6 +25,13 @@ class LenardBernstein:
         r_e = 2.8179402894e-13
         c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
         self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
+
+        # For debugging/experimentation, boosting/reducing isotropic ee collisions has no impact on LOCAL fields
+        # i.e. this is a way to artificially tune dgree of nonlocality without affecting anything else
+        # collision_boost = 50
+        # print('isotropic ee collisions boosted by factor of {}, '.format(collision_boost)
+        #     + 'note this has no impact on the effect on nonlocality from electron inertia')
+        # self.nu_ee_coeff = collision_boost*self.nu_ee_coeff
 
     def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
         """
@@ -47,6 +52,7 @@ class LenardBernstein:
     def _get_operator_(self, nu: float, f0: Array, dt: float) -> lx.TridiagonalLinearOperator:
         """
         Returns the tridiagonal operator for the Lenard-Bernstein collision operator
+        Cee0 = - nuee0 (kb Te d2fdv + v dfdv)
 
         This is called at each location in space because the f0 is different
 
@@ -86,11 +92,12 @@ class FLMCollisions:
     """
     The FLM collision operator is as described in Tzoufras2014
 
-    It also has an implementation of electron-electron hack where the off-diagonal terms in the electron-electron collision
+    It also has an implementation of electron-electron hack
+    where the off-diagonal terms in the electron-electron collision
     operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
         self.Z = cfg["units"]["Z"]
@@ -126,7 +133,7 @@ class FLMCollisions:
             self.b4[il] = (il * (il + 1) / 2 - il) / (2 * il + 1) / (2 * il - 1)
 
     def calc_ros_i(self, flm: Array, power: int) -> Array:
-        """
+        r"""
         Calculates the Rosenbluth I integral
 
         $$4 \pi v^{-i} \int_0^v' [   f(v') v'^(2+i)  ] dv'$$
@@ -139,7 +146,7 @@ class FLMCollisions:
         return 4 * jnp.pi * self.v**-power * jnp.cumsum(self.v[None, :] ** (2.0 + power) * flm, axis=1) * self.dv
 
     def calc_ros_j(self, flm: Array, power: int) -> Array:
-        """
+        r"""
         Calculates the Rosenbluth J integral
 
         $$4 \pi v^{-j} \int_v^\infty [  f(v') v'^(2+j)  ] dv'$$
@@ -153,7 +160,7 @@ class FLMCollisions:
             * self.dv
         )
 
-    def get_ee_offdiagonal_contrib(self, t, y: Array, args: Dict) -> Array:
+    def get_ee_offdiagonal_contrib(self, t, y: Array, args: dict) -> Array:
         """
         The off-diagonal terms in the electron-electron collision operator are calculated explicitly
 
@@ -221,17 +228,18 @@ class FLMCollisions:
 
         The solve has two options
 
-        1. The full ee + ei collision operator is used. This is done by solving the tridiagonal ee + ei implicitly and calculating the
+        1. The full ee + ei collision operator is used.
+        This is done by solving the tridiagonal ee + ei implicitly and calculating the
         off-diagonal terms in the ee collision operator explicitly
         2. The ee collision operator is ignored and the Z* scaling is used instead
 
         """
-        ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
 
         for il in range(1, self.nl + 1):
             ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / self.v[None, :] ** 3.0
 
             if self.ee:
+                ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
                 #
                 d2dv2 = (

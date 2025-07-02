@@ -1,0 +1,81 @@
+[project]
+name = "adept"
+description = "Automatic-Differentiation-Enabled Plasma Transport in JAX"
+readme = "README.md"
+authors = [
+    {name = "Archis Joglekar/Ergodic LLC", email="archis@ergodic.io"},
+]
+license = "MIT"
+license-files = ["LICENSE*"]
+requires-python = ">=3.11"
+dependencies = [
+    "diffrax",
+    "matplotlib",
+    "scipy",
+    "numpy",
+    "tqdm",
+    "xarray",
+    "mlflow",
+    "flatdict",
+    "h5netcdf",
+    "optax",
+    "boto3",
+    "pint",
+    "plasmapy",
+    "interpax",
+    "tabulate",
+    "pydantic",
+    "scienceplots",
+    "jax"
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/ergodicio/adept"
+Documentation = "https://adept.readthedocs.io/en/latest/"
+
+[project.optional-dependencies]
+cpu = []
+gpu = ["jax[cuda12]"]
+docs = [
+    "sphinx",
+    "sphinx_autodoc_typehints",
+    "sphinx_copybutton",
+    "sphinx-rtd-theme",
+    "sphinx-github-style",
+    "adept"
+]
+dev = [
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "typeguard",
+    "adept[docs]",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs", "toml"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "adept/_version.py"
+
+[tool.pytest.ini_options]
+# Test type hints w/ typeguard - currently disabled
+# addopts = ["--typeguard-packages=adept"]
+testpaths = ["tests"]
+filterwarnings = [
+    "error",
+    # ignored by default
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+    "ignore::ImportWarning",
+    # raised by Cython, usually harmless
+    "ignore:numpy.dtype size changed",
+    "ignore:numpy.ufunc size changed",
+    # sometimes, dependencies leak resources
+    "ignore:.*socket\\.socket.*:pytest.PytestUnraisableExceptionWarning",
+]

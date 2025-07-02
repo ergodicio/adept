@@ -1,5 +1,5 @@
-from typing import Dict
 from jax import numpy as jnp
+
 from adept._base_ import get_envelope
 
 
@@ -8,7 +8,7 @@ class Driver:
         self.xax = cfg["grid"]["x"]
         self.yax = cfg["grid"]["y"]
 
-    def __call__(self, this_pulse: Dict, current_time: jnp.float64):
+    def __call__(self, this_pulse: dict, current_time: jnp.float64):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
         t_L = this_pulse["tc"] - this_pulse["tw"] * 0.5

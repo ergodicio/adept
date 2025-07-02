@@ -1,5 +1,4 @@
 from pydantic import BaseModel
-from typing import Dict
 
 
 class SpaceProfileModel(BaseModel):
@@ -54,8 +53,8 @@ class TimeSaveModel(BaseModel):
 
 
 class SaveModel(BaseModel):
-    fields: Dict[str, TimeSaveModel]
-    electron: Dict[str, TimeSaveModel]
+    fields: dict[str, TimeSaveModel]
+    electron: dict[str, TimeSaveModel]
 
 
 class ExDriverModel(BaseModel):
@@ -76,7 +75,7 @@ class EyDriverModel(BaseModel):
 
 
 class DriversModel(BaseModel):
-    ex: Dict[str, ExDriverModel]
+    ex: dict[str, ExDriverModel]
     ey: EyDriverModel
 
 

@@ -1,18 +1,16 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-from functools import partial
-from typing import Dict, Tuple
 
+import equinox as eqx
 import numpy as np
 from jax import numpy as jnp
-import equinox as eqx
 
 from adept.vlasov2d.solver.tridiagonal import TridiagonalSolver
 
 
 class Collisions(eqx.Module):
     def __init__(self, cfg):
-        super(Collisions, self).__init__()
+        super().__init__()
         self.cfg = cfg
         self.fp = self.__init_fp_operator__()
         self.krook = Krook(self.cfg)
@@ -93,7 +91,7 @@ class Collisions(eqx.Module):
 
 class Krook(eqx.Module):
     def __init__(self, cfg):
-        super(Krook, self).__init__()
+        super().__init__()
         self.cfg = cfg
         self.dvx = self.cfg["grid"]["dvx"]
         self.dvy = self.cfg["grid"]["dvy"]
@@ -110,7 +108,7 @@ class Krook(eqx.Module):
 
 class LenardBernstein(eqx.Module):
     def __init__(self, cfg):
-        super(LenardBernstein, self).__init__()
+        super().__init__()
         self.cfg = cfg
         self.vx = self.cfg["grid"]["vx"]
         self.dvx = self.cfg["grid"]["dvx"]
@@ -128,7 +126,7 @@ class LenardBernstein(eqx.Module):
 
     def get_vx_operator(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
 
         :param nu:
@@ -153,7 +151,7 @@ class LenardBernstein(eqx.Module):
 
     def get_vy_operator(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
 
         :param nu:
@@ -179,7 +177,7 @@ class LenardBernstein(eqx.Module):
 
 class Dougherty(eqx.Module):
     def __init__(self, cfg):
-        super(Dougherty, self).__init__()
+        super().__init__()
         self.cfg = cfg
         self.vx = self.cfg["grid"]["vx"]
         self.dvx = self.cfg["grid"]["dvx"]
@@ -197,7 +195,7 @@ class Dougherty(eqx.Module):
 
     def get_vx_operator(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
 
         :param nu:
@@ -230,7 +228,7 @@ class Dougherty(eqx.Module):
 
     def get_vy_operator(
         self, nu: jnp.float64, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
 
         :param nu:

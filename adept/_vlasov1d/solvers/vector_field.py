@@ -1,7 +1,5 @@
-from typing import Tuple, Dict
-
-
-from jax import numpy as jnp, Array
+from jax import Array
+from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
@@ -19,12 +17,12 @@ class TimeIntegrator:
 
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.field_solve = field.ElectricFieldSolver(cfg)
         self.edfdv = self.get_edfdv(cfg)
         self.vdfdx = vlasov.SpaceExponential(cfg)
 
-    def get_edfdv(self, cfg: Dict):
+    def get_edfdv(self, cfg: dict):
         if cfg["terms"]["edfdv"] == "exponential":
             return vlasov.VelocityExponential(cfg)
         elif cfg["terms"]["edfdv"] == "cubic-spline":
@@ -40,12 +38,12 @@ class LeapfrogIntegrator(TimeIntegrator):
     :param cfg:
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         super().__init__(cfg)
         self.dt = cfg["grid"]["dt"]
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
 
-    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> Tuple[Array, Array]:
+    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, Array]:
         f_after_v = self.vdfdx(f=f, dt=self.dt)
         if self.field_solve.hampere:
             f_for_field = f
@@ -96,7 +94,7 @@ class SixthOrderHamIntegrator(TimeIntegrator):
             ]
         )
 
-    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> Tuple[Array, Array]:
+    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, Array]:
         ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[0] + self_consistent_ex
         f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
@@ -143,7 +141,7 @@ class VlasovPoissonFokkerPlanck:
     :return: Tuple of the electric field and the distribution function
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.dt = cfg["grid"]["dt"]
         self.v = cfg["grid"]["v"]
         if cfg["terms"]["time"] == "sixth":
@@ -155,14 +153,23 @@ class VlasovPoissonFokkerPlanck:
         else:
             raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
+        self.vlasov_dfdt = cfg["diagnostics"]["diag-vlasov-dfdt"]
+        self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
 
     def __call__(
         self, f: Array, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
-    ) -> Tuple[Array, Array]:
-        e, f = self.vlasov_poisson(f, a, dex_array, prev_ex)
-        f = self.fp(nu_fp, nu_K, f, dt=self.dt)
+    ) -> tuple[Array, Array]:
+        e, f_vlasov = self.vlasov_poisson(f, a, dex_array, prev_ex)
 
-        return e, f
+        f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=self.dt)
+        diags = {}
+
+        if self.vlasov_dfdt:
+            diags["diag-vlasov-dfdt"] = (f_vlasov - f) / self.dt
+        if self.fp_dfdt:
+            diags["diag-fp-dfdt"] = (f_fp - f_vlasov) / self.dt
+
+        return e, f_fp, diags
 
 
 class VlasovMaxwell:
@@ -172,7 +179,7 @@ class VlasovMaxwell:
     :param cfg:
     """
 
-    def __init__(self, cfg: Dict):
+    def __init__(self, cfg: dict):
         self.cfg = cfg
         self.vpfp = VlasovPoissonFokkerPlanck(cfg)
         self.wave_solver = field.WaveSolver(c=1.0 / cfg["grid"]["beta"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
@@ -231,11 +238,20 @@ class VlasovMaxwell:
             nu_K_prof = None
 
         electron_density_n = self.compute_charges(y["electron"])
-        e, f = self.vpfp(f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof)
+        e, f, diags = self.vpfp(
+            f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof
+        )
         electron_density_np1 = self.compute_charges(f)
 
         a = self.wave_solver(
             a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
         )
 
-        return {"electron": f, "a": a["a"], "prev_a": a["prev_a"], "da": djy, "de": dex[self.vpfp.dex_save], "e": e}
+        return {
+            "electron": f,
+            "a": a["a"],
+            "prev_a": a["prev_a"],
+            "da": djy,
+            "de": dex[self.vpfp.dex_save],
+            "e": e,
+        } | diags

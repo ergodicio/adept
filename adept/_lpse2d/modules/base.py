@@ -1,19 +1,18 @@
-from typing import Dict
 import numpy as np
-from diffrax import diffeqsolve, SaveAt, ODETerm, SubSaveAt
+from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from equinox import filter_jit
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._lpse2d.helpers import (
-    write_units,
-    post_process,
-    get_derived_quantities,
-    get_solver_quantities,
-    get_save_quantities,
-    get_density_profile,
-)
 from adept._lpse2d.core.vector_field import SplitStep
+from adept._lpse2d.helpers import (
+    get_density_profile,
+    get_derived_quantities,
+    get_save_quantities,
+    get_solver_quantities,
+    post_process,
+    write_units,
+)
 from adept._lpse2d.modules import driver
 
 
@@ -21,10 +20,10 @@ class BaseLPSE2D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
 
-    def post_process(self, run_output: Dict, td: str) -> Dict:
+    def post_process(self, run_output: dict, td: str) -> dict:
         return post_process(run_output["solver result"], self.cfg, td)
 
-    def write_units(self) -> Dict:
+    def write_units(self) -> dict:
         """
         Write the units to a file
 
@@ -40,8 +39,7 @@ class BaseLPSE2D(ADEPTModule):
     def get_solver_quantities(self):
         self.cfg["grid"] = get_solver_quantities(self.cfg)
 
-    def init_modules(self) -> Dict:
-
+    def init_modules(self) -> dict:
         modules = {}
         if "E0" in self.cfg["drivers"]:
             DriverModule = driver.choose_driver(self.cfg["drivers"]["E0"]["shape"])
@@ -53,7 +51,6 @@ class BaseLPSE2D(ADEPTModule):
         return modules
 
     def init_diffeqsolve(self):
-
         self.cfg = get_save_quantities(self.cfg)
         self.time_quantities = {
             "t0": 0.0,
@@ -74,7 +71,7 @@ class BaseLPSE2D(ADEPTModule):
             ),
         )
 
-    def init_state_and_args(self) -> Dict:
+    def init_state_and_args(self) -> dict:
         if self.cfg["density"]["noise"]["type"] == "uniform":
             random_amps = np.random.uniform(
                 self.cfg["density"]["noise"]["min"],
@@ -103,10 +100,12 @@ class BaseLPSE2D(ADEPTModule):
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
 
     @filter_jit
-    def __call__(self, trainable_modules: Dict, args: Dict = None) -> Dict:
+    def __call__(self, trainable_modules: dict, args: dict | None = None) -> dict:
         state = self.state
 
-        if args is None:
+        if args is not None:
+            args = self.args | args
+        else:
             args = self.args
 
         for name, module in trainable_modules.items():
@@ -117,7 +116,7 @@ class BaseLPSE2D(ADEPTModule):
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=self.cfg["grid"]["max_steps"],
+            max_steps=None,  # self.cfg["grid"]["max_steps"],
             dt0=self.cfg["grid"]["dt"],
             y0=state,
             args=args,

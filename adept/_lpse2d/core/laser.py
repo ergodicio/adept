@@ -1,5 +1,5 @@
-from typing import Dict, Tuple
-from jax import numpy as jnp, Array
+from jax import Array
+from jax import numpy as jnp
 
 
 class Light:
@@ -11,7 +11,7 @@ class Light:
         self.dE0x = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
         self.x = cfg["grid"]["x"]
 
-    def laser_update(self, t: float, y: jnp.ndarray, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field at time t
 
@@ -28,7 +28,7 @@ class Light:
             (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][None, None])) ** 2) ** -0.25
             * self.E0_source
             * jnp.sqrt(light_wave["intensities"][None, None])
-            * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["initial_phase"][None, None])
+            * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["phases"][None, None])
         )
         dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][None, None] * self.w0 * t)
         dE0y = jnp.sum(dE0y, axis=-1)
@@ -61,7 +61,7 @@ class Light:
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)
 
-    def calc_ey_at_one_point(self, t: float, density: Array, light_wave: Dict) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def calc_ey_at_one_point(self, t: float, density: Array, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function is used to calculate the coherence time of the laser
 
@@ -76,7 +76,7 @@ class Light:
             (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"])) ** 2) ** -0.25
             * self.E0_source
             * jnp.sqrt(light_wave["intensities"])
-            * jnp.exp(1j * k0 * self.x[0] + 1j * light_wave["initial_phase"])
+            * jnp.exp(1j * k0 * self.x[0] + 1j * light_wave["phases"])
         )
         dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"] * self.w0 * t)
         return jnp.sum(dE0y, axis=0)

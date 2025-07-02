@@ -1,8 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Dict, Tuple
-from functools import partial
 
 from jax import numpy as jnp
 
@@ -74,7 +72,7 @@ class Driver:
         self.xax = xax
         self.yax = yax
 
-    def get_this_pulse(self, this_pulse: Dict, current_time: jnp.float64):
+    def get_this_pulse(self, this_pulse: dict, current_time: jnp.float64):
         kk = this_pulse["k0"]
         ww = this_pulse["w0"]
         dw = this_pulse["dw0"]
