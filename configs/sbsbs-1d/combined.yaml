@@ -21,14 +21,15 @@ sbs:
     reference density: nc  # or it can be a float value
     logLambda: nrl
   profiles:
-    n: 
-      min: 0.001nc
-      max: 0.025nc
-    Te: 1.4keV
-    Ti: 450eV
-    flow: 0.0m/s
-    Zeff: 5
-    lambdabeat: 5.293519e-10m
+    0:
+      n: 
+        min: 0.001nc
+        max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      Zeff: 5
+      lambdabeat: 5.293519e-10m
 
 cbet:
   profiles:
@@ -48,6 +49,20 @@ laser:
   # beam_file: /path/to/beam_file.txt  # path to the beam file
   # a0_sq: 1e-6  # initial a_0^2, assuming all beams have same initial intensity
   num_beams: 4
-  thetas: [23.5, 30, 44.5, 50] # polar angles in degrees
-  phis: [0, 0, 0, 0]  # azimuthal angles in radians
-  dls: [0, 0, 1.8, 1.8]  # dlambda/lambda
+  beams:
+    0:
+      theta: 23.5  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 0.0  # dlambda/lambda
+    1:
+      theta: 30.0  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 0.0  # dlambda/lambda
+    2:
+      theta: 44.5  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 1.8  # dlambda/lambda
+    3:
+      theta: 50.0  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 1.8  # dlambda/lambda
