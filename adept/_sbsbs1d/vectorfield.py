@@ -6,25 +6,24 @@ from tensorflow_probability.substrates import jax as tfpj
 
 
 class BaseLPIVectorField:
-    def __init__(self, cfg):
-        self.cfg = cfg
+    def __init__(self, grid, units):
+        # self.cfg = cfg
         self.PRNGKey = random.PRNGKey(0)
-        self.dz = cfg["grid"]["dz"]
-        self.zax = cfg["grid"]["z"]
-        self.nc = cfg["units"]["derived"]["nc_over_n0"]
-        self.ratio_M_m = cfg["units"]["derived"]["ratio_M_m"]
-        self.nuei0 = cfg["units"]["derived"]["nuei_epphaines0"].to("Hz").value
-        self.logLambda_ei0 = cfg["units"]["derived"]["logLambda_ei0"]
-        self.nc_over_n0 = cfg["units"]["derived"]["nc_over_n0"]
-        self.vg_const = ((const.c**2.0) / cfg["units"]["derived"]["w0"]).to("um^2/s").value
-        self.a0 = cfg["units"]["derived"]["a0"]
-        self.kz0 = cfg["units"]["derived"]["kz0"].to("1/um").value
-        self.w0 = cfg["units"]["derived"]["w0"].to("Hz").value
-        self.n0 = cfg["units"]["derived"]["n0"].to("cm-3").value
-        self.T0 = cfg["units"]["derived"]["T0"].to("eV").value
-        self.Zeff = cfg["profiles"]["Zeff"]
-        self.vth0 = cfg["units"]["derived"]["vth0"].to("um/s").value
-        self.cs0 = cfg["units"]["derived"]["cs0"].to("um/s").value
+        self.dz = grid["dz"]
+        self.zax = grid["z"]
+        self.nc = units["derived"]["nc_over_n0"]
+        self.ratio_M_m = units["derived"]["ratio_M_m"]
+        self.nuei0 = units["derived"]["nuei_epphaines0"].to("Hz").value
+        self.logLambda_ei0 = units["derived"]["logLambda_ei0"]
+        self.nc_over_n0 = units["derived"]["nc_over_n0"]
+        self.vg_const = ((const.c**2.0) / units["derived"]["w0"]).to("um^2/s").value
+        self.a0 = units["derived"]["a0"]
+        self.kz0 = units["derived"]["kz0"].to("1/um").value
+        self.w0 = units["derived"]["w0"].to("Hz").value
+        self.n0 = units["derived"]["n0"].to("cm-3").value
+        self.T0 = units["derived"]["T0"].to("eV").value
+        self.vth0 = units["derived"]["vth0"].to("um/s").value
+        self.cs0 = units["derived"]["cs0"].to("um/s").value
 
     def zprime(self, x: Union[complex, float]) -> complex:
         Zx = 1j * jnp.sqrt(jnp.pi) * jnp.exp(-(x**2.0)) - 2.0 * tfpj.math.dawsn(x)
@@ -32,8 +31,8 @@ class BaseLPIVectorField:
 
 
 class SBSVectorField(BaseLPIVectorField):
-    def __init__(self, cfg: Dict) -> None:
-        super().__init__(cfg)
+    def __init__(self, grid, units) -> None:
+        super().__init__(grid, units)
 
     def calc_logLambda(self, n_over_n0: float, Te_over_T0: float, Zeff: int) -> float:
         log_ne = jnp.log(n_over_n0 * self.n0)
@@ -130,7 +129,7 @@ class CBETVectorField(BaseLPIVectorField):
     def __init__(self, cfg):
         super().__init__(cfg)
 
-        self.dz = 1 / self.cfg["grid"]["n_steps"]
+        self.dz = 1 / self.cfg["cbet"]["grid"]["n_steps"]
         self.a0_sq = self.cfg["laser"]["a0_sq"]
         self.beam_params = self.cfg["laser"]
 
@@ -219,25 +218,27 @@ class CBETVectorField(BaseLPIVectorField):
         return y * jnp.exp(coeffs @ y * self.dz)
 
 
-class SBSBS_CBET_VectorField:
-    def __init__(self, cfg):
-        self.sbs_solvers = [SBSVectorField(cfg) for _ in range(cfg["laser"]["num_beams"])]
-        self.cbet = CBETVectorField(cfg)
+# class SBSBS_CBET_VectorField:
+#     def __init__(self, cfg):
+#         self.sbs_solvers = [
+#             SBSVectorField(cfg["sbs"]["grid"][i], cfg["units"]) for i in range(cfg["laser"]["num_beams"])
+#         ]
+#         self.cbet = CBETVectorField(cfg)
 
-    def __call__(self, t, y, args):
-        """
-        Update step for the ODE system.
+#     def __call__(self, t, y, args):
+#         """
+#         Update step for the ODE system.
 
-        :param t: Time variable (not used in this case).
-        :param y: Current state of the system (intensities).
-        :param args: Additional arguments (coefficients).
-        :return: Derivative of the state.
-        """
-        cbet_result = self.cbet(t, y, args)
-        reflected_light = []
-        for this_beam, sbs_solver in zip(cbet_result, self.sbs_solvers):
-            y["Ji"] = this_beam
-            sbs_result = sbs_solver(t, y, args)
-            reflected_light.append(sbs_result["Jr"])
+#         :param t: Time variable (not used in this case).
+#         :param y: Current state of the system (intensities).
+#         :param args: Additional arguments (coefficients).
+#         :return: Derivative of the state.
+#         """
+#         cbet_result = self.cbet(t, y, args)
+#         reflected_light = []
+#         for this_beam, sbs_solver in zip(cbet_result, self.sbs_solvers):
+#             y["Ji"] = this_beam
+#             sbs_result = sbs_solver(t, y, args)
+#             reflected_light.append(sbs_result["Jr"])
 
-        return reflected_light
+#         return reflected_light
