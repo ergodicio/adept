@@ -1,43 +1,72 @@
 mlflow:
   experiment: sbsbs
   run: test
+
+units:
+  atomic mass number: 13.0
+  laser_intensity: 8.0e+15W/cm^2
+  laser_wavelength: 351nm
+  reference temperature: 1000.0eV
+  reference density: nc  # or it can be a float value
+  Z_eff: 4.0  # effective charge
+  logLambda: nrl
   
 sbs:
   grid:
-    0:
+    "0":
       dz: 10um
       zmax: 1cm
-    1:
+    "1":
       dz: 10um
       zmax: 1cm
-    2:
+    "2":
       dz: 10um
       zmax: 1cm
-  units:
-    atomic mass number: 13.0
-    laser_intensity: 8.0e+15W/cm^2
-    laser_wavelength: 351nm
-    reference temperature: 1000.0eV
-    reference density: nc  # or it can be a float value
-    logLambda: nrl
+    "3":
+      dz: 10um
+      zmax: 1cm
+  
   profiles:
-    0:
+    "0":
       n: 
         min: 0.001nc
         max: 0.025nc
       Te: 1.4keV
       Ti: 450eV
       flow: 0.0m/s
-      Zeff: 5
+      lambdabeat: 5.293519e-10m
+    "1":
+      n: 
+        min: 0.001nc
+        max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      lambdabeat: 5.293519e-10m
+    "2":
+      n: 
+        min: 0.001nc
+        max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      lambdabeat: 5.293519e-10m
+    "3":
+      n: 
+        min: 0.001nc
+        max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
       lambdabeat: 5.293519e-10m
 
 cbet:
   profiles:
     n_over_n0: 0.05  # normalized density profile
-    T_e_over_T_i: 3.0  # electron temperature over ion temperature ratio
-    Z_eff: 4.0  # effective charge
+    Te_over_T0: 1.5  # electron temperature over ion temperature ratio
+    Ti_over_T0: 0.5  # ion temperature over ion temperature ratio
     A_ion: 4.0  # ion mass number
-    flow_magnitude: 1e-4  # flow magnitude in units of u/c
+    flow_magnitude: 1.0e-4  # flow magnitude in units of u/c
     flow_theta: 0.0  # flow polar angle in degrees
     flow_phi: 0.0  # flow azimuthal angle in radians
     L_p: 600.0  # plasma length in units of lambda
@@ -50,19 +79,19 @@ laser:
   # a0_sq: 1e-6  # initial a_0^2, assuming all beams have same initial intensity
   num_beams: 4
   beams:
-    0:
+    "0":
       theta: 23.5  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 0.0  # dlambda/lambda
-    1:
+    "1":
       theta: 30.0  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 0.0  # dlambda/lambda
-    2:
+    "2":
       theta: 44.5  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 1.8  # dlambda/lambda
-    3:
+    "3":
       theta: 50.0  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 1.8  # dlambda/lambda

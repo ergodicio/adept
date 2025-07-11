@@ -127,15 +127,19 @@ class SBSVectorField(BaseLPIVectorField):
 
 class CBETVectorField(BaseLPIVectorField):
     def __init__(self, cfg):
-        super().__init__(cfg)
+        super().__init__(cfg["cbet"]["grid"], cfg["units"])
+        self.cfg = cfg
+        self.dz = self.cfg["cbet"]["grid"]["dz"]
+        self.a0_sq = self.cfg["units"]["derived"]["a0"] ** 2.0
+        self.beam_params = self.cfg["laser"]["beams"]
+        self.thetas = jnp.array([self.beam_params[str(i)]["theta"] for i in range(self.cfg["laser"]["num_beams"])])
+        self.phis = jnp.array([self.beam_params[str(i)]["phi"] for i in range(self.cfg["laser"]["num_beams"])])
+        self.dls = jnp.array([self.beam_params[str(i)]["dl"] for i in range(self.cfg["laser"]["num_beams"])])
 
-        self.dz = 1 / self.cfg["cbet"]["grid"]["n_steps"]
-        self.a0_sq = self.cfg["laser"]["a0_sq"]
-        self.beam_params = self.cfg["laser"]
-
-        kxs = -jnp.sin(self.cfg["laser"]["thetas"]) * jnp.cos(self.cfg["laser"]["phis"])  # k*c/omega
-        kys = -jnp.sin(self.cfg["laser"]["thetas"]) * jnp.sin(self.cfg["laser"]["phis"])
-        kzs = -jnp.cos(self.cfg["laser"]["thetas"])
+        kxs = -jnp.sin(self.thetas) * jnp.cos(self.phis)  # k*c/omega
+        kys = -jnp.sin(self.thetas) * jnp.sin(self.phis)
+        kzs = -jnp.cos(self.thetas)
+        print(kxs)
         self.kb_x = kxs.reshape(-1, 1) - kxs.reshape(1, -1)  # k_b*c/omega
         self.kb_y = kys.reshape(-1, 1) - kys.reshape(1, -1)
         self.kb_z = kzs.reshape(-1, 1) - kzs.reshape(1, -1)
@@ -163,18 +167,18 @@ class CBETVectorField(BaseLPIVectorField):
         m_pc2 = self.mass_ratio * self.m_ec2  # proton mass
         m_ic2 = plasma_params["A_ion"] * m_pc2  # ion mass
 
-        v_th_e_sq = plasma_params["T_e"] / self.m_ec2  # T_e/(m_ec^2)=v_th_e^2/c^2
-        v_th_i_sq = plasma_params["T_i"] / m_ic2  # T_i/(m_ic^2)=v_th_i^2/c^2
+        v_th_e_sq = plasma_params["Te_over_T0"] / self.m_ec2  # T_e/(m_ec^2)=v_th_e^2/c^2
+        v_th_i_sq = plasma_params["Ti_over_T0"] / m_ic2  # T_i/(m_ic^2)=v_th_i^2/c^2
 
         omega_beat = -(
-            self.beam_params["dls"].reshape(-1, 1) - self.beam_params["dls"].reshape(1, -1)
+            self.dls.reshape(-1, 1) - self.dls.reshape(1, -1)
         )  # omega_beat/omega
 
-        chi_e_coeff = -plasma_params["ne_over_nc"] / (2 * v_th_e_sq) * self.one_over_kbsq
+        chi_e_coeff = -plasma_params["n_over_n0"] / (2 * v_th_e_sq) * self.one_over_kbsq
 
         chi_i_coeff = (
-            -plasma_params["ne_over_nc"]
-            * plasma_params["Z_eff"]
+            -plasma_params["n_over_n0"]
+            * plasma_params["Zeff"]
             / (2 * self.mass_ratio * v_th_i_sq)
             * self.one_over_kbsq
         )
@@ -198,7 +202,7 @@ class CBETVectorField(BaseLPIVectorField):
             * self.kb_sq
             * self.a0_sq
             * plasma_params["L_p"]
-            / (4 * jnp.abs(jnp.cos(self.beam_params["thetas"]).reshape(-1, 1)))
+            / (4 * jnp.abs(jnp.cos(self.thetas).reshape(-1, 1)))
         )
 
         return coeffs
@@ -217,28 +221,3 @@ class CBETVectorField(BaseLPIVectorField):
 
         return y * jnp.exp(coeffs @ y * self.dz)
 
-
-# class SBSBS_CBET_VectorField:
-#     def __init__(self, cfg):
-#         self.sbs_solvers = [
-#             SBSVectorField(cfg["sbs"]["grid"][i], cfg["units"]) for i in range(cfg["laser"]["num_beams"])
-#         ]
-#         self.cbet = CBETVectorField(cfg)
-
-#     def __call__(self, t, y, args):
-#         """
-#         Update step for the ODE system.
-
-#         :param t: Time variable (not used in this case).
-#         :param y: Current state of the system (intensities).
-#         :param args: Additional arguments (coefficients).
-#         :return: Derivative of the state.
-#         """
-#         cbet_result = self.cbet(t, y, args)
-#         reflected_light = []
-#         for this_beam, sbs_solver in zip(cbet_result, self.sbs_solvers):
-#             y["Ji"] = this_beam
-#             sbs_result = sbs_solver(t, y, args)
-#             reflected_light.append(sbs_result["Jr"])
-
-#         return reflected_light

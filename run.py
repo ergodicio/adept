@@ -11,6 +11,7 @@ config.update("jax_enable_x64", True)
 import yaml
 
 from adept import ergoExo
+from adept._sbsbs1d.base import SBSBS_CBET
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automatic Differentiation Enabled Plasma Transport")
@@ -23,7 +24,7 @@ if __name__ == "__main__":
     if args.run_id is None:
         with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml") as fi:
             cfg = yaml.safe_load(fi)
-        modules = exo.setup(cfg=cfg)
+        modules = exo.setup(cfg=cfg, adept_module=SBSBS_CBET)
         sol, post_out, run_id = exo(modules)
 
     else:

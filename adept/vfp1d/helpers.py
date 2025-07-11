@@ -39,7 +39,7 @@ def gamma_5_over_m(m: float) -> Array:
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
-def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int, ion_species: str) -> tuple[float, float]:
+def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int) -> tuple[float, float]:
     """
     Calculate the Coulomb logarithm
 
@@ -47,7 +47,6 @@ def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int, ion_species: str) ->
     :param ne: float
     :param Te: float
     :param Z: int
-    :param ion_species: str
 
     :return: Tuple[float, float]
 
