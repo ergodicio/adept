@@ -1,0 +1,123 @@
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 1000eV
+  normalizing_density: 1e21/cc
+  Z: 1
+  Zp: 1
+  A: 1.0  # Hydrogen ions
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 321
+    noise_type: gaussian
+    noise_val: 1.e-5
+    v0: 0.0
+    T0: 1.0
+    m: 1.0
+    basis: cosine
+    mode: 1
+    baseline: 0.9  # Background component
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+  species-bump:
+    noise_seed: 654
+    noise_type: gaussian
+    noise_val: 1.e-5
+    v0: 4.0  # Fast tail component
+    T0: 0.5  # Cooler tail
+    m: 1.0
+    basis: cosine
+    mode: 1
+    baseline: 0.1  # Small bump
+    bump_or_trough: bump
+    center: 0.0
+    rise: 5.0  # Sharp bump
+    bump_height: 0.0
+    width: 2.0  # Narrow in velocity
+
+grid:
+  dt: 0.025
+  nv: 256  # High resolution for fine structure
+  nx: 64
+  tmin: 0.
+  tmax: 40.0
+  vmax: 8.0  # Wide range for fast tail
+  xmax: 12.566  # 2*pi
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 40.0
+      nt: 401
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 40.0
+      nt: 81
+  ion:
+    t:
+      tmin: 0.0
+      tmax: 40.0
+      nt: 81
+
+solver: vlasov-2s1d
+
+mlflow:
+  experiment: 2species-instabilities
+  run: bump-on-tail-test
+
+drivers:
+  ex: {}
+  ey: {}
+
+diagnostics:
+  diag-vlasov-dfdt: True  # Track phase space mixing
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: leapfrog
+  fokker_planck:
+    is_on: False  # Pure kinetic instability
+    type: lenard_bernstein
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

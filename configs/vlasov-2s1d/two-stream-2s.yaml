@@ -1,0 +1,123 @@
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 1000eV
+  normalizing_density: 1e21/cc
+  Z: 1
+  Zp: 1
+  A: 1.0  # Hydrogen ions
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 123
+    noise_type: gaussian
+    noise_val: 1.e-4
+    v0: 3.0  # Streaming velocity for instability
+    T0: 0.5  # Cooler for instability
+    m: 1.0
+    basis: cosine
+    mode: 1
+    baseline: 0.5  # Background density
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+  species-beam:
+    noise_seed: 456
+    noise_type: gaussian
+    noise_val: 1.e-4
+    v0: -3.0  # Counter-streaming velocity
+    T0: 0.5
+    m: 1.0
+    basis: cosine
+    mode: 1
+    baseline: 0.5  # Beam density
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+
+grid:
+  dt: 0.02
+  nv: 256  # Higher resolution for two-stream
+  nx: 128
+  tmin: 0.
+  tmax: 20.0
+  vmax: 8.0  # Wider velocity range
+  xmax: 25.132  # 4*pi for multiple modes
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 20.0
+      nt: 201
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 20.0
+      nt: 41
+  ion:
+    t:
+      tmin: 0.0
+      tmax: 20.0
+      nt: 41
+
+solver: vlasov-2s1d
+
+mlflow:
+  experiment: 2species-instabilities
+  run: two-stream-test
+
+drivers:
+  ex: {}
+  ey: {}
+
+diagnostics:
+  diag-vlasov-dfdt: True  # Track phase space evolution
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: leapfrog
+  fokker_planck:
+    is_on: False  # Pure kinetic instability
+    type: lenard_bernstein
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

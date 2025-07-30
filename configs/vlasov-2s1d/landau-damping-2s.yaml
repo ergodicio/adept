@@ -1,0 +1,122 @@
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 1000eV
+  normalizing_density: 1e21/cc
+  Z: 1
+  Zp: 1
+  A: 1.0  # Hydrogen ions
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 42
+    noise_type: gaussian
+    noise_val: 1.e-5
+    v0: 0.0
+    T0: 1.0
+    m: 1.0
+    basis: cosine
+    mode: 1
+    baseline: 1.0
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.1
+    width: 100000.0
+  species-ion:
+    noise_seed: 43
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 0.1  # Cold ions for Landau damping
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+
+grid:
+  dt: 0.05
+  nv: 128
+  nx: 64
+  tmin: 0.
+  tmax: 50.0
+  vmax: 6.0
+  xmax: 12.566  # 2*pi for k=1 mode
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 501
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 21
+  ion:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 21
+
+solver: vlasov-2s1d
+
+mlflow:
+  experiment: 2species-landau
+  run: damping-test
+
+drivers:
+  ex: {}  # No external drive for Landau damping
+  ey: {}
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: leapfrog
+  fokker_planck:
+    is_on: False  # Pure Landau damping without collisions
+    type: lenard_bernstein
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

@@ -297,6 +297,8 @@ class ergoExo:
 
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
+        elif cfg["solver"] == "vlasov-2s1d":
+            from adept.vlasov2s1d import BaseVlasov2S1D as this_module
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
