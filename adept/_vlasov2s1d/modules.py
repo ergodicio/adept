@@ -92,7 +92,7 @@ class BaseVlasov2S1D(ADEPTModule):
         cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
         cfg_grid["vmax_i"] = cfg_grid["vmax"] * np.sqrt(ion_T0 * me_over_mi)
-        cfg_grid["dv_i"] = 2.0 * cfg_grid["vmax_i"] / cfg_grid["nv"]
+        cfg_grid["dv_i"] = 2.0 * cfg_grid["vmax_i"] / cfg_grid["nv_i"]
 
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
@@ -133,14 +133,14 @@ class BaseVlasov2S1D(ADEPTModule):
                 "v_i": jnp.linspace(
                     -cfg_grid["vmax_i"] + cfg_grid["dv_i"] / 2,
                     cfg_grid["vmax_i"] - cfg_grid["dv_i"] / 2,
-                    cfg_grid["nv"],
+                    cfg_grid["nv_i"],
                 ),
                 "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
                 "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
                 "kv": jnp.fft.fftfreq(cfg_grid["nv"], d=cfg_grid["dv"]) * 2.0 * np.pi,
                 "kvr": jnp.fft.rfftfreq(cfg_grid["nv"], d=cfg_grid["dv"]) * 2.0 * np.pi,
-                "kv_i": jnp.fft.fftfreq(cfg_grid["nv"], d=cfg_grid["dv_i"]) * 2.0 * np.pi,
-                "kvr_i": jnp.fft.rfftfreq(cfg_grid["nv"], d=cfg_grid["dv_i"]) * 2.0 * np.pi,
+                "kv_i": jnp.fft.fftfreq(cfg_grid["nv_i"], d=cfg_grid["dv_i"]) * 2.0 * np.pi,
+                "kvr_i": jnp.fft.rfftfreq(cfg_grid["nv_i"], d=cfg_grid["dv_i"]) * 2.0 * np.pi,
             },
         }
 
@@ -238,7 +238,7 @@ class BaseVlasov2S1D(ADEPTModule):
         # Create ion distribution using the proper framework
         f_i, _ = _initialize_distribution_(
             nx=int(self.cfg["grid"]["nx"]),
-            nv=int(self.cfg["grid"]["nv"]),
+            nv=int(self.cfg["grid"]["nv_i"]),
             v0=ion_v0,
             m=ion_m,
             T0=ion_T0,  # Use ion temperature directly

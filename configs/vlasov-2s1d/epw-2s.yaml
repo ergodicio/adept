@@ -27,7 +27,7 @@ density:
     noise_type: gaussian
     noise_val: 0.0
     v0: 0.0  # Ion drift velocity
-    T0: 0.1  # Ion temperature directly (0.1 = Ti/Te = 0.1)
+    T0: 0.5  # Ion temperature directly (0.1 = Ti/Te = 0.1)
     m: 2.0   # Maxwellian (m=2)
     basis: uniform
     baseline: 1.0
@@ -39,30 +39,31 @@ density:
 
 grid:
   dt: 0.1
-  nv: 128  # Reduced for 2-species to save memory
-  nx: 8192
+  nv: 512
+  nv_i: 128
+  nx: 10240
   tmin: 0.
-  tmax: 5000.0
+  tmax: 50000.0
   vmax: 6.4
-  xmax: 8000.0
+  xmax: 10000.0
   xmin: 0.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 5000.0
-      nt: 601
+      tmax: 50000.0
+      nt: 5001
   electron:
     t:
       tmin: 0.0
-      tmax: 5000.0
-      nt: 11
+      tmax: 50000.0
+      nt: 101
   ion:
     t:
       tmin: 0.0
-      tmax: 5000.0
-      nt: 11
+      tmax: 50000.0
+      nt: 101
 
 solver: vlasov-2s1d
 
@@ -73,16 +74,16 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-2
-      k0: 0.22
-      t_center: 40.0
+      a0: 5.e-2
+      k0: 0.06
+      t_center: 100.0
       t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
+      t_width: 100.0
+      w0: 1.005
       dw0: 0.
-      x_center: 200.0
-      x_rise: 10.0
-      x_width: 100.0
+      x_center: 2000.0
+      x_rise: 100.0
+      x_width: 2000.0
   ey: {}
 
 diagnostics:
