@@ -22,6 +22,7 @@ dependencies = [
     "boto3",
     "pint",
     "plasmapy",
+    "psutil",
     "interpax",
     "tabulate",
     "pydantic",
@@ -36,7 +37,7 @@ Documentation = "https://adept.readthedocs.io/en/latest/"
 
 [project.optional-dependencies]
 cpu = []
-gpu = ["jax[cuda12]"]
+gpu = ["jax[cuda12]", "pynvml"]
 docs = [
     "sphinx",
     "sphinx_autodoc_typehints",
