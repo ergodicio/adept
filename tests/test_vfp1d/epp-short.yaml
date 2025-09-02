@@ -36,7 +36,7 @@ grid:
   nv: 256
   nx: 32
   tmin: 0.ps
-  tmax: 2ps
+  tmax: 0.5ps
   vmax: 8.0
   xmax: 500um
   xmin: 0.0um

@@ -2,6 +2,7 @@
 #  research@ergodic.io
 
 
+import jax
 import numpy as np
 from astropy.units import Quantity as _Q
 from jax import Array
@@ -218,7 +219,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             # I don't like having to reinitialise oshun to get helper functions,
             # either we pass as an argument or refactor
             oshun = OSHUN1D(cfg)
-            big_dt = 1e12
+            big_dt = 1e3 * cfg["grid"]["dt"]
             ni = prof_total["n"] / cfg["units"]["Z"]
             f10_star = -big_dt * oshun.v[None, :] * oshun.ddx(f0)
             f10_from_adv = oshun.ei(Z=jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=f10_star, dt=big_dt)
