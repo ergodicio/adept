@@ -69,6 +69,9 @@ source = "vcs"
 [tool.hatch.build.hooks.vcs]
 version-file = "adept/_version.py"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.pytest.ini_options]
 # Test type hints w/ typeguard - currently disabled
 # addopts = ["--typeguard-packages=adept"]
