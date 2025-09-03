@@ -34,11 +34,11 @@ density:
 grid:
   dt: 1fs
   nv: 256
-  nx: 32
+  nx: 16
   tmin: 0.ps
   tmax: 0.5ps
   vmax: 8.0
-  xmax: 500um
+  xmax: 250um
   xmin: 0.0um
   nl: 1
 

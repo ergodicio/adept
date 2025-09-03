@@ -22,6 +22,7 @@ def _run_(Z, ee):
 
     exo = ergoExo()
     exo.setup(cfg)
+
     sol, datasets, run_id = exo(None)
     dataT = datasets["fields"]["fields-T keV"].data
     np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=5)

@@ -215,18 +215,29 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             )
             f0 += temp_f0
 
-            # initialize f1 by taking a big time step while keeping f0 fix (essentailly sets electron inertia to 0)
+            # initialize f1 by taking a big time step while keeping f0 fixed (essentially sets electron inertia to 0)
             # I don't like having to reinitialise oshun to get helper functions,
             # either we pass as an argument or refactor
+            # TODO: add switch to opt in/out
             oshun = OSHUN1D(cfg)
-            big_dt = 1e3 * cfg["grid"]["dt"]
+
+            big_dt = 1e12
             ni = prof_total["n"] / cfg["units"]["Z"]
             f10_star = -big_dt * oshun.v[None, :] * oshun.ddx(f0)
-            f10_from_adv = oshun.ei(Z=jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=f10_star, dt=big_dt)
+            f10_from_adv = oshun.ei(
+                Z=jnp.ones(cfg["grid"]["nx"]),
+                ni=ni,
+                f0=f0,
+                f10=f10_star,
+                dt=big_dt,
+                include_ee_offdiag_explicitly=False,
+            ).block_until_ready()
             jx_from_adv = oshun.calc_j(f10_from_adv)
 
             df0dv = oshun.ddv(f0)
-            f10_from_df0dv = oshun.ei(Z=jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=df0dv, dt=big_dt)
+            f10_from_df0dv = oshun.ei(
+                Z=jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=df0dv, dt=big_dt, include_ee_offdiag_explicitly=False
+            )
             jx_from_df0dv = oshun.calc_j(f10_from_df0dv)
 
             # directly solve for ex field
