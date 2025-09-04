@@ -47,6 +47,22 @@ class SplitStep:
 
         return y, new_y
 
+    def scattered_light_update(self, t, y, args):
+        # Implement the scattered light update logic here
+        k_E1_x = (
+            1j * c**2 / (2 * w1) * (E1.x(ixc, iyp) - 2 * E1.x(ixc, iyc) + E1.x(ixc, iym)) / dy**2
+            - 1j * c**2 / (2 * w1) * (E1.y(ixp, iyp) - E1.y(ixm, iyp) - E1.y(ixp, iym) + E1.y(ixm, iym)) / (4 * dy * dx)
+            + 1j * w1 / 2 * (1 - wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf(ixc, iyc))) * E1.x(ixc, iyc)
+        )
+
+        k_E1_y = (
+            1j * c**2 / (2 * w1) * (E1.y(ixp, iyc) - 2 * E1.y(ixc, iyc) + E1.y(ixm, iyc)) / dx**2
+            - 1j * c**2 / (2 * w1) * (E1.x(ixp, iyp) - E1.x(ixm, iyp) - E1.x(ixp, iym) + E1.x(ixm, iym)) / (4 * dy * dx)
+            + 1j * w1 / 2 * (1 - wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf(ixc, iyc))) * E1.y(ixc, iyc)
+        )
+
+        return None, jnp.hstack([k_E1_x, k_E1_y]))
+
     def light_split_step(self, t, y, driver_args):
         if "E0" in driver_args:
             t_coeff = get_envelope(
@@ -57,6 +73,15 @@ class SplitStep:
                 t,
             )
             y["E0"] = t_coeff * self.light.laser_update(t, y, driver_args["E0"])
+
+        if self.cfg["terms"]["epw"]["source"]["srs"]:
+            [k1_E0, k1_E1] = self.scattered_light_update(t, y, args)
+            # y["E0"] += self.dt * jnp.real(k1_E0)
+            y["E1"] += self.dt * jnp.real(k1_E1)
+
+            [k1_E0, k1_E1] = self.scattered_light_update(t, y, args)
+            # y["E0"] += self.dt * jnp.real(k1_E0)
+            y["E1"] += self.dt * jnp.imag(k1_E1)
 
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
