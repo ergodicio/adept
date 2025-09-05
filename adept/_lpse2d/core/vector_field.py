@@ -48,20 +48,46 @@ class SplitStep:
         return y, new_y
 
     def scattered_light_update(self, t, y, args):
+        E0 = y["E0"]
+        E0_x = E0[..., 0]
+        E0_y = E0[..., 1]
+        E1 = y["E1"]
+        E1x = jnp.pad(E1[..., 0], ((1, 1), (1, 1)), mode='wrap')
+        E1y = jnp.pad(E1[..., 1], ((1, 1), (1, 1)), mode='wrap')
+        phi = y["epw"]
+        c = self.cfg["units"]["derived"]["c"]
+        w1 = self.cfg["units"]["derived"]["w1"]
+        dx = self.cfg["grid"]["dx"]
+        dy = self.cfg["grid"]["dy"]
+        backgroundDensityPerturbation = y["background_density"] / self.envelope_density - 1
+
+        Nelf = 0. #self.cfg["Nelf"]
+
         # Implement the scattered light update logic here
+        # these are derivative calculations, rewrite using numpy slicing and broadcasting
+        ixc = iyc = slice(1, -1)
+        ixp = iyp = slice(2, None)
+        ixm = iym = slice(None, -2)
+
         k_E1_x = (
-            1j * c**2 / (2 * w1) * (E1.x(ixc, iyp) - 2 * E1.x(ixc, iyc) + E1.x(ixc, iym)) / dy**2
-            - 1j * c**2 / (2 * w1) * (E1.y(ixp, iyp) - E1.y(ixm, iyp) - E1.y(ixp, iym) + E1.y(ixm, iym)) / (4 * dy * dx)
-            + 1j * w1 / 2 * (1 - wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf(ixc, iyc))) * E1.x(ixc, iyc)
+            1j * c**2 / (2 * w1) * (E1x[ixc, iyp] - 2 * E1x[ixc, iyc] + E1x[ixc, iym]) / dy**2
+            - 1j * c**2 / (2 * w1) * (E1y[ixp, iyp] - E1y[ixm, iyp] - E1y[ixp, iym] + E1y[ixm, iym]) / (4 * dy * dx)
+            + 1j * w1 / 2 * (1 - self.wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf)) * E1x
         )
 
         k_E1_y = (
-            1j * c**2 / (2 * w1) * (E1.y(ixp, iyc) - 2 * E1.y(ixc, iyc) + E1.y(ixm, iyc)) / dx**2
-            - 1j * c**2 / (2 * w1) * (E1.x(ixp, iyp) - E1.x(ixm, iyp) - E1.x(ixp, iym) + E1.x(ixm, iym)) / (4 * dy * dx)
-            + 1j * w1 / 2 * (1 - wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf(ixc, iyc))) * E1.y(ixc, iyc)
+            1j * c**2 / (2 * w1) * (E1y[ixp, iyc] - 2 * E1y + E1y[ixm, iyc]) / dx**2
+            - 1j * c**2 / (2 * w1) * (E1x[ixp, iyp] - E1x[ixm, iyp] - E1x[ixp, iym] + E1x[ixm, iym]) / (4 * dy * dx)
+            + 1j * w1 / 2 * (1 - self.wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf)) * E1y
         )
 
-        return None, jnp.hstack([k_E1_x, k_E1_y]))
+        # calculate spectral 2d laplacian
+        laplacianPhi = self.k_sq * jnp.fft.fft2(phi)
+
+        k_E1_x = k_E1_x - 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi) * E0_x
+        k_E1_y = k_E1_y - 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi) * E0_y
+
+        return None, jnp.hstack([k_E1_x, k_E1_y])
 
     def light_split_step(self, t, y, driver_args):
         if "E0" in driver_args:
@@ -75,12 +101,12 @@ class SplitStep:
             y["E0"] = t_coeff * self.light.laser_update(t, y, driver_args["E0"])
 
         if self.cfg["terms"]["epw"]["source"]["srs"]:
-            [k1_E0, k1_E1] = self.scattered_light_update(t, y, args)
+            [k1_E0, k1_E1] = self.scattered_light_update(t, y)
             # y["E0"] += self.dt * jnp.real(k1_E0)
             y["E1"] += self.dt * jnp.real(k1_E1)
 
-            [k1_E0, k1_E1] = self.scattered_light_update(t, y, args)
-            # y["E0"] += self.dt * jnp.real(k1_E0)
+            [k1_E0, k1_E1] = self.scattered_light_update(t + self.dt / 2, y)
+            # y["E0"] += self.dt * jnp.imag(k1_E0)
             y["E1"] += self.dt * jnp.imag(k1_E1)
 
         # if self.cfg["terms"]["light"]["update"]:

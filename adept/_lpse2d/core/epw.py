@@ -96,7 +96,7 @@ class SpectralPotential:
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
 
         return total_tpd
-    
+
     def eval_E0_dot_E1(self, t, y, args):
         E0 = args["E0"]
         E1 = y["E1"]
@@ -106,13 +106,11 @@ class SpectralPotential:
         E1_y_source = E1[..., 1]
         return E0_x_source * jnp.conj(E1_x_source) + E0_y_source * jnp.conj(E1_y_source)
 
-
-    def srs(self, t: float, phi: Array, ey: Array, args: dict) -> Array:
+    def srs(self, t: float, y, args: dict) -> Array:
         E0 = args["E0"]
-        E0_dot_E1 = self.eval_E0_dot_E1()
-
+        E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
+        backgrounddensityperturbation = y["background_density"] / self.envelope_density - 1
         total_srs = 1j * self.srs_const * (1 + backgrounddensityperturbation) * E0_dot_E1
-
         return total_srs
 
     def get_noise(self):
@@ -137,7 +135,7 @@ class SpectralPotential:
             tpd_term = self.tpd(t, phi, ey, args={"E0": E0})
 
         if self.cfg["terms"]["epw"]["source"]["srs"]:
-            srs_term = self.srs(t, phi, ey, args={"E0": E0})
+            srs_term = self.srs(t, y, args={"E0": E0})
 
         # density gradient
         if self.cfg["terms"]["epw"]["density_gradient"]:
