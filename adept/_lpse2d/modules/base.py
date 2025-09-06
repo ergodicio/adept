@@ -94,7 +94,8 @@ class BaseLPSE2D(ADEPTModule):
         background_density = get_density_profile(self.cfg)
         vte_sq = np.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"])) * self.cfg["units"]["derived"]["vte"] ** 2
         E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
-        state = {"background_density": background_density, "epw": epw, "E0": E0, "vte_sq": vte_sq}
+        E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
+        state = {"background_density": background_density, "epw": epw, "E0": E0, "E1": E1, "vte_sq": vte_sq}
 
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}

@@ -23,12 +23,18 @@ class SplitStep:
         self.wp0 = cfg["units"]["derived"]["wp0"]
         self.epw = epw.SpectralPotential(cfg)
         self.light = laser.Light(cfg)
-        self.complex_state_vars = ["E0", "epw"]
+        self.complex_state_vars = ["E0", "epw", "E1"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
         self.zero_mask = cfg["grid"]["zero_mask"]
         self.low_pass_filter = cfg["grid"]["low_pass_filter"]
+        self.k_sq = cfg["grid"]["kx"][:, None] ** 2 + cfg["grid"]["ky"][None, :] ** 2
+        self.one_over_ksq = cfg["grid"]["one_over_ksq"]
 
+        self.envelope_density = cfg["units"]["envelope density"]
+        self.e = cfg["units"]["derived"]["e"]
+        self.me = cfg["units"]["derived"]["me"]
+        self.w0 = cfg["units"]["derived"]["w0"]
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
 
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
@@ -47,13 +53,13 @@ class SplitStep:
 
         return y, new_y
 
-    def scattered_light_update(self, t, y, args):
+    def scattered_light_update(self, t, y):
         E0 = y["E0"]
         E0_x = E0[..., 0]
         E0_y = E0[..., 1]
         E1 = y["E1"]
-        E1x = jnp.pad(E1[..., 0], ((1, 1), (1, 1)), mode='wrap')
-        E1y = jnp.pad(E1[..., 1], ((1, 1), (1, 1)), mode='wrap')
+        E1x = jnp.pad(E1[..., 0], ((1, 1), (1, 1)), mode="wrap")
+        E1y = jnp.pad(E1[..., 1], ((1, 1), (1, 1)), mode="wrap")
         phi = y["epw"]
         c = self.cfg["units"]["derived"]["c"]
         w1 = self.cfg["units"]["derived"]["w1"]
@@ -61,7 +67,7 @@ class SplitStep:
         dy = self.cfg["grid"]["dy"]
         backgroundDensityPerturbation = y["background_density"] / self.envelope_density - 1
 
-        Nelf = 0. #self.cfg["Nelf"]
+        Nelf = 0.0  # self.cfg["Nelf"]
 
         # Implement the scattered light update logic here
         # these are derivative calculations, rewrite using numpy slicing and broadcasting
@@ -72,22 +78,26 @@ class SplitStep:
         k_E1_x = (
             1j * c**2 / (2 * w1) * (E1x[ixc, iyp] - 2 * E1x[ixc, iyc] + E1x[ixc, iym]) / dy**2
             - 1j * c**2 / (2 * w1) * (E1y[ixp, iyp] - E1y[ixm, iyp] - E1y[ixp, iym] + E1y[ixm, iym]) / (4 * dy * dx)
-            + 1j * w1 / 2 * (1 - self.wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf)) * E1x
+            + 1j * w1 / 2 * (1 - self.wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf)) * E1x[ixc, iyc]
         )
 
         k_E1_y = (
-            1j * c**2 / (2 * w1) * (E1y[ixp, iyc] - 2 * E1y + E1y[ixm, iyc]) / dx**2
+            1j * c**2 / (2 * w1) * (E1y[ixp, iyc] - 2 * E1y[ixc, iyc] + E1y[ixm, iyc]) / dx**2
             - 1j * c**2 / (2 * w1) * (E1x[ixp, iyp] - E1x[ixm, iyp] - E1x[ixp, iym] + E1x[ixm, iym]) / (4 * dy * dx)
-            + 1j * w1 / 2 * (1 - self.wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf)) * E1y
+            + 1j * w1 / 2 * (1 - self.wp0**2 / w1**2 * (1 + backgroundDensityPerturbation + Nelf)) * E1y[ixc, iyc]
         )
 
-        # calculate spectral 2d laplacian
-        laplacianPhi = self.k_sq * jnp.fft.fft2(phi)
+        # calculate 2d laplacian
+        padded_phi = jnp.pad(phi, ((1, 1), (1, 1)), mode="wrap")
+        laplacianPhi = (padded_phi[ixp, iyc] + padded_phi[ixm, iyc] - 2 * padded_phi[ixc, iyc]) / dx**2.0 + (
+            padded_phi[ixc, iyp] + padded_phi[ixc, iym] - 2 * padded_phi[ixc, iyc]
+        ) / dy**2.0
 
-        k_E1_x = k_E1_x - 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi) * E0_x
-        k_E1_y = k_E1_y - 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi) * E0_y
+        coeff = 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi)
+        k_E1_x -= coeff * E0_x
+        k_E1_y -= coeff * E0_y
 
-        return None, jnp.hstack([k_E1_x, k_E1_y])
+        return None, jnp.concatenate([k_E1_x[..., None], k_E1_y[..., None]], axis=-1)
 
     def light_split_step(self, t, y, driver_args):
         if "E0" in driver_args:

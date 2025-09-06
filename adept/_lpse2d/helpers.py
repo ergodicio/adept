@@ -600,7 +600,7 @@ def get_save_quantities(cfg: dict) -> dict:
         def save_func(t, y, args):
             save_y = {}
             for k, v in y.items():
-                if k == "E0":
+                if k in ["E0", "E1"]:
                     cmplx_fld = v.view(jnp.complex128)
                     save_y[k] = jnp.concatenate(
                         [
