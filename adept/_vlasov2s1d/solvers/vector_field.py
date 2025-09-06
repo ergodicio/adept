@@ -123,13 +123,13 @@ class Vlasov2SPoissonFokkerPlanck:
         e, f_e_vlasov, f_i_vlasov = self.vlasov_poisson(f_e, f_i, a, dex_array, prev_ex)
 
         # Apply collisions to both species
-        # f_e_fp = self.fp_e(nu_fp_e, nu_K_e, f_e_vlasov, dt=self.dt)
-        # f_i_fp = self.fp_i(nu_fp_i, nu_K_i, f_i_vlasov, dt=self.dt)
+        f_e_fp = self.fp_e(nu_fp_e, nu_K_e, f_e_vlasov, dt=self.dt)
+        f_i_fp = self.fp_i(nu_fp_i, nu_K_i, f_i_vlasov, dt=self.dt)
 
         diags = {}
 
-        f_e_fp = f_e_vlasov
-        f_i_fp = f_i_vlasov
+        # f_e_fp = f_e_vlasov
+        # f_i_fp = f_i_vlasov
 
         # if self.vlasov_dfdt:
         #     diags["diag-vlasov-dfdt-e"] = (f_e_vlasov - f_e) / self.dt

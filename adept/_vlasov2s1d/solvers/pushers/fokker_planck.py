@@ -139,7 +139,7 @@ class IonLenardBernstein:
         self.cfg = cfg
         self.v = self.cfg["grid"]["v_i"]
         self.dv = self.cfg["grid"]["dv_i"]
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
+        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv_i"]))
 
     def vx_moment(self, f_xv):
         return jnp.sum(f_xv, axis=1) * self.dv
@@ -205,7 +205,7 @@ class IonDougherty:
         self.cfg = cfg
         self.v = self.cfg["grid"]["v_i"]
         self.dv = self.cfg["grid"]["dv_i"]
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
+        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv_i"]))
 
     def vx_moment(self, f_xv):
         return jnp.sum(f_xv, axis=1) * self.dv
