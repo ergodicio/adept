@@ -145,8 +145,6 @@ class SplitStep:
         return y
 
     def landau_damping(self, epw: Array, vte_sq: float):
-        # convert matlab to numpy
-        # sqrt(pi/8) * (1.0 + (3.0 / 2.0)*K_sq * (vte/wp0)^2 ) .* wp0^4./ (K_sq.^(3/2) * vte^3) .* exp(-(3/2 + 1./(2 * K_sq * (vte_sq/wp0^2))))
         gammaLandauEpw = (
             jnp.sqrt(np.pi / 8)
             * (1.0 + 1.5 * self.k_sq * (vte_sq / self.wp0**2))
