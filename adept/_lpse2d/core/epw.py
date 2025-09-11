@@ -31,6 +31,15 @@ class SpectralPotential:
 
         if cfg["terms"]["epw"]["source"]["srs"]:
             self.w1 = cfg["units"]["derived"]["w1"]
+            max_source_k_multiplier = 1.2
+            max_k0 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"])
+            max_k1 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"] * (self.w0**2) / (self.w1**2))
+            print(max_k0, max_k1, self.w0, self.w1)
+            is_outside_max_k0 = self.k_sq * (1 / self.w0**2) > max_k0**2
+            is_outside_max_k1 = self.k_sq * (1 / self.w1**2) > max_k1**2
+            self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
+            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+
             self.srs_const = self.e * self.wp0 / (4 * self.me * self.w0 * self.w1)
 
     def calc_fields_from_phi(self, phi: Array) -> tuple[Array, Array]:
@@ -100,14 +109,16 @@ class SpectralPotential:
     def eval_E0_dot_E1(self, t, y, args):
         E0 = args["E0"]
         E1 = y["E1"]
-        E0_x_source = E0[..., 0]
-        E0_y_source = E0[..., 1]
-        E1_x_source = E1[..., 0]
-        E1_y_source = E1[..., 1]
+
+        # filter E0 and E1
+        E0_filtered = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
+        E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
+        E0_x_source, E0_y_source = E0_filtered[..., 0], E0_filtered[..., 1]
+        E1_x_source, E1_y_source = E1_filtered[..., 0], E1_filtered[..., 1]
+
         return E0_x_source * jnp.conj(E1_x_source) + E0_y_source * jnp.conj(E1_y_source)
 
     def srs(self, t: float, y, args: dict) -> Array:
-        E0 = args["E0"]
         E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
         backgrounddensityperturbation = y["background_density"] / self.envelope_density - 1
         total_srs = 1j * self.srs_const * (1 + backgrounddensityperturbation) * E0_dot_E1

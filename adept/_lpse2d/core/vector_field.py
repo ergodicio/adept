@@ -88,10 +88,14 @@ class SplitStep:
         )
 
         # calculate 2d laplacian
-        padded_phi = jnp.pad(phi, ((1, 1), (1, 1)), mode="wrap")
-        laplacianPhi = (padded_phi[ixp, iyc] + padded_phi[ixm, iyc] - 2 * padded_phi[ixc, iyc]) / dx**2.0 + (
-            padded_phi[ixc, iyp] + padded_phi[ixc, iym] - 2 * padded_phi[ixc, iyc]
-        ) / dy**2.0
+        # padded_phi = jnp.pad(phi, ((1, 1), (1, 1)), mode="wrap")
+        # laplacianPhi = (padded_phi[ixp, iyc] + padded_phi[ixm, iyc] - 2 * padded_phi[ixc, iyc]) / dx**2.0
+        # laplacianPhi += (padded_phi[ixc, iyp] + padded_phi[ixc, iym] - 2 * padded_phi[ixc, iyc]) / dy**2.0
+        laplacianPhi = (
+            jnp.fft.ifft2(
+                self.k_sq * jnp.fft.fft2(phi)  # * self.low_pass_filter * self.zero_mask
+            )
+        ).real
 
         coeff = 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi)
         k_E1_x -= coeff * E0_x
@@ -115,9 +119,20 @@ class SplitStep:
             # y["E0"] += self.dt * jnp.real(k1_E0)
             y["E1"] += self.dt * jnp.real(k1_E1)
 
+            yE0t = y["E0"]
+
+            t_coeff = get_envelope(
+                driver_args["E0"]["tr"],
+                driver_args["E0"]["tr"],
+                driver_args["E0"]["tc"] - driver_args["E0"]["tw"] / 2,
+                driver_args["E0"]["tc"] + driver_args["E0"]["tw"] / 2,
+                t + self.dt / 2.0,
+            )
+            y["E0"] = t_coeff * self.light.laser_update(t + self.dt / 2.0, y, driver_args["E0"])
+
             [k1_E0, k1_E1] = self.scattered_light_update(t + self.dt / 2, y)
             # y["E0"] += self.dt * jnp.imag(k1_E0)
-            y["E1"] += self.dt * jnp.imag(k1_E1)
+            y["E1"] += self.dt * 1j * jnp.imag(k1_E1)
 
         # if self.cfg["terms"]["light"]["update"]:
         # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
@@ -130,12 +145,15 @@ class SplitStep:
         return y
 
     def landau_damping(self, epw: Array, vte_sq: float):
+        # convert matlab to numpy
+        # sqrt(pi/8) * (1.0 + (3.0 / 2.0)*K_sq * (vte/wp0)^2 ) .* wp0^4./ (K_sq.^(3/2) * vte^3) .* exp(-(3/2 + 1./(2 * K_sq * (vte_sq/wp0^2))))
         gammaLandauEpw = (
-            np.sqrt(np.pi / 8)
+            jnp.sqrt(np.pi / 8)
+            * (1.0 + 1.5 * self.k_sq * (vte_sq / self.wp0**2))
             * self.wp0**4
             * self.one_over_ksq**1.5
-            / (vte_sq**1.5)
-            * jnp.exp(-(self.wp0**2.0) * self.one_over_ksq / (2 * vte_sq))
+            / vte_sq**1.5
+            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / vte_sq))
         )
 
         return jnp.fft.ifft2(
@@ -162,6 +180,7 @@ class SplitStep:
         ex, ey = self.epw.calc_fields_from_phi(new_y["epw"])
         ex = ex * self.boundary_envelope
         ey = ey * self.boundary_envelope
+        new_y["E1"] *= self.boundary_envelope[..., None]
         new_y["epw"] = self.epw.calc_phi_from_fields(ex, ey)
         # new_y["epw"] = jnp.fft.ifft2(self.zero_mask * self.low_pass_filter * jnp.fft.fft2(new_y["epw"]))
 

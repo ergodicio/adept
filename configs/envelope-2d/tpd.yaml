@@ -1,54 +1,60 @@
 density:
   basis: linear
-  gradient scale length: 62.5um
+  gradient scale length: 50um
   max: 0.28
-  min: 0.2
+  min: 0.18
   noise:
     max: 1.0e-09
     min: 1.0e-10
     type: uniform
 drivers:
   E0:
-    shape: uniform
-    # file: s3://public-ergodic-continuum/87254/0bb528f5a431439e9f9f295bdcd6d9e7/artifacts/used_driver.pkl
-    delta_omega_max: 0.025
-    num_colors: 8
+    delta_omega_max: 0.015
     envelope:
-      tw: 50ps
-      tr: 0.25ps
-      tc: 20.05ps
+      tc: 200.25ps
+      tr: 0.1ps
+      tw: 400ps
+      xc: 50um
       xr: 0.2um
       xw: 1000um
-      xc: 50um
+      yc: 50um
       yr: 0.2um
       yw: 1000um
-      yc: 50um
+    num_colors: 1
+    shape: uniform
     params:
-      {}
+      amplitudes: 
+        init: random # uniform, random
+        learned: true
+        activation: log # linear, log
+      phases:
+        init: random # random, seed-###
+        learned: true 
+        seed: 42
 
 grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 1.5um
   low_pass_filter: 0.66
-  dt: 0.01ps
-  dx: 50nm
-  tmax: 5ps
+  dt: 0.010fs
+  dx: 40nm
+  tmax: 2ps
   tmin: 0.0ns
-  ymax: 3um
-  ymin: -3um
+  ymax: 0.08um
+  ymin: -0.08um
 mlflow:
   experiment: tpd
-  run: test
+  run: srs-test
 save:
   fields:
     t:
       dt: 0.2ps
-      tmax: 5ps
+      tmax: 2ps
       tmin: 0ps
     x:
-      dx: 52nm
+      dx: 50nm
     y:
-      dy: 52nm
+      dy: 50nm
 solver: envelope-2d
 terms:
   epw:
@@ -62,14 +68,15 @@ terms:
     linear: true
     source:
       noise: true
-      tpd: true
+      tpd: false
+      srs: true
   zero_mask: true
 
 units:
   atomic number: 40
   envelope density: 0.25
   ionization state: 6
-  laser intensity: 1.2e+15W/cm^2
+  laser intensity: 1.5e+14W/cm^2
   laser_wavelength: 351nm
   reference electron temperature: 2000.0eV
   reference ion temperature: 1000eV

@@ -534,6 +534,8 @@ def make_field_xarrays(cfg, this_t, state, td):
     ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
     e0x = xr.DataArray(state["E0"].view(np.complex128)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
     e0y = xr.DataArray(state["E0"].view(np.complex128)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1x = xr.DataArray(state["E1"].view(np.complex128)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1y = xr.DataArray(state["E1"].view(np.complex128)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
 
     background_density = xr.DataArray(state["background_density"], coords=(tax_tuple, xax_tuple, yax_tuple))
 
@@ -541,7 +543,16 @@ def make_field_xarrays(cfg, this_t, state, td):
 
     kfields = xr.Dataset({"phi": phi_k, "ex": ex_k, "ey": ey_k})
     fields = xr.Dataset(
-        {"phi": phi_x, "ex": ex, "ey": ey, "e0_x": e0x, "e0_y": e0y, "background_density": background_density}
+        {
+            "phi": phi_x,
+            "ex": ex,
+            "ey": ey,
+            "e0_x": e0x,
+            "e0_y": e0y,
+            "e1_x": e1x,
+            "e1_y": e1y,
+            "background_density": background_density,
+        }
     )
     kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
