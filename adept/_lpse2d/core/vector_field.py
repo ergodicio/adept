@@ -36,6 +36,7 @@ class SplitStep:
         self.me = cfg["units"]["derived"]["me"]
         self.w0 = cfg["units"]["derived"]["w0"]
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
+        self.phi_laplacian = "spectral" # hard coded for now, can be implemented to config if ever necessary
 
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
@@ -88,14 +89,19 @@ class SplitStep:
         )
 
         # calculate 2d laplacian
-        # padded_phi = jnp.pad(phi, ((1, 1), (1, 1)), mode="wrap")
-        # laplacianPhi = (padded_phi[ixp, iyc] + padded_phi[ixm, iyc] - 2 * padded_phi[ixc, iyc]) / dx**2.0
-        # laplacianPhi += (padded_phi[ixc, iyp] + padded_phi[ixc, iym] - 2 * padded_phi[ixc, iyc]) / dy**2.0
-        laplacianPhi = (
-            jnp.fft.ifft2(
-                self.k_sq * jnp.fft.fft2(phi)  # * self.low_pass_filter * self.zero_mask
-            )
-        ).real
+
+        if self.phi_laplacian == "fd":
+            padded_phi = jnp.pad(phi, ((1, 1), (1, 1)), mode="wrap")
+            laplacianPhi = (padded_phi[ixp, iyc] + padded_phi[ixm, iyc] - 2 * padded_phi[ixc, iyc]) / dx**2.0
+            laplacianPhi += (padded_phi[ixc, iyp] + padded_phi[ixc, iym] - 2 * padded_phi[ixc, iyc]) / dy**2.0
+        elif self.phi_laplacian == "spectral":
+            laplacianPhi = (
+                jnp.fft.ifft2(
+                    -self.k_sq * jnp.fft.fft2(phi)  # * self.low_pass_filter * self.zero_mask
+                )
+            ).real
+        else:
+            raise NotImplementedError("phi_laplacian method not implemented")
 
         coeff = 1j * self.e / (4 * self.w0 * self.me) * jnp.conj(laplacianPhi)
         k_E1_x -= coeff * E0_x

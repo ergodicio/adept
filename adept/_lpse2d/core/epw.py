@@ -34,7 +34,6 @@ class SpectralPotential:
             max_source_k_multiplier = 1.2
             max_k0 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"])
             max_k1 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"] * (self.w0**2) / (self.w1**2))
-            print(max_k0, max_k1, self.w0, self.w1)
             is_outside_max_k0 = self.k_sq * (1 / self.w0**2) > max_k0**2
             is_outside_max_k1 = self.k_sq * (1 / self.w1**2) > max_k1**2
             self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
