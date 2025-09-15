@@ -27,15 +27,19 @@ class SpectralPotential:
         self.nx = cfg["grid"]["nx"]
         self.ny = cfg["grid"]["ny"]
         self.driver = Driver(cfg)
-        # self.step_tpd = partial(
-        #     diffrax.diffeqsolve,
-        #     terms=diffrax.ODETerm(self.tpd),
-        #     solver=diffrax.Tsit5(),
-        #     t0=0.0,
-        #     t1=self.dt,
-        #     dt0=self.dt,
-        # )
         self.tpd_const = 1j * self.e / (8 * self.wp0 * self.me)
+
+        if cfg["terms"]["epw"]["source"]["srs"]:
+            self.w1 = cfg["units"]["derived"]["w1"]
+            max_source_k_multiplier = 1.2
+            max_k0 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"])
+            max_k1 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"] * (self.w0**2) / (self.w1**2))
+            is_outside_max_k0 = self.k_sq * (1 / self.w0**2) > max_k0**2
+            is_outside_max_k1 = self.k_sq * (1 / self.w1**2) > max_k1**2
+            self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
+            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+
+            self.srs_const = self.e * self.wp0 / (4 * self.me * self.w0 * self.w1)
 
     def calc_fields_from_phi(self, phi: Array) -> tuple[Array, Array]:
         """
@@ -101,6 +105,24 @@ class SpectralPotential:
 
         return total_tpd
 
+    def eval_E0_dot_E1(self, t, y, args):
+        E0 = args["E0"]
+        E1 = y["E1"]
+
+        # filter E0 and E1
+        E0_filtered = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
+        E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
+        E0_x_source, E0_y_source = E0_filtered[..., 0], E0_filtered[..., 1]
+        E1_x_source, E1_y_source = E1_filtered[..., 0], E1_filtered[..., 1]
+
+        return E0_x_source * jnp.conj(E1_x_source) + E0_y_source * jnp.conj(E1_y_source)
+
+    def srs(self, t: float, y, args: dict) -> Array:
+        E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
+        backgrounddensityperturbation = y["background_density"] / self.envelope_density - 1
+        total_srs = 1j * self.srs_const * (1 + backgrounddensityperturbation) * E0_dot_E1
+        return total_srs
+
     def get_noise(self):
         random_amps = 1.0  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
         random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
@@ -122,6 +144,9 @@ class SpectralPotential:
         if self.cfg["terms"]["epw"]["source"]["tpd"]:
             tpd_term = self.tpd(t, phi, ey, args={"E0": E0})
 
+        if self.cfg["terms"]["epw"]["source"]["srs"]:
+            srs_term = self.srs(t, y, args={"E0": E0})
+
         # density gradient
         if self.cfg["terms"]["epw"]["density_gradient"]:
             ex *= jnp.exp(-1j * self.wp0 / 2.0 * (background_density / self.envelope_density - 1) * self.dt)
@@ -135,6 +160,9 @@ class SpectralPotential:
         # tpd
         if self.cfg["terms"]["epw"]["source"]["tpd"]:
             phi += self.dt * tpd_term
+
+        if self.cfg["terms"]["epw"]["source"]["srs"]:
+            phi += self.dt * srs_term
 
         # noise
         if self.cfg["terms"]["epw"]["source"]["noise"]:
