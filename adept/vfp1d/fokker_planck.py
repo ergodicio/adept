@@ -213,6 +213,8 @@ class FLMCollisions:
         diag = diag_term1 - 2.0 * diag_d2dv2 + diag_angular
         upper = upper_d2dv2 + upper_ddv
 
+        diag = diag.at[:, 0].add(lower[:, 0])
+
         return diag, lower[:, :-1], upper[:, 1:]
 
     def _solve_one_x_tridiag_(self, diag: Array, upper: Array, lower: Array, f10: Array) -> Array:
@@ -222,7 +224,7 @@ class FLMCollisions:
         op = lx.TridiagonalLinearOperator(diagonal=diag, upper_diagonal=upper, lower_diagonal=lower)
         return lx.linear_solve(op, f10, solver=lx.Tridiagonal()).value
 
-    def __call__(self, Z, ni, f0, f10, dt):
+    def __call__(self, Z, ni, f0, f10, dt, include_ee_offdiag_explicitly=True):
         """
         Solves the FLM collision operator for all l and m
 
@@ -234,7 +236,6 @@ class FLMCollisions:
         2. The ee collision operator is ignored and the Z* scaling is used instead
 
         """
-
         for il in range(1, self.nl + 1):
             ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / self.v[None, :] ** 3.0
 
@@ -254,9 +255,10 @@ class FLMCollisions:
 
                 new_f10 = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, f10)
 
-                new_f10 = new_f10 + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
-                    None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
-                )
+                if include_ee_offdiag_explicitly:
+                    new_f10 = new_f10 + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
+                        None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
+                    )
 
             else:
                 # only uses the Z* epperlein haines scaling instead of solving the ee collisions

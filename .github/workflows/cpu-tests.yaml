@@ -20,7 +20,7 @@ concurrency:
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
-  test-adept:
+  test-base:
     runs-on: ubuntu-latest
     steps:
     - name: set up Git repository
@@ -38,4 +38,64 @@ jobs:
 
     - name: Test with pytest
       run: |
-        pytest tests/test_base tests/test_lpse2d tests/test_vlasov1d tests/test_vfp1d
+        pytest tests/test_base
+
+  test-lpse2d:
+    runs-on: ubuntu-latest
+    steps:
+    - name: set up Git repository
+      uses: actions/checkout@v5
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install .[dev]
+
+    - name: Test with pytest
+      run: |
+        pytest tests/test_lpse2d
+
+  test-vlasov1d:
+    runs-on: ubuntu-latest
+    steps:
+    - name: set up Git repository
+      uses: actions/checkout@v5
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install .[dev]
+
+    - name: Test with pytest
+      run: |
+        pytest tests/test_vlasov1d
+
+  test-vfp1d:
+    runs-on: ubuntu-latest
+    steps:
+    - name: set up Git repository
+      uses: actions/checkout@v5
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install .[dev]
+
+    - name: Test with pytest
+      run: |
+        pytest tests/test_vfp1d
