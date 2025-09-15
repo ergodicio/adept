@@ -22,6 +22,7 @@ def _run_(Z, ee):
 
     exo = ergoExo()
     exo.setup(cfg)
+
     sol, datasets, run_id = exo(None)
     dataT = datasets["fields"]["fields-T keV"].data
     np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=5)
@@ -37,13 +38,14 @@ def _run_(Z, ee):
     return run_id
 
 
-@pytest.mark.parametrize("Z", list(range(1, 21, 4)) + [40, 60, 80])
+@pytest.mark.parametrize("Z", list(range(1, 22, 4)) + [40, 60, 80])
 @pytest.mark.parametrize("ee", [True, False])
 def test_kappa_eh(Z, ee):
     if not any(["gpu" == device.platform for device in devices()]):
-        pytest.skip(f"Skipping Z={Z} to save time because no GPU is available")
         if Z in [1, 21, 80]:
             _run_(Z, ee)
+        else:
+            pytest.skip(f"Skipping Z={Z} to save time because no GPU is available")
 
     else:
         _run_(Z, ee)
