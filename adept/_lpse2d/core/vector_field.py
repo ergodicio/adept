@@ -36,7 +36,7 @@ class SplitStep:
         self.me = cfg["units"]["derived"]["me"]
         self.w0 = cfg["units"]["derived"]["w0"]
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
-        self.phi_laplacian = "spectral" # hard coded for now, can be implemented to config if ever necessary
+        self.phi_laplacian = "spectral"  # hard coded for now, can be implemented to config if ever necessary
 
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
