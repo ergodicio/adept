@@ -59,6 +59,7 @@ terms:
     source:
       noise: false
       tpd: false
+      srs: false
   zero_mask: false
 units:
   atomic number: 40
