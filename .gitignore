@@ -132,4 +132,4 @@ dmypy.json
 .pyre/
 
 # hatchling-generated version file
-_version.py
+**/_version.py
