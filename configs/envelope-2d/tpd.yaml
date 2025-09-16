@@ -23,13 +23,13 @@ drivers:
     num_colors: 1
     shape: uniform
     params:
-      amplitudes: 
+      amplitudes:
         init: random # uniform, random
         learned: true
         activation: log # linear, log
       phases:
         init: random # random, seed-###
-        learned: true 
+        learned: true
         seed: 42
 
 grid:
