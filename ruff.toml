@@ -42,6 +42,7 @@ ignore = [
     "NPY002", # Replace legacy `np.random.uniform` call with `np.random.Generator`
     "NPY201", # `np.trapz` will be removed in NumPy 2.0. Use `numpy.trapezoid` on NumPy 2.0
     "RUF005", # Consider unpacking instad of concatenation
+    "RUF059", # Unpacked variable never used
 ]
 allowed-confusables = [
     "–", # EN DASH

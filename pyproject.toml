@@ -9,7 +9,8 @@ license = "MIT"
 license-files = ["LICENSE*"]
 requires-python = ">=3.11"
 dependencies = [
-    "diffrax",
+    "lineax @ git+https://github.com/patrick-kidger/lineax.git",
+    "diffrax @ git+https://github.com/patrick-kidger/diffrax.git@dev",
     "matplotlib",
     "scipy",
     "numpy",
@@ -28,7 +29,7 @@ dependencies = [
     "tabulate",
     "pydantic",
     "scienceplots",
-    "jax"
+    "jax==0.6.2"
 ]
 dynamic = ["version"]
 
@@ -38,7 +39,10 @@ Documentation = "https://adept.readthedocs.io/en/latest/"
 
 [project.optional-dependencies]
 cpu = []
-gpu = ["jax[cuda12]", "pynvml"]
+gpu = [
+    "jax[cuda12]==0.6.2",
+    "pynvml"
+]
 docs = [
     "sphinx",
     "sphinx_autodoc_typehints",
@@ -65,9 +69,14 @@ source = "vcs"
 [tool.hatch.build.hooks.vcs]
 version-file = "adept/_version.py"
 
+[tool.hatch.metadata]
+allow-direct-references = true
+
 [tool.pytest.ini_options]
 # Test type hints w/ typeguard - currently disabled
 # addopts = ["--typeguard-packages=adept"]
+addopts = "--import-mode=importlib --strict-markers"
+pythonpath = "."
 testpaths = ["tests"]
 filterwarnings = [
     "error",
