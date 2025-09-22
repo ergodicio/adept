@@ -35,8 +35,7 @@ class SplitStep:
         self.e = cfg["units"]["derived"]["e"]
         self.me = cfg["units"]["derived"]["me"]
         self.w0 = cfg["units"]["derived"]["w0"]
-        self.nu_coll = cfg["units"]["derived"]["nu_coll"]
-        self.phi_laplacian = "spectral" # hard coded for now, can be implemented to config if ever necessary
+        self.phi_laplacian = "spectral"  # hard coded for now, can be implemented to config if ever necessary
 
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
@@ -70,8 +69,6 @@ class SplitStep:
 
         Nelf = 0.0  # self.cfg["Nelf"]
 
-        # Implement the scattered light update logic here
-        # these are derivative calculations, rewrite using numpy slicing and broadcasting
         ixc = iyc = slice(1, -1)
         ixp = iyp = slice(2, None)
         ixm = iym = slice(None, -2)
@@ -89,7 +86,6 @@ class SplitStep:
         )
 
         # calculate 2d laplacian
-
         if self.phi_laplacian == "fd":
             padded_phi = jnp.pad(phi, ((1, 1), (1, 1)), mode="wrap")
             laplacianPhi = (padded_phi[ixp, iyc] + padded_phi[ixm, iyc] - 2 * padded_phi[ixc, iyc]) / dx**2.0
@@ -109,15 +105,18 @@ class SplitStep:
 
         return None, jnp.concatenate([k_E1_x[..., None], k_E1_y[..., None]], axis=-1)
 
+    def get_envelope_coefficient(self, envelope_args, t):
+        return get_envelope(
+            envelope_args["tr"],
+            envelope_args["tr"],
+            envelope_args["tc"] - envelope_args["tw"] / 2,
+            envelope_args["tc"] + envelope_args["tw"] / 2,
+            t,
+        )
+
     def light_split_step(self, t, y, driver_args):
         if "E0" in driver_args:
-            t_coeff = get_envelope(
-                driver_args["E0"]["tr"],
-                driver_args["E0"]["tr"],
-                driver_args["E0"]["tc"] - driver_args["E0"]["tw"] / 2,
-                driver_args["E0"]["tc"] + driver_args["E0"]["tw"] / 2,
-                t,
-            )
+            t_coeff = self.get_envelope_coefficient(driver_args["E0"], t)
             y["E0"] = t_coeff * self.light.laser_update(t, y, driver_args["E0"])
 
         if self.cfg["terms"]["epw"]["source"]["srs"]:
@@ -125,68 +124,27 @@ class SplitStep:
             # y["E0"] += self.dt * jnp.real(k1_E0)
             y["E1"] += self.dt * jnp.real(k1_E1)
 
-            yE0t = y["E0"]
-
-            t_coeff = get_envelope(
-                driver_args["E0"]["tr"],
-                driver_args["E0"]["tr"],
-                driver_args["E0"]["tc"] - driver_args["E0"]["tw"] / 2,
-                driver_args["E0"]["tc"] + driver_args["E0"]["tw"] / 2,
-                t + self.dt / 2.0,
-            )
+            t_coeff = self.get_envelope_coefficient(driver_args["E0"], t + self.dt / 2.0)
             y["E0"] = t_coeff * self.light.laser_update(t + self.dt / 2.0, y, driver_args["E0"])
-
             [k1_E0, k1_E1] = self.scattered_light_update(t + self.dt / 2, y)
             # y["E0"] += self.dt * jnp.imag(k1_E0)
             y["E1"] += self.dt * 1j * jnp.imag(k1_E1)
 
-        # if self.cfg["terms"]["light"]["update"]:
-        # y["E0"] = y["E0"] + self.dt * jnp.real(k1_E0)
-
-        # t_coeff = get_envelope(0.1, 0.1, 0.2, 100.0, t + 0.5 * self.dt)
-        # y["E0"] = t_coeff * self.light.laser_update(t + 0.5 * self.dt, y, args["E0"])
-        # if self.cfg["terms"]["light"]["update"]:
-        # y["E0"] = y["E0"] + 1j * self.dt * jnp.imag(k1_E0)
+        y["E1"] *= self.boundary_envelope[..., None]
 
         return y
-
-    def landau_damping(self, epw: Array, vte_sq: float):
-        gammaLandauEpw = (
-            jnp.sqrt(np.pi / 8)
-            * (1.0 + 1.5 * self.k_sq * (vte_sq / self.wp0**2))
-            * self.wp0**4
-            * self.one_over_ksq**1.5
-            / vte_sq**1.5
-            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / vte_sq))
-        )
-
-        return jnp.fft.ifft2(
-            jnp.fft.fft2(epw) * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt) * self.low_pass_filter
-        )
 
     def __call__(self, t, y, args):
         # unpack y into complex128
         new_y = self._unpack_y_(y)
 
-        if self.cfg["terms"]["epw"]["damping"]["landau"]:
-            new_y["epw"] = self.landau_damping(epw=new_y["epw"], vte_sq=y["vte_sq"])
-
-        # split step
+        # light split step
         new_y = self.light_split_step(t, new_y, args["drivers"])
 
         if "E2" in args["drivers"]:
-            new_y["epw"] += self.dt * self.epw.driver(args["drivers"]["E2"], t)
+            new_y["epw"] += jnp.fft.fft2(self.dt * self.epw.driver(args["drivers"]["E2"], t))
+        # epw split step
         new_y["epw"] = self.epw(t, new_y, args)
-
-        # landau and collisional damping
-
-        # boundary damping
-        ex, ey = self.epw.calc_fields_from_phi(new_y["epw"])
-        ex = ex * self.boundary_envelope
-        ey = ey * self.boundary_envelope
-        new_y["E1"] *= self.boundary_envelope[..., None]
-        new_y["epw"] = self.epw.calc_phi_from_fields(ex, ey)
-        # new_y["epw"] = jnp.fft.ifft2(self.zero_mask * self.low_pass_filter * jnp.fft.fft2(new_y["epw"]))
 
         # pack y into float64
         y, new_y = self._pack_y_(y, new_y)

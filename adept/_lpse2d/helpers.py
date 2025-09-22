@@ -97,12 +97,6 @@ def write_units(cfg: dict) -> dict:
     else:
         nu_coll = 0.0  # nu_ee + nu_ei + nu_sideloss
 
-    if "gradient scale length" in cfg["density"]:
-        gradient_scale_length = _Q(cfg["density"]["gradient scale length"]).to("um").value
-        I_thresh = calc_threshold_intensity(Te, Ln=gradient_scale_length, w0=w0)
-    else:
-        I_thresh = "n/a"
-
     # Derived units
     cfg["units"]["derived"] = {
         "c": c,
@@ -118,7 +112,6 @@ def write_units(cfg: dict) -> dict:
         "nc": nc,
         "lambda_D": ld,
         "nu_coll": nu_coll,
-        "I_thresh": I_thresh,
         "E0_source": E0_source,
         "timeScale": timeScale,
         "spatialScale": spatialScale,
@@ -302,7 +295,7 @@ def get_solver_quantities(cfg: dict) -> dict:
         if cfg["terms"]["zero_mask"]
         else 1
     )
-    # sqrt(kx**2 + ky**2) < 2/3 kmax
+    # sqrt(kx**2 + ky**2) < 0.5 kmax
     cfg_grid["low_pass_filter"] = np.where(
         np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
         < cfg_grid["low_pass_filter"] * cfg_grid["kx"].max(),
@@ -512,8 +505,10 @@ def make_field_xarrays(cfg, this_t, state, td):
     xax_tuple = ("x (um)", xax)
     yax_tuple = ("y (um)", yax)
 
-    phi_vs_t = state["epw"].view(np.complex128)
-    phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2))
+    # phi_vs_t = state["epw"].view(np.complex128)
+    phi_k_np = state["epw"].view(np.complex128)
+    phi_vs_t = np.fft.ifft2(state["epw"].view(np.complex128), axes=(1, 2))
+    # phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2))
     ex_k_np = -1j * kx[None, :, None] * phi_k_np
     ey_k_np = -1j * ky[None, None, :] * phi_k_np
 
@@ -620,6 +615,7 @@ def get_save_quantities(cfg: dict) -> dict:
                         ],
                         axis=-1,
                     ).view(jnp.float64)
+
                 elif k == "epw":
                     cmplx_fld = v.view(jnp.complex128)
                     save_y[k] = jnp.reshape(interpolator(f=cmplx_fld), (nx, ny), order="F").view(jnp.float64)
