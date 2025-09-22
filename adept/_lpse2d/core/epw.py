@@ -132,7 +132,7 @@ class SpectralPotential:
 
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
 
-        total_tpd *= self.zero_mask
+        total_tpd *= self.zero_mask * self.low_pass_filter
 
         return total_tpd
 
