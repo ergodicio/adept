@@ -128,7 +128,6 @@ class SpectralPotential:
         divE_true = jnp.fft.ifft2(self.k_sq * phi_k)
         E0_divE_k = jnp.fft.fft2(E0[..., 1] * jnp.conj(divE_true))
         tpd2 = 1j * self.ky[None, :] * self.one_over_ksq * E0_divE_k
-        # tpd2 = jnp.fft.ifft2(tpd2 * self.low_pass_filter)
 
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
 
