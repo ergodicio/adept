@@ -460,22 +460,29 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     plot_fields(fields, td)
     plot_kt(kfields, td)
 
-    return {"k": kfields, "x": fields, "metrics": {}}
+    return {"k": kfields, "x": fields, "series": series, "metrics": {}}
 
 
 def plot_series(series, td):
-    fig, ax = plt.subplots(1, 2, figsize=(8, 3))
-    series["e_sq"].plot(ax=ax[0])
-    series["e_sq"].plot(ax=ax[1])
-    ax[1].set_yscale("log")
-    fig.savefig(os.path.join(td, "plots", "e_sq_vs_t.png"), bbox_inches="tight")
-    fig.savefig(os.path.join(td, "plots", "e_sq_vs_t.pdf"), bbox_inches="tight")
-    plt.close()
+    for k in series.keys():
+        fig, ax = plt.subplots(1, 2, figsize=(8, 3))
+        series[k].plot(ax=ax[0])
+        series[k].plot(ax=ax[1])
+        ax[1].set_yscale("log")
+        fig.savefig(os.path.join(td, "plots", f"{k}_vs_t.png"), bbox_inches="tight")
+        fig.savefig(os.path.join(td, "plots", f"{k}_vs_t.pdf"), bbox_inches="tight")
+        plt.close()
 
 
 def make_series_xarrays(cfg, this_t, state, td):
     esq = state["e_sq"]
-    series_xr = xr.Dataset({"e_sq": xr.DataArray(esq, coords=(("t (ps)", this_t),))})
+    max_phi = state["max_phi"]
+    series_xr = xr.Dataset(
+        {
+            "e_sq": xr.DataArray(esq, coords=(("t (ps)", this_t),)),
+            "max_phi": xr.DataArray(max_phi, coords=(("t (ps)", this_t),)),
+        }
+    )
     series_xr.to_netcdf(os.path.join(td, "binary", "series.xr"), engine="h5netcdf", invalid_netcdf=True)
     return series_xr
 
@@ -636,13 +643,13 @@ def get_save_quantities(cfg: dict) -> dict:
 
 def get_default_save_func(cfg):
     def save_func(t, y, args):
-        phi_k = jnp.fft.fft2(y["epw"].view(jnp.complex128), norm="ortho")
+        phi_k = y["epw"].view(jnp.complex128)
         ex = -1j * cfg["grid"]["kx"][:, None] * phi_k
         ey = -1j * cfg["grid"]["ky"][None, :] * phi_k
-        ex = jnp.fft.ifft2(ex, norm="ortho")
-        ey = jnp.fft.ifft2(ey, norm="ortho")
+        ex = jnp.fft.ifft2(ex)
+        ey = jnp.fft.ifft2(ey)
         e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
 
-        return {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"])}
+        return {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 
     return {"t": {"ax": cfg["grid"]["t"]}, "func": save_func}
