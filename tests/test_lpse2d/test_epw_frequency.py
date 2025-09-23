@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import yaml
+import mlflow
 from numpy import testing
 
 from adept import ergoExo
@@ -11,13 +12,15 @@ def _real_part_():
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
+    cfg["mlflow"]["run"] = "dummy"
     exo = ergoExo()
     _ = exo.setup(cfg)
 
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
     # modify config
-    rand_k0 = np.random.uniform(10, 30)
+    cfg["mlflow"]["run"] = "epw-test-real"
+    rand_k0 = np.random.uniform(5, 20)
     rand_scalar = np.random.uniform(0.5, 2.0)
     lambda_w = round(float(2 * np.pi / rand_k0), 2)
     k0 = 2 * np.pi / lambda_w
@@ -30,9 +33,9 @@ def _real_part_():
     cfg["drivers"]["E2"]["k0"] = float(k0)
     cfg["drivers"]["E2"]["w0"] = w0 * rand_scalar
     cfg["grid"]["xmax"] = f"{10 * float(2 * np.pi / k0)}um"
-    cfg["grid"]["tmax"] = "1ps"
-    cfg["save"]["fields"]["t"]["tmax"] = "1ps"
-    cfg["save"]["fields"]["t"]["dt"] = "5fs"
+    cfg["grid"]["tmax"] = "4ps"
+    cfg["save"]["fields"]["t"]["tmax"] = "4ps"
+    cfg["save"]["fields"]["t"]["dt"] = "10fs"
 
     exo = ergoExo()
     modules = exo.setup(cfg)
@@ -45,8 +48,14 @@ def _real_part_():
     dt = flds.coords["t (ps)"].data[2] - flds.coords["t (ps)"].data[1]
     amplitude_envelope, instantaneous_frequency_smooth = get_nlfs(slc, dt)
 
-    actual = np.mean(instantaneous_frequency_smooth[100:160])
+    # middle 20% of points
+    mid_slice = slice(
+        int(len(instantaneous_frequency_smooth) // 2 - 0.1 * len(instantaneous_frequency_smooth) // 2),
+        int(len(instantaneous_frequency_smooth) // 2 + 0.1 * len(instantaneous_frequency_smooth) // 2),
+    )
+    actual = np.mean(instantaneous_frequency_smooth[mid_slice])
 
+    mlflow.log_metrics({"actual frequency": actual, "desired frequency": w0}, run_id=mlrunid)
     testing.assert_allclose(desired=w0, actual=actual, rtol=0.1)
 
 
@@ -54,13 +63,15 @@ def _imaginary_part_():
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
+    cfg["mlflow"]["run"] = "dummy"
     exo = ergoExo()
     _ = exo.setup(cfg)
 
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
     # modify config
-    rand_k0 = np.random.uniform(22, 28)
+    cfg["mlflow"]["run"] = "epw-test-imaginary"
+    rand_k0 = np.random.uniform(22, 40)
     lambda_w = round(float(2 * np.pi / rand_k0), 2)
     k0 = 2 * np.pi / lambda_w
     cfg["drivers"]["E2"]["k0"] = float(k0)
@@ -77,22 +88,39 @@ def _imaginary_part_():
     modules = exo.setup(cfg)
     sol, ppo, mlrunid = exo(modules)
 
+    # desired = (
+    #     np.sqrt(np.pi / 8)
+    #     * exo.cfg["units"]["derived"]["wp0"] ** 4
+    #     * k0**-3.0
+    #     / (exo.cfg["units"]["derived"]["vte_sq"] ** 1.5)
+    #     * np.exp(-(exo.cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * exo.cfg["units"]["derived"]["vte_sq"]))
+    # )
+
+    wp0 = exo.cfg["units"]["derived"]["wp0"]
+    vte_sq = exo.cfg["units"]["derived"]["vte_sq"]
     desired = (
         np.sqrt(np.pi / 8)
-        * exo.cfg["units"]["derived"]["wp0"] ** 4
+        * (1.0 + 1.5 * k0**2.0 * (vte_sq / wp0**2))
+        * wp0**4
         * k0**-3.0
-        / (exo.cfg["units"]["derived"]["vte_sq"] ** 1.5)
-        * np.exp(-(exo.cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * exo.cfg["units"]["derived"]["vte_sq"]))
+        / vte_sq**1.5
+        * np.exp(-(1.5 + 0.5 * wp0**2 * k0**-2.0 / vte_sq))
     )
+
     # get damping rate out of ppo
     flds = ppo["x"]
     amplitude_envelope = np.abs(np.fft.fft(np.real(flds["phi"][:, :, 0]).data, axis=1)[:, 10])
     dt = flds.coords["t (ps)"].data[2] - flds.coords["t (ps)"].data[1]
     # amplitude_envelope, instantaneous_frequency_smooth = get_nlfs(slc, dt)
 
-    actual = np.mean((np.gradient(amplitude_envelope) / amplitude_envelope)[20:40]) / dt
+    # middle 20% of points
+    mid_slice = slice(
+        int(len(amplitude_envelope) // 2 - 0.1 * len(amplitude_envelope) // 2),
+        int(len(amplitude_envelope) // 2 + 0.1 * len(amplitude_envelope) // 2),
+    )
+    actual = np.mean((np.gradient(amplitude_envelope) / amplitude_envelope)[mid_slice]) / dt
 
-    # mlflow.log_metrics({"actual damping rate": actual, "desired damping rate": desired})
+    mlflow.log_metrics({"actual damping rate": actual, "desired damping rate": desired}, run_id=mlrunid)
     testing.assert_allclose(desired=desired, actual=-actual, rtol=0.35)
 
 

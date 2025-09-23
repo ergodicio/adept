@@ -295,7 +295,7 @@ def get_solver_quantities(cfg: dict) -> dict:
         if cfg["terms"]["zero_mask"]
         else 1
     )
-    # sqrt(kx**2 + ky**2) < 0.5 kmax
+    # sqrt(kx**2 + ky**2) < low_pass_filter * kmax
     cfg_grid["low_pass_filter"] = np.where(
         np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
         < cfg_grid["low_pass_filter"] * cfg_grid["kx"].max(),
@@ -512,10 +512,8 @@ def make_field_xarrays(cfg, this_t, state, td):
     xax_tuple = ("x (um)", xax)
     yax_tuple = ("y (um)", yax)
 
-    # phi_vs_t = state["epw"].view(np.complex128)
     phi_k_np = state["epw"].view(np.complex128)
     phi_vs_t = np.fft.ifft2(state["epw"].view(np.complex128), axes=(1, 2))
-    # phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2))
     ex_k_np = -1j * kx[None, :, None] * phi_k_np
     ey_k_np = -1j * ky[None, None, :] * phi_k_np
 

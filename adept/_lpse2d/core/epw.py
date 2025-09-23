@@ -196,7 +196,6 @@ class SpectralPotential:
             ex = ex * phase
             ey = ey * phase
 
-        # if boundary_damping:
         ex = ex * self.boundary_envelope
         ey = ey * self.boundary_envelope
         phi_k = self.calc_phi_k_from_fields(ex, ey)
