@@ -1,7 +1,7 @@
+import mlflow
 import numpy as np
 import pytest
 import yaml
-import mlflow
 from numpy import testing
 
 from adept import ergoExo
