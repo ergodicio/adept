@@ -201,7 +201,7 @@ class BaseVlasov1D(ADEPTModule):
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
 
-    def __call__(self, trainable_modules: dict, args: dict | None = None):
+    def __call__(self, cfg, state, trainable_modules: dict, args: dict | None = None):
         if args is None:
             args = self.args
         solver_result = diffeqsolve(
@@ -209,9 +209,9 @@ class BaseVlasov1D(ADEPTModule):
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=self.cfg["grid"]["max_steps"],
-            dt0=self.cfg["grid"]["dt"],
-            y0=self.state,
+            max_steps=cfg["grid"]["max_steps"],
+            dt0=cfg["grid"]["dt"],
+            y0=state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
         )
