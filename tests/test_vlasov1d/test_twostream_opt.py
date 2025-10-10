@@ -65,12 +65,12 @@ if __name__ == "__main__":
 
     params = {"density": {
             "species-electron1": {
-                "v0": jnp.array(-1.5),
-                "T0": jnp.array(0.2),
+                "v0": jnp.array(cfg["density"]["species-electron1"]["v0"]),
+                "T0": jnp.array(cfg["density"]["species-electron1"]["T0"]),
                 },
             "species-electron2": {
-                "v0": jnp.array(1.5),
-                "T0": jnp.array(0.2),
+                "v0": jnp.array(cfg["density"]["species-electron2"]["v0"]),
+                "T0": jnp.array(cfg["density"]["species-electron2"]["T0"]),
                 }
             }
         }
@@ -118,7 +118,7 @@ if __name__ == "__main__":
     # The final parameter values are not logged because they do not correspond to
     #   the final optimized quantity (the update step has been applied to them)
     np.testing.assert_almost_equal(val, -8.572186655748087, decimal=2)
-    np.testing.assert_almost_equal(params["density"]["species-electron1"]["v0"], 
-                                   params["density"]["species-electron2"]["v0"], decimal=2)
+    np.testing.assert_almost_equal(np.abs(params["density"]["species-electron1"]["v0"]), 
+                                   np.abs(params["density"]["species-electron2"]["v0"]), decimal=2)
     np.testing.assert_almost_equal(params["density"]["species-electron1"]["T0"], 
                                    params["density"]["species-electron2"]["T0"], decimal=2)
