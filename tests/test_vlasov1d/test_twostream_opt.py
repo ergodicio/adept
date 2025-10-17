@@ -14,6 +14,8 @@ config.update("jax_enable_x64", True)
 import equinox as eqx
 import optax
 
+from diffrax import diffeqsolve, SaveAt
+
 from adept import ergoExo
 from adept._vlasov1d.modules import BaseVlasov1D
 from adept._vlasov1d.helpers import _initialize_total_distribution_
@@ -45,8 +47,18 @@ class OptVlasov1D(BaseVlasov1D):
         set_dict_leaves(params, cfg)
         # Reinitialize the distribution based on args
         state = self.reinitialize_distribution(cfg, self.state)
-        # Call diffeqsolve via __call__ defined in the BaseVlasov1D class
-        solver_result = super().__call__(cfg, state, params, args)['solver result'] 
+        # Solve the equations
+        solver_result = diffeqsolve(
+            terms=self.diffeqsolve_quants["terms"],
+            solver=self.diffeqsolve_quants["solver"],
+            t0=self.time_quantities["t0"],
+            t1=self.time_quantities["t1"],
+            max_steps=cfg["grid"]["max_steps"],
+            dt0=cfg["grid"]["dt"],
+            y0=state,
+            args=args,
+            saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+        )
          # Compute the mean growth rate at the start of the simulation
         opt_quantity = jnp.mean(jnp.log10(solver_result.ys['default']['mean_e2'][10:200]))
         return_val = (opt_quantity, {"solver result": solver_result})
