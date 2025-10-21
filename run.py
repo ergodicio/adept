@@ -11,7 +11,9 @@ config.update("jax_enable_x64", True)
 import yaml
 
 from adept import ergoExo
-from adept._sbsbs1d.base import SBSBS_CBET
+from adept._sbsbs1d.base import SBSBS_CBET, Train_SBSBS_CBET
+import numpy as np
+import equinox as eqx
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Automatic Differentiation Enabled Plasma Transport")
@@ -22,10 +24,16 @@ if __name__ == "__main__":
     exo = ergoExo()
 
     if args.run_id is None:
-        with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml") as fi:
+        file_string = f"{os.path.join(os.getcwd(), args.cfg)}"
+        file_string = file_string if file_string.endswith('.yaml') else file_string+'.yaml'
+        with open(file_string) as fi:
             cfg = yaml.safe_load(fi)
-        modules = exo.setup(cfg=cfg, adept_module=SBSBS_CBET)
-        sol, post_out, run_id = exo(modules)
+        all_modules = exo.setup(cfg=cfg,adept_module=Train_SBSBS_CBET)
+        diff_modules, static_modules = {}, {}
+        diff_modules['lpi'], static_modules['lpi'] = eqx.partition(all_modules['lpi'],all_modules['lpi'].get_partition_spec())
+        # static_modules = exo.setup(cfg=cfg, adept_module=Train_SBSBS_CBET)
+        # diff_modules = {'Jr_target':0.5*np.ones(4)}
+        val, grad, (sol, post_out, run_id) = exo.val_and_grad(diff_modules,args={'static_modules':static_modules,'reflectivity':0.1})
 
     else:
         exo.run_job(args.run_id, nested=None)

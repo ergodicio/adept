@@ -2,6 +2,17 @@ mlflow:
   experiment: sbsbs
   run: test
 
+opt:
+  learning_rate: 0.1
+  num_epochs: 200
+  batch_size: 1
+  decay_steps: 100000
+  method: scipy
+  metric_time_in_ps: 6.0
+
+trainable_params:
+  Jr_target: [0.1,0.1,0.1,0.1]
+
 units:
   atomic mass number: 13.0
   laser_intensity: 8.0e+15W/cm^2

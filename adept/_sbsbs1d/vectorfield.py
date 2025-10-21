@@ -127,19 +127,22 @@ class SBSVectorField(BaseLPIVectorField):
 
 class CBETVectorField(BaseLPIVectorField):
     def __init__(self, cfg):
-        super().__init__(cfg["cbet"]["grid"], cfg["units"])
+        super().__init__(cfg["leh"]["spec"], cfg["units"])
         self.cfg = cfg
-        self.dz = self.cfg["cbet"]["grid"]["dz"]
+        self.dz = self.cfg["leh"]["spec"]["dz"]
         self.a0_sq = self.cfg["units"]["derived"]["a0"] ** 2.0
-        self.beam_params = self.cfg["laser"]["beams"]
-        self.thetas = jnp.array([self.beam_params[str(i)]["theta"] for i in range(self.cfg["laser"]["num_beams"])])
-        self.phis = jnp.array([self.beam_params[str(i)]["phi"] for i in range(self.cfg["laser"]["num_beams"])])
-        self.dls = jnp.array([self.beam_params[str(i)]["dl"] for i in range(self.cfg["laser"]["num_beams"])])
+        self.beam_params = self.cfg["beam"]
+        self.thetas = jnp.array([self.beam_params[str(i)]["spec"]["theta"] for i in range(self.cfg["laser"]["num_beams"])])*jnp.pi/180
+        self.phis = jnp.array([self.beam_params[str(i)]["spec"]["phi"] for i in range(self.cfg["laser"]["num_beams"])])*jnp.pi/180
+        self.dls = jnp.array([self.beam_params[str(i)]["spec"]["dl"] for i in range(self.cfg["laser"]["num_beams"])])
+        
+        print({'thetas':self.thetas,'phis':self.phis,'dls':self.dls})
+        
 
         kxs = -jnp.sin(self.thetas) * jnp.cos(self.phis)  # k*c/omega
         kys = -jnp.sin(self.thetas) * jnp.sin(self.phis)
         kzs = -jnp.cos(self.thetas)
-        print(kxs)
+        # print(kxs)
         self.kb_x = kxs.reshape(-1, 1) - kxs.reshape(1, -1)  # k_b*c/omega
         self.kb_y = kys.reshape(-1, 1) - kys.reshape(1, -1)
         self.kb_z = kzs.reshape(-1, 1) - kzs.reshape(1, -1)
