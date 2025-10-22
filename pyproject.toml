@@ -28,7 +28,7 @@ dependencies = [
     "tabulate",
     "pydantic",
     "scienceplots",
-    "jax==0.6.2"
+    "jax"
 ]
 dynamic = ["version"]
 
@@ -39,7 +39,7 @@ Documentation = "https://adept.readthedocs.io/en/latest/"
 [project.optional-dependencies]
 cpu = []
 gpu = [
-    "jax[cuda12]==0.6.2",
+    "jax[cuda12]",
     "nvidia-ml-py"
 ]
 docs = [
