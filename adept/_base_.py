@@ -335,8 +335,8 @@ class ergoExo:
             with open(os.path.join(td, "array_config.pkl"), "wb") as fi:
                 pickle.dump(self.adept_module.cfg, fi)
 
-        self.adept_module.init_diffeqsolve()
         self.adept_module.init_state_and_args()
+        self.adept_module.init_diffeqsolve()
         modules = self.adept_module.init_modules()
 
         self.ran_setup = True
