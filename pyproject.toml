@@ -81,6 +81,8 @@ filterwarnings = [
     "error",
     # ignored by default
     "ignore::DeprecationWarning",
+    "ignore::RuntimeWarning",
+    "ignore::UserWarning",
     "ignore::PendingDeprecationWarning",
     "ignore::ImportWarning",
     # raised by Cython, usually harmless

@@ -188,7 +188,7 @@ def get_derived_quantities(cfg: dict) -> dict:
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
 
-    cfg_grid["max_steps"] = cfg_grid["nt"] + 4
+    cfg_grid["max_steps"] = cfg_grid["nt"] + 2048
 
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
@@ -401,15 +401,15 @@ def plot_fields(fields, td):
         plt.savefig(os.path.join(slice_dir, f"real-{k}.png"))
         plt.close()
 
-        np.log10(np.abs(v[:, :, ymidpt])).plot()
+        np.log10(np.abs(v[:, :, ymidpt])).plot(size=10, aspect=1)
         plt.savefig(os.path.join(slice_dir, f"spacetime-log-{k}.png"))
         plt.close()
 
-        np.abs(v[:, :, ymidpt]).plot()
+        np.abs(v[:, :, ymidpt]).plot(size=10, aspect=1)
         plt.savefig(os.path.join(slice_dir, f"spacetime-{k}.png"))
         plt.close()
 
-        np.real(v[:, :, ymidpt]).plot()
+        np.real(v[:, :, ymidpt]).plot(size=10, aspect=1)
         plt.savefig(os.path.join(slice_dir, f"spacetime-real-{k}.png"))
         plt.close()
 
