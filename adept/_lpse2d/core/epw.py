@@ -20,7 +20,8 @@ class SpectralPotential:
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.dt = cfg["grid"]["dt"]
         self.cfg = cfg
-        self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
+        # self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
+        self.phase_seed = np.random.randint(2**20)
         self.low_pass_filter = cfg["grid"]["low_pass_filter"]
         self.zero_mask = cfg["grid"]["zero_mask"]
         self.nx = cfg["grid"]["nx"]
@@ -151,9 +152,10 @@ class SpectralPotential:
         E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
         return jnp.fft.fft2(1j * self.srs_const * y["background_density"] / self.envelope_density * E0_dot_E1)
 
-    def get_noise(self):
-        random_amps = 1.0e-16  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
-        random_phases = 2 * np.pi * jax.random.uniform(self.phase_key, (self.nx, self.ny))
+    def get_noise(self, t):
+        random_amps = 1.0e-12  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
+        phase_key = jax.random.PRNGKey((t / self.dt).astype(int) + self.phase_seed)
+        random_phases = 2 * np.pi * jax.random.uniform(phase_key, (self.nx, self.ny))
         return random_amps * jnp.exp(1j * random_phases) * self.zero_mask
 
     def landau_damping(self, phi_k: Array, vte_sq: float):
@@ -179,7 +181,7 @@ class SpectralPotential:
         phi_k = self.landau_damping(phi_k, vte_sq[0, 0])
 
         if self.cfg["terms"]["epw"]["source"]["noise"]:
-            phi_k += self.dt * self.get_noise()
+            phi_k += self.dt * self.get_noise(t)
 
         ex, ey = self.calc_fields_from_phi_k(phi_k)
 

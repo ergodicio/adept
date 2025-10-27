@@ -12,13 +12,8 @@ def _real_part_():
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
-    cfg["mlflow"]["run"] = "dummy"
     exo = ergoExo()
     _ = exo.setup(cfg)
-
-    with open("tests/test_lpse2d/configs/epw.yaml") as fi:
-        cfg = yaml.safe_load(fi)
-    # modify config
     cfg["mlflow"]["run"] = "epw-test-real"
     rand_k0 = np.random.uniform(5, 20)
     rand_scalar = np.random.uniform(0.5, 2.0)
@@ -63,12 +58,8 @@ def _imaginary_part_():
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
-    cfg["mlflow"]["run"] = "dummy"
     exo = ergoExo()
     _ = exo.setup(cfg)
-
-    with open("tests/test_lpse2d/configs/epw.yaml") as fi:
-        cfg = yaml.safe_load(fi)
     # modify config
     cfg["mlflow"]["run"] = "epw-test-imaginary"
     rand_k0 = np.random.uniform(22, 40)
@@ -88,21 +79,13 @@ def _imaginary_part_():
     modules = exo.setup(cfg)
     sol, ppo, mlrunid = exo(modules)
 
-    # desired = (
-    #     np.sqrt(np.pi / 8)
-    #     * exo.cfg["units"]["derived"]["wp0"] ** 4
-    #     * k0**-3.0
-    #     / (exo.cfg["units"]["derived"]["vte_sq"] ** 1.5)
-    #     * np.exp(-(exo.cfg["units"]["derived"]["wp0"] ** 2.0) / k0**2.0 / (2 * exo.cfg["units"]["derived"]["vte_sq"]))
-    # )
-
-    wp0 = exo.cfg["units"]["derived"]["wp0"]
+    wp0 = exo.cfg["units"]["derived"]["vte_sq"]
     vte_sq = exo.cfg["units"]["derived"]["vte_sq"]
     desired = (
         np.sqrt(np.pi / 8)
         * (1.0 + 1.5 * k0**2.0 * (vte_sq / wp0**2))
         * wp0**4
-        * k0**-3.0
+        * k0**-1.5
         / vte_sq**1.5
         * np.exp(-(1.5 + 0.5 * wp0**2 * k0**-2.0 / vte_sq))
     )
@@ -111,7 +94,6 @@ def _imaginary_part_():
     flds = ppo["x"]
     amplitude_envelope = np.abs(np.fft.fft(np.real(flds["phi"][:, :, 0]).data, axis=1)[:, 10])
     dt = flds.coords["t (ps)"].data[2] - flds.coords["t (ps)"].data[1]
-    # amplitude_envelope, instantaneous_frequency_smooth = get_nlfs(slc, dt)
 
     # middle 20% of points
     mid_slice = slice(

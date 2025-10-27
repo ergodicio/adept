@@ -5,9 +5,10 @@ os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
 
 from jax import config
 
-config.update("jax_enable_x64", True)
+# config.update("jax_enable_x64", True)
 # config.update("jax_disable_jit", True)
 
+import jax
 import yaml
 
 from adept import ergoExo

@@ -106,14 +106,81 @@ def download_and_open_file_from_this_run(fname, run_id, destination_path):
     return this_file
 
 
-def all_reduce_gradients(gradients, num):
+def all_reduce_gradients(gradients: list, num: int):
+    """
+    Averages gradients across multiple devices and returns a single gradient pytree.
+
+    The gradients object is a list of a pytree, one for each device. Each of those pytrees contains a gradient value at the right attribute or location.
+    The algorithm should calculate the average of each of those gradient values across devices and return a single pytree with the same structure as the input pytrees, but with the averaged gradient values.
+
+    Need to make NaN proof and introduce gradient clipping
+
+    :param gradients: List of gradient dictionaries from each device.
+    :param num: Number of devices.
+    """
+
+    # This is the simple version without nan and clipping
+    # if num > 1:
+    #     def _safe_add(a1, a2):
+    #         if a1 is None:
+    #             return a2
+    #         else:
+    #             return a1 + a2
+
+    #     def _is_none(x):
+    #         return x is None
+
+    #     def _safe_divide(a1):
+    #         if a1 is None:
+    #             return a1
+    #         else:
+    #             return a1 / num
+
+    #     summed_gradients = jax.tree.map(_safe_add, gradients[0], gradients[1], is_leaf=_is_none)
+    #     for i in range(2, num):
+    #         summed_gradients = jax.tree_map(_safe_add, summed_gradients, gradients[i], is_leaf=_is_none)
+
+    #     average_gradient = jax.tree_map(_safe_divide, summed_gradients, is_leaf=_is_none)
+    # else:
+    #     average_gradient = gradients[0]
+
+    # this is the better version with nan
+    # if num > 1:
+    #     def _safe_add(a1, a2):
+    #         if a1 is None:
+    #             return a2
+    #         elif a2 is None:
+    #             return a1
+    #         else:
+    #             return jax.numpy.where(jax.numpy.isnan(a1), a2, jax.numpy.where(jax.numpy.isnan(a2), a1, a1 + a2))
+
+    #     def _is_none(x):
+    #         return x is None
+
+    #     def _safe_divide(a1):
+    #         if a1 is None:
+    #             return a1
+    #         else:
+    #             return jax.numpy.where(jax.numpy.isnan(a1), a1, a1 / num)
+
+    #     summed_gradients = jax.tree_map(_safe_add, gradients[0], gradients[1], is_leaf=_is_none)
+    #     for i in range(2, num):
+    #         summed_gradients = jax.tree_map(_safe_add, summed_gradients, gradients[i], is_leaf=_is_none)
+
+    #     average_gradient = jax.tree_map(_safe_divide, summed_gradients, is_leaf=_is_none)
+    # else:
+    #     average_gradient = gradients[0]
+
+    # this is the best version with nan and clipping
     if num > 1:
 
         def _safe_add(a1, a2):
             if a1 is None:
                 return a2
+            elif a2 is None:
+                return a1
             else:
-                return a1 + a2
+                return jax.numpy.where(jax.numpy.isnan(a1), a2, jax.numpy.where(jax.numpy.isnan(a2), a1, a1 + a2))
 
         def _is_none(x):
             return x is None
@@ -122,15 +189,20 @@ def all_reduce_gradients(gradients, num):
             if a1 is None:
                 return a1
             else:
-                return a1 / num
+                return jax.numpy.where(jax.numpy.isnan(a1), a1, a1 / num)
 
-        summed_gradients = jax.tree_map(_safe_add, gradients[0], gradients[1], is_leaf=_is_none)
+        def _clip_gradient(g):
+            if g is None:
+                return g
+            else:
+                return jax.numpy.where(jax.numpy.isnan(g), g, jax.numpy.clip(g, -1e3, 1e3))
+
+        summed_gradients = jax.tree.map(_safe_add, gradients[0], gradients[1], is_leaf=_is_none)
         for i in range(2, num):
-            summed_gradients = jax.tree_map(_safe_add, summed_gradients, gradients[i], is_leaf=_is_none)
+            summed_gradients = jax.tree.map(_safe_add, summed_gradients, gradients[i], is_leaf=_is_none)
 
-        average_gradient = jax.tree_map(_safe_divide, summed_gradients, is_leaf=_is_none)
-    else:
-        average_gradient = gradients[0]
+        average_gradient = jax.tree.map(_safe_divide, summed_gradients, is_leaf=_is_none)
+        average_gradient = jax.tree.map(_clip_gradient, average_gradient, is_leaf=_is_none)
 
     return average_gradient
 
