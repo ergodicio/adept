@@ -6,8 +6,9 @@ import scienceplots
 
 plt.style.use(["science", "grid", "no-latex"])
 
-import interpax
 import time
+
+import interpax
 import numpy as np
 import xarray as xr
 from astropy.units import Quantity as _Q
