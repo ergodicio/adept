@@ -3,28 +3,21 @@ repos:
   rev: v6.0.0
   hooks:
   - id: check-added-large-files
-    additional_dependencies: [--isolated]
     args: ["--maxkb=2000"]
     # Add exceptions here, as a regex
     exclude: ""
 
   - id: check-json
-    additional_dependencies: [--isolated]
 
   - id: check-toml
-    additional_dependencies: [--isolated]
 
   - id: check-yaml
-    additional_dependencies: [--isolated]
 
   - id: detect-private-key
-    additional_dependencies: [--isolated]
 
   - id: end-of-file-fixer
-    additional_dependencies: [--isolated]
 
   - id: trailing-whitespace
-    additional_dependencies: [--isolated]
 
 
 - repo: https://github.com/henryiii/validate-pyproject-schema-store
@@ -40,11 +33,6 @@ repos:
   - id: ruff
     args: [--fix]
     types_or: [pyi, python, jupyter]
-    # Ignore global python configuration for private registry and install hooks from public index
-    # Add for each hook
-    # Reference: https://github.com/pre-commit/pre-commit/issues/1454#issuecomment-1816328894
-    additional_dependencies: [--isolated]
   # Run the formatter.
   - id: ruff-format
     types_or: [pyi, python, jupyter]
-    additional_dependencies: [--isolated]

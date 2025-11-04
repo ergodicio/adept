@@ -21,17 +21,34 @@ class Light:
         """
         # method = "broadcast"
         # if method == "broadcast":
-        wpe = self.w0 * jnp.sqrt(y["background_density"])[..., None]
-        k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + light_wave["delta_omega"][None, None]) ** 2 - wpe**2 / self.w0**2)
+        # wpe = self.w0 * jnp.sqrt(y["background_density"])[..., None]
+        # k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + light_wave["delta_omega"][None, None]) ** 2 - wpe**2 / self.w0**2)
 
-        E0_static = (
-            (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][None, None])) ** 2) ** -0.25
-            * self.E0_source
-            * jnp.sqrt(light_wave["intensities"][None, None])
-            * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["phases"][None, None])
-        )
-        dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][None, None] * self.w0 * t)
-        dE0y = jnp.sum(dE0y, axis=-1)
+        # E0_static = (
+        #     (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][None, None])) ** 2) ** -0.25
+        #     * self.E0_source
+        #     * jnp.sqrt(light_wave["intensities"][None, None])
+        #     * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["phases"][None, None])
+        # )
+        # dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][None, None] * self.w0 * t)
+        # dE0y = jnp.sum(dE0y, axis=-1)
+
+        # for loop implementation (slower)
+        dE0y = jnp.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]), dtype=jnp.complex128)
+        for i in range(len(light_wave["delta_omega"])):
+            delta_omega = light_wave["delta_omega"][i]
+            intensity = light_wave["intensities"][i]
+            phase = light_wave["phases"][i]
+
+            wpe = self.w0 * jnp.sqrt(y["background_density"])
+            k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + delta_omega) ** 2 - wpe**2 / self.w0**2)
+            E0_static = (
+                (1 + 0j - wpe**2.0 / (self.w0 * (1 + delta_omega)) ** 2) ** -0.25
+                * self.E0_source
+                * jnp.sqrt(intensity)
+                * jnp.exp(1j * k0 * self.x[:, None] + 1j * phase)
+            )
+            dE0y += E0_static * jnp.exp(-1j * delta_omega * self.w0 * t)
 
         # elif method == "map":
         #     wpe = self.w0 * jnp.sqrt(y["background_density"])
