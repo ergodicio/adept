@@ -255,7 +255,7 @@ class SpectralPotential:
             phi_k += self.dt * srs_term
 
         # add hyperviscosity in k space for phi
-        if self.cfg["terms"]["epw"]["hyperviscosity"]["coeff"] > 0:
+        if self.cfg["terms"]["epw"].get("hyperviscosity", {}).get("coeff", 0) > 0:
             if self.cfg["terms"]["epw"]["hyperviscosity"]["order"] % 2 != 0:
                 raise ValueError("Hyperviscosity order must be even")
             # hypervisc_coeff * dt < coeff
