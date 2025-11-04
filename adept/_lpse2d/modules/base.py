@@ -1,3 +1,6 @@
+import math
+
+import diffrax
 import numpy as np
 from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from equinox import filter_jit
@@ -112,6 +115,12 @@ class BaseLPSE2D(ADEPTModule):
         for name, module in trainable_modules.items():
             state, args = module(state, args)
 
+        if self.cfg.get("opt", {}).get("checkpoints_coeff"):
+            base_checkpoints = math.floor(-1.5 + math.sqrt(2 * (self.cfg["grid"]["max_steps"] + 2048) + 0.25)) + 1
+            checkpoints = int(self.cfg["opt"]["checkpoints_coeff"] * base_checkpoints)
+        else:
+            checkpoints = None
+
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],
             solver=self.diffeqsolve_quants["solver"],
@@ -122,6 +131,7 @@ class BaseLPSE2D(ADEPTModule):
             y0=state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+            adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=checkpoints),
         )
 
         return {"solver result": solver_result, "args": args}
