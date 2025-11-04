@@ -110,8 +110,10 @@ def all_reduce_gradients(gradients: list, num: int):
     """
     Averages gradients across multiple devices and returns a single gradient pytree.
 
-    The gradients object is a list of a pytree, one for each device. Each of those pytrees contains a gradient value at the right attribute or location.
-    The algorithm should calculate the average of each of those gradient values across devices and return a single pytree with the same structure as the input pytrees, but with the averaged gradient values.
+    The gradients object is a list of a pytree, one for each device. Each of those pytrees contains a gradient value
+    at the right attribute or location. The algorithm should calculate the average of each of those gradient values
+    across devices and return a single pytree with the same structure as the input pytrees, but with the averaged
+    gradient values
 
     Need to make NaN proof and introduce gradient clipping
 

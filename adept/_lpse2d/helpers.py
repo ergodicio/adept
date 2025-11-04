@@ -6,6 +6,8 @@ import scienceplots
 
 plt.style.use(["science", "grid", "no-latex"])
 
+import time
+
 import interpax
 import numpy as np
 import xarray as xr
