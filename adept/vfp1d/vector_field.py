@@ -31,6 +31,29 @@ class OSHUN1D:
         self.large_eps = 1e-6
         self.eps = 1e-12
 
+        self.geometry = cfg["grid"].get("geometry", "cartesian")
+        # Placeholder for future eta profile (defaults to 1 for cartesian)
+        self.eta = jnp.asarray(cfg["grid"].get("eta", 1.0), dtype=jnp.float64)
+        eta_safe = jnp.where(jnp.abs(self.eta) > self.eps, self.eta, 1.0)
+        self.inv_eta = jnp.reciprocal(eta_safe)
+        self._inv_eta_profile = jnp.broadcast_to(self.inv_eta, (self.nx,))
+
+        if self.geometry == "radial":
+            x = cfg["grid"].get("x")
+            if x is None:
+                raise ValueError("Radial geometry requires `cfg['grid']['x']` to be defined.")
+
+            self.x = jnp.asarray(x, dtype=jnp.float64)
+            self._radial_eps = 1e-12
+            self._x_sq = jnp.square(self.x)
+            safe_x_sq = jnp.where(self._x_sq > self._radial_eps, self._x_sq, self._radial_eps)
+            self._inv_safe_x_sq = jnp.reciprocal(safe_x_sq)
+        else:
+            self.x = None
+            self._radial_eps = None
+            self._x_sq = None
+            self._inv_safe_x_sq = None
+
     def ddv(self, f: Array) -> Array:
         """
         Calculates the derivative of f with respect to v
@@ -67,8 +90,22 @@ class OSHUN1D:
         Returns:
             Array: df/dx
         """
-        periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
-        return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
+        if self.geometry == "radial":
+            # nx = f.shape[0]
+            # if nx == 1:
+            #     return jnp.zeros_like(f)
+            # if nx == 2:
+            #     reflecting = jnp.zeros_like(f[:1])
+            #     open_boundary = (f[-1:] - f[:1]) / self.dx
+            #     return jnp.concatenate([reflecting, open_boundary], axis=0)
+
+            interior = (f[2:] - f[:-2]) / (2.0 * self.dx)
+            reflecting = jnp.zeros_like(f[:1])
+            open_boundary = (f[-1:] - f[-2:-1]) / self.dx
+            return jnp.concatenate([reflecting, interior, open_boundary], axis=0)
+        else:
+            periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
+            return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
 
     def calc_j(self, f1: Array) -> Array:
         """
@@ -231,6 +268,7 @@ class OSHUN1D:
 
         df0dt_e = e_field[:, None] / 3.0 * h10
         df10dt_e = e_field[:, None] * g00
+        # Placeholder (radial): include U(x) and f2(x, v) driven sources once those fields are evolved.
 
         return {"f0": df0dt_e, "f10": df10dt_e}
 
@@ -274,8 +312,16 @@ class OSHUN1D:
         f0 = y["f0"]
         f10 = y["f10"]
 
-        df0dt_sa = -self.v[None, :] / 3.0 * self.ddx(f10)
+        if self.geometry == "radial":
+            radial_flux = self._x_sq[:, None] * f10
+            radial_grad = self.ddx(radial_flux)
+            scaling = self._inv_eta_profile[:, None] * self._inv_safe_x_sq[:, None]
+            df0dt_sa = -(self.v[None, :] / 3.0) * scaling * radial_grad
+        else:
+            df0dt_sa = -(self.v[None, :] / 3.0) * self.ddx(f10)
+
         df10dt_sa = -self.v[None, :] * self.ddx(f0)
+        # Placeholder (radial): add f2-driven streaming corrections when f2 is available.
 
         return {"f0": df0dt_sa, "f10": df10dt_sa}
 
