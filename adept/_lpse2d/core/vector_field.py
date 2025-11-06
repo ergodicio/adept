@@ -37,6 +37,7 @@ class SplitStep:
         self.w0 = cfg["units"]["derived"]["w0"]
         self.phi_laplacian = "spectral"  # hard coded for now, can be implemented to config if ever necessary
         self.background_density = cfg["grid"]["background_density"]
+
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
         for k in y.keys():
