@@ -616,12 +616,20 @@ def make_field_xarrays(cfg, this_t, state, td):
     e1x = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
     e1y = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
 
-    background_density = xr.DataArray(
-        np.repeat(cfg["grid"]["background_density"][None, ...], repeats=len(this_t), axis=0),
-        coords=(tax_tuple, xax_tuple, yax_tuple),
+    from scipy import interpolate
+
+    density_interpolator = interpolate.RegularGridInterpolator(
+        (cfg["grid"]["x"], cfg["grid"]["y"]), cfg["grid"]["background_density"], bounds_error=False, fill_value=0.0
     )
 
-    # delta = xr.DataArray(state["delta"], coords=(tax_tuple, xax_tuple, yax_tuple))
+    grid_x, grid_y = np.meshgrid(xax, yax, indexing="ij")
+    points = np.array([grid_x.flatten(), grid_y.flatten()]).T
+    density_on_save_grid = density_interpolator(points).reshape((nx, ny))
+
+    background_density = xr.DataArray(
+        np.repeat(density_on_save_grid[None, ...], repeats=len(this_t), axis=0),
+        coords=(tax_tuple, xax_tuple, yax_tuple),
+    )
 
     kfields = xr.Dataset({"phi": phi_k, "ex": ex_k, "ey": ey_k})
     fields = xr.Dataset(
