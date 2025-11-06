@@ -491,7 +491,7 @@ def plot_kt(kfields, td):
     t_skip = t_skip if t_skip > 1 else 1
     tslice = slice(0, -1, t_skip)
 
-    for abs_kmax in [2.5, 0.5]:
+    for abs_kmax in [2.5, 1.25]:
         # k_min = -2.5
         # k_max = 2.5
         k_min = -abs_kmax
@@ -616,7 +616,10 @@ def make_field_xarrays(cfg, this_t, state, td):
     e1x = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
     e1y = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
 
-    background_density = xr.DataArray(state["background_density"], coords=(tax_tuple, xax_tuple, yax_tuple))
+    background_density = xr.DataArray(
+        np.repeat(cfg["grid"]["background_density"][None, ...], repeats=len(this_t), axis=0),
+        coords=(tax_tuple, xax_tuple, yax_tuple),
+    )
 
     # delta = xr.DataArray(state["delta"], coords=(tax_tuple, xax_tuple, yax_tuple))
 

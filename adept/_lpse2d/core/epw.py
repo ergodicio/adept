@@ -8,6 +8,8 @@ from adept._lpse2d.core.driver import Driver
 
 class SpectralPotential:
     def __init__(self, cfg) -> None:
+        self.background_density = cfg["grid"]["background_density"]
+        self.vte_sq = cfg["units"]["derived"]["vte_sq"]
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
         self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
@@ -195,7 +197,7 @@ class SpectralPotential:
 
     def srs(self, t: float, y, args: dict) -> Array:
         E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
-        return jnp.fft.fft2(1j * self.srs_const * y["background_density"] / self.envelope_density * E0_dot_E1)
+        return jnp.fft.fft2(1j * self.srs_const * self.background_density / self.envelope_density * E0_dot_E1)
 
     def get_noise(self, t):
         random_amps = 1.0e-12  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
@@ -203,14 +205,14 @@ class SpectralPotential:
         random_phases = 2 * np.pi * jax.random.uniform(phase_key, (self.nx, self.ny))
         return random_amps * jnp.exp(1j * random_phases) * self.zero_mask
 
-    def landau_damping(self, phi_k: Array, vte_sq: float):
+    def landau_damping(self, phi_k: Array):
         gammaLandauEpw = (
             jnp.sqrt(np.pi / 8)
-            * (1.0 + 1.5 * self.k_sq * (vte_sq / self.wp0**2))
+            * (1.0 + 1.5 * self.k_sq * (self.vte_sq / self.wp0**2))
             * self.wp0**4
             * self.one_over_ksq**1.5
-            / vte_sq**1.5
-            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / vte_sq))
+            / self.vte_sq**1.5
+            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / self.vte_sq))
         ) * self.zero_mask
 
         return phi_k * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt) * self.zero_mask * self.low_pass_filter
@@ -218,12 +220,11 @@ class SpectralPotential:
     def __call__(self, t: float, y: dict[str, Array], args: dict) -> Array:
         phi_k = y["epw"]
         E0 = y["E0"]
-        background_density = y["background_density"]
-        vte_sq = y["vte_sq"]
+        background_density = self.background_density
 
         # linear propagation
-        phi_k = phi_k * jnp.exp(-1j * 1.5 * vte_sq[0, 0] / self.wp0 * self.k_sq * self.dt) * self.low_pass_filter
-        phi_k = self.landau_damping(phi_k, vte_sq[0, 0])
+        phi_k = phi_k * jnp.exp(-1j * 1.5 * self.vte_sq / self.wp0 * self.k_sq * self.dt) * self.low_pass_filter
+        phi_k = self.landau_damping(phi_k)
 
         if self.cfg["terms"]["epw"]["source"]["noise"]:
             phi_k += self.dt * self.get_noise(t)

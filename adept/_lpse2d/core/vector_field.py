@@ -36,7 +36,7 @@ class SplitStep:
         self.me = cfg["units"]["derived"]["me"]
         self.w0 = cfg["units"]["derived"]["w0"]
         self.phi_laplacian = "spectral"  # hard coded for now, can be implemented to config if ever necessary
-
+        self.background_density = cfg["grid"]["background_density"]
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
         for k in y.keys():
@@ -65,7 +65,8 @@ class SplitStep:
         w1 = self.cfg["units"]["derived"]["w1"]
         dx = self.cfg["grid"]["dx"]
         dy = self.cfg["grid"]["dy"]
-        backgroundDensityPerturbation = y["background_density"] / self.envelope_density - 1
+        # backgroundDensityPerturbation = y["background_density"] / self.envelope_density - 1
+        backgroundDensityPerturbation = self.background_density / self.envelope_density - 1
 
         Nelf = 0.0  # self.cfg["Nelf"]
 

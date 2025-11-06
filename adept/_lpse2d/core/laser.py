@@ -10,6 +10,7 @@ class Light:
         self.w0 = cfg["units"]["derived"]["w0"]
         self.dE0x = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
         self.x = cfg["grid"]["x"]
+        self.background_density = cfg["grid"]["background_density"]
 
     def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
@@ -19,28 +20,14 @@ class Light:
         :param y: state variables
         :return: updated laser field
         """
-        # method = "broadcast"
-        # if method == "broadcast":
-        # wpe = self.w0 * jnp.sqrt(y["background_density"])[..., None]
-        # k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + light_wave["delta_omega"][None, None]) ** 2 - wpe**2 / self.w0**2)
 
-        # E0_static = (
-        #     (1 + 0j - wpe**2.0 / (self.w0 * (1 + light_wave["delta_omega"][None, None])) ** 2) ** -0.25
-        #     * self.E0_source
-        #     * jnp.sqrt(light_wave["intensities"][None, None])
-        #     * jnp.exp(1j * k0 * self.x[:, None, None] + 1j * light_wave["phases"][None, None])
-        # )
-        # dE0y = E0_static * jnp.exp(-1j * light_wave["delta_omega"][None, None] * self.w0 * t)
-        # dE0y = jnp.sum(dE0y, axis=-1)
-
-        # for loop implementation (slower)
         dE0y = jnp.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
             delta_omega = light_wave["delta_omega"][i]
             intensity = light_wave["intensities"][i]
             phase = light_wave["phases"][i]
 
-            wpe = self.w0 * jnp.sqrt(y["background_density"])
+            wpe = self.w0 * jnp.sqrt(self.background_density)
             k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + delta_omega) ** 2 - wpe**2 / self.w0**2)
             E0_static = (
                 (1 + 0j - wpe**2.0 / (self.w0 * (1 + delta_omega)) ** 2) ** -0.25
@@ -49,32 +36,6 @@ class Light:
                 * jnp.exp(1j * k0 * self.x[:, None] + 1j * phase)
             )
             dE0y += E0_static * jnp.exp(-1j * delta_omega * self.w0 * t)
-
-        # elif method == "map":
-        #     wpe = self.w0 * jnp.sqrt(y["background_density"])
-
-        #     def _fn_(light_wave_item):
-        #         delta_omega, intensity, initial_phase = light_wave_item
-        #         k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + delta_omega) ** 2 - wpe**2 / self.w0**2)
-        #         coeff = (1 + 0j - wpe**2.0 / (self.w0 * (1 + delta_omega)) ** 2) ** -0.25
-        #         E0_static = (
-        #             coeff
-        #             * self.E0_source
-        #             * jnp.sqrt(intensity)
-        #             * jnp.exp(1j * k0 * self.x[:, None] + 1j * initial_phase)
-        #         )
-        #         dE0y = E0_static * jnp.exp(-1j * delta_omega * self.w0 * t)
-        #         return dE0y
-
-        #     dE0y = jmp(
-        #         _fn_,
-        #         [light_wave["delta_omega"], light_wave["intensities"], light_wave["initial_phase"]],
-        #         batch_size=256,
-        #     )
-        #     dE0y = jnp.sum(dE0y, axis=0)
-
-        # else:
-        #     raise NotImplementedError
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)
 
