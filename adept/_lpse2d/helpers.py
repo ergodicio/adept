@@ -6,6 +6,8 @@ import scienceplots
 
 plt.style.use(["science", "grid", "no-latex"])
 
+import time
+
 import interpax
 import numpy as np
 import xarray as xr
@@ -14,6 +16,55 @@ from jax import Array
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
+
+
+def next_smooth_fft_size(n, max_prime=7):
+    """
+    Find the smallest integer >= n that has only small prime factors.
+
+    Parameters:
+    -----------
+    n : int
+        Minimum size needed
+    max_prime : int
+        Largest prime factor allowed (default: 7)
+        Use 5 for best performance, 7 for more flexibility
+
+    Returns:
+    --------
+    int
+        Optimal FFT size >= n
+    """
+    if n <= 1:
+        return 1
+
+    # Generate smooth numbers up to a reasonable limit
+    # We'll generate more than we need and find the first one >= n
+    limit = n * 2  # generous upper bound
+
+    # Allowed prime factors
+    primes = [2, 3, 5]
+    if max_prime >= 7:
+        primes.append(7)
+
+    # Generate all smooth numbers using dynamic programming
+    smooth = [1]
+    indices = [0] * len(primes)
+
+    while smooth[-1] < limit:
+        # Next candidates: multiply smallest smooth number by each prime
+        candidates = [smooth[indices[i]] * primes[i] for i in range(len(primes))]
+        next_smooth = min(candidates)
+        smooth.append(next_smooth)
+
+        # Increment indices for primes that produced this value
+        for i in range(len(primes)):
+            if candidates[i] == next_smooth:
+                indices[i] += 1
+
+    # Binary search for first value >= n
+    idx = np.searchsorted(smooth, n)
+    return smooth[idx]
 
 
 def write_units(cfg: dict) -> dict:
@@ -168,20 +219,27 @@ def get_derived_quantities(cfg: dict) -> dict:
     else:
         Lgrid = _Q(cfg_grid["xmax"]).to("um").value
 
-    cfg_grid["xmax"] = Lgrid
-    cfg_grid["xmin"] = 0.0
+    xmax = cfg_grid["xmax"] = Lgrid
+    xmin = cfg_grid["xmin"] = 0.0
 
     if "x" in cfg["save"]:
         cfg["save"]["x"]["xmax"] = cfg_grid["xmax"]
 
-    cfg_grid["ymax"] = _Q(cfg_grid["ymax"]).to("um").value
-    cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
-    cfg_grid["dx"] = _Q(cfg_grid["dx"]).to("um").value
+    ymax = cfg_grid["ymax"] = _Q(cfg_grid["ymax"]).to("um").value
+    ymin = cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
+    dx = cfg_grid["dx"] = _Q(cfg_grid["dx"]).to("um").value
 
-    cfg_grid["nx"] = int((cfg_grid["xmax"] - cfg_grid["xmin"]) / cfg_grid["dx"]) + 1
+    # round to the nearest even number
+    cfg_grid["nx"] = int((xmax - xmin) / dx)
+    cfg_grid["nx"] = next_smooth_fft_size(cfg_grid["nx"], max_prime=5)
+    cfg_grid["dx"] = dx = (xmax - xmin) / cfg_grid["nx"]  # recalculate dx based on optimal nx
 
-    cfg_grid["dy"] = cfg_grid["dx"]
-    cfg_grid["ny"] = int((cfg_grid["ymax"] - cfg_grid["ymin"]) / cfg_grid["dy"]) + 1
+    cfg_grid["dy"] = dx  # we want square cells
+    cfg_grid["ny"] = int((ymax - ymin) / dx)  # recalculate ny based on dx
+    cfg_grid["ny"] = next_smooth_fft_size(cfg_grid["ny"], max_prime=5)
+    # ymax and ymin have to be symmetric about 0 and have to be recalculated
+    cfg_grid["ymax"] = ymax = dx * cfg_grid["ny"] / 2
+    cfg_grid["ymin"] = ymin = -ymax
 
     cfg_grid["dt"] = _Q(cfg_grid["dt"]).to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
@@ -295,13 +353,27 @@ def get_solver_quantities(cfg: dict) -> dict:
         if cfg["terms"]["zero_mask"]
         else 1
     )
-    # sqrt(kx**2 + ky**2) < low_pass_filter * kmax
-    cfg_grid["low_pass_filter"] = np.where(
-        np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
-        < cfg_grid["low_pass_filter"] * cfg_grid["kx"].max(),
-        1,
-        0,
-    )
+
+    k_mag = np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
+    kmax = cfg_grid["kx"].max()
+    cutoff = cfg_grid["low_pass_filter"] * kmax
+    taper_fraction = cfg_grid.get("low_pass_taper_fraction", 0.0)
+
+    if cutoff <= 0:
+        cfg_grid["low_pass_filter_grid"] = np.ones_like(k_mag)
+    elif taper_fraction <= 0.0:
+        cfg_grid["low_pass_filter_grid"] = np.where(k_mag < cutoff, 1.0, 0.0)
+    else:
+        taper_start = cutoff * (1.0 - taper_fraction)
+        taper_start = max(taper_start, 0.0)
+        filter_grid = np.ones_like(k_mag)
+        outside_cutoff = k_mag >= cutoff
+        filter_grid[outside_cutoff] = 0.0
+        taper_region = (k_mag >= taper_start) & (k_mag < cutoff)
+        if cutoff > taper_start:
+            xi = (k_mag[taper_region] - taper_start) / (cutoff - taper_start)
+            filter_grid[taper_region] = 0.5 * (1.0 + np.cos(np.pi * xi))
+        cfg_grid["low_pass_filter_grid"] = filter_grid
 
     return cfg_grid
 
@@ -415,52 +487,59 @@ def plot_fields(fields, td):
 
 
 def plot_kt(kfields, td):
-    t_skip = int(kfields.coords["t (ps)"].data.size // 8)
+    t_skip = int(kfields.coords["t (ps)"].data.size // 6)
     t_skip = t_skip if t_skip > 1 else 1
     tslice = slice(0, -1, t_skip)
 
-    k_min = -2.5
-    k_max = 2.5
+    for abs_kmax in [2.5, 1.25]:
+        # k_min = -2.5
+        # k_max = 2.5
+        k_min = -abs_kmax
+        k_max = abs_kmax
 
-    ikx_min = np.argmin(np.abs(kfields.coords[r"kx ($kc\omega_0^{-1}$)"].data - k_min))
-    ikx_max = np.argmin(np.abs(kfields.coords[r"kx ($kc\omega_0^{-1}$)"].data - k_max))
-    iky_min = np.argmin(np.abs(kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data - k_min))
-    iky_max = np.argmin(np.abs(kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data - k_max))
+        ikx_min = np.argmin(np.abs(kfields.coords[r"kx ($kc\omega_0^{-1}$)"].data - k_min))
+        ikx_max = np.argmin(np.abs(kfields.coords[r"kx ($kc\omega_0^{-1}$)"].data - k_max))
+        iky_min = np.argmin(np.abs(kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data - k_min))
+        iky_max = np.argmin(np.abs(kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data - k_max))
 
-    kx_slice = slice(ikx_min, ikx_max)
-    ky_slice = slice(iky_min, iky_max)
+        kx_slice = slice(ikx_min, ikx_max)
+        ky_slice = slice(iky_min, iky_max)
 
-    for k, v in kfields.items():
-        fld_dir = os.path.join(td, "plots", k)
-        os.makedirs(fld_dir, exist_ok=True)
+        for k, v in kfields.items():
+            fld_dir = os.path.join(td, "plots", k)
+            os.makedirs(fld_dir, exist_ok=True)
 
-        np.log10(np.abs(v[tslice, kx_slice, 0])).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"log_{k}_kx.png"), bbox_inches="tight")
-        plt.close()
+            # np.log10(np.abs(v[tslice, kx_slice, 0])).T.plot(col="t (ps)", col_wrap=4)
+            # plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_k0_absmax{abs_kmax}.png"), bbox_inches="tight")
+            # plt.close()
 
-        np.abs(v[tslice, kx_slice, ky_slice]).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky.png"), bbox_inches="tight")
-        plt.close()
+            np.abs(v[tslice, kx_slice, ky_slice]).T.plot(col="t (ps)", col_wrap=4)
+            plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky_absmax{abs_kmax}.png"), bbox_inches="tight")
+            plt.close()
 
-        np.log10(np.abs(v[tslice, kx_slice, ky_slice])).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_ky.png"), bbox_inches="tight")
-        plt.close()
-        #
-        # kx = kfields.coords["kx"].data
+            np.log10(np.abs(v[tslice, kx_slice, ky_slice])).T.plot(col="t (ps)", col_wrap=4)
+            plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_ky_absmax{abs_kmax}.png"), bbox_inches="tight")
+            plt.close()
+            #
+            # kx = kfields.coords["kx"].data
 
 
 def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     os.makedirs(os.path.join(td, "binary"))
-
+    metrics = {}
+    t0 = time.time()
     kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
     series = make_series_xarrays(cfg, result.ts["default"], result.ys["default"], td)
-
+    metrics["write_time"] = time.time() - t0
     os.makedirs(os.path.join(td, "plots"))
+
+    t0 = time.time()
     plot_series(series, td)
     plot_fields(fields, td)
     plot_kt(kfields, td)
+    metrics["plot_time"] = time.time() - t0
 
-    return {"k": kfields, "x": fields, "series": series, "metrics": {}}
+    return {"k": kfields, "x": fields, "series": series, "metrics": metrics}
 
 
 def plot_series(series, td):
@@ -512,8 +591,8 @@ def make_field_xarrays(cfg, this_t, state, td):
     xax_tuple = ("x (um)", xax)
     yax_tuple = ("y (um)", yax)
 
-    phi_k_np = state["epw"].view(np.complex128)
-    phi_vs_t = np.fft.ifft2(state["epw"].view(np.complex128), axes=(1, 2))
+    phi_k_np = np.array(state["epw"]).view(np.complex64)
+    phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(np.complex64), axes=(1, 2))
     ex_k_np = -1j * kx[None, :, None] * phi_k_np
     ey_k_np = -1j * ky[None, None, :] * phi_k_np
 
@@ -532,12 +611,15 @@ def make_field_xarrays(cfg, this_t, state, td):
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
     ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
     ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
-    e0x = xr.DataArray(state["E0"].view(np.complex128)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e0y = xr.DataArray(state["E0"].view(np.complex128)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e1x = xr.DataArray(state["E1"].view(np.complex128)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e1y = xr.DataArray(state["E1"].view(np.complex128)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e0x = xr.DataArray(np.array(state["E0"]).view(np.complex64)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e0y = xr.DataArray(np.array(state["E0"]).view(np.complex64)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1x = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1y = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
 
-    background_density = xr.DataArray(state["background_density"], coords=(tax_tuple, xax_tuple, yax_tuple))
+    background_density = xr.DataArray(
+        np.repeat(cfg["grid"]["background_density"][None, ...], repeats=len(this_t), axis=0),
+        coords=(tax_tuple, xax_tuple, yax_tuple),
+    )
 
     # delta = xr.DataArray(state["delta"], coords=(tax_tuple, xax_tuple, yax_tuple))
 

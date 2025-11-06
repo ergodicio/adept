@@ -8,6 +8,8 @@ from adept._lpse2d.core.driver import Driver
 
 class SpectralPotential:
     def __init__(self, cfg) -> None:
+        self.background_density = cfg["grid"]["background_density"]
+        self.vte_sq = cfg["units"]["derived"]["vte_sq"]
         self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
         self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
@@ -22,13 +24,22 @@ class SpectralPotential:
         self.cfg = cfg
         # self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
         self.phase_seed = np.random.randint(2**20)
-        self.low_pass_filter = cfg["grid"]["low_pass_filter"]
+        self.low_pass_filter = cfg["grid"]["low_pass_filter_grid"]
         self.zero_mask = cfg["grid"]["zero_mask"]
         self.nx = cfg["grid"]["nx"]
         self.ny = cfg["grid"]["ny"]
         self.driver = Driver(cfg)
         self.tpd_const = 1j * self.e / (8 * self.wp0 * self.me)
         self.nu_coll = cfg["units"]["derived"]["nu_coll"]
+        self.nx_pad = self.nx * 2  # + (self.nx + 1) // 2
+        self.ny_pad = self.ny * 2  # + (self.ny + 1) // 2
+        self.pad_x = self._compute_pad_width(self.nx_pad, self.nx)
+        self.pad_y = self._compute_pad_width(self.ny_pad, self.ny)
+        self.trunc_x_start = self.pad_x[0]
+        self.trunc_x_end = self.trunc_x_start + self.nx
+        self.trunc_y_start = self.pad_y[0]
+        self.trunc_y_end = self.trunc_y_start + self.ny
+        self.pad_norm = (self.nx_pad / self.nx) * (self.ny_pad / self.ny)
 
         if cfg["terms"]["epw"]["source"]["srs"]:
             self.w1 = cfg["units"]["derived"]["w1"]
@@ -109,6 +120,41 @@ class SpectralPotential:
         phi_k = divE_k * self.one_over_ksq
         return phi_k * self.zero_mask
 
+    @staticmethod
+    def _compute_pad_width(target: int, original: int) -> tuple[int, int]:
+        total = max(target - original, 0)
+        before = total // 2
+        after = total - before
+        return before, after
+
+    def _fft_pad(self, arr_k: Array) -> Array:
+        if self.nx_pad == self.nx and self.ny_pad == self.ny:
+            return arr_k
+        arr_shift = jnp.fft.fftshift(arr_k)
+        padded_shift = jnp.pad(
+            arr_shift,
+            ((self.pad_x[0], self.pad_x[1]), (self.pad_y[0], self.pad_y[1])),
+        )
+        return jnp.fft.ifftshift(padded_shift)
+
+    def _fft_truncate(self, arr_k_pad: Array) -> Array:
+        if self.nx_pad == self.nx and self.ny_pad == self.ny:
+            return arr_k_pad
+        arr_shift = jnp.fft.fftshift(arr_k_pad)
+        truncated_shift = arr_shift[self.trunc_x_start : self.trunc_x_end, self.trunc_y_start : self.trunc_y_end]
+        return jnp.fft.ifftshift(truncated_shift)
+
+    def _dealias_fft_product(self, first: Array, second: Array) -> Array:
+        first_k = jnp.fft.fft2(first)
+        second_k = jnp.fft.fft2(second)
+        first_k_pad = self._fft_pad(first_k)
+        second_k_pad = self._fft_pad(second_k)
+        first_pad = jnp.fft.ifft2(first_k_pad)
+        second_pad = jnp.fft.ifft2(second_k_pad)
+        prod_pad = first_pad * second_pad
+        prod_k_pad = jnp.fft.fft2(prod_pad) * self.pad_norm
+        return self._fft_truncate(prod_k_pad)
+
     def tpd(self, t: float, phi_k: Array, ey: Array, args: dict) -> Array:
         """
         Calculates the two plasmon decay term
@@ -123,11 +169,12 @@ class SpectralPotential:
 
         """
         E0 = args["E0"]
-        tpd1 = E0[..., 1] * jnp.conj(ey)
-        tpd1 = jnp.fft.fft2(tpd1)
+        E0_y = E0[..., 1]
+        filtered_E0y = jnp.fft.ifft2(jnp.fft.fft2(E0_y) * self.low_pass_filter)
+        tpd1 = self._dealias_fft_product(filtered_E0y, jnp.conj(ey))
 
         divE_true = jnp.fft.ifft2(self.k_sq * phi_k)
-        E0_divE_k = jnp.fft.fft2(E0[..., 1] * jnp.conj(divE_true))
+        E0_divE_k = self._dealias_fft_product(filtered_E0y, jnp.conj(divE_true))
         tpd2 = 1j * self.ky[None, :] * self.one_over_ksq * E0_divE_k
 
         total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
@@ -150,7 +197,7 @@ class SpectralPotential:
 
     def srs(self, t: float, y, args: dict) -> Array:
         E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
-        return jnp.fft.fft2(1j * self.srs_const * y["background_density"] / self.envelope_density * E0_dot_E1)
+        return jnp.fft.fft2(1j * self.srs_const * self.background_density / self.envelope_density * E0_dot_E1)
 
     def get_noise(self, t):
         random_amps = 1.0e-12  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
@@ -158,14 +205,14 @@ class SpectralPotential:
         random_phases = 2 * np.pi * jax.random.uniform(phase_key, (self.nx, self.ny))
         return random_amps * jnp.exp(1j * random_phases) * self.zero_mask
 
-    def landau_damping(self, phi_k: Array, vte_sq: float):
+    def landau_damping(self, phi_k: Array):
         gammaLandauEpw = (
             jnp.sqrt(np.pi / 8)
-            * (1.0 + 1.5 * self.k_sq * (vte_sq / self.wp0**2))
+            * (1.0 + 1.5 * self.k_sq * (self.vte_sq / self.wp0**2))
             * self.wp0**4
             * self.one_over_ksq**1.5
-            / vte_sq**1.5
-            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / vte_sq))
+            / self.vte_sq**1.5
+            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / self.vte_sq))
         ) * self.zero_mask
 
         return phi_k * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt) * self.zero_mask * self.low_pass_filter
@@ -173,12 +220,11 @@ class SpectralPotential:
     def __call__(self, t: float, y: dict[str, Array], args: dict) -> Array:
         phi_k = y["epw"]
         E0 = y["E0"]
-        background_density = y["background_density"]
-        vte_sq = y["vte_sq"]
+        background_density = self.background_density
 
         # linear propagation
-        phi_k = phi_k * jnp.exp(-1j * 1.5 * vte_sq[0, 0] / self.wp0 * self.k_sq * self.dt) * self.low_pass_filter
-        phi_k = self.landau_damping(phi_k, vte_sq[0, 0])
+        phi_k = phi_k * jnp.exp(-1j * 1.5 * self.vte_sq / self.wp0 * self.k_sq * self.dt) * self.low_pass_filter
+        phi_k = self.landau_damping(phi_k)
 
         if self.cfg["terms"]["epw"]["source"]["noise"]:
             phi_k += self.dt * self.get_noise(t)
@@ -208,5 +254,19 @@ class SpectralPotential:
 
         if self.cfg["terms"]["epw"]["source"]["srs"]:
             phi_k += self.dt * srs_term
+
+        # add hyperviscosity in k space for phi
+        if self.cfg["terms"]["epw"].get("hyperviscosity", {}).get("coeff", 0) > 0:
+            if self.cfg["terms"]["epw"]["hyperviscosity"]["order"] % 2 != 0:
+                raise ValueError("Hyperviscosity order must be even")
+            # hypervisc_coeff * dt < coeff
+            # hypervisc_coeff = coeff / (kmax**order * dt)
+            coeff = self.cfg["terms"]["epw"]["hyperviscosity"]["coeff"]
+            order = self.cfg["terms"]["epw"]["hyperviscosity"]["order"]
+            # kmax = kmax * lowpass_filter
+            kmax = self.cfg["grid"]["low_pass_filter"] * jnp.sqrt(jnp.max(self.k_sq))
+            hypervisc_coeff = coeff / kmax**order / self.dt
+
+            phi_k = phi_k * jnp.exp(-hypervisc_coeff * (self.k_sq ** (order / 2.0)) * self.dt)
 
         return phi_k
