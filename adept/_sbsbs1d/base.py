@@ -18,6 +18,7 @@ from adept import ADEPTModule
 from adept.vfp1d.helpers import calc_logLambda
 from adept._base_ import Stepper
 from adept._sbsbs1d.vectorfield import SBSVectorField, CBETVectorField
+from adept._sbsbs1d.modules import HohlNet
 
 import equinox as eqx
 
@@ -152,6 +153,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
         Teprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Te"]).to("keV").value
         Tiprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["Ti"]).to("keV").value
         Zeffprof = np.ones_like(nprof) * self.cfg["profiles"]["Zeff"]
+        A_ionprof = np.ones_like(nprof)* self.cfg["profiles"]["A_ion"]
         flowprof = np.ones_like(nprof) * _Q(self.cfg["profiles"]["flow"]).to("um/s").value
         omega_beat_prof = np.ones_like(nprof) * (
             self.cfg["units"]["derived"]["w0"].to("Hz").value
@@ -171,6 +173,7 @@ class BaseSteadyStateBackwardStimulatedBrilloiunScattering(ADEPTModule):
             "Zeff": lambda z: jnp.interp(z, self.cfg["grid"]["z"], Zeffprof),
             "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
             "omegabeat": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat),
+            "A_ion": lambda z: jnp.interp(z, self.cfg["grid"]["z"],A_ionprof)
         }
         self.state = {
             "Ji": 1.0,
@@ -402,32 +405,6 @@ class LPIParams(eqx.Module):
             {'thermal_noise':cfg["beam"][str(i)]["profile"]["thermal_noise"]}
             for i in range(cfg["laser"]["num_beams"])
         ]
-        # self.sbs = []
-        # for i in range(cfg["laser"]["num_beams"]):
-        #     sbs_dict = {}
-        #     for j,param in enumerate(sbs_params):
-        #         print(j,param)
-        #         print(profiles[i][j])
-        #         p = profiles[i][j]
-        #         def interp_z(z):
-        #             print(z)
-        #             print(p)
-        #             return jnp.interp(z,cfg["beam"][str(i)]["spec"]["z"],p)
-        #         # sbs_dict[param] = lambda z: jnp.interp(z,cfg["beam"][str(i)]["spec"]["z"],p)
-        #         sbs_dict[param] = interp_z
-        #     sbs_dict['thermal_noise'] = cfg["beam"][str(i)]["profile"]["thermal_noise"]
-        #     print(sbs_dict)
-        #     self.sbs.append(sbs_dict)
-        #     print(cfg["beam"][str(0)]["spec"]["z"])
-        #     print(jnp.interp(1000,cfg["beam"][str(0)]["spec"]["z"],profiles[0][0]))
-        #     print(self.sbs[0]['n_over_n0'](0))
-        #     raise ValueError
-        # print(profiles[0][0])
-        # print(cfg["beam"][str(0)]["spec"]["z"])
-        # print(jnp.interp(1000,cfg["beam"][str(0)]["spec"]["z"],profiles[0][0]))
-        # print(self.sbs[0]['n_over_n0'](1000))
-        # print(self.sbs[0].keys())
-
         
     def get_partition_spec(self):
         #Work on self.params
@@ -437,64 +414,50 @@ class LPIParams(eqx.Module):
     def __getitem__(self,key):
         return getattr(self,key)
     
-    # def __call__(self,state,args):
-    #     args["cbet"] = self.cbet
-    #     args["sbs"] = self.sbs
+    
+# class LPIParamsNN(eqx.Module):
+#     cbet: dict
+#     sbs: list[dict]
+    
+#     def __init__(self,cfg,hohl_net):
+#         super().__init__()
+#         self.cbet = hohl_net.leh_eval(cfg["nn_inputs"]["laser_powers"],cfg["nn_inputs"]["design"],cfg["t"])
+#         self.sbs = [{param: lambda z,i=i: hohl_net.hohl_eval(
+#             cfg["nn_inputs"]["laser_powers"],
+#             cfg["nn_inputs"]["design"],
+#             i,z,cfg["t"])[param] for param in hohl_net.hohl_outputs} for i in range(cfg["laser"]["num_beams"])]
+
+        
+#     def get_partition_spec(self):
+#         #Work on self.params
+#         filter_spec = jtu.tree_map(lambda _: False, self)
+#         return filter_spec
+    
+#     def __getitem__(self,key):
+#         return getattr(self,key)
+    
                 
 class SBSBS_CBET(ADEPTModule):
-    def __init__(self, cfg):
+    def __init__(self, cfg, mode='nn'):
         super().__init__(cfg)
         # self.cbet_steps = cfg["cbet"]["grid"]["n_steps"]
         self.cbet_steps = cfg["leh"]["spec"]["n_steps"]
         self.cbet_dz = 1.0 / self.cbet_steps
-
+        
+        self.mode = mode
+        
     def init_modules(self):
-        # if self.cfg["profiles"]["type"] == "user":
-        profiles = [
-            self.make_sbs_profiles(self.cfg["beam"][str(i)]["profile"], self.cfg["beam"][str(i)]["spec"])
-            for i in range(self.cfg["laser"]["num_beams"])
-        ]
-        modules = {'lpi':LPIParams(self.cfg,profiles)}
-        # sbs_nprof = [p[0] for p in profiles]
-        # sbs_Teprof = [p[1] for p in profiles]
-        # sbs_Tiprof = [p[2] for p in profiles]
-        # sbs_Zeffprof = [p[3] for p in profiles]
-        # sbs_flowprof = [p[4] for p in profiles]
-        # sbs_omegabeat = [p[5] for p in profiles]
-
-        # sbs_grids = self.cfg["sbs"]["grid"]
-        # profile_functions = {
-        #     "cbet": {
-        #         "n_over_n0": self.cfg["cbet"]["profiles"]["n_over_n0"],
-        #         "Te_over_T0": self.cfg["cbet"]["profiles"]["Te_over_T0"],
-        #         "Ti_over_T0": self.cfg["cbet"]["profiles"]["Ti_over_T0"],
-        #         "Zeff": self.cfg["units"]["Z_eff"],
-        #         "flow_magnitude": self.cfg["cbet"]["profiles"]["flow_magnitude"],
-        #         "flow_theta": self.cfg["cbet"]["profiles"]["flow_theta"],
-        #         "flow_phi": self.cfg["cbet"]["profiles"]["flow_phi"],
-        #         "A_ion": self.cfg["cbet"]["profiles"]["A_ion"],
-        #         "L_p": self.cfg["cbet"]["profiles"]["L_p"],
-        #     },
-        #     "sbs": [
-        #         {
-        #             "n_over_n0": lambda z: jnp.interp(z, sbs_grids[str(i)]["z"], sbs_nprof[i]),
-        #             "Te_over_T0": lambda z: jnp.interp(z, sbs_grids[str(i)]["z"], sbs_Teprof[i]),
-        #             "Ti_over_T0": lambda z: jnp.interp(z, sbs_grids[str(i)]["z"], sbs_Tiprof[i]),
-        #             "Zeff": lambda z: jnp.interp(z, sbs_grids[str(i)]["z"], sbs_Zeffprof[i]),
-        #             "flow_over_flow0": lambda z: jnp.interp(z, sbs_grids[str(i)]["z"], sbs_flowprof[i]),
-        #             "omegabeat": lambda z: jnp.interp(z, sbs_grids[str(i)]["z"], sbs_omegabeat[i]),
-        #         }
-        #         for i in range(self.cfg["laser"]["num_beams"])
-        #     ],
-        #     # "Jr_target" : np.array(self.cfg['trainable_params']['Jr_target']),
-        # }
-        # elif self.cfg["profiles"]["type"] == "nn":
-        #     raise NotImplementedError("Neural network profiles are not implemented yet.")
-        # else:
-        #     raise NotImplementedError("Unknown profile type. Please use 'user' or 'nn'.")
+        if self.mode=='nn':
+            modules = {'hohlnet':HohlNet(beams=self.cfg["laser"]["num_beams"],
+                                         t_pts=self.cfg["nn"]["tpts"],
+                                         n_design_params=self.cfg["nn"]["n_design_params"])}
+        else:
+            profiles = [
+                self.make_sbs_profiles(self.cfg["beam"][str(i)]["profile"], self.cfg["beam"][str(i)]["spec"])
+                for i in range(self.cfg["laser"]["num_beams"])
+            ]
+            modules = {'lpi':LPIParams(self.cfg,profiles)}
         
-        
-
         return modules
 
     def write_units(self) -> Dict:
@@ -630,10 +593,13 @@ class SBSBS_CBET(ADEPTModule):
         #     "flow_over_flow0": lambda z: jnp.interp(z, self.cfg["grid"]["z"], flowprof),
         #     "omegabeat": lambda z: jnp.interp(z, self.cfg["grid"]["z"], omegabeat),
         # }
+        self.hohl_outputs = ['n_over_n0','Te_over_T0','Ti_over_T0','flow_over_flow0','Zeff','A_ion','omegabeat']
+        
         self.args = {}
         n_beams = self.cfg["laser"]["num_beams"]
         self.state = {
-            "Ji": jnp.ones(n_beams),
+            # "Ji": jnp.ones(n_beams),
+            "Ji": self.cfg["intensities"],
             "Jr": jnp.full(n_beams, 0.1),
             "imfx0": jnp.zeros(n_beams),
             "kappaIB": jnp.zeros(n_beams),
@@ -641,7 +607,7 @@ class SBSBS_CBET(ADEPTModule):
             "cs": jnp.zeros(n_beams),
             "kz": jnp.zeros(n_beams),
             "res_cond": jnp.zeros(n_beams),
-        } | {k: 0.0 for k in self.args.keys()}
+        } | {k: 0.0 for k in self.hohl_outputs}
 
     def make_sbs_profiles(self, this_profile, this_grid):
         if "nc" in this_profile["n_min"]:
@@ -716,21 +682,23 @@ class SBSBS_CBET(ADEPTModule):
             },
         }
 
-    def perform_sbs(self, diffeqsolve_quants, beam_modules, _cbet_light, this_space_quantity, this_grid):#,Jr_target):
-        args = {
-            "n_over_n0": beam_modules["n_over_n0"],
-            "Te_over_T0": beam_modules["Te_over_T0"],
-            "Ti_over_T0": beam_modules["Ti_over_T0"],
-            "Zeff": beam_modules["Zeff"],
-            "flow_over_flow0": beam_modules["flow_over_flow0"],
-            "omegabeat": beam_modules["omegabeat"],
-            "thermal_noise": beam_modules["thermal_noise"]
-        }
+    def perform_sbs(self, diffeqsolve_quants, beam_modules, thermal_noise, _cbet_light, this_space_quantity, this_grid):#,Jr_target):
+        # args = {
+        #     "n_over_n0": beam_modules["n_over_n0"],
+        #     "Te_over_T0": beam_modules["Te_over_T0"],
+        #     "Ti_over_T0": beam_modules["Ti_over_T0"],
+        #     "Zeff": beam_modules["Zeff"],
+        #     "flow_over_flow0": beam_modules["flow_over_flow0"],
+        #     "omegabeat": beam_modules["omegabeat"],
+        #     "thermal_noise": beam_modules["thermal_noise"]
+        # }
+        args = {"plasma_conditions_vs_z":beam_modules}
+        Jr_target = thermal_noise
         
         # Jr_target = 0.1
         # Jr_guess = 0.5*stop_gradient(Jr_target)
         # Jr_guess = 0.5*jnp.ones(4)
-        Jr_target = args.pop("thermal_noise")
+        # Jr_target = args.pop("thermal_noise")
         Jr_target_init = stop_gradient(Jr_target)
         
 
@@ -743,7 +711,7 @@ class SBSBS_CBET(ADEPTModule):
             "cs": 0.0,
             "kz": 0.0,
             "res_cond": 0.0,
-        } | {k: 0.0 for k in args.keys()}
+        } | {k: 0.0 for k in self.hohl_outputs}
         
         sbs_step = lambda y, x: self.perform_sbs_step(
                 terms=diffeqsolve_quants["terms"],
@@ -855,20 +823,61 @@ class SBSBS_CBET(ADEPTModule):
         all_modules = eqx.combine(trainable_modules,args['static_modules'])
         beams = self.state["Ji"]
 
-        cbet_result, args = self.perform_cbet(all_modules["lpi"]["cbet"], beams, args)
-        sbs_solver_results = []
+        if "lpi" in all_modules:
+            cbet_result, args = self.perform_cbet(all_modules["lpi"]["cbet"], beams, args)
+            sbs_solver_results = []
 
-        # loop over beams / quads / rays
-        print(f"{len(all_modules['lpi']['sbs'])=}")
-        for i in range(self.cfg["laser"]["num_beams"]):
-            diffeqsolve_quants = self.diffeqsolve_quants["sbs"][i]
-            beam_modules = all_modules["lpi"]["sbs"][i]
-            this_space_quantity = self.sbs_space_quantities[i]
-            _cbet_light = cbet_result.ys[-1, i]
-            this_grid = self.cfg["beam"][str(i)]["spec"]
-            beam_result, beam_args = self.perform_sbs(
-                diffeqsolve_quants, beam_modules, _cbet_light, this_space_quantity, this_grid)
-            sbs_solver_results.append(beam_result)
+            # loop over beams / quads / rays
+            print(f"{len(all_modules['lpi']['sbs'])=}")
+            for i in range(self.cfg["laser"]["num_beams"]):
+                diffeqsolve_quants = self.diffeqsolve_quants["sbs"][i]
+                beam_modules = all_modules["lpi"]["sbs"][i]
+                this_space_quantity = self.sbs_space_quantities[i]
+                _cbet_light = cbet_result.ys[-1, i]
+                this_grid = self.cfg["beam"][str(i)]["spec"]
+                beam_result, beam_args = self.perform_sbs(
+                    diffeqsolve_quants, beam_modules, _cbet_light, this_space_quantity, this_grid)
+                sbs_solver_results.append(beam_result)
+        elif "hohlnet" in all_modules:
+            cbet_module = all_modules["hohlnet"].leh_eval(
+                self.cfg["nn_inputs"]["laser_powers"],self.cfg["nn_inputs"]["design"],self.cfg["nn_inputs"]["t"])
+            cbet_result, args = self.perform_cbet(cbet_module, beams, args)
+            
+            
+            sbs_solver_results = []
+            sbs_modules = [lambda z,i=i: all_modules["hohlnet"].hohl_eval(
+                self.cfg["nn_inputs"]["laser_powers"],
+                self.cfg["nn_inputs"]["design"],
+                jnp.array([i]), jnp.array([z]), self.cfg["nn_inputs"]["t"]
+            ) for i in range(self.cfg["laser"]["num_beams"])]
+            thermal_noise_modules = [all_modules["hohlnet"].sbs_source_eval(
+                self.cfg["nn_inputs"]["laser_powers"],
+                self.cfg["nn_inputs"]["design"],
+                jnp.array([i]), self.cfg["nn_inputs"]["t"]
+            )["thermal_noise"] for i in range(self.cfg["laser"]["num_beams"])]
+            # sbs_modules = [{param: lambda z,i=i: all_modules["hohlnet"].hohl_eval(
+            #     self.cfg["nn_inputs"]["laser_powers"],
+            #     self.cfg["nn_inputs"]["design"],
+            #     jnp.array([i]),jnp.array([z]),self.cfg["nn_inputs"]["t"])[param] for param in all_modules["hohlnet"].hohl_outputs}|{
+            #         param: all_modules["hohlnet"].sbs_source_eval(
+            #             self.cfg["nn_inputs"]["laser_powers"],
+            #             self.cfg["nn_inputs"]["design"],
+            #             jnp.array([i]),self.cfg["nn_inputs"]["t"])[param] for param in all_modules["hohlnet"].sbs_source_outputs} 
+            #                for i in range(self.cfg["laser"]["num_beams"])]
+
+            # loop over beams / quads / rays
+            print(f"{len(sbs_modules)=}")
+            for i in range(self.cfg["laser"]["num_beams"]):
+                print(f"Running SBS calculation on beam {i+1}/{self.cfg["laser"]["num_beams"]}")
+                diffeqsolve_quants = self.diffeqsolve_quants["sbs"][i]
+                beam_modules = sbs_modules[i]
+                thermal_noise = thermal_noise_modules[i]
+                this_space_quantity = self.sbs_space_quantities[i]
+                _cbet_light = cbet_result.ys[-1, i]
+                this_grid = self.cfg["beam"][str(i)]["spec"]
+                beam_result, beam_args = self.perform_sbs(
+                    diffeqsolve_quants, beam_modules, thermal_noise, _cbet_light, this_space_quantity, this_grid)
+                sbs_solver_results.append(beam_result)
 
         return {"cbet result": cbet_result, "sbs results": sbs_solver_results, "args": args}
     

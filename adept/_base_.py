@@ -421,7 +421,9 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
+            print('Starting filter_jit')
             (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, args)
+            print('Finished filter_jit')
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})

@@ -100,8 +100,8 @@ class SBSVectorField(BaseLPIVectorField):
         Ji = y["Ji"]
         Jr = y["Jr"]
         z = t
-
-        plasma_conditions_at_z = {k: func(z) for k, func in args.items()}
+        # plasma_conditions_at_z = {k: func(z) for k, func in args.items()}
+        plasma_conditions_at_z = args["plasma_conditions_vs_z"](z)
 
         noise = self.calculate_noise(args)
         kappaIB = self.calc_kappa(z, plasma_conditions_at_z)
@@ -136,7 +136,7 @@ class CBETVectorField(BaseLPIVectorField):
         self.phis = jnp.array([self.beam_params[str(i)]["spec"]["phi"] for i in range(self.cfg["laser"]["num_beams"])])*jnp.pi/180
         self.dls = jnp.array([self.beam_params[str(i)]["spec"]["dl"] for i in range(self.cfg["laser"]["num_beams"])])
         
-        print({'thetas':self.thetas,'phis':self.phis,'dls':self.dls})
+        # print({'thetas':self.thetas,'phis':self.phis,'dls':self.dls})
         
 
         kxs = -jnp.sin(self.thetas) * jnp.cos(self.phis)  # k*c/omega

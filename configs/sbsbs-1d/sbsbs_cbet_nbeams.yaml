@@ -4,12 +4,15 @@ mlflow:
 
 opt:
   learning_rate: 0.1
-  num_epochs: 200
+  num_epochs: 3
   batch_size: 1
   decay_steps: 100000
   method: scipy
   metric_time_in_ps: 6.0
 
+nn:
+  tpts: 512
+  n_design_params: 12
 # trainable_params:
 #   Jr_target: [0.1,0.1,0.1,0.1]
 
@@ -41,14 +44,14 @@ laser:
   wavelength: 3510  # Angstrom
   # beam_file: /path/to/beam_file.txt  # path to the beam file
   # a0_sq: 1e-6  # initial a_0^2, assuming all beams have same initial intensity
-  num_beams: 4
+  num_beams: 8
 
 beam:
   "0":
     spec:
       dz: 10um
       zmax: 1cm
-      theta: 23.5  # polar angle in degrees
+      theta: 21  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 0.0  # dlambda/lambda
     profile:
@@ -63,7 +66,7 @@ beam:
     spec:
       dz: 10um
       zmax: 1cm
-      theta: 30  # polar angle in degrees
+      theta: 26  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 0.0  # dlambda/lambda
     profile:
@@ -78,7 +81,7 @@ beam:
     spec:
       dz: 10um
       zmax: 1cm
-      theta: 44.5  # polar angle in degrees
+      theta: 28  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 1.8  # dlambda/lambda
     profile:
@@ -93,9 +96,70 @@ beam:
     spec:
       dz: 10um
       zmax: 1cm
-      theta: 50  # polar angle in degrees
+      theta: 33  # polar angle in degrees
       phi: 0.0  # azimuthal angle in radians
       dl: 1.8  # dlambda/lambda
+    profile:
+      n_min: 0.001nc
+      n_max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      lambdabeat: 5.293519e-10m
+      thermal_noise: 0.1
+  "4":
+    spec:
+      dz: 10um
+      zmax: 1cm
+      theta: 42  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 0.0  # dlambda/lambda
+    profile:
+      n_min: 0.001nc
+      n_max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      lambdabeat: 5.293519e-10m
+      thermal_noise: 0.1
+  "5":
+    spec:
+      dz: 10um
+      zmax: 1cm
+      theta: 47  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 0.0  # dlambda/lambda
+    profile:
+      n_min: 0.001nc
+      n_max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      lambdabeat: 5.293519e-10m
+      thermal_noise: 0.1
+  "6":
+    spec:
+      dz: 10um
+      zmax: 1cm
+      theta: 48  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 0.0  # dlambda/lambda
+    profile:
+      n_min: 0.001nc
+      n_max: 0.025nc
+      Te: 1.4keV
+      Ti: 450eV
+      flow: 0.0m/s
+      lambdabeat: 5.293519e-10m
+      thermal_noise: 0.1
+
+  "7":
+    spec:
+      dz: 10um
+      zmax: 1cm
+      theta: 52  # polar angle in degrees
+      phi: 0.0  # azimuthal angle in radians
+      dl: 0.0  # dlambda/lambda
     profile:
       n_min: 0.001nc
       n_max: 0.025nc
