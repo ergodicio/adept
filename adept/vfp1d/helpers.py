@@ -192,6 +192,16 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
                     profs[k] = baseline * (1.0 + amp * jnp.sin(2 * jnp.pi / ll * cfg_grid["x"]))
 
+                elif species_params[k]["basis"] == "sinc":
+                    baseline = species_params[k]["baseline"]
+                    amp = species_params[k]["amplitude"]
+                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
+
+                    # Spherical Bessel function j0(kr) = sin(kr)/(kr)
+                    # np.sinc(x) = sin(pi*x)/(pi*x), so np.sinc(kx/pi) = sin(kx)/(kx)
+                    k_times_x = 2 * np.pi / ll * cfg_grid["x"]
+                    profs[k] = baseline * (1.0 + amp * np.sinc(k_times_x / np.pi))
+
                 else:
                     raise NotImplementedError
 
