@@ -1,4 +1,4 @@
-import jax 
+import jax
 
 jax.config.update("jax_enable_x64", False)
 
@@ -116,7 +116,7 @@ def _imaginary_part_():
     # np.real(flds["phi"][:, :, 2]).plot(ax=ax[1])
 
     mlflow.log_metrics({"actual damping rate": actual, "desired damping rate": desired}, run_id=mlrunid)
-    testing.assert_allclose(desired=desired, actual=actual, rtol=0.35)
+    testing.assert_allclose(desired=desired, actual=actual, rtol=0.25)
 
 
 @pytest.mark.parametrize("test_func", [_real_part_, _imaginary_part_])
