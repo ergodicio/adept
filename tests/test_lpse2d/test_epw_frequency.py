@@ -1,3 +1,7 @@
+import jax 
+
+jax.config.update("jax_enable_x64", False)
+
 import mlflow
 import numpy as np
 import pytest
@@ -51,9 +55,9 @@ def _real_part_():
     actual = np.mean(instantaneous_frequency_smooth[mid_slice])
     from matplotlib import pyplot as plt
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-    ax[0].plot(instantaneous_frequency_smooth[32:-32])
-    np.real(flds["phi"][:, :, 2]).plot(ax=ax[1])
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    # ax[0].plot(instantaneous_frequency_smooth[32:-32])
+    # np.real(flds["phi"][:, :, 2]).plot(ax=ax[1])
     mlflow.log_metrics({"actual frequency": actual, "desired frequency": w0}, run_id=mlrunid)
     testing.assert_allclose(desired=w0, actual=actual, rtol=0.1)
 
@@ -105,11 +109,11 @@ def _imaginary_part_():
 
     from matplotlib import pyplot as plt
 
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-    ax[0].semilogy(flds.coords["t (ps)"].data[32: -32], amplitude_envelope[32:-32])
+    # fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+    # ax[0].semilogy(flds.coords["t (ps)"].data[32: -32], amplitude_envelope[32:-32])
     # plot midslice
-    ax[0].semilogy(flds.coords["t (ps)"].data[mid_slice], amplitude_envelope[mid_slice])
-    np.real(flds["phi"][:, :, 2]).plot(ax=ax[1])
+    # ax[0].semilogy(flds.coords["t (ps)"].data[mid_slice], amplitude_envelope[mid_slice])
+    # np.real(flds["phi"][:, :, 2]).plot(ax=ax[1])
 
     mlflow.log_metrics({"actual damping rate": actual, "desired damping rate": desired}, run_id=mlrunid)
     testing.assert_allclose(desired=desired, actual=actual, rtol=0.35)
