@@ -44,6 +44,7 @@ class HohlNet(eqx.Module):
     leh_outputs: list
     hohl_outputs: list
     sbs_source_outputs: list
+    quantity_bounds: dict
     
     def __init__(self,beams,t_pts,n_design_params):
         seed = np.random.randint(0,int(1e4))
@@ -55,6 +56,31 @@ class HohlNet(eqx.Module):
         self.nn_input_laser_leh = CNN(beams,t_pts,cnn_out_features)
         self.nn_mlp_leh = eqx.nn.MLP(cnn_out_features+n_design_params+1,9,width_size=width,depth=depth,key=key)
         self.leh_outputs = ['n_over_n0','Te_over_T0','Ti_over_T0','flow_magnitude','flow_theta','flow_phi','Zeff','A_ion','L_p']
+        # self.quantity_bounds = {'n_over_n0':[1e-4,1],
+        #                         'Te_over_T0':[0.01,8],
+        #                         'Ti_over_T0':[0.01,8],
+        #                         'flow_over_flow0':[0,5],
+        #                         'flow_magnitude':[0,1e-3],
+        #                         'flow_theta':[0,jnp.pi],
+        #                         'flow_phi':[0,2*jnp.pi],
+        #                         'Zeff':[1,100],
+        #                         'A_ion':[1,300],
+        #                         'L_p': [5,1e4/0.33],
+        #                         'omegabeat':[1e17*1e-6,1e17*1e-2],
+        #                         'thermal_noise':[1e-10,1e-1]}
+        
+        self.quantity_bounds = {'n_over_n0':[1e-3,2.5e-2],
+                                'Te_over_T0':[1.,2.],
+                                'Ti_over_T0':[1./3,2./3],
+                                'flow_over_flow0':[0,1e-3],
+                                'flow_magnitude':[0,1e-5],
+                                'flow_theta':[0,jnp.pi],
+                                'flow_phi':[0,2*jnp.pi],
+                                'Zeff':[3,5],
+                                'A_ion':[10,15],
+                                'L_p': [400.,800.],
+                                'omegabeat':[1e12,1e13],
+                                'thermal_noise':[1e-10,1e-1]}
         #inputs = embedded input pulse, design inputs, t
         #outputs = n, Te, Ti, flow_magnitude, flow_theta, flow_phi, Zeff, A_ion, Lp
         
@@ -74,21 +100,29 @@ class HohlNet(eqx.Module):
         embedded_input_laser = self.nn_input_laser_leh(input_powers)
         x_in = jnp.concatenate([embedded_input_laser,design_inputs,time],axis=0)
         leh_plasma = self.nn_mlp_leh(x_in)
-        leh_plasma_dict = {self.leh_outputs[i]:leh_plasma[i] for i in range(len(self.leh_outputs))}
+        leh_plasma_dict = {key:jax.nn.sigmoid(leh_plasma[i])*(self.quantity_bounds[key][1]-self.quantity_bounds[key][0])
+                           +self.quantity_bounds[key][0] for i,key in enumerate(self.leh_outputs)}
+        # leh_plasma_dict = {self.leh_outputs[i]:leh_plasma[i] for i in range(len(self.leh_outputs))}
+        # leh_plasma_dict = {key:jax.nn.sigmoid(val)*(self.quantity_bounds[key][1]-self.quantity_bounds[key][0])
+        #                    +self.quantity_bounds[key][0] for key,val in leh_plasma_dict.items()}
         return leh_plasma_dict
     
     def hohl_eval(self,input_powers,design_inputs,subcone_index,z,t):
         embedded_input_laser = self.nn_input_laser_hohl(input_powers)
         x_in = jnp.concatenate([embedded_input_laser,design_inputs,subcone_index,z,t],axis=0)
         hohl_plasma = self.nn_mlp_hohl(x_in)
-        hohl_plasma_dict = {self.hohl_outputs[i]:hohl_plasma[i] for i in range(len(self.hohl_outputs))}
+        hohl_plasma_dict = {key:jax.nn.sigmoid(hohl_plasma[i])*(self.quantity_bounds[key][1]-self.quantity_bounds[key][0])
+                           +self.quantity_bounds[key][0] for i,key in enumerate(self.hohl_outputs)}
+        # hohl_plasma_dict = {self.hohl_outputs[i]:hohl_plasma[i] for i in range(len(self.hohl_outputs))}
         return hohl_plasma_dict
     
     def sbs_source_eval(self,input_powers,design_inputs,subcone_index,t):
         embedded_input_laser = self.nn_input_laser_sbs_source(input_powers)
         x_in = jnp.concatenate([embedded_input_laser,design_inputs,subcone_index,t],axis=0)
         sbs_source = self.nn_mlp_sbs_source(x_in)
-        sbs_source_dict = {self.sbs_source_outputs[i]:sbs_source[i] for i in range(len(self.sbs_source_outputs))}
+        sbs_source_dict = {key:jax.nn.sigmoid(sbs_source[i])*(self.quantity_bounds[key][1]-self.quantity_bounds[key][0])
+                           +self.quantity_bounds[key][0] for i,key in enumerate(self.sbs_source_outputs)}
+        # sbs_source_dict = {self.sbs_source_outputs[i]:sbs_source[i] for i in range(len(self.sbs_source_outputs))}
         return sbs_source_dict
     
     def get_partition_spec(self):

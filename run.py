@@ -34,6 +34,10 @@ if __name__ == "__main__":
         
         all_modules = exo.setup(cfg=cfg,adept_module=Train_SBSBS_CBET)
         diff_modules, static_modules = {}, {}
+        all_modules['hohlnet'].hohl_eval(cfg["nn_inputs"]["laser_powers"],
+                cfg["nn_inputs"]["design"],
+                np.array([0]), np.array([0.5]), cfg["nn_inputs"]["t"]
+            )
         # diff_modules['lpi'], static_modules['lpi'] = eqx.partition(all_modules['lpi'],all_modules['lpi'].get_partition_spec())
         diff_modules['hohlnet'], static_modules['hohlnet'] = eqx.partition(all_modules['hohlnet'],all_modules['hohlnet'].get_partition_spec())
         # static_modules = exo.setup(cfg=cfg, adept_module=Train_SBSBS_CBET)
