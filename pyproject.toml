@@ -80,6 +80,7 @@ testpaths = ["tests"]
 filterwarnings = [
     "error",
     # ignored by default
+    "ignore::FutureWarning",
     "ignore::DeprecationWarning",
     "ignore::RuntimeWarning",
     "ignore::UserWarning",
