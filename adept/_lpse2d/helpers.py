@@ -591,8 +591,15 @@ def make_field_xarrays(cfg, this_t, state, td):
     xax_tuple = ("x (um)", xax)
     yax_tuple = ("y (um)", yax)
 
-    phi_k_np = np.array(state["epw"]).view(np.complex64)
-    phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(np.complex64), axes=(1, 2))
+    # check if state["epw"] is a complex64 or 128 and choose accordingly
+    # if state["epw"].dtype == jnp.complex128:
+    # _complex = np.complex128
+    # else:
+    _complex = np.complex64
+
+
+    phi_k_np = np.array(state["epw"]).view(_complex)
+    phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
     ex_k_np = -1j * kx[None, :, None] * phi_k_np
     ey_k_np = -1j * ky[None, None, :] * phi_k_np
 
@@ -611,10 +618,10 @@ def make_field_xarrays(cfg, this_t, state, td):
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
     ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
     ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
-    e0x = xr.DataArray(np.array(state["E0"]).view(np.complex64)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e0y = xr.DataArray(np.array(state["E0"]).view(np.complex64)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e1x = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e1y = xr.DataArray(np.array(state["E1"]).view(np.complex64)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e0x = xr.DataArray(np.array(state["E0"]).view(_complex)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e0y = xr.DataArray(np.array(state["E0"]).view(_complex)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1x = xr.DataArray(np.array(state["E1"]).view(_complex)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1y = xr.DataArray(np.array(state["E1"]).view(_complex)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
 
     from scipy import interpolate
 

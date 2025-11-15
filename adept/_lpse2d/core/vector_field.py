@@ -21,7 +21,8 @@ class SplitStep:
         self.cfg = cfg
         self.dt = cfg["grid"]["dt"]
         self.wp0 = cfg["units"]["derived"]["wp0"]
-        self.epw = epw.SpectralPotential(cfg)
+        # self.epw = epw.SpectralPotential(cfg)
+        self.epw = epw.SpectralEPWSolver(cfg)
         self.light = laser.Light(cfg)
         self.complex_state_vars = ["E0", "epw", "E1"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
