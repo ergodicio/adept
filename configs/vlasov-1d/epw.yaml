@@ -12,9 +12,19 @@ density:
     noise_seed: 420
     noise_type: gaussian
     noise_val: 0.0
-    v0: 0.0
-    T0: 1.0
-    m: 2.0
+
+    # Drift velocity: can be dimensionless (v/v_th) or physical units
+    v0: 0.0  # dimensionless
+    # v0: 0 m/s  # Alternatively, specify in m/s
+
+    # Temperature: can be dimensionless (T/T0) or in eV
+    T0: 1.0  # dimensionless (T/T0, so 1.0 means 2000eV for this config)
+    # T0: 2000eV  # Alternatively, specify in eV directly!
+
+    # Mass ratio (always dimensionless)
+    m: 2.0  # Super-Gaussian parameter
+
+    # Spatial profile
     basis: uniform
     baseline: 1.0
     bump_or_trough: bump
@@ -24,35 +34,41 @@ density:
     width: 100000.0
 
 grid:
-  dt: 0.1
-  nv: 256
+  # Can now use real units! These will be automatically converted to normalized units
+  # Box size in physical units (or use normalized units like before)
+  xmin: 0.0  # Can also be "0nm"
+  xmax: 3000nm  # ~3 microns (equivalent to 20.94 in normalized units for these plasma params)
+  vmax: 5.0e6 m/s  # ~6.4 vth for 2keV electrons
+
+  # Time parameters in physical units
+  tmin: 0.0  # Can also be "0fs"
+  tmax: 30fs  # ~100 in normalized units (wp0^-1)
+  dt: 0.03fs  # ~0.1 in normalized units
+
+  # Grid resolution (still integers)
   nx: 32
-  tmin: 0.
-  tmax: 100.0
-  vmax: 6.4
-  xmax: 20.94
-  xmin: 0.0
+  nv: 256
 
 save:
   fields:
     t:
-      tmin: 0.0
-      tmax: 100.0
+      tmin: 0fs
+      tmax: 30fs
       nt: 601
   electron:
     t:
-      tmin: 0.0
-      tmax: 100.0
+      tmin: 0fs
+      tmax: 30fs
       nt: 11
   diag-vlasov-dfdt:
     t:
-      tmin: 0.0
-      tmax: 100.0
+      tmin: 0fs
+      tmax: 30fs
       nt: 91
   diag-fp-dfdt:
     t:
-      tmin: 0.0
-      tmax: 100.0
+      tmin: 0fs
+      tmax: 30fs
       nt: 91
 
 solver: vlasov-1d
@@ -64,16 +80,28 @@ mlflow:
 drivers:
   ex:
     '0':
-      a0: 1.e-2
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
-      dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      # Driver amplitude: can be dimensionless (a0) or intensity
+      a0: 1.e-2  # dimensionless normalized vector potential
+      # a0: 1e14 W/cm^2  # Alternatively, specify as intensity!
+
+      # Wavenumber: can be dimensionless or 1/nm
+      k0: 0.3  # dimensionless (k0 * lambda_D)
+      # k0: 0.002 1/nm  # Alternatively, specify in 1/nm
+
+      # Frequency: can be dimensionless or rad/ps
+      w0: 1.1598  # dimensionless (omega/omega_p)
+      # w0: 6.5 rad/ps  # Alternatively, specify in rad/ps
+      dw0: 0.  # frequency chirp
+
+      # Temporal envelope (can use physical units!)
+      t_center: 12fs  # Center time of pulse
+      t_rise: 1.5fs   # Rise time
+      t_width: 9fs    # Pulse width
+
+      # Spatial envelope (can use physical units!)
+      x_center: 0nm   # Center position
+      x_rise: 1500nm  # Spatial rise length
+      x_width: 600000nm  # Very wide pulse (essentially uniform)
   ey: {}
 
 diagnostics:

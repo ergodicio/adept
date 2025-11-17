@@ -8,7 +8,13 @@ from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
+from adept._vlasov1d.helpers import (
+    _initialize_total_distribution_,
+    post_process,
+    convert_to_normalized_units,
+    intensity_to_a0,
+    _Q,
+)
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
 
@@ -74,19 +80,34 @@ class BaseVlasov1D(ADEPTModule):
         """
         This function just updates the config with the derived quantities that are only integers or strings.
 
-        This is run prior to the log params step
+        This is run prior to the log params step. It handles conversion from real units to normalized units.
 
         :param cfg_grid:
         :return:
         """
         cfg_grid = self.cfg["grid"]
 
+        # Get normalization scales from write_units()
+        tp0 = self.cfg["units"]["derived"]["tp0"]  # time scale in fs
+        x0 = self.cfg["units"]["derived"]["x0"]    # length scale in nm
+        v0 = self.cfg["units"]["derived"]["v0"]    # velocity scale in m/s
+        T0 = self.cfg["units"]["derived"]["T0"]    # temperature scale in eV
+        wp0 = self.cfg["units"]["derived"]["wp0"]  # plasma frequency in rad/s
+
+        # Convert grid parameters to normalized units
+        cfg_grid["xmin"] = convert_to_normalized_units(cfg_grid["xmin"], "nm", x0)
+        cfg_grid["xmax"] = convert_to_normalized_units(cfg_grid["xmax"], "nm", x0)
+        cfg_grid["vmax"] = convert_to_normalized_units(cfg_grid["vmax"], "m/s", v0)
+        cfg_grid["tmin"] = convert_to_normalized_units(cfg_grid["tmin"], "fs", tp0)
+        cfg_grid["tmax"] = convert_to_normalized_units(cfg_grid["tmax"], "fs", tp0)
+        cfg_grid["dt"] = convert_to_normalized_units(cfg_grid["dt"], "fs", tp0)
+
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
         cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
-            cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / self.cfg["units"]["derived"]["c_light"]
+            cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / self.cfg["units"]["derived"]["c_light"].magnitude
 
         cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
 
@@ -97,6 +118,72 @@ class BaseVlasov1D(ADEPTModule):
             cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
         cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
+
+        # Convert save times to normalized units
+        for save_category in ["fields", "electron", "diag-vlasov-dfdt", "diag-fp-dfdt"]:
+            if save_category in self.cfg["save"]:
+                for save_key in self.cfg["save"][save_category]:
+                    save_dict = self.cfg["save"][save_category][save_key]
+                    save_dict["tmin"] = convert_to_normalized_units(save_dict["tmin"], "fs", tp0)
+                    save_dict["tmax"] = convert_to_normalized_units(save_dict["tmax"], "fs", tp0)
+
+        # Convert driver parameters to normalized units
+        for driver_key in self.cfg["drivers"]["ex"]:
+            driver = self.cfg["drivers"]["ex"][driver_key]
+            driver["t_center"] = convert_to_normalized_units(driver["t_center"], "fs", tp0)
+            driver["t_rise"] = convert_to_normalized_units(driver["t_rise"], "fs", tp0)
+            driver["t_width"] = convert_to_normalized_units(driver["t_width"], "fs", tp0)
+            driver["x_center"] = convert_to_normalized_units(driver["x_center"], "nm", x0)
+            driver["x_rise"] = convert_to_normalized_units(driver["x_rise"], "nm", x0)
+            driver["x_width"] = convert_to_normalized_units(driver["x_width"], "nm", x0)
+
+            # Handle frequency - can be in rad/ps or already normalized
+            if isinstance(driver["w0"], str):
+                # Convert from rad/ps to normalized (units of wp0)
+                _Q = self.ureg.Quantity
+                w0_real = _Q(driver["w0"]).to("rad/ps")
+                driver["w0"] = (w0_real / wp0.to("rad/ps")).magnitude
+
+            if isinstance(driver["dw0"], str):
+                _Q = self.ureg.Quantity
+                dw0_real = _Q(driver["dw0"]).to("rad/ps")
+                driver["dw0"] = (dw0_real / wp0.to("rad/ps")).magnitude
+
+            # Handle k0 - can be in 1/um or already normalized (units of 1/x0)
+            if isinstance(driver["k0"], str):
+                _Q = self.ureg.Quantity
+                k0_real = _Q(driver["k0"]).to("1/nm")
+                driver["k0"] = (k0_real * x0).magnitude
+
+            # Handle a0 - can be intensity (W/cm^2) or already normalized
+            if isinstance(driver["a0"], str):
+                if "W/cm" in driver["a0"] or "W cm" in driver["a0"]:
+                    # Convert intensity to normalized a0
+                    laser_wavelength = _Q(self.cfg["units"]["laser_wavelength"])
+                    normalizing_temperature = _Q(self.cfg["units"]["normalizing_temperature"])
+                    a0_from_intensity = intensity_to_a0(driver["a0"], laser_wavelength, normalizing_temperature)
+                    print(f"Converting intensity {driver['a0']} to a0 = {a0_from_intensity:.6e}")
+                    driver["a0"] = a0_from_intensity
+                else:
+                    # Assume it's a dimensionless value as a string
+                    driver["a0"] = float(driver["a0"])
+
+        # Convert species background parameters to normalized units
+        for species_key in self.cfg["density"]:
+            if species_key.startswith("species-"):
+                species = self.cfg["density"][species_key]
+                # Temperature can be in eV or already normalized
+                if isinstance(species["T0"], str):
+                    _Q = self.ureg.Quantity
+                    T_real = _Q(species["T0"]).to("eV")
+                    species["T0"] = (T_real / T0).magnitude
+
+                # Velocity can be in physical units or already normalized
+                if isinstance(species["v0"], str):
+                    _Q = self.ureg.Quantity
+                    v_real = _Q(species["v0"]).to("m/s")
+                    species["v0"] = (v_real / v0).magnitude
+
         self.cfg["grid"] = cfg_grid
 
     def get_solver_quantities(self) -> dict:

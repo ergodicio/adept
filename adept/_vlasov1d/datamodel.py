@@ -1,3 +1,4 @@
+from typing import Union
 from pydantic import BaseModel
 
 
@@ -15,9 +16,9 @@ class SpeciesBackgroundModel(BaseModel):
     noise_seed: int
     noise_type: str
     noise_val: float
-    v0: float
-    T0: float
-    m: float
+    v0: Union[str, float]  # Can be dimensionless or um/ps
+    T0: Union[str, float]  # Can be dimensionless or eV
+    m: float  # Mass ratio (dimensionless)
     basis: str
     space_profile: SpaceProfileModel
 
@@ -36,19 +37,19 @@ class UnitsModel(BaseModel):
 
 
 class GridModel(BaseModel):
-    dt: float
+    dt: Union[str, float]
     nv: int
     nx: int
-    tmin: float
-    tmax: float
-    vmax: float
-    xmax: float
-    xmin: float
+    tmin: Union[str, float]
+    tmax: Union[str, float]
+    vmax: Union[str, float]
+    xmax: Union[str, float]
+    xmin: Union[str, float]
 
 
 class TimeSaveModel(BaseModel):
-    tmin: float
-    tmax: float
+    tmin: Union[str, float]
+    tmax: Union[str, float]
     nt: int
 
 
@@ -58,16 +59,16 @@ class SaveModel(BaseModel):
 
 
 class ExDriverModel(BaseModel):
-    a0: float
-    k0: float
-    t_center: float
-    t_rise: float
-    t_width: float
-    w0: float
-    dw0: float
-    x_center: float
-    x_rise: float
-    x_width: float
+    a0: Union[str, float]  # Can be dimensionless or intensity (W/cm^2)
+    k0: Union[str, float]  # Can be dimensionless or 1/um
+    t_center: Union[str, float]  # Can be dimensionless or ps
+    t_rise: Union[str, float]  # Can be dimensionless or ps
+    t_width: Union[str, float]  # Can be dimensionless or ps
+    w0: Union[str, float]  # Can be dimensionless or rad/ps
+    dw0: Union[str, float]  # Can be dimensionless or rad/ps
+    x_center: Union[str, float]  # Can be dimensionless or um
+    x_rise: Union[str, float]  # Can be dimensionless or um
+    x_width: Union[str, float]  # Can be dimensionless or um
 
 
 class EyDriverModel(BaseModel):

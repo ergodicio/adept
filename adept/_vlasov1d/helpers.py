@@ -15,6 +15,71 @@ from scipy.special import gamma
 from adept._base_ import get_envelope
 from adept._vlasov1d.storage import store_f, store_fields
 
+# Create unit registry
+ureg = pint.UnitRegistry()
+_Q = ureg.Quantity
+
+
+def convert_to_normalized_units(value, target_unit, normalization_scale):
+    """
+    Convert a value (which can be a string with units or a float) to normalized units.
+
+    Args:
+        value: Either a float (already normalized) or a string with units (e.g., "100um", "10ps")
+        target_unit: The target unit to convert to (e.g., "um", "ps", "eV")
+        normalization_scale: The scale to normalize by (a pint Quantity)
+
+    Returns:
+        float: The value in normalized units
+    """
+    if isinstance(value, str):
+        # Parse the string with units and convert to target unit, then normalize
+        real_value = _Q(value).to(target_unit)
+        return (real_value / normalization_scale).magnitude
+    else:
+        # Already in normalized units
+        return value
+
+
+def intensity_to_a0(intensity_str, laser_wavelength, normalizing_temperature):
+    """
+    Convert laser intensity to normalized vector potential a0.
+
+    The normalized vector potential is defined as:
+        a0 = e * E0 / (m_e * omega * c)
+
+    where E0 is the peak electric field amplitude:
+        E0 = sqrt(2 * I / (epsilon_0 * c))
+
+    Args:
+        intensity_str: Intensity as a string with units (e.g., "1e15 W/cm^2")
+        laser_wavelength: Laser wavelength (pint Quantity, e.g., _Q("351nm"))
+        normalizing_temperature: Normalizing temperature (pint Quantity, e.g., _Q("2keV"))
+
+    Returns:
+        float: Normalized a0 (dimensionless)
+    """
+    # Convert intensity to W/m^2
+    I = _Q(intensity_str).to("W/m^2").magnitude
+
+    # Physical constants
+    c = ureg.c.to("m/s").magnitude  # speed of light
+    epsilon_0 = ureg.epsilon_0.to("F/m").magnitude  # vacuum permittivity
+    e = ureg.e.to("C").magnitude  # electron charge
+    m_e = ureg.m_e.to("kg").magnitude  # electron mass
+
+    # Calculate laser frequency from wavelength
+    lambda_0 = laser_wavelength.to("m").magnitude
+    omega = 2 * np.pi * c / lambda_0  # rad/s
+
+    # Calculate peak electric field from intensity
+    E0 = np.sqrt(2 * I / (epsilon_0 * c))  # V/m
+
+    # Calculate normalized vector potential
+    a0 = e * E0 / (m_e * omega * c)
+
+    return a0
+
 # gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 # m_ax = gamma_da.coords["m"].data
 # g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
