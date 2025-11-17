@@ -354,6 +354,21 @@ class SpectralEPWSolver:
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
 
+        # SRS parameters
+        self.srs_enabled = cfg["terms"]["epw"]["source"]["srs"]
+        if self.srs_enabled:
+            self.w1 = cfg["units"]["derived"]["w1"]
+            self.srs_prefactor = 1j * self.e * self.wp0 / (4.0 * self.me * self.w0 * self.w1)
+
+            # Optional: k-space filters for source terms (following MATLAB isSuppressHighKSource)
+            max_source_k_multiplier = 1.2
+            max_k0 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"])
+            max_k1 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"] * (self.w0**2) / (self.w1**2))
+            is_outside_max_k0 = self.k_sq * (1 / self.w0**2) > max_k0**2
+            is_outside_max_k1 = self.k_sq * (1 / self.w1**2) > max_k1**2
+            self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)
+            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)
+
         # Store config for reference
         self.cfg = cfg
 
@@ -529,6 +544,90 @@ class SpectralEPWSolver:
 
         return noise
 
+    def eval_E0_dot_E1(self, E0: Array, E1: Array) -> Array:
+        """
+        Calculate scalar product of laser and Raman fields.
+
+        Matches MATLAB's evaluate_E0_dot_E1() function (lines 2302-2352).
+
+        This calculates E0 · conj(E1) with optional filtering to suppress
+        high-k modes that are not physically realistic for SRS.
+
+        Args:
+            E0: Laser field (shape: nx, ny, 2) where [..., 0] is x, [..., 1] is y
+            E1: Raman field (shape: nx, ny, 2) where [..., 0] is x, [..., 1] is y
+
+        Returns:
+            E0_dot_E1 in real space (shape: nx, ny)
+        """
+        # Extract components
+        E0_x, E0_y = E0[..., 0], E0[..., 1]
+        E1_x, E1_y = E1[..., 0], E1[..., 1]
+
+        # Apply k-space filters if configured (MATLAB isSuppressHighKSource)
+        # This removes high-k structure from fields before taking the product
+        if hasattr(self, "E0_filter") and hasattr(self, "E1_filter"):
+            # Filter E0
+            E0_x_k = jnp.fft.fft2(E0_x)
+            E0_y_k = jnp.fft.fft2(E0_y)
+            E0_x_filtered = jnp.fft.ifft2(E0_x_k * self.E0_filter)
+            E0_y_filtered = jnp.fft.ifft2(E0_y_k * self.E0_filter)
+
+            # Filter E1
+            E1_x_k = jnp.fft.fft2(E1_x)
+            E1_y_k = jnp.fft.fft2(E1_y)
+            E1_x_filtered = jnp.fft.ifft2(E1_x_k * self.E1_filter)
+            E1_y_filtered = jnp.fft.ifft2(E1_y_k * self.E1_filter)
+        else:
+            # No filtering
+            E0_x_filtered = E0_x
+            E0_y_filtered = E0_y
+            E1_x_filtered = E1_x
+            E1_y_filtered = E1_y
+
+        # Calculate dot product: E0 · conj(E1)
+        # MATLAB line 2344 or 2351
+        E0_dot_E1 = E0_x_filtered * jnp.conj(E1_x_filtered) + E0_y_filtered * jnp.conj(E1_y_filtered)
+
+        return E0_dot_E1
+
+    def calc_srs_source(self, E0_dot_E1: Array) -> Array:
+        """
+        Calculate Stimulated Raman Scattering source term.
+
+        Matches MATLAB lines 2052-2078 in spectralEpwUpdate() for isSolveForPotential=true.
+
+        For the potential formulation:
+          srsSourceTerm = 1i * e * wp0 / (4*me*w0*w1) * (1 + n_pert) * E0_dot_E1
+
+        Then transformed to k-space.
+
+        Args:
+            E0_dot_E1: Scalar product of laser and Raman fields in real space
+
+        Returns:
+            SRS source term in k-space
+        """
+        # MATLAB line 2073:
+        # srsSourceTerm = 1i * e * wp0 /(4*me*w0*w1) .* (1 + backgroundDensityPerturbation) .* E0_dot_E1(ixc,iyc);
+
+        # Density perturbation: n/n0 - 1
+        density_perturbation = self.background_density / self.envelope_density - 1.0
+
+        # Build source in real space
+        source_real = self.srs_prefactor * (1.0 + density_perturbation) * E0_dot_E1
+
+        # Transform to k-space (MATLAB line 2077)
+        source_k = jnp.fft.fft2(source_real)
+
+        # Apply filter (matching TPD treatment)
+        source_k = source_k * self.low_pass_filter
+
+        # Zero out k=0
+        source_k = source_k * self.zero_mask
+
+        return source_k
+
     def __call__(self, t: float, y, args) -> Array:
         """
         Advance EPW by one timestep using spectral method.
@@ -542,16 +641,20 @@ class SpectralEPWSolver:
         4. Add noise (line 1988)
         5. Calculate E fields from phi_k (line 1992)
         6. Calculate TPD source in k-space (lines 2011-2024)
+        6b. Calculate SRS source in k-space (lines 2052-2078)
         7. Apply density gradient to E fields (line 2081-2082)
         8. Apply absorbing boundaries to E fields (line 2088-2100)
         9. Convert E fields back to phi_k (line 2103) ← FILTER applied here too
         10. Add TPD source (line 2109)
+        11. Add SRS source (line 2113)
 
         Args:
             t: Current time
-            phi_k: Current EPW potential in k-space
-            E0: Static laser field (shape: nx, ny, 2) where E0[..., 1] is y-component
-            background_density: Density profile (shape: nx, ny)
+            y: Dictionary containing:
+                - "epw": Current EPW potential in k-space
+                - "E0": Laser field (shape: nx, ny, 2) where E0[..., 1] is y-component
+                - "E1": Raman field (shape: nx, ny, 2), optional for SRS
+            args: Additional arguments (not used currently)
 
         Returns:
             Updated phi_k after one timestep
@@ -602,6 +705,17 @@ class SpectralEPWSolver:
             tpd_source = self.calc_tpd_source(t, phi_k, ey, E0_y)
 
         # ========================================================================
+        # STEP 6b: Calculate SRS source (in k-space, before applying density gradient)
+        # ========================================================================
+        srs_source = None
+        if self.srs_enabled:
+            # MATLAB lines 2052-2078
+            E1 = y.get("E1")  # Raman field
+            if E1 is not None:
+                E0_dot_E1 = self.eval_E0_dot_E1(E0, E1)
+                srs_source = self.calc_srs_source(E0_dot_E1)
+
+        # ========================================================================
         # STEP 7: Apply density gradient to E fields (in REAL space)
         # ========================================================================
         if self.density_gradient_enabled:
@@ -635,5 +749,12 @@ class SpectralEPWSolver:
         if self.tpd_enabled and tpd_source is not None:
             # MATLAB line 2109: divE = divE + tpdSourceTerm * DT
             phi_k = phi_k + self.dt * tpd_source
+
+        # ========================================================================
+        # STEP 11: Add SRS source
+        # ========================================================================
+        if self.srs_enabled and srs_source is not None:
+            # MATLAB line 2113: divE = divE + srsSourceTerm * DT
+            phi_k = phi_k + self.dt * srs_source
 
         return phi_k
