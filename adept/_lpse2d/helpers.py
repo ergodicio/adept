@@ -597,7 +597,6 @@ def make_field_xarrays(cfg, this_t, state, td):
     # else:
     _complex = np.complex64
 
-
     phi_k_np = np.array(state["epw"]).view(_complex)
     phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
     ex_k_np = -1j * kx[None, :, None] * phi_k_np

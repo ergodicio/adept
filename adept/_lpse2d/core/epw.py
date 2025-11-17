@@ -2,7 +2,6 @@ import jax
 import numpy as np
 from jax import Array
 from jax import numpy as jnp
-from typing import Tuple
 
 from adept._lpse2d.core.driver import Driver
 
@@ -384,7 +383,7 @@ class SpectralEPWSolver:
 
         return damping
 
-    def phi_k_to_e_fields(self, phi_k: Array) -> Tuple[Array, Array]:
+    def phi_k_to_e_fields(self, phi_k: Array) -> tuple[Array, Array]:
         """
         Convert phi_k to electric field components in real space.
 
@@ -451,7 +450,7 @@ class SpectralEPWSolver:
         # Apply filter (MATLAB line 2523)
         div_e_k = div_e_k * self.low_pass_filter
 
-        # Poisson equation: ∇²φ = -ρ → -k²φ = ∇·E → φ = -∇·E/k²
+        # Poisson equation: ∇²φ = -p → -k²φ = ∇·E → φ = -∇·E/k²
         phi_k = div_e_k * self.one_over_k_sq
 
         # Zero out k=0 mode (MATLAB line 2529)
