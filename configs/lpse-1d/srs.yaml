@@ -1,0 +1,108 @@
+# 1D Stimulated Raman Scattering (SRS) Configuration
+# Based on MATLAB LPSE solver m201805_matlabLpse_v11.m
+# This config simulates backscatter SRS: pump (E0) -> seed (E1) + EPW
+
+density:
+  basis: linear  # Linear density gradient for SRS resonance
+  gradient scale length: 50um
+  max: 0.28  # Maximum density (normalized to critical)
+  min: 0.18  # Minimum density
+  noise:
+    max: 1.0e-09
+    min: 1.0e-10
+    type: uniform
+
+drivers:
+  E0:  # Pump laser at frequency w0
+    pump_amplitude: 1.0e-3  # Initial pump amplitude (will be set by laser intensity)
+    envelope:
+      tc: 200.25ps  # Envelope center time
+      tr: 0.1ps     # Rise time
+      tw: 400ps     # Pulse width
+      xc: 50um      # Center position
+      xr: 0.2um     # Rise length
+      xw: 1000um    # Spatial width
+    shape: uniform
+
+  E1:  # Seed laser at frequency w1 = w0 - wp (Raman downshift)
+    seed_amplitude: 1.0e-6  # Small initial seed for noise-driven growth
+    envelope:
+      tc: 200.25ps
+      tr: 0.1ps
+      tw: 400ps
+      xc: 50um
+      xr: 0.2um
+      xw: 1000um
+    shape: uniform
+
+grid:
+  boundary_abs_coeff: 1.0e4  # Absorbing boundary coefficient
+  boundary_width: 1.5um      # Width of absorbing boundary layer
+  low_pass_filter: 0.66      # k-space low-pass filter (maxSourceKMultiplier ~ 1.2)
+  dtFraction: 0.8            # Timestep safety factor (dt will be auto-calculated for SRS)
+  dx: 40nm                   # Spatial resolution
+  nx: 2048                   # Number of grid points (will be adjusted to FFT-friendly size)
+  xmax: 100um                # Domain length
+  tmax: 2ps                  # Simulation end time
+  tmin: 0.0ps
+  max_steps: 100000          # Maximum number of timesteps
+
+mlflow:
+  experiment: lpse-1d
+  run: srs-backscatter
+
+save:
+  fields:  # Save full field data
+    t:
+      dt: 0.2ps    # Time interval for field saves
+      tmax: 2ps
+      tmin: 0ps
+    x:
+      dx: 50nm     # Spatial resolution for saved fields (can differ from grid.dx)
+
+  series:  # Save time series of integrated quantities
+    t:
+      dt: 0.01ps   # Frequent sampling for energy evolution
+      tmax: 2ps
+      tmin: 0ps
+
+solver: lpse-1d
+
+terms:
+  epw:
+    active: true  # Evolve plasma wave
+    boundary:
+      x: absorbing  # Absorbing boundaries to prevent reflections
+    damping:
+      collisions: 1.0   # Collisional damping multiplier
+      landau: true      # Include Landau damping
+    density_gradient: true  # Include density gradient effects
+    linear: true            # Linear (cold plasma) dispersion
+    source:
+      noise: true   # Include noise source
+      srs: true     # Enable SRS source term
+
+  laser:
+    active: true  # Evolve laser fields (E0 and E1)
+
+  raman:
+    active: true  # Enable Raman coupling
+    pump_depletion: true  # Include pump depletion by seed
+
+  zero_mask: true  # Mask DC component in k-space
+
+units:
+  atomic number: 40           # Zirconium-like plasma
+  envelope density: 0.25      # Density envelope reference (normalized to critical)
+  ionization state: 6         # Average ionization
+  laser intensity: 1.5e+14W/cm^2  # Pump laser intensity
+  laser_wavelength: 351nm     # Pump laser wavelength (351 nm = 3ω of Nd:glass)
+  reference electron temperature: 2000.0eV
+  reference ion temperature: 1000eV
+
+# SRS-specific derived parameters (calculated automatically):
+# - w1 = w0 - wp (seed frequency, Raman downshift)
+# - dt: auto-calculated from stability condition (MATLAB lines 499-501)
+#   dt_max_pump = 1/(c^2/(dx^2*w0) - (w0^2-wpe_max^2)/(4*w0))
+#   dt_max_seed = 1/(c^2/(dx^2*w1) - (w1^2-wpe_max^2)/(4*w1))
+#   dt = dtFraction * min(dt_max_pump, dt_max_seed)
