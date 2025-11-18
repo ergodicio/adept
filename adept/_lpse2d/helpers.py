@@ -240,48 +240,7 @@ def get_derived_quantities(cfg: dict) -> dict:
     # ymax and ymin have to be symmetric about 0 and have to be recalculated
     cfg_grid["ymax"] = ymax = dx * cfg_grid["ny"] / 2
     cfg_grid["ymin"] = ymin = -ymax
-
-    # Calculate dt based on stability conditions if dtFraction is specified
-    # This matches MATLAB lines 496-520
-    if cfg["terms"]["epw"]["source"]["srs"]:
-        # Get derived units (already calculated by write_units)
-        c = float(cfg["units"]["derived"]["c"])
-        w0 = float(cfg["units"]["derived"]["w0"])
-        wp0 = float(cfg["units"]["derived"]["wp0"])
-        w1 = float(cfg["units"]["derived"]["w1"])
-
-        # Calculate plasma frequency at maximum density
-        # wpe = w0 * sqrt(backgroundDensity)
-        nmax = cfg["density"]["max"]
-        wpe_max = w0 * np.sqrt(nmax)
-
-        # if is_srs_enabled:
-        # Stability condition for pump (w0) field
-        # MATLAB line 499: dt_max_pump = 1/(c^2/(dx^2*w0) - (w0^2 - max(wpe(:))^2)/(4*w0))
-        dt_max_pump = 1.0 / (c**2 / (dx**2 * w0) - (w0**2 - wpe_max**2) / (4 * w0))
-
-        # Stability condition for seed (w1) field
-        # MATLAB line 500: dt_max_seed = 1/(c^2/(dx^2*w1) - (w1^2 - max(wpe(:))^2)/(4*w1))
-        dt_max_seed = 1.0 / (c**2 / (dx**2 * w1) - (w1**2 - wpe_max**2) / (4 * w1))
-
-        # Take minimum for stability
-        # MATLAB line 501: dt_max = min([dt_max_pump,dt_max_seed])
-        dt_max = min(dt_max_pump, dt_max_seed)
-        # else:
-        #     # Use original stability condition without SRS
-        #     # MATLAB line 504: dt_max = 1/( c^2/( w0 * dx^2) - (w0^2 - max(wpe(:))^2)/(4*w0) )
-        #     dt_max = 1.0 / (c**2 / (w0 * dx**2) - (w0**2 - wpe_max**2) / (4 * w0))
-
-        # Apply fraction
-        # MATLAB line 519: dt = dtFraction * dt_max
-        dtFraction = 0.9
-        cfg_grid["dt"] = dtFraction * dt_max
-        print(
-            f"Calculated dt = {cfg_grid['dt']:.6g} ps (dtFraction = {cfg_grid['dtFraction']}, dt_max = {dt_max:.6g} ps)"
-        )
-    else:
-        cfg_grid["dt"] = _Q(cfg_grid["dt"]).to("ps").value
-
+    cfg_grid["dt"] = _Q(cfg_grid["dt"]).to("ps").value
     cfg_grid["tmax"] = _Q(cfg_grid["tmax"]).to("ps").value
     cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
     cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
