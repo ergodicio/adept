@@ -9,8 +9,11 @@ import pint
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
+import matplotlib
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
-from scipy.special import gamma
+from jax.scipy.special import gamma
+
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.storage import store_f, store_fields
@@ -36,7 +39,7 @@ def _initialize_distribution_(
     m=2.0,
     T0=1.0,
     vmax=6.0,
-    n_prof=np.ones(1),
+    n_prof=jnp.ones(1),
     noise_val=0.0,
     noise_seed=42,
     noise_type="Uniform",
@@ -60,23 +63,23 @@ def _initialize_distribution_(
     :return:
     """
 
-    # noise_generator = np.random.default_rng(seed=noise_seed)
+    # noise_generator = jnp.random.default_rng(seed=noise_seed)
 
     dv = 2.0 * vmax / nv
-    vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+    vax = jnp.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
 
-    alpha = np.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
-    # cst = m / (4 * np.pi * alpha**3.0 * gamma(3.0 / m))
+    alpha = jnp.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
+    # cst = m / (4 * jnp.pi * alpha**3.0 * gamma(3.0 / m))
 
-    single_dist = -(np.power(np.abs((vax[None, :] - v0) / alpha / np.sqrt(T0)), m))
+    single_dist = -(jnp.power(jnp.abs((vax[None, :] - v0) / alpha / jnp.sqrt(T0)), m))
 
-    single_dist = np.exp(single_dist)
-    # single_dist = np.exp(-(vaxs[0][None, None, :, None]**2.+vaxs[1][None, None, None, :]**2.)/2/T0)
+    single_dist = jnp.exp(single_dist)
+    # single_dist = jnp.exp(-(vaxs[0][None, None, :, None]**2.+vaxs[1][None, None, None, :]**2.)/2/T0)
 
     # for ix in range(nx):
-    f = np.repeat(single_dist, nx, axis=0)
+    f = jnp.repeat(single_dist, nx, axis=0)
     # normalize
-    f = f / np.trapz(f, dx=dv, axis=1)[:, None]
+    f = f / jnp.trapezoid(f, dx=dv, axis=1)[:, None]
 
     if n_prof.size > 1:
         # scale by density profile
@@ -92,8 +95,8 @@ def _initialize_distribution_(
 
 def _initialize_total_distribution_(cfg, cfg_grid):
     params = cfg["density"]
-    n_prof_total = np.zeros([cfg_grid["nx"]])
-    f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
+    n_prof_total = jnp.zeros([cfg_grid["nx"]])
+    f = jnp.zeros([cfg_grid["nx"], cfg_grid["nv"]])
     species_found = False
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
@@ -111,7 +114,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                     m = params[name]["m"]
 
             if species_params["basis"] == "uniform":
-                nprof = np.ones_like(n_prof_total)
+                nprof = jnp.ones_like(n_prof_total)
 
             elif species_params["basis"] == "linear":
                 left = species_params["center"] - species_params["width"] * 0.5
@@ -141,7 +144,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                     _Q(species_params["gradient scale length"]).to("nm").magnitude
                     / cfg["units"]["derived"]["x0"].to("nm").magnitude
                 )
-                nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
+                nprof = species_params["val at center"] * jnp.exp((cfg_grid["x"] - species_params["center"]) / L)
                 nprof = mask * nprof
 
             elif species_params["basis"] == "tanh":
