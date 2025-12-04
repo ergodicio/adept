@@ -210,7 +210,7 @@ class BaseVlasov1D(ADEPTModule):
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=self.cfg["grid"]["max_steps"] * 2,
+            max_steps=self.cfg["grid"]["max_steps"],
             dt0=self.cfg["grid"]["dt"],
             y0=self.state,
             args=args,
