@@ -86,7 +86,7 @@ class BaseVlasov1D(ADEPTModule):
 
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
-            cfg_grid["dt"] = 0.95 * cfg_grid["dx"] / self.cfg["units"]["derived"]["c_light"]
+            cfg_grid["dt"] = float(0.95 * cfg_grid["dx"] / self.cfg["units"]["derived"]["c_light"].magnitude)
 
         cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
 
@@ -109,6 +109,7 @@ class BaseVlasov1D(ADEPTModule):
         :return:
         """
         cfg_grid = self.cfg["grid"]
+        print(cfg_grid)
 
         cfg_grid = {
             **cfg_grid,
@@ -209,7 +210,7 @@ class BaseVlasov1D(ADEPTModule):
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=self.cfg["grid"]["max_steps"],
+            max_steps=self.cfg["grid"]["max_steps"] * 2,
             dt0=self.cfg["grid"]["dt"],
             y0=self.state,
             args=args,
