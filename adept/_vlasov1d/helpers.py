@@ -60,7 +60,7 @@ def _initialize_distribution_(
     :return:
     """
 
-    # noise_generator = np.random.default_rng(seed=noise_seed)
+    noise_generator = np.random.default_rng(seed=noise_seed)
 
     dv = 2.0 * vmax / nv
     vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
@@ -82,8 +82,8 @@ def _initialize_distribution_(
         # scale by density profile
         f = n_prof[:, None] * f
 
-    # if noise_type.casefold() == "uniform":
-    #     f = (1.0 + noise_generator.uniform(-noise_val, noise_val, nx)[:, None]) * f
+    if noise_type.casefold() == "uniform":
+        f = (1.0 + noise_generator.uniform(-noise_val, noise_val, nx)[:, None]) * f
     # elif noise_type.casefold() == "gaussian":
     #     f = (1.0 + noise_generator.normal(-noise_val, noise_val, nx)[:, None]) * f
 
