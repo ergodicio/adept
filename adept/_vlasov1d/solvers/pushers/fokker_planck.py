@@ -82,17 +82,10 @@ class LenardBernstein:
         v0t_sq = self.vx_moment(f_xv * self.v[None, :] ** 2.0)
 
         # Build coefficients without periodic boundaries
-        # a = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 + self.v[None, :] / 2 / self.dv)
         a = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 + jnp.roll(self.v, 1)[None, :] / 2 / self.dv)
-
         b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
-        # c = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 - self.v[None, :] / 2 / self.dv)
         c = nu[:, None] * dt * (-v0t_sq[:, None] / self.dv**2.0 - jnp.roll(self.v, -1)[None, :] / 2 / self.dv)
 
-
-        # Enforce zero-flux boundary conditions
-        # a = a.at[:, 0].set(0.0)
-        # c = c.at[:, -1].set(0.0)
 
         return a, b, c
 
@@ -220,14 +213,12 @@ class Dougherty:
             nu[:, None]
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 + (jnp.roll(self.v, 1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
-
         )
         b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
         c = (
             nu[:, None]
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 - (jnp.roll(self.v, -1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
-
         )
-        
+
         return a, b, c

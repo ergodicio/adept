@@ -10,7 +10,9 @@ The Lenard-Bernstein and Dougherty operators should conserve:
 This test verifies that the boundary conditions in the tridiagonal solve
 are implemented correctly to ensure these conservation properties.
 """
+
 import jax
+
 jax.config.update("jax_enable_x64", True)
 
 import numpy as np
@@ -47,11 +49,7 @@ def test_fokker_planck_conservation(operator_type):
     # Get grid parameters from the actual config (cell-centered grid)
     # The code constructs v as: linspace(-vmax + dv/2, vmax - dv/2, nv)
     dv = config["grid"]["vmax"] * 2.0 / config["grid"]["nv"]
-    v = np.linspace(
-        -config["grid"]["vmax"] + dv / 2,
-        config["grid"]["vmax"] - dv / 2,
-        config["grid"]["nv"]
-    )
+    v = np.linspace(-config["grid"]["vmax"] + dv / 2, config["grid"]["vmax"] - dv / 2, config["grid"]["nv"])
 
     # Compute density and energy over time
     nt = f_xvt.shape[0]
@@ -76,11 +74,10 @@ def test_fokker_planck_conservation(operator_type):
         print(f"\n{operator_type} - Spatial point {ix}:")
         print(f"  Max density relative error: {max_density_error:.2e}")
 
-        # Density should be conserved to within 1e-10 relative error
-        # assert max_density_error < 1e-10, (
-        #     f"{operator_type}: Density not conserved at x[{ix}]. "
-        #     f"Max relative error: {max_density_error:.2e}"
-        # )
+        # Density should be conserved to within 1e-8 relative error
+        assert max_density_error < 1e-8, (
+            f"{operator_type}: Density not conserved at x[{ix}]. Max relative error: {max_density_error:.2e}"
+        )
 
         # Check energy conservation
         energy_rel_error = np.abs(energy[:, ix] - energy_0) / energy_0
@@ -88,11 +85,10 @@ def test_fokker_planck_conservation(operator_type):
 
         print(f"  Max energy relative error: {max_energy_error:.2e}")
 
-        # Energy should be conserved to within 1e-10 relative error
-        # assert max_energy_error < 1e-10, (
-        #     f"{operator_type}: Energy not conserved at x[{ix}]. "
-        #     f"Max relative error: {max_energy_error:.2e}"
-        # )
+        # Energy should be conserved to within 1e-8 relative error
+        assert max_energy_error < 1e-8, (
+            f"{operator_type}: Energy not conserved at x[{ix}]. Max relative error: {max_energy_error:.2e}"
+        )
 
     print(f"\n{operator_type}: Conservation test passed!")
     print(f"  Density conserved to within {np.max(np.abs(density - density[0:1, :]) / density[0:1, :]):.2e}")
@@ -134,11 +130,7 @@ def test_fokker_planck_thermalization(operator_type):
 
     # Get grid parameters from the actual config (cell-centered grid)
     dv = config["grid"]["vmax"] * 2.0 / config["grid"]["nv"]
-    v = np.linspace(
-        -config["grid"]["vmax"] + dv / 2,
-        config["grid"]["vmax"] - dv / 2,
-        config["grid"]["nv"]
-    )
+    v = np.linspace(-config["grid"]["vmax"] + dv / 2, config["grid"]["vmax"] - dv / 2, config["grid"]["nv"])
 
     # Check thermalization for first spatial point
     ix = 0
@@ -150,10 +142,10 @@ def test_fokker_planck_thermalization(operator_type):
     T_final = np.sum(f_final * v**2) * dv / n_final
 
     # Expected Maxwellian
-    f_maxwellian = n_final / np.sqrt(2.0 * np.pi * T_final) * np.exp(-v**2 / (2.0 * T_final))
+    f_maxwellian = n_final / np.sqrt(2.0 * np.pi * T_final) * np.exp(-(v**2) / (2.0 * T_final))
 
     # Compute L2 error between final distribution and Maxwellian using midpoint rule
-    l2_error = np.sqrt(np.sum((f_final - f_maxwellian)**2) * dv)
+    l2_error = np.sqrt(np.sum((f_final - f_maxwellian) ** 2) * dv)
     l2_norm = np.sqrt(np.sum(f_maxwellian**2) * dv)
     relative_error = l2_error / l2_norm
 
@@ -163,8 +155,7 @@ def test_fokker_planck_thermalization(operator_type):
     # Final distribution should be close to Maxwellian (within 10% L2 error)
     # This is a loose bound since we're testing conservation primarily
     assert relative_error < 0.1, (
-        f"{operator_type}: Distribution did not thermalize properly. "
-        f"L2 error to Maxwellian: {relative_error:.2e}"
+        f"{operator_type}: Distribution did not thermalize properly. L2 error to Maxwellian: {relative_error:.2e}"
     )
 
     print(f"  Thermalization test passed!")
@@ -173,8 +164,8 @@ def test_fokker_planck_thermalization(operator_type):
 if __name__ == "__main__":
     # Run tests for both operators
     for operator in ["Lenard_Bernstein", "Dougherty", "chang_cooper"]:
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Testing {operator}")
-        print('='*60)
+        print("=" * 60)
         test_fokker_planck_conservation(operator)
         # test_fokker_planck_thermalization(operator)
