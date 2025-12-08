@@ -158,7 +158,7 @@ def test_fokker_planck_thermalization(operator_type):
         f"{operator_type}: Distribution did not thermalize properly. L2 error to Maxwellian: {relative_error:.2e}"
     )
 
-    print(f"  Thermalization test passed!")
+    print("  Thermalization test passed!")
 
 
 if __name__ == "__main__":
