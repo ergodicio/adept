@@ -109,7 +109,6 @@ class BaseVlasov1D(ADEPTModule):
         :return:
         """
         cfg_grid = self.cfg["grid"]
-        print(cfg_grid)
 
         cfg_grid = {
             **cfg_grid,
