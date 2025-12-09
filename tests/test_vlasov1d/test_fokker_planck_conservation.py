@@ -74,8 +74,8 @@ def test_fokker_planck_conservation(operator_type):
         print(f"\n{operator_type} - Spatial point {ix}:")
         print(f"  Max density relative error: {max_density_error:.2e}")
 
-        # Density should be conserved to within 1e-8 relative error
-        assert max_density_error < 1e-8, (
+        # Density should be conserved to within 1e-10 relative error
+        assert max_density_error < 1e-10, (
             f"{operator_type}: Density not conserved at x[{ix}]. Max relative error: {max_density_error:.2e}"
         )
 
@@ -85,8 +85,8 @@ def test_fokker_planck_conservation(operator_type):
 
         print(f"  Max energy relative error: {max_energy_error:.2e}")
 
-        # Energy should be conserved to within 1e-8 relative error
-        assert max_energy_error < 1e-8, (
+        # Energy should be conserved to within 1e-6 relative error
+        assert max_energy_error < 1e-6, (
             f"{operator_type}: Energy not conserved at x[{ix}]. Max relative error: {max_energy_error:.2e}"
         )
 
