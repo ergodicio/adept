@@ -1,8 +1,9 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
-from typing import Any
 from collections.abc import Mapping
+from typing import Any
+
 import numpy as np
 from jax import numpy as jnp
 
