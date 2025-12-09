@@ -158,8 +158,6 @@ def test_fokker_planck_thermalization(operator_type):
         f"{operator_type}: Distribution did not thermalize properly. L2 error to Maxwellian: {relative_error:.2e}"
     )
 
-    print("  Thermalization test passed!")
-
 
 if __name__ == "__main__":
     # Run tests for both operators
@@ -168,4 +166,4 @@ if __name__ == "__main__":
         print(f"Testing {operator}")
         print("=" * 60)
         test_fokker_planck_conservation(operator)
-        # test_fokker_planck_thermalization(operator)
+        test_fokker_planck_thermalization(operator)
