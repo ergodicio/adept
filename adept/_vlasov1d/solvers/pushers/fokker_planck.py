@@ -189,8 +189,8 @@ class ChangCooperLenardBernstein:
         """
         Assemble Chang-Cooper tridiagonal coefficients for Lenard-Bernstein.
 
-        C = v f
-        D = <v^2> df/dv
+        B = v f
+        C = <v^2> df/dv
 
         :param nu: Collision frequency profile (shape: nx).
         :param f_xv: Distribution function f(x, v) (shape: nx x nv).
@@ -256,8 +256,8 @@ class ChangCooperDougherty:
         """
         Assemble Chang-Cooper tridiagonal coefficients for the Dougherty operator.
 
-        C = (v - <v>) f
-        D = <(v-<v>)^2> df/dv
+        B = (v - <v>) f
+        C = <(v-<v>)^2> df/dv
 
         :param nu: Collision frequency profile (shape: nx).
         :param f_xv: Distribution function f(x, v) (shape: nx x nv).
