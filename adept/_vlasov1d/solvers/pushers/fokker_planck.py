@@ -132,7 +132,7 @@ class _DriftDiffusionBase:
 
 
 class LenardBernstein(_DriftDiffusionBase):
-    """Classic Lenard-Bernstein Fokker-Planck operator."""
+    """Classic Lenard-Bernstein Fokker-Planck operator. """
 
     def __init__(self, cfg: Mapping[str, Any]):
         """
@@ -147,6 +147,8 @@ class LenardBernstein(_DriftDiffusionBase):
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
         Assemble tridiagonal coefficients for the Lenard-Bernstein operator.
+
+        NB: The equilbrium solution has a mean velocity of 0.
 
         :param nu: Collision frequency profile (shape: nx).
         :param f_xv: Distribution function f(x, v) (shape: nx x nv).
@@ -307,6 +309,8 @@ class Dougherty(_DriftDiffusionBase):
     ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """
         Assemble tridiagonal coefficients for the Dougherty operator.
+
+        NB: The equilbrium solution has a non-zero and self-consistent mean velocity.
 
         :param nu: Collision frequency profile (shape: nx).
         :param f_xv: Distribution function f(x, v) (shape: nx x nv).
