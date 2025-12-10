@@ -132,7 +132,7 @@ class _DriftDiffusionBase:
 
 
 class LenardBernstein(_DriftDiffusionBase):
-    """Classic Lenard-Bernstein Fokker-Planck operator. """
+    """Classic Lenard-Bernstein Fokker-Planck operator."""
 
     def __init__(self, cfg: Mapping[str, Any]):
         """
