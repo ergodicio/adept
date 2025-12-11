@@ -3,10 +3,10 @@ import re
 import jax
 import jax.numpy as jnp
 
-from adept import AdroitModule
+from adept import MlflowLoggingModule
 
 
-class ScaleAndAddModule(AdroitModule):
+class ScaleAndAddModule(MlflowLoggingModule):
     s: float
 
     def call(self, a, mlflow_run_id=None, b=0.0):

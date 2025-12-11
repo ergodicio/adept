@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 
 import equinox as eqx
@@ -28,7 +28,7 @@ class MLRunId(eqx.Module):
         return MLRunId("0" * 32)
 
 
-class AdroitModule(eqx.Module, ABC):
+class MlflowLoggingModule(eqx.Module):
     with_mlflow: bool
 
     @staticmethod
@@ -37,13 +37,12 @@ class AdroitModule(eqx.Module, ABC):
             with mlflow.start_run() as run:
                 return MLRunId(run.info.run_id)
 
-        return jax.experimental.io_callback(
-            create_mlflow_run, MLRunId.example(), dummy_arg, sharding=None, ordered=False
-        )
+        return jax.experimental.io_callback(create_mlflow_run, MLRunId.example(), dummy_arg)
 
-    def call_in_callback(self, callable, *args, mlflow_run_id, **kwargs):
+    @staticmethod
+    def call_logfunc_in_callback(logfunc, *args, mlflow_run_id, **kwargs):
         def call_with_byte_array_id(*args, mlflow_run_id, **kwargs):
-            callable(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
+            logfunc(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
 
         jax.debug.callback(call_with_byte_array_id, *args, mlflow_run_id=mlflow_run_id, **kwargs)
 
@@ -61,17 +60,17 @@ class AdroitModule(eqx.Module, ABC):
         if self.with_mlflow:
             if mlflow_batch_num is None:
                 raise ValueError("mlflow_batch_num must be specified")
-            run_id = AdroitModule.create_mlflow_run_in_callback(mlflow_batch_num)
+            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(mlflow_batch_num)
         else:
             run_id = None
 
         if self.with_mlflow:
-            self.call_in_callback(self.pre_logging, *args, mlflow_run_id=run_id, **kwargs)
+            self.call_logfunc_in_callback(self.pre_logging, *args, mlflow_run_id=run_id, **kwargs)
 
         result = self.call(*args, mlflow_run_id=run_id, **kwargs)
 
         if self.with_mlflow:
-            self.call_in_callback(self.post_logging, result, *args, mlflow_run_id=run_id, **kwargs)
+            self.call_logfunc_in_callback(self.post_logging, result, *args, mlflow_run_id=run_id, **kwargs)
 
         return result
 
