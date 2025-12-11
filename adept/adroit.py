@@ -24,6 +24,7 @@ class MLRunId(eqx.Module):
 
     @staticmethod
     def example():
+        "Generate an MLRunId of the correct length for shape,dtype purposes"
         return MLRunId("0" * 32)
 
 
