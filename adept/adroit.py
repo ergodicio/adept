@@ -41,17 +41,11 @@ class AdroitModule(eqx.Module, ABC):
             create_mlflow_run, MLRunId.example(), dummy_arg, sharding=None, ordered=False
         )
 
-    def call_pre_logging_in_callback(self, *args, mlflow_run_id, **kwargs):
-        def pre_logging_call(*args, mlflow_run_id, **kwargs):
-            self.pre_logging(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
+    def call_in_callback(self, callable, *args, mlflow_run_id, **kwargs):
+        def call_with_byte_array_id(*args, mlflow_run_id, **kwargs):
+            callable(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
 
-        jax.debug.callback(pre_logging_call, *args, mlflow_run_id=mlflow_run_id, **kwargs)
-
-    def call_post_logging_in_callback(self, result, *args, mlflow_run_id, **kwargs):
-        def post_logging_call(result, *args, mlflow_run_id, **kwargs):
-            self.post_logging(result, *args, mlflow_run_id=str(mlflow_run_id), **kwargs)
-
-        jax.debug.callback(post_logging_call, result, *args, mlflow_run_id=mlflow_run_id, **kwargs)
+        jax.debug.callback(call_with_byte_array_id, *args, mlflow_run_id=mlflow_run_id, **kwargs)
 
     def __call__(self, *args, mlflow_batch_num=None, **kwargs):
         """
@@ -72,12 +66,12 @@ class AdroitModule(eqx.Module, ABC):
             run_id = None
 
         if self.with_mlflow:
-            self.call_pre_logging_in_callback(*args, mlflow_run_id=run_id, **kwargs)
+            self.call_in_callback(self.pre_logging, *args, mlflow_run_id=run_id, **kwargs)
 
         result = self.call(*args, mlflow_run_id=run_id, **kwargs)
 
         if self.with_mlflow:
-            self.call_post_logging_in_callback(result, *args, mlflow_run_id=run_id, **kwargs)
+            self.call_in_callback(self.post_logging, result, *args, mlflow_run_id=run_id, **kwargs)
 
         return result
 
