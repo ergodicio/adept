@@ -28,7 +28,7 @@ class MLRunId(eqx.Module):
         return MLRunId("0" * 32)
 
 
-class AdroitModule(eqx.Module, ABC):
+class MlflowLoggingModule(eqx.Module, ABC):
     with_mlflow: bool
 
     @staticmethod
@@ -37,9 +37,7 @@ class AdroitModule(eqx.Module, ABC):
             with mlflow.start_run() as run:
                 return MLRunId(run.info.run_id)
 
-        return jax.experimental.io_callback(
-            create_mlflow_run, MLRunId.example(), dummy_arg, sharding=None, ordered=False
-        )
+        return jax.experimental.io_callback(create_mlflow_run, MLRunId.example(), dummy_arg)
 
     def call_in_callback(self, callable, *args, mlflow_run_id, **kwargs):
         def call_with_byte_array_id(*args, mlflow_run_id, **kwargs):
@@ -61,7 +59,7 @@ class AdroitModule(eqx.Module, ABC):
         if self.with_mlflow:
             if mlflow_batch_num is None:
                 raise ValueError("mlflow_batch_num must be specified")
-            run_id = AdroitModule.create_mlflow_run_in_callback(mlflow_batch_num)
+            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(mlflow_batch_num)
         else:
             run_id = None
 
