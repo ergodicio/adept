@@ -2,21 +2,23 @@ import re
 
 import jax
 import jax.numpy as jnp
+import mlflow
 
 from adept import MlflowLoggingModule
+from adept.mlflow_logging import MLRunId
 
 
 class ScaleAndAddModule(MlflowLoggingModule):
     s: float
 
-    def call(self, a, mlflow_run_id=None, b=0.0):
+    def call(self, a, mlflow_run_id_bytes=None, b=0.0):
         return self.s * a + b
 
-    def pre_logging(self, a, mlflow_run_id=None, b=0.0):
-        print(f"PRE_LOGGING | a={a}, b={b}, mlflow_run_id={mlflow_run_id}")
+    def pre_logging(self, a, mlflow_run_id_bytes=None, b=0.0):
+        print(f"PRE_LOGGING | a={a}, b={b}, mlflow_run_id={mlflow_run_id_bytes!s}")
 
-    def post_logging(self, result, a, mlflow_run_id=None, b=0.0):
-        print(f"POST_LOGGING | a={a}, b={b}, result={result}, mlflow_run_id={mlflow_run_id}")
+    def post_logging(self, result, a, mlflow_run_id_bytes=None, b=0.0):
+        print(f"POST_LOGGING | a={a}, b={b}, result={result}, mlflow_run_id={mlflow_run_id_bytes!s}")
 
 
 def test_adroit_module_base_call():
@@ -92,6 +94,61 @@ def test_adroit_module_mlflow_with_vmap(capsys):
     result = jax.vmap(saam)(2.0 * jnp.ones(3), mlflow_batch_num=jnp.arange(3), b=4.5 * jnp.ones(3))
 
     captured = capsys.readouterr()
+
+    pre_logging_pattern = r"PRE_LOGGING \| a=2.0, b=4.5, mlflow_run_id=(\w{32})"
+    post_logging_pattern = r"POST_LOGGING \| a=2.0, b=4.5, result=10.5, mlflow_run_id=(\w{32})"
+
+    pre_logging_matches = list(re.finditer(pre_logging_pattern, captured.out))
+    post_logging_matches = list(re.finditer(post_logging_pattern, captured.out))
+
+    assert len(pre_logging_matches) == 3
+    assert len(set([m.group(1) for m in pre_logging_matches])) == 3
+    assert len(post_logging_matches) == 3
+    assert len(set([m.group(1) for m in post_logging_matches])) == 3
+
+    assert set([m.group(1) for m in pre_logging_matches]) == set([m.group(1) for m in post_logging_matches])
+
+
+def test_mlflow_logging_module_in_manually_created_parent_run():
+    saam = ScaleAndAddModule(True, 3.0)
+    with mlflow.start_run() as parent_run:
+        parent_run_id = MLRunId(parent_run.info.run_id)
+        print("Parent run id:", parent_run.info.run_id)
+        saam(2.0, b=4.5, mlflow_batch_num=0, mlflow_parent_run_id_bytes=parent_run_id)
+
+
+class OuterScalingAndAddingModule(MlflowLoggingModule):
+    saam: ScaleAndAddModule
+    b: float
+
+    def call(self, a, mlflow_run_id_bytes=None, **kwargs):
+        return self.saam(a, b=self.b, mlflow_parent_run_id_bytes=mlflow_run_id_bytes, mlflow_batch_num=0)
+
+    def pre_logging(self, *args, **kwargs):
+        pass
+
+    def post_logging(self, *args, **kwargs):
+        pass
+
+
+def test_nested_mlflow_logging_modules():
+    saam = ScaleAndAddModule(True, 3.0)
+    b = 4.5
+    outer_module = OuterScalingAndAddingModule(True, saam, b)
+
+    outer_module(2.0, mlflow_batch_num=0)
+
+
+def test_nested_mlflow_logging_vmap(capsys):
+    saam = ScaleAndAddModule(True, 3.0)
+    b = 4.5
+    outer_module = OuterScalingAndAddingModule(True, saam, b)
+
+    jax.vmap(outer_module)(2 * jnp.ones(3), mlflow_batch_num=jnp.arange(3))
+
+    captured = capsys.readouterr()
+
+    print(captured.out)
 
     pre_logging_pattern = r"PRE_LOGGING \| a=2.0, b=4.5, mlflow_run_id=(\w{32})"
     post_logging_pattern = r"POST_LOGGING \| a=2.0, b=4.5, result=10.5, mlflow_run_id=(\w{32})"

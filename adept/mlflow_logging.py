@@ -32,21 +32,17 @@ class MlflowLoggingModule(eqx.Module):
     with_mlflow: bool
 
     @staticmethod
-    def create_mlflow_run_in_callback(dummy_arg):
-        def create_mlflow_run(dummy_arg):
-            with mlflow.start_run() as run:
+    def create_mlflow_run_in_callback(dummy_arg, parent_run_id_bytes=None):
+        def create_mlflow_run(dummy_arg, parent_run_id_bytes=None):
+            parent_run_id_str = None if parent_run_id_bytes is None else str(parent_run_id_bytes)
+            with mlflow.start_run(parent_run_id=parent_run_id_str, nested=(parent_run_id_str is not None)) as run:
                 return MLRunId(run.info.run_id)
 
-        return jax.experimental.io_callback(create_mlflow_run, MLRunId.example(), dummy_arg)
+        return jax.experimental.io_callback(
+            create_mlflow_run, MLRunId.example(), dummy_arg, parent_run_id_bytes=parent_run_id_bytes
+        )
 
-    @staticmethod
-    def call_logfunc_in_callback(logfunc, *args, mlflow_run_id, **kwargs):
-        def call_with_byte_array_id(*args, mlflow_run_id, **kwargs):
-            logfunc(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
-
-        jax.debug.callback(call_with_byte_array_id, *args, mlflow_run_id=mlflow_run_id, **kwargs)
-
-    def __call__(self, *args, mlflow_batch_num=None, **kwargs):
+    def __call__(self, *args, mlflow_batch_num=None, mlflow_parent_run_id_bytes=None, **kwargs):
         """
         Params:
             - `*args`: The list of positional arguments to pass to `call`
@@ -60,36 +56,38 @@ class MlflowLoggingModule(eqx.Module):
         if self.with_mlflow:
             if mlflow_batch_num is None:
                 raise ValueError("mlflow_batch_num must be specified")
-            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(mlflow_batch_num)
+            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(
+                mlflow_batch_num, parent_run_id_bytes=mlflow_parent_run_id_bytes
+            )
         else:
             run_id = None
 
         if self.with_mlflow:
-            self.call_logfunc_in_callback(self.pre_logging, *args, mlflow_run_id=run_id, **kwargs)
+            jax.debug.callback(self.pre_logging, *args, mlflow_run_id_bytes=run_id, **kwargs)
 
-        result = self.call(*args, mlflow_run_id=run_id, **kwargs)
+        result = self.call(*args, mlflow_run_id_bytes=run_id, **kwargs)
 
         if self.with_mlflow:
-            self.call_logfunc_in_callback(self.post_logging, result, *args, mlflow_run_id=run_id, **kwargs)
+            jax.debug.callback(self.post_logging, result, *args, mlflow_run_id_bytes=run_id, **kwargs)
 
         return result
 
     @abstractmethod
-    def call(self, *args, **kwargs):
+    def call(self, *args, mlflow_run_id_bytes=None, **kwargs):
         """
         The computation to wrap.
         """
         pass
 
     @abstractmethod
-    def pre_logging(self, *args, mlflow_run_id=None, **kwargs):
+    def pre_logging(self, *args, mlflow_run_id_bytes=None, **kwargs):
         """
         Any mlflow logging to be performed before the computation, such as logging params.
         """
         pass
 
     @abstractmethod
-    def post_logging(self, result, *args, mlflow_run_id=None, **kwargs):
+    def post_logging(self, result, *args, mlflow_run_id_bytes=None, **kwargs):
         """
         Any mlflow logging to be performed after the computation.
         """
