@@ -9,14 +9,20 @@ from adept import MlflowLoggingModule
 class ScaleAndAddModule(MlflowLoggingModule):
     s: float
 
-    def call(self, a, mlflow_run_id=None, b=0.0):
+    def setup(self, *args, **kwargs):
+        return {"abs2(s)": jnp.abs(self.s) ** 2}
+
+    def call(self, a, mlflow_run_id=None, b=0.0, **kwargs):
         return self.s * a + b
 
-    def pre_logging(self, a, mlflow_run_id=None, b=0.0):
-        print(f"PRE_LOGGING | a={a}, b={b}, mlflow_run_id={mlflow_run_id}")
+    def pre_logging(self, a, setup_result, mlflow_run_id, b):
+        print(f"PRE_LOGGING | a={a}, b={b}, abs2(s)={setup_result['abs2(s)']}, mlflow_run_id={mlflow_run_id}")
 
-    def post_logging(self, result, a, mlflow_run_id=None, b=0.0):
-        print(f"POST_LOGGING | a={a}, b={b}, result={result}, mlflow_run_id={mlflow_run_id}")
+    def post_logging(self, result, a, setup_result, mlflow_run_id, b):
+        print(
+            f"POST_LOGGING | a={a}, b={b}, abs2(s)={setup_result['abs2(s)']}, "
+            + f"result={result}, mlflow_run_id={mlflow_run_id}"
+        )
 
 
 def test_adroit_module_base_call():
@@ -64,8 +70,8 @@ def test_pre_and_post_logging(capsys):
     saam(2.0, b=4.5, mlflow_batch_num=0)
 
     captured = capsys.readouterr()
-    pattern = r"""PRE_LOGGING | a=2.0, b=4.5, mlflow_run_id=(\w{32})
-POST_LOGGING | a=2.0, b=4.5, result=10.5, mlflow_run_id=(\w{32})
+    pattern = r"""PRE_LOGGING | a=2.0, b=4.5, abs2\(s\)=9.0, mlflow_run_id=(\w{32})
+POST_LOGGING | a=2.0, b=4.5, abs2\(s\)=9.0, result=10.5, mlflow_run_id=(\w{32})
 """
     match = re.search(pattern, captured.out)
     assert match is not None
@@ -77,8 +83,8 @@ def test_pre_and_post_logging_grad(capsys):
     jax.grad(saam)(2.0, b=4.5, mlflow_batch_num=0)
 
     captured = capsys.readouterr()
-    pattern = r"""PRE_LOGGING \| a=2.0, b=4.5, mlflow_run_id=(\w{32})
-POST_LOGGING \| a=2.0, b=4.5, result=10.5, mlflow_run_id=(\w{32})
+    pattern = r"""PRE_LOGGING \| a=2.0, b=4.5, abs2\(s\)=9.0, mlflow_run_id=(\w{32})
+POST_LOGGING \| a=2.0, b=4.5, abs2\(s\)=9.0, result=10.5, mlflow_run_id=(\w{32})
 """
     match = re.fullmatch(pattern, captured.out, re.MULTILINE)
     assert match is not None
@@ -93,8 +99,8 @@ def test_adroit_module_mlflow_with_vmap(capsys):
 
     captured = capsys.readouterr()
 
-    pre_logging_pattern = r"PRE_LOGGING \| a=2.0, b=4.5, mlflow_run_id=(\w{32})"
-    post_logging_pattern = r"POST_LOGGING \| a=2.0, b=4.5, result=10.5, mlflow_run_id=(\w{32})"
+    pre_logging_pattern = r"PRE_LOGGING \| a=2.0, b=4.5, abs2\(s\)=9.0, mlflow_run_id=(\w{32})"
+    post_logging_pattern = r"POST_LOGGING \| a=2.0, b=4.5, abs2\(s\)=9.0, result=10.5, mlflow_run_id=(\w{32})"
 
     pre_logging_matches = list(re.finditer(pre_logging_pattern, captured.out))
     post_logging_matches = list(re.finditer(post_logging_pattern, captured.out))

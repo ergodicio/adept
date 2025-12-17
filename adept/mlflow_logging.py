@@ -40,11 +40,13 @@ class MlflowLoggingModule(eqx.Module):
         return jax.experimental.io_callback(create_mlflow_run, MLRunId.example(), dummy_arg)
 
     @staticmethod
-    def call_logfunc_in_callback(logfunc, *args, mlflow_run_id, **kwargs):
-        def call_with_byte_array_id(*args, mlflow_run_id, **kwargs):
-            logfunc(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
+    def call_logfunc_in_callback(logfunc, *args, setup_result, mlflow_run_id, **kwargs):
+        def call_with_byte_array_id(*args, setup_result, mlflow_run_id, **kwargs):
+            logfunc(*args, setup_result, mlflow_run_id=str(mlflow_run_id), **kwargs)
 
-        jax.debug.callback(call_with_byte_array_id, *args, mlflow_run_id=mlflow_run_id, **kwargs)
+        jax.debug.callback(
+            call_with_byte_array_id, *args, setup_result=setup_result, mlflow_run_id=mlflow_run_id, **kwargs
+        )
 
     def __call__(self, *args, mlflow_batch_num=None, **kwargs):
         """
@@ -64,33 +66,75 @@ class MlflowLoggingModule(eqx.Module):
         else:
             run_id = None
 
-        if self.with_mlflow:
-            self.call_logfunc_in_callback(self.pre_logging, *args, mlflow_run_id=run_id, **kwargs)
-
-        result = self.call(*args, mlflow_run_id=run_id, **kwargs)
+        setup_result = self.setup(*args, mlflow_run_id=run_id, **kwargs)
 
         if self.with_mlflow:
-            self.call_logfunc_in_callback(self.post_logging, result, *args, mlflow_run_id=run_id, **kwargs)
+            self.call_logfunc_in_callback(
+                self.pre_logging, *args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs
+            )
+
+        result = self.call(*args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs)
+
+        if self.with_mlflow:
+            self.call_logfunc_in_callback(
+                self.post_logging, result, *args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs
+            )
 
         return result
 
     @abstractmethod
-    def call(self, *args, **kwargs):
+    def setup(self, *args, mlflow_run_id=None, **kwargs):
+        """
+        Perform any preprocessing of `*args`, `**kwargs`, and `self` that should
+        be logged as part of `self.pre_logging`. For example, computing derived units
+        or grid arrays.
+
+        The return value of this function will be piped to the other lifecycle
+        methods as the `setup_result` kwarg.
+
+        params:
+            - `mlflow_run_id`: The ID of the mlflow run for the current module call
+            - `*args`: Any remaining positional arguments to `self.__call__`
+            - `*kwargs`: Any remaining keyword arguments to `self.__call__`
+        """
+        pass
+
+    @abstractmethod
+    def call(self, *args, setup_result=None, mlflow_run_id=None, **kwargs):
         """
         The computation to wrap.
+
+        params:
+            - `setup_result`: The return value of `setup()`
+            - `mlflow_run_id`: The ID of the mlflow run for the current module call
+            - `*args`: Any remaining positional arguments to `self.__call__`
+            - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
         pass
 
     @abstractmethod
-    def pre_logging(self, *args, mlflow_run_id=None, **kwargs):
+    def pre_logging(self, *args, setup_result=None, mlflow_run_id=None, **kwargs):
         """
         Any mlflow logging to be performed before the computation, such as logging params.
+
+        params:
+            - `setup_result`: The return value of `setup()`
+            - `mlflow_run_id`: The ID of the mlflow run for the current module call
+            - `*args`: Any remaining positional arguments to `self.__call__`
+            - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
         pass
 
     @abstractmethod
-    def post_logging(self, result, *args, mlflow_run_id=None, **kwargs):
+    def post_logging(self, result, *args, setup_result=None, mlflow_run_id=None, **kwargs):
         """
-        Any mlflow logging to be performed after the computation.
+        Any mlflow logging to be performed after the computation, such as metrics and plot artifacts.
+
+        params:
+            - `result`: The return value of `call()`
+            - `setup_result`: The return value of `setup()`
+            - `mlflow_run_id`: The ID of the mlflow run for the current module call
+            - `*args`: Any remaining positional arguments to `self.__call__`
+            - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
         pass
