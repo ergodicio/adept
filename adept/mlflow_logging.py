@@ -32,12 +32,39 @@ class MlflowLoggingModule(eqx.Module):
     with_mlflow: bool
 
     @staticmethod
-    def create_mlflow_run_in_callback(dummy_arg):
-        def create_mlflow_run(dummy_arg):
-            with mlflow.start_run() as run:
+    def create_mlflow_run_in_callback(
+        dummy_arg,
+        experiment_id=None,
+        run_name=None,
+        parent_run_id=None,
+        tags=None,
+        description=None,
+        log_system_metrics=None,
+    ):
+        if parent_run_id is not None:
+            assert isinstance(parent_run_id, MLRunId)
+
+        def create_mlflow_run(dummy_arg, parent_run_id=None):
+            nested = parent_run_id is not None
+            parent_run_id = str(parent_run_id) if nested else None
+
+            with mlflow.start_run(
+                parent_run_id=parent_run_id,
+                nested=nested,
+                experiment_id=experiment_id,
+                run_name=run_name,
+                tags=tags,
+                description=description,
+                log_system_metrics=log_system_metrics,
+            ) as run:
                 return MLRunId(run.info.run_id)
 
-        return jax.experimental.io_callback(create_mlflow_run, MLRunId.example(), dummy_arg)
+        return jax.experimental.io_callback(
+            create_mlflow_run,
+            MLRunId.example(),
+            dummy_arg,
+            parent_run_id=parent_run_id,
+        )
 
     @staticmethod
     def call_logfunc_in_callback(logfunc, *args, setup_result, mlflow_run_id, **kwargs):
@@ -48,7 +75,7 @@ class MlflowLoggingModule(eqx.Module):
             call_with_byte_array_id, *args, setup_result=setup_result, mlflow_run_id=mlflow_run_id, **kwargs
         )
 
-    def __call__(self, *args, mlflow_batch_num=None, **kwargs):
+    def __call__(self, *args, mlflow_batch_num=None, mlflow_kwargs=None, **kwargs):
         """
         Params:
             - `*args`: The list of positional arguments to pass to `call`
@@ -57,12 +84,15 @@ class MlflowLoggingModule(eqx.Module):
                                   be specified by the caller.
                                   Outside of a vmap context, mlflow_batch_num=0 is an appropriate choice.
                                   When vmapping, you should use `mlflow_batch_num=jnp.arange(batch_size)`.
+            - `mlflow_kwargs`: A dict of keyword arguments to pass to `mlflow.start_run`. If "parent_run_id"
+                               is included, it must be passed as an MLRunId, not a string.
             - `**kwargs`: The dict of keyword args to pass to `call`
         """
         if self.with_mlflow:
             if mlflow_batch_num is None:
                 raise ValueError("mlflow_batch_num must be specified")
-            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(mlflow_batch_num)
+            mlflow_kwargs = {} if mlflow_kwargs is None else mlflow_kwargs
+            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(mlflow_batch_num, **mlflow_kwargs)
         else:
             run_id = None
 
