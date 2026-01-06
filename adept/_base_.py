@@ -7,13 +7,13 @@ from copy import deepcopy
 
 import jax
 import jax.flatten_util
-import mlflow
 import numpy as np
 import yaml
 from diffrax import RESULTS, Euler, Solution
 from equinox import Module, filter_jit
 from jax import numpy as jnp
 
+from . import patched_mlflow as mlflow
 from .utils import robust_log_artifacts
 
 

@@ -9,10 +9,11 @@ import botocore
 import equinox as eqx
 import flatdict
 import jax
-import mlflow
 import yaml
 from mlflow.tracking import MlflowClient
 from pint import Quantity
+
+from . import patched_mlflow as mlflow
 
 
 def log_params(cfg):

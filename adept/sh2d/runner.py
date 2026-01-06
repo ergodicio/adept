@@ -4,7 +4,6 @@ import time
 
 import diffrax
 import equinox as eqx
-import mlflow
 import numpy as np
 import pint
 import yaml
@@ -12,6 +11,8 @@ from diffrax import ODETerm, SaveAt, Solution, diffeqsolve
 from utils import misc
 
 from adept.sh2d.utils import helpers, save
+
+from .. import patched_mlflow as mlflow
 
 
 def write_units(cfg, td):

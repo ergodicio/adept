@@ -16,7 +16,7 @@ dependencies = [
     "numpy",
     "tqdm",
     "xarray",
-    "mlflow @ git+https://github.com/johnbcoughlin/mlflow.git@449a16f6d8ed061270712faef08cb3a48402bb81",
+    "mlflow",
     "flatdict",
     "h5netcdf",
     "optax",
