@@ -4,8 +4,9 @@ from dataclasses import dataclass
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import mlflow
 import numpy as np
+
+from . import patched_mlflow as mlflow
 
 
 class MLRunId(eqx.Module):

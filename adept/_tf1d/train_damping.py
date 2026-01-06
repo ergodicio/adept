@@ -16,7 +16,6 @@ import tempfile
 import time
 
 import equinox as eqx
-import mlflow
 import optax
 import xarray as xr
 from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
@@ -25,6 +24,8 @@ from tqdm import tqdm
 from utils import misc, plotters
 
 from adept._tf1d import helpers
+
+from .. import patched_mlflow as mlflow
 
 # This happens a lot in this file, don't think there's another way to do it
 # but also don't feel confiident to disable this check repo wide

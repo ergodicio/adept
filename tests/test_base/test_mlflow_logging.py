@@ -2,8 +2,8 @@ import re
 
 import jax
 import jax.numpy as jnp
-import mlflow
 
+import adept.patched_mlflow as mlflow
 from adept import MlflowLoggingModule
 from adept.mlflow_logging import MLRunId
 

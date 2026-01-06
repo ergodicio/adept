@@ -2,12 +2,12 @@ import jax
 
 jax.config.update("jax_enable_x64", False)
 
-import mlflow
 import numpy as np
 import pytest
 import yaml
 from numpy import testing
 
+import adept.patched_mlflow as mlflow
 from adept import ergoExo
 from adept.electrostatic import get_nlfs
 
