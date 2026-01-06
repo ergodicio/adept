@@ -1,0 +1,128 @@
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+density:
+  quasineutrality: true
+  species-electron-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: sine
+    baseline: 1.0
+    amplitude: 1.0e-3
+    wavenumber: 0.3
+  species-ion-background:
+    noise_seed: 421
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 0.01
+    m: 2.0
+    basis: sine
+    baseline: 1.0
+    amplitude: -1.0e-3
+    wavenumber: 0.3
+
+grid:
+  dt: 0.05
+  nx: 32
+  tmin: 0.
+  tmax: 50.0
+  xmax: 20.94
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 501
+  electron:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 11
+  ion:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 11
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: multispecies-test
+  run: ion-acoustic-wave
+
+drivers:
+  ex: {}
+  ey: {}
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: sixth
+  species:
+    - name: electron
+      charge: -1.0
+      mass: 1.0
+      vmax: 6.4
+      nv: 512
+      density_components:
+        - species-electron-background
+    - name: ion
+      charge: 10.0
+      mass: 18360.0
+      vmax: 0.15
+      nv: 256
+      density_components:
+        - species-ion-background
+  fokker_planck:
+    is_on: False
+    type: Dougherty
+    time:
+      baseline: 1.0e-5
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
