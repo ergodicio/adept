@@ -1,6 +1,6 @@
 ---
 id: a-b69a
-status: open
+status: in_progress
 deps: [a-8693]
 links: []
 created: 2026-01-06T22:18:20Z
