@@ -82,7 +82,10 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid = self.cfg["grid"]
 
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
-        cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
+
+        # Only compute dv if vmax and nv are present (single-species mode)
+        if "vmax" in cfg_grid and "nv" in cfg_grid:
+            cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
@@ -117,13 +120,8 @@ class BaseVlasov1D(ADEPTModule):
                     cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
                 ),
                 "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-                "v": jnp.linspace(
-                    -cfg_grid["vmax"] + cfg_grid["dv"] / 2, cfg_grid["vmax"] - cfg_grid["dv"] / 2, cfg_grid["nv"]
-                ),
                 "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
                 "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-                "kv": jnp.fft.fftfreq(cfg_grid["nv"], d=cfg_grid["dv"]) * 2.0 * np.pi,
-                "kvr": jnp.fft.rfftfreq(cfg_grid["nv"], d=cfg_grid["dv"]) * 2.0 * np.pi,
             },
         }
 
@@ -136,25 +134,93 @@ class BaseVlasov1D(ADEPTModule):
         one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
         cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
 
-        # velocity axes
-        one_over_kv = np.zeros_like(cfg_grid["kv"])
-        one_over_kv[1:] = 1.0 / cfg_grid["kv"][1:]
-        cfg_grid["one_over_kv"] = jnp.array(one_over_kv)
-
-        one_over_kvr = np.zeros_like(cfg_grid["kvr"])
-        one_over_kvr[1:] = 1.0 / cfg_grid["kvr"][1:]
-        cfg_grid["one_over_kvr"] = jnp.array(one_over_kvr)
-
         cfg_grid["nuprof"] = 1.0
         # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
         cfg_grid["ktprof"] = 1.0
         # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-        cfg_grid["n_prof_total"], cfg_grid["starting_f"] = _initialize_total_distribution_(self.cfg, cfg_grid)
+
+        # Initialize distributions (always returns dict format)
+        dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
+        cfg_grid["species_distributions"] = dist_result
+
+        # Build species_grids and species_params
+        cfg_grid["species_grids"] = {}
+        cfg_grid["species_params"] = {}
+        n_prof_total = np.zeros([cfg_grid["nx"]])
+
+        # Check if multi-species mode (more than one species OR species config provided)
+        is_multispecies = self.cfg["terms"].get("species", None) is not None
+
+        for species_name, (n_prof, f_s, v_ax) in dist_result.items():
+            n_prof_total += n_prof
+
+            if is_multispecies:
+                # Find the species config
+                species_cfg = next(
+                    (s for s in self.cfg["terms"]["species"] if s["name"] == species_name), None
+                )
+                if species_cfg is None:
+                    raise ValueError(f"Species '{species_name}' not found in config['terms']['species']")
+
+                nv = species_cfg["nv"]
+                vmax = species_cfg["vmax"]
+            else:
+                # Single-species mode: use grid-level values
+                nv = cfg_grid["nv"]
+                vmax = cfg_grid["vmax"]
+                # Create a species config for consistency
+                species_cfg = {"charge": -1.0, "mass": 1.0}
+
+            dv = 2.0 * vmax / nv
+
+            # Build velocity grid parameters for this species
+            cfg_grid["species_grids"][species_name] = {
+                "v": jnp.array(v_ax),
+                "dv": dv,
+                "nv": nv,
+                "vmax": vmax,
+                "kv": jnp.fft.fftfreq(nv, d=dv) * 2.0 * np.pi,
+                "kvr": jnp.fft.rfftfreq(nv, d=dv) * 2.0 * np.pi,
+            }
+
+            # one_over_kv for this species (size is length of kvr for real FFT)
+            kvr_len = len(cfg_grid["species_grids"][species_name]["kvr"])
+            one_over_kv = np.zeros(nv)
+            one_over_kv[1:] = 1.0 / cfg_grid["species_grids"][species_name]["kv"][1:]
+            cfg_grid["species_grids"][species_name]["one_over_kv"] = jnp.array(one_over_kv)
+
+            one_over_kvr = np.zeros(kvr_len)
+            one_over_kvr[1:] = 1.0 / cfg_grid["species_grids"][species_name]["kvr"][1:]
+            cfg_grid["species_grids"][species_name]["one_over_kvr"] = jnp.array(one_over_kvr)
+
+            # Build species parameters (charge, mass, charge-to-mass ratio)
+            cfg_grid["species_params"][species_name] = {
+                "charge": species_cfg["charge"],
+                "mass": species_cfg["mass"],
+                "charge_to_mass": species_cfg["charge"] / species_cfg["mass"],
+            }
+
+        cfg_grid["n_prof_total"] = n_prof_total
+
+        # Quasineutrality handling
+        if is_multispecies:
+            # For multi-species, use zeros (quasineutrality handled differently)
+            cfg_grid["ion_charge"] = np.zeros_like(n_prof_total)
+        else:
+            # For single-species, set ion_charge to n_prof_total
+            cfg_grid["ion_charge"] = n_prof_total.copy()
+
+        # For backward compatibility, also store starting_f and v at grid level for single-species
+        if not is_multispecies:
+            cfg_grid["starting_f"] = dist_result["electron"][1]
+            cfg_grid["v"] = jnp.array(dist_result["electron"][2])
+            cfg_grid["kv"] = cfg_grid["species_grids"]["electron"]["kv"]
+            cfg_grid["kvr"] = cfg_grid["species_grids"]["electron"]["kvr"]
+            cfg_grid["one_over_kv"] = cfg_grid["species_grids"]["electron"]["one_over_kv"]
+            cfg_grid["one_over_kvr"] = cfg_grid["species_grids"]["electron"]["one_over_kvr"]
 
         cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
         # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
-        cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["n_prof_total"]) + cfg_grid["n_prof_total"]
 
         cfg_grid["x_a"] = np.concatenate(
             [
@@ -173,21 +239,30 @@ class BaseVlasov1D(ADEPTModule):
         :param cfg:
         :return:
         """
-        n_prof_total, f = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
+        # Initialize distributions (always returns dict format)
+        dist_result = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
 
         state = {}
-        for species in ["electron"]:
-            state[species] = f
 
+        # Build state dict with all species distributions
+        for species_name, (n_prof, f_s, v_ax) in dist_result.items():
+            state[species_name] = jnp.array(f_s)
+
+        # Reference distribution for diagnostics (use first species)
+        first_species_name = list(dist_result.keys())[0]
+        f_ref = dist_result[first_species_name][1]
+
+        # Field quantities (same for all modes)
         for field in ["e", "de"]:
             state[field] = jnp.zeros(self.cfg["grid"]["nx"])
 
         for field in ["a", "da", "prev_a"]:
             state[field] = jnp.zeros(self.cfg["grid"]["nx"] + 2)  # need boundary cells
 
+        # Diagnostics (use reference distribution shape)
         for k in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
             if self.cfg["diagnostics"][k]:
-                state[k] = jnp.zeros_like(f)
+                state[k] = jnp.zeros_like(f_ref)
 
         self.state = state
         self.args = {"drivers": self.cfg["drivers"], "terms": self.cfg["terms"]}
