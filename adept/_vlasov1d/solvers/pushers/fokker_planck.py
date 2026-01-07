@@ -42,16 +42,32 @@ class Collisions:
         else:
             raise NotImplementedError
 
-    def __call__(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+    def __call__(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f, dt: jnp.float64):
         """
         Apply configured collision operators to the distribution function.
 
         :param nu_fp: Collision frequencies for the Fokker-Planck operator (shape: nx).
         :param nu_K: Krook collision frequencies (shape: nx).
-        :param f: Distribution function f(x, v) (shape: nx x nv).
+        :param f: Distribution function (dict or array).
         :param dt: Time step size.
         :return: Updated distribution function after collisions.
         """
+        # TODO: Properly handle multi-species collisions
+        # For now, only apply to electron distribution for backward compatibility
+        if isinstance(f, dict):
+            result = {}
+            for species_name, f_species in f.items():
+                if species_name == "electron":
+                    result[species_name] = self._apply_collisions(nu_fp, nu_K, f_species, dt)
+                else:
+                    # For non-electron species, just pass through unchanged for now
+                    result[species_name] = f_species
+            return result
+        else:
+            return self._apply_collisions(nu_fp, nu_K, f, dt)
+
+    def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+        """Apply collision operators to a single species distribution."""
         if self.cfg["terms"]["fokker_planck"]["is_on"]:
             # The three diagonals representing collision operator for all x
             cee_a, cee_b, cee_c = self.fp(nu=nu_fp, f_xv=f, dt=dt)
