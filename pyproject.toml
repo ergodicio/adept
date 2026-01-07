@@ -1,5 +1,6 @@
 [project]
 name = "adept"
+version = "0.1.0"
 description = "Automatic-Differentiation-Enabled Plasma Transport in JAX"
 readme = "README.md"
 authors = [
@@ -30,7 +31,6 @@ dependencies = [
     "scienceplots",
     "jax"
 ]
-dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/ergodicio/adept"
