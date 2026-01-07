@@ -9,6 +9,7 @@ plt.style.use(["science", "grid", "no-latex"])
 import time
 
 import interpax
+import jax
 import numpy as np
 import xarray as xr
 from astropy.units import Quantity as _Q
@@ -591,10 +592,10 @@ def make_field_xarrays(cfg, this_t, state, td):
     yax_tuple = ("y (um)", yax)
 
     # check if state["epw"] is a complex64 or 128 and choose accordingly
-    # if state["epw"].dtype == jnp.complex128:
-    # _complex = np.complex128
-    # else:
-    _complex = np.complex64
+    if state["epw"].dtype == jnp.complex128:
+        _complex = np.complex128
+    else:
+        _complex = np.complex64
 
     phi_k_np = np.array(state["epw"]).view(_complex)
     phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
@@ -676,7 +677,8 @@ def get_save_quantities(cfg: dict) -> dict:
         xmin = cfg["grid"]["xmin"]
         xmax = cfg["grid"]["xmax"]
         dx = _Q(cfg["save"]["fields"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
-        nx = int((xmax - xmin) / dx)
+        nx = cfg["grid"]["nx"]
+        #nx = int((xmax - xmin) / dx)
         cfg["save"]["fields"]["x"]["dx"] = dx
         cfg["save"]["fields"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
         cfg["save"]["fields"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
@@ -685,7 +687,7 @@ def get_save_quantities(cfg: dict) -> dict:
             ymin = cfg["grid"]["ymin"]
             ymax = cfg["grid"]["ymax"]
             dy = _Q(cfg["save"]["fields"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
-            ny = int((ymax - ymin) / dy)
+            ny = cfg["grid"]["ny"]
             cfg["save"]["fields"]["y"]["dy"] = dy
             cfg["save"]["fields"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
             cfg["save"]["fields"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
