@@ -127,7 +127,7 @@ class SpeciesConfig(BaseModel):
 
     Attributes:
         name: Species name (e.g., 'electron', 'ion')
-        charge: Charge in units of electron charge (e.g., -1.0 for electrons, 10.0 for Z=10 ions)
+        charge: Charge in units of fundamental charge (e.g., -1.0 for electrons, 10.0 for Z=10 ions)
         mass: Mass in units of electron mass (e.g., 1.0 for electrons, 1836.0 for protons)
         vmax: Velocity grid maximum for this species
         nv: Number of velocity grid points for this species
