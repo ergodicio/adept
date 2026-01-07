@@ -170,16 +170,23 @@ class ElectricFieldSolver:
             raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
         self.dx = cfg["grid"]["dx"]
 
-    def __call__(self, f: jnp.ndarray, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+    def __call__(self, f, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         """
         This returns the total electrostatic field that is used in the Vlasov equation
         The total field is a sum of the ponderomotive force from `E_y`, the driver field, and the
         self-consistent electrostatic field from a Poisson or Ampere solve
 
-        :param f: distribution function
+        :param f: distribution function (dict or array)
         :param a:
         :return:
         """
+        # TODO: Phase 4 will properly handle multi-species field solve
+        # For now, extract electron distribution for backward compatibility
+        if isinstance(f, dict):
+            f_for_field = f["electron"]
+        else:
+            f_for_field = f
+
         ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)[1:-1]
-        self_consistent_ex = self.es_field_solver(f, prev_ex, dt)
+        self_consistent_ex = self.es_field_solver(f_for_field, prev_ex, dt)
         return ponderomotive_force, self_consistent_ex
