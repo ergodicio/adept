@@ -13,19 +13,19 @@ from adept._vlasov1d.solvers.pushers.vlasov import VelocityExponential, Velocity
 
 
 def test_space_exponential_convergence():
-    """Test SpaceExponential convergence using method of manufactured solutions.
+    """Test SpaceExponential achieves machine precision using method of manufactured solutions.
 
     The space pusher solves: ∂f/∂t + v ∂f/∂x = 0
     Exact characteristic solution: f(x, v, t+dt) = f(x - v*dt, v, t)
 
-    Tests convergence by refining nx and verifying error decreases at 2nd order or better.
+    The spectral method achieves machine precision even at low resolution.
     """
     Lx = 2 * np.pi
     nv = 1  # Only testing spatial dimension
     v = jnp.array([0.5])  # Single velocity value
 
-    # Test multiple resolutions
-    nx_values = [16, 32, 64, 128]
+    # Test at two resolutions to verify machine precision
+    nx_values = [16, 32]
     errors = []
 
     for nx in nx_values:
@@ -57,87 +57,85 @@ def test_space_exponential_convergence():
         error = jnp.sqrt(jnp.mean((f_numerical - f_exact)**2))
         errors.append(float(error))
 
-    # Verify 2nd order convergence or better (or already at machine precision)
-    # For doubling resolution (factor of 2), error should decrease by at least factor of 4 (2nd order)
-    convergence_rates = []
-    for i in range(len(errors) - 1):
-        ratio = nx_values[i+1] / nx_values[i]
-        error_ratio = errors[i] / errors[i+1]
-        # Convergence order: log(error_ratio) / log(ratio)
-        if errors[i+1] > 1e-14 and errors[i] > 1e-14:  # Above machine precision
-            order = np.log(error_ratio) / np.log(ratio)
-            convergence_rates.append(order)
-
-    # Check that we have good convergence or are at machine precision
-    has_good_convergence = any(order >= 2.0 for order in convergence_rates) if convergence_rates else False
-    at_machine_precision = all(err < 1e-12 for err in errors)
-
-    assert has_good_convergence or at_machine_precision, \
-        f"No 2nd order convergence and not at machine precision. " \
-        f"Convergence orders: {[f'{o:.2f}' for o in convergence_rates]}, " \
-        f"Errors: {[f'{e:.2e}' for e in errors]}"
+    # Spectral method should achieve machine precision
+    assert all(err < 1e-12 for err in errors), \
+        f"SpaceExponential should achieve machine precision. Errors: {[f'{e:.2e}' for e in errors]}"
 
 
-def test_velocity_exponential_multispecies_qm_ratio():
-    """Test that VelocityExponential correctly applies different q/m ratios to different species.
+def test_velocity_exponential_convergence():
+    """Test VelocityExponential achieves machine precision for multiple species.
 
-    With same initial conditions and E field, the velocity shift should be proportional to q/m.
+    The velocity pusher solves: ∂f/∂t + (q/m)E ∂f/∂v = 0
+    Exact characteristic solution: f(x, v, t+dt) = f(x, v - (q/m)*E*dt, t)
+
+    Tests that each species is pushed by its respective q/m factor.
+    The spectral method achieves machine precision even at low resolution.
     """
-    nx = 32
-    nv = 64
-    vmax = 6.0
-    dv = 2.0 * vmax / nv
-    v = jnp.linspace(-vmax + dv/2, vmax - dv/2, nv)
-    kvr = jnp.fft.rfftfreq(nv, d=dv/(2*np.pi))
-
-    species_grids = {
-        "electron": {"kvr": kvr, "nv": nv, "v": v},
-        "ion": {"kvr": kvr, "nv": nv, "v": v},
-    }
-
-    qm_electron = -1.0
-    qm_ion = 1.0 / 1836.0
-
-    species_params = {
-        "electron": {"charge": -1.0, "mass": 1.0, "charge_to_mass": qm_electron},
-        "ion": {"charge": 1.0, "mass": 1836.0, "charge_to_mass": qm_ion},
-    }
-
-    pusher = VelocityExponential(species_grids, species_params)
-
-    # Same initial condition for both species (Gaussian)
-    v_center = 0.0
-    v_width = 1.0
-    f_init_v = jnp.exp(-((v - v_center) / v_width)**2)
-    f_init = jnp.ones((nx, 1)) * f_init_v[None, :]
-
-    e = jnp.ones(nx) * 0.5
+    nx = 1  # Only testing velocity dimension
+    vmax = 2 * np.pi  # Periodic domain in velocity
+    qm_electron = -1.0  # electron charge-to-mass ratio
+    qm_ion = 1.0 / 1836.0  # ion charge-to-mass ratio (proton)
+    e = jnp.array([0.5])  # Constant electric field
     dt = 0.01
 
-    f_dict = {"electron": f_init, "ion": f_init}
-    result = pusher(f_dict, e, dt)
+    # Test at two resolutions to verify machine precision
+    nv_values = [16, 32]
+    errors_electron = []
+    errors_ion = []
 
-    # Compute center of mass in velocity for each species
-    def velocity_moment(f):
-        return jnp.sum(v[None, :] * f, axis=1) / jnp.sum(f, axis=1)
+    for nv in nv_values:
+        dv = 2.0 * vmax / nv
+        v = jnp.linspace(-vmax + dv/2, vmax - dv/2, nv)
+        kvr = jnp.fft.rfftfreq(nv, d=dv) * 2.0 * np.pi
 
-    v_cm_electron = jnp.mean(velocity_moment(result["electron"]))
-    v_cm_ion = jnp.mean(velocity_moment(result["ion"]))
+        species_grids = {
+            "electron": {"kvr": kvr, "nv": nv, "v": v},
+            "ion": {"kvr": kvr, "nv": nv, "v": v},
+        }
 
-    # Expected shifts
-    shift_electron = -qm_electron * e[0] * dt
-    shift_ion = -qm_ion * e[0] * dt
+        species_params = {
+            "electron": {"charge": -1.0, "mass": 1.0, "charge_to_mass": qm_electron},
+            "ion": {"charge": 1.0, "mass": 1836.0, "charge_to_mass": qm_ion},
+        }
 
-    # Check that the velocity shifts have the correct ratio
-    ratio_expected = shift_electron / shift_ion
-    ratio_actual = (v_cm_electron - v_center) / (v_cm_ion - v_center)
+        pusher = VelocityExponential(species_grids, species_params)
 
-    # Ratio should match q/m ratio (with some tolerance for numerical error)
-    assert jnp.abs(ratio_actual - ratio_expected) / jnp.abs(ratio_expected) < 0.01, \
-        f"q/m ratio not correctly applied: expected {ratio_expected}, got {ratio_actual}"
+        # Manufactured solution: sinusoidal in velocity
+        # k must be chosen so function is periodic over [-vmax, vmax]
+        # Period = 2*vmax, so k = 2*pi*n / (2*vmax) = pi*n/vmax
+        n_mode = 1  # Choose mode number
+        k = np.pi * n_mode / vmax  # This ensures periodicity
+        f_init = jnp.sin(k * v)[None, :]  # Shape (1, nv)
+
+        # Apply pusher to both species with same initial condition
+        f_dict = {"electron": f_init, "ion": f_init}
+        result = pusher(f_dict, e, dt)
+        f_electron_numerical = result["electron"]
+        f_ion_numerical = result["ion"]
+
+        # Exact solution using characteristic solution: f(v, t+dt) = f(v - (q/m)*E*dt, t)
+        # Each species should be shifted by its own q/m factor
+        v_shift_electron = qm_electron * e[0] * dt
+        v_shift_ion = qm_ion * e[0] * dt
+
+        f_electron_exact = jnp.sin(k * (v - v_shift_electron))[None, :]
+        f_ion_exact = jnp.sin(k * (v - v_shift_ion))[None, :]
+
+        # Compute errors (L2 norm)
+        error_electron = jnp.sqrt(jnp.mean((f_electron_numerical - f_electron_exact)**2))
+        error_ion = jnp.sqrt(jnp.mean((f_ion_numerical - f_ion_exact)**2))
+
+        errors_electron.append(float(error_electron))
+        errors_ion.append(float(error_ion))
+
+    # Spectral method should achieve machine precision for both species
+    assert all(err < 1e-12 for err in errors_electron), \
+        f"VelocityExponential should achieve machine precision for electrons. Errors: {[f'{e:.2e}' for e in errors_electron]}"
+    assert all(err < 1e-12 for err in errors_ion), \
+        f"VelocityExponential should achieve machine precision for ions. Errors: {[f'{e:.2e}' for e in errors_ion]}"
 
 
 if __name__ == "__main__":
     test_space_exponential_convergence()
-    test_velocity_exponential_multispecies_qm_ratio()
+    test_velocity_exponential_convergence()
     print("All pusher tests passed!")
