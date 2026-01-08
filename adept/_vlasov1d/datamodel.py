@@ -41,11 +41,11 @@ class UnitsModel(BaseModel):
 
 class GridModel(BaseModel):
     dt: float
-    nv: int | None = None  # Optional: used only in single-species mode
+    nv: int | None = None  # Optional: for backward compatibility with single-species config files
     nx: int
     tmin: float
     tmax: float
-    vmax: float | None = None  # Optional: used only in single-species mode
+    vmax: float | None = None  # Optional: for backward compatibility with single-species config files
     xmax: float
     xmin: float
 
