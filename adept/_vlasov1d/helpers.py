@@ -126,6 +126,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 species_params = cfg["density"][component_name]
                 v0 = species_params["v0"]
                 T0 = species_params["T0"]
+                # CR: What is this m -- it should match the mass from the species config. We should deprecate this cfg["density"]["m"] in favor of the explicit species config. Log a warning if this is set and doesn't match the species_config mass. But continue to use this value if it is set; if not, use the species mass.
                 m = species_params["m"]
 
                 # Get density profile
@@ -152,6 +153,8 @@ def _initialize_total_distribution_(cfg, cfg_grid):
         return species_distributions
 
     else:
+        # CR: This entire else clause can be avoided if we just provide a default species config of a plain electron species, with `density_components` equal to the entire list of `density` keys. The `species_found` check is still valuable, let's keep it.
+
         # Single-species backward compatibility mode
         n_prof_total = np.zeros([cfg_grid["nx"]])
         f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
