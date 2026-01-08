@@ -83,9 +83,9 @@ class BaseVlasov1D(ADEPTModule):
 
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
 
-        # CR: This is the appropriate place to normalize the species config stanza, I believe. Refer to adept/_base_.py for the lifecycle order in which these functions are called. This is called early. If no species configs are provided ("single species mode"), we want to generate one for the appropriate single species and make sure it's there for all subsequent steps. 
+        # CR: This is the appropriate place to normalize the species config stanza, I believe. Refer to adept/_base_.py for the lifecycle order in which these functions are called. This is called early. If no species configs are provided (backward compatibility with single-species config files), we want to generate one for the appropriate single species and make sure it's there for all subsequent steps.
 
-        # Only compute dv if vmax and nv are present (single-species mode)
+        # Only compute dv if vmax and nv are present (backward compatibility with single-species config files)
         # CR: Where are we using _this_ dv now at all? Can't we just rely on the species dv always?
         # CR: This is another example of the single-species mode being an extraneous concept. We should do our best to remove it at all points by normalizing the config, not having two separate cases throughout the code.
         if "vmax" in cfg_grid and "nv" in cfg_grid:
@@ -143,7 +143,9 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid["ktprof"] = 1.0
         # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
 
-        cfg_grid["species_distributions"] = _initialize_total_distribution_(self.cfg, cfg_grid)
+        # Initialize distributions (always returns dict format)
+        dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
+        cfg_grid["species_distributions"] = dist_result
 
         # Build species_grids and species_params
         cfg_grid["species_grids"] = {}
@@ -167,7 +169,7 @@ class BaseVlasov1D(ADEPTModule):
                 nv = species_cfg["nv"]
                 vmax = species_cfg["vmax"]
             else:
-                # Single-species mode: use grid-level values
+                # Backward compatibility with single-species config files: use grid-level values
                 # CR: remove this clause, there's no purpose for it. The grid level values should match the species config values (for the single species) if we did our job right.
                 nv = cfg_grid["nv"]
                 vmax = cfg_grid["vmax"]
@@ -211,13 +213,11 @@ class BaseVlasov1D(ADEPTModule):
             # For multi-species, use zeros (quasineutrality handled differently)
             cfg_grid["ion_charge"] = np.zeros_like(n_prof_total)
         else:
-            # For single-species, set ion_charge to n_prof_total
+            # For backward compatibility with single-species config files, set ion_charge to n_prof_total
             cfg_grid["ion_charge"] = n_prof_total.copy()
 
-        # CR: don't do this, don't store the starting_f, we weren't doing that before.
-        # For backward compatibility, also store starting_f and v at grid level for single-species
+        # For backward compatibility with single-species config files, store velocity grid at grid level
         if not is_multispecies:
-            cfg_grid["starting_f"] = dist_result["electron"][1]
             cfg_grid["v"] = jnp.array(dist_result["electron"][2])
             cfg_grid["kv"] = cfg_grid["species_grids"]["electron"]["kv"]
             cfg_grid["kvr"] = cfg_grid["species_grids"]["electron"]["kvr"]

@@ -1,6 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import os
+import warnings
 from time import time
 
 import numpy as np
@@ -97,7 +98,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
     Returns:
         dict mapping species_name -> (n_prof, f_s, v_ax)
-        For single-species mode (backward compatibility), returns dict with "electron" key
+        For backward compatibility with single-species config files, returns dict with "electron" key
     """
     # Check if multi-species mode
     species_configs = cfg["terms"].get("species", None)
@@ -126,8 +127,28 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                 species_params = cfg["density"][component_name]
                 v0 = species_params["v0"]
                 T0 = species_params["T0"]
-                # CR: What is this m -- it should match the mass from the species config. We should deprecate this cfg["density"]["m"] in favor of the explicit species config. Log a warning if this is set and doesn't match the species_config mass. But continue to use this value if it is set; if not, use the species mass.
-                m = species_params["m"]
+
+                # Handle mass parameter with deprecation
+                if "m" in species_params:
+                    warnings.warn(
+                        f"Density component '{component_name}': The 'm' parameter in density config is deprecated. "
+                        f"Please use the mass from the species config instead.",
+                        DeprecationWarning,
+                        stacklevel=2
+                    )
+                    m = species_params["m"]
+                    # Check if it matches the species config mass
+                    if abs(m - species_cfg["mass"]) > 1e-10:
+                        warnings.warn(
+                            f"Density component '{component_name}': Mass mismatch! "
+                            f"Using m={m} from density config, but species '{species_name}' has mass={species_cfg['mass']}. "
+                            f"This may lead to inconsistent physics.",
+                            UserWarning,
+                            stacklevel=2
+                        )
+                else:
+                    # Use mass from species config
+                    m = species_cfg["mass"]
 
                 # Get density profile
                 nprof = _get_density_profile(species_params, cfg, cfg_grid)
@@ -155,7 +176,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     else:
         # CR: This entire else clause can be avoided if we just provide a default species config of a plain electron species, with `density_components` equal to the entire list of `density` keys. The `species_found` check is still valuable, let's keep it.
 
-        # Single-species backward compatibility mode
+        # Backward compatibility with single-species config files
         n_prof_total = np.zeros([cfg_grid["nx"]])
         f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
         species_found = False
