@@ -53,6 +53,7 @@ class Collisions:
         :return: Updated distribution function after collisions.
         """
         # TODO: Properly handle multi-species collisions
+        # CR: make a ticket for this TODO
         # For now, only apply to electron distribution for backward compatibility
         if isinstance(f, dict):
             result = {}

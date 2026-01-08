@@ -1,1 +1,3 @@
+diff: jj diff -f uzq -t @ adept
+
 - The term "single-species" mode appears multiple times in the comments, but it's not really reified in the code or the public API of the package. It would be better to be clear that these special cases are about maintaining backwards compatibility with single-species config files.

@@ -83,7 +83,11 @@ class BaseVlasov1D(ADEPTModule):
 
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
 
+        # CR: This is the appropriate place to normalize the species config stanza, I believe. Refer to adept/_base_.py for the lifecycle order in which these functions are called. This is called early. If no species configs are provided ("single species mode"), we want to generate one for the appropriate single species and make sure it's there for all subsequent steps. 
+
         # Only compute dv if vmax and nv are present (single-species mode)
+        # CR: Where are we using _this_ dv now at all? Can't we just rely on the species dv always?
+        # CR: This is another example of the single-species mode being an extraneous concept. We should do our best to remove it at all points by normalizing the config, not having two separate cases throughout the code.
         if "vmax" in cfg_grid and "nv" in cfg_grid:
             cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
 
@@ -139,9 +143,7 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid["ktprof"] = 1.0
         # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
 
-        # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
-        cfg_grid["species_distributions"] = dist_result
+        cfg_grid["species_distributions"] = _initialize_total_distribution_(self.cfg, cfg_grid)
 
         # Build species_grids and species_params
         cfg_grid["species_grids"] = {}
@@ -166,9 +168,11 @@ class BaseVlasov1D(ADEPTModule):
                 vmax = species_cfg["vmax"]
             else:
                 # Single-species mode: use grid-level values
+                # CR: remove this clause, there's no purpose for it. The grid level values should match the species config values (for the single species) if we did our job right.
                 nv = cfg_grid["nv"]
                 vmax = cfg_grid["vmax"]
                 # Create a species config for consistency
+                # CR: This is the wrong place to do this. The species config should have been created much earlier 
                 species_cfg = {"charge": -1.0, "mass": 1.0}
 
             dv = 2.0 * vmax / nv
@@ -210,6 +214,7 @@ class BaseVlasov1D(ADEPTModule):
             # For single-species, set ion_charge to n_prof_total
             cfg_grid["ion_charge"] = n_prof_total.copy()
 
+        # CR: don't do this, don't store the starting_f, we weren't doing that before.
         # For backward compatibility, also store starting_f and v at grid level for single-species
         if not is_multispecies:
             cfg_grid["starting_f"] = dist_result["electron"][1]
@@ -249,6 +254,7 @@ class BaseVlasov1D(ADEPTModule):
             state[species_name] = jnp.array(f_s)
 
         # Reference distribution for diagnostics (use first species)
+        # CR: we will need to store the species distributions separately for diagnostics, so this will NOT work when we're running multiple species. Create a ticket for this one, it will be addressed later on when we get around to fixing diagnostics.
         first_species_name = list(dist_result.keys())[0]
         f_ref = dist_result[first_species_name][1]
 
