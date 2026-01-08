@@ -73,6 +73,7 @@ class UniformDriver(eqx.Module):
     delta_omega: Array
     phases: Array
     envelope: dict
+    ny: int
 
     def __init__(self, cfg: dict):
         super().__init__()
@@ -84,6 +85,7 @@ class UniformDriver(eqx.Module):
         phase_rng = np.random.default_rng(seed=cfg["drivers"]["E0"]["params"]["phases"]["seed"])
         self.phases = jnp.array(phase_rng.uniform(-1, 1, driver_cfg["num_colors"]))
         self.envelope = driver_cfg["derived"]
+        self.ny = cfg["grid"]["ny"]
 
     def save(self, filename: str) -> None:
         """
@@ -103,12 +105,17 @@ class UniformDriver(eqx.Module):
 
     def __call__(self, state: dict, args: dict) -> tuple:
         intensities = self.intensities / jnp.sum(self.intensities)
+        ones = jnp.ones(self.ny)
         args["drivers"]["E0"] = {
             "delta_omega": self.delta_omega,
-            "phases": jnp.tanh(self.phases) * jnp.pi,
-            "intensities": intensities,
+            "phases": jnp.tanh(self.phases[:, None]) * jnp.pi * ones[None, :],
+            "intensities": intensities[:, None] * ones[None, :],
         } | self.envelope
         return state, args
+
+
+class SpeckledDriver(eqx.Module):
+    pass
 
 
 class ArbitraryDriver(UniformDriver):

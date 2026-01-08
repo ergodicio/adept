@@ -1,6 +1,6 @@
 density:
   basis: linear
-  gradient scale length: 50um
+  gradient scale length: 200um
   max: 0.28
   min: 0.18
   noise:
@@ -36,25 +36,25 @@ grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 1.5um
   low_pass_filter: 0.66
-  dt: 0.010fs
-  dx: 40nm
-  tmax: 2ps
+  dt: 5fs
+  dx: 66.3nm
+  tmax: 5ps
   tmin: 0.0ns
-  ymax: 0.08um
-  ymin: -0.08um
+  ymax: 6um
+  ymin: -6um
 mlflow:
   experiment: tpd
-  run: srs-test
+  run: tpd-test
 save:
   fields:
     t:
       dt: 0.2ps
-      tmax: 2ps
+      tmax: 5ps
       tmin: 0ps
     x:
-      dx: 50nm
+      dx: 80nm
     y:
-      dy: 50nm
+      dy: 80nm
 solver: envelope-2d
 terms:
   epw:
@@ -68,8 +68,8 @@ terms:
     linear: true
     source:
       noise: true
-      tpd: false
-      srs: true
+      tpd: true
+      srs: false
   zero_mask: true
 
 units:
