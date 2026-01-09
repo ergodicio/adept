@@ -82,11 +82,11 @@ def mlflow_callback(func):
     automatically converting MLRunId to string.
 
     The wrapped function should accept `mlflow_run_id` as a keyword argument.
-    If mlflow_run_id is None, the callback is skipped entirely.
+    If mlflow_run_id is None at call time, the callback is skipped entirely.
 
     Example:
         @mlflow_callback
-        def log_metrics(loss, accuracy, mlflow_run_id=None):
+        def log_metrics(loss, accuracy, *, mlflow_run_id: str):
             mlflow.log_metrics({
                 "loss": float(loss),
                 "accuracy": float(accuracy)

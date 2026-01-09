@@ -206,7 +206,7 @@ def test_nested_mlflow_logging_modules_vmap(capsys):
 
 def test_mlflow_callback_skips_when_run_id_is_none(capsys):
     @mlflow_callback
-    def log_something(value, mlflow_run_id=None):
+    def log_something(value, *, mlflow_run_id: str):
         print(f"logged {value} to {mlflow_run_id}")
 
     log_something(42, mlflow_run_id=None)
@@ -217,7 +217,7 @@ def test_mlflow_callback_skips_when_run_id_is_none(capsys):
 
 def test_mlflow_callback_converts_mlrun_id_to_string(capsys):
     @mlflow_callback
-    def log_something(value, mlflow_run_id=None):
+    def log_something(value, *, mlflow_run_id: str):
         assert isinstance(mlflow_run_id, str)
         print(f"run_id_type={type(mlflow_run_id).__name__}")
 
@@ -232,7 +232,7 @@ def test_mlflow_callback_converts_mlrun_id_to_string(capsys):
 
 def test_mlflow_callback_preserves_function_metadata():
     @mlflow_callback
-    def my_logging_func(value, mlflow_run_id=None):
+    def my_logging_func(value, *, mlflow_run_id: str):
         """This is my docstring."""
         pass
 
@@ -242,7 +242,7 @@ def test_mlflow_callback_preserves_function_metadata():
 
 def test_mlflow_callback_works_inside_jit(capsys):
     @mlflow_callback
-    def log_value(value, mlflow_run_id=None):
+    def log_value(value, *, mlflow_run_id: str):
         print(f"value={float(value)}, run_id={mlflow_run_id}")
 
     @jax.jit
@@ -280,7 +280,7 @@ def test_mlflow_callback_standalone_with_create_mlflow_run(capsys):
     """Test decorator and helper used together outside MlflowLoggingModule."""
 
     @mlflow_callback
-    def log_metric(name, value, mlflow_run_id=None):
+    def log_metric(name, value, *, mlflow_run_id: str):
         print(f"metric {name}={value}, run_id={mlflow_run_id[:8]}...")
 
     @jax.jit
