@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from dataclasses import dataclass
+from functools import wraps
 
 import equinox as eqx
 import jax
@@ -29,52 +29,100 @@ class MLRunId(eqx.Module):
         return MLRunId("0" * 32)
 
 
-class MlflowLoggingModule(eqx.Module):
-    with_mlflow: bool
+def create_mlflow_run(
+    dummy_arg,
+    experiment_id=None,
+    run_name=None,
+    parent_run_id=None,
+    tags=None,
+    description=None,
+    log_system_metrics=None,
+) -> MLRunId:
+    """
+    Create an mlflow run from within a JIT-compiled function.
 
-    @staticmethod
-    def create_mlflow_run_in_callback(
+    Args:
+        dummy_arg: Ensures multiple runs are opened when vmapping.
+                   Use 0 outside vmap, jnp.arange(batch_size) when vmapping.
+        parent_run_id: If provided, must be an MLRunId (not a string).
+        **kwargs: Passed to mlflow.start_run.
+
+    Returns:
+        MLRunId usable in @mlflow_callback decorated functions.
+    """
+    if parent_run_id is not None and not isinstance(parent_run_id, MLRunId):
+        raise TypeError("parent_run_id must be an MLRunId, not a string")
+
+    def _create_run(dummy_arg, parent_run_id=None):
+        nested = parent_run_id is not None
+        parent_run_id_str = str(parent_run_id) if nested else None
+
+        with mlflow.start_run(
+            parent_run_id=parent_run_id_str,
+            nested=nested,
+            experiment_id=experiment_id,
+            run_name=run_name,
+            tags=tags,
+            description=description,
+            log_system_metrics=log_system_metrics,
+        ) as run:
+            return MLRunId(run.info.run_id)
+
+    return jax.experimental.io_callback(
+        _create_run,
+        MLRunId.example(),
         dummy_arg,
-        experiment_id=None,
-        run_name=None,
-        parent_run_id=None,
-        tags=None,
-        description=None,
-        log_system_metrics=None,
-    ):
-        if parent_run_id is not None:
-            assert isinstance(parent_run_id, MLRunId)
+        parent_run_id=parent_run_id,
+    )
 
-        def create_mlflow_run(dummy_arg, parent_run_id=None):
-            nested = parent_run_id is not None
-            parent_run_id = str(parent_run_id) if nested else None
 
-            with mlflow.start_run(
-                parent_run_id=parent_run_id,
-                nested=nested,
-                experiment_id=experiment_id,
-                run_name=run_name,
-                tags=tags,
-                description=description,
-                log_system_metrics=log_system_metrics,
-            ) as run:
-                return MLRunId(run.info.run_id)
+def mlflow_callback(func):
+    """
+    Decorator that wraps a logging function to run via jax.debug.callback,
+    automatically converting MLRunId to string.
 
-        return jax.experimental.io_callback(
-            create_mlflow_run,
-            MLRunId.example(),
-            dummy_arg,
-            parent_run_id=parent_run_id,
+    The wrapped function should accept `mlflow_run_id` as a keyword argument.
+    If mlflow_run_id is None, the callback is skipped entirely.
+
+    Example:
+        @mlflow_callback
+        def log_metrics(loss, accuracy, mlflow_run_id=None):
+            mlflow.log_metrics({
+                "loss": float(loss),
+                "accuracy": float(accuracy)
+            }, run_id=mlflow_run_id)
+
+        # Inside jitted code:
+        run_id = create_mlflow_run(0)
+        log_metrics(loss, accuracy, mlflow_run_id=run_id)
+    """
+
+    @wraps(func)
+    def wrapper(*args, mlflow_run_id: MLRunId | None = None, **kwargs):
+        if mlflow_run_id is None:
+            return
+
+        assert isinstance(mlflow_run_id, MLRunId), (
+            f"mlflow_run_id must be an MLRunId, got {type(mlflow_run_id).__name__}"
         )
 
-    @staticmethod
-    def call_logfunc_in_callback(logfunc, *args, setup_result, mlflow_run_id, **kwargs):
-        def call_with_byte_array_id(*args, setup_result, mlflow_run_id, **kwargs):
-            logfunc(*args, setup_result, mlflow_run_id=str(mlflow_run_id), **kwargs)
+        def _inner(*args, mlflow_run_id: MLRunId, **kwargs):
+            func(*args, mlflow_run_id=str(mlflow_run_id), **kwargs)
 
-        jax.debug.callback(
-            call_with_byte_array_id, *args, setup_result=setup_result, mlflow_run_id=mlflow_run_id, **kwargs
-        )
+        jax.debug.callback(_inner, *args, mlflow_run_id=mlflow_run_id, **kwargs)
+
+    return wrapper
+
+
+class MlflowLoggingModule(eqx.Module):
+    """
+    Base class for modules that log to mlflow from within JIT-compiled functions.
+
+    For simpler use cases, consider using the standalone `create_mlflow_run` helper
+    and `@mlflow_callback` decorator directly instead of subclassing this module.
+    """
+
+    with_mlflow: bool
 
     def __call__(self, *args, mlflow_batch_num=None, mlflow_kwargs=None, **kwargs):
         """
@@ -93,23 +141,17 @@ class MlflowLoggingModule(eqx.Module):
             if mlflow_batch_num is None:
                 raise ValueError("mlflow_batch_num must be specified")
             mlflow_kwargs = {} if mlflow_kwargs is None else mlflow_kwargs
-            run_id = MlflowLoggingModule.create_mlflow_run_in_callback(mlflow_batch_num, **mlflow_kwargs)
+            run_id = create_mlflow_run(mlflow_batch_num, **mlflow_kwargs)
         else:
             run_id = None
 
         setup_result = self.setup(*args, mlflow_run_id=run_id, **kwargs)
 
-        if self.with_mlflow:
-            self.call_logfunc_in_callback(
-                self.pre_logging, *args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs
-            )
+        mlflow_callback(self.pre_logging)(*args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs)
 
         result = self.call(*args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs)
 
-        if self.with_mlflow:
-            self.call_logfunc_in_callback(
-                self.post_logging, result, *args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs
-            )
+        mlflow_callback(self.post_logging)(result, *args, setup_result=setup_result, mlflow_run_id=run_id, **kwargs)
 
         return result
 
