@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 import adept.patched_mlflow as mlflow
 from adept import MlflowLoggingModule
-from adept.mlflow_logging import MLRunId
+from adept.mlflow_logging import MLRunId, create_mlflow_run, mlflow_callback
 
 
 def parse_unique_mlflow_run_id(capsys):
@@ -199,3 +199,99 @@ def test_nested_mlflow_logging_modules_vmap(capsys):
     assert len(set([m.group(1) for m in post_logging_matches])) == 3
 
     assert set([m.group(1) for m in pre_logging_matches]) == set([m.group(1) for m in post_logging_matches])
+
+
+# --- mlflow_callback decorator tests ---
+
+
+def test_mlflow_callback_skips_when_run_id_is_none(capsys):
+    @mlflow_callback
+    def log_something(value, *, mlflow_run_id: str):
+        print(f"logged {value} to {mlflow_run_id}")
+
+    log_something(42, mlflow_run_id=None)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
+def test_mlflow_callback_converts_mlrun_id_to_string(capsys):
+    @mlflow_callback
+    def log_something(value, *, mlflow_run_id: str):
+        assert isinstance(mlflow_run_id, str)
+        print(f"run_id_type={type(mlflow_run_id).__name__}")
+
+    with mlflow.start_run() as run:
+        run_id = MLRunId(run.info.run_id)
+
+    log_something(42, mlflow_run_id=run_id)
+
+    captured = capsys.readouterr()
+    assert "run_id_type=str" in captured.out
+
+
+def test_mlflow_callback_preserves_function_metadata():
+    @mlflow_callback
+    def my_logging_func(value, *, mlflow_run_id: str):
+        """This is my docstring."""
+        pass
+
+    assert my_logging_func.__name__ == "my_logging_func"
+    assert my_logging_func.__doc__ == """This is my docstring."""
+
+
+def test_mlflow_callback_works_inside_jit(capsys):
+    @mlflow_callback
+    def log_value(value, *, mlflow_run_id: str):
+        print(f"value={float(value)}, run_id={mlflow_run_id}")
+
+    @jax.jit
+    def compute_and_log(x, run_id):
+        result = x * 2
+        log_value(result, mlflow_run_id=run_id)
+        return result
+
+    with mlflow.start_run() as run:
+        run_id = MLRunId(run.info.run_id)
+
+    result = compute_and_log(jnp.array(5.0), run_id)
+
+    assert result == 10.0
+    captured = capsys.readouterr()
+    assert "value=10.0" in captured.out
+
+
+def test_mlflow_callback_works_with_kwargs_style_function(capsys):
+    @mlflow_callback
+    def log_anything(*args, **kwargs):
+        mlflow_run_id = kwargs.get("mlflow_run_id")
+        print(f"num_args={len(args)}, run_id={mlflow_run_id[:8]}...")
+
+    with mlflow.start_run() as run:
+        run_id = MLRunId(run.info.run_id)
+
+    log_anything(jnp.array(1), jnp.array(2), jnp.array(3), mlflow_run_id=run_id)
+
+    captured = capsys.readouterr()
+    assert "num_args=3" in captured.out
+
+
+def test_mlflow_callback_standalone_with_create_mlflow_run(capsys):
+    """Test decorator and helper used together outside MlflowLoggingModule."""
+
+    @mlflow_callback
+    def log_metric(name, value, *, mlflow_run_id: str):
+        print(f"metric {name}={value}, run_id={mlflow_run_id[:8]}...")
+
+    @jax.jit
+    def train_step(x):
+        run_id = create_mlflow_run(0)
+        result = x**2
+        log_metric("squared", result, mlflow_run_id=run_id)
+        return result
+
+    result = train_step(jnp.array(3.0))
+
+    assert result == 9.0
+    captured = capsys.readouterr()
+    assert "metric squared=9.0" in captured.out
