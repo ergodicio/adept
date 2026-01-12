@@ -64,6 +64,9 @@ def choose_driver(shape: str) -> eqx.Module:
     elif shape == "arbitrary":
         return ArbitraryDriver
 
+    elif shape == "speckled":
+        return SpeckledDriver
+
     else:
         raise NotImplementedError(f"Amplitude shape -- {shape} -- not implemented")
 
@@ -114,8 +117,46 @@ class UniformDriver(eqx.Module):
         return state, args
 
 
-class SpeckledDriver(eqx.Module):
-    pass
+class SpeckledDriver(UniformDriver):
+    """
+    Driver with y-dependent intensity and phase profiles loaded from file.
+
+    Expects a .npz file with:
+      - intensities: shape (num_colors, ny)
+      - phases: shape (num_colors, ny), values in [-1, 1]
+    """
+
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        driver_cfg = cfg["drivers"]["E0"]
+
+        # Load speckle data from file
+        speckle_file = driver_cfg["speckle_file"]
+        data = np.load(speckle_file)
+
+        # Override with file data (shape: num_colors, ny)
+        self.intensities = jnp.array(data["intensities"])
+        self.phases = jnp.array(data["phases"])
+
+        # Validate shapes
+        expected_shape = (driver_cfg["num_colors"], cfg["grid"]["ny"])
+        assert self.intensities.shape == expected_shape, (
+            f"intensities shape {self.intensities.shape} != expected {expected_shape}"
+        )
+        assert self.phases.shape == expected_shape, (
+            f"phases shape {self.phases.shape} != expected {expected_shape}"
+        )
+
+    def __call__(self, state: dict, args: dict) -> tuple:
+        # Normalize intensities (sum over all colors and y)
+        intensities = self.intensities / jnp.sum(self.intensities)
+
+        args["drivers"]["E0"] = {
+            "delta_omega": self.delta_omega,
+            "phases": jnp.tanh(self.phases) * jnp.pi,
+            "intensities": intensities,
+        } | self.envelope
+        return state, args
 
 
 class ArbitraryDriver(UniformDriver):

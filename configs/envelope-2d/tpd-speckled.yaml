@@ -1,0 +1,83 @@
+density:
+  basis: linear
+  gradient scale length: 200um
+  max: 0.28
+  min: 0.18
+  noise:
+    max: 1.0e-09
+    min: 1.0e-10
+    type: uniform
+drivers:
+  E0:
+    delta_omega_max: 0.015
+    envelope:
+      tc: 200.25ps
+      tr: 0.1ps
+      tw: 400ps
+      xc: 50um
+      xr: 0.2um
+      xw: 1000um
+      yc: 50um
+      yr: 0.2um
+      yw: 1000um
+    num_colors: 1
+    shape: speckled
+    speckle_file: configs/envelope-2d/speckle.npz
+    params:
+      amplitudes:
+        init: random
+        learned: true
+        activation: log
+      phases:
+        init: random
+        learned: true
+        seed: 42
+
+grid:
+  boundary_abs_coeff: 1.0e4
+  boundary_width: 1.5um
+  low_pass_filter: 0.66
+  dt: 5fs
+  dx: 66.3nm
+  tmax: 5ps
+  tmin: 0.0ns
+  ymax: 6um
+  ymin: -6um
+mlflow:
+  experiment: tpd
+  run: tpd-speckled
+save:
+  fields:
+    t:
+      dt: 0.2ps
+      tmax: 5ps
+      tmin: 0ps
+    x:
+      dx: 80nm
+    y:
+      dy: 80nm
+solver: envelope-2d
+terms:
+  epw:
+    boundary:
+      x: absorbing
+      y: periodic
+    damping:
+      collisions: 1.0
+      landau: true
+    density_gradient: true
+    linear: true
+    source:
+      noise: true
+      tpd: true
+      srs: false
+  zero_mask: true
+
+units:
+  atomic number: 40
+  envelope density: 0.25
+  ionization state: 6
+  laser intensity: 3.5e+14W/cm^2
+  laser_wavelength: 351nm
+  reference electron temperature: 2000.0eV
+  reference ion temperature: 1000eV

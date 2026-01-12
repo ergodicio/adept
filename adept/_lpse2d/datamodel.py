@@ -1,3 +1,5 @@
+from typing import Optional
+
 from pydantic import BaseModel
 
 
@@ -48,11 +50,10 @@ class E0DriverModel(BaseModel):
     """
 
     amplitude_shape: str
-    # Uncomment the following line if the file path is needed
-    # file: Optional[str]
     delta_omega_max: float
     num_colors: int
     envelope: EnvelopeModel
+    speckle_file: Optional[str] = None
 
 
 class DriversModel(BaseModel):
