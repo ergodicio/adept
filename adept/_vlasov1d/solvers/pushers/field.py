@@ -102,67 +102,221 @@ class WaveSolver:
 
 
 class SpectralPoissonSolver:
-    def __init__(self, ion_charge, one_over_kx, dv):
+    """Spectral Poisson solver for electrostatic field.
+
+    Solves Poisson equation: ∇²φ = -ρ, E = -∇φ
+    where ρ = Σ_s q_s ∫f_s dv_s is the total charge density from all species.
+
+    For quasineutral plasmas, the total charge should sum to zero at initialization.
+    """
+
+    def __init__(self, one_over_kx, species_grids, species_params):
+        """Initialize the Poisson solver.
+
+        Args:
+            one_over_kx: 1/kx array for spectral solve (with 0 for k=0 mode)
+            species_grids: dict mapping species_name -> {"dv": dv, "v": v, ...}
+            species_params: dict mapping species_name -> {"charge": q, "mass": m, ...}
+        """
         super().__init__()
-        self.ion_charge = ion_charge
         self.one_over_kx = one_over_kx
-        self.dv = dv
+        self.species_grids = species_grids
+        self.species_params = species_params
 
-    def compute_charges(self, f):
-        return jnp.sum(f, axis=1) * self.dv
+    def compute_charge_density(self, f_dict):
+        """Compute total charge density from all species.
 
-    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
-        return jnp.real(jnp.fft.ifft(1j * self.one_over_kx * jnp.fft.fft(self.ion_charge - self.compute_charges(f))))
+        ρ = Σ_s q_s ∫f_s dv_s = Σ_s q_s * n_s
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+
+        Returns:
+            Total charge density array[nx]
+        """
+        rho = jnp.zeros_like(list(f_dict.values())[0][:, 0])
+
+        for species_name, f_s in f_dict.items():
+            q_s = self.species_params[species_name]["charge"]
+            dv_s = self.species_grids[species_name]["dv"]
+            n_s = jnp.sum(f_s, axis=1) * dv_s
+            rho = rho + q_s * n_s
+
+        return rho
+
+    def __call__(self, f_dict: dict, prev_ex: jnp.ndarray, dt: jnp.float64):
+        """Solve Poisson equation for electric field.
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            prev_ex: previous electric field (unused for Poisson, kept for interface)
+            dt: time step (unused for Poisson, kept for interface)
+
+        Returns:
+            Electric field E[nx] from Poisson solve
+        """
+        rho = self.compute_charge_density(f_dict)
+        # E = -∇φ, ∇²φ = -ρ => in Fourier space: E_k = i*k*φ_k = i*k*(ρ_k/k²) = i*ρ_k/k
+        # But we want E such that ∂E/∂x = ρ (Gauss's law), so E_k = -i*ρ_k/k
+        # The sign convention here: positive charge creates outward E field
+        return jnp.real(jnp.fft.ifft(-1j * self.one_over_kx * jnp.fft.fft(rho)))
 
 
 class AmpereSolver:
-    def __init__(self, cfg):
+    """Ampere solver using current density to evolve electric field.
+
+    Solves: a single Euler step of ∂E/∂t = -j, where j = Σ_s (q_s/m_s) ∫v f_s dv
+    is the total current density from all species.
+    """
+
+    def __init__(self, species_grids, species_params):
+        """Initialize the Ampere solver.
+
+        Args:
+            species_grids: dict mapping species_name -> {"dv": dv, "v": v[nv], ...}
+            species_params: dict mapping species_name -> {"charge": q, "mass": m, ...}
+        """
         super().__init__()
-        self.vx = cfg["grid"]["v"]
-        self.dv = cfg["grid"]["dv"]
+        self.species_grids = species_grids
+        self.species_params = species_params
 
-    def vx_moment(self, f):
-        return jnp.sum(f, axis=1) * self.dv
+    def compute_current_density(self, f_dict):
+        """Compute total current density from all species.
 
-    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
-        return prev_ex - dt * self.vx_moment(self.vx[None, :] * f)
+        j = Σ_s q_s ∫v f_s dv_s
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+
+        Returns:
+            Total current density array[nx]
+        """
+        j = jnp.zeros_like(list(f_dict.values())[0][:, 0])
+
+        for species_name, f_s in f_dict.items():
+            q_s = self.species_params[species_name]["charge"]
+            v_s = self.species_grids[species_name]["v"]
+            dv_s = self.species_grids[species_name]["dv"]
+            # Current from this species: q_s * ∫v f_s dv
+            j_s = jnp.sum(v_s[None, :] * f_s, axis=1) * dv_s
+            j = j + q_s * j_s
+
+        return j
+
+    def __call__(self, f_dict: dict, prev_ex: jnp.ndarray, dt: jnp.float64):
+        """Evolve electric field using Ampere's law.
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            prev_ex: previous electric field E[nx]
+            dt: time step
+
+        Returns:
+            Updated electric field E[nx]
+        """
+        j = self.compute_current_density(f_dict)
+        return prev_ex - dt * j
 
 
 class HampereSolver:
-    def __init__(self, cfg):
-        self.vx = cfg["grid"]["v"][None, :]
-        self.dv = cfg["grid"]["dv"]
-        self.kx = cfg["grid"]["kx"][:, None]
-        self.one_over_ikx = cfg["grid"]["one_over_kx"] / 1j
+    """Hamiltonian Ampere solver using spectral integration in time.
 
-    def __call__(self, f: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+    This solver uses the characteristic method to integrate Ampere's law
+    exactly along particle trajectories in Fourier space.
+
+    Note: Currently only supports single-species due to the complexity of
+    the spectral integration with different velocity grids. For multi-species,
+    use the standard AmpereSolver instead.
+    """
+
+    def __init__(self, kx, one_over_kx, species_grids, species_params):
+        """Initialize the Hamiltonian Ampere solver.
+
+        Args:
+            kx: wavenumber array kx[nx]
+            one_over_kx: 1/kx array (with 0 for k=0 mode)
+            species_grids: dict mapping species_name -> {"dv": dv, "v": v[nv], ...}
+            species_params: dict mapping species_name -> {"charge": q, "mass": m, ...}
+        """
+        self.kx = kx[:, None]
+        self.one_over_ikx = one_over_kx / 1j
+        self.species_grids = species_grids
+        self.species_params = species_params
+
+        # For now, validate that we have exactly one species (limitation documented above)
+        if len(species_grids) > 1:
+            raise NotImplementedError(
+                "HampereSolver currently only supports single-species simulations. "
+                "For multi-species, use 'ampere' or 'poisson' field solver instead."
+            )
+
+        # Cache the single species' grid parameters
+        species_name = list(species_grids.keys())[0]
+        self.vx = species_grids[species_name]["v"][None, :]
+        self.dv = species_grids[species_name]["dv"]
+        self.charge = species_params[species_name]["charge"]
+
+    def __call__(self, f_dict: dict, prev_ex: jnp.ndarray, dt: jnp.float64):
+        """Evolve electric field using Hamiltonian Ampere method.
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            prev_ex: previous electric field E[nx]
+            dt: time step
+
+        Returns:
+            Updated electric field E[nx]
+        """
+        # Extract the single species distribution
+        f = list(f_dict.values())[0]
+
         prev_ek = jnp.fft.fft(prev_ex, axis=0)
         fk = jnp.fft.fft(f, axis=0)
         new_ek = (
-            prev_ek + self.one_over_ikx * jnp.sum(fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), axis=1) * self.dv
+            prev_ek
+            + self.charge * self.one_over_ikx * jnp.sum(fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), axis=1) * self.dv
         )
 
         return jnp.real(jnp.fft.ifft(new_ek))
 
 
 class ElectricFieldSolver:
+    """Wrapper for electrostatic field solvers.
+
+    Combines the self-consistent electrostatic field from Poisson/Ampere solve
+    with the ponderomotive force from laser fields.
+    """
+
     def __init__(self, cfg):
         super().__init__()
 
+        species_grids = cfg["grid"]["species_grids"]
+        species_params = cfg["grid"]["species_params"]
+
         if cfg["terms"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(
-                ion_charge=cfg["grid"]["ion_charge"], one_over_kx=cfg["grid"]["one_over_kx"], dv=cfg["grid"]["dv"]
+                one_over_kx=cfg["grid"]["one_over_kx"],
+                species_grids=species_grids,
+                species_params=species_params,
             )
             self.hampere = False
         elif cfg["terms"]["field"] == "ampere":
             if cfg["terms"]["time"] == "leapfrog":
-                self.es_field_solver = AmpereSolver(cfg)
+                self.es_field_solver = AmpereSolver(
+                    species_grids=species_grids,
+                    species_params=species_params,
+                )
                 self.hampere = False
             else:
                 raise NotImplementedError(f"ampere + {cfg['terms']['time']} has not yet been implemented")
         elif cfg["terms"]["field"] == "hampere":
             if cfg["terms"]["time"] == "leapfrog":
-                self.es_field_solver = HampereSolver(cfg)
+                self.es_field_solver = HampereSolver(
+                    kx=cfg["grid"]["kx"],
+                    one_over_kx=cfg["grid"]["one_over_kx"],
+                    species_grids=species_grids,
+                    species_params=species_params,
+                )
                 self.hampere = True
             else:
                 raise NotImplementedError(f"ampere + {cfg['terms']['time']} has not yet been implemented")
@@ -170,23 +324,22 @@ class ElectricFieldSolver:
             raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
         self.dx = cfg["grid"]["dx"]
 
-    def __call__(self, f, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
-        """
-        This returns the total electrostatic field that is used in the Vlasov equation
-        The total field is a sum of the ponderomotive force from `E_y`, the driver field, and the
-        self-consistent electrostatic field from a Poisson or Ampere solve
+    def __call__(self, f_dict: dict, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
+        """Compute total electrostatic field for the Vlasov equation.
 
-        :param f: distribution function (dict or array)
-        :param a:
-        :return:
-        """
-        # TODO: Phase 4 will properly handle multi-species field solve
-        # For now, extract electron distribution for backward compatibility
-        if isinstance(f, dict):
-            f_for_field = f["electron"]
-        else:
-            f_for_field = f
+        The total field is a sum of:
+        - Ponderomotive force from E_y (laser field)
+        - Self-consistent electrostatic field from Poisson or Ampere solve
 
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            a: vector potential a[nx+2] (with boundary cells)
+            prev_ex: previous electric field E[nx]
+            dt: time step
+
+        Returns:
+            Tuple of (ponderomotive_force[nx], self_consistent_ex[nx])
+        """
         ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)[1:-1]
-        self_consistent_ex = self.es_field_solver(f_for_field, prev_ex, dt)
+        self_consistent_ex = self.es_field_solver(f_dict, prev_ex, dt)
         return ponderomotive_force, self_consistent_ex

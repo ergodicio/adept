@@ -1,6 +1,6 @@
 ---
 id: a-ad8e
-status: open
+status: in_progress
 deps: [a-58a6]
 links: []
 created: 2026-01-06T22:18:21Z
