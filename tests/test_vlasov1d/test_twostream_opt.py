@@ -20,6 +20,10 @@ from adept import ergoExo
 from adept._vlasov1d.modules import BaseVlasov1D
 from adept._vlasov1d.helpers import _initialize_total_distribution_
 
+import matplotlib
+matplotlib.use("Agg")
+
+
 def set_dict_leaves(src, dst, key=None):
     for k, v in src.items():
         if isinstance(dst[k], dict):

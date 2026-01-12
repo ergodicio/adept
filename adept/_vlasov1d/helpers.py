@@ -9,8 +9,6 @@ import pint
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
-import matplotlib
-matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from jax.scipy.special import gamma
 
