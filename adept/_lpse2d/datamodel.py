@@ -43,6 +43,21 @@ class EnvelopeModel(BaseModel):
     yc: str
 
 
+class SpeckleModel(BaseModel):
+    """
+    LASY speckle profile configuration (RPP/CPP only).
+
+    Used to apply a y-dependent speckle envelope to the laser field.
+    """
+
+    enabled: bool = False
+    focal_length: float  # meters
+    beam_aperture: list[float]  # [x, y] in meters
+    n_beamlets: list[int]  # [nx, ny]
+    smoothing_type: str = "CPP"  # RPP or CPP only
+    seed: int = 42
+
+
 class E0DriverModel(BaseModel):
     """
     E0 driver model
@@ -54,6 +69,7 @@ class E0DriverModel(BaseModel):
     num_colors: int
     envelope: EnvelopeModel
     speckle_file: Optional[str] = None
+    speckle: Optional[SpeckleModel] = None
 
 
 class DriversModel(BaseModel):
