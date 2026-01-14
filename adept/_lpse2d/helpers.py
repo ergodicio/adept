@@ -375,6 +375,34 @@ def get_solver_quantities(cfg: dict) -> dict:
             filter_grid[taper_region] = 0.5 * (1.0 + np.cos(np.pi * xi))
         cfg_grid["low_pass_filter_grid"] = filter_grid
 
+    # Initialize LASY speckle profile if configured (RPP/CPP only)
+    if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
+        import jax
+        from adept._lpse2d.core.speckle import SpeckleProfile
+
+        speckle_cfg = cfg["drivers"]["E0"]["speckle"]
+
+        # Get wavelength in meters from config (laser_wavelength is stored as string like "351nm")
+        wavelength_m = _Q(cfg["units"]["laser_wavelength"]).to("m").value
+
+        # Validate smoothing type (only RPP/CPP supported in ADEPT)
+        smoothing_type = speckle_cfg.get("smoothing_type", "CPP").upper()
+        assert smoothing_type in ["RPP", "CPP"], (
+            f"Only RPP and CPP smoothing supported, got {smoothing_type}"
+        )
+
+        cfg["drivers"]["E0"]["speckle_profile"] = SpeckleProfile(
+            wavelength=wavelength_m,
+            pol=(1, 0),
+            laser_energy=1.0,  # Normalized
+            focal_length=speckle_cfg["focal_length"],
+            beam_aperture=speckle_cfg["beam_aperture"],
+            n_beamlets=speckle_cfg["n_beamlets"],
+            temporal_smoothing_type=smoothing_type,
+            relative_laser_bandwidth=1e-10,  # Near-zero; RPP/CPP don't use bandwidth
+        )
+        cfg["drivers"]["E0"]["speckle_key"] = jax.random.PRNGKey(speckle_cfg.get("seed", 42))
+
     return cfg_grid
 
 

@@ -12,6 +12,27 @@ class Light:
         self.x = cfg["grid"]["x"]
         self.background_density = cfg["grid"]["background_density"]
 
+        # Speckle envelope (if configured) - computed once since RPP/CPP are static
+        self.speckle_envelope = None
+        speckle_profile = cfg["drivers"]["E0"].get("speckle_profile")
+        speckle_key = cfg["drivers"]["E0"].get("speckle_key")
+
+        if speckle_profile is not None:
+            # Convert y-coordinates to SI units (meters)
+            y_si = cfg["grid"]["y"] * 1e-6  # um -> m
+
+            # Evaluate speckle at x=0 (center of beam), y_grid, t=0
+            # Shape for evaluate: (nx, ny, nt)
+            ny = len(y_si)
+            x_eval = jnp.zeros((1, ny, 1))
+            y_eval = jnp.broadcast_to(y_si[None, :, None], (1, ny, 1))
+            t_eval = jnp.zeros((1, ny, 1))
+
+            # Get speckle envelope (complex) - static for RPP/CPP
+            envelope = speckle_profile.evaluate(x_eval, y_eval, t_eval, speckle_key)
+            # Shape: (1, ny, 1) -> (ny,)
+            self.speckle_envelope = envelope[0, :, 0]
+
     def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field at time t
@@ -36,6 +57,10 @@ class Light:
                 * jnp.exp(1j * k0 * self.x[:, None] + 1j * phase[None, :])
             )
             dE0y += E0_static * jnp.exp(-1j * delta_omega * self.w0 * t)
+
+        # Apply speckle envelope if configured (same for all colors)
+        if self.speckle_envelope is not None:
+            dE0y = dE0y * self.speckle_envelope[None, :]
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)
 
