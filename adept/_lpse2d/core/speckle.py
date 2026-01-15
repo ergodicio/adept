@@ -83,8 +83,6 @@ class SpeckleProfile:
         The main laser wavelength of the laser.
     pol : list of 2 complex numbers (dimensionless)
         Polarization vector.
-    laser_energy : float (in Joules)
-        The total energy of the laser pulse.
     focal_length : float (in meters)
         Focal length of lens just after the RPP/CPP.
     beam_aperture : list of 2 floats (in meters)
@@ -111,7 +109,6 @@ class SpeckleProfile:
         self,
         wavelength: float,
         pol: tuple,
-        laser_energy: float,
         focal_length: float,
         beam_aperture: tuple,
         n_beamlets: tuple,
@@ -130,7 +127,6 @@ class SpeckleProfile:
         self.k0 = 2.0 * jnp.pi / wavelength
 
         # Speckle-specific attributes
-        self.laser_energy = laser_energy
         self.focal_length = focal_length
         self.beam_aperture = jnp.array(beam_aperture, dtype=jnp.float64)
         self.n_beamlets = tuple(n_beamlets)
@@ -409,6 +405,7 @@ class SpeckleProfile:
             * self.y_lens_list[:, jnp.newaxis]
             * y_focus_list[jnp.newaxis, :]
         )
+
 
         bca = self.beamlets_complex_amplitude(
             t_now,

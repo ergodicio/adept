@@ -394,7 +394,6 @@ def get_solver_quantities(cfg: dict) -> dict:
         cfg["drivers"]["E0"]["speckle_profile"] = SpeckleProfile(
             wavelength=wavelength_m,
             pol=(1, 0),
-            laser_energy=1.0,  # Normalized
             focal_length=speckle_cfg["focal_length"],
             beam_aperture=speckle_cfg["beam_aperture"],
             n_beamlets=speckle_cfg["n_beamlets"],
