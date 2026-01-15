@@ -143,9 +143,7 @@ class SpeckledDriver(UniformDriver):
         assert self.intensities.shape == expected_shape, (
             f"intensities shape {self.intensities.shape} != expected {expected_shape}"
         )
-        assert self.phases.shape == expected_shape, (
-            f"phases shape {self.phases.shape} != expected {expected_shape}"
-        )
+        assert self.phases.shape == expected_shape, f"phases shape {self.phases.shape} != expected {expected_shape}"
 
     def __call__(self, state: dict, args: dict) -> tuple:
         # Normalize intensities (sum over all colors and y)

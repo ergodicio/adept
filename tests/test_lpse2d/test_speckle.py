@@ -24,9 +24,7 @@ def create_grid(lo, hi, num_points):
     return X, Y, T
 
 
-@pytest.mark.parametrize(
-    "temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"]
-)
+@pytest.mark.parametrize("temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"])
 def test_intensity_distribution(temporal_smoothing_type):
     """Test whether the spatial intensity distribution and statistics are correct.
 
@@ -94,9 +92,7 @@ def test_intensity_distribution(temporal_smoothing_type):
     assert error_I_dist < 2.0e-4
 
 
-@pytest.mark.parametrize(
-    "temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"]
-)
+@pytest.mark.parametrize("temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"])
 def test_spatial_correlation(temporal_smoothing_type):
     """Tests whether the speckles have the correct shape.
 
@@ -152,12 +148,8 @@ def test_spatial_correlation(temporal_smoothing_type):
     acorr2_3d_norm = acorr2_3d / jnp.max(acorr2_3d, axis=(0, 1))
 
     # Compare with theoretical speckle profile
-    x_list = jnp.linspace(
-        -n_beamlets[0] / 2 + 0.5, n_beamlets[0] / 2 - 0.5, num_points[0], endpoint=False
-    )
-    y_list = jnp.linspace(
-        -n_beamlets[1] / 2 + 0.5, n_beamlets[1] / 2 - 0.5, num_points[1], endpoint=False
-    )
+    x_list = jnp.linspace(-n_beamlets[0] / 2 + 0.5, n_beamlets[0] / 2 - 0.5, num_points[0], endpoint=False)
+    y_list = jnp.linspace(-n_beamlets[1] / 2 + 0.5, n_beamlets[1] / 2 - 0.5, num_points[1], endpoint=False)
     X, Y = jnp.meshgrid(x_list, y_list, indexing="ij")
     acorr_theor = jnp.sinc(X) ** 2 * jnp.sinc(Y) ** 2
     error_auto_correlation = jnp.max(jnp.abs(acorr_theor[:, :, jnp.newaxis] - acorr2_3d_norm))
@@ -165,9 +157,7 @@ def test_spatial_correlation(temporal_smoothing_type):
     assert error_auto_correlation < 5.0e-1
 
 
-@pytest.mark.parametrize(
-    "temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"]
-)
+@pytest.mark.parametrize("temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"])
 def test_sinc_zeros(temporal_smoothing_type):
     r"""Test whether the transverse sinc envelope has the correct width.
 
@@ -251,17 +241,13 @@ def test_FM_SSD_periodicity():
     )
 
     nu_laser = c / wavelength
-    ssd_frac = jnp.sqrt(
-        ssd_transverse_bandwidth_distribution[0] ** 2
-        + ssd_transverse_bandwidth_distribution[1] ** 2
-    )
+    ssd_frac = jnp.sqrt(ssd_transverse_bandwidth_distribution[0] ** 2 + ssd_transverse_bandwidth_distribution[1] ** 2)
     ssd_frac = (
         ssd_transverse_bandwidth_distribution[0] / ssd_frac,
         ssd_transverse_bandwidth_distribution[1] / ssd_frac,
     )
     phase_mod_freq = [
-        relative_laser_bandwidth * sf * 0.5 / pma
-        for sf, pma in zip(ssd_frac, ssd_phase_modulation_amplitude)
+        relative_laser_bandwidth * sf * 0.5 / pma for sf, pma in zip(ssd_frac, ssd_phase_modulation_amplitude)
     ]
     t_max = 1.0 / phase_mod_freq[0] / nu_laser
 

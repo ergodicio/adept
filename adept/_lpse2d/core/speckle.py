@@ -53,12 +53,8 @@ def gen_gaussian_time_series(
     imag_part = jax.random.normal(key2, shape=(t_num,))
     spectral_amplitude = psd * (real_part + 1j * imag_part)
 
-    temporal_amplitude = jnp.fft.ifftshift(
-        jnp.fft.fft(jnp.fft.fftshift(spectral_amplitude))
-    )
-    temporal_amplitude = temporal_amplitude * rms_mean / jnp.sqrt(
-        jnp.mean(jnp.square(jnp.abs(temporal_amplitude)))
-    )
+    temporal_amplitude = jnp.fft.ifftshift(jnp.fft.fft(jnp.fft.fftshift(spectral_amplitude)))
+    temporal_amplitude = temporal_amplitude * rms_mean / jnp.sqrt(jnp.mean(jnp.square(jnp.abs(temporal_amplitude))))
     return temporal_amplitude
 
 
@@ -148,9 +144,7 @@ class SpeckleProfile:
             0.5 * (self.n_beamlets[1] - 1),
             num=self.n_beamlets[1],
         )
-        self.Y_lens_matrix, self.X_lens_matrix = jnp.meshgrid(
-            self.y_lens_list, self.x_lens_list
-        )
+        self.Y_lens_matrix, self.X_lens_matrix = jnp.meshgrid(self.y_lens_list, self.x_lens_list)
         self.Y_lens_index_matrix, self.X_lens_index_matrix = jnp.meshgrid(
             jnp.arange(self.n_beamlets[1], dtype=jnp.float64),
             jnp.arange(self.n_beamlets[0], dtype=jnp.float64),
@@ -163,27 +157,23 @@ class SpeckleProfile:
 
         if "SSD" in self.temporal_smoothing_type:
             ssd_normalization = jnp.sqrt(
-                self.ssd_transverse_bandwidth_distribution[0] ** 2
-                + self.ssd_transverse_bandwidth_distribution[1] ** 2
+                self.ssd_transverse_bandwidth_distribution[0] ** 2 + self.ssd_transverse_bandwidth_distribution[1] ** 2
             )
             ssd_frac = [
                 self.ssd_transverse_bandwidth_distribution[0] / ssd_normalization,
                 self.ssd_transverse_bandwidth_distribution[1] / ssd_normalization,
             ]
             self.ssd_phase_modulation_frequency = [
-                self.laser_bandwidth * sf * 0.5 / pma
-                for sf, pma in zip(ssd_frac, self.ssd_phase_modulation_amplitude)
+                self.laser_bandwidth * sf * 0.5 / pma for sf, pma in zip(ssd_frac, self.ssd_phase_modulation_amplitude)
             ]
             self.ssd_time_delay = (
                 (
-                    self.ssd_number_color_cycles[0]
-                    / self.ssd_phase_modulation_frequency[0]
+                    self.ssd_number_color_cycles[0] / self.ssd_phase_modulation_frequency[0]
                     if self.ssd_phase_modulation_frequency[0] > 0
                     else 0
                 ),
                 (
-                    self.ssd_number_color_cycles[1]
-                    / self.ssd_phase_modulation_frequency[1]
+                    self.ssd_number_color_cycles[1] / self.ssd_phase_modulation_frequency[1]
                     if self.ssd_phase_modulation_frequency[1] > 0
                     else 0
                 ),
@@ -197,15 +187,11 @@ class SpeckleProfile:
         assert len(n_beamlets) == 2, "n_beamlets must be size 2"
 
         if "SSD" in self.temporal_smoothing_type:
-            assert ssd_number_color_cycles is not None, (
-                "must supply `ssd_number_color_cycles` to use SSD"
-            )
+            assert ssd_number_color_cycles is not None, "must supply `ssd_number_color_cycles` to use SSD"
             assert ssd_transverse_bandwidth_distribution is not None, (
                 "must supply `ssd_transverse_bandwidth_distribution` to use SSD"
             )
-            assert ssd_phase_modulation_amplitude is not None, (
-                "must supply `ssd_phase_modulation_amplitude` to use SSD"
-            )
+            assert ssd_phase_modulation_amplitude is not None, "must supply `ssd_phase_modulation_amplitude` to use SSD"
 
     def init_gaussian_time_series(
         self,
@@ -251,13 +237,15 @@ class SpeckleProfile:
                 0,
                 series_time[-1] + ssd_time_delay_sum + 3 * self.dt_update,
                 self.dt_update,
-            )[:pm_phase0.size]
+            )[: pm_phase0.size]
             return (
                 time_interp,
-                jnp.stack([
-                    (jnp.real(pm_phase0) + jnp.imag(pm_phase0)) / jnp.sqrt(2),
-                    (jnp.real(pm_phase1) + jnp.imag(pm_phase1)) / jnp.sqrt(2),
-                ]),
+                jnp.stack(
+                    [
+                        (jnp.real(pm_phase0) + jnp.imag(pm_phase0)) / jnp.sqrt(2),
+                        (jnp.real(pm_phase1) + jnp.imag(pm_phase1)) / jnp.sqrt(2),
+                    ]
+                ),
             )
         elif "ISI" in self.temporal_smoothing_type:
             # Generate complex amplitudes for each beamlet
@@ -265,13 +253,9 @@ class SpeckleProfile:
             keys = keys.reshape(self.n_beamlets[0], self.n_beamlets[1], 2)
 
             def gen_beamlet_series(k):
-                return gen_gaussian_time_series(
-                    k, series_time.size, self.dt_update, 2 * self.laser_bandwidth, 1
-                )
+                return gen_gaussian_time_series(k, series_time.size, self.dt_update, 2 * self.laser_bandwidth, 1)
 
-            complex_amp = jax.vmap(
-                jax.vmap(gen_beamlet_series)
-            )(keys)
+            complex_amp = jax.vmap(jax.vmap(gen_beamlet_series))(keys)
             return series_time, complex_amp
         else:
             return series_time, None
@@ -309,35 +293,23 @@ class SpeckleProfile:
                 + 2
                 * jnp.pi
                 * self.ssd_phase_modulation_frequency[0]
-                * (
-                    t_now
-                    - self.X_lens_matrix * self.ssd_time_delay[0] / self.n_beamlets[0]
-                )
+                * (t_now - self.X_lens_matrix * self.ssd_time_delay[0] / self.n_beamlets[0])
             ) + self.ssd_phase_modulation_amplitude[1] * jnp.sin(
                 ssd_x_y_dephasing[1]
                 + 2
                 * jnp.pi
                 * self.ssd_phase_modulation_frequency[1]
-                * (
-                    t_now
-                    - self.Y_lens_matrix * self.ssd_time_delay[1] / self.n_beamlets[1]
-                )
+                * (t_now - self.Y_lens_matrix * self.ssd_time_delay[1] / self.n_beamlets[1])
             )
             return jnp.exp(1j * phase_t)
 
         elif self.temporal_smoothing_type == "GP RPM SSD":
             phase_t = jnp.interp(
-                t_now
-                + self.X_lens_index_matrix
-                * self.ssd_time_delay[0]
-                / self.n_beamlets[0],
+                t_now + self.X_lens_index_matrix * self.ssd_time_delay[0] / self.n_beamlets[0],
                 series_time,
                 time_series[0],
             ) + jnp.interp(
-                t_now
-                + self.Y_lens_index_matrix
-                * self.ssd_time_delay[1]
-                / self.n_beamlets[1],
+                t_now + self.Y_lens_index_matrix * self.ssd_time_delay[1] / self.n_beamlets[1],
                 series_time,
                 time_series[1],
             )
@@ -390,22 +362,11 @@ class SpeckleProfile:
         y_focus_list = Y_focus_matrix[0, :]
 
         x_phase_focus_matrix = jnp.exp(
-            -2
-            * jnp.pi
-            * 1j
-            / self.n_beamlets[0]
-            * self.x_lens_list[:, jnp.newaxis]
-            * x_focus_list[jnp.newaxis, :]
+            -2 * jnp.pi * 1j / self.n_beamlets[0] * self.x_lens_list[:, jnp.newaxis] * x_focus_list[jnp.newaxis, :]
         )
         y_phase_focus_matrix = jnp.exp(
-            -2
-            * jnp.pi
-            * 1j
-            / self.n_beamlets[1]
-            * self.y_lens_list[:, jnp.newaxis]
-            * y_focus_list[jnp.newaxis, :]
+            -2 * jnp.pi * 1j / self.n_beamlets[1] * self.y_lens_list[:, jnp.newaxis] * y_focus_list[jnp.newaxis, :]
         )
-
 
         bca = self.beamlets_complex_amplitude(
             t_now,
@@ -453,13 +414,9 @@ class SpeckleProfile:
 
         # Calculate phase plate
         if self.temporal_smoothing_type == "RPP":
-            phase_plate = jax.random.choice(
-                key1, jnp.array([0.0, jnp.pi]), shape=self.n_beamlets
-            )
+            phase_plate = jax.random.choice(key1, jnp.array([0.0, jnp.pi]), shape=self.n_beamlets)
         elif self.temporal_smoothing_type in ["CPP", "FM SSD", "GP RPM SSD"]:
-            phase_plate = jax.random.uniform(
-                key1, shape=self.n_beamlets, minval=-jnp.pi, maxval=jnp.pi
-            )
+            phase_plate = jax.random.uniform(key1, shape=self.n_beamlets, minval=-jnp.pi, maxval=jnp.pi)
         elif "ISI" in self.temporal_smoothing_type:
             phase_plate = jnp.zeros(self.n_beamlets)
         else:
