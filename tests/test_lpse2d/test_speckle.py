@@ -42,8 +42,6 @@ def test_intensity_distribution(temporal_smoothing_type):
     beam_aperture = [0.35, 0.5]  # m
     n_beamlets = [24, 32]
     relative_laser_bandwidth = 0.005
-    laser_energy = 1.0  # J
-
     ssd_phase_modulation_amplitude = (4.1, 4.5)
     ssd_number_color_cycles = [1.4, 1.0]
     ssd_transverse_bandwidth_distribution = [1.8, 1.0]
@@ -51,7 +49,6 @@ def test_intensity_distribution(temporal_smoothing_type):
     profile = SpeckleProfile(
         wavelength,
         polarization,
-        laser_energy,
         focal_length,
         beam_aperture,
         n_beamlets,
@@ -111,7 +108,6 @@ def test_spatial_correlation(temporal_smoothing_type):
 
     wavelength = 0.351e-6
     polarization = (1, 0)
-    laser_energy = 1.0
     focal_length = 3.5
     beam_aperture = [0.35, 0.35]
     n_beamlets = [24, 32]
@@ -124,7 +120,6 @@ def test_spatial_correlation(temporal_smoothing_type):
     profile = SpeckleProfile(
         wavelength,
         polarization,
-        laser_energy,
         focal_length,
         beam_aperture,
         n_beamlets,
@@ -183,7 +178,6 @@ def test_sinc_zeros(temporal_smoothing_type):
 
     wavelength = 0.351e-6
     polarization = (1, 0)
-    laser_energy = 1.0
     focal_length = 3.5
     beam_aperture = [0.35, 0.35]
     n_beamlets = [24, 48]
@@ -195,7 +189,6 @@ def test_sinc_zeros(temporal_smoothing_type):
     profile = SpeckleProfile(
         wavelength,
         polarization,
-        laser_energy,
         focal_length,
         beam_aperture,
         n_beamlets,
@@ -234,7 +227,6 @@ def test_FM_SSD_periodicity():
 
     wavelength = 0.351e-6
     polarization = (1, 0)
-    laser_energy = 1.0
     focal_length = 3.5
     beam_aperture = [0.35, 0.35]
     n_beamlets = [24, 32]
@@ -248,7 +240,6 @@ def test_FM_SSD_periodicity():
     profile = SpeckleProfile(
         wavelength,
         polarization,
-        laser_energy,
         focal_length,
         beam_aperture,
         n_beamlets,
