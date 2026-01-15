@@ -24,14 +24,32 @@ class Light:
             # Evaluate speckle at x=0 (center of beam), y_grid, t=0
             # Shape for evaluate: (nx, ny, nt)
             ny = len(y_si)
+            t_eval = jnp.zeros((1, ny, 1))
+
+            fnum = speckle_profile.focal_length / jnp.linalg.norm(speckle_profile.beam_aperture)
+
+            # Calculate the average magnitude of the entire speckle envelope so we can normalize by that.
+            # Michel Fig 9.2 -- the entire speckle profile has a size
+            # on the order of f lambda_0 / delta_x_RPP
+            delta_x_RPP = speckle_profile.beam_aperture[0] / speckle_profile.n_beamlets[0]
+            delta_x = fnum * speckle_profile.lambda0 / delta_x_RPP
+            delta_y_RPP = speckle_profile.beam_aperture[0] / speckle_profile.n_beamlets[0]
+            delta_y = fnum * speckle_profile.lambda0 / delta_y_RPP
+
+            xs = jnp.linspace(-delta_x, delta_x, 1000)
+            ys = jnp.linspace(-delta_y, delta_y, 1000)
+
+            whole_focal_plane = jnp.meshgrid(xs, ys, jnp.array([0.]), indexing='ij')
+            whole_envelope = speckle_profile.evaluate(*whole_focal_plane, speckle_key)
+            average = jnp.mean(jnp.abs(whole_envelope))
+
             x_eval = jnp.zeros((1, ny, 1))
             y_eval = jnp.broadcast_to(y_si[None, :, None], (1, ny, 1))
-            t_eval = jnp.zeros((1, ny, 1))
 
             # Get speckle envelope (complex) - static for RPP/CPP
             envelope = speckle_profile.evaluate(x_eval, y_eval, t_eval, speckle_key)
             # Shape: (1, ny, 1) -> (ny,)
-            self.speckle_envelope = envelope[0, :, 0]
+            self.speckle_envelope = envelope[0, :, 0] / average
 
     def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
