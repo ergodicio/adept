@@ -68,8 +68,8 @@ class E0DriverModel(BaseModel):
     delta_omega_max: float
     num_colors: int
     envelope: EnvelopeModel
-    speckle_file: Optional[str] = None
-    speckle: Optional[SpeckleModel] = None
+    speckle_file: str | None = None
+    speckle: SpeckleModel | None = None
 
 
 class DriversModel(BaseModel):

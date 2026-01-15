@@ -378,6 +378,7 @@ def get_solver_quantities(cfg: dict) -> dict:
     # Initialize LASY speckle profile if configured (RPP/CPP only)
     if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
         import jax
+
         from adept._lpse2d.core.speckle import SpeckleProfile
 
         speckle_cfg = cfg["drivers"]["E0"]["speckle"]
@@ -387,9 +388,7 @@ def get_solver_quantities(cfg: dict) -> dict:
 
         # Validate smoothing type (only RPP/CPP supported in ADEPT)
         smoothing_type = speckle_cfg.get("smoothing_type", "CPP").upper()
-        assert smoothing_type in ["RPP", "CPP"], (
-            f"Only RPP and CPP smoothing supported, got {smoothing_type}"
-        )
+        assert smoothing_type in ["RPP", "CPP"], f"Only RPP and CPP smoothing supported, got {smoothing_type}"
 
         cfg["drivers"]["E0"]["speckle_profile"] = SpeckleProfile(
             wavelength=wavelength_m,
@@ -705,7 +704,7 @@ def get_save_quantities(cfg: dict) -> dict:
         xmax = cfg["grid"]["xmax"]
         dx = _Q(cfg["save"]["fields"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
         nx = cfg["grid"]["nx"]
-        #nx = int((xmax - xmin) / dx)
+        # nx = int((xmax - xmin) / dx)
         cfg["save"]["fields"]["x"]["dx"] = dx
         cfg["save"]["fields"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
         cfg["save"]["fields"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)

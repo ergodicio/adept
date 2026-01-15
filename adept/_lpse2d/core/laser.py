@@ -39,7 +39,7 @@ class Light:
             xs = jnp.linspace(-delta_x, delta_x, 1000)
             ys = jnp.linspace(-delta_y, delta_y, 1000)
 
-            whole_focal_plane = jnp.meshgrid(xs, ys, jnp.array([0.]), indexing='ij')
+            whole_focal_plane = jnp.meshgrid(xs, ys, jnp.array([0.0]), indexing="ij")
             whole_envelope = speckle_profile.evaluate(*whole_focal_plane, speckle_key)
             average = jnp.mean(jnp.abs(whole_envelope))
 
@@ -81,4 +81,3 @@ class Light:
             dE0y = dE0y * self.speckle_envelope[None, :]
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)
-

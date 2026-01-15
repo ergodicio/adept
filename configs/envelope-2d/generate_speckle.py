@@ -9,11 +9,13 @@ This creates a square filter localized to the middle of the y-domain.
 """
 
 import argparse
+
 import numpy as np
 
 
 def next_smooth_fft_size(n: int, max_prime: int = 5) -> int:
     """Find the next FFT-friendly size (only factors 2, 3, 5)."""
+
     def is_smooth(x):
         for p in [2, 3, 5]:
             while x % p == 0:
