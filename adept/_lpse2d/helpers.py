@@ -9,6 +9,7 @@ plt.style.use(["science", "grid", "no-latex"])
 import time
 
 import interpax
+import jax
 import numpy as np
 import xarray as xr
 from astropy.units import Quantity as _Q
@@ -374,6 +375,32 @@ def get_solver_quantities(cfg: dict) -> dict:
             filter_grid[taper_region] = 0.5 * (1.0 + np.cos(np.pi * xi))
         cfg_grid["low_pass_filter_grid"] = filter_grid
 
+    # Initialize LASY speckle profile if configured (RPP/CPP only)
+    if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
+        import jax
+
+        from adept._lpse2d.core.speckle import SpeckleProfile
+
+        speckle_cfg = cfg["drivers"]["E0"]["speckle"]
+
+        # Get wavelength in meters from config (laser_wavelength is stored as string like "351nm")
+        wavelength_m = _Q(cfg["units"]["laser_wavelength"]).to("m").value
+
+        # Validate smoothing type (only RPP/CPP supported in ADEPT)
+        smoothing_type = speckle_cfg.get("smoothing_type", "CPP").upper()
+        assert smoothing_type in ["RPP", "CPP"], f"Only RPP and CPP smoothing supported, got {smoothing_type}"
+
+        cfg["drivers"]["E0"]["speckle_profile"] = SpeckleProfile(
+            wavelength=wavelength_m,
+            pol=(1, 0),
+            focal_length=speckle_cfg["focal_length"],
+            beam_aperture=speckle_cfg["beam_aperture"],
+            n_beamlets=speckle_cfg["n_beamlets"],
+            temporal_smoothing_type=smoothing_type,
+            relative_laser_bandwidth=1e-10,  # Near-zero; RPP/CPP don't use bandwidth
+        )
+        cfg["drivers"]["E0"]["speckle_key"] = jax.random.PRNGKey(speckle_cfg.get("seed", 42))
+
     return cfg_grid
 
 
@@ -591,10 +618,10 @@ def make_field_xarrays(cfg, this_t, state, td):
     yax_tuple = ("y (um)", yax)
 
     # check if state["epw"] is a complex64 or 128 and choose accordingly
-    # if state["epw"].dtype == jnp.complex128:
-    # _complex = np.complex128
-    # else:
-    _complex = np.complex64
+    if state["epw"].dtype == jnp.complex128:
+        _complex = np.complex128
+    else:
+        _complex = np.complex64
 
     phi_k_np = np.array(state["epw"]).view(_complex)
     phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
@@ -676,7 +703,8 @@ def get_save_quantities(cfg: dict) -> dict:
         xmin = cfg["grid"]["xmin"]
         xmax = cfg["grid"]["xmax"]
         dx = _Q(cfg["save"]["fields"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
-        nx = int((xmax - xmin) / dx)
+        nx = cfg["grid"]["nx"]
+        # nx = int((xmax - xmin) / dx)
         cfg["save"]["fields"]["x"]["dx"] = dx
         cfg["save"]["fields"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
         cfg["save"]["fields"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
@@ -685,7 +713,7 @@ def get_save_quantities(cfg: dict) -> dict:
             ymin = cfg["grid"]["ymin"]
             ymax = cfg["grid"]["ymax"]
             dy = _Q(cfg["save"]["fields"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
-            ny = int((ymax - ymin) / dy)
+            ny = cfg["grid"]["ny"]
             cfg["save"]["fields"]["y"]["dy"] = dy
             cfg["save"]["fields"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
             cfg["save"]["fields"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)

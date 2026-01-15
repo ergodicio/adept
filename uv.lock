@@ -18,6 +18,7 @@ wheels = [
 
 [[package]]
 name = "adept"
+version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
@@ -68,6 +69,8 @@ gpu = [
 
 [package.metadata]
 requires-dist = [
+    { name = "adept", marker = "extra == 'docs'" },
+    { name = "adept", extras = ["docs"], marker = "extra == 'dev'" },
     { name = "boto3" },
     { name = "diffrax", git = "https://github.com/patrick-kidger/diffrax.git?rev=dev" },
     { name = "flatdict" },
@@ -90,22 +93,17 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'" },
     { name = "scienceplots" },
     { name = "scipy" },
-    { name = "sphinx", marker = "extra == 'dev'" },
     { name = "sphinx", marker = "extra == 'docs'" },
-    { name = "sphinx-autodoc-typehints", marker = "extra == 'dev'" },
     { name = "sphinx-autodoc-typehints", marker = "extra == 'docs'" },
-    { name = "sphinx-copybutton", marker = "extra == 'dev'" },
     { name = "sphinx-copybutton", marker = "extra == 'docs'" },
-    { name = "sphinx-github-style", marker = "extra == 'dev'" },
     { name = "sphinx-github-style", marker = "extra == 'docs'" },
-    { name = "sphinx-rtd-theme", marker = "extra == 'dev'" },
     { name = "sphinx-rtd-theme", marker = "extra == 'docs'" },
     { name = "tabulate" },
     { name = "tqdm" },
     { name = "typeguard", marker = "extra == 'dev'" },
     { name = "xarray" },
 ]
-provides-extras = ["cpu", "dev", "docs", "gpu"]
+provides-extras = ["cpu", "gpu", "docs", "dev"]
 
 [[package]]
 name = "alabaster"

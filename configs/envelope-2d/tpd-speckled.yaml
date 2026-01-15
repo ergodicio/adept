@@ -21,14 +21,15 @@ drivers:
       yr: 0.2um
       yw: 1000um
     num_colors: 1
-    shape: uniform
+    shape: speckled
+    speckle_file: configs/envelope-2d/speckle.npz
     params:
       amplitudes:
-        init: random # uniform, random
+        init: random
         learned: true
-        activation: log # linear, log
+        activation: log
       phases:
-        init: random # random, seed-###
+        init: random
         learned: true
         seed: 42
 
@@ -44,7 +45,7 @@ grid:
   ymin: -6um
 mlflow:
   experiment: tpd
-  run: tpd-test
+  run: tpd-speckled
 save:
   fields:
     t:
