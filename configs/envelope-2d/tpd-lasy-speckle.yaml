@@ -43,7 +43,7 @@ drivers:
 grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 1.5um
-  low_pass_filter: 0.66
+  low_pass_filter: 0.4
   dt: 5fs
   dx: 66.3nm
   tmax: 5ps
