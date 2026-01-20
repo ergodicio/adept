@@ -18,7 +18,7 @@ density:
     basis: sine
     baseline: 1.0
     amplitude: 1.0e-3
-    wavenumber: 0.3
+    wavenumber: 0.1
   species-ion-background:
     noise_seed: 421
     noise_type: gaussian
@@ -28,33 +28,23 @@ density:
     m: 2.0
     basis: sine
     baseline: 1.0
-    amplitude: -1.0e-3
-    wavenumber: 0.3
+    amplitude: 1.0e-3
+    wavenumber: 0.1
 
 grid:
-  dt: 0.05
+  dt: 0.5
   nx: 32
   tmin: 0.
-  tmax: 50.0
-  xmax: 20.94
+  tmax: 5000.0
+  xmax: 314.159
   xmin: 0.0
 
 save:
   fields:
     t:
       tmin: 0.0
-      tmax: 50.0
-      nt: 501
-  electron:
-    t:
-      tmin: 0.0
-      tmax: 50.0
-      nt: 11
-  ion:
-    t:
-      tmin: 0.0
-      tmax: 50.0
-      nt: 11
+      tmax: 5000.0
+      nt: 1001
 
 solver: vlasov-1d
 
@@ -93,7 +83,7 @@ terms:
     is_on: False
     type: Dougherty
     time:
-      baseline: 1.0e-5
+      baseline: 1.0
       bump_or_trough: bump
       center: 0.0
       rise: 25.0
