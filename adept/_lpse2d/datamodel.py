@@ -45,17 +45,29 @@ class EnvelopeModel(BaseModel):
 
 class SpeckleModel(BaseModel):
     """
-    LASY speckle profile configuration (RPP/CPP only).
+    LASY speckle profile configuration.
 
     Used to apply a y-dependent speckle envelope to the laser field.
+
+    Supported smoothing types:
+    - 'RPP': Random phase plates (static)
+    - 'CPP': Continuous phase plates (static)
+    - 'FM SSD': Frequency modulated smoothing by spectral dispersion (time-varying)
+    - 'GP RPM SSD': Gaussian process randomly phase-modulated SSD (time-varying)
+    - 'GP ISI': Gaussian process induced spatial incoherence (time-varying)
     """
 
     enabled: bool = False
     focal_length: float  # meters
     beam_aperture: list[float]  # [x, y] in meters
     n_beamlets: list[int]  # [nx, ny]
-    smoothing_type: str = "CPP"  # RPP or CPP only
+    smoothing_type: str = "CPP"  # RPP, CPP, FM SSD, GP RPM SSD, GP ISI
     seed: int = 42
+    # SSD-specific parameters (required for FM SSD, GP RPM SSD, GP ISI)
+    relative_laser_bandwidth: float | None = None
+    ssd_phase_modulation_amplitude: list[float] | None = None  # [x, y]
+    ssd_number_color_cycles: list[float] | None = None  # [x, y]
+    ssd_transverse_bandwidth_distribution: list[float] | None = None  # [x, y]
 
 
 class E0DriverModel(BaseModel):

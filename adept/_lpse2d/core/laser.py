@@ -12,50 +12,56 @@ class Light:
         self.x = cfg["grid"]["x"]
         self.background_density = cfg["grid"]["background_density"]
 
-        # Speckle envelope (if configured) - computed once since RPP/CPP are static
-        self.speckle_envelope = None
+        # Speckle state
+        self.speckle_envelope = None  # Cached envelope for static methods (RPP/CPP)
+        self.speckle_profile = None  # Profile object for time-varying methods
+        self.speckle_normalization = 1.0
+        self.y_si = None  # y-coordinates in meters
+        self.x_si_zeros = None  # x=0 evaluation points
+
         speckle_profile = cfg["drivers"]["E0"].get("speckle_profile")
-        speckle_key = cfg["drivers"]["E0"].get("speckle_key")
 
         if speckle_profile is not None:
             # Convert y-coordinates to SI units (meters)
             y_si = cfg["grid"]["y"] * 1e-6  # um -> m
-
-            # Evaluate speckle at x=0 (center of beam), y_grid, t=0
-            # Shape for evaluate: (nx, ny, nt)
             ny = len(y_si)
-            t_eval = jnp.zeros((1, ny, 1))
+            self.y_si = y_si
+            self.x_si_zeros = jnp.zeros(ny)
 
-            fnum = speckle_profile.focal_length / jnp.linalg.norm(speckle_profile.beam_aperture)
+            # Build 2D meshgrid for evaluation (x=0 slice)
+            x_eval, y_eval = jnp.meshgrid(jnp.array([0.0]), y_si, indexing="ij")
+            # Shape: (1, ny)
 
-            # Calculate the average magnitude of the entire speckle envelope so we can normalize by that.
+            # Calculate the normalization factor (average magnitude over focal plane)
             # Michel Fig 9.2 -- the entire speckle profile has a size
             # on the order of f lambda_0 / delta_x_RPP
+            fnum = speckle_profile.focal_length / jnp.linalg.norm(speckle_profile.beam_aperture)
             delta_x_RPP = speckle_profile.beam_aperture[0] / speckle_profile.n_beamlets[0]
             delta_x = fnum * speckle_profile.lambda0 / delta_x_RPP
-            delta_y_RPP = speckle_profile.beam_aperture[0] / speckle_profile.n_beamlets[0]
+            delta_y_RPP = speckle_profile.beam_aperture[1] / speckle_profile.n_beamlets[1]
             delta_y = fnum * speckle_profile.lambda0 / delta_y_RPP
 
             xs = jnp.linspace(-delta_x, delta_x, 1000)
             ys = jnp.linspace(-delta_y, delta_y, 1000)
+            whole_x, whole_y = jnp.meshgrid(xs, ys, indexing="ij")
+            whole_envelope = speckle_profile.evaluate(whole_x, whole_y, 0.0)
+            self.speckle_normalization = jnp.mean(jnp.abs(whole_envelope))
 
-            whole_focal_plane = jnp.meshgrid(xs, ys, jnp.array([0.0]), indexing="ij")
-            whole_envelope = speckle_profile.evaluate(*whole_focal_plane, speckle_key)
-            average = jnp.mean(jnp.abs(whole_envelope))
-
-            x_eval = jnp.zeros((1, ny, 1))
-            y_eval = jnp.broadcast_to(y_si[None, :, None], (1, ny, 1))
-
-            # Get speckle envelope (complex) - static for RPP/CPP
-            envelope = speckle_profile.evaluate(x_eval, y_eval, t_eval, speckle_key)
-            # Shape: (1, ny, 1) -> (ny,)
-            self.speckle_envelope = envelope[0, :, 0] / average
+            # Check if static (RPP/CPP) or time-varying (SSD/ISI)
+            if speckle_profile.temporal_smoothing_type in ["RPP", "CPP"]:
+                # Static: compute envelope once and cache
+                envelope = speckle_profile.evaluate(x_eval, y_eval, 0.0)
+                # Shape: (1, ny) -> (ny,)
+                self.speckle_envelope = envelope[0, :] / self.speckle_normalization
+            else:
+                # Time-varying: store profile for per-timestep evaluation
+                self.speckle_profile = speckle_profile
 
     def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field at time t
 
-        :param t: time
+        :param t: time (in ps)
         :param y: state variables
         :return: updated laser field
         """
@@ -78,6 +84,14 @@ class Light:
 
         # Apply speckle envelope if configured (same for all colors)
         if self.speckle_envelope is not None:
+            # Static (RPP/CPP) - use cached envelope
             dE0y = dE0y * self.speckle_envelope[None, :]
+        elif self.speckle_profile is not None:
+            # Time-varying (SSD/ISI) - evaluate at current time
+            t_seconds = t * 1e-12  # ps -> s
+            x_eval, y_eval = jnp.meshgrid(jnp.array([0.0]), self.y_si, indexing="ij")
+            envelope = self.speckle_profile.evaluate(x_eval, y_eval, t_seconds)
+            # Shape: (1, ny) -> (ny,)
+            dE0y = dE0y * (envelope[0, :] / self.speckle_normalization)[None, :]
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)

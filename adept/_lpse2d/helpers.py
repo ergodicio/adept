@@ -375,7 +375,7 @@ def get_solver_quantities(cfg: dict) -> dict:
             filter_grid[taper_region] = 0.5 * (1.0 + np.cos(np.pi * xi))
         cfg_grid["low_pass_filter_grid"] = filter_grid
 
-    # Initialize LASY speckle profile if configured (RPP/CPP only)
+    # Initialize LASY speckle profile if configured
     if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
         import jax
 
@@ -386,9 +386,15 @@ def get_solver_quantities(cfg: dict) -> dict:
         # Get wavelength in meters from config (laser_wavelength is stored as string like "351nm")
         wavelength_m = _Q(cfg["units"]["laser_wavelength"]).to("m").value
 
-        # Validate smoothing type (only RPP/CPP supported in ADEPT)
+        # Get smoothing type
         smoothing_type = speckle_cfg.get("smoothing_type", "CPP").upper()
-        assert smoothing_type in ["RPP", "CPP"], f"Only RPP and CPP smoothing supported, got {smoothing_type}"
+
+        # Get t_max for time-varying methods (GP methods need this)
+        # cfg_grid["tmax"] is already in ps at this point
+        t_max_seconds = cfg_grid["tmax"] * 1e-12  # ps -> s
+
+        # Get bandwidth (required for SSD/ISI, default small value for RPP/CPP)
+        relative_laser_bandwidth = speckle_cfg.get("relative_laser_bandwidth", 1e-10)
 
         cfg["drivers"]["E0"]["speckle_profile"] = SpeckleProfile(
             wavelength=wavelength_m,
@@ -397,9 +403,13 @@ def get_solver_quantities(cfg: dict) -> dict:
             beam_aperture=speckle_cfg["beam_aperture"],
             n_beamlets=speckle_cfg["n_beamlets"],
             temporal_smoothing_type=smoothing_type,
-            relative_laser_bandwidth=1e-10,  # Near-zero; RPP/CPP don't use bandwidth
+            key=jax.random.PRNGKey(speckle_cfg.get("seed", 42)),
+            t_max=t_max_seconds,
+            relative_laser_bandwidth=relative_laser_bandwidth,
+            ssd_phase_modulation_amplitude=speckle_cfg.get("ssd_phase_modulation_amplitude"),
+            ssd_number_color_cycles=speckle_cfg.get("ssd_number_color_cycles"),
+            ssd_transverse_bandwidth_distribution=speckle_cfg.get("ssd_transverse_bandwidth_distribution"),
         )
-        cfg["drivers"]["E0"]["speckle_key"] = jax.random.PRNGKey(speckle_cfg.get("seed", 42))
 
     return cfg_grid
 

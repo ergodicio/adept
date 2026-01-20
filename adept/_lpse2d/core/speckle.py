@@ -7,8 +7,6 @@ Speckled lasers are used to mitigate laser-plasma interactions in fusion and ion
 More on the subject can be found in chapter 9 of P. Michel, Introduction to Laser-Plasma Interactions.
 """
 
-from functools import partial
-
 import jax
 import jax.numpy as jnp
 from jax import Array
@@ -64,14 +62,15 @@ class SpeckleProfile:
 
     This is a JAX port of the LASY SpeckleProfile class. Key differences:
     - Uses JAX arrays and operations
-    - Random number generation requires passing a JAX PRNGKey to evaluate()
+    - Random state is initialized in constructor (key parameter)
+    - evaluate() operates on a single time slice
 
     Supported smoothing types:
-    - 'RPP': Random phase plates
-    - 'CPP': Continuous phase plates
-    - 'FM SSD': Frequency modulated smoothing by spectral dispersion
-    - 'GP RPM SSD': Gaussian process randomly phase-modulated SSD
-    - 'GP ISI': Gaussian process induced spatial incoherence
+    - 'RPP': Random phase plates (static)
+    - 'CPP': Continuous phase plates (static)
+    - 'FM SSD': Frequency modulated smoothing by spectral dispersion (time-varying)
+    - 'GP RPM SSD': Gaussian process randomly phase-modulated SSD (time-varying)
+    - 'GP ISI': Gaussian process induced spatial incoherence (time-varying)
 
     Parameters
     ----------
@@ -87,8 +86,13 @@ class SpeckleProfile:
         Number of RPP/CPP elements in each direction.
     temporal_smoothing_type : string
         Smoothing method: 'RPP', 'CPP', 'FM SSD', 'GP RPM SSD', or 'GP ISI'.
-    relative_laser_bandwidth : float
+    key : jax.random.PRNGKey
+        Random key for initializing phase plate, dephasing, and time series.
+    t_max : float, optional (in seconds)
+        Maximum simulation time. Required for GP methods.
+    relative_laser_bandwidth : float, optional
         Bandwidth of the laser pulse, relative to central frequency.
+        Required for SSD/ISI methods.
     ssd_phase_modulation_amplitude : list of 2 floats, optional
         Amplitudes of phase modulation (for SSD types).
     ssd_number_color_cycles : list of 2 floats, optional
@@ -109,7 +113,9 @@ class SpeckleProfile:
         beam_aperture: tuple,
         n_beamlets: tuple,
         temporal_smoothing_type: str,
-        relative_laser_bandwidth: float,
+        key: Array,
+        t_max: float = 0.0,
+        relative_laser_bandwidth: float = 1e-10,
         ssd_phase_modulation_amplitude: tuple | None = None,
         ssd_number_color_cycles: tuple | None = None,
         ssd_transverse_bandwidth_distribution: tuple | None = None,
@@ -130,7 +136,7 @@ class SpeckleProfile:
         self.laser_bandwidth = relative_laser_bandwidth
         self.do_include_transverse_envelope = do_include_transverse_envelope
 
-        # Time interval to update the speckle pattern
+        # Time interval to update the speckle pattern (for time-varying methods)
         self.dt_update = 1 / self.laser_bandwidth / 50
 
         # Beamlet grid in lens plane
@@ -193,7 +199,38 @@ class SpeckleProfile:
             )
             assert ssd_phase_modulation_amplitude is not None, "must supply `ssd_phase_modulation_amplitude` to use SSD"
 
-    def init_gaussian_time_series(
+        if "GP" in self.temporal_smoothing_type:
+            assert t_max > 0, "t_max must be provided and > 0 for GP methods"
+
+        # Pre-compute random state (split key for different random operations)
+        key1, key2, key3 = jax.random.split(key, 3)
+
+        # Phase plate (computed once, used for all evaluations)
+        if self.temporal_smoothing_type == "RPP":
+            phase_plate = jax.random.choice(key1, jnp.array([0.0, jnp.pi]), shape=self.n_beamlets)
+        elif self.temporal_smoothing_type in ["CPP", "FM SSD", "GP RPM SSD"]:
+            phase_plate = jax.random.uniform(key1, shape=self.n_beamlets, minval=-jnp.pi, maxval=jnp.pi)
+        elif "ISI" in self.temporal_smoothing_type:
+            phase_plate = jnp.zeros(self.n_beamlets)
+        else:
+            raise NotImplementedError(f"Unknown smoothing type: {self.temporal_smoothing_type}")
+
+        self.exp_phase_plate = jnp.exp(1j * phase_plate)
+
+        # SSD dephasing (for FM SSD only)
+        self.ssd_x_y_dephasing = None
+        if self.temporal_smoothing_type == "FM SSD":
+            self.ssd_x_y_dephasing = jax.random.normal(key2, shape=(2,)) * jnp.pi
+
+        # Time series for GP methods
+        self.series_time = None
+        self.time_series = None
+        if "GP" in self.temporal_smoothing_type:
+            t_max_norm = t_max * c / self.lambda0
+            series_time = jnp.arange(0, t_max_norm + self.dt_update, self.dt_update)
+            self.series_time, self.time_series = self._init_gaussian_time_series(key3, series_time)
+
+    def _init_gaussian_time_series(
         self,
         key: Array,
         series_time: Array,
@@ -263,22 +300,13 @@ class SpeckleProfile:
     def beamlets_complex_amplitude(
         self,
         t_now: float,
-        series_time: Array,
-        time_series: Array | None,
-        ssd_x_y_dephasing: Array | None = None,
     ) -> Array:
         """Calculate complex amplitude of the beamlets in the near-field.
 
         Parameters
         ----------
         t_now : float
-            Time at which to calculate the complex amplitude
-        series_time : array
-            Array of times for the stochastic process
-        time_series : array or None
-            Random phase/amplitude data
-        ssd_x_y_dephasing : array or None
-            Random dephasing for FM SSD
+            Time at which to calculate the complex amplitude (normalized by c/lambda0)
 
         Returns
         -------
@@ -289,13 +317,13 @@ class SpeckleProfile:
 
         elif self.temporal_smoothing_type == "FM SSD":
             phase_t = self.ssd_phase_modulation_amplitude[0] * jnp.sin(
-                ssd_x_y_dephasing[0]
+                self.ssd_x_y_dephasing[0]
                 + 2
                 * jnp.pi
                 * self.ssd_phase_modulation_frequency[0]
                 * (t_now - self.X_lens_matrix * self.ssd_time_delay[0] / self.n_beamlets[0])
             ) + self.ssd_phase_modulation_amplitude[1] * jnp.sin(
-                ssd_x_y_dephasing[1]
+                self.ssd_x_y_dephasing[1]
                 + 2
                 * jnp.pi
                 * self.ssd_phase_modulation_frequency[1]
@@ -306,18 +334,18 @@ class SpeckleProfile:
         elif self.temporal_smoothing_type == "GP RPM SSD":
             phase_t = jnp.interp(
                 t_now + self.X_lens_index_matrix * self.ssd_time_delay[0] / self.n_beamlets[0],
-                series_time,
-                time_series[0],
+                self.series_time,
+                self.time_series[0],
             ) + jnp.interp(
                 t_now + self.Y_lens_index_matrix * self.ssd_time_delay[1] / self.n_beamlets[1],
-                series_time,
-                time_series[1],
+                self.series_time,
+                self.time_series[1],
             )
             return jnp.exp(1j * phase_t)
 
         elif self.temporal_smoothing_type == "GP ISI":
             idx = jnp.round(t_now / self.dt_update).astype(int)
-            return time_series[:, :, idx]
+            return self.time_series[:, :, idx]
 
         else:
             raise NotImplementedError(f"Unknown smoothing type: {self.temporal_smoothing_type}")
@@ -325,39 +353,27 @@ class SpeckleProfile:
     def generate_speckle_pattern(
         self,
         t_now: float,
-        exp_phase_plate: Array,
         x: Array,
         y: Array,
-        series_time: Array,
-        time_series: Array | None,
-        ssd_x_y_dephasing: Array | None = None,
     ) -> Array:
         """Calculate the speckle pattern in the focal plane.
 
         Parameters
         ----------
         t_now : float
-            Time at which to calculate the speckle pattern
-        exp_phase_plate : 2d array
-            The RPP/CPP phase contributions (exp(i*phase))
-        x : 3d array
-            x-positions in focal plane
-        y : 3d array
-            y-positions in focal plane
-        series_time : 1d array
-            Times for the stochastic process
-        time_series : array or None
-            Random phase/amplitude data
-        ssd_x_y_dephasing : array or None
-            Random dephasing for FM SSD
+            Time at which to calculate the speckle pattern (normalized by c/lambda0)
+        x : 2d array
+            x-positions in focal plane (meters)
+        y : 2d array
+            y-positions in focal plane (meters)
 
         Returns
         -------
         speckle_amp : 2D array of complex numbers
         """
         lambda_fnum = self.lambda0 * self.focal_length / self.beam_aperture
-        X_focus_matrix = x[:, :, 0] / lambda_fnum[0]
-        Y_focus_matrix = y[:, :, 0] / lambda_fnum[1]
+        X_focus_matrix = x / lambda_fnum[0]
+        Y_focus_matrix = y / lambda_fnum[1]
         x_focus_list = X_focus_matrix[:, 0]
         y_focus_list = Y_focus_matrix[0, :]
 
@@ -368,15 +384,10 @@ class SpeckleProfile:
             -2 * jnp.pi * 1j / self.n_beamlets[1] * self.y_lens_list[:, jnp.newaxis] * y_focus_list[jnp.newaxis, :]
         )
 
-        bca = self.beamlets_complex_amplitude(
-            t_now,
-            series_time=series_time,
-            time_series=time_series,
-            ssd_x_y_dephasing=ssd_x_y_dephasing,
-        )
+        bca = self.beamlets_complex_amplitude(t_now)
         speckle_amp = jnp.einsum(
             "jk,jl->kl",
-            jnp.einsum("ij,ik->jk", bca * exp_phase_plate, x_phase_focus_matrix),
+            jnp.einsum("ij,ik->jk", bca * self.exp_phase_plate, x_phase_focus_matrix),
             y_phase_focus_matrix,
         )
         if self.do_include_transverse_envelope:
@@ -387,70 +398,23 @@ class SpeckleProfile:
             )
         return speckle_amp
 
-    def evaluate(self, x: Array, y: Array, t: Array, key: Array) -> Array:
+    def evaluate(self, x: Array, y: Array, t: float) -> Array:
         """
-        Return the envelope field of the laser.
+        Return the envelope field of the laser at a single time.
 
         Parameters
         ----------
-        x, y, t : ndarrays of floats
-            Define points on which to evaluate the envelope.
-            These arrays need to all have the same shape.
-        key : jax.random.PRNGKey
-            Random key for JAX random number generation.
+        x, y : 2D ndarrays of floats (in meters)
+            Define spatial points on which to evaluate the envelope.
+            These arrays must have the same shape.
+        t : float (in seconds)
+            Time at which to evaluate the envelope.
 
         Returns
         -------
-        envelope : ndarray of complex numbers
+        envelope : 2D ndarray of complex numbers
             Contains the value of the envelope at the specified points.
-            This array has the same shape as the arrays x, y, t.
+            This array has the same shape as the arrays x, y.
         """
-        # General parameters
-        t_norm = t[0, 0, :] * c / self.lambda0
-        t_max = t_norm[-1]
-
-        # Split key for different random operations
-        key1, key2, key3 = jax.random.split(key, 3)
-
-        # Calculate phase plate
-        if self.temporal_smoothing_type == "RPP":
-            phase_plate = jax.random.choice(key1, jnp.array([0.0, jnp.pi]), shape=self.n_beamlets)
-        elif self.temporal_smoothing_type in ["CPP", "FM SSD", "GP RPM SSD"]:
-            phase_plate = jax.random.uniform(key1, shape=self.n_beamlets, minval=-jnp.pi, maxval=jnp.pi)
-        elif "ISI" in self.temporal_smoothing_type:
-            phase_plate = jnp.zeros(self.n_beamlets)
-        else:
-            raise NotImplementedError(f"Unknown smoothing type: {self.temporal_smoothing_type}")
-
-        exp_phase_plate = jnp.exp(1j * phase_plate)
-
-        # SSD dephasing
-        ssd_x_y_dephasing = None
-        if self.temporal_smoothing_type == "FM SSD":
-            ssd_x_y_dephasing = jax.random.normal(key2, shape=(2,)) * jnp.pi
-
-        # Time series for GP methods
-        series_time = jnp.arange(0, t_max + self.dt_update, self.dt_update)
-        if "GP" in self.temporal_smoothing_type:
-            new_series_time, time_series = self.init_gaussian_time_series(key3, series_time)
-        else:
-            new_series_time, time_series = series_time, None
-
-        # Generate envelope for each time step
-        envelope = jnp.zeros(x.shape, dtype=jnp.complex128)
-
-        def body_fn(i, env):
-            t_i = t_norm[i]
-            pattern = self.generate_speckle_pattern(
-                t_i,
-                exp_phase_plate=exp_phase_plate,
-                x=x,
-                y=y,
-                series_time=new_series_time,
-                time_series=time_series,
-                ssd_x_y_dephasing=ssd_x_y_dephasing,
-            )
-            return env.at[:, :, i].set(pattern)
-
-        envelope = jax.lax.fori_loop(0, t_norm.size, body_fn, envelope)
-        return envelope
+        t_norm = t * c / self.lambda0
+        return self.generate_speckle_pattern(t_norm, x, y)

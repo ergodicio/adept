@@ -15,13 +15,29 @@ from scipy.constants import c
 from adept._lpse2d.core.speckle import SpeckleProfile
 
 
-def create_grid(lo, hi, num_points):
-    """Create a 3D meshgrid for x, y, t coordinates."""
+def create_2d_grid(lo, hi, num_points):
+    """Create a 2D meshgrid for x, y coordinates."""
     x = jnp.linspace(lo[0], hi[0], num_points[0])
     y = jnp.linspace(lo[1], hi[1], num_points[1])
-    t = jnp.linspace(lo[2], hi[2], num_points[2])
-    X, Y, T = jnp.meshgrid(x, y, t, indexing="ij")
-    return X, Y, T
+    X, Y = jnp.meshgrid(x, y, indexing="ij")
+    return X, Y
+
+
+def evaluate_over_time(profile, x, y, t_array):
+    """Evaluate speckle profile over multiple time points.
+
+    Args:
+        profile: SpeckleProfile instance
+        x, y: 2D spatial arrays
+        t_array: 1D array of times in seconds
+
+    Returns:
+        3D array of shape (nx, ny, nt)
+    """
+    def eval_at_t(t):
+        return profile.evaluate(x, y, t)
+
+    return jnp.stack([eval_at_t(t) for t in t_array], axis=-1)
 
 
 @pytest.mark.parametrize("temporal_smoothing_type", ["RPP", "CPP", "FM SSD", "GP RPM SSD", "GP ISI"])
@@ -44,6 +60,17 @@ def test_intensity_distribution(temporal_smoothing_type):
     ssd_number_color_cycles = [1.4, 1.0]
     ssd_transverse_bandwidth_distribution = [1.8, 1.0]
 
+    dx = wavelength * focal_length / beam_aperture[0]
+    dy = wavelength * focal_length / beam_aperture[1]
+    Lx = 1.8 * dx * n_beamlets[0]
+    Ly = 3.1 * dy * n_beamlets[1]
+    nu_laser = c / wavelength
+    t_max = 50 / nu_laser
+    lo = (0, 0)
+    hi = (Lx, Ly)
+    num_points = (200, 250)
+    num_t = 2
+
     profile = SpeckleProfile(
         wavelength,
         polarization,
@@ -51,24 +78,17 @@ def test_intensity_distribution(temporal_smoothing_type):
         beam_aperture,
         n_beamlets,
         temporal_smoothing_type=temporal_smoothing_type,
+        key=key,
+        t_max=t_max,
         relative_laser_bandwidth=relative_laser_bandwidth,
         ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
         ssd_number_color_cycles=ssd_number_color_cycles,
         ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
     )
 
-    dx = wavelength * focal_length / beam_aperture[0]
-    dy = wavelength * focal_length / beam_aperture[1]
-    Lx = 1.8 * dx * n_beamlets[0]
-    Ly = 3.1 * dy * n_beamlets[1]
-    nu_laser = c / wavelength
-    t_max = 50 / nu_laser
-    lo = (0, 0, 0)
-    hi = (Lx, Ly, t_max)
-    num_points = (200, 250, 2)
-
-    x, y, t = create_grid(lo, hi, num_points)
-    F = profile.evaluate(x, y, t, key)
+    x, y = create_2d_grid(lo, hi, num_points)
+    t_array = jnp.linspace(0, t_max, num_t)
+    F = evaluate_over_time(profile, x, y, t_array)
 
     # Get spatial statistics
     # <real env> = 0 = <imag env> = <er * ei>
@@ -113,19 +133,6 @@ def test_spatial_correlation(temporal_smoothing_type):
     ssd_number_color_cycles = [1.4, 1.0]
     ssd_transverse_bandwidth_distribution = [1.0, 1.0]
 
-    profile = SpeckleProfile(
-        wavelength,
-        polarization,
-        focal_length,
-        beam_aperture,
-        n_beamlets,
-        temporal_smoothing_type=temporal_smoothing_type,
-        relative_laser_bandwidth=relative_laser_bandwidth,
-        ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
-        ssd_number_color_cycles=ssd_number_color_cycles,
-        ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
-    )
-
     dx = wavelength * focal_length / beam_aperture[0]
     dy = wavelength * focal_length / beam_aperture[1]
     Lx = dx * n_beamlets[0]
@@ -133,12 +140,29 @@ def test_spatial_correlation(temporal_smoothing_type):
     nu_laser = c / wavelength
     tu = 1 / relative_laser_bandwidth / 50 / nu_laser
     t_max = 200 * tu
-    lo = (0, 0, 0)
-    hi = (Lx, Ly, t_max)
-    num_points = (200, 200, 300)
+    lo = (0, 0)
+    hi = (Lx, Ly)
+    num_points = (200, 200)
+    num_t = 300
 
-    x, y, t = create_grid(lo, hi, num_points)
-    F = profile.evaluate(x, y, t, key)
+    profile = SpeckleProfile(
+        wavelength,
+        polarization,
+        focal_length,
+        beam_aperture,
+        n_beamlets,
+        temporal_smoothing_type=temporal_smoothing_type,
+        key=key,
+        t_max=t_max,
+        relative_laser_bandwidth=relative_laser_bandwidth,
+        ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
+        ssd_number_color_cycles=ssd_number_color_cycles,
+        ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
+    )
+
+    x, y = create_2d_grid(lo, hi, num_points)
+    t_array = jnp.linspace(0, t_max, num_t)
+    F = evaluate_over_time(profile, x, y, t_array)
 
     # Compare speckle profile / autocorrelation
     # Compute autocorrelation using Wiener-Khinchin Theorem
@@ -176,20 +200,6 @@ def test_sinc_zeros(temporal_smoothing_type):
     ssd_number_color_cycles = [1.4, 1.0]
     ssd_transverse_bandwidth_distribution = [1.0, 1.0]
 
-    profile = SpeckleProfile(
-        wavelength,
-        polarization,
-        focal_length,
-        beam_aperture,
-        n_beamlets,
-        temporal_smoothing_type=temporal_smoothing_type,
-        relative_laser_bandwidth=relative_laser_bandwidth,
-        ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
-        ssd_number_color_cycles=ssd_number_color_cycles,
-        ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
-        do_include_transverse_envelope=True,
-    )
-
     dx = wavelength * focal_length / beam_aperture[0]
     dy = wavelength * focal_length / beam_aperture[1]
     Lx = dx * n_beamlets[0]
@@ -197,12 +207,30 @@ def test_sinc_zeros(temporal_smoothing_type):
     nu_laser = c / wavelength
     tu = 1 / relative_laser_bandwidth / 50 / nu_laser
     t_max = 200 * tu
-    lo = (-Lx, -Ly, 0)
-    hi = (Lx, Ly, t_max)
-    num_points = (300, 300, 10)
+    lo = (-Lx, -Ly)
+    hi = (Lx, Ly)
+    num_points = (300, 300)
+    num_t = 10
 
-    x, y, t = create_grid(lo, hi, num_points)
-    F = profile.evaluate(x, y, t, key)
+    profile = SpeckleProfile(
+        wavelength,
+        polarization,
+        focal_length,
+        beam_aperture,
+        n_beamlets,
+        temporal_smoothing_type=temporal_smoothing_type,
+        key=key,
+        t_max=t_max,
+        relative_laser_bandwidth=relative_laser_bandwidth,
+        ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
+        ssd_number_color_cycles=ssd_number_color_cycles,
+        ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
+        do_include_transverse_envelope=True,
+    )
+
+    x, y = create_2d_grid(lo, hi, num_points)
+    t_array = jnp.linspace(0, t_max, num_t)
+    F = evaluate_over_time(profile, x, y, t_array)
 
     # Check that edges are near zero (sinc zeros)
     assert jnp.abs(F[0, :, :]).max() / jnp.abs(F).max() < 1.0e-8
@@ -227,19 +255,6 @@ def test_FM_SSD_periodicity():
     ssd_number_color_cycles = [1.4, 1.0]
     ssd_transverse_bandwidth_distribution = [1.0, 1.0]
 
-    profile = SpeckleProfile(
-        wavelength,
-        polarization,
-        focal_length,
-        beam_aperture,
-        n_beamlets,
-        temporal_smoothing_type=temporal_smoothing_type,
-        relative_laser_bandwidth=relative_laser_bandwidth,
-        ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
-        ssd_number_color_cycles=ssd_number_color_cycles,
-        ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
-    )
-
     nu_laser = c / wavelength
     ssd_frac = jnp.sqrt(ssd_transverse_bandwidth_distribution[0] ** 2 + ssd_transverse_bandwidth_distribution[1] ** 2)
     ssd_frac = (
@@ -255,12 +270,29 @@ def test_FM_SSD_periodicity():
     dy = wavelength * focal_length / beam_aperture[1]
     Lx = dx * n_beamlets[0]
     Ly = dy * n_beamlets[1]
-    lo = (0, 0, 0)
-    hi = (Lx, Ly, t_max)
-    num_points = (160, 200, 400)
+    lo = (0, 0)
+    hi = (Lx, Ly)
+    num_points = (160, 200)
+    num_t = 400
 
-    x, y, t = create_grid(lo, hi, num_points)
-    F = profile.evaluate(x, y, t, key)
+    profile = SpeckleProfile(
+        wavelength,
+        polarization,
+        focal_length,
+        beam_aperture,
+        n_beamlets,
+        temporal_smoothing_type=temporal_smoothing_type,
+        key=key,
+        t_max=t_max,
+        relative_laser_bandwidth=relative_laser_bandwidth,
+        ssd_phase_modulation_amplitude=ssd_phase_modulation_amplitude,
+        ssd_number_color_cycles=ssd_number_color_cycles,
+        ssd_transverse_bandwidth_distribution=ssd_transverse_bandwidth_distribution,
+    )
+
+    x, y = create_2d_grid(lo, hi, num_points)
+    t_array = jnp.linspace(0, t_max, num_t)
+    F = evaluate_over_time(profile, x, y, t_array)
 
     period_error = jnp.abs(F[:, :, 0] - F[:, :, -1]).max() / jnp.abs(F).max()
     assert period_error < 1.0e-8
