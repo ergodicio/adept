@@ -23,18 +23,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install -r docs/requirements.txt
+      - uses: astral-sh/setup-uv@v5
 
       - name: Build Sphinx docs
         run: |
-          cd docs
-          make html
+          uv run --with-requirements docs/requirements.txt make -C docs html
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
