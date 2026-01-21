@@ -1,18 +1,16 @@
-Developer Guide
----------------
+# Developer Guide
 
-In case you are interested in looking past the forward simulation use case, that is, if you are interested in running a program which is not just
+In case you are interested in looking past the forward simulation use case, that is, if you are interested in running a program which is not just:
 
-.. code-block:: bash
-
-    python3 run.py --cfg config/<mode>/<config>
+```bash
+python3 run.py --cfg config/<mode>/<config>
+```
 
 This runs a forward simulation with the specified input parameters. It calls functions within `utils/runner.py` for this.
-The most important one to understand is the ``_run_`` function. Here is a stripped down pseudo-code version
+The most important one to understand is the `_run_` function. Here is a stripped down pseudo-code version:
 
-.. code-block:: python
-
-    def run(cfg: Dict) -> Tuple[Solution, Dict]:
+```python
+def run(cfg: Dict) -> Tuple[Solution, Dict]:
     """
     This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
     ``diffrax.Solution`` object and a dictionary of datasets.
@@ -100,10 +98,9 @@ The most important one to understand is the ``_run_`` function. Here is a stripp
 
     # fin
     return result, datasets
+```
 
-
-Here, we are heavily relying on two open-source libraries.
+Here, we are heavily relying on two open-source libraries:
 
 1. **MLFlow** as an experiment manager to log parameters, metrics, and artifacts
-
 2. **Diffrax** to solve the ODEs
