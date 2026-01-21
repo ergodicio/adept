@@ -29,12 +29,17 @@ Documentation
 
    solvers
    solvers/vlasov1d/overview
-   solvers/vlasov1d/config
    solvers/vlasov2d/overview
-   solvers/vlasov2d/config
    solvers/lpse2d/overview
-   solvers/lpse2d/config
    solvers/vfp1d/overview
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Configuration Reference
+
+   solvers/vlasov1d/config
+   solvers/vlasov2d/config
+   solvers/lpse2d/config
 
 .. toctree::
    :maxdepth: 2
