@@ -29,6 +29,15 @@ jobs:
         run: |
           uv run --with-requirements docs/requirements.txt make -C docs html
 
+      - name: Copy raw markdown sources for LLM access
+        run: |
+          mkdir -p docs/build/html/raw
+          cp -r docs/source/*.md docs/build/html/raw/ 2>/dev/null || true
+          cp -r docs/source/solvers docs/build/html/raw/
+          cp -r docs/source/usage docs/build/html/raw/
+          # Generate index of all markdown files for LLM discovery
+          cd docs/build/html/raw && find . -name "*.md" | sort > index.txt
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
