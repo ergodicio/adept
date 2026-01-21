@@ -17,6 +17,7 @@ class Light:
         self.speckle_profile = None  # Profile object for time-varying methods
         self.speckle_normalization = 1.0
         self.y_si = None  # y-coordinates in meters
+        # CR: This is never used outside of __init__, remove it / make it a local var to the if statement block.
         self.x_si_zeros = None  # x=0 evaluation points
 
         speckle_profile = cfg["drivers"]["E0"].get("speckle_profile")
@@ -35,6 +36,8 @@ class Light:
             # Calculate the normalization factor (average magnitude over focal plane)
             # Michel Fig 9.2 -- the entire speckle profile has a size
             # on the order of f lambda_0 / delta_x_RPP
+
+            # All lengths are in units of meters
             f = speckle_profile.focal_length
             fnum = f / jnp.linalg.norm(speckle_profile.beam_aperture)
             delta_x_RPP = speckle_profile.beam_aperture[0] / speckle_profile.n_beamlets[0]
@@ -49,6 +52,7 @@ class Light:
             self.speckle_normalization = jnp.mean(jnp.abs(whole_envelope))
 
             # Check if static (RPP/CPP) or time-varying (SSD/ISI)
+            # CR: Remove this custom caching logic. It's complicating matters and is a premature optimization. Don't cache the envelope, simply always compute it.
             if speckle_profile.temporal_smoothing_type in ["RPP", "CPP"]:
                 # Static: compute envelope once and cache
                 envelope = speckle_profile.evaluate(x_eval, y_eval, 0.0)
@@ -58,6 +62,7 @@ class Light:
                 # Time-varying: store profile for per-timestep evaluation
                 self.speckle_profile = speckle_profile
 
+    # CR: change name of t to `t_ps` rather than documenting it.
     def laser_update(self, t: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field at time t

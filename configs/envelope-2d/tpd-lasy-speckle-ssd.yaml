@@ -1,3 +1,4 @@
+# CR: Same comment, let's rename it to tpd-dynamic-ssd-speckle.yaml
 density:
   basis: linear
   gradient scale length: 200um
@@ -31,9 +32,11 @@ drivers:
         init: random
         learned: true
         seed: 42
+    # CR: Remove comment, we can see that.
     # LASY SpeckleProfile configuration with FM SSD (time-varying)
     speckle:
       enabled: true
+      # CR: Change the name of the config keys to `focal_length_m`, or better yet, make it take a string with units like the other things, and parse and convert it to meters.
       focal_length: 3.5  # meters
       beam_aperture: [0.35, 0.35]  # [x, y] in meters
       n_beamlets: [24, 32]
@@ -57,6 +60,7 @@ grid:
   ymin: -6um
 mlflow:
   experiment: tpd
+  # CR: don't forget to change mlflow run names to match file names.
   run: tpd-lasy-speckle-ssd
 save:
   fields:

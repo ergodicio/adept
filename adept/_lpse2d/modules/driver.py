@@ -117,6 +117,7 @@ class UniformDriver(eqx.Module):
         return state, args
 
 
+# CR: Let's remove this and the associated config file and .npz generator. We won't be using it.
 class SpeckledDriver(UniformDriver):
     """
     Driver with y-dependent intensity and phase profiles loaded from file.
