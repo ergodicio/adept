@@ -35,11 +35,12 @@ class Light:
             # Calculate the normalization factor (average magnitude over focal plane)
             # Michel Fig 9.2 -- the entire speckle profile has a size
             # on the order of f lambda_0 / delta_x_RPP
-            fnum = speckle_profile.focal_length / jnp.linalg.norm(speckle_profile.beam_aperture)
+            f = speckle_profile.focal_length
+            fnum = f / jnp.linalg.norm(speckle_profile.beam_aperture)
             delta_x_RPP = speckle_profile.beam_aperture[0] / speckle_profile.n_beamlets[0]
-            delta_x = fnum * speckle_profile.lambda0 / delta_x_RPP
+            delta_x = f * speckle_profile.lambda0 / delta_x_RPP
             delta_y_RPP = speckle_profile.beam_aperture[1] / speckle_profile.n_beamlets[1]
-            delta_y = fnum * speckle_profile.lambda0 / delta_y_RPP
+            delta_y = f * speckle_profile.lambda0 / delta_y_RPP
 
             xs = jnp.linspace(-delta_x, delta_x, 1000)
             ys = jnp.linspace(-delta_y, delta_y, 1000)
