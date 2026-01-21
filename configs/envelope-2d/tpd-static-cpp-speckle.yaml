@@ -1,4 +1,3 @@
-# CR: Let's rename this file to like `tpd-static-cpp-speckle.yaml
 density:
   basis: linear
   gradient scale length: 200um
@@ -32,11 +31,10 @@ drivers:
         init: random
         learned: true
         seed: 42
-    # LASY SpeckleProfile configuration (RPP/CPP only)
     speckle:
       enabled: true
-      focal_length: 3.5  # meters
-      beam_aperture: [0.35, 0.35]  # [x, y] in meters
+      focal_length: 3.5m
+      beam_aperture: [0.35m, 0.35m]
       n_beamlets: [24, 32]
       smoothing_type: CPP  # RPP or CPP
       seed: 42
@@ -53,7 +51,7 @@ grid:
   ymin: -6um
 mlflow:
   experiment: tpd
-  run: tpd-lasy-speckle
+  run: tpd-static-cpp-speckle
 save:
   fields:
     t:

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel
 
 
@@ -58,8 +56,8 @@ class SpeckleModel(BaseModel):
     """
 
     enabled: bool = False
-    focal_length: float  # meters
-    beam_aperture: list[float]  # [x, y] in meters
+    focal_length: str  # e.g. "3.5m"
+    beam_aperture: list[str]  # [x, y] e.g. ["0.35m", "0.35m"]
     n_beamlets: list[int]  # [nx, ny]
     smoothing_type: str = "CPP"  # RPP, CPP, FM SSD, GP RPM SSD, GP ISI
     seed: int = 42
@@ -80,7 +78,6 @@ class E0DriverModel(BaseModel):
     delta_omega_max: float
     num_colors: int
     envelope: EnvelopeModel
-    speckle_file: str | None = None
     speckle: SpeckleModel | None = None
 
 

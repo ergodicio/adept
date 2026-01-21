@@ -396,11 +396,15 @@ def get_solver_quantities(cfg: dict) -> dict:
         # Get bandwidth (required for SSD/ISI, default small value for RPP/CPP)
         relative_laser_bandwidth = speckle_cfg.get("relative_laser_bandwidth", 1e-10)
 
+        # Parse focal_length and beam_aperture with units
+        focal_length_m = _Q(speckle_cfg["focal_length"]).to("m").value
+        beam_aperture_m = [_Q(a).to("m").value for a in speckle_cfg["beam_aperture"]]
+
         cfg["drivers"]["E0"]["speckle_profile"] = SpeckleProfile(
             wavelength=wavelength_m,
             pol=(1, 0),
-            focal_length=speckle_cfg["focal_length"],
-            beam_aperture=speckle_cfg["beam_aperture"],
+            focal_length=focal_length_m,
+            beam_aperture=beam_aperture_m,
             n_beamlets=speckle_cfg["n_beamlets"],
             temporal_smoothing_type=smoothing_type,
             key=jax.random.PRNGKey(speckle_cfg.get("seed", 42)),
