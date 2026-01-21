@@ -34,6 +34,7 @@ def evaluate_over_time(profile, x, y, t_array):
     Returns:
         3D array of shape (nx, ny, nt)
     """
+
     def eval_at_t(t):
         return profile.evaluate(x, y, t)
 
@@ -262,7 +263,8 @@ def test_FM_SSD_periodicity():
         ssd_transverse_bandwidth_distribution[1] / ssd_frac,
     )
     phase_mod_freq = [
-        relative_laser_bandwidth * sf * 0.5 / pma for sf, pma in zip(ssd_frac, ssd_phase_modulation_amplitude)
+        relative_laser_bandwidth * sf * 0.5 / pma
+        for sf, pma in zip(ssd_frac, ssd_phase_modulation_amplitude, strict=True)
     ]
     t_max = 1.0 / phase_mod_freq[0] / nu_laser
 

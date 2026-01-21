@@ -170,7 +170,8 @@ class SpeckleProfile:
                 self.ssd_transverse_bandwidth_distribution[1] / ssd_normalization,
             ]
             self.ssd_phase_modulation_frequency = [
-                self.laser_bandwidth * sf * 0.5 / pma for sf, pma in zip(ssd_frac, self.ssd_phase_modulation_amplitude)
+                self.laser_bandwidth * sf * 0.5 / pma
+                for sf, pma in zip(ssd_frac, self.ssd_phase_modulation_amplitude, strict=True)
             ]
             self.ssd_time_delay = (
                 (

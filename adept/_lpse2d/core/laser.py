@@ -41,6 +41,7 @@ class Light:
             whole_x, whole_y = jnp.meshgrid(xs_m, ys_m, indexing="ij")
             whole_envelope = speckle_profile.evaluate(whole_x, whole_y, 0.0)
             self.speckle_normalization = jnp.mean(jnp.abs(whole_envelope))
+
     def laser_update(self, t_ps: float, y: jnp.ndarray, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """
         This function updates the laser field.
