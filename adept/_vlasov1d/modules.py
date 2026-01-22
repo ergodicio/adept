@@ -255,7 +255,7 @@ class BaseVlasov1D(ADEPTModule):
             state[species_name] = jnp.array(f_s)
 
         # Reference distribution for diagnostics (use first species)
-        # TODO(a-6c41): Store species distributions separately for multi-species diagnostics
+        # TODO(gh-174): Store species distributions separately for multi-species diagnostics
         first_species_name = list(dist_result.keys())[0]
         f_ref = dist_result[first_species_name][1]
 

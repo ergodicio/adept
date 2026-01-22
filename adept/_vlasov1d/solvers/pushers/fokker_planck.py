@@ -52,8 +52,7 @@ class Collisions:
         :param dt: Time step size.
         :return: Updated distribution function after collisions.
         """
-        # CR: I changed my mind, let's create gh issues to track these TODOs.
-        # TODO(a-55f5): Properly handle multi-species collisions
+        # TODO(gh-173): Properly handle multi-species collisions
         # For now, only apply to electron distribution for backward compatibility
         if isinstance(f, dict):
             result = {}
@@ -91,14 +90,8 @@ class Krook:
         :param cfg: Simulation configuration containing grid spacing and velocity grid.
         """
         self.cfg = cfg
-        # CR: After the refactoring to normalize species configs, isn't this unnecessary? The species_grids will always be populated in the cfg["grid"].
-        # Support both single-species and multi-species grids
-        if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
-            v = cfg["grid"]["species_grids"]["electron"]["v"]
-            dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        else:
-            v = self.cfg["grid"]["v"]
-            dv = self.cfg["grid"]["dv"]
+        v = cfg["grid"]["species_grids"]["electron"]["v"]
+        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
         f_mx = np.exp(-(v[None, :] ** 2.0) / 2.0)
         self.f_mx = f_mx / np.trapz(f_mx, dx=dv, axis=1)[:, None]
         self.dv = dv
@@ -128,17 +121,10 @@ class _DriftDiffusionBase:
 
     def __init__(self, cfg: Mapping[str, Any]):
         self.cfg = cfg
-        # CR: ditto
-        # Support both single-species (grid-level v/dv/nv) and multi-species (species_grids)
-        # For multi-species, use electron grid for FP (TODO: proper multi-species collisions in a-3903)
-        if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
-            self.v = cfg["grid"]["species_grids"]["electron"]["v"]
-            self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-            nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        else:
-            self.v = self.cfg["grid"]["v"]
-            self.dv = self.cfg["grid"]["dv"]
-            nv = self.cfg["grid"]["nv"]
+        # TODO(gh-173): For multi-species, use electron grid for FP for now
+        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
+        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
@@ -203,16 +189,9 @@ class ChangCooperLenardBernstein:
         :param cfg: Simulation configuration providing grid metadata.
         """
         self.cfg = cfg
-        # Ditto here
-        # Support both single-species and multi-species grids
-        if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
-            self.v = cfg["grid"]["species_grids"]["electron"]["v"]
-            self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-            nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        else:
-            self.v = self.cfg["grid"]["v"]
-            self.dv = self.cfg["grid"]["dv"]
-            nv = self.cfg["grid"]["nv"]
+        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
+        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
         self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
@@ -278,15 +257,9 @@ class ChangCooperDougherty:
         :param cfg: Simulation configuration providing grid metadata.
         """
         self.cfg = cfg
-        # Support both single-species and multi-species grids
-        if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
-            self.v = cfg["grid"]["species_grids"]["electron"]["v"]
-            self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-            nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        else:
-            self.v = self.cfg["grid"]["v"]
-            self.dv = self.cfg["grid"]["dv"]
-            nv = self.cfg["grid"]["nv"]
+        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
+        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
         self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 

@@ -64,22 +64,12 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     :return:
     """
     # Find which species distributions were saved
-    # CR: What, why are we special-casing these two strings? isn't there a species dict in the cfg we can get keys from?
-    species_to_save = [spc for spc in ["electron", "ion"] if spc in ys]
+    species_names = list(cfg["grid"]["species_grids"].keys())
+    species_to_save = [spc for spc in species_names if spc in ys]
 
-    # CR: I feel like this if statement is unnecessary, doesn't xr.Dataset({}) do what we want?
-    if not species_to_save:
-        # No distributions to save
-        return xr.Dataset()
-
-    # CR: same comment, we don't need to support both.
-    # Support both single-species and multi-species grids
     data_vars = {}
     for spc in species_to_save:
-        if "species_grids" in cfg["grid"] and spc in cfg["grid"]["species_grids"]:
-            v = cfg["grid"]["species_grids"][spc]["v"]
-        else:
-            v = cfg["grid"]["v"]
+        v = cfg["grid"]["species_grids"][spc]["v"]
         data_vars[spc] = xr.DataArray(
             ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v))
         )
@@ -123,14 +113,8 @@ def store_diags(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
 
 def get_field_save_func(cfg):
     if {"t"} == set(cfg["save"]["fields"].keys()):
-        # CR: here too
-        # Support both single-species and multi-species grids
-        if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
-            v = cfg["grid"]["species_grids"]["electron"]["v"]
-            dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        else:
-            v = cfg["grid"]["v"]
-            dv = cfg["grid"]["dv"]
+        v = cfg["grid"]["species_grids"]["electron"]["v"]
+        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
 
         def _calc_moment_(inp):
             return jnp.sum(inp, axis=1) * dv
@@ -237,13 +221,8 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
-    # Support both single-species (grid-level v/dv) and multi-species (species_grids)
-    if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
-        v = cfg["grid"]["species_grids"]["electron"]["v"][None, :]
-        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-    else:
-        v = cfg["grid"]["v"][None, :]
-        dv = cfg["grid"]["dv"]
+    v = cfg["grid"]["species_grids"]["electron"]["v"][None, :]
+    dv = cfg["grid"]["species_grids"]["electron"]["dv"]
 
     def _calc_mean_moment_(inp):
         return jnp.mean(jnp.sum(inp, axis=1) * dv)
