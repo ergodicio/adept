@@ -24,18 +24,30 @@ drivers:
     shape: uniform
     params:
       amplitudes:
-        init: random # uniform, random
+        init: random
         learned: true
-        activation: log # linear, log
+        activation: log
       phases:
-        init: random # random, seed-###
+        init: random
         learned: true
         seed: 42
+    speckle:
+      enabled: true
+      focal_length: 3.5m
+      beam_aperture: [0.35m, 0.35m]
+      n_beamlets: [24, 32]
+      smoothing_type: FM SSD
+      seed: 42
+      # SSD-specific parameters
+      relative_laser_bandwidth: 0.005
+      ssd_phase_modulation_amplitude: [4.1, 4.1]  # [x, y]
+      ssd_number_color_cycles: [1.4, 1.0]  # [x, y]
+      ssd_transverse_bandwidth_distribution: [1.0, 1.0]  # [x, y]
 
 grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 1.5um
-  low_pass_filter: 0.66
+  low_pass_filter: 0.4
   dt: 5fs
   dx: 66.3nm
   tmax: 5ps
@@ -44,7 +56,7 @@ grid:
   ymin: -6um
 mlflow:
   experiment: tpd
-  run: tpd-test
+  run: tpd-dynamic-ssd-speckle
 save:
   fields:
     t:
