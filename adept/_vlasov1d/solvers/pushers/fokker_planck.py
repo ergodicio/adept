@@ -52,8 +52,8 @@ class Collisions:
         :param dt: Time step size.
         :return: Updated distribution function after collisions.
         """
-        # TODO: Properly handle multi-species collisions
-        # CR: make a ticket for this TODO
+        # CR: I changed my mind, let's create gh issues to track these TODOs.
+        # TODO(a-55f5): Properly handle multi-species collisions
         # For now, only apply to electron distribution for backward compatibility
         if isinstance(f, dict):
             result = {}
@@ -91,6 +91,7 @@ class Krook:
         :param cfg: Simulation configuration containing grid spacing and velocity grid.
         """
         self.cfg = cfg
+        # CR: After the refactoring to normalize species configs, isn't this unnecessary? The species_grids will always be populated in the cfg["grid"].
         # Support both single-species and multi-species grids
         if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
             v = cfg["grid"]["species_grids"]["electron"]["v"]
@@ -127,6 +128,7 @@ class _DriftDiffusionBase:
 
     def __init__(self, cfg: Mapping[str, Any]):
         self.cfg = cfg
+        # CR: ditto
         # Support both single-species (grid-level v/dv/nv) and multi-species (species_grids)
         # For multi-species, use electron grid for FP (TODO: proper multi-species collisions in a-3903)
         if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
@@ -201,6 +203,7 @@ class ChangCooperLenardBernstein:
         :param cfg: Simulation configuration providing grid metadata.
         """
         self.cfg = cfg
+        # Ditto here
         # Support both single-species and multi-species grids
         if "species_grids" in cfg["grid"] and "electron" in cfg["grid"]["species_grids"]:
             self.v = cfg["grid"]["species_grids"]["electron"]["v"]

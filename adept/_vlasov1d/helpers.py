@@ -94,127 +94,88 @@ def _initialize_distribution_(
 
 def _initialize_total_distribution_(cfg, cfg_grid):
     """
-    Initialize distribution functions for multi-species or single-species simulations.
+    Initialize distribution functions for all species.
+
+    The species config is normalized in modules.py:get_derived_quantities() so that
+    a species config always exists (for backward compatibility with single-species
+    config files, a default electron species is generated).
 
     Returns:
         dict mapping species_name -> (n_prof, f_s, v_ax)
-        For backward compatibility with single-species config files, returns dict with "electron" key
     """
-    # Check if multi-species mode
-    species_configs = cfg["terms"].get("species", None)
+    species_configs = cfg["terms"]["species"]
+    species_distributions = {}
+    species_found = False
 
-    if species_configs is not None:
-        # Multi-species mode
-        species_distributions = {}
+    for species_cfg in species_configs:
+        species_name = species_cfg["name"]
+        density_components = species_cfg["density_components"]
+        vmax = species_cfg["vmax"]
+        nv = species_cfg["nv"]
 
-        for species_cfg in species_configs:
-            species_name = species_cfg["name"]
-            density_components = species_cfg["density_components"]
-            vmax = species_cfg["vmax"]
-            nv = species_cfg["nv"]
+        # Initialize arrays for this species
+        n_prof_species = np.zeros([cfg_grid["nx"]])
+        dv = 2.0 * vmax / nv
+        vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+        f_species = np.zeros([cfg_grid["nx"], nv])
 
-            # Initialize arrays for this species
-            n_prof_species = np.zeros([cfg_grid["nx"]])
-            dv = 2.0 * vmax / nv
-            vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
-            f_species = np.zeros([cfg_grid["nx"], nv])
+        # Sum contributions from all density components
+        for component_name in density_components:
+            if component_name not in cfg["density"]:
+                raise ValueError(f"Density component '{component_name}' not found in config")
 
-            # Sum contributions from all density components
-            for component_name in density_components:
-                if component_name not in cfg["density"]:
-                    raise ValueError(f"Density component '{component_name}' not found in config")
+            species_params = cfg["density"][component_name]
+            v0 = species_params["v0"]
+            T0 = species_params["T0"]
 
-                species_params = cfg["density"][component_name]
-                v0 = species_params["v0"]
-                T0 = species_params["T0"]
-
-                # Handle mass parameter with deprecation
-                if "m" in species_params:
+            # Handle mass parameter with deprecation
+            if "m" in species_params:
+                warnings.warn(
+                    f"Density component '{component_name}': The 'm' parameter in density config is deprecated. "
+                    f"Please use the mass from the species config instead.",
+                    DeprecationWarning,
+                    stacklevel=2
+                )
+                m = species_params["m"]
+                # Check if it matches the species config mass
+                if abs(m - species_cfg["mass"]) > 1e-10:
                     warnings.warn(
-                        f"Density component '{component_name}': The 'm' parameter in density config is deprecated. "
-                        f"Please use the mass from the species config instead.",
-                        DeprecationWarning,
+                        f"Density component '{component_name}': Mass mismatch! "
+                        f"Using m={m} from density config, but species '{species_name}' has mass={species_cfg['mass']}. "
+                        f"This may lead to inconsistent physics.",
+                        UserWarning,
                         stacklevel=2
                     )
-                    m = species_params["m"]
-                    # Check if it matches the species config mass
-                    if abs(m - species_cfg["mass"]) > 1e-10:
-                        warnings.warn(
-                            f"Density component '{component_name}': Mass mismatch! "
-                            f"Using m={m} from density config, but species '{species_name}' has mass={species_cfg['mass']}. "
-                            f"This may lead to inconsistent physics.",
-                            UserWarning,
-                            stacklevel=2
-                        )
-                else:
-                    # Use mass from species config
-                    m = species_cfg["mass"]
+            else:
+                # Use mass from species config
+                m = species_cfg["mass"]
 
-                # Get density profile
-                nprof = _get_density_profile(species_params, cfg, cfg_grid)
-                n_prof_species += nprof
+            # Get density profile
+            nprof = _get_density_profile(species_params, cfg, cfg_grid)
+            n_prof_species += nprof
 
-                # Distribution function for this component
-                temp_f, _ = _initialize_distribution_(
-                    nx=int(cfg_grid["nx"]),
-                    nv=nv,
-                    v0=v0,
-                    m=m,
-                    T0=T0,
-                    vmax=vmax,
-                    n_prof=nprof,
-                    noise_val=species_params["noise_val"],
-                    noise_seed=int(species_params["noise_seed"]),
-                    noise_type=species_params["noise_type"],
-                )
-                f_species += temp_f
+            # Distribution function for this component
+            temp_f, _ = _initialize_distribution_(
+                nx=int(cfg_grid["nx"]),
+                nv=nv,
+                v0=v0,
+                m=m,
+                T0=T0,
+                vmax=vmax,
+                n_prof=nprof,
+                noise_val=species_params["noise_val"],
+                noise_seed=int(species_params["noise_seed"]),
+                noise_type=species_params["noise_type"],
+            )
+            f_species += temp_f
+            species_found = True
 
-            species_distributions[species_name] = (n_prof_species, f_species, vax)
+        species_distributions[species_name] = (n_prof_species, f_species, vax)
 
-        return species_distributions
+    if not species_found:
+        raise ValueError("No species found! Check the config")
 
-    else:
-        # CR: This entire else clause can be avoided if we just provide a default species config of a plain electron species, with `density_components` equal to the entire list of `density` keys. The `species_found` check is still valuable, let's keep it.
-
-        # Backward compatibility with single-species config files
-        n_prof_total = np.zeros([cfg_grid["nx"]])
-        f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
-        species_found = False
-
-        # Compute velocity axis
-        dv = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
-        vax = np.linspace(-cfg_grid["vmax"] + dv / 2.0, cfg_grid["vmax"] - dv / 2.0, cfg_grid["nv"])
-
-        for name, species_params in cfg["density"].items():
-            if name.startswith("species-"):
-                v0 = species_params["v0"]
-                T0 = species_params["T0"]
-                m = species_params["m"]
-
-                nprof = _get_density_profile(species_params, cfg, cfg_grid)
-                n_prof_total += nprof
-
-                # Distribution function
-                temp_f, _ = _initialize_distribution_(
-                    nx=int(cfg_grid["nx"]),
-                    nv=int(cfg_grid["nv"]),
-                    v0=v0,
-                    m=m,
-                    T0=T0,
-                    vmax=cfg_grid["vmax"],
-                    n_prof=nprof,
-                    noise_val=species_params["noise_val"],
-                    noise_seed=int(species_params["noise_seed"]),
-                    noise_type=species_params["noise_type"],
-                )
-                f += temp_f
-                species_found = True
-
-        if not species_found:
-            raise ValueError("No species found! Check the config")
-
-        # Return dict format for consistency with multi-species mode
-        return {"electron": (n_prof_total, f, vax)}
+    return species_distributions
 
 
 def _get_density_profile(species_params, cfg, cfg_grid):

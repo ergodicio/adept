@@ -83,13 +83,25 @@ class BaseVlasov1D(ADEPTModule):
 
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
 
-        # CR: This is the appropriate place to normalize the species config stanza, I believe. Refer to adept/_base_.py for the lifecycle order in which these functions are called. This is called early. If no species configs are provided (backward compatibility with single-species config files), we want to generate one for the appropriate single species and make sure it's there for all subsequent steps.
+        # Normalize species config: if not provided, generate a default electron species
+        if self.cfg["terms"].get("species", None) is None:
+            # Collect all density components (keys starting with "species-")
+            density_components = [
+                name for name in self.cfg["density"].keys()
+                if name.startswith("species-")
+            ]
+            if not density_components:
+                raise ValueError("No density components found (expected keys starting with 'species-')")
 
-        # Only compute dv if vmax and nv are present (backward compatibility with single-species config files)
-        # CR: Where are we using _this_ dv now at all? Can't we just rely on the species dv always?
-        # CR: This is another example of the single-species mode being an extraneous concept. We should do our best to remove it at all points by normalizing the config, not having two separate cases throughout the code.
-        if "vmax" in cfg_grid and "nv" in cfg_grid:
-            cfg_grid["dv"] = 2.0 * cfg_grid["vmax"] / cfg_grid["nv"]
+            # Generate default electron species config
+            self.cfg["terms"]["species"] = [{
+                "name": "electron",
+                "charge": -1.0,
+                "mass": 1.0,
+                "vmax": cfg_grid["vmax"],
+                "nv": cfg_grid["nv"],
+                "density_components": density_components,
+            }]
 
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
@@ -152,30 +164,18 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid["species_params"] = {}
         n_prof_total = np.zeros([cfg_grid["nx"]])
 
-        # Check if multi-species mode (more than one species OR species config provided)
-        is_multispecies = self.cfg["terms"].get("species", None) is not None
-
         for species_name, (n_prof, f_s, v_ax) in dist_result.items():
             n_prof_total += n_prof
 
-            if is_multispecies:
-                # Find the species config
-                species_cfg = next(
-                    (s for s in self.cfg["terms"]["species"] if s["name"] == species_name), None
-                )
-                if species_cfg is None:
-                    raise ValueError(f"Species '{species_name}' not found in config['terms']['species']")
+            # Find the species config (always exists due to normalization in get_derived_quantities)
+            species_cfg = next(
+                (s for s in self.cfg["terms"]["species"] if s["name"] == species_name), None
+            )
+            if species_cfg is None:
+                raise ValueError(f"Species '{species_name}' not found in config['terms']['species']")
 
-                nv = species_cfg["nv"]
-                vmax = species_cfg["vmax"]
-            else:
-                # Backward compatibility with single-species config files: use grid-level values
-                # CR: remove this clause, there's no purpose for it. The grid level values should match the species config values (for the single species) if we did our job right.
-                nv = cfg_grid["nv"]
-                vmax = cfg_grid["vmax"]
-                # Create a species config for consistency
-                # CR: This is the wrong place to do this. The species config should have been created much earlier 
-                species_cfg = {"charge": -1.0, "mass": 1.0}
+            nv = species_cfg["nv"]
+            vmax = species_cfg["vmax"]
 
             dv = 2.0 * vmax / nv
 
@@ -209,15 +209,16 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid["n_prof_total"] = n_prof_total
 
         # Quasineutrality handling
-        if is_multispecies:
-            # For multi-species, use zeros (quasineutrality handled differently)
+        # For single-species electron-only sims, assume static ion background
+        # For multi-species, quasineutrality is handled by the species themselves
+        has_multiple_species = len(self.cfg["terms"]["species"]) > 1
+        if has_multiple_species:
             cfg_grid["ion_charge"] = np.zeros_like(n_prof_total)
         else:
-            # For backward compatibility with single-species config files, set ion_charge to n_prof_total
             cfg_grid["ion_charge"] = n_prof_total.copy()
 
-        # For backward compatibility with single-species config files, store velocity grid at grid level
-        if not is_multispecies:
+        # For single-species configs, also store velocity grid at grid level for backward compatibility
+        if not has_multiple_species and "electron" in cfg_grid["species_grids"]:
             cfg_grid["v"] = jnp.array(dist_result["electron"][2])
             cfg_grid["kv"] = cfg_grid["species_grids"]["electron"]["kv"]
             cfg_grid["kvr"] = cfg_grid["species_grids"]["electron"]["kvr"]
@@ -254,7 +255,7 @@ class BaseVlasov1D(ADEPTModule):
             state[species_name] = jnp.array(f_s)
 
         # Reference distribution for diagnostics (use first species)
-        # CR: we will need to store the species distributions separately for diagnostics, so this will NOT work when we're running multiple species. Create a ticket for this one, it will be addressed later on when we get around to fixing diagnostics.
+        # TODO(a-6c41): Store species distributions separately for multi-species diagnostics
         first_species_name = list(dist_result.keys())[0]
         f_ref = dist_result[first_species_name][1]
 

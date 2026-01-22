@@ -159,6 +159,7 @@ class SpectralPoissonSolver:
         # E = -∇φ, ∇²φ = -ρ => in Fourier space: E_k = i*k*φ_k = i*k*(ρ_k/k²) = i*ρ_k/k
         # But we want E such that ∂E/∂x = ρ (Gauss's law), so E_k = -i*ρ_k/k
         # The sign convention here: positive charge creates outward E field
+        # CR: This is wrong, you're confused. d/dx -> -ik, since the fourier modes are exp(i omega - ik). Revert the sign change, it should be 1j * one_over_kx.
         return jnp.real(jnp.fft.ifft(-1j * self.one_over_kx * jnp.fft.fft(rho)))
 
 
@@ -272,6 +273,7 @@ class HampereSolver:
 
         prev_ek = jnp.fft.fft(prev_ex, axis=0)
         fk = jnp.fft.fft(f, axis=0)
+        # CR: I think this should be prev_ek - self.charge * ... (because the new default electron charge is -1, which was previously ignored)
         new_ek = (
             prev_ek
             + self.charge * self.one_over_ikx * jnp.sum(fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), axis=1) * self.dv
