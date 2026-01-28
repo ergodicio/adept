@@ -1,6 +1,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import os
+import warnings
 from time import time
 
 import numpy as np
@@ -92,101 +93,147 @@ def _initialize_distribution_(
 
 
 def _initialize_total_distribution_(cfg, cfg_grid):
-    params = cfg["density"]
-    n_prof_total = np.zeros([cfg_grid["nx"]])
-    f = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
+    """
+    Initialize distribution functions for all species.
+
+    The species config is normalized in modules.py:get_derived_quantities() so that
+    a species config always exists (for backward compatibility with single-species
+    config files, a default electron species is generated).
+
+    Returns:
+        dict mapping species_name -> (n_prof, f_s, v_ax)
+    """
+    species_configs = cfg["terms"]["species"]
+    species_distributions = {}
     species_found = False
-    for name, species_params in cfg["density"].items():
-        if name.startswith("species-"):
+
+    for species_cfg in species_configs:
+        species_name = species_cfg["name"]
+        density_components = species_cfg["density_components"]
+        vmax = species_cfg["vmax"]
+        nv = species_cfg["nv"]
+
+        # Initialize arrays for this species
+        n_prof_species = np.zeros([cfg_grid["nx"]])
+        dv = 2.0 * vmax / nv
+        vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+        f_species = np.zeros([cfg_grid["nx"], nv])
+
+        # Sum contributions from all density components
+        for component_name in density_components:
+            if component_name not in cfg["density"]:
+                raise ValueError(f"Density component '{component_name}' not found in config")
+
+            species_params = cfg["density"][component_name]
             v0 = species_params["v0"]
             T0 = species_params["T0"]
-            m = species_params["m"]
-            if name in params:
-                if "v0" in params[name]:
-                    v0 = params[name]["v0"]
 
-                if "T0" in params[name]:
-                    T0 = params[name]["T0"]
-
-                if "m" in params[name]:
-                    m = params[name]["m"]
-
-            if species_params["basis"] == "uniform":
-                nprof = np.ones_like(n_prof_total)
-
-            elif species_params["basis"] == "linear":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
-
-                ureg = pint.UnitRegistry()
-                _Q = ureg.Quantity
-
-                L = (
-                    _Q(species_params["gradient scale length"]).to("nm").magnitude
-                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
+            # Handle mass parameter with deprecation
+            if "m" in species_params:
+                warnings.warn(
+                    f"Density component '{component_name}': The 'm' parameter in density config is deprecated. "
+                    f"Please use the mass from the species config instead.",
+                    DeprecationWarning,
+                    stacklevel=2,
                 )
-                nprof = species_params["val at center"] + (cfg_grid["x"] - species_params["center"]) / L
-                nprof = mask * nprof
-            elif species_params["basis"] == "exponential":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
-
-                ureg = pint.UnitRegistry()
-                _Q = ureg.Quantity
-
-                L = (
-                    _Q(species_params["gradient scale length"]).to("nm").magnitude
-                    / cfg["units"]["derived"]["x0"].to("nm").magnitude
-                )
-                nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
-                nprof = mask * nprof
-
-            elif species_params["basis"] == "tanh":
-                left = species_params["center"] - species_params["width"] * 0.5
-                right = species_params["center"] + species_params["width"] * 0.5
-                rise = species_params["rise"]
-                nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
-
-                if species_params["bump_or_trough"] == "trough":
-                    nprof = 1 - nprof
-                nprof = species_params["baseline"] + species_params["bump_height"] * nprof
-
-            elif species_params["basis"] == "sine":
-                baseline = species_params["baseline"]
-                amp = species_params["amplitude"]
-                kk = species_params["wavenumber"]
-                nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg_grid["x"]))
+                m = species_params["m"]
+                # Check if it matches the species config mass
+                if abs(m - species_cfg["mass"]) > 1e-10:
+                    warnings.warn(
+                        f"Density component '{component_name}': Mass mismatch! "
+                        f"Using m={m} from density config, but species '{species_name}' "
+                        f"has mass={species_cfg['mass']}. This may lead to inconsistent physics.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
             else:
-                raise NotImplementedError
+                # Use mass from species config
+                m = species_cfg["mass"]
 
-            n_prof_total += nprof
+            # Get density profile
+            nprof = _get_density_profile(species_params, cfg, cfg_grid)
+            n_prof_species += nprof
 
-            # Distribution function
+            # Distribution function for this component
             temp_f, _ = _initialize_distribution_(
                 nx=int(cfg_grid["nx"]),
-                nv=int(cfg_grid["nv"]),
+                nv=nv,
                 v0=v0,
                 m=m,
                 T0=T0,
-                vmax=cfg_grid["vmax"],
+                vmax=vmax,
                 n_prof=nprof,
                 noise_val=species_params["noise_val"],
                 noise_seed=int(species_params["noise_seed"]),
                 noise_type=species_params["noise_type"],
             )
-            f += temp_f
+            f_species += temp_f
             species_found = True
-        else:
-            pass
+
+        species_distributions[species_name] = (n_prof_species, f_species, vax)
 
     if not species_found:
         raise ValueError("No species found! Check the config")
 
-    return n_prof_total, f
+    return species_distributions
+
+
+def _get_density_profile(species_params, cfg, cfg_grid):
+    """Extract density profile generation logic into a helper function."""
+    if species_params["basis"] == "uniform":
+        nprof = np.ones([cfg_grid["nx"]])
+
+    elif species_params["basis"] == "linear":
+        left = species_params["center"] - species_params["width"] * 0.5
+        right = species_params["center"] + species_params["width"] * 0.5
+        rise = species_params["rise"]
+        mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+
+        ureg = pint.UnitRegistry()
+        _Q = ureg.Quantity
+
+        L = (
+            _Q(species_params["gradient scale length"]).to("nm").magnitude
+            / cfg["units"]["derived"]["x0"].to("nm").magnitude
+        )
+        nprof = species_params["val at center"] + (cfg_grid["x"] - species_params["center"]) / L
+        nprof = mask * nprof
+
+    elif species_params["basis"] == "exponential":
+        left = species_params["center"] - species_params["width"] * 0.5
+        right = species_params["center"] + species_params["width"] * 0.5
+        rise = species_params["rise"]
+        mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+
+        ureg = pint.UnitRegistry()
+        _Q = ureg.Quantity
+
+        L = (
+            _Q(species_params["gradient scale length"]).to("nm").magnitude
+            / cfg["units"]["derived"]["x0"].to("nm").magnitude
+        )
+        nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
+        nprof = mask * nprof
+
+    elif species_params["basis"] == "tanh":
+        left = species_params["center"] - species_params["width"] * 0.5
+        right = species_params["center"] + species_params["width"] * 0.5
+        rise = species_params["rise"]
+        nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
+
+        if species_params["bump_or_trough"] == "trough":
+            nprof = 1 - nprof
+        nprof = species_params["baseline"] + species_params["bump_height"] * nprof
+
+    elif species_params["basis"] == "sine":
+        baseline = species_params["baseline"]
+        amp = species_params["amplitude"]
+        kk = species_params["wavenumber"]
+        nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg_grid["x"]))
+    else:
+        raise NotImplementedError
+
+    return nprof
 
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):

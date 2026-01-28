@@ -49,31 +49,49 @@ class VlasovExternalE(eqx.Module):
 
 
 class VelocityExponential:
-    def __init__(self, cfg):
-        self.kv_real = cfg["grid"]["kvr"]
+    def __init__(self, species_grids, species_params):
+        self.species_grids = species_grids
+        self.species_params = species_params
 
-    def __call__(self, f, e, dt):
-        return jnp.real(
-            jnp.fft.irfft(jnp.exp(-1j * self.kv_real[None, :] * dt * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1)
-        )
+    def __call__(self, f_dict, e, dt):
+        result = {}
+        for species_name, f in f_dict.items():
+            kv_real = self.species_grids[species_name]["kvr"]
+            qm = self.species_params[species_name]["charge_to_mass"]
+            result[species_name] = jnp.real(
+                jnp.fft.irfft(jnp.exp(-1j * kv_real[None, :] * dt * qm * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1)
+            )
+        return result
 
 
 class VelocityCubicSpline:
-    def __init__(self, cfg):
-        self.v = jnp.repeat(cfg["grid"]["v"][None, :], repeats=cfg["grid"]["nx"], axis=0)
-        self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)  # {"xq": 0, "f": 0, "x": None})
+    def __init__(self, species_grids, species_params):
+        self.species_grids = species_grids
+        self.species_params = species_params
+        self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)
 
-    def __call__(self, f, e, dt):
-        vq = self.v - e[:, None] * dt
-        return self.interp(xq=vq, x=self.v, f=f)
+    def __call__(self, f_dict, e, dt):
+        result = {}
+        for species_name, f in f_dict.items():
+            v = self.species_grids[species_name]["v"]
+            qm = self.species_params[species_name]["charge_to_mass"]
+            nx = f.shape[0]
+            v_repeated = jnp.repeat(v[None, :], repeats=nx, axis=0)
+            vq = v_repeated - qm * e[:, None] * dt
+            result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
+        return result
 
 
 class SpaceExponential:
-    def __init__(self, cfg):
-        self.kx_real = cfg["grid"]["kxr"]
-        self.v = cfg["grid"]["v"]
+    def __init__(self, x, species_grids):
+        self.kx_real = jnp.fft.rfftfreq(len(x), d=x[1] - x[0]) * 2 * jnp.pi
+        self.species_grids = species_grids
 
-    def __call__(self, f, dt):
-        return jnp.real(
-            jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * dt * self.v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
-        )
+    def __call__(self, f_dict, dt):
+        result = {}
+        for species_name, f in f_dict.items():
+            v = self.species_grids[species_name]["v"]
+            result[species_name] = jnp.real(
+                jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * dt * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
+            )
+        return result
