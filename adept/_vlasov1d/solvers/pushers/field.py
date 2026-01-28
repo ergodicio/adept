@@ -104,8 +104,8 @@ class WaveSolver:
 class SpectralPoissonSolver:
     """Spectral Poisson solver for electrostatic field.
 
-    Solves Poisson equation: ∇²φ = -ρ, E = -∇φ
-    where ρ = Σ_s q_s ∫f_s dv_s is the total charge density from all species.
+    Solves Poisson equation: div^2(phi) = -rho, E = -grad(phi)
+    where rho = sum_s q_s * integral(f_s dv_s) is the total charge density from all species.
 
     For quasineutral plasmas, the total charge should sum to zero at initialization.
     """
@@ -126,7 +126,7 @@ class SpectralPoissonSolver:
     def compute_charge_density(self, f_dict):
         """Compute total charge density from all species.
 
-        ρ = Σ_s q_s ∫f_s dv_s = Σ_s q_s * n_s
+        rho = sum_s q_s * integral(f_s dv_s) = sum_s q_s * n_s
 
         Args:
             f_dict: dict mapping species_name -> f[nx, nv] distribution
@@ -134,7 +134,7 @@ class SpectralPoissonSolver:
         Returns:
             Total charge density array[nx]
         """
-        rho = jnp.zeros_like(list(f_dict.values())[0][:, 0])
+        rho = jnp.zeros_like(next(iter(f_dict.values()))[:, 0])
 
         for species_name, f_s in f_dict.items():
             q_s = self.species_params[species_name]["charge"]
@@ -156,8 +156,8 @@ class SpectralPoissonSolver:
             Electric field E[nx] from Poisson solve
         """
         rho = self.compute_charge_density(f_dict)
-        # Poisson equation: ∇²φ = -ρ => -k² φ_k = -ρ_k => φ_k = ρ_k / k²
-        # E = -∇φ => E_k = -ik φ_k = -ik ρ_k / k² = -i ρ_k / k
+        # Poisson equation: div^2(phi) = -rho => -k^2 phi_k = -rho_k => phi_k = rho_k / k^2
+        # E = -grad(phi) => E_k = -ik phi_k = -ik rho_k / k^2 = -i rho_k / k
         return jnp.real(jnp.fft.ifft(-1j * self.one_over_kx * jnp.fft.fft(rho)))
 
 
@@ -190,7 +190,7 @@ class AmpereSolver:
         Returns:
             Total current density array[nx]
         """
-        j = jnp.zeros_like(list(f_dict.values())[0][:, 0])
+        j = jnp.zeros_like(next(iter(f_dict.values()))[:, 0])
 
         for species_name, f_s in f_dict.items():
             q_s = self.species_params[species_name]["charge"]
@@ -250,7 +250,7 @@ class HampereSolver:
             )
 
         # Cache the single species' grid parameters
-        species_name = list(species_grids.keys())[0]
+        species_name = next(iter(species_grids.keys()))
         self.vx = species_grids[species_name]["v"][None, :]
         self.dv = species_grids[species_name]["dv"]
         self.charge = species_params[species_name]["charge"]
@@ -267,13 +267,16 @@ class HampereSolver:
             Updated electric field E[nx]
         """
         # Extract the single species distribution
-        f = list(f_dict.values())[0]
+        f = next(iter(f_dict.values()))
 
         prev_ek = jnp.fft.fft(prev_ex, axis=0)
         fk = jnp.fft.fft(f, axis=0)
         new_ek = (
             prev_ek
-            + self.charge * self.one_over_ikx * jnp.sum(fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), axis=1) * self.dv
+            + self.charge
+            * self.one_over_ikx
+            * jnp.sum(fk * (jnp.exp(-1j * self.kx * dt * self.vx) - 1), axis=1)
+            * self.dv
         )
 
         return jnp.real(jnp.fft.ifft(new_ek))

@@ -40,7 +40,7 @@ class LeapfrogIntegrator(TimeIntegrator):
     synchronously under the same self-consistent electric field.
 
     The field solve uses the total charge density from all species:
-    ρ = Σ_s q_s ∫f_s dv_s
+    rho = sum_s q_s * integral(f_s dv_s)
 
     Args:
         cfg: Configuration dictionary
@@ -82,7 +82,7 @@ class SixthOrderHamIntegrator(TimeIntegrator):
     electric field at each substep.
 
     The field solve uses the total charge density from all species:
-    ρ = Σ_s q_s ∫f_s dv_s
+    rho = sum_s q_s * integral(f_s dv_s)
 
     Args:
         cfg: Configuration dictionary

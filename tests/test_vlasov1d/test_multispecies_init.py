@@ -1,8 +1,9 @@
 """Test multi-species initialization and state structure."""
 
+from pathlib import Path
+
 import numpy as np
 import yaml
-from pathlib import Path
 
 from adept._vlasov1d.modules import BaseVlasov1D
 
@@ -11,7 +12,7 @@ def test_multispecies_state_initialization():
     """Test that multi-species state initialization creates correct structures."""
     config_path = Path(__file__).parent / "configs" / "multispecies_ion_acoustic.yaml"
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
     # Create module
@@ -78,7 +79,7 @@ def test_backward_compatible_state_initialization():
     """Test that single-species configs still work correctly."""
     config_path = Path(__file__).parent / "configs" / "resonance.yaml"
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
     # Create module

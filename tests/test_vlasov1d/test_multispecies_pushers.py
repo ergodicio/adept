@@ -4,12 +4,13 @@ These tests verify convergence to exact solutions obtained by characteristic tra
 since the pushers implement linear advection operators in space.
 """
 
-import numpy as np
-import jax.numpy as jnp
 from pathlib import Path
+
+import jax.numpy as jnp
+import numpy as np
 import yaml
 
-from adept._vlasov1d.solvers.pushers.vlasov import VelocityExponential, VelocityCubicSpline, SpaceExponential
+from adept._vlasov1d.solvers.pushers.vlasov import SpaceExponential, VelocityCubicSpline, VelocityExponential
 
 
 def test_space_exponential_convergence():
@@ -54,12 +55,13 @@ def test_space_exponential_convergence():
         f_exact = jnp.sin(k * x - k * v[0] * dt)[:, None]  # Shape (nx, 1)
 
         # Compute error (L2 norm)
-        error = jnp.sqrt(jnp.mean((f_numerical - f_exact)**2))
+        error = jnp.sqrt(jnp.mean((f_numerical - f_exact) ** 2))
         errors.append(float(error))
 
     # Spectral method should achieve machine precision
-    assert all(err < 1e-12 for err in errors), \
+    assert all(err < 1e-12 for err in errors), (
         f"SpaceExponential should achieve machine precision. Errors: {[f'{e:.2e}' for e in errors]}"
+    )
 
 
 def test_velocity_exponential_convergence():
@@ -85,7 +87,7 @@ def test_velocity_exponential_convergence():
 
     for nv in nv_values:
         dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv/2, vmax - dv/2, nv)
+        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
         kvr = jnp.fft.rfftfreq(nv, d=dv) * 2.0 * np.pi
 
         species_grids = {
@@ -122,17 +124,20 @@ def test_velocity_exponential_convergence():
         f_ion_exact = jnp.sin(k * (v - v_shift_ion))[None, :]
 
         # Compute errors (L2 norm)
-        error_electron = jnp.sqrt(jnp.mean((f_electron_numerical - f_electron_exact)**2))
-        error_ion = jnp.sqrt(jnp.mean((f_ion_numerical - f_ion_exact)**2))
+        error_electron = jnp.sqrt(jnp.mean((f_electron_numerical - f_electron_exact) ** 2))
+        error_ion = jnp.sqrt(jnp.mean((f_ion_numerical - f_ion_exact) ** 2))
 
         errors_electron.append(float(error_electron))
         errors_ion.append(float(error_ion))
 
     # Spectral method should achieve machine precision for both species
-    assert all(err < 1e-12 for err in errors_electron), \
-        f"VelocityExponential should achieve machine precision for electrons. Errors: {[f'{e:.2e}' for e in errors_electron]}"
-    assert all(err < 1e-12 for err in errors_ion), \
+    assert all(err < 1e-12 for err in errors_electron), (
+        f"VelocityExponential should achieve machine precision for electrons. "
+        f"Errors: {[f'{e:.2e}' for e in errors_electron]}"
+    )
+    assert all(err < 1e-12 for err in errors_ion), (
         f"VelocityExponential should achieve machine precision for ions. Errors: {[f'{e:.2e}' for e in errors_ion]}"
+    )
 
 
 if __name__ == "__main__":

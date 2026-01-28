@@ -59,9 +59,7 @@ class VelocityExponential:
             kv_real = self.species_grids[species_name]["kvr"]
             qm = self.species_params[species_name]["charge_to_mass"]
             result[species_name] = jnp.real(
-                jnp.fft.irfft(
-                    jnp.exp(-1j * kv_real[None, :] * dt * qm * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1
-                )
+                jnp.fft.irfft(jnp.exp(-1j * kv_real[None, :] * dt * qm * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1)
             )
         return result
 
@@ -94,8 +92,6 @@ class SpaceExponential:
         for species_name, f in f_dict.items():
             v = self.species_grids[species_name]["v"]
             result[species_name] = jnp.real(
-                jnp.fft.irfft(
-                    jnp.exp(-1j * self.kx_real[:, None] * dt * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0
-                )
+                jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * dt * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
             )
         return result

@@ -1,8 +1,9 @@
 """Test multi-species configuration parsing and validation."""
 
+from pathlib import Path
+
 import pytest
 import yaml
-from pathlib import Path
 from pydantic import ValidationError
 
 from adept._vlasov1d.datamodel import ConfigModel, SpeciesConfig
@@ -12,7 +13,7 @@ def test_multispecies_config_parsing():
     """Test that multi-species config files parse correctly."""
     config_path = Path(__file__).parent / "configs" / "multispecies_ion_acoustic.yaml"
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
     # Validate with Pydantic model
@@ -45,7 +46,7 @@ def test_backward_compatible_config():
     """Test that old configs without terms.species still work."""
     config_path = Path(__file__).parent / "configs" / "resonance.yaml"
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
     # Validate with Pydantic model

@@ -86,22 +86,21 @@ class BaseVlasov1D(ADEPTModule):
         # Normalize species config: if not provided, generate a default electron species
         if self.cfg["terms"].get("species", None) is None:
             # Collect all density components (keys starting with "species-")
-            density_components = [
-                name for name in self.cfg["density"].keys()
-                if name.startswith("species-")
-            ]
+            density_components = [name for name in self.cfg["density"].keys() if name.startswith("species-")]
             if not density_components:
                 raise ValueError("No density components found (expected keys starting with 'species-')")
 
             # Generate default electron species config
-            self.cfg["terms"]["species"] = [{
-                "name": "electron",
-                "charge": -1.0,
-                "mass": 1.0,
-                "vmax": cfg_grid["vmax"],
-                "nv": cfg_grid["nv"],
-                "density_components": density_components,
-            }]
+            self.cfg["terms"]["species"] = [
+                {
+                    "name": "electron",
+                    "charge": -1.0,
+                    "mass": 1.0,
+                    "vmax": cfg_grid["vmax"],
+                    "nv": cfg_grid["nv"],
+                    "density_components": density_components,
+                }
+            ]
 
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
@@ -168,9 +167,7 @@ class BaseVlasov1D(ADEPTModule):
             n_prof_total += n_prof
 
             # Find the species config (always exists due to normalization in get_derived_quantities)
-            species_cfg = next(
-                (s for s in self.cfg["terms"]["species"] if s["name"] == species_name), None
-            )
+            species_cfg = next((s for s in self.cfg["terms"]["species"] if s["name"] == species_name), None)
             if species_cfg is None:
                 raise ValueError(f"Species '{species_name}' not found in config['terms']['species']")
 
@@ -256,7 +253,7 @@ class BaseVlasov1D(ADEPTModule):
 
         # Reference distribution for diagnostics (use first species)
         # TODO(gh-174): Store species distributions separately for multi-species diagnostics
-        first_species_name = list(dist_result.keys())[0]
+        first_species_name = next(iter(dist_result.keys()))
         f_ref = dist_result[first_species_name][1]
 
         # Field quantities (same for all modes)

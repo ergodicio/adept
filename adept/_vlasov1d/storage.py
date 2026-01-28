@@ -70,9 +70,7 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     data_vars = {}
     for spc in species_to_save:
         v = cfg["grid"]["species_grids"][spc]["v"]
-        data_vars[spc] = xr.DataArray(
-            ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v))
-        )
+        data_vars[spc] = xr.DataArray(ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v)))
 
     f_store = xr.Dataset(data_vars)
     f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))

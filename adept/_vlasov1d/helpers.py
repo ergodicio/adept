@@ -134,17 +134,17 @@ def _initialize_total_distribution_(cfg, cfg_grid):
                     f"Density component '{component_name}': The 'm' parameter in density config is deprecated. "
                     f"Please use the mass from the species config instead.",
                     DeprecationWarning,
-                    stacklevel=2
+                    stacklevel=2,
                 )
                 m = species_params["m"]
                 # Check if it matches the species config mass
                 if abs(m - species_cfg["mass"]) > 1e-10:
                     warnings.warn(
                         f"Density component '{component_name}': Mass mismatch! "
-                        f"Using m={m} from density config, but species '{species_name}' has mass={species_cfg['mass']}. "
-                        f"This may lead to inconsistent physics.",
+                        f"Using m={m} from density config, but species '{species_name}' "
+                        f"has mass={species_cfg['mass']}. This may lead to inconsistent physics.",
                         UserWarning,
-                        stacklevel=2
+                        stacklevel=2,
                     )
             else:
                 # Use mass from species config

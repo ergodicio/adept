@@ -15,6 +15,7 @@ Full dispersion relation:
 
 Reference: https://farside.ph.utexas.edu/teaching/plasma/Plasma/node112.html
 """
+
 import numpy as np
 import pytest
 import yaml
@@ -141,7 +142,7 @@ def test_ion_acoustic_simulation_runs(time_integrator):
     assert np.std(e_field) > 0, "Electric field should have dynamics"
 
     print(f"\nIon Acoustic Smoke Test ({time_integrator}):")
-    print(f"  Simulation completed successfully")
+    print("  Simulation completed successfully")
     print(f"  Time steps: {len(time_axis)}")
     print(f"  E-field std: {np.std(e_field):.2e}")
 
