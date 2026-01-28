@@ -10,7 +10,7 @@ license = "MIT"
 license-files = ["LICENSE*"]
 requires-python = ">=3.11"
 dependencies = [
-    "lineax @ git+https://github.com/patrick-kidger/lineax.git",
+    "lineax",
     "diffrax @ git+https://github.com/patrick-kidger/diffrax.git@dev",
     "matplotlib",
     "scipy",
