@@ -42,16 +42,32 @@ class Collisions:
         else:
             raise NotImplementedError
 
-    def __call__(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+    def __call__(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f, dt: jnp.float64):
         """
         Apply configured collision operators to the distribution function.
 
         :param nu_fp: Collision frequencies for the Fokker-Planck operator (shape: nx).
         :param nu_K: Krook collision frequencies (shape: nx).
-        :param f: Distribution function f(x, v) (shape: nx x nv).
+        :param f: Distribution function (dict or array).
         :param dt: Time step size.
         :return: Updated distribution function after collisions.
         """
+        # TODO(gh-173): Properly handle multi-species collisions
+        # For now, only apply to electron distribution for backward compatibility
+        if isinstance(f, dict):
+            result = {}
+            for species_name, f_species in f.items():
+                if species_name == "electron":
+                    result[species_name] = self._apply_collisions(nu_fp, nu_K, f_species, dt)
+                else:
+                    # For non-electron species, just pass through unchanged for now
+                    result[species_name] = f_species
+            return result
+        else:
+            return self._apply_collisions(nu_fp, nu_K, f, dt)
+
+    def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
+        """Apply collision operators to a single species distribution."""
         if self.cfg["terms"]["fokker_planck"]["is_on"]:
             # The three diagonals representing collision operator for all x
             cee_a, cee_b, cee_c = self.fp(nu=nu_fp, f_xv=f, dt=dt)
@@ -74,9 +90,11 @@ class Krook:
         :param cfg: Simulation configuration containing grid spacing and velocity grid.
         """
         self.cfg = cfg
-        f_mx = np.exp(-(self.cfg["grid"]["v"][None, :] ** 2.0) / 2.0)
-        self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
-        self.dv = self.cfg["grid"]["dv"]
+        v = cfg["grid"]["species_grids"]["electron"]["v"]
+        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        f_mx = np.exp(-(v[None, :] ** 2.0) / 2.0)
+        self.f_mx = f_mx / np.trapz(f_mx, dx=dv, axis=1)[:, None]
+        self.dv = dv
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -103,9 +121,11 @@ class _DriftDiffusionBase:
 
     def __init__(self, cfg: Mapping[str, Any]):
         self.cfg = cfg
-        self.v = self.cfg["grid"]["v"]
-        self.dv = self.cfg["grid"]["dv"]
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
+        # TODO(gh-173): For multi-species, use electron grid for FP for now
+        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
+        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
+        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -169,10 +189,11 @@ class ChangCooperLenardBernstein:
         :param cfg: Simulation configuration providing grid metadata.
         """
         self.cfg = cfg
-        self.v = self.cfg["grid"]["v"]
-        self.dv = self.cfg["grid"]["dv"]
+        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
+        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
+        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -236,10 +257,11 @@ class ChangCooperDougherty:
         :param cfg: Simulation configuration providing grid metadata.
         """
         self.cfg = cfg
-        self.v = self.cfg["grid"]["v"]
-        self.dv = self.cfg["grid"]["dv"]
+        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
+        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
+        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["nv"]))
+        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""

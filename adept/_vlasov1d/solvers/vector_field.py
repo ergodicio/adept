@@ -19,23 +19,31 @@ class TimeIntegrator:
 
     def __init__(self, cfg: dict):
         self.field_solve = field.ElectricFieldSolver(cfg)
+        self.species_grids = cfg["grid"]["species_grids"]
+        self.species_params = cfg["grid"]["species_params"]
         self.edfdv = self.get_edfdv(cfg)
-        self.vdfdx = vlasov.SpaceExponential(cfg)
+        self.vdfdx = vlasov.SpaceExponential(cfg["grid"]["x"], self.species_grids)
 
     def get_edfdv(self, cfg: dict):
         if cfg["terms"]["edfdv"] == "exponential":
-            return vlasov.VelocityExponential(cfg)
+            return vlasov.VelocityExponential(self.species_grids, self.species_params)
         elif cfg["terms"]["edfdv"] == "cubic-spline":
-            return vlasov.VelocityCubicSpline(cfg)
+            return vlasov.VelocityCubicSpline(self.species_grids, self.species_params)
         else:
             raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
 
 
 class LeapfrogIntegrator(TimeIntegrator):
-    """
-    This is a leapfrog integrator
+    """Leapfrog integrator for Vlasov-Poisson system.
 
-    :param cfg:
+    Implements a standard leapfrog scheme where all species are pushed
+    synchronously under the same self-consistent electric field.
+
+    The field solve uses the total charge density from all species:
+    rho = sum_s q_s * integral(f_s dv_s)
+
+    Args:
+        cfg: Configuration dictionary
     """
 
     def __init__(self, cfg: dict):
@@ -43,23 +51,41 @@ class LeapfrogIntegrator(TimeIntegrator):
         self.dt = cfg["grid"]["dt"]
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
 
-    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, Array]:
-        f_after_v = self.vdfdx(f=f, dt=self.dt)
+    def __call__(self, f_dict: dict, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, dict]:
+        """Perform one leapfrog timestep for all species.
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            a: vector potential a[nx+2]
+            dex_array: external driver field at substep times
+            prev_ex: previous electric field E[nx]
+
+        Returns:
+            Tuple of (electric_field[nx], updated_f_dict)
+        """
+        f_after_v = self.vdfdx(f_dict, dt=self.dt)
         if self.field_solve.hampere:
-            f_for_field = f
+            f_for_field = f_dict
         else:
             f_for_field = f_after_v
-        pond, e = self.field_solve(f=f_for_field, a=a, prev_ex=prev_ex, dt=self.dt)
-        f = self.edfdv(f=f_after_v, e=pond + e + dex_array[0], dt=self.dt)
+        pond, e = self.field_solve(f_dict=f_for_field, a=a, prev_ex=prev_ex, dt=self.dt)
+        f_dict = self.edfdv(f_after_v, e=pond + e + dex_array[0], dt=self.dt)
 
-        return e, f
+        return e, f_dict
 
 
 class SixthOrderHamIntegrator(TimeIntegrator):
-    """
-    This class contains the 6th order Hamiltonian integrator from Crousseilles
+    """6th-order Hamiltonian integrator for Vlasov-Poisson system.
 
-    :param cfg:
+    Implements the 6th-order symplectic integrator from Crouseilles et al.
+    All species are pushed synchronously under the same self-consistent
+    electric field at each substep.
+
+    The field solve uses the total charge density from all species:
+    rho = sum_s q_s * integral(f_s dv_s)
+
+    Args:
+        cfg: Configuration dictionary
     """
 
     def __init__(self, cfg):
@@ -94,56 +120,72 @@ class SixthOrderHamIntegrator(TimeIntegrator):
             ]
         )
 
-    def __call__(self, f: Array, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, Array]:
-        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[0] + self_consistent_ex
-        f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
+    def __call__(self, f_dict: dict, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, dict]:
+        """Perform one 6th-order timestep for all species.
 
-        f = self.vdfdx(f=f, dt=self.a1 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            a: vector potential a[nx+2]
+            dex_array: external driver field at substep times
+            prev_ex: previous electric field (unused, kept for interface consistency)
+
+        Returns:
+            Tuple of (electric_field[nx], updated_f_dict)
+        """
+        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
+        force = ponderomotive_force + dex_array[0] + self_consistent_ex
+        f_dict = self.edfdv(f_dict, e=force, dt=self.D1 * self.dt)
+
+        f_dict = self.vdfdx(f_dict, dt=self.a1 * self.dt)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[1] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force, dt=self.D2 * self.dt)
+        f_dict = self.edfdv(f_dict, e=force, dt=self.D2 * self.dt)
 
-        f = self.vdfdx(f=f, dt=self.a2 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        f_dict = self.vdfdx(f_dict, dt=self.a2 * self.dt)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[2] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force, dt=self.D3 * self.dt)
+        f_dict = self.edfdv(f_dict, e=force, dt=self.D3 * self.dt)
 
-        f = self.vdfdx(f=f, dt=self.a3 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        f_dict = self.vdfdx(f_dict, dt=self.a3 * self.dt)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[3] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force, dt=self.D3 * self.dt)
+        f_dict = self.edfdv(f_dict, e=force, dt=self.D3 * self.dt)
 
-        f = self.vdfdx(f=f, dt=self.a2 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        f_dict = self.vdfdx(f_dict, dt=self.a2 * self.dt)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[4] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force, dt=self.D2 * self.dt)
+        f_dict = self.edfdv(f_dict, e=force, dt=self.D2 * self.dt)
 
-        f = self.vdfdx(f=f, dt=self.a1 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f=f, a=a, prev_ex=None, dt=None)
+        f_dict = self.vdfdx(f_dict, dt=self.a1 * self.dt)
+        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
         force = ponderomotive_force + dex_array[5] + self_consistent_ex
 
-        f = self.edfdv(f=f, e=force, dt=self.D1 * self.dt)
+        f_dict = self.edfdv(f_dict, e=force, dt=self.D1 * self.dt)
 
-        return self_consistent_ex, f
+        return self_consistent_ex, f_dict
 
 
 class VlasovPoissonFokkerPlanck:
-    """
-    This class contains the Vlasov-Poisson + Fokker-Planck timestep
+    """Vlasov-Poisson + Fokker-Planck timestep for multi-species simulations.
 
-    :param cfg: Configuration dictionary
+    Combines a Vlasov-Poisson integrator (leapfrog or 6th-order Hamiltonian)
+    with optional Fokker-Planck collisions. Handles dict-based multi-species
+    distributions where each species evolves under the same self-consistent
+    electric field.
 
-    :return: Tuple of the electric field and the distribution function
+    Args:
+        cfg: Configuration dictionary
+
+    Returns:
+        Tuple of (electric_field, f_dict, diagnostics_dict)
     """
 
     def __init__(self, cfg: dict):
         self.dt = cfg["grid"]["dt"]
-        self.v = cfg["grid"]["v"]
         if cfg["terms"]["time"] == "sixth":
             self.vlasov_poisson = SixthOrderHamIntegrator(cfg)
             self.dex_save = 3
@@ -157,17 +199,21 @@ class VlasovPoissonFokkerPlanck:
         self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
 
     def __call__(
-        self, f: Array, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
-    ) -> tuple[Array, Array]:
-        e, f_vlasov = self.vlasov_poisson(f, a, dex_array, prev_ex)
+        self, f_dict: dict, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
+    ) -> tuple[Array, dict, dict]:
+        e, f_vlasov = self.vlasov_poisson(f_dict, a, dex_array, prev_ex)
 
         f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=self.dt)
         diags = {}
 
         if self.vlasov_dfdt:
-            diags["diag-vlasov-dfdt"] = (f_vlasov - f) / self.dt
+            # Compute diagnostics for each species
+            for species_name in f_dict.keys():
+                diags[f"diag-vlasov-dfdt-{species_name}"] = (f_vlasov[species_name] - f_dict[species_name]) / self.dt
         if self.fp_dfdt:
-            diags["diag-fp-dfdt"] = (f_fp - f_vlasov) / self.dt
+            # Compute diagnostics for each species
+            for species_name in f_dict.keys():
+                diags[f"diag-fp-dfdt-{species_name}"] = (f_fp[species_name] - f_vlasov[species_name]) / self.dt
 
         return e, f_fp, diags
 
@@ -188,8 +234,18 @@ class VlasovMaxwell:
         self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
         self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
 
-    def compute_charges(self, f):
-        return jnp.sum(f, axis=1) * self.cfg["grid"]["dv"]
+    def compute_charges(self, f_dict):
+        """Compute charge density from distribution functions.
+
+        For a dict of species distributions, sum over all species with their charge-to-mass ratios.
+        """
+        charge_density = jnp.zeros_like(self.cfg["grid"]["x"])
+        for species_name, f in f_dict.items():
+            dv = self.cfg["grid"]["species_grids"][species_name]["dv"]
+            charge = self.cfg["grid"]["species_params"][species_name]["charge"]
+            # Sum over velocity axis (axis=1) to get spatial density, then multiply by charge
+            charge_density += charge * jnp.sum(f, axis=1) * dv
+        return charge_density
 
     def nu_prof(self, t, nu_args):
         t_L = nu_args["time"]["center"] - nu_args["time"]["width"] * 0.5
@@ -237,21 +293,29 @@ class VlasovMaxwell:
         else:
             nu_K_prof = None
 
-        electron_density_n = self.compute_charges(y["electron"])
-        e, f, diags = self.vpfp(
-            f=y["electron"], a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof
+        # Extract all species distributions from state
+        f_dict = {k: v for k, v in y.items() if k in self.cfg["grid"]["species_grids"]}
+
+        electron_density_n = self.compute_charges(f_dict)
+        e, f_dict_new, diags = self.vpfp(
+            f_dict=f_dict, a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof
         )
-        electron_density_np1 = self.compute_charges(f)
+        electron_density_np1 = self.compute_charges(f_dict_new)
 
         a = self.wave_solver(
             a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
         )
 
-        return {
-            "electron": f,
+        # Build result dict with all species distributions
+        result = {
             "a": a["a"],
             "prev_a": a["prev_a"],
             "da": djy,
             "de": dex[self.vpfp.dex_save],
             "e": e,
-        } | diags
+        }
+        # Add all species distributions
+        result.update(f_dict_new)
+        result.update(diags)
+
+        return result
