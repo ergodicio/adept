@@ -25,7 +25,7 @@ dependencies = [
     "pint",
     "plasmapy",
     "psutil",
-    "interpax",
+    "interpax @ git+https://github.com/f0uriest/interpax.git",
     "tabulate",
     "pydantic",
     "scienceplots",
