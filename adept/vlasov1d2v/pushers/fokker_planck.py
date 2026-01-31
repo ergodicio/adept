@@ -8,6 +8,8 @@ from interpax import interp2d
 from jax import numpy as jnp
 from jax import vmap
 
+from adept.driftdiffusion import CentralDifferencing
+
 
 class Collisions:
     def __init__(self, cfg):
@@ -73,12 +75,13 @@ class Dougherty:
         self.cfg = cfg
         self.v = self.cfg["grid"]["v"]
         self.dv = self.cfg["grid"]["dv"]
-        self.ones = jnp.ones(self.cfg["grid"]["nv"])
+        self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
+        self.scheme = CentralDifferencing(dv=self.dv)
         self.scan_over_vy = vmap(self._solve_one_vslice_, in_axes=(None, 1), out_axes=1)
         self.scan_over_vx = vmap(self._solve_one_vslice_, in_axes=(None, 0), out_axes=0)
 
     def _solve_one_vslice_(self, operator, f_vxvy):
-        return lx.linear_solve(operator, f_vxvy, solver=lx.Tridiagonal()).value
+        return lx.linear_solve(operator, f_vxvy, solver=lx.AutoLinearSolver(well_posed=True)).value
 
     def ddx(self, f_vxvy: jnp.ndarray):
         return jnp.gradient(f_vxvy, self.dv, axis=0)
@@ -97,39 +100,32 @@ class Dougherty:
 
         return vybar, v0t_sq
 
-    def _get_operator_(self, nu, vbar, v0t_sq, dt):
-        # TODO
-        lower_diagonal = nu * dt * (-v0t_sq / self.dv**2.0 + (self.v[:-1] - vbar) / 2.0 / self.dv)
-        diagonal = 1.0 + nu * dt * self.ones * (2.0 * v0t_sq / self.dv**2.0)
-        upper_diagonal = nu * dt * (-v0t_sq / self.dv**2.0 - (self.v[1:] - vbar) / 2.0 / self.dv)
-        return lx.TridiagonalLinearOperator(
-            diagonal=diagonal, upper_diagonal=upper_diagonal, lower_diagonal=lower_diagonal
-        )
-
     def implicit_vx(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """
+        Implicit solve along vx axis using shared CentralDifferencing scheme.
 
-        :param nu:
-        :param f_vxvy:
-        :param dt:
-        :return:
+        :param nu: Collision frequency
+        :param f_vxvy: Distribution function, shape (nv, nv)
+        :param dt: Time step
+        :return: Updated distribution function
         """
-
         vxbar, v0t_sq = self.get_init_quants_x(f_vxvy)
-        operator = self._get_operator_(nu, vxbar, v0t_sq, dt)
+        C_edge = self.v_edge - vxbar
+        operator = self.scheme.get_operator(C_edge=C_edge, D=jnp.array(v0t_sq), nu=jnp.array(nu), dt=dt)
         return self.scan_over_vy(operator, f_vxvy)
 
     def implicit_vy(self, nu: jnp.float64, f_vxvy: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """
+        Implicit solve along vy axis using shared CentralDifferencing scheme.
 
-        :param nu:
-        :param f_vxvy:
-        :param dt:
-        :return:
+        :param nu: Collision frequency
+        :param f_vxvy: Distribution function, shape (nv, nv)
+        :param dt: Time step
+        :return: Updated distribution function
         """
-
         vybar, v0t_sq = self.get_init_quants_y(f_vxvy)
-        operator = self._get_operator_(nu, vybar, v0t_sq, dt)
+        C_edge = self.v_edge - vybar
+        operator = self.scheme.get_operator(C_edge=C_edge, D=jnp.array(v0t_sq), nu=jnp.array(nu), dt=dt)
         return self.scan_over_vx(operator, f_vxvy)
 
     def explicit_vx(self, nu, f_vxvy, dt: jnp.float64):
@@ -250,7 +246,7 @@ class Banks:
             diagonal=diagonal, upper_diagonal=upper_diagonal, lower_diagonal=lower_diagonal
         )
 
-        return lx.linear_solve(op, rhs, lx.Tridiagonal()).value
+        return lx.linear_solve(op, rhs, lx.AutoLinearSolver(well_posed=True)).value
 
     def solve_azimuthal(self, f_vxvy, nu, dt):
         # interpolate to polar axes

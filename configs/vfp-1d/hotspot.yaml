@@ -72,5 +72,6 @@ terms:
     flm:
       ee: True
     f00:
-      type: Dougherty
+      model: LenardBernstein
+      scheme: central
   e_solver: oshun
