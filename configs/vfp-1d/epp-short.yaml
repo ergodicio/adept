@@ -89,5 +89,6 @@ terms:
     flm:
       ee: true
     f00:
-      type: Dougherty
+      model: LenardBernstein
+      scheme: central
   e_solver: oshun
