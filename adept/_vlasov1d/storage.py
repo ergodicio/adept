@@ -63,12 +63,16 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     :param ys:
     :return:
     """
-    f_store = xr.Dataset(
-        {
-            spc: xr.DataArray(ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"])))
-            for spc in ["electron"]
-        }
-    )
+    # Find which species distributions were saved
+    species_names = list(cfg["grid"]["species_grids"].keys())
+    species_to_save = [spc for spc in species_names if spc in ys]
+
+    data_vars = {}
+    for spc in species_to_save:
+        v = cfg["grid"]["species_grids"][spc]["v"]
+        data_vars[spc] = xr.DataArray(ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v)))
+
+    f_store = xr.Dataset(data_vars)
     f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))
 
     return f_store
@@ -107,13 +111,15 @@ def store_diags(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
 
 def get_field_save_func(cfg):
     if {"t"} == set(cfg["save"]["fields"].keys()):
+        v = cfg["grid"]["species_grids"]["electron"]["v"]
+        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
 
         def _calc_moment_(inp):
-            return jnp.sum(inp, axis=1) * cfg["grid"]["dv"]
+            return jnp.sum(inp, axis=1) * dv
 
         def fields_save_func(t, y, args):
-            temp = {"n": _calc_moment_(y["electron"]), "v": _calc_moment_(y["electron"] * cfg["grid"]["v"][None, :])}
-            v_m_vbar = cfg["grid"]["v"][None, :] - temp["v"][:, None]
+            temp = {"n": _calc_moment_(y["electron"]), "v": _calc_moment_(y["electron"] * v[None, :])}
+            v_m_vbar = v[None, :] - temp["v"][:, None]
             temp["p"] = _calc_moment_(y["electron"] * v_m_vbar**2.0)
             temp["q"] = _calc_moment_(y["electron"] * v_m_vbar**3.0)
             temp["-flogf"] = _calc_moment_(y["electron"] * jnp.log(jnp.abs(y["electron"])))
@@ -213,8 +219,8 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
-    v = cfg["grid"]["v"][None, :]
-    dv = cfg["grid"]["dv"]
+    v = cfg["grid"]["species_grids"]["electron"]["v"][None, :]
+    dv = cfg["grid"]["species_grids"]["electron"]["dv"]
 
     def _calc_mean_moment_(inp):
         return jnp.mean(jnp.sum(inp, axis=1) * dv)

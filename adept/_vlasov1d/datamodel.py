@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class SpaceProfileModel(BaseModel):
@@ -23,8 +23,12 @@ class SpeciesBackgroundModel(BaseModel):
 
 
 class DensityModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     quasineutrality: bool
-    species_background: SpeciesBackgroundModel
+    # Note: Allow arbitrary species-* fields to be defined dynamically
+    # e.g., species_background, species_beam, etc.
+    # These are validated as SpeciesBackgroundModel when accessed
 
 
 class UnitsModel(BaseModel):
@@ -37,11 +41,11 @@ class UnitsModel(BaseModel):
 
 class GridModel(BaseModel):
     dt: float
-    nv: int
+    nv: int | None = None  # Optional: for backward compatibility with single-species config files
     nx: int
     tmin: float
     tmax: float
-    vmax: float
+    vmax: float | None = None  # Optional: for backward compatibility with single-species config files
     xmax: float
     xmin: float
 
@@ -53,8 +57,11 @@ class TimeSaveModel(BaseModel):
 
 
 class SaveModel(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     fields: dict[str, TimeSaveModel]
-    electron: dict[str, TimeSaveModel]
+    # Note: Allow arbitrary species save sections (electron, ion, etc.)
+    # These are validated as dict[str, TimeSaveModel] when accessed
 
 
 class ExDriverModel(BaseModel):
@@ -112,10 +119,35 @@ class KrookModel(BaseModel):
     space: SpaceTermModel
 
 
+class SpeciesConfig(BaseModel):
+    """Configuration for a physical species in multi-species simulations.
+
+    Each species has its own charge-to-mass ratio and velocity grid, allowing
+    for electron-ion physics and other multi-species interactions.
+
+    Attributes:
+        name: Species name (e.g., 'electron', 'ion')
+        charge: Charge in units of fundamental charge (e.g., -1.0 for electrons, 10.0 for Z=10 ions)
+        mass: Mass in units of electron mass (e.g., 1.0 for electrons, 1836.0 for protons)
+        vmax: Velocity grid maximum for this species
+        nv: Number of velocity grid points for this species
+        density_components: List of density component names from the 'density:' section
+                          that contribute to this species' distribution function
+    """
+
+    name: str
+    charge: float
+    mass: float
+    vmax: float
+    nv: int
+    density_components: list[str]
+
+
 class TermsModel(BaseModel):
     field: str
     edfdv: str
     time: str
+    species: list[SpeciesConfig] | None = None
     fokker_planck: FokkerPlanckModel
     krook: KrookModel
 
