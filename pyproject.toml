@@ -24,7 +24,6 @@ dependencies = [
     "pint",
     "plasmapy",
     "psutil",
-    "mlflow-export-import",
     "interpax",
     "tabulate",
     "pydantic",
@@ -41,7 +40,7 @@ Documentation = "https://adept.readthedocs.io/en/latest/"
 cpu = []
 gpu = [
     "jax[cuda12]==0.6.2",
-    "pynvml"
+    "nvidia-ml-py"
 ]
 docs = [
     "sphinx",
