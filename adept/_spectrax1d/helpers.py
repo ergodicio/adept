@@ -90,12 +90,12 @@ def initialize_distribution(cfg: dict) -> jnp.ndarray:
 
     Based on user's code:
         Electron (alpha_s[0]):
-        - Ck_0[0, (Ny-1)/2-ny, (Nx-1)/2-nx, (Nz-1)/2-nz] = -i/(2α³) * dn
+        - Ck_0[0, (Ny-1)/2-ny, (Nx-1)/2-nx, (Nz-1)/2-nz] = -i/(2alpha³) * dn
         - Ck_0[0, (Ny-1)/2, (Nx-1)/2, (Nz-1)/2] = 1/α³  (equilibrium)
-        - Ck_0[0, (Ny-1)/2+ny, (Nx-1)/2+nx, (Nz-1)/2+nz] = +i/(2α³) * dn
+        - Ck_0[0, (Ny-1)/2+ny, (Nx-1)/2+nx, (Nz-1)/2+nz] = +i/(2alpha³) * dn
 
         Ion (alpha_s[1]):
-        - Ck_0[Nn*Nm*Np, (Ny-1)/2, (Nx-1)/2, (Nz-1)/2] = 1/α_i³  (equilibrium)
+        - Ck_0[Nn*Nm*Np, (Ny-1)/2, (Nx-1)/2, (Nz-1)/2] = 1/alpha_i³  (equilibrium)
 
     Args:
         cfg: Configuration dict with physics and grid parameters

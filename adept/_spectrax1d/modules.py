@@ -861,7 +861,7 @@ class BaseSpectrax1D(ADEPTModule):
 
         if energy_vars:
             energy_ds = xr.Dataset(
-                energy_vars, coords={"t": t_array[: len(energy_vars[list(energy_vars.keys())[0]][1])]}
+                energy_vars, coords={"t": t_array[: len(energy_vars[next(iter(energy_vars.keys()))][1])]}
             )
             energy_ds.to_netcdf(os.path.join(td, "binary", "energies.nc"))
 
