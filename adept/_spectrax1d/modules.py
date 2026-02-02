@@ -15,8 +15,9 @@ from functools import partial
 import pint
 import xarray as xr
 from diffrax import ConstantStepSize, ODETerm, PIDController, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
-from jax import numpy as jnp, jit, Array
-from spectrax import initialize_simulation_parameters, plasma_current, Hermite_Fourier_system, cross_product, simulation
+from jax import Array, jit
+from jax import numpy as jnp
+from spectrax import Hermite_Fourier_system, cross_product, initialize_simulation_parameters, plasma_current, simulation
 
 from adept._base_ import ADEPTModule
 from adept._spectrax1d.storage import (
