@@ -7,27 +7,27 @@ density:
 drivers:
   E2:
     envelope:
-      tw: 200fs
-      tr: 25fs
-      tc: 150fs
+      tw: 2ps
+      tr: 200fs
+      tc: 1250fs
       xw: 500um
       xc: 10um
       xr: 0.2um
       yr: 0.2um
       yc: 0um
       yw: 50um
-    a0: 1000
+    a0: 1.0e-3
     k0: -10.0
     w0: 20.0  # 1.5 k^2 vth^2 / wp0
 
 grid:
   boundary_abs_coeff: 1.0e4
   boundary_width: 8um
-  low_pass_filter: 0.7
-  dt: 0.002ps
-  dx: 20nm
+  low_pass_filter: 1.0
+  dt: 6fs
+  dx: 40nm
   xmax: 6.28um
-  tmax: 4.0ps
+  tmax: 6.0ps
   tmin: 0.0ns
   ymax: 1um
   ymin: -1um
@@ -38,13 +38,13 @@ mlflow:
 save:
   fields:
     t:
-      dt: 100fs
-      tmax: 4ps
+      dt: 10fs
+      tmax: 6ps
       tmin: 0ps
-    x:
-      dx: 22nm
-    y:
-      dy: 22nm
+    # x:
+    #   dx: 22nm
+    # y:
+    #   dy: 22nm
 solver: envelope-2d
 terms:
   epw:

@@ -3,7 +3,6 @@
 import os
 from time import time
 
-import mlflow
 import numpy as np
 import pint
 import xarray
@@ -15,6 +14,8 @@ from matplotlib import pyplot as plt
 from adept._base_ import get_envelope
 from adept.vlasov1d2v.integrator import Stepper, VlasovMaxwell
 from adept.vlasov1d2v.storage import store_f, store_fields
+
+from .. import patched_mlflow as mlflow
 
 gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data

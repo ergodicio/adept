@@ -1,0 +1,55 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [main, jack-gh-pages]
+    paths:
+      - 'docs/**'
+      - '.github/workflows/docs.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Build Sphinx docs
+        run: |
+          uv run --with-requirements docs/requirements.txt make -C docs html
+
+      - name: Copy raw markdown sources for LLM access
+        run: |
+          mkdir -p docs/build/html/raw
+          cp -r docs/source/*.md docs/build/html/raw/ 2>/dev/null || true
+          cp -r docs/source/solvers docs/build/html/raw/
+          cp -r docs/source/usage docs/build/html/raw/
+          # Generate index of all markdown files for LLM discovery
+          cd docs/build/html/raw && find . -name "*.md" | sort > index.txt
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/build/html
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

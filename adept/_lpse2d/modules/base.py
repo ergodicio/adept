@@ -1,3 +1,6 @@
+import math
+
+import diffrax
 import numpy as np
 from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from equinox import filter_jit
@@ -91,11 +94,10 @@ class BaseLPSE2D(ADEPTModule):
         phi_noise = 1 * np.exp(1j * random_phases)
         epw = 0 * phi_noise
 
-        background_density = get_density_profile(self.cfg)
-        vte_sq = np.ones((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"])) * self.cfg["units"]["derived"]["vte"] ** 2
+        self.cfg["grid"]["background_density"] = get_density_profile(self.cfg)
         E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
         E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
-        state = {"background_density": background_density, "epw": epw, "E0": E0, "E1": E1, "vte_sq": vte_sq}
+        state = {"epw": epw, "E0": E0, "E1": E1}
 
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
@@ -112,16 +114,23 @@ class BaseLPSE2D(ADEPTModule):
         for name, module in trainable_modules.items():
             state, args = module(state, args)
 
+        if self.cfg.get("opt", {}).get("checkpoints_coeff"):
+            base_checkpoints = math.floor(-1.5 + math.sqrt(2 * (self.cfg["grid"]["max_steps"] + 2048) + 0.25)) + 1
+            checkpoints = int(self.cfg["opt"]["checkpoints_coeff"] * base_checkpoints)
+        else:
+            checkpoints = None
+
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=None,  # self.cfg["grid"]["max_steps"],
+            max_steps=self.cfg["grid"]["max_steps"] + 2048,
             dt0=self.cfg["grid"]["dt"],
             y0=state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+            adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=checkpoints),
         )
 
         return {"solver result": solver_result, "args": args}

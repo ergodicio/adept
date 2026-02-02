@@ -2,12 +2,12 @@
 #  research@ergodic.io
 
 
-import mlflow
 import numpy as np
 import pytest
 import yaml
 from jax import devices
 
+import adept.patched_mlflow as mlflow
 from adept import electrostatic
 
 

@@ -55,6 +55,13 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx_copybutton",
     "sphinx_github_style",
+    "myst_parser",
+]
+
+# MyST parser configuration
+myst_enable_extensions = [
+    "dollarmath",  # Enable $...$ and $$...$$ math
+    "colon_fence",  # Enable ::: fenced directives
 ]
 # options for sphinx_github_style
 top_level = "adept"

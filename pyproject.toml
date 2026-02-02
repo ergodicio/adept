@@ -1,5 +1,6 @@
 [project]
 name = "adept"
+version = "0.1.0"
 description = "Automatic-Differentiation-Enabled Plasma Transport in JAX"
 readme = "README.md"
 authors = [
@@ -9,8 +10,8 @@ license = "MIT"
 license-files = ["LICENSE*"]
 requires-python = ">=3.11"
 dependencies = [
-    "lineax @ git+https://github.com/patrick-kidger/lineax.git",
-    "diffrax @ git+https://github.com/patrick-kidger/diffrax.git@dev",
+    "lineax",
+    "diffrax",
     "matplotlib",
     "scipy",
     "numpy",
@@ -24,13 +25,12 @@ dependencies = [
     "pint",
     "plasmapy",
     "psutil",
-    "interpax",
+    "interpax @ git+https://github.com/f0uriest/interpax.git",
     "tabulate",
     "pydantic",
     "scienceplots",
-    "jax==0.6.2"
+    "jax"
 ]
-dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/ergodicio/adept"
@@ -39,7 +39,7 @@ Documentation = "https://adept.readthedocs.io/en/latest/"
 [project.optional-dependencies]
 cpu = []
 gpu = [
-    "jax[cuda12]==0.6.2",
+    "jax[cuda12]",
     "nvidia-ml-py"
 ]
 docs = [
@@ -80,7 +80,10 @@ testpaths = ["tests"]
 filterwarnings = [
     "error",
     # ignored by default
+    "ignore::FutureWarning",
     "ignore::DeprecationWarning",
+    "ignore::RuntimeWarning",
+    "ignore::UserWarning",
     "ignore::PendingDeprecationWarning",
     "ignore::ImportWarning",
     # raised by Cython, usually harmless

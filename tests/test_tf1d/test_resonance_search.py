@@ -4,7 +4,6 @@ import time
 from itertools import product
 
 import equinox as eqx
-import mlflow
 import numpy as np
 import optax
 import pytest
@@ -14,6 +13,7 @@ from jax import numpy as jnp
 from jax import random as jr
 from tqdm import tqdm
 
+import adept.patched_mlflow as mlflow
 from adept import ergoExo
 from adept.electrostatic import get_roots_to_electrostatic_dispersion
 from adept.tf1d import BaseTwoFluid1D
