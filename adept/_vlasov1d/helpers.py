@@ -1,7 +1,6 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import os
-import warnings
 from time import time
 
 import numpy as np
@@ -31,12 +30,13 @@ def gamma_5_over_m(m):
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
-def _initialize_distribution_(
+def _initialize_supergaussian_distribution_(
     nx: int,
     nv: int,
     v0=0.0,
-    m=2.0,
+    supergaussian_order=2.0,
     T0=1.0,
+    mass=1.0,
     vmax=6.0,
     n_prof=np.ones(1),
     noise_val=0.0,
@@ -44,33 +44,38 @@ def _initialize_distribution_(
     noise_type="Uniform",
 ):
     """
+    Initialize a supergaussian distribution function.
 
-    :param nxs:
-    :param nvs:
-    :param n_prof:
-    :param vmax:
-    :return:
+    For supergaussian_order=2, this gives a Maxwell-Boltzmann distribution.
+
+    Args:
+        nx: size of grid in x
+        nv: size of grid in v
+        v0: drift velocity
+        supergaussian_order: order of supergaussian (2 = Maxwell-Boltzmann)
+        T0: temperature
+        mass: species mass for thermal velocity calculation
+        vmax: maximum absolute value of v
+        n_prof: density profile
+        noise_val: noise amplitude
+        noise_seed: random seed for noise
+        noise_type: type of noise ("Uniform")
+
+    Returns:
+        Tuple of (f[nx, nv], vax[nv])
     """
-    """
-    Initializes a Maxwell-Boltzmann distribution
-
-    TODO: temperature and density pertubations
-
-    :param nx: size of grid in x (single int)
-    :param nv: size of grid in v (single int)
-    :param vmax: maximum absolute value of v (single float)
-    :return:
-    """
-
     noise_generator = np.random.default_rng(seed=noise_seed)
 
     dv = 2.0 * vmax / nv
     vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
 
-    alpha = np.sqrt(3.0 * gamma_3_over_m(m) / gamma_5_over_m(m))
-    # cst = m / (4 * np.pi * alpha**3.0 * gamma(3.0 / m))
+    # Thermal velocity: v_t = sqrt(T/m)
+    v_thermal = np.sqrt(T0 / mass)
 
-    single_dist = -(np.power(np.abs((vax[None, :] - v0) / alpha / np.sqrt(T0)), m))
+    # Alpha factor for supergaussian normalization
+    alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
+
+    single_dist = -(np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
 
     single_dist = np.exp(single_dist)
     # single_dist = np.exp(-(vaxs[0][None, None, :, None]**2.+vaxs[1][None, None, None, :]**2.)/2/T0)
@@ -128,39 +133,24 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             v0 = species_params["v0"]
             T0 = species_params["T0"]
 
-            # Handle mass parameter with deprecation
-            if "m" in species_params:
-                warnings.warn(
-                    f"Density component '{component_name}': The 'm' parameter in density config is deprecated. "
-                    f"Please use the mass from the species config instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                m = species_params["m"]
-                # Check if it matches the species config mass
-                if abs(m - species_cfg["mass"]) > 1e-10:
-                    warnings.warn(
-                        f"Density component '{component_name}': Mass mismatch! "
-                        f"Using m={m} from density config, but species '{species_name}' "
-                        f"has mass={species_cfg['mass']}. This may lead to inconsistent physics.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-            else:
-                # Use mass from species config
-                m = species_cfg["mass"]
+            # Supergaussian order from density config (default 2.0 = Maxwell-Boltzmann)
+            supergaussian_order = species_params.get("m", 2.0)
+
+            # Mass from species config for thermal velocity calculation
+            mass = species_cfg["mass"]
 
             # Get density profile
             nprof = _get_density_profile(species_params, cfg, cfg_grid)
             n_prof_species += nprof
 
             # Distribution function for this component
-            temp_f, _ = _initialize_distribution_(
+            temp_f, _ = _initialize_supergaussian_distribution_(
                 nx=int(cfg_grid["nx"]),
                 nv=nv,
                 v0=v0,
-                m=m,
+                supergaussian_order=supergaussian_order,
                 T0=T0,
+                mass=mass,
                 vmax=vmax,
                 n_prof=nprof,
                 noise_val=species_params["noise_val"],

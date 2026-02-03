@@ -11,7 +11,7 @@ license-files = ["LICENSE*"]
 requires-python = ">=3.11"
 dependencies = [
     "lineax",
-    "diffrax @ git+https://github.com/patrick-kidger/diffrax.git@dev",
+    "diffrax",
     "matplotlib",
     "scipy",
     "numpy",
