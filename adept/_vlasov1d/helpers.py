@@ -228,39 +228,106 @@ def _get_density_profile(species_params, cfg, cfg_grid):
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
     t0 = time()
-    os.makedirs(os.path.join(td, "plots"), exist_ok=True)
-    os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
-    os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
-    os.makedirs(os.path.join(td, "plots", "fields", "logplots"), exist_ok=True)
 
+    # Get species names for directory creation
+    species_names = list(cfg["grid"]["species_grids"].keys())
+
+    # Create base plot directories
+    os.makedirs(os.path.join(td, "plots"), exist_ok=True)
+
+    # Create fields directory structure
+    # - fields/ (shared EM fields at top level)
+    # - fields/{species}/ (species-specific moments)
+    os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
+    os.makedirs(os.path.join(td, "plots", "fields", "logplots"), exist_ok=True)
+    os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
+    for species_name in species_names:
+        species_dir = os.path.join(td, "plots", "fields", species_name)
+        os.makedirs(species_dir, exist_ok=True)
+        os.makedirs(os.path.join(species_dir, "logplots"), exist_ok=True)
+        os.makedirs(os.path.join(species_dir, "lineouts"), exist_ok=True)
+
+    # Create scalars directory structure
+    # - scalars/ (shared field scalars at top level)
+    # - scalars/{species}/ (species-specific scalars)
     os.makedirs(os.path.join(td, "plots", "scalars"), exist_ok=True)
+    for species_name in species_names:
+        os.makedirs(os.path.join(td, "plots", "scalars", species_name), exist_ok=True)
+
+    # Create dists directory for distribution function snapshots
+    os.makedirs(os.path.join(td, "plots", "dists"), exist_ok=True)
+    for species_name in species_names:
+        os.makedirs(os.path.join(td, "plots", "dists", species_name), exist_ok=True)
 
     binary_dir = os.path.join(td, "binary")
     os.makedirs(binary_dir)
-    # merge
-    # flds_paths = [os.path.join(flds_path, tf) for tf in flds_list]
-    # arr = xarray.open_mfdataset(flds_paths, combine="by_coords", parallel=True)
+
+    fields_result = {}
+    fields_base_dir = os.path.join(td, "plots", "fields")
+
     for k in result.ys.keys():
         if k.startswith("field"):
-            fields_xr = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
-            t_skip = int(fields_xr.coords["t"].data.size // 8)
-            t_skip = t_skip if t_skip > 1 else 1
-            tslice = slice(0, -1, t_skip)
+            # store_fields now returns dict with species names and "fields" keys
+            fields_dict = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
 
-            for nm, fld in fields_xr.items():
-                fld.plot()
-                plt.savefig(os.path.join(td, "plots", "fields", f"spacetime-{nm[7:]}.png"), bbox_inches="tight")
-                plt.close()
+            # Plot species-specific moments in fields/{species}/
+            for species_name in species_names:
+                if species_name not in fields_dict:
+                    continue
 
-                np.log10(np.abs(fld)).plot()
-                plt.savefig(
-                    os.path.join(td, "plots", "fields", "logplots", f"spacetime-log-{nm[7:]}.png"), bbox_inches="tight"
-                )
-                plt.close()
+                species_xr = fields_dict[species_name]
+                species_dir = os.path.join(fields_base_dir, species_name)
 
-                fld[tslice].T.plot(col="t", col_wrap=4)
-                plt.savefig(os.path.join(td, "plots", "fields", "lineouts", f"{nm[7:]}.png"), bbox_inches="tight")
-                plt.close()
+                t_skip = int(species_xr.coords["t"].data.size // 8)
+                t_skip = t_skip if t_skip > 1 else 1
+                tslice = slice(0, -1, t_skip)
+
+                for nm, fld in species_xr.items():
+                    # Strip prefix (e.g., "fields-n" -> "n")
+                    field_name = nm.split("-", 1)[1] if "-" in nm else nm
+
+                    # Spacetime plot
+                    fld.plot()
+                    plt.savefig(os.path.join(species_dir, f"spacetime_{field_name}.png"), bbox_inches="tight")
+                    plt.close()
+
+                    # Log plot
+                    np.log10(np.abs(fld)).plot()
+                    plt.savefig(
+                        os.path.join(species_dir, "logplots", f"spacetime_log_{field_name}.png"), bbox_inches="tight"
+                    )
+                    plt.close()
+
+                    # Lineouts
+                    fld[tslice].T.plot(col="t", col_wrap=4)
+                    plt.savefig(os.path.join(species_dir, "lineouts", f"{field_name}.png"), bbox_inches="tight")
+                    plt.close()
+
+            # Plot shared field data (e, de, a, pond) in fields/ (top level)
+            if "fields" in fields_dict:
+                shared_xr = fields_dict["fields"]
+
+                t_skip = int(shared_xr.coords["t"].data.size // 8)
+                t_skip = t_skip if t_skip > 1 else 1
+                tslice = slice(0, -1, t_skip)
+
+                for nm, fld in shared_xr.items():
+                    field_name = nm.split("-", 1)[1] if "-" in nm else nm
+
+                    fld.plot()
+                    plt.savefig(os.path.join(fields_base_dir, f"spacetime_{field_name}.png"), bbox_inches="tight")
+                    plt.close()
+
+                    np.log10(np.abs(fld)).plot()
+                    log_path = os.path.join(fields_base_dir, "logplots", f"spacetime_log_{field_name}.png")
+                    plt.savefig(log_path, bbox_inches="tight")
+                    plt.close()
+
+                    fld[tslice].T.plot(col="t", col_wrap=4)
+                    plt.savefig(os.path.join(fields_base_dir, "lineouts", f"{field_name}.png"), bbox_inches="tight")
+                    plt.close()
+
+            fields_result = fields_dict
 
         elif k.startswith("default"):
             scalars_xr = xarray.Dataset(
@@ -268,6 +335,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
             )
             scalars_xr.to_netcdf(os.path.join(binary_dir, f"scalars-t={round(scalars_xr.coords['t'].data[-1], 4)}.nc"))
 
+            scalars_base_dir = os.path.join(td, "plots", "scalars")
             for nm, srs in scalars_xr.items():
                 fig, ax = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
                 srs.plot(ax=ax[0])
@@ -275,7 +343,21 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                 np.log10(np.abs(srs)).plot(ax=ax[1])
                 ax[1].grid()
                 ax[1].set_ylabel("$log_{10}$(|" + nm + "|)")
-                fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
+
+                # Determine if this is a species-specific or shared scalar
+                # Species-specific scalars have format: mean_X_{species_name}
+                scalar_species = None
+                for species_name in species_names:
+                    if nm.endswith(f"_{species_name}"):
+                        scalar_species = species_name
+                        break
+
+                if scalar_species:
+                    # Save to scalars/{species}/
+                    fig.savefig(os.path.join(scalars_base_dir, scalar_species, f"{nm}.png"), bbox_inches="tight")
+                else:
+                    # Shared field scalar (e.g., mean_e2, mean_de2, mean_pond)
+                    fig.savefig(os.path.join(scalars_base_dir, f"{nm}.png"), bbox_inches="tight")
                 plt.close()
 
     f_xr = store_f(cfg, result.ts, td, result.ys)
@@ -293,4 +375,4 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
 
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
-    return {"fields": fields_xr, "dists": f_xr, "scalars": scalars_xr}
+    return {"fields": fields_result, "dists": f_xr, "scalars": scalars_xr}
