@@ -76,16 +76,19 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
 
     data_vars = {}
     for spc in species_to_save:
+        # Use species-specific velocity dimension name to avoid coordinate conflicts
+        # when different species have different velocity grids
+        v_dim = f"v_{spc}"
         spc_save_cfg = cfg["save"][spc]
         save_keys = set(spc_save_cfg.keys()) - {"t", "func"}
         if {"x", "v"} <= save_keys:
-            coords = (("t", this_t[spc]), ("x", spc_save_cfg["x"]["ax"]), ("v", spc_save_cfg["v"]["ax"]))
+            coords = (("t", this_t[spc]), ("x", spc_save_cfg["x"]["ax"]), (v_dim, spc_save_cfg["v"]["ax"]))
         elif {"kx", "v"} <= save_keys:
-            coords = (("t", this_t[spc]), ("kx", spc_save_cfg["kx"]["ax"]), ("v", spc_save_cfg["v"]["ax"]))
+            coords = (("t", this_t[spc]), ("kx", spc_save_cfg["kx"]["ax"]), (v_dim, spc_save_cfg["v"]["ax"]))
         else:
             warnings.warn(f"Saving distribution for species '{spc}' at full resolution.", stacklevel=2)
             v = cfg["grid"]["species_grids"][spc]["v"]
-            coords = (("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v))
+            coords = (("t", this_t[spc]), ("x", cfg["grid"]["x"]), (v_dim, v))
         data_vars[spc] = xr.DataArray(ys[spc], coords=coords)
 
     f_store = xr.Dataset(data_vars)
@@ -229,9 +232,20 @@ def get_save_quantities(cfg: dict) -> dict:
         if save_type.startswith("fields"):
             save_config["func"] = get_field_save_func(cfg)
 
-        elif save_type.casefold() in [s.casefold() for s in species_names] or save_type in diag_types:
+        elif save_type.casefold() in [s.casefold() for s in species_names]:
+            # Species distribution - use species-specific velocity grid
+            species_grid = cfg["grid"]["species_grids"][save_type]
             save_config["func"] = get_dist_save_func(
-                axes={dim: cfg["grid"][dim] for dim in ("x", "v", "kx")},
+                axes={"x": cfg["grid"]["x"], "v": species_grid["v"], "kx": cfg["grid"]["kx"]},
+                dist_save_config=save_config,
+                dist_key=save_type,
+            )
+
+        elif save_type in diag_types:
+            # Diagnostics - use electron grid as default
+            electron_grid = cfg["grid"]["species_grids"]["electron"]
+            save_config["func"] = get_dist_save_func(
+                axes={"x": cfg["grid"]["x"], "v": electron_grid["v"], "kx": cfg["grid"]["kx"]},
                 dist_save_config=save_config,
                 dist_key=save_type,
             )

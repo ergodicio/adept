@@ -119,6 +119,8 @@ def test_ion_acoustic_simulation_runs(time_integrator):
     config["grid"]["dt"] = 0.1
     config["save"]["fields"]["t"]["tmax"] = 100.0
     config["save"]["fields"]["t"]["nt"] = 101
+    config["save"]["electron"]["t"]["tmax"] = 100.0
+    config["save"]["ion"]["t"]["tmax"] = 100.0
 
     # Modify config for this test
     config["terms"]["time"] = time_integrator
