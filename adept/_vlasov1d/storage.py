@@ -76,7 +76,10 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     data_vars = {}
     for spc in species_to_save:
         v = cfg["grid"]["species_grids"][spc]["v"]
-        data_vars[spc] = xr.DataArray(ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v)))
+        # Use species-specific velocity dimension name to avoid coordinate conflicts
+        # when different species have different velocity grids
+        v_dim = f"v_{spc}"
+        data_vars[spc] = xr.DataArray(ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), (v_dim, v)))
 
     f_store = xr.Dataset(data_vars)
     f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))
@@ -228,9 +231,20 @@ def get_save_quantities(cfg: dict) -> dict:
         if save_type.startswith("fields"):
             save_config["func"] = get_field_save_func(cfg)
 
-        elif save_type.casefold() in [s.casefold() for s in species_names] or save_type in diag_types:
+        elif save_type.casefold() in [s.casefold() for s in species_names]:
+            # Species distribution - use species-specific velocity grid
+            species_grid = cfg["grid"]["species_grids"][save_type]
             save_config["func"] = get_dist_save_func(
-                axes={dim: cfg["grid"][dim] for dim in ("x", "v", "kx")},
+                axes={"x": cfg["grid"]["x"], "v": species_grid["v"], "kx": cfg["grid"]["kx"]},
+                dist_save_config=save_config,
+                dist_key=save_type,
+            )
+
+        elif save_type in diag_types:
+            # Diagnostics - use electron grid as default
+            electron_grid = cfg["grid"]["species_grids"]["electron"]
+            save_config["func"] = get_dist_save_func(
+                axes={"x": cfg["grid"]["x"], "v": electron_grid["v"], "kx": cfg["grid"]["kx"]},
                 dist_save_config=save_config,
                 dist_key=save_type,
             )
