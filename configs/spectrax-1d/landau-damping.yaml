@@ -88,12 +88,20 @@ drivers:
   ey: {}
   ez: {}
 
+  # Hou-Li exponential filter in Hermite space
+  # Smoothly damps high Hermite modes to prevent aliasing and numerical instabilities
+  hermite_filter:
+    enabled: true              # Enable/disable Hermite space filtering
+    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode (2/3 ≈ 0.6667)
+    strength: 4.0              # Filter strength parameter (higher = sharper cutoff)
+    order: 4                   # Filter order (higher = sharper transition)
+
 # Grid resolution parameters
 # Maps to spectrax solver_parameters dict
 grid:
   # Fourier space grid dimensions
   # TOML: Nx = 33, Ny = 1, Nz = 1
-  Nx: 33   # Number of Fourier modes in x
+  Nx: 17   # Number of Fourier modes in x
   Ny: 1    # Number of Fourier modes in y
   Nz: 1    # Number of Fourier modes in z
 

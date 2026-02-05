@@ -31,6 +31,15 @@ units:
   normalizing_density: 1e20/cc
   normalizing_temperature: 1keV
 
+# External drivers configuration (for filter only, since TOML handles field drivers)
+drivers:
+  # Hou-Li exponential filter in Hermite space
+  hermite_filter:
+    enabled: false              # Enable/disable Hermite space filtering
+    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode
+    strength: 36.0              # Filter strength parameter
+    order: 36                   # Filter order
+
 # Save configuration
 save:
   fields:

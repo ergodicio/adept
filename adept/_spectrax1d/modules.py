@@ -15,15 +15,11 @@ import xarray as xr
 from diffrax import ConstantStepSize, ODETerm, PIDController, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import Array
 from jax import numpy as jnp
-from spectrax import Hermite_Fourier_system, cross_product, initialize_simulation_parameters, plasma_current
+from spectrax import cross_product, initialize_simulation_parameters, plasma_current
 
 from adept._base_ import ADEPTModule, get_envelope
-from adept._spectrax1d.storage import (
-    get_save_quantities,
-    store_distribution_timeseries,
-    store_fields_timeseries,
-    store_scalars,
-)
+from adept._spectrax1d.hermite_fourier_ode import HermiteFourierODE
+from adept._spectrax1d.storage import get_save_quantities, store_distribution_timeseries, store_scalars
 
 
 class Driver:
@@ -198,21 +194,7 @@ class SpectraxVectorField:
         self.Ns = Ns
 
         # Store grid quantities as class attributes (constants)
-        self.Lx = Lx
-        self.Ly = Ly
-        self.Lz = Lz
-        self.kx_grid = kx_grid
-        self.ky_grid = ky_grid
-        self.kz_grid = kz_grid
-        self.k2_grid = k2_grid
         self.nabla = nabla
-        self.col = col
-        self.sqrt_n_plus = sqrt_n_plus
-        self.sqrt_n_minus = sqrt_n_minus
-        self.sqrt_m_plus = sqrt_m_plus
-        self.sqrt_m_minus = sqrt_m_minus
-        self.sqrt_p_plus = sqrt_p_plus
-        self.sqrt_p_minus = sqrt_p_minus
 
         # Initialize external field driver if configured
         if driver_config.get("ex"):
@@ -227,6 +209,42 @@ class SpectraxVectorField:
         # Pre-compute the 2/3 dealiasing mask (only depends on grid dimensions)
         # Use fftshifted format to match spectrax convention
         self.mask23 = self._compute_twothirds_mask()
+
+        # Pre-compute Hou-Li filter in Hermite space if enabled
+        filter_config = driver_config.get("hermite_filter", {})
+        self.use_hermite_filter = filter_config.get("enabled", False)
+        if self.use_hermite_filter:
+            filter_order = filter_config.get("order", 36)
+            filter_strength = filter_config.get("strength", 36.0)
+            cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
+            self.hermite_filter = self._compute_houli_hermite_filter(
+                Nn, Nm, Np, cutoff_fraction, filter_strength, filter_order
+            )
+        else:
+            self.hermite_filter = None
+
+        # Instantiate class-based Hermite-Fourier ODE system (NEW refactored approach)
+        self.hermite_fourier_ode = HermiteFourierODE(
+            Nn=Nn,
+            Nm=Nm,
+            Np=Np,
+            Ns=Ns,
+            kx_grid=kx_grid,
+            ky_grid=ky_grid,
+            kz_grid=kz_grid,
+            k2_grid=k2_grid,
+            Lx=Lx,
+            Ly=Ly,
+            Lz=Lz,
+            col=col,
+            sqrt_n_plus=sqrt_n_plus,
+            sqrt_n_minus=sqrt_n_minus,
+            sqrt_m_plus=sqrt_m_plus,
+            sqrt_m_minus=sqrt_m_minus,
+            sqrt_p_plus=sqrt_p_plus,
+            sqrt_p_minus=sqrt_p_minus,
+            mask23=self.mask23,
+        )
 
         # Pre-compute state sizes for reshaping
         self.total_Ck_size = Nn * Nm * Np * Ns * Nx * Ny * Nz
@@ -257,6 +275,46 @@ class SpectraxVectorField:
         cz = self.Nz // 3
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
+
+    def _compute_houli_hermite_filter(
+        self, Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
+    ) -> Array:
+        """
+        Compute Hou-Li exponential filter in Hermite space.
+
+        The Hou-Li filter smoothly damps high Hermite modes using an exponential profile:
+            H(n, m, p) = exp(-strength * ((h/h_cutoff)^order))
+        where h = sqrt(n^2 + m^2 + p^2) is the Hermite mode magnitude.
+
+        Args:
+            Nn, Nm, Np: Number of Hermite modes in each direction
+            cutoff_fraction: Fraction of max mode where filtering begins (typically 2/3)
+            strength: Filter strength parameter (typically 36)
+            order: Filter order (typically 36 for sharp cutoff)
+
+        Returns:
+            Filter array with shape (Np, Nm, Nn) containing filter coefficients [0, 1]
+        """
+        # Create Hermite mode index grids
+        n = jnp.arange(Nn)[None, None, :]  # Shape (1, 1, Nn)
+        m = jnp.arange(Nm)[None, :, None]  # Shape (1, Nm, 1)
+        p = jnp.arange(Np)[:, None, None]  # Shape (Np, 1, 1)
+
+        # Compute maximum Hermite mode magnitude
+        h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
+
+        # Cutoff at specified fraction of max
+        h_cutoff = cutoff_fraction * h_max
+
+        # Compute mode magnitude for each (n, m, p)
+        h = jnp.sqrt(n**2 + m**2 + p**2)
+
+        # Apply Hou-Li filter: exp(-strength * (h/h_cutoff)^order)
+        # Only filter modes above cutoff
+        filter_arg = jnp.where(h > h_cutoff, strength * ((h / h_cutoff) ** order), 0.0)
+        hermite_filter = jnp.exp(-filter_arg)
+
+        return hermite_filter
 
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         """
@@ -332,42 +390,35 @@ class SpectraxVectorField:
         F = jnp.fft.ifftn(jnp.fft.ifftshift(Fk * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
         C = jnp.fft.ifftn(jnp.fft.ifftshift(Ck * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
 
-        # Compute time derivative of distribution function using spectrax's Hermite-Fourier system
+        # Compute time derivative of distribution function
         # Returns 7D array: (Ns, Np, Nm, Nn, Ny, Nx, Nz)
-        dCk_s_dt_7d = Hermite_Fourier_system(
-            Ck,
-            C,
-            F,
-            self.kx_grid,
-            self.ky_grid,
-            self.kz_grid,
-            self.k2_grid,
-            self.col,
-            self.sqrt_n_plus,
-            self.sqrt_n_minus,
-            self.sqrt_m_plus,
-            self.sqrt_m_minus,
-            self.sqrt_p_plus,
-            self.sqrt_p_minus,
-            self.Lx,
-            self.Ly,
-            self.Lz,
-            nu,
-            D,
-            alpha_s,
-            u_s,
-            qs,
-            Omega_cs,
-            self.Nn,
-            self.Nm,
-            self.Np,
-            self.Ns,
-            mask23=self.mask23,
+
+        # NEW: Class-based approach (9 parameters instead of 25)
+        dCk_s_dt_7d = self.hermite_fourier_ode(
+            Ck=Ck,
+            C=C,
+            F=F,
+            nu=nu,
+            D=D,
+            alpha_s=alpha_s,
+            u_s=u_s,
+            qs=qs,
+            Omega_cs=Omega_cs,
         )
 
         # Reshape 7D output to 4D to match state structure
         # (Ns, Np, Nm, Nn, Ny, Nx, Nz) -> (Ns*Np*Nm*Nn, Ny, Nx, Nz)
         dCk_s_dt = dCk_s_dt_7d.reshape(self.Ns * self.Np * self.Nm * self.Nn, self.Ny, self.Nx, self.Nz)
+
+        # Apply Hou-Li filter in Hermite space if enabled
+        if self.use_hermite_filter:
+            # Reshape to 7D to apply filter: (Ns*Np*Nm*Nn, Ny, Nx, Nz) -> (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+            dCk_s_dt_7d_filtered = dCk_s_dt.reshape(self.Ns, self.Np, self.Nm, self.Nn, self.Ny, self.Nx, self.Nz)
+            # Apply filter: hermite_filter has shape (Np, Nm, Nn), broadcast over (Ns, Ny, Nx, Nz)
+            filter_broadcast = self.hermite_filter[None, :, :, :, None, None, None]  # (1, Np, Nm, Nn, 1, 1, 1)
+            dCk_s_dt_7d_filtered = dCk_s_dt_7d_filtered * filter_broadcast
+            # Reshape back to 4D
+            dCk_s_dt = dCk_s_dt_7d_filtered.reshape(self.Ns * self.Np * self.Nm * self.Nn, self.Ny, self.Nx, self.Nz)
 
         # Compute time derivative of magnetic field (Faraday's law)
         dBk_dt = -1j * cross_product(self.nabla, Fk[:3])
