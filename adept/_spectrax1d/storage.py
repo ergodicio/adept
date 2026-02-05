@@ -143,9 +143,9 @@ def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def fields_save_func(t, y, args):
         """Extract field quantities and moments from state."""
-        # Extract Ck and Fk from state dictionary
-        Ck = y["Ck"]
-        Fk = y["Fk"]
+        # Extract Ck and Fk from state dictionary (convert from float64 views to complex128)
+        Ck = y["Ck"].view(jnp.complex128)
+        Fk = y["Fk"].view(jnp.complex128)
 
         # Compute electromagnetic field energy
         # E^2 + B^2 (sum over all Fourier modes)
@@ -184,8 +184,8 @@ def get_distribution_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def dist_save_func(t, y, args):
         """Extract Hermite-Fourier coefficients from state."""
-        # Extract Ck from state dictionary
-        return y["Ck"]
+        # Extract Ck from state dictionary (convert from float64 view to complex128)
+        return y["Ck"].view(jnp.complex128)
 
     return dist_save_func
 
@@ -203,8 +203,8 @@ def get_fields_only_save_func(Nx, Ny, Nz):
 
     def fields_only_save_func(t, y, args):
         """Extract electromagnetic field Fourier coefficients from state."""
-        # Extract Fk from state dictionary
-        return y["Fk"]
+        # Extract Fk from state dictionary (convert from float64 view to complex128)
+        return y["Fk"].view(jnp.complex128)
 
     return fields_only_save_func
 
@@ -228,9 +228,9 @@ def get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def save_func(t, y, args):
         """Compute scalar diagnostics from state."""
-        # Extract Ck and Fk from state dictionary
-        Ck = y["Ck"]
-        Fk = y["Fk"]
+        # Extract Ck and Fk from state dictionary (convert from float64 views to complex128)
+        Ck = y["Ck"].view(jnp.complex128)
+        Fk = y["Fk"].view(jnp.complex128)
 
         # Compute electromagnetic field energy
         E_energy = jnp.sum(jnp.abs(Fk[0:3, :, :, :]) ** 2.0)
@@ -242,16 +242,6 @@ def get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
         Ey_max = jnp.max(jnp.abs(Fk[1, :, :, :]))
         Ez_max = jnp.max(jnp.abs(Fk[2, :, :, :]))
 
-        # Get density perturbation amplitude (k=1 mode for electrons)
-        center_x = int((Nx - 1) / 2)
-        center_y = int((Ny - 1) / 2)
-        center_z = int((Nz - 1) / 2)
-
-        if center_x + 1 < Nx:
-            ne_k1 = jnp.abs(Ck[0, center_y, center_x + 1, center_z])
-        else:
-            ne_k1 = 0.0
-
         return {
             "total_EM_energy": EM_energy,
             "E_energy": E_energy,
@@ -259,7 +249,6 @@ def get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
             "Ex_max": Ex_max,
             "Ey_max": Ey_max,
             "Ez_max": Ez_max,
-            "ne_k1": ne_k1,
         }
 
     return save_func

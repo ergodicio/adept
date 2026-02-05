@@ -78,8 +78,7 @@ class Driver:
         # Use fftshifted format to match spectrax convention (k=0 at center)
         field_real_3d = total_field_real[None, :, None]
         field_fourier_3d = jnp.fft.fftshift(
-            jnp.fft.fftn(field_real_3d, axes=(-3, -2, -1), norm="forward"),
-            axes=(-3, -2, -1)
+            jnp.fft.fftn(field_real_3d, axes=(-3, -2, -1), norm="forward"), axes=(-3, -2, -1)
         )
 
         # Create output array with shape (3, Ny, Nx, Nz)
@@ -139,6 +138,12 @@ class SpectraxVectorField:
     - args: {"qs": Array, "nu": float, "D": float, ...}
 
     Follows the pattern from adept/_vlasov1d/solvers/vector_field.py
+
+    Complex array handling:
+    - Diffrax doesn't fully support complex state, so we use float64 views
+    - _unpack_y_() converts float64 views to complex128 at start of __call__
+    - _pack_y_() converts back to float64 views at end of __call__
+    - This pattern matches LPSE2D implementation
 
     Args:
         Nx, Ny, Nz: Number of Fourier modes per spatial dimension
@@ -226,6 +231,9 @@ class SpectraxVectorField:
         # Pre-compute state sizes for reshaping
         self.total_Ck_size = Nn * Nm * Np * Ns * Nx * Ny * Nz
 
+        # List of state variables that are complex (for unpacking/packing)
+        self.complex_state_vars = ["Ck", "Fk"]
+
     def _compute_twothirds_mask(self) -> Array:
         """
         Compute the 2/3 dealiasing mask in fftshifted format (spectrax convention).
@@ -250,6 +258,46 @@ class SpectraxVectorField:
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
+    def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
+        """
+        Unpack state from float64 views to complex128.
+
+        Diffrax doesn't fully support complex state, so arrays are passed as float64 views.
+        This method converts them back to complex128 for computation.
+
+        Args:
+            y: State dictionary with float64 views
+
+        Returns:
+            State dictionary with complex128 arrays
+        """
+        new_y = {}
+        for k in y.keys():
+            if k in self.complex_state_vars:
+                new_y[k] = y[k].view(jnp.complex128)
+            else:
+                new_y[k] = y[k].view(jnp.float64)
+        return new_y
+
+    def _pack_y_(self, y: dict[str, Array], new_y: dict[str, Array]) -> tuple[dict[str, Array], dict[str, Array]]:
+        """
+        Pack state and time derivatives back to float64 views.
+
+        Converts complex128 arrays back to float64 views for diffrax.
+
+        Args:
+            y: Original state dictionary
+            new_y: Time derivatives dictionary
+
+        Returns:
+            Tuple of (y, new_y) both with float64 views
+        """
+        for k in y.keys():
+            y[k] = y[k].view(jnp.float64)
+            new_y[k] = new_y[k].view(jnp.float64)
+
+        return y, new_y
+
     def __call__(self, t: float, y: dict, args: dict) -> dict:
         """
         Compute the right-hand side of the Vlasov-Maxwell ODE system.
@@ -258,15 +306,18 @@ class SpectraxVectorField:
 
         Args:
             t: Current time
-            y: State dictionary with keys "Ck" and "Fk"
+            y: State dictionary with keys "Ck" and "Fk" (float64 views)
             args: Dictionary of physical parameters (qs, nu, D, Omega_cs, etc.)
 
         Returns:
-            Dictionary with time derivatives of Ck and Fk
+            Dictionary with time derivatives of Ck and Fk (float64 views)
         """
+        # Unpack state from float64 views to complex128
+        new_y = self._unpack_y_(y)
+
         # Unpack state dictionary
-        Ck = y["Ck"]
-        Fk = y["Fk"]
+        Ck = new_y["Ck"]
+        Fk = new_y["Fk"]
 
         # Unpack physical parameters from args dictionary
         qs = args["qs"]
@@ -284,15 +335,34 @@ class SpectraxVectorField:
         # Compute time derivative of distribution function using spectrax's Hermite-Fourier system
         # Returns 7D array: (Ns, Np, Nm, Nn, Ny, Nx, Nz)
         dCk_s_dt_7d = Hermite_Fourier_system(
-            Ck, C, F,
-            self.kx_grid, self.ky_grid, self.kz_grid, self.k2_grid, self.col,
-            self.sqrt_n_plus, self.sqrt_n_minus,
-            self.sqrt_m_plus, self.sqrt_m_minus,
-            self.sqrt_p_plus, self.sqrt_p_minus,
-            self.Lx, self.Ly, self.Lz,
-            nu, D, alpha_s, u_s, qs, Omega_cs,
-            self.Nn, self.Nm, self.Np, self.Ns,
-            mask23=self.mask23
+            Ck,
+            C,
+            F,
+            self.kx_grid,
+            self.ky_grid,
+            self.kz_grid,
+            self.k2_grid,
+            self.col,
+            self.sqrt_n_plus,
+            self.sqrt_n_minus,
+            self.sqrt_m_plus,
+            self.sqrt_m_minus,
+            self.sqrt_p_plus,
+            self.sqrt_p_minus,
+            self.Lx,
+            self.Ly,
+            self.Lz,
+            nu,
+            D,
+            alpha_s,
+            u_s,
+            qs,
+            Omega_cs,
+            self.Nn,
+            self.Nm,
+            self.Np,
+            self.Ns,
+            mask23=self.mask23,
         )
 
         # Reshape 7D output to 4D to match state structure
@@ -316,8 +386,14 @@ class SpectraxVectorField:
         # Concatenate field derivatives
         dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
 
+        # Create time derivatives dictionary
+        dy_dt = {"Ck": dCk_s_dt, "Fk": dFk_dt}
+
+        # Pack state and derivatives back to float64 views
+        y, dy_dt = self._pack_y_(y, dy_dt)
+
         # Return dictionary with time derivatives (must match state structure)
-        return {"Ck": dCk_s_dt, "Fk": dFk_dt}
+        return dy_dt
 
 
 class BaseSpectrax1D(ADEPTModule):
@@ -676,10 +752,11 @@ class BaseSpectrax1D(ADEPTModule):
         self.parameters = parameters
 
         # Create initial state dictionary with Ck and Fk
-        # Use arrays directly - they're already in the correct shape
+        # Store as float64 views for diffrax compatibility
+        # (diffrax doesn't fully support complex state)
         self.state = {
-            "Ck": parameters["Ck_0"],  # Already has shape (Ns*Nn*Nm*Np, Ny, Nx, Nz)
-            "Fk": parameters["Fk_0"],  # Already has shape (6, Ny, Nx, Nz)
+            "Ck": parameters["Ck_0"].view(jnp.float64),  # Shape (Ns*Nn*Nm*Np, Ny, Nx, Nz) as float64 view
+            "Fk": parameters["Fk_0"].view(jnp.float64),  # Shape (6, Ny, Nx, Nz) as float64 view
         }
 
         # Create real-space grid for driver
@@ -1146,9 +1223,7 @@ class BaseSpectrax1D(ADEPTModule):
             # Use fftshifted format (spectrax convention) - need ifftshift before ifftn
             field_real = np.real(
                 np.fft.ifftn(
-                    np.fft.ifftshift(Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1)),
-                    axes=(-3, -2, -1),
-                    norm="forward"
+                    np.fft.ifftshift(Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward"
                 )
             )
             fields_real[name] = field_real
@@ -1342,8 +1417,7 @@ class BaseSpectrax1D(ADEPTModule):
                 dist_xr = store_distribution_timeseries(self.cfg, Ck_array, sol.ts[k], binary_dir)
                 saved_datasets["distribution"] = dist_xr
 
-                # Create facet plots for distribution
-                self._plot_distribution_facets(dist_xr, td)
+                # Note: Distribution facet plots removed - use EPW1D module for enhanced visualization
 
         # Compute metrics for MLflow
         metrics = {
@@ -1360,3 +1434,304 @@ class BaseSpectrax1D(ADEPTModule):
                 metrics[f"final_{k}"] = float(np.abs(v.values[-1]))
 
         return {"metrics": metrics, "datasets": saved_datasets}
+
+
+class EPW1D(BaseSpectrax1D):
+    """
+    Specialized ADEPTModule for 1D Electron Plasma Wave (EPW) analysis.
+
+    Extends BaseSpectrax1D with EPW-specific postprocessing:
+    - Plots first mode amplitude and frequency of EPW over time
+    - Enhanced visualization of Hermite coefficients for the first spatial mode
+    - 2x2 plots with ions and electrons on linear and log scale
+    - Time axis vertical, Hermite mode axis horizontal
+    """
+
+    def _compute_epw_frequency(self, Ex_k1: Array, t_array: Array) -> tuple[Array, Array]:
+        """
+        Compute instantaneous frequency of the first EPW mode from phase evolution.
+
+        Args:
+            Ex_k1: Complex amplitude of Ex at k=1 mode as function of time (nt,)
+            t_array: Time array (nt,)
+
+        Returns:
+            tuple: (frequencies, times_for_frequency)
+                frequencies: Instantaneous frequency dφ/dt at each time
+                times_for_frequency: Time points for frequency (centered difference)
+        """
+        import numpy as np
+
+        # Extract phase
+        phase = np.unwrap(np.angle(Ex_k1))
+
+        # Compute instantaneous frequency using centered differences
+        dt = t_array[1] - t_array[0]
+        frequencies = np.gradient(phase, dt)
+
+        return frequencies, t_array
+
+    def _plot_epw_diagnostics(self, Fk: Array, t_array: Array, Nx: int, Ny: int, Nz: int, td: str) -> None:
+        """
+        Plot EPW amplitude and frequency for the first mode over time.
+
+        Creates a 2-panel figure:
+        - Left: Amplitude |Ex(k=1)| vs time (log scale) - full time range
+        - Right: Frequency ω(k=1) vs time - zoomed to driver-on period, excluding final 50 ωpe^-1
+
+        Args:
+            Fk: Field array of shape (nt, 6, Ny, Nx, Nz)
+            t_array: Time array
+            Nx, Ny, Nz: Grid dimensions
+            td: Temporary directory for plots
+        """
+        import os
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+
+        # Get center indices (fftshifted convention)
+        center_x = (Nx - 1) // 2
+        center_y = (Ny - 1) // 2
+        center_z = (Nz - 1) // 2
+
+        # Extract Ex at k=1 mode (offset +1 from center)
+        if center_x + 1 < Nx:
+            Ex_k1 = Fk[:, 0, center_y, center_x + 1, center_z]
+
+            # Compute amplitude
+            amplitude = np.abs(Ex_k1)
+
+            # Compute instantaneous frequency
+            frequencies, freq_times = self._compute_epw_frequency(Ex_k1, t_array)
+
+            # Determine time window for frequency plot
+            # Get driver config if available
+            driver_config = self.cfg.get("drivers", {})
+            ex_drivers = driver_config.get("ex", {})
+
+            if ex_drivers:
+                # Use first driver config to determine when driver is on
+                first_driver = next(iter(ex_drivers.values()))
+                t_center = first_driver.get("t_center", 0.0)
+                t_width = first_driver.get("t_width", 0.0)
+                t_rise = first_driver.get("t_rise", 0.0)
+                # Driver is fully on after t_center - t_width/2 + t_rise
+                t_start = t_center - t_width / 2 + t_rise
+            else:
+                # No driver config, use heuristic: skip first 25% of simulation
+                t_start = 0.25 * t_array[-1]
+
+            # Omit final 50 ωpe^-1
+            t_end = t_array[-1] - 50.0
+
+            # Create time mask for frequency plot
+            freq_mask = (freq_times >= t_start) & (freq_times <= t_end)
+            freq_times_zoomed = freq_times[freq_mask]
+            frequencies_zoomed = frequencies[freq_mask]
+
+            # Create figure
+            fig, axes = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+            fig.suptitle("EPW First Mode Diagnostics (k=1)", fontsize=14, fontweight="bold")
+
+            # Left panel: Amplitude (full time range)
+            axes[0].semilogy(t_array, amplitude, "b-", linewidth=2)
+            axes[0].set_xlabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=12)
+            axes[0].set_ylabel(r"$|E_x(k=1)|$", fontsize=12)
+            axes[0].set_title("EPW Amplitude (First Mode)", fontsize=12)
+            axes[0].grid(True, alpha=0.3)
+
+            # Right panel: Frequency (zoomed to driver-on period, excluding final 50)
+            axes[1].plot(freq_times_zoomed, frequencies_zoomed, "r-", linewidth=2)
+            axes[1].set_xlabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=12)
+            axes[1].set_ylabel(r"$\omega$ ($\omega_{pe}$)", fontsize=12)
+            axes[1].set_title(f"EPW Frequency (t={t_start:.1f} to {t_end:.1f})", fontsize=12)
+            axes[1].grid(True, alpha=0.3)
+
+            plt.savefig(os.path.join(td, "plots", "epw_mode1_diagnostics.png"), bbox_inches="tight")
+            plt.close()
+
+    def _plot_hermite_coefficients_enhanced(
+        self, Ck: Array, t_array: Array, Nn: int, Nm: int, Np: int, Nx: int, Ny: int, Nz: int, td: str
+    ) -> None:
+        """
+        Enhanced visualization of Hermite coefficients at k=1 mode.
+
+        Creates a 2x2 plot grid:
+        - Top row: Electron species (linear and log scale)
+        - Bottom row: Ion species (linear and log scale)
+        - Time axis: vertical (y-axis)
+        - Hermite mode axis: horizontal (x-axis)
+
+        For 1D1V problems, only one Hermite mode dimension is active and visible.
+
+        Args:
+            Ck: Distribution function coefficients (nt, hermite_modes, Ny, Nx, Nz)
+            t_array: Time array
+            Nn, Nm, Np: Hermite mode dimensions
+            Nx, Ny, Nz: Spatial grid dimensions
+            td: Temporary directory for plots
+        """
+        import os
+
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import xarray as xr
+
+        # Get center indices (fftshifted convention)
+        center_x = (Nx - 1) // 2
+        center_y = (Ny - 1) // 2
+        center_z = (Nz - 1) // 2
+
+        if center_x + 1 < Nx:
+            # Extract k=1 mode for all time steps and Hermite modes
+            kx1_mode = Ck[:, :, center_y, center_x + 1, center_z]
+
+            # Separate electron and ion contributions
+            electron_modes = kx1_mode[:, : Nn * Nm * Np]
+            ion_modes = kx1_mode[:, Nn * Nm * Np :]
+
+            # Create Hermite mode index array
+            hermite_mode_indices = np.arange(Nn * Nm * Np)
+
+            # Create xarray DataArrays for easier plotting
+            electron_amp_da = xr.DataArray(
+                np.abs(electron_modes),
+                coords={"t": t_array, "m": hermite_mode_indices},
+                dims=["t", "m"],
+                name="electron_amplitude",
+            )
+
+            ion_amp_da = xr.DataArray(
+                np.abs(ion_modes),
+                coords={"t": t_array, "m": hermite_mode_indices},
+                dims=["t", "m"],
+                name="ion_amplitude",
+            )
+
+            # Create 2x2 figure with time vertical, hermite mode horizontal
+            fig, axes = plt.subplots(2, 2, figsize=(10, 6), tight_layout=True)
+            fig.suptitle("Hermite Coefficients at EPW First Mode (k=1)", fontsize=14, fontweight="bold")
+
+            # Electron - Linear scale (time vertical, m horizontal)
+            electron_amp_da.plot(
+                ax=axes[0, 0], y="t", x="m", cmap="viridis", cbar_kwargs={"label": r"$|C_{m}|$"}, add_colorbar=True
+            )
+            axes[0, 0].set_ylabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=11)
+            axes[0, 0].set_xlabel("Hermite Mode Index (m)", fontsize=11)
+            axes[0, 0].set_title("Electrons - Linear Scale", fontsize=12)
+
+            # Electron - Log scale (time vertical, m horizontal)
+            log_electron = np.log10(electron_amp_da + 1e-20)
+            log_electron.plot(
+                ax=axes[0, 1],
+                y="t",
+                x="m",
+                cmap="viridis",
+                vmin=-10,
+                vmax=0,
+                cbar_kwargs={"label": r"$\log_{10}(|C_{m}|)$"},
+                add_colorbar=True,
+            )
+            axes[0, 1].set_ylabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=11)
+            axes[0, 1].set_xlabel("Hermite Mode Index (m)", fontsize=11)
+            axes[0, 1].set_title("Electrons - Log Scale", fontsize=12)
+
+            # Ion - Linear scale (time vertical, m horizontal)
+            ion_amp_da.plot(
+                ax=axes[1, 0], y="t", x="m", cmap="viridis", cbar_kwargs={"label": r"$|C_{m}|$"}, add_colorbar=True
+            )
+            axes[1, 0].set_ylabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=11)
+            axes[1, 0].set_xlabel("Hermite Mode Index (m)", fontsize=11)
+            axes[1, 0].set_title("Ions - Linear Scale", fontsize=12)
+
+            # Ion - Log scale (time vertical, m horizontal)
+            log_ion = np.log10(ion_amp_da + 1e-20)
+            log_ion.plot(
+                ax=axes[1, 1],
+                y="t",
+                x="m",
+                cmap="viridis",
+                vmin=-10,
+                vmax=0,
+                cbar_kwargs={"label": r"$\log_{10}(|C_{m}|)$"},
+                add_colorbar=True,
+            )
+            axes[1, 1].set_ylabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=11)
+            axes[1, 1].set_xlabel("Hermite Mode Index (m)", fontsize=11)
+            axes[1, 1].set_title("Ions - Log Scale", fontsize=12)
+
+            plt.savefig(os.path.join(td, "plots", "epw_hermite_coefficients_2x2.png"), dpi=150, bbox_inches="tight")
+            plt.close()
+
+    def post_process(self, run_output: dict, td: str) -> dict:
+        """
+        EPW-specific post-processing with enhanced diagnostics.
+
+        Extends base post-processing with:
+        - EPW amplitude and frequency plots for the first mode
+        - Enhanced 2x2 Hermite coefficient visualization
+
+        Args:
+            run_output: Dict containing {"solver result": <diffrax Solution>}
+            td: Temporary directory path for saving artifacts
+
+        Returns:
+            dict: {"metrics": {...}, "datasets": {...}} with EPW-specific metrics
+        """
+        import numpy as np
+
+        # Call base class post_process first
+        result = super().post_process(run_output, td)
+
+        # Extract solution
+        sol = run_output["solver result"]
+
+        # Get grid parameters
+        Nx = int(self.cfg["grid"]["Nx"])
+        Ny = int(self.cfg["grid"]["Ny"])
+        Nz = int(self.cfg["grid"]["Nz"])
+        Nn = int(self.cfg["grid"]["Nn"])
+        Nm = int(self.cfg["grid"]["Nm"])
+        Np = int(self.cfg["grid"]["Np"])
+
+        # Process EPW-specific diagnostics if field data is available
+        if "fields_only" in sol.ys:
+            Fk_array = np.asarray(sol.ys["fields_only"])
+            t_array = sol.ts["fields_only"]
+
+            # Create EPW diagnostics plot
+            self._plot_epw_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td)
+
+            # Add EPW-specific metrics
+            center_x = (Nx - 1) // 2
+            center_y = (Ny - 1) // 2
+            center_z = (Nz - 1) // 2
+
+            if center_x + 1 < Nx:
+                Ex_k1 = Fk_array[:, 0, center_y, center_x + 1, center_z]
+
+                # Compute time-averaged amplitude and final frequency
+                avg_amplitude = float(np.mean(np.abs(Ex_k1)))
+                final_amplitude = float(np.abs(Ex_k1[-1]))
+
+                frequencies, _ = self._compute_epw_frequency(Ex_k1, t_array)
+                avg_frequency = float(np.mean(frequencies))
+                final_frequency = float(frequencies[-1])
+
+                # Add to metrics
+                result["metrics"]["epw_avg_amplitude_k1"] = avg_amplitude
+                result["metrics"]["epw_final_amplitude_k1"] = final_amplitude
+                result["metrics"]["epw_avg_frequency_k1"] = avg_frequency
+                result["metrics"]["epw_final_frequency_k1"] = final_frequency
+
+        # Process enhanced Hermite coefficient visualization if distribution data is available
+        if "hermite" in sol.ys or "distribution" in sol.ys:
+            key = "hermite" if "hermite" in sol.ys else "distribution"
+            Ck_array = np.asarray(sol.ys[key])
+            t_array = sol.ts[key]
+
+            # Create enhanced Hermite coefficient plot
+            self._plot_hermite_coefficients_enhanced(Ck_array, t_array, Nn, Nm, Np, Nx, Ny, Nz, td)
+
+        return result
