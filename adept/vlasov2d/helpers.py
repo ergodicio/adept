@@ -212,6 +212,13 @@ def get_derived_quantities(cfg: dict) -> dict:
     """
     cfg_grid = cfg["grid"]
 
+    # Default save.*.t.tmin/tmax to grid values
+    for save_type in cfg.get("save", {}).keys():
+        if "t" in cfg["save"][save_type]:
+            t_cfg = cfg["save"][save_type]["t"]
+            t_cfg.setdefault("tmin", cfg_grid.get("tmin", 0.0))
+            t_cfg.setdefault("tmax", cfg_grid["tmax"])
+
     cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
     cfg_grid["dy"] = cfg_grid["ymax"] / cfg_grid["ny"]
 

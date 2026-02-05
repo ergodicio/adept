@@ -187,6 +187,13 @@ class BaseSpectrax1D(ADEPTModule):
         """
         cfg_grid = self.cfg["grid"]
 
+        # Default save.*.t.tmin/tmax to grid values
+        for save_type in self.cfg.get("save", {}).keys():
+            if "t" in self.cfg["save"][save_type]:
+                t_cfg = self.cfg["save"][save_type]["t"]
+                t_cfg.setdefault("tmin", cfg_grid.get("tmin", 0.0))
+                t_cfg.setdefault("tmax", cfg_grid.get("tmax", self.cfg["physics"].get("t_max", 50.0)))
+
         # Get tmax from grid or physics config
         if "tmax" not in cfg_grid:
             cfg_grid["tmax"] = self.cfg["physics"].get("t_max", 50.0)
