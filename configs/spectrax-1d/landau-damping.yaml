@@ -9,7 +9,7 @@ solver: spectrax-1d
 # MLflow experiment tracking configuration
 mlflow:
   experiment: spectrax-1d-tests
-  run: landau-damping-k26-n64-driven
+  run: landau-damping-k26-n4-driven
 
 # Physical units for normalization
 # These define the reference scales for the simulation
@@ -99,7 +99,7 @@ grid:
 
   # Hermite polynomial expansion
   # TOML: Nn = 40, Nm = 1, Np = 1
-  Nn: 64   # Number of Hermite modes
+  Nn: 4   # Number of Hermite modes
   Nm: 1    # Additional mode dimension
   Np: 1    # Additional mode dimension
 
