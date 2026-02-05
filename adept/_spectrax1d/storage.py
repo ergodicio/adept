@@ -143,9 +143,9 @@ def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def fields_save_func(t, y, args):
         """Extract field quantities and moments from state."""
-        # Reshape state vector back to Ck and Fk
-        Ck = y[: (-6 * Nx * Ny * Nz)].reshape(Ns * Nn * Nm * Np, Ny, Nx, Nz)
-        Fk = y[(-6 * Nx * Ny * Nz) :].reshape(6, Ny, Nx, Nz)
+        # Extract Ck and Fk from state dictionary
+        Ck = y["Ck"]
+        Fk = y["Fk"]
 
         # Compute electromagnetic field energy
         # E^2 + B^2 (sum over all Fourier modes)
@@ -184,9 +184,8 @@ def get_distribution_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def dist_save_func(t, y, args):
         """Extract Hermite-Fourier coefficients from state."""
-        # Reshape state vector to get Ck
-        Ck = y[: (-6 * Nx * Ny * Nz)].reshape(Ns * Nn * Nm * Np, Ny, Nx, Nz)
-        return Ck
+        # Extract Ck from state dictionary
+        return y["Ck"]
 
     return dist_save_func
 
@@ -204,9 +203,8 @@ def get_fields_only_save_func(Nx, Ny, Nz):
 
     def fields_only_save_func(t, y, args):
         """Extract electromagnetic field Fourier coefficients from state."""
-        # Reshape state vector to get Fk
-        Fk = y[(-6 * Nx * Ny * Nz) :].reshape(6, Ny, Nx, Nz)
-        return Fk
+        # Extract Fk from state dictionary
+        return y["Fk"]
 
     return fields_only_save_func
 
@@ -230,9 +228,9 @@ def get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def save_func(t, y, args):
         """Compute scalar diagnostics from state."""
-        # Reshape state vector back to Ck and Fk
-        Ck = y[: (-6 * Nx * Ny * Nz)].reshape(Ns * Nn * Nm * Np, Ny, Nx, Nz)
-        Fk = y[(-6 * Nx * Ny * Nz) :].reshape(6, Ny, Nx, Nz)
+        # Extract Ck and Fk from state dictionary
+        Ck = y["Ck"]
+        Fk = y["Fk"]
 
         # Compute electromagnetic field energy
         E_energy = jnp.sum(jnp.abs(Fk[0:3, :, :, :]) ** 2.0)

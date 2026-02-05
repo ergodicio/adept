@@ -9,7 +9,7 @@ solver: spectrax-1d
 # MLflow experiment tracking configuration
 mlflow:
   experiment: spectrax-1d-tests
-  run: landau-damping-k03
+  run: landau-damping-k26-n64-driven
 
 # Physical units for normalization
 # These define the reference scales for the simulation
@@ -64,24 +64,42 @@ physics:
 
   # Density perturbation amplitude
   # TOML: dn1 = 1.0e-9
-  dn1: 1.0e-12
+  dn1: 0.0e-12
 
   # ODE solver tolerance
   # TOML: ode_tolerance = 1e-8
   ode_tolerance: 1.0e-8
+
+# External field drivers
+# Configures wave driving similar to Vlasov1D
+drivers:
+  ex:
+    '0':
+      k0: 6.283185307179586    # Wavenumber: 2π/Lx (fundamental mode for Lx=1.0)
+      w0: 1.1                 # Frequency: Bohm-Gross frequency for k*λD ≈ 0.26
+      a0: 1.0e-6               # Amplitude (linear regime)
+      t_center: 35.0           # Temporal center of pulse
+      t_width: 30.0            # Temporal width (FWHM)
+      t_rise: 14.0             # Rise/fall time (smooth turn-on)
+      x_center: 0.5            # Spatial center (middle of domain)
+      x_width: 1000.0          # Spatial width (very large = uniform in space)
+      x_rise: 0.1              # Spatial rise
+      dw0: 0.0                 # Frequency detuning
+  ey: {}
+  ez: {}
 
 # Grid resolution parameters
 # Maps to spectrax solver_parameters dict
 grid:
   # Fourier space grid dimensions
   # TOML: Nx = 33, Ny = 1, Nz = 1
-  Nx: 17   # Number of Fourier modes in x
+  Nx: 33   # Number of Fourier modes in x
   Ny: 1    # Number of Fourier modes in y
   Nz: 1    # Number of Fourier modes in z
 
   # Hermite polynomial expansion
   # TOML: Nn = 40, Nm = 1, Np = 1
-  Nn: 512   # Number of Hermite modes
+  Nn: 64   # Number of Hermite modes
   Nm: 1    # Additional mode dimension
   Np: 1    # Additional mode dimension
 
@@ -124,7 +142,7 @@ initialization:
         # Perturbation at ±k: Ck_0[0, ...] = ±i/(2*alpha_s[0]^3) * dn
         temperature_ratio: 1.0  # Relative to normalizing_temperature
         equilibrium_density: 1.0
-        perturbation_amplitude: 1.0e-7  # Uses physics.density_perturbation
+        perturbation_amplitude: 0.0  # Uses physics.density_perturbation
 
       ion:
         # Equilibrium only: Ck_0[Nn*Nm*Np, Ny/2, Nx/2, Nz/2] = 1/alpha_s[1]^3

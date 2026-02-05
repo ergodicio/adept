@@ -10,16 +10,14 @@ the solver in diffrax. This maintains compatibility with the external library wh
 leveraging ADEPT's experiment tracking infrastructure.
 """
 
-from functools import partial
-
 import pint
 import xarray as xr
 from diffrax import ConstantStepSize, ODETerm, PIDController, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
-from jax import Array, jit
+from jax import Array
 from jax import numpy as jnp
-from spectrax import Hermite_Fourier_system, cross_product, initialize_simulation_parameters, plasma_current, simulation
+from spectrax import Hermite_Fourier_system, cross_product, initialize_simulation_parameters, plasma_current
 
-from adept._base_ import ADEPTModule
+from adept._base_ import ADEPTModule, get_envelope
 from adept._spectrax1d.storage import (
     get_save_quantities,
     store_distribution_timeseries,
@@ -28,131 +26,298 @@ from adept._spectrax1d.storage import (
 )
 
 
-@partial(jit, static_argnames=["Nx", "Ny", "Nz"])
-def _twothirds_mask(Ny: int, Nx: int, Nz: int):
-    """Return a boolean mask in fftshifted (zero-centered) k-ordering that keeps |k|<=N//3 in each dim."""
+class Driver:
+    """External field driver for Spectrax-1D (Hermite-Fourier solver).
 
-    def centered_modes(N):
-        # integer mode numbers in fftshift ordering: [-N//2, ..., -1, 0, 1, ..., N//2-1]
-        k = jnp.fft.fftfreq(N) * N
-        return jnp.fft.fftshift(k)
-
-    ky = centered_modes(Ny)[:, None, None]
-    kx = centered_modes(Nx)[None, :, None]
-    kz = centered_modes(Nz)[None, None, :]
-
-    # cutoffs (keep indices with |k| <= floor(N/3)); if N<3 this naturally keeps only k=0
-    cy = Ny // 3
-    cx = Nx // 3
-    cz = Nz // 3
-
-    return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
-
-
-@partial(jit, static_argnames=["Nx", "Ny", "Nz", "Nn", "Nm", "Np", "Ns"])
-def ode_system(Nx, Ny, Nz, Nn, Nm, Np, Ns, t, Ck_Fk, args):
-    """
-    Right-hand side for the coupled Vlasov-Maxwell system expressed in spectral form.
-
-    Parameters
-    ----------
-    Nx, Ny, Nz : int
-        Number of retained Fourier modes per spatial dimension.
-    Nn, Nm, Np : int
-        Number of Hermite modes per velocity-space dimension.
-    Ns : int
-        Number of species.
-    t : float
-        Integration time (unused but required by Diffrax interface).
-    Ck_Fk : jnp.ndarray
-        Flattened state vector containing concatenated Hermite coefficients followed
-        by electromagnetic field coefficients.
-    args : tuple
-        Cached parameter tuple produced in `simulation` providing physical constants,
-        grids, and helper arrays.
-
-    Returns
-    -------
-    jnp.ndarray
-        Flattened derivative vector matching the shape of `Ck_Fk`.
+    Computes external driving fields and returns them in 3D Fourier space format
+    ready for use in the VectorField. Handles all FFT transformations internally.
     """
 
-    (
-        qs,
-        nu,
-        D,
-        Omega_cs,
-        alpha_s,
-        u_s,
-        Lx,
-        Ly,
-        Lz,
-        kx_grid,
-        ky_grid,
-        kz_grid,
-        k2_grid,
-        nabla,
-        col,
-        sqrt_n_plus,
-        sqrt_n_minus,
-        sqrt_m_plus,
-        sqrt_m_minus,
-        sqrt_p_plus,
-        sqrt_p_minus,
-    ) = args[7:]
+    def __init__(self, xax: Array, Nx: int, Ny: int, Nz: int, driver_key: str = "ex"):
+        """
+        Initialize driver.
 
-    total_Ck_size = Nn * Nm * Np * Ns * Nx * Ny * Nz
-    Ck = Ck_Fk[:total_Ck_size].reshape(Nn * Nm * Np * Ns, Ny, Nx, Nz)
-    Fk = Ck_Fk[total_Ck_size:].reshape(6, Ny, Nx, Nz)
+        Args:
+            xax: Real-space x grid
+            Nx: Number of Fourier modes in x (for output shape)
+            Ny: Number of Fourier modes in y (for output shape)
+            Nz: Number of Fourier modes in z (for output shape)
+            driver_key: Which field component to drive ("ex", "ey", or "ez")
+        """
+        self.xax = xax
+        self.Nx = Nx
+        self.Ny = Ny
+        self.Nz = Nz
+        self.driver_key = driver_key
 
-    # Build the 2/3 mask once per call (JIT will constant-fold it since Nx/Ny/Nz are static)
-    mask23 = _twothirds_mask(Ny, Nx, Nz)
+        # Determine which component index this driver targets
+        self.component_map = {"ex": 0, "ey": 1, "ez": 2}
+        self.component_idx = self.component_map[driver_key]
 
-    F = jnp.fft.ifftn(jnp.fft.ifftshift(Fk * mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
-    C = jnp.fft.ifftn(jnp.fft.ifftshift(Ck * mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
+    def __call__(self, driver_config: dict, t: float) -> Array:
+        """
+        Compute external field in Fourier space at time t.
 
-    dCk_s_dt = Hermite_Fourier_system(
-        Ck,
-        C,
-        F,
-        kx_grid,
-        ky_grid,
-        kz_grid,
-        k2_grid,
-        col,
-        sqrt_n_plus,
-        sqrt_n_minus,
-        sqrt_m_plus,
-        sqrt_m_minus,
-        sqrt_p_plus,
-        sqrt_p_minus,
-        Lx,
-        Ly,
-        Lz,
-        nu,
-        D,
-        alpha_s,
-        u_s,
-        qs,
-        Omega_cs,
-        Nn,
-        Nm,
-        Np,
-        Ns,
-        mask23=mask23,
-    )
+        Args:
+            driver_config: Driver configuration dict from YAML
+            t: Current time
 
-    # nabla = jnp.array([kx_grid / Lx, ky_grid / Ly, kz_grid / Lz])
-    dBk_dt = -1j * cross_product(nabla, Fk[:3])
-    driver = jnp.zeros_like(dBk_dt)
-    dex = jnp.exp(-(((t - 35) / 14) ** 8)) * 0.00000 * jnp.exp(-1j * 1.25 * t)
-    driver = driver.at[0, 0, 1, 0].set(dex)
-    current = plasma_current(qs, alpha_s, u_s, Ck, Nn, Nm, Np, Ns)
-    dEk_dt = 1j * cross_product(nabla, Fk[3:]) - current / Omega_cs[0] + driver
+        Returns:
+            Complex array of shape (3, Ny, Nx, Nz) with Fourier-space field values.
+            Only the component specified by driver_key is non-zero.
+        """
+        pulse_configs = driver_config.get(self.driver_key, {})
 
-    dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
-    dy_dt = jnp.concatenate([dCk_s_dt.reshape(-1), dFk_dt.reshape(-1)])
-    return dy_dt
+        # Compute total real-space field
+        total_field_real = jnp.zeros_like(self.xax)
+        for pulse_name, pulse_params in pulse_configs.items():
+            total_field_real += self._get_single_pulse(pulse_params, t)
+
+        # Convert to Fourier space with 3D shape
+        # For 1D case (Ny=1, Nz=1), expand to 3D shape: (1, Nx, 1)
+        # Use fftshifted format to match spectrax convention (k=0 at center)
+        field_real_3d = total_field_real[None, :, None]
+        field_fourier_3d = jnp.fft.fftshift(
+            jnp.fft.fftn(field_real_3d, axes=(-3, -2, -1), norm="forward"),
+            axes=(-3, -2, -1)
+        )
+
+        # Create output array with shape (3, Ny, Nx, Nz)
+        # Only set the component for this driver (Ex, Ey, or Ez)
+        driver_array = jnp.zeros((3, self.Ny, self.Nx, self.Nz), dtype=jnp.complex128)
+        driver_array = driver_array.at[self.component_idx].set(field_fourier_3d)
+
+        return driver_array
+
+    def _get_single_pulse(self, pulse: dict, t: float) -> Array:
+        """
+        Compute spatiotemporal envelope for a single pulse in real space.
+
+        Args:
+            pulse: Pulse parameters (k0, w0, a0, envelopes, etc.)
+            t: Current time
+
+        Returns:
+            Array of shape (Nx,) with real-space field
+        """
+        kk = pulse["k0"]
+        ww = pulse["w0"]
+        a0 = pulse["a0"]
+        dw = pulse.get("dw0", 0.0)
+
+        left_bound = pulse.get("t_center", 0.0) - 0.5 * pulse.get("t_width", 1e10)
+        right_bound = pulse.get("t_center", 0.0) + 0.5 * pulse.get("t_width", 1e10)
+
+        # Temporal envelope
+        envelope_t = get_envelope(pulse.get("t_rise", 10.0), pulse.get("t_rise", 10.0), left_bound, right_bound, t)
+
+        left_bound = pulse.get("x_center", 0.0) - 0.5 * pulse.get("x_width", 1e10)
+        right_bound = pulse.get("x_center", 0.0) + 0.5 * pulse.get("x_width", 1e10)
+
+        # Spatial envelope
+        envelope_x = get_envelope(
+            pulse.get("x_rise", 10.0), pulse.get("x_rise", 10.0), left_bound, right_bound, self.xax
+        )
+
+        # Real-space field: a0 * sin(k*x - w*t)
+        # Note: |k0| factor matches Vlasov1D convention
+        return envelope_t * envelope_x * jnp.abs(kk) * a0 * jnp.sin(kk * self.xax - (ww + dw) * t)
+
+
+class SpectraxVectorField:
+    """
+    Vector field class for the Spectrax Vlasov-Maxwell system.
+
+    This class encapsulates the right-hand side of the ODE system for diffrax,
+    including external field driving.
+
+    By storing static grid parameters as class attributes, we avoid the need for
+    static_argnames in JIT compilation and make the code more readable.
+
+    State and args are now dictionaries for improved clarity:
+    - state: {"Ck": Array, "Fk": Array}
+    - args: {"qs": Array, "nu": float, "D": float, ...}
+
+    Follows the pattern from adept/_vlasov1d/solvers/vector_field.py
+
+    Args:
+        Nx, Ny, Nz: Number of Fourier modes per spatial dimension
+        Nn, Nm, Np: Number of Hermite modes per velocity dimension
+        Ns: Number of species
+        xax: Real-space x grid for driver computation
+        driver_config: Driver configuration dict from YAML
+        Lx, Ly, Lz: Domain sizes
+        kx_grid, ky_grid, kz_grid, k2_grid: Wave vector grids
+        nabla: Gradient operator in Fourier space
+        col: Collision matrix
+        sqrt_n_plus, sqrt_n_minus: Hermite ladder operators for n-direction
+        sqrt_m_plus, sqrt_m_minus: Hermite ladder operators for m-direction
+        sqrt_p_plus, sqrt_p_minus: Hermite ladder operators for p-direction
+    """
+
+    def __init__(
+        self,
+        Nx: int,
+        Ny: int,
+        Nz: int,
+        Nn: int,
+        Nm: int,
+        Np: int,
+        Ns: int,
+        xax: Array,
+        driver_config: dict,
+        Lx: float,
+        Ly: float,
+        Lz: float,
+        kx_grid: Array,
+        ky_grid: Array,
+        kz_grid: Array,
+        k2_grid: Array,
+        nabla: Array,
+        col: Array,
+        sqrt_n_plus: Array,
+        sqrt_n_minus: Array,
+        sqrt_m_plus: Array,
+        sqrt_m_minus: Array,
+        sqrt_p_plus: Array,
+        sqrt_p_minus: Array,
+    ):
+        """Initialize with static grid dimensions, grid quantities, and driver configuration."""
+        # Store dimensions as attributes
+        self.Nx = Nx
+        self.Ny = Ny
+        self.Nz = Nz
+        self.Nn = Nn
+        self.Nm = Nm
+        self.Np = Np
+        self.Ns = Ns
+
+        # Store grid quantities as class attributes (constants)
+        self.Lx = Lx
+        self.Ly = Ly
+        self.Lz = Lz
+        self.kx_grid = kx_grid
+        self.ky_grid = ky_grid
+        self.kz_grid = kz_grid
+        self.k2_grid = k2_grid
+        self.nabla = nabla
+        self.col = col
+        self.sqrt_n_plus = sqrt_n_plus
+        self.sqrt_n_minus = sqrt_n_minus
+        self.sqrt_m_plus = sqrt_m_plus
+        self.sqrt_m_minus = sqrt_m_minus
+        self.sqrt_p_plus = sqrt_p_plus
+        self.sqrt_p_minus = sqrt_p_minus
+
+        # Initialize external field driver if configured
+        if driver_config.get("ex"):
+            self.driver = Driver(xax, Nx, Ny, Nz, driver_key="ex")
+            self.driver_config = driver_config
+            self.has_driver = True
+        else:
+            self.driver = None
+            self.driver_config = None
+            self.has_driver = False
+
+        # Pre-compute the 2/3 dealiasing mask (only depends on grid dimensions)
+        # Use fftshifted format to match spectrax convention
+        self.mask23 = self._compute_twothirds_mask()
+
+        # Pre-compute state sizes for reshaping
+        self.total_Ck_size = Nn * Nm * Np * Ns * Nx * Ny * Nz
+
+    def _compute_twothirds_mask(self) -> Array:
+        """
+        Compute the 2/3 dealiasing mask in fftshifted format (spectrax convention).
+
+        Returns a boolean mask that keeps |k| <= N//3 in each dimension.
+        Uses fftshifted ordering (DC at center) to match spectrax library.
+        """
+
+        def centered_modes(N):
+            # integer mode numbers in fftshifted ordering (DC at center)
+            k = jnp.fft.fftfreq(N) * N
+            return jnp.fft.fftshift(k)  # Shift to centered ordering
+
+        ky = centered_modes(self.Ny)[:, None, None]
+        kx = centered_modes(self.Nx)[None, :, None]
+        kz = centered_modes(self.Nz)[None, None, :]
+
+        # cutoffs (keep indices with |k| <= floor(N/3)); if N<3 this naturally keeps only k=0
+        cy = self.Ny // 3
+        cx = self.Nx // 3
+        cz = self.Nz // 3
+
+        return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
+
+    def __call__(self, t: float, y: dict, args: dict) -> dict:
+        """
+        Compute the right-hand side of the Vlasov-Maxwell ODE system.
+
+        This is the interface required by diffrax.ODETerm.
+
+        Args:
+            t: Current time
+            y: State dictionary with keys "Ck" and "Fk"
+            args: Dictionary of physical parameters (qs, nu, D, Omega_cs, etc.)
+
+        Returns:
+            Dictionary with time derivatives of Ck and Fk
+        """
+        # Unpack state dictionary
+        Ck = y["Ck"]
+        Fk = y["Fk"]
+
+        # Unpack physical parameters from args dictionary
+        qs = args["qs"]
+        nu = args["nu"]
+        D = args["D"]
+        Omega_cs = args["Omega_cs"]
+        alpha_s = args["alpha_s"]
+        u_s = args["u_s"]
+
+        # Apply 2/3 dealiasing and inverse FFT to get real-space fields
+        # Use fftshifted format (spectrax convention: k=0 at center)
+        F = jnp.fft.ifftn(jnp.fft.ifftshift(Fk * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
+        C = jnp.fft.ifftn(jnp.fft.ifftshift(Ck * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
+
+        # Compute time derivative of distribution function using spectrax's Hermite-Fourier system
+        # Returns 7D array: (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+        dCk_s_dt_7d = Hermite_Fourier_system(
+            Ck, C, F,
+            self.kx_grid, self.ky_grid, self.kz_grid, self.k2_grid, self.col,
+            self.sqrt_n_plus, self.sqrt_n_minus,
+            self.sqrt_m_plus, self.sqrt_m_minus,
+            self.sqrt_p_plus, self.sqrt_p_minus,
+            self.Lx, self.Ly, self.Lz,
+            nu, D, alpha_s, u_s, qs, Omega_cs,
+            self.Nn, self.Nm, self.Np, self.Ns,
+            mask23=self.mask23
+        )
+
+        # Reshape 7D output to 4D to match state structure
+        # (Ns, Np, Nm, Nn, Ny, Nx, Nz) -> (Ns*Np*Nm*Nn, Ny, Nx, Nz)
+        dCk_s_dt = dCk_s_dt_7d.reshape(self.Ns * self.Np * self.Nm * self.Nn, self.Ny, self.Nx, self.Nz)
+
+        # Compute time derivative of magnetic field (Faraday's law)
+        dBk_dt = -1j * cross_product(self.nabla, Fk[:3])
+
+        # Get external driver field in Fourier space (if configured)
+        # Driver returns complex array of shape (3, Ny, Nx, Nz)
+        if self.has_driver:
+            driver = self.driver(self.driver_config, t)
+        else:
+            driver = jnp.zeros_like(Fk[:3])
+
+        # Compute plasma current and time derivative of electric field (Ampere's law)
+        current = plasma_current(qs, alpha_s, u_s, Ck, self.Nn, self.Nm, self.Np, self.Ns)
+        dEk_dt = 1j * cross_product(self.nabla, Fk[3:]) - current / Omega_cs[0] + driver
+
+        # Concatenate field derivatives
+        dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
+
+        # Return dictionary with time derivatives (must match state structure)
+        return {"Ck": dCk_s_dt, "Fk": dFk_dt}
 
 
 class BaseSpectrax1D(ADEPTModule):
@@ -414,15 +579,18 @@ class BaseSpectrax1D(ADEPTModule):
         L = Lx * jnp.sign(nx) + Ly * jnp.sign(ny) + Lz * jnp.sign(nz)
         E_field_component = int(jnp.sign(ny) + 2 * jnp.sign(nz))
 
-        # Set field perturbation at ±k modes
+        # Set field perturbation at ±k modes using fftshifted indexing (k=0 at center)
+        # Calculate center indices
+        center_x = int((Nx - 1) / 2)
+        center_y = int((Ny - 1) / 2)
+        center_z = int((Nz - 1) / 2)
+
         if n != 0 and Omega_cs[0] != 0:
             amplitude = dn * L / (4 * jnp.pi * n * Omega_cs[0])
-            Fk_0 = Fk_0.at[
-                E_field_component, int((Ny - 1) / 2 - ny), int((Nx - 1) / 2 - nx), int((Nz - 1) / 2 - nz)
-            ].set(amplitude)
-            Fk_0 = Fk_0.at[
-                E_field_component, int((Ny - 1) / 2 + ny), int((Nx - 1) / 2 + nx), int((Nz - 1) / 2 + nz)
-            ].set(amplitude)
+            # -k mode: offset negatively from center
+            Fk_0 = Fk_0.at[E_field_component, center_y - ny, center_x - nx, center_z - nz].set(amplitude)
+            # +k mode: offset positively from center
+            Fk_0 = Fk_0.at[E_field_component, center_y + ny, center_x + nx, center_z + nz].set(amplitude)
 
         input_parameters["Fk_0"] = Fk_0
 
@@ -438,16 +606,21 @@ class BaseSpectrax1D(ADEPTModule):
         Ce0_0 = 1 / (alpha_e**3) + 0 * 1j  # Equilibrium
         Ce0_k = 0 - 1j * (1 / (2 * alpha_e**3)) * dn  # +k mode
 
-        Ck_0 = Ck_0.at[0, int((Ny - 1) / 2 - ny), int((Nx - 1) / 2 - nx), int((Nz - 1) / 2 - nz)].set(Ce0_mk)
-        Ck_0 = Ck_0.at[0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)].set(Ce0_0)
-        Ck_0 = Ck_0.at[0, int((Ny - 1) / 2 + ny), int((Nx - 1) / 2 + nx), int((Nz - 1) / 2 + nz)].set(Ce0_k)
+        # Use fftshifted indexing: k=0 at center, ±k relative to center
+        center_x = int((Nx - 1) / 2)
+        center_y = int((Ny - 1) / 2)
+        center_z = int((Nz - 1) / 2)
+
+        Ck_0 = Ck_0.at[0, center_y - ny, center_x - nx, center_z - nz].set(Ce0_mk)  # -k mode
+        Ck_0 = Ck_0.at[0, center_y, center_x, center_z].set(Ce0_0)  # k=0 (equilibrium)
+        Ck_0 = Ck_0.at[0, center_y + ny, center_x + nx, center_z + nz].set(Ce0_k)  # +k mode
 
         # Ion distribution (second Nn*Nm*Np components)
         # Use alpha_s[3] for ion thermal velocity (first component in ion triplet)
         alpha_i = input_parameters["alpha_s"][3]
         Ci0_0 = 1 / (alpha_i**3) + 0 * 1j
 
-        Ck_0 = Ck_0.at[Nn * Nm * Np, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)].set(Ci0_0)
+        Ck_0 = Ck_0.at[Nn * Nm * Np, center_y, center_x, center_z].set(Ci0_0)  # k=0 (equilibrium)
 
         input_parameters["Ck_0"] = Ck_0
 
@@ -465,71 +638,15 @@ class BaseSpectrax1D(ADEPTModule):
         """
         Initialize state and runtime arguments.
 
-        For the wrapper approach, this is minimal since spectrax manages its own state.
-        The actual initial conditions are in cfg["spectrax_input"] from get_solver_quantities().
+        Creates simulation parameters, initial conditions, and args tuple for ODE system.
+        Follows pattern from adept/_vlasov1d/modules.py and adept/_tf1d/modules.py.
 
-        Reference: adept/_vlasov1d/modules.py lines 169-193
-
-        TODO:
-        - Set self.state = {} (empty, spectrax manages state internally)
-        - Set self.args = {} (or include any runtime parameters if needed)
+        Reference: adept/_vlasov1d/modules.py lines 238-272
         """
-        self.state = {}  # Spectrax manages state internally
-        self.args = {}
-
-    def init_diffeqsolve(self) -> None:
-        """
-        Initialize solver configuration with save quantities.
-
-        Sets up time quantities and save configuration for diagnostics.
-        Uses get_save_quantities to process save config and create save functions.
-
-        Reference: adept/_vlasov1d/modules.py lines 195-202
-        """
-        # Process save configuration to add time axes and save functions
-        self.cfg = get_save_quantities(self.cfg)
-
-        # Set time quantities (matches Vlasov1D pattern)
-        self.time_quantities = {
-            "t0": 0.0,
-            "t1": self.cfg["grid"]["tmax"],
-            "max_steps": self.cfg["grid"]["max_steps"],
-        }
-
-        # Store diffeqsolve configuration (now using diffrax for ODE solving)
-        # SubSaveAt will be configured in __call__ based on cfg["save"]
-
-    def __call__(self, trainable_modules: dict, args: dict | None = None) -> dict:
-        """
-        Run the spectrax simulation.
-
-        This is the main execution method. It calls the external spectrax library's
-        simulation() function with the parameters prepared in get_solver_quantities().
-
-        Reference: adept/_vlasov1d/modules.py lines 203-219 (diffrax pattern)
-
-        The wrapper pattern differs from native ADEPT modules:
-        - Native modules call diffrax.diffeqsolve() with VectorField
-        - This wrapper calls spectrax.simulation() directly
-        - Output is NOT a diffrax.Solution object, but a spectrax output dict
-
-        Args:
-            trainable_modules: Dict of equinox.Module objects (unused in wrapper)
-            args: Optional runtime arguments (unused in wrapper)
-
-        Returns:
-            dict: {"spectrax output": output_from_spectrax}
-        """
-
-        # from jax import block_until_ready
-
-        # Get parameters prepared in get_solver_quantities()
+        # Get parameters from config
         input_params = self.cfg["spectrax_input"]
         solver_params = self.cfg["spectrax_solver"]
 
-        # Run spectrax simulation
-        # output = block_until_ready(simulation(input_params, **solver_params))
-        # **Initialize simulation parameters**
         # Get dimensions from solver_params
         Nx = solver_params["Nx"]
         Ny = solver_params["Ny"]
@@ -541,6 +658,7 @@ class BaseSpectrax1D(ADEPTModule):
         nt = solver_params["timesteps"]
         dt = solver_params["dt"]
 
+        # Initialize simulation parameters using spectrax function
         parameters = initialize_simulation_parameters(
             input_params,
             Nx,
@@ -554,78 +672,174 @@ class BaseSpectrax1D(ADEPTModule):
             dt,
         )
 
-        # Combine initial conditions.
-        initial_conditions = jnp.concatenate([parameters["Ck_0"].flatten(), parameters["Fk_0"].flatten()])
+        # Store parameters for later use
+        self.parameters = parameters
 
-        # Arguments for the ODE system.
-        args = (
-            Nx,
-            Ny,
-            Nz,
-            Nn,
-            Nm,
-            Np,
-            Ns,
-            parameters["qs"],
-            parameters["nu"],
-            parameters["D"],
-            parameters["Omega_cs"],
-            parameters["alpha_s"],
-            parameters["u_s"],
-            parameters["Lx"],
-            parameters["Ly"],
-            parameters["Lz"],
-            parameters["kx_grid"],
-            parameters["ky_grid"],
-            parameters["kz_grid"],
-            parameters["k2_grid"],
-            parameters["nabla"],
-            parameters["collision_matrix"],
-            parameters["sqrt_n_plus"],
-            parameters["sqrt_n_minus"],
-            parameters["sqrt_m_plus"],
-            parameters["sqrt_m_minus"],
-            parameters["sqrt_p_plus"],
-            parameters["sqrt_p_minus"],
+        # Create initial state dictionary with Ck and Fk
+        # Use arrays directly - they're already in the correct shape
+        self.state = {
+            "Ck": parameters["Ck_0"],  # Already has shape (Ns*Nn*Nm*Np, Ny, Nx, Nz)
+            "Fk": parameters["Fk_0"],  # Already has shape (6, Ny, Nx, Nz)
+        }
+
+        # Create real-space grid for driver
+        Lx = self.cfg["physics"]["Lx"]
+        self.xax = jnp.linspace(0, Lx, Nx, endpoint=False)
+
+        # Store driver config for VectorField initialization
+        self.driver_config = self.cfg.get("drivers", {})
+
+        # Build args dictionary for the ODE system (only time-varying physical parameters)
+        self.args = {
+            "qs": parameters["qs"],
+            "nu": parameters["nu"],
+            "D": parameters["D"],
+            "Omega_cs": parameters["Omega_cs"],
+            "alpha_s": parameters["alpha_s"],
+            "u_s": parameters["u_s"],
+        }
+
+        # Store grid quantities separately for VectorField initialization
+        # These are constants and will be stored as class attributes
+        self.grid_quantities = {
+            "Lx": parameters["Lx"],
+            "Ly": parameters["Ly"],
+            "Lz": parameters["Lz"],
+            "kx_grid": parameters["kx_grid"],
+            "ky_grid": parameters["ky_grid"],
+            "kz_grid": parameters["kz_grid"],
+            "k2_grid": parameters["k2_grid"],
+            "nabla": parameters["nabla"],
+            "col": parameters["collision_matrix"],
+            "sqrt_n_plus": parameters["sqrt_n_plus"],
+            "sqrt_n_minus": parameters["sqrt_n_minus"],
+            "sqrt_m_plus": parameters["sqrt_m_plus"],
+            "sqrt_m_minus": parameters["sqrt_m_minus"],
+            "sqrt_p_plus": parameters["sqrt_p_plus"],
+            "sqrt_p_minus": parameters["sqrt_p_minus"],
+        }
+
+    def init_diffeqsolve(self) -> None:
+        """
+        Initialize solver configuration with save quantities.
+
+        Sets up time quantities, ODE system, solver, and save configuration.
+        Follows pattern from adept/_vlasov1d/modules.py and adept/_tf1d/modules.py.
+
+        Reference: adept/_vlasov1d/modules.py lines 274-281
+        """
+        # Process save configuration to add time axes and save functions
+        self.cfg = get_save_quantities(self.cfg)
+
+        # Set time quantities (matches Vlasov1D pattern)
+        self.time_quantities = {
+            "t0": 0.0,
+            "t1": self.cfg["grid"]["tmax"],
+            "max_steps": self.cfg["grid"]["max_steps"],
+        }
+
+        # Get solver configuration
+        solver_params = self.cfg["spectrax_solver"]
+        input_params = self.cfg["spectrax_input"]
+
+        # Get dimensions
+        Nx = solver_params["Nx"]
+        Ny = solver_params["Ny"]
+        Nz = solver_params["Nz"]
+        Nn = solver_params["Nn"]
+        Nm = solver_params["Nm"]
+        Np = solver_params["Np"]
+        Ns = solver_params["Ns"]
+
+        # Create VectorField instance with driver configuration and grid quantities
+        grid_q = self.grid_quantities
+        vector_field = SpectraxVectorField(
+            Nx=Nx,
+            Ny=Ny,
+            Nz=Nz,
+            Nn=Nn,
+            Nm=Nm,
+            Np=Np,
+            Ns=Ns,
+            xax=self.xax,
+            driver_config=self.driver_config,
+            Lx=grid_q["Lx"],
+            Ly=grid_q["Ly"],
+            Lz=grid_q["Lz"],
+            kx_grid=grid_q["kx_grid"],
+            ky_grid=grid_q["ky_grid"],
+            kz_grid=grid_q["kz_grid"],
+            k2_grid=grid_q["k2_grid"],
+            nabla=grid_q["nabla"],
+            col=grid_q["col"],
+            sqrt_n_plus=grid_q["sqrt_n_plus"],
+            sqrt_n_minus=grid_q["sqrt_n_minus"],
+            sqrt_m_plus=grid_q["sqrt_m_plus"],
+            sqrt_m_minus=grid_q["sqrt_m_minus"],
+            sqrt_p_plus=grid_q["sqrt_p_plus"],
+            sqrt_p_minus=grid_q["sqrt_p_minus"],
         )
 
-        controllers = {
-            True: PIDController(
-                rtol=parameters["ode_tolerance"],
-                atol=parameters["ode_tolerance"],
-            ),
-            False: ConstantStepSize(),
-        }
-        adaptive_time_step = solver_params["adaptive_time_step"]
-        stepsize_controller = controllers[adaptive_time_step]
-
-        # Solve the ODE system with diagnostic saves
-        ode_system_partial = partial(ode_system, Nx, Ny, Nz, Nn, Nm, Np, Ns)
-
         # Build SubSaveAt dictionary for diagnostics
-        # This allows saving interpolated quantities at specified times
         subsaves = {}
         for k, v in self.cfg["save"].items():
             if isinstance(v, dict) and "t" in v and "func" in v:
                 subsaves[k] = SubSaveAt(ts=v["t"]["ax"], fn=v["func"])
 
+        # Get stepsize controller
+        adaptive_time_step = solver_params["adaptive_time_step"]
+        controllers = {
+            True: PIDController(
+                rtol=input_params["ode_tolerance"],
+                atol=input_params["ode_tolerance"],
+            ),
+            False: ConstantStepSize(),
+        }
+        stepsize_controller = controllers[adaptive_time_step]
+
+        # Store diffeqsolve configuration (matches pattern from other modules)
+        self.diffeqsolve_quants = {
+            "terms": ODETerm(vector_field),
+            "solver": solver_params["solver"],
+            "stepsize_controller": stepsize_controller,
+            "saveat": {"subs": subsaves},
+        }
+
+    def __call__(self, trainable_modules: dict, args: dict | None = None) -> dict:
+        """
+        Run the spectrax simulation.
+
+        Uses pre-initialized quantities from init_state_and_args() and init_diffeqsolve().
+        Follows pattern from adept/_vlasov1d/modules.py and adept/_tf1d/modules.py.
+
+        Reference: adept/_vlasov1d/modules.py lines 283-298
+
+        Args:
+            trainable_modules: Dict of equinox.Module objects (unused)
+            args: Optional runtime arguments (uses self.args if None)
+
+        Returns:
+            dict: {"solver result": <diffrax.Solution>}
+        """
+        # Use pre-initialized args if not provided
+        if args is None:
+            args = self.args
+
+        # Call diffeqsolve with pre-initialized quantities
         sol = diffeqsolve(
-            ODETerm(ode_system_partial),
-            solver=solver_params["solver"],
-            stepsize_controller=stepsize_controller,
+            terms=self.diffeqsolve_quants["terms"],
+            solver=self.diffeqsolve_quants["solver"],
+            stepsize_controller=self.diffeqsolve_quants["stepsize_controller"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
             dt0=self.cfg["grid"]["dt"],
-            y0=initial_conditions,
+            y0=self.state,
             args=args,
-            saveat=SaveAt(subs=subsaves),
+            saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
             max_steps=self.time_quantities["max_steps"],
             progress_meter=TqdmProgressMeter(),
         )
 
-        # When using only SubSaveAt (no ts), sol.ys is a dict, not an array
-        # The diagnostic quantities are saved in sol.ys[key] for each subsave key
-        # We return the solution object directly for post-processing
         return {"solver result": sol}
 
     def _save_scalar_outputs(self, scalar_outputs: dict, td: str) -> None:
@@ -929,7 +1143,14 @@ class BaseSpectrax1D(ADEPTModule):
         for i, name in enumerate(field_names):
             # Apply inverse FFT and take real part
             # For 1D case (Ny=1, Nz=1), this is essentially just ifft along x
-            field_real = np.real(np.fft.ifftn(Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1)))
+            # Use fftshifted format (spectrax convention) - need ifftshift before ifftn
+            field_real = np.real(
+                np.fft.ifftn(
+                    np.fft.ifftshift(Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1)),
+                    axes=(-3, -2, -1),
+                    norm="forward"
+                )
+            )
             fields_real[name] = field_real
 
         return fields_real
