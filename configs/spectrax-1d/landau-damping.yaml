@@ -164,8 +164,6 @@ save:
   # - ne_k0, ni_k0: equilibrium densities
   fields:
     t:
-      tmin: 0.0
-      tmax: 200.0
       nt: 801  # Save every ~1 time unit
 
   # Save Hermite-Fourier coefficients (full distribution function)
@@ -173,8 +171,6 @@ save:
   # Comment out if not needed for analysis
   hermite:
     t:
-      tmin: 0.0
-      tmax: 200.0
       nt: 101  # Save less frequently to reduce memory usage
   # The "default" save is automatically added and tracks scalar quantities:
   # - total_EM_energy, E_energy, B_energy

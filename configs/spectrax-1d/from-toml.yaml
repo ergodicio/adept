@@ -44,12 +44,8 @@ drivers:
 save:
   fields:
     t:
-      tmin: 0.0
-      tmax: 50.0
       nt: 51
   hermite:
     t:
-      tmin: 0.0
-      tmax: 50.0
       nt: 51
   reconstruct_distribution: false

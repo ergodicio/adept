@@ -137,8 +137,6 @@ save:
   # Save real-space fields Ey(x, t) for spacetime wavepacket visualization
   fields:
     t:
-      tmin: 0.0
-      tmax: 300.0
       nt: 601      # Every 0.5 ωpe⁻¹  (≈6 saves per EM period T=π)
     x:
       xmin: 0.0

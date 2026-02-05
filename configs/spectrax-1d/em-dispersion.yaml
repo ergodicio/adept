@@ -122,15 +122,11 @@ initialization:
 save:
   default:
     t:
-      tmin: 0.0
-      tmax: 2000.0
       nt: 2001
 
   # >8 saves per EM period (T=2π/1≈6.28), sufficient for phase unwrapping
   fields:
     t:
-      tmin: 0.0
-      tmax: 2000.0
       nt: 4001
 
 diagnostics:

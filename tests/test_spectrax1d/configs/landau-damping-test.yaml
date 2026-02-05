@@ -102,6 +102,4 @@ initialization:
 save:
   fields:
     t:
-      tmin: 0.0
-      tmax: 100.0
       nt: 201
