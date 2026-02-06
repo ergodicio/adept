@@ -37,7 +37,7 @@ def test_multispecies_config_parsing():
     assert ion.name == "ion"
     assert ion.charge == 10.0
     assert ion.mass == 18360.0
-    assert ion.vmax == 0.15
+    assert ion.vmax == 0.005
     assert ion.nv == 256
     assert "species-ion-background" in ion.density_components
 

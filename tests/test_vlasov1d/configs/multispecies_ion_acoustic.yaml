@@ -75,7 +75,7 @@ terms:
     - name: ion
       charge: 10.0
       mass: 18360.0
-      vmax: 0.15
+      vmax: 0.005
       nv: 256
       density_components:
         - species-ion-background
