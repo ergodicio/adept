@@ -7,10 +7,13 @@ import xarray as xr
 from diffrax import ConstantStepSize, ODETerm, PIDController, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import Array
 from jax import numpy as jnp
-from spectrax import initialize_simulation_parameters
 
 from adept._base_ import ADEPTModule
-from adept._spectrax1d.storage import get_save_quantities, store_distribution_timeseries, store_scalars
+from adept._spectrax1d.storage import (
+    get_save_quantities,
+    store_scalars,
+    store_species_distribution_timeseries,
+)
 from adept._spectrax1d.vector_field import SpectraxVectorField
 
 
@@ -74,6 +77,65 @@ class BaseSpectrax1D(ADEPTModule):
             f"Solver '{solver_name}' is not supported. Choose from Diffrax solvers "
             "(e.g., Dopri8, Tsit5, Euler, Heun, etc.)"
         )
+
+    def _compute_hermite_parameters(self, Nn: int, Nm: int, Np: int) -> dict:
+        """
+        Compute Hermite ladder operators and collision matrix for given mode counts.
+
+        This replicates the spectrax initialization logic for a single species,
+        allowing per-species mode counts without calling the full spectrax initialization.
+
+        Args:
+            Nn: Number of Hermite modes in x-velocity direction
+            Nm: Number of Hermite modes in y-velocity direction
+            Np: Number of Hermite modes in z-velocity direction
+
+        Returns:
+            dict: Contains:
+                - sqrt_n_plus, sqrt_n_minus: Ladder operators for n direction (Nn,)
+                - sqrt_m_plus, sqrt_m_minus: Ladder operators for m direction (Nm,)
+                - sqrt_p_plus, sqrt_p_minus: Ladder operators for p direction (Np,)
+                - col: Hypercollisional damping matrix (Np, Nm, Nn)
+        """
+        # Ladder operators for Hermite polynomial derivatives
+        # sqrt_n_plus[n] = sqrt(n+1) for d/dξ Hₙ(ξ) = 2n Hₙ₋₁(ξ)
+        n = jnp.arange(Nn)
+        m = jnp.arange(Nm)
+        p = jnp.arange(Np)
+
+        sqrt_n_plus = jnp.sqrt(n + 1)
+        sqrt_n_minus = jnp.sqrt(n)
+        sqrt_m_plus = jnp.sqrt(m + 1)
+        sqrt_m_minus = jnp.sqrt(m)
+        sqrt_p_plus = jnp.sqrt(p + 1)
+        sqrt_p_minus = jnp.sqrt(p)
+
+        # Collision matrix: hypercollisional damping for high modes
+        # This prevents unphysical growth at high mode numbers
+        # Formula: col[p,m,n] = sum over directions of i*(i-1)*(i-2) / (N-1)(N-2)(N-3)
+        p_grid = p[:, None, None]
+        m_grid = m[None, :, None]
+        n_grid = n[None, None, :]
+
+        def safe_collision_term(N, i):
+            """Compute collision term with safe handling for small N."""
+            term = i * (i - 1) * (i - 2)
+            denom = (N - 1) * (N - 2) * (N - 3)
+            return jnp.where(N > 3, term / denom, 0.0)
+
+        col = (
+            safe_collision_term(Nn, n_grid) + safe_collision_term(Nm, m_grid) + safe_collision_term(Np, p_grid)
+        )
+
+        return {
+            "sqrt_n_plus": sqrt_n_plus,
+            "sqrt_n_minus": sqrt_n_minus,
+            "sqrt_m_plus": sqrt_m_plus,
+            "sqrt_m_minus": sqrt_m_minus,
+            "sqrt_p_plus": sqrt_p_plus,
+            "sqrt_p_minus": sqrt_p_minus,
+            "col": col,
+        }
 
     def write_units(self) -> dict:
         """
@@ -234,6 +296,31 @@ class BaseSpectrax1D(ADEPTModule):
                 "ode_tolerance": float(physics.get("ode_tolerance", 1e-8)),
             }
 
+            # Parse per-species Hermite mode configuration with backward compatibility
+            if "hermite_modes" in grid:
+                # New per-species format
+                Nn_e = int(grid["hermite_modes"]["electrons"]["Nn"])
+                Nm_e = int(grid["hermite_modes"]["electrons"]["Nm"])
+                Np_e = int(grid["hermite_modes"]["electrons"]["Np"])
+                Nn_i = int(grid["hermite_modes"]["ions"]["Nn"])
+                Nm_i = int(grid["hermite_modes"]["ions"]["Nm"])
+                Np_i = int(grid["hermite_modes"]["ions"]["Np"])
+            elif "Nn" in grid and "Nm" in grid and "Np" in grid:
+                # Legacy format: same modes for both species
+                Nn_e = Nn_i = int(grid["Nn"])
+                Nm_e = Nm_i = int(grid["Nm"])
+                Np_e = Np_i = int(grid["Np"])
+            else:
+                raise ValueError("Must specify grid.hermite_modes or grid.Nn/Nm/Np")
+
+            # Store per-species mode counts in grid config for later access
+            grid["Nn_electrons"] = Nn_e
+            grid["Nm_electrons"] = Nm_e
+            grid["Np_electrons"] = Np_e
+            grid["Nn_ions"] = Nn_i
+            grid["Nm_ions"] = Nm_i
+            grid["Np_ions"] = Np_i
+
             # Build solver_parameters dict
             solver_name = grid.get("solver", "Dopri8")
             adaptive_time_step = grid.get("adaptive_time_step", True)
@@ -242,9 +329,12 @@ class BaseSpectrax1D(ADEPTModule):
                 "Nx": int(grid["Nx"]),
                 "Ny": int(grid["Ny"]),
                 "Nz": int(grid["Nz"]),
-                "Nn": int(grid["Nn"]),
-                "Nm": int(grid["Nm"]),
-                "Np": int(grid["Np"]),
+                "Nn_electrons": Nn_e,
+                "Nm_electrons": Nm_e,
+                "Np_electrons": Np_e,
+                "Nn_ions": Nn_i,
+                "Nm_ions": Nm_i,
+                "Np_ions": Np_i,
                 "Ns": int(grid["Ns"]),
                 "timesteps": int(grid["nt"]),
                 "dt": float(grid["dt"]),
@@ -283,36 +373,45 @@ class BaseSpectrax1D(ADEPTModule):
         input_parameters["Fk_0"] = Fk_0
 
         # Initialize Ck_0 (distribution function Hermite-Fourier components)
-        # Shape: (Ns, Np, Nm, Nn, Ny, Nx, Nz) for 7D representation
-        Nn, Nm, Np = solver_parameters["Nn"], solver_parameters["Nm"], solver_parameters["Np"]
-        Ns = 2  # electron and ion
-        Ck_0 = jnp.zeros((Ns, Np, Nm, Nn, Ny, Nx, Nz), dtype=jnp.complex128)
+        # Now separate per species with per-species mode counts
+        # Electron shape: (Np_e, Nm_e, Nn_e, Ny, Nx, Nz)
+        # Ion shape: (Np_i, Nm_i, Nn_i, Ny, Nx, Nz)
+        Nn_e = solver_parameters["Nn_electrons"]
+        Nm_e = solver_parameters["Nm_electrons"]
+        Np_e = solver_parameters["Np_electrons"]
+        Nn_i = solver_parameters["Nn_ions"]
+        Nm_i = solver_parameters["Nm_ions"]
+        Np_i = solver_parameters["Np_ions"]
 
-        # Electron distribution (species 0, only (0,0,0) Hermite mode)
-        # Use alpha_s[0] for electron thermal velocity (in x-direction for 1D)
-        alpha_e = input_parameters["alpha_s"][0]
-        Ce0_mk = 0 + 1j * (1 / (2 * alpha_e**3)) * dn  # -k mode
-        Ce0_0 = 1 / (alpha_e**3) + 0 * 1j  # Equilibrium
-        Ce0_k = 0 - 1j * (1 / (2 * alpha_e**3)) * dn  # +k mode
+        Ck_0_electrons = jnp.zeros((Np_e, Nm_e, Nn_e, Ny, Nx, Nz), dtype=jnp.complex128)
+        Ck_0_ions = jnp.zeros((Np_i, Nm_i, Nn_i, Ny, Nx, Nz), dtype=jnp.complex128)
 
         # Use fftshifted indexing: k=0 at center, ±k relative to center
         center_x = int((Nx - 1) / 2)
         center_y = int((Ny - 1) / 2)
         center_z = int((Nz - 1) / 2)
 
-        # Electron modes (species=0, p=0, m=0, n=0)
-        Ck_0 = Ck_0.at[0, 0, 0, 0, center_y - ny, center_x - nx, center_z - nz].set(Ce0_mk)  # -k mode
-        Ck_0 = Ck_0.at[0, 0, 0, 0, center_y, center_x, center_z].set(Ce0_0)  # k=0 (equilibrium)
-        Ck_0 = Ck_0.at[0, 0, 0, 0, center_y + ny, center_x + nx, center_z + nz].set(Ce0_k)  # +k mode
+        # Electron distribution (only (0,0,0) Hermite mode)
+        # Use alpha_s[0] for electron thermal velocity (in x-direction for 1D)
+        alpha_e = input_parameters["alpha_s"][0]
+        Ce0_mk = 0 + 1j * (1 / (2 * alpha_e**3)) * dn  # -k mode
+        Ce0_0 = 1 / (alpha_e**3) + 0 * 1j  # Equilibrium
+        Ce0_k = 0 - 1j * (1 / (2 * alpha_e**3)) * dn  # +k mode
 
-        # Ion distribution (species 1, only (0,0,0) Hermite mode)
+        # Electron modes (p=0, m=0, n=0)
+        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, center_y - ny, center_x - nx, center_z - nz].set(Ce0_mk)
+        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, center_y, center_x, center_z].set(Ce0_0)
+        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, center_y + ny, center_x + nx, center_z + nz].set(Ce0_k)
+
+        # Ion distribution (only (0,0,0) Hermite mode)
         # Use alpha_s[3] for ion thermal velocity (first component in ion triplet)
         alpha_i = input_parameters["alpha_s"][3]
         Ci0_0 = 1 / (alpha_i**3) + 0 * 1j
 
-        Ck_0 = Ck_0.at[1, 0, 0, 0, center_y, center_x, center_z].set(Ci0_0)  # k=0 (equilibrium)
+        Ck_0_ions = Ck_0_ions.at[0, 0, 0, center_y, center_x, center_z].set(Ci0_0)  # k=0 (equilibrium)
 
-        input_parameters["Ck_0"] = Ck_0
+        input_parameters["Ck_0_electrons"] = Ck_0_electrons
+        input_parameters["Ck_0_ions"] = Ck_0_ions
 
         # Store in config
         self.cfg["spectrax_input"] = input_parameters
@@ -341,40 +440,45 @@ class BaseSpectrax1D(ADEPTModule):
         Nx = solver_params["Nx"]
         Ny = solver_params["Ny"]
         Nz = solver_params["Nz"]
-        Nn = solver_params["Nn"]
-        Nm = solver_params["Nm"]
-        Np = solver_params["Np"]
-        Ns = solver_params["Ns"]
-        nt = solver_params["timesteps"]
-        dt = solver_params["dt"]
+        Nn_e = solver_params["Nn_electrons"]
+        Nm_e = solver_params["Nm_electrons"]
+        Np_e = solver_params["Np_electrons"]
+        Nn_i = solver_params["Nn_ions"]
+        Nm_i = solver_params["Nm_ions"]
+        Np_i = solver_params["Np_ions"]
 
-        # Initialize simulation parameters using spectrax function
-        parameters = initialize_simulation_parameters(
-            input_params,
-            Nx,
-            Ny,
-            Nz,
-            Nn,
-            Nm,
-            Np,
-            Ns,
-            nt,
-            dt,
-        )
+        # Compute per-species Hermite parameters (ladder operators and collision matrices)
+        hermite_params_e = self._compute_hermite_parameters(Nn_e, Nm_e, Np_e)
+        hermite_params_i = self._compute_hermite_parameters(Nn_i, Nm_i, Np_i)
 
-        # Store parameters for later use
-        self.parameters = parameters
+        # Compute k-space grids (shared by both species)
+        Lx = input_params["Lx"]
+        Ly = input_params["Ly"]
+        Lz = input_params["Lz"]
 
-        # Create initial state dictionary with Ck and Fk
-        # Store as float64 views for diffrax compatibility
-        # (diffrax doesn't fully support complex state)
+        # Fourier wavenumber grids (spectrax uses fftshift convention)
+        kx_simulation = (jnp.arange(-Nx // 2, Nx // 2) + 1) * 2 * jnp.pi
+        ky_simulation = (jnp.arange(-Ny // 2, Ny // 2) + 1) * 2 * jnp.pi
+        kz_simulation = (jnp.arange(-Nz // 2, Nz // 2) + 1) * 2 * jnp.pi
+        ky_grid, kx_grid, kz_grid = jnp.meshgrid(ky_simulation, kx_simulation, kz_simulation, indexing="ij")
+        k2_grid = kx_grid**2 + ky_grid**2 + kz_grid**2
+
+        # Normalized gradient operator
+        nabla = jnp.array([kx_grid / Lx, ky_grid / Ly, kz_grid / Lz])
+
+        # Get initial conditions
+        Ck_0_electrons = input_params["Ck_0_electrons"]
+        Ck_0_ions = input_params["Ck_0_ions"]
+
+        # Create initial state dictionary with per-species Ck and Fk
+        # Store as float64 views for diffrax compatibility (diffrax doesn't fully support complex state)
         self.state = {
-            "Ck": parameters["Ck_0"].view(jnp.float64),  # Shape (Ns, Np, Nm, Nn, Ny, Nx, Nz) as float64 view
-            "Fk": parameters["Fk_0"].view(jnp.float64),  # Shape (6, Ny, Nx, Nz) as float64 view
+            "Ck_electrons": Ck_0_electrons.view(jnp.float64),  # Shape (Np_e, Nm_e, Nn_e, Ny, Nx, Nz)
+            "Ck_ions": Ck_0_ions.view(jnp.float64),  # Shape (Np_i, Nm_i, Nn_i, Ny, Nx, Nz)
+            "Fk": input_params["Fk_0"].view(jnp.float64),  # Shape (6, Ny, Nx, Nz)
         }
 
         # Create real-space grid for driver
-        Lx = self.cfg["physics"]["Lx"]
         self.xax = jnp.linspace(0, Lx, Nx, endpoint=False)
 
         # Store driver config for VectorField initialization
@@ -382,32 +486,50 @@ class BaseSpectrax1D(ADEPTModule):
 
         # Build args dictionary for the ODE system (only time-varying physical parameters)
         self.args = {
-            "qs": parameters["qs"],
-            "nu": parameters["nu"],
-            "D": parameters["D"],
-            "Omega_cs": parameters["Omega_cs"],
-            "alpha_s": parameters["alpha_s"],
-            "u_s": parameters["u_s"],
+            "qs": jnp.array(input_params["qs"]),
+            "nu": float(input_params["nu"]),
+            "D": 0.0,  # Diffusion coefficient (typically zero unless specified)
+            "Omega_cs": jnp.array(input_params["Omega_cs"]),
+            "alpha_s": jnp.array(input_params["alpha_s"]),
+            "u_s": jnp.array(input_params["u_s"]),
         }
 
-        # Store grid quantities separately for VectorField initialization
-        # These are constants and will be stored as class attributes
-        self.grid_quantities = {
-            "Lx": parameters["Lx"],
-            "Ly": parameters["Ly"],
-            "Lz": parameters["Lz"],
-            "kx_grid": parameters["kx_grid"],
-            "ky_grid": parameters["ky_grid"],
-            "kz_grid": parameters["kz_grid"],
-            "k2_grid": parameters["k2_grid"],
-            "nabla": parameters["nabla"],
-            "col": parameters["collision_matrix"],
-            "sqrt_n_plus": parameters["sqrt_n_plus"],
-            "sqrt_n_minus": parameters["sqrt_n_minus"],
-            "sqrt_m_plus": parameters["sqrt_m_plus"],
-            "sqrt_m_minus": parameters["sqrt_m_minus"],
-            "sqrt_p_plus": parameters["sqrt_p_plus"],
-            "sqrt_p_minus": parameters["sqrt_p_minus"],
+        # Store per-species grid quantities separately for VectorField initialization
+        # These are constants and will be stored as class attributes in VectorField
+        self.grid_quantities_electrons = {
+            "Lx": Lx,
+            "Ly": Ly,
+            "Lz": Lz,
+            "kx_grid": kx_grid,
+            "ky_grid": ky_grid,
+            "kz_grid": kz_grid,
+            "k2_grid": k2_grid,
+            "nabla": nabla,
+            "col": hermite_params_e["col"],
+            "sqrt_n_plus": hermite_params_e["sqrt_n_plus"],
+            "sqrt_n_minus": hermite_params_e["sqrt_n_minus"],
+            "sqrt_m_plus": hermite_params_e["sqrt_m_plus"],
+            "sqrt_m_minus": hermite_params_e["sqrt_m_minus"],
+            "sqrt_p_plus": hermite_params_e["sqrt_p_plus"],
+            "sqrt_p_minus": hermite_params_e["sqrt_p_minus"],
+        }
+
+        self.grid_quantities_ions = {
+            "Lx": Lx,
+            "Ly": Ly,
+            "Lz": Lz,
+            "kx_grid": kx_grid,
+            "ky_grid": ky_grid,
+            "kz_grid": kz_grid,
+            "k2_grid": k2_grid,
+            "nabla": nabla,
+            "col": hermite_params_i["col"],
+            "sqrt_n_plus": hermite_params_i["sqrt_n_plus"],
+            "sqrt_n_minus": hermite_params_i["sqrt_n_minus"],
+            "sqrt_m_plus": hermite_params_i["sqrt_m_plus"],
+            "sqrt_m_minus": hermite_params_i["sqrt_m_minus"],
+            "sqrt_p_plus": hermite_params_i["sqrt_p_plus"],
+            "sqrt_p_minus": hermite_params_i["sqrt_p_minus"],
         }
 
     def init_diffeqsolve(self) -> None:
@@ -437,38 +559,30 @@ class BaseSpectrax1D(ADEPTModule):
         Nx = solver_params["Nx"]
         Ny = solver_params["Ny"]
         Nz = solver_params["Nz"]
-        Nn = solver_params["Nn"]
-        Nm = solver_params["Nm"]
-        Np = solver_params["Np"]
+        Nn_e = solver_params["Nn_electrons"]
+        Nm_e = solver_params["Nm_electrons"]
+        Np_e = solver_params["Np_electrons"]
+        Nn_i = solver_params["Nn_ions"]
+        Nm_i = solver_params["Nm_ions"]
+        Np_i = solver_params["Np_ions"]
         Ns = solver_params["Ns"]
 
-        # Create VectorField instance with driver configuration and grid quantities
-        grid_q = self.grid_quantities
+        # Create VectorField instance with per-species configuration and grid quantities
         vector_field = SpectraxVectorField(
             Nx=Nx,
             Ny=Ny,
             Nz=Nz,
-            Nn=Nn,
-            Nm=Nm,
-            Np=Np,
+            Nn_electrons=Nn_e,
+            Nm_electrons=Nm_e,
+            Np_electrons=Np_e,
+            Nn_ions=Nn_i,
+            Nm_ions=Nm_i,
+            Np_ions=Np_i,
             Ns=Ns,
             xax=self.xax,
             driver_config=self.driver_config,
-            Lx=grid_q["Lx"],
-            Ly=grid_q["Ly"],
-            Lz=grid_q["Lz"],
-            kx_grid=grid_q["kx_grid"],
-            ky_grid=grid_q["ky_grid"],
-            kz_grid=grid_q["kz_grid"],
-            k2_grid=grid_q["k2_grid"],
-            nabla=grid_q["nabla"],
-            col=grid_q["col"],
-            sqrt_n_plus=grid_q["sqrt_n_plus"],
-            sqrt_n_minus=grid_q["sqrt_n_minus"],
-            sqrt_m_plus=grid_q["sqrt_m_plus"],
-            sqrt_m_minus=grid_q["sqrt_m_minus"],
-            sqrt_p_plus=grid_q["sqrt_p_plus"],
-            sqrt_p_minus=grid_q["sqrt_p_minus"],
+            grid_quantities_electrons=self.grid_quantities_electrons,
+            grid_quantities_ions=self.grid_quantities_ions,
         )
 
         # Build SubSaveAt dictionary for diagnostics
@@ -996,10 +1110,19 @@ class BaseSpectrax1D(ADEPTModule):
                 self._plot_fields_lineouts(fields_xr, td)
 
             elif k in ["hermite", "distribution"]:
-                # Distribution function (Hermite coefficients)
-                Ck_array = np.asarray(sol.ys[k])
-                dist_xr = store_distribution_timeseries(self.cfg, Ck_array, sol.ts[k], binary_dir)
-                saved_datasets["distribution"] = dist_xr
+                # Distribution function (Hermite coefficients) - per-species dict
+                species_dict = sol.ys[k]
+
+                # Store each species separately
+                electrons_xr = store_species_distribution_timeseries(
+                    self.cfg, "electrons", np.asarray(species_dict["electrons"]), sol.ts[k], binary_dir
+                )
+                ions_xr = store_species_distribution_timeseries(
+                    self.cfg, "ions", np.asarray(species_dict["ions"]), sol.ts[k], binary_dir
+                )
+
+                saved_datasets["distribution_electrons"] = electrons_xr
+                saved_datasets["distribution_ions"] = ions_xr
 
                 # Note: Distribution facet plots removed - use EPW1D module for enhanced visualization
 

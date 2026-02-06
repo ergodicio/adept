@@ -66,6 +66,70 @@ def store_scalars(cfg: dict, scalars_dict: dict, t_array: np.ndarray, binary_dir
     return scalars_xr
 
 
+def store_species_distribution_timeseries(
+    cfg: dict, species_name: str, Ck_array: np.ndarray, t_array: np.ndarray, binary_dir: str
+) -> xr.Dataset:
+    """
+    Store distribution function (Hermite-Fourier coefficients) for a single species.
+
+    Saves the Hermite-Fourier coefficients Ck over time for one species from SubSaveAt output.
+
+    Args:
+        cfg: Configuration dict with grid info
+        species_name: Name of the species ("electrons" or "ions")
+        Ck_array: Array of shape (nt, Np, Nm, Nn, Ny, Nx, Nz) - Single species
+        t_array: Time axis for the saved data
+        binary_dir: Directory path for saving netCDF files
+
+    Returns:
+        xr.Dataset: Hermite coefficient data with time and spatial coordinates
+    """
+    # Get grid dimensions (species-specific for Hermite modes)
+    Nn = int(cfg["grid"][f"Nn_{species_name}"])
+    Nm = int(cfg["grid"][f"Nm_{species_name}"])
+    Np = int(cfg["grid"][f"Np_{species_name}"])
+    Nx = int(cfg["grid"]["Nx"])
+    Ny = int(cfg["grid"]["Ny"])
+    Nz = int(cfg["grid"]["Nz"])
+
+    # Reshape from 6D to 4D for storage: (nt, Np, Nm, Nn, Ny, Nx, Nz) -> (nt, Np*Nm*Nn, Ny, Nx, Nz)
+    nt = Ck_array.shape[0]
+    Ck_array_4d = Ck_array.reshape(nt, Np * Nm * Nn, Ny, Nx, Nz)
+
+    # Create coordinate arrays
+    hermite_modes = np.arange(Nn * Nm * Np)
+    kx = np.fft.fftshift(np.fft.fftfreq(Nx, d=1.0 / Nx))  # Sort kx in increasing order
+    ky = np.arange(Ny)
+    kz = np.arange(Nz)
+
+    # Shift the data to match the sorted kx coordinate
+    Ck_array_shifted = np.fft.fftshift(Ck_array_4d, axes=-2)  # Shift along kx dimension
+
+    # Create Dataset with Hermite coefficients
+    Ck_ds = xr.Dataset(
+        {
+            f"Ck_{species_name}": (["t", "hermite_mode", "ky", "kx", "kz"], Ck_array_shifted),
+        },
+        coords={
+            "t": t_array,
+            "hermite_mode": hermite_modes,
+            "ky": ky,
+            "kx": kx,
+            "kz": kz,
+        },
+    )
+
+    # Add metadata
+    Ck_ds[f"Ck_{species_name}"].attrs["long_name"] = f"{species_name.capitalize()} Hermite-Fourier coefficients"
+    Ck_ds[f"Ck_{species_name}"].attrs["description"] = f"Distribution function for {species_name} in Hermite-Fourier basis"
+    Ck_ds[f"Ck_{species_name}"].attrs["species"] = species_name
+
+    # Save to netCDF
+    Ck_ds.to_netcdf(os.path.join(binary_dir, f"distribution_{species_name}_timeseries-t={round(t_array[-1], 4)}.nc"))
+
+    return Ck_ds
+
+
 def store_distribution_timeseries(cfg: dict, Ck_array: np.ndarray, t_array: np.ndarray, binary_dir: str) -> xr.Dataset:
     """
     Store distribution function (Hermite-Fourier coefficients) time series.
@@ -147,8 +211,9 @@ def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def fields_save_func(t, y, args):
         """Extract field quantities and moments from state."""
-        # Extract Ck and Fk from state dictionary (convert from float64 views to complex128)
-        Ck = y["Ck"].view(jnp.complex128)
+        # Extract per-species Ck and Fk from state dictionary (convert from float64 views to complex128)
+        Ck_electrons = y["Ck_electrons"].view(jnp.complex128)
+        Ck_ions = y["Ck_ions"].view(jnp.complex128)
         Fk = y["Fk"].view(jnp.complex128)
 
         # Compute electromagnetic field energy
@@ -158,11 +223,11 @@ def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
         EM_energy = E_energy + B_energy
 
         # Get density from n=0 Hermite mode (equilibrium)
-        # Ck shape: (Ns, Np, Nm, Nn, Ny, Nx, Nz)
-        # Electron density (species 0, (p,m,n)=(0,0,0) Hermite mode at k=0)
-        ne_k0 = Ck[0, 0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
-        # Ion density (species 1, (p,m,n)=(0,0,0) Hermite mode at k=0)
-        ni_k0 = Ck[1, 0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
+        # Ck shape: (Np, Nm, Nn, Ny, Nx, Nz) - Per species
+        # Electron density ((p,m,n)=(0,0,0) Hermite mode at k=0)
+        ne_k0 = Ck_electrons[0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
+        # Ion density ((p,m,n)=(0,0,0) Hermite mode at k=0)
+        ni_k0 = Ck_ions[0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
 
         return {
             "EM_energy": EM_energy,
@@ -188,9 +253,12 @@ def get_distribution_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
     """
 
     def dist_save_func(t, y, args):
-        """Extract Hermite-Fourier coefficients from state."""
-        # Extract Ck from state dictionary (convert from float64 view to complex128)
-        return y["Ck"].view(jnp.complex128)
+        """Extract Hermite-Fourier coefficients from state as dict of species."""
+        # Extract per-species Ck from state dictionary (convert from float64 views to complex128)
+        return {
+            "electrons": y["Ck_electrons"].view(jnp.complex128),
+            "ions": y["Ck_ions"].view(jnp.complex128),
+        }
 
     return dist_save_func
 
@@ -233,8 +301,8 @@ def get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
     def save_func(t, y, args):
         """Compute scalar diagnostics from state."""
-        # Extract Ck and Fk from state dictionary (convert from float64 views to complex128)
-        Ck = y["Ck"].view(jnp.complex128)
+        # Extract per-species Ck and Fk from state dictionary (convert from float64 views to complex128)
+        # (Distribution functions not needed for these scalar diagnostics, but kept for consistency)
         Fk = y["Fk"].view(jnp.complex128)
 
         # Compute electromagnetic field energy
@@ -279,9 +347,18 @@ def get_save_quantities(cfg: dict) -> dict:
     Nx = int(cfg["grid"]["Nx"])
     Ny = int(cfg["grid"]["Ny"])
     Nz = int(cfg["grid"]["Nz"])
-    Nn = int(cfg["grid"]["Nn"])
-    Nm = int(cfg["grid"]["Nm"])
-    Np = int(cfg["grid"]["Np"])
+
+    # Get mode counts - handle both legacy and per-species formats
+    # For save functions that need these, use electron modes (typically larger)
+    if "Nn_electrons" in cfg["grid"]:
+        Nn = int(cfg["grid"]["Nn_electrons"])
+        Nm = int(cfg["grid"]["Nm_electrons"])
+        Np = int(cfg["grid"]["Np_electrons"])
+    else:
+        Nn = int(cfg["grid"]["Nn"])
+        Nm = int(cfg["grid"]["Nm"])
+        Np = int(cfg["grid"]["Np"])
+
     Ns = int(cfg["grid"]["Ns"])
 
     # Process each save type in the configuration

@@ -119,7 +119,20 @@ class EPW1D(BaseSpectrax1D):
             plt.close()
 
     def _plot_hermite_coefficients_enhanced(
-        self, Ck: Array, t_array: Array, Nn: int, Nm: int, Np: int, Nx: int, Ny: int, Nz: int, td: str
+        self,
+        Ck_electrons: Array,
+        Ck_ions: Array,
+        t_array: Array,
+        Nn_e: int,
+        Nm_e: int,
+        Np_e: int,
+        Nn_i: int,
+        Nm_i: int,
+        Np_i: int,
+        Nx: int,
+        Ny: int,
+        Nz: int,
+        td: str,
     ) -> None:
         """
         Enhanced visualization of Hermite coefficients at k=1 mode.
@@ -133,9 +146,11 @@ class EPW1D(BaseSpectrax1D):
         For 1D1V problems, only one Hermite mode dimension is active and visible.
 
         Args:
-            Ck: Distribution function coefficients (nt, Ns, Np, Nm, Nn, Ny, Nx, Nz)
+            Ck_electrons: Electron distribution function coefficients (nt, Np_e, Nm_e, Nn_e, Ny, Nx, Nz)
+            Ck_ions: Ion distribution function coefficients (nt, Np_i, Nm_i, Nn_i, Ny, Nx, Nz)
             t_array: Time array
-            Nn, Nm, Np: Hermite mode dimensions
+            Nn_e, Nm_e, Np_e: Electron Hermite mode dimensions
+            Nn_i, Nm_i, Np_i: Ion Hermite mode dimensions
             Nx, Ny, Nz: Spatial grid dimensions
             td: Temporary directory for plots
         """
@@ -148,34 +163,33 @@ class EPW1D(BaseSpectrax1D):
         center_z = (Nz - 1) // 2
 
         if center_x + 1 < Nx:
-            # Extract k=1 mode for all time steps and all species/Hermite modes
-            # Ck shape: (nt, Ns, Np, Nm, Nn, Ny, Nx, Nz)
-            # Extract at kx=1: Ck[:, :, :, :, :, center_y, center_x+1, center_z]
-            # Result shape: (nt, Ns, Np, Nm, Nn)
-            kx1_mode = Ck[:, :, :, :, :, center_y, center_x + 1, center_z]
+            # Extract k=1 mode for all time steps and all Hermite modes
+            # Ck shape per species: (nt, Np, Nm, Nn, Ny, Nx, Nz)
+            # Extract at kx=1: Ck[:, :, :, :, center_y, center_x+1, center_z]
+            # Result shape: electrons (nt, Np_e, Nm_e, Nn_e), ions (nt, Np_i, Nm_i, Nn_i)
+            kx1_electrons = Ck_electrons[:, :, :, :, center_y, center_x + 1, center_z]
+            kx1_ions = Ck_ions[:, :, :, :, center_y, center_x + 1, center_z]
 
-            # Flatten Hermite modes for each species: (nt, Ns, Np*Nm*Nn)
-            nt = kx1_mode.shape[0]
-            kx1_mode_flat = kx1_mode.reshape(nt, 2, Np * Nm * Nn)
+            # Flatten Hermite modes with per-species dimensions
+            nt = kx1_electrons.shape[0]
+            electron_modes = kx1_electrons.reshape(nt, Np_e * Nm_e * Nn_e)
+            ion_modes = kx1_ions.reshape(nt, Np_i * Nm_i * Nn_i)
 
-            # Separate electron (species 0) and ion (species 1) contributions
-            electron_modes = kx1_mode_flat[:, 0, :]  # (nt, Np*Nm*Nn)
-            ion_modes = kx1_mode_flat[:, 1, :]  # (nt, Np*Nm*Nn)
-
-            # Create Hermite mode index array
-            hermite_mode_indices = np.arange(Nn * Nm * Np)
+            # Create per-species Hermite mode index arrays
+            hermite_mode_indices_e = np.arange(Nn_e * Nm_e * Np_e)
+            hermite_mode_indices_i = np.arange(Nn_i * Nm_i * Np_i)
 
             # Create xarray DataArrays for easier plotting
             electron_amp_da = xr.DataArray(
                 np.abs(electron_modes),
-                coords={"t": t_array, "m": hermite_mode_indices},
+                coords={"t": t_array, "m": hermite_mode_indices_e},
                 dims=["t", "m"],
                 name="electron_amplitude",
             )
 
             ion_amp_da = xr.DataArray(
                 np.abs(ion_modes),
-                coords={"t": t_array, "m": hermite_mode_indices},
+                coords={"t": t_array, "m": hermite_mode_indices_i},
                 dims=["t", "m"],
                 name="ion_amplitude",
             )
@@ -260,9 +274,12 @@ class EPW1D(BaseSpectrax1D):
         Nx = int(self.cfg["grid"]["Nx"])
         Ny = int(self.cfg["grid"]["Ny"])
         Nz = int(self.cfg["grid"]["Nz"])
-        Nn = int(self.cfg["grid"]["Nn"])
-        Nm = int(self.cfg["grid"]["Nm"])
-        Np = int(self.cfg["grid"]["Np"])
+        Nn_e = int(self.cfg["grid"]["Nn_electrons"])
+        Nm_e = int(self.cfg["grid"]["Nm_electrons"])
+        Np_e = int(self.cfg["grid"]["Np_electrons"])
+        Nn_i = int(self.cfg["grid"]["Nn_ions"])
+        Nm_i = int(self.cfg["grid"]["Nm_ions"])
+        Np_i = int(self.cfg["grid"]["Np_ions"])
 
         # Process EPW-specific diagnostics if field data is available
         if "fields_only" in sol.ys:
@@ -297,10 +314,16 @@ class EPW1D(BaseSpectrax1D):
         # Process enhanced Hermite coefficient visualization if distribution data is available
         if "hermite" in sol.ys or "distribution" in sol.ys:
             key = "hermite" if "hermite" in sol.ys else "distribution"
-            Ck_array = np.asarray(sol.ys[key])
+            species_dict = sol.ys[key]
             t_array = sol.ts[key]
 
+            # Extract per-species arrays
+            Ck_electrons = np.asarray(species_dict["electrons"])
+            Ck_ions = np.asarray(species_dict["ions"])
+
             # Create enhanced Hermite coefficient plot
-            self._plot_hermite_coefficients_enhanced(Ck_array, t_array, Nn, Nm, Np, Nx, Ny, Nz, td)
+            self._plot_hermite_coefficients_enhanced(
+                Ck_electrons, Ck_ions, t_array, Nn_e, Nm_e, Np_e, Nn_i, Nm_i, Np_i, Nx, Ny, Nz, td
+            )
 
         return result

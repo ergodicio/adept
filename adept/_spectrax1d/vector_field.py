@@ -32,17 +32,13 @@ class SpectraxVectorField:
 
     Args:
         Nx, Ny, Nz: Number of Fourier modes per spatial dimension
-        Nn, Nm, Np: Number of Hermite modes per velocity dimension
+        Nn_electrons, Nm_electrons, Np_electrons: Electron Hermite modes per velocity dimension
+        Nn_ions, Nm_ions, Np_ions: Ion Hermite modes per velocity dimension
         Ns: Number of species
         xax: Real-space x grid for driver computation
         driver_config: Driver configuration dict from YAML
-        Lx, Ly, Lz: Domain sizes
-        kx_grid, ky_grid, kz_grid, k2_grid: Wave vector grids
-        nabla: Gradient operator in Fourier space
-        col: Collision matrix
-        sqrt_n_plus, sqrt_n_minus: Hermite ladder operators for n-direction
-        sqrt_m_plus, sqrt_m_minus: Hermite ladder operators for m-direction
-        sqrt_p_plus, sqrt_p_minus: Hermite ladder operators for p-direction
+        grid_quantities_electrons: Dict with electron-specific ladder operators, collision matrix, k-grids
+        grid_quantities_ions: Dict with ion-specific ladder operators, collision matrix, k-grids
     """
 
     def __init__(
@@ -50,40 +46,33 @@ class SpectraxVectorField:
         Nx: int,
         Ny: int,
         Nz: int,
-        Nn: int,
-        Nm: int,
-        Np: int,
+        Nn_electrons: int,
+        Nm_electrons: int,
+        Np_electrons: int,
+        Nn_ions: int,
+        Nm_ions: int,
+        Np_ions: int,
         Ns: int,
         xax: Array,
         driver_config: dict,
-        Lx: float,
-        Ly: float,
-        Lz: float,
-        kx_grid: Array,
-        ky_grid: Array,
-        kz_grid: Array,
-        k2_grid: Array,
-        nabla: Array,
-        col: Array,
-        sqrt_n_plus: Array,
-        sqrt_n_minus: Array,
-        sqrt_m_plus: Array,
-        sqrt_m_minus: Array,
-        sqrt_p_plus: Array,
-        sqrt_p_minus: Array,
+        grid_quantities_electrons: dict,
+        grid_quantities_ions: dict,
     ):
-        """Initialize with static grid dimensions, grid quantities, and driver configuration."""
+        """Initialize with per-species mode counts and grid quantities."""
         # Store dimensions as attributes
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = Nz
-        self.Nn = Nn
-        self.Nm = Nm
-        self.Np = Np
+        self.Nn_electrons = Nn_electrons
+        self.Nm_electrons = Nm_electrons
+        self.Np_electrons = Np_electrons
+        self.Nn_ions = Nn_ions
+        self.Nm_ions = Nm_ions
+        self.Np_ions = Np_ions
         self.Ns = Ns
 
-        # Store grid quantities as class attributes (constants)
-        self.nabla = nabla
+        # Store shared grid quantities (nabla is species-independent)
+        self.nabla = grid_quantities_electrons["nabla"]
 
         # Initialize external field driver if configured
         if driver_config.get("ex"):
@@ -99,44 +88,71 @@ class SpectraxVectorField:
         # Use fftshifted format to match spectrax convention
         self.mask23 = self._compute_twothirds_mask()
 
-        # Pre-compute Hou-Li filter in Hermite space if enabled
+        # Pre-compute Hou-Li filter in Hermite space if enabled (per-species)
         filter_config = driver_config.get("hermite_filter", {})
         self.use_hermite_filter = filter_config.get("enabled", False)
         if self.use_hermite_filter:
             filter_order = filter_config.get("order", 36)
             filter_strength = filter_config.get("strength", 36.0)
             cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
-            self.hermite_filter = self._compute_houli_hermite_filter(
-                Nn, Nm, Np, cutoff_fraction, filter_strength, filter_order
+
+            self.hermite_filter_electrons = self._compute_houli_hermite_filter(
+                Nn_electrons, Nm_electrons, Np_electrons, cutoff_fraction, filter_strength, filter_order
+            )
+            self.hermite_filter_ions = self._compute_houli_hermite_filter(
+                Nn_ions, Nm_ions, Np_ions, cutoff_fraction, filter_strength, filter_order
             )
         else:
-            self.hermite_filter = None
+            self.hermite_filter_electrons = None
+            self.hermite_filter_ions = None
 
-        # Instantiate class-based Hermite-Fourier ODE system (NEW refactored approach)
-        self.hermite_fourier_ode = HermiteFourierODE(
-            Nn=Nn,
-            Nm=Nm,
-            Np=Np,
-            Ns=Ns,
-            kx_grid=kx_grid,
-            ky_grid=ky_grid,
-            kz_grid=kz_grid,
-            k2_grid=k2_grid,
-            Lx=Lx,
-            Ly=Ly,
-            Lz=Lz,
-            col=col,
-            sqrt_n_plus=sqrt_n_plus,
-            sqrt_n_minus=sqrt_n_minus,
-            sqrt_m_plus=sqrt_m_plus,
-            sqrt_m_minus=sqrt_m_minus,
-            sqrt_p_plus=sqrt_p_plus,
-            sqrt_p_minus=sqrt_p_minus,
+        # Create per-species HermiteFourierODE instances with species-specific parameters
+        gq_e = grid_quantities_electrons
+        self.hermite_fourier_ode_electrons = HermiteFourierODE(
+            Nn=Nn_electrons,
+            Nm=Nm_electrons,
+            Np=Np_electrons,
+            kx_grid=gq_e["kx_grid"],
+            ky_grid=gq_e["ky_grid"],
+            kz_grid=gq_e["kz_grid"],
+            k2_grid=gq_e["k2_grid"],
+            Lx=gq_e["Lx"],
+            Ly=gq_e["Ly"],
+            Lz=gq_e["Lz"],
+            col=gq_e["col"],
+            sqrt_n_plus=gq_e["sqrt_n_plus"],
+            sqrt_n_minus=gq_e["sqrt_n_minus"],
+            sqrt_m_plus=gq_e["sqrt_m_plus"],
+            sqrt_m_minus=gq_e["sqrt_m_minus"],
+            sqrt_p_plus=gq_e["sqrt_p_plus"],
+            sqrt_p_minus=gq_e["sqrt_p_minus"],
+            mask23=self.mask23,
+        )
+
+        gq_i = grid_quantities_ions
+        self.hermite_fourier_ode_ions = HermiteFourierODE(
+            Nn=Nn_ions,
+            Nm=Nm_ions,
+            Np=Np_ions,
+            kx_grid=gq_i["kx_grid"],
+            ky_grid=gq_i["ky_grid"],
+            kz_grid=gq_i["kz_grid"],
+            k2_grid=gq_i["k2_grid"],
+            Lx=gq_i["Lx"],
+            Ly=gq_i["Ly"],
+            Lz=gq_i["Lz"],
+            col=gq_i["col"],
+            sqrt_n_plus=gq_i["sqrt_n_plus"],
+            sqrt_n_minus=gq_i["sqrt_n_minus"],
+            sqrt_m_plus=gq_i["sqrt_m_plus"],
+            sqrt_m_minus=gq_i["sqrt_m_minus"],
+            sqrt_p_plus=gq_i["sqrt_p_plus"],
+            sqrt_p_minus=gq_i["sqrt_p_minus"],
             mask23=self.mask23,
         )
 
         # List of state variables that are complex (for unpacking/packing)
-        self.complex_state_vars = ["Ck", "Fk"]
+        self.complex_state_vars = ["Ck_electrons", "Ck_ions", "Fk"]
 
     def _compute_twothirds_mask(self) -> Array:
         """
@@ -229,6 +245,57 @@ class SpectraxVectorField:
         # Shape: (3, Ny, Nx, Nz)
         return jnp.sum(J_species, axis=1)
 
+    def _compute_plasma_current_single_species(
+        self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int
+    ) -> Array:
+        """
+        Compute the spectral Ampère-Maxwell current for a single species.
+
+        This version operates on a single species distribution function (6D array)
+        instead of the multi-species 7D array.
+
+        Args:
+            Ck: Hermite-Fourier coefficients for single species, shape (Np, Nm, Nn, Ny, Nx, Nz)
+            q: Species charge (scalar)
+            alpha: Thermal velocity scaling factors, shape (3,) = (alpha_x, alpha_y, alpha_z)
+            u: Drift velocities, shape (3,) = (u_x, u_y, u_z)
+            Nn, Nm, Np: Species-specific mode counts (for bounds checking)
+
+        Returns:
+            Current density in Fourier space, shape (3, Ny, Nx, Nz) for (Jx, Jy, Jz)
+        """
+        # Extract specific Hermite modes for current calculation
+        # C0 = (p,m,n) = (0,0,0) mode - density
+        C0 = Ck[0, 0, 0]  # shape: (Ny, Nx, Nz)
+
+        # C100 = (0,0,1) mode - x-velocity moment (if Nn > 1, else zero)
+        C100 = Ck[0, 0, 1] if Nn > 1 else jnp.zeros_like(C0)
+
+        # C010 = (0,1,0) mode - y-velocity moment (if Nm > 1, else zero)
+        C010 = Ck[0, 1, 0] if Nm > 1 else jnp.zeros_like(C0)
+
+        # C001 = (1,0,0) mode - z-velocity moment (if Np > 1, else zero)
+        C001 = Ck[1, 0, 0] if Np > 1 else jnp.zeros_like(C0)
+
+        # Extract alpha and u components
+        a0, a1, a2 = alpha[0], alpha[1], alpha[2]
+        u0, u1, u2 = u[0], u[1], u[2]
+
+        # Prefactor: q * alpha_x * alpha_y * alpha_z
+        pre = q * a0 * a1 * a2
+
+        # Thermal velocity contribution: (1/sqrt(2)) * alpha_i * C_i
+        # Shape: (3, Ny, Nx, Nz)
+        term1 = (1.0 / jnp.sqrt(2.0)) * jnp.stack([a0 * C100, a1 * C010, a2 * C001], axis=0)
+
+        # Drift velocity contribution: u_i * C0
+        # Shape: (3, Ny, Nx, Nz)
+        term2 = jnp.stack([u0 * C0, u1 * C0, u2 * C0], axis=0)
+
+        # Current for this species: (term1 + term2) * prefactor
+        # Shape: (3, Ny, Nx, Nz)
+        return (term1 + term2) * pre
+
     def _compute_houli_hermite_filter(
         self, Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
     ) -> Array:
@@ -290,24 +357,23 @@ class SpectraxVectorField:
                 new_y[k] = y[k].view(jnp.float64)
         return new_y
 
-    def _pack_y_(self, y: dict[str, Array], new_y: dict[str, Array]) -> tuple[dict[str, Array], dict[str, Array]]:
+    def _pack_y_(self, new_y: dict[str, Array]) -> dict[str, Array]:
         """
-        Pack state and time derivatives back to float64 views.
+        Pack time derivatives back to float64 views.
 
         Converts complex128 arrays back to float64 views for diffrax.
 
         Args:
-            y: Original state dictionary
             new_y: Time derivatives dictionary
 
         Returns:
-            Tuple of (y, new_y) both with float64 views
+            Time derivatives dictionary with float64 views
         """
-        for k in y.keys():
-            y[k] = y[k].view(jnp.float64)
-            new_y[k] = new_y[k].view(jnp.float64)
+        packed_dy = {}
+        for k in new_y.keys():
+            packed_dy[k] = new_y[k].view(jnp.float64)
 
-        return y, new_y
+        return packed_dy
 
     def __call__(self, t: float, y: dict, args: dict) -> dict:
         """
@@ -326,8 +392,9 @@ class SpectraxVectorField:
         # Unpack state from float64 views to complex128
         new_y = self._unpack_y_(y)
 
-        # Unpack state dictionary
-        Ck = new_y["Ck"]
+        # Unpack state dictionary - per-species distribution functions
+        Ck_electrons = new_y["Ck_electrons"]
+        Ck_ions = new_y["Ck_ions"]
         Fk = new_y["Fk"]
 
         # Unpack physical parameters from args dictionary
@@ -345,32 +412,57 @@ class SpectraxVectorField:
         # Apply 2/3 dealiasing and inverse FFT to get real-space fields
         # Use fftshifted format (spectrax convention: k=0 at center)
         F = jnp.fft.ifftn(jnp.fft.ifftshift(Fk * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
-        C = jnp.fft.ifftn(jnp.fft.ifftshift(Ck * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
 
-        # Compute time derivative of distribution function
-        # Returns 7D array: (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+        # Transform each species separately
+        C_electrons = jnp.fft.ifftn(
+            jnp.fft.ifftshift(Ck_electrons * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward"
+        )
+        C_ions = jnp.fft.ifftn(
+            jnp.fft.ifftshift(Ck_ions * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward"
+        )
 
-        # NEW: Class-based approach with optional neural network closure
-        dCk_s_dt = self.hermite_fourier_ode(
-            Ck=Ck,
-            C=C,
+        # Compute time derivative of distribution function for each species
+        # Returns 6D array per species: (Np, Nm, Nn, Ny, Nx, Nz)
+
+        # Compute electron derivative using electron-specific ODE
+        dCk_electrons_dt = self.hermite_fourier_ode_electrons(
+            Ck=Ck_electrons,
+            C=C_electrons,
             F=F,
             nu=nu,
             D=D,
-            alpha_s=alpha_s,
-            u_s=u_s,
-            qs=qs,
-            Omega_cs=Omega_cs,
+            alpha=alpha_s[:3],  # Electron thermal velocities
+            u=u_s[:3],  # Electron drift velocities
+            q=qs[0],  # Electron charge
+            Omega_c=Omega_cs[0],  # Electron cyclotron frequency
             closure_n=closure_n,
             closure_m=closure_m,
             closure_p=closure_p,
         )
 
-        # Apply Hou-Li filter in Hermite space if enabled
+        # Compute ion derivative using ion-specific ODE
+        dCk_ions_dt = self.hermite_fourier_ode_ions(
+            Ck=Ck_ions,
+            C=C_ions,
+            F=F,
+            nu=nu,
+            D=D,
+            alpha=alpha_s[3:],  # Ion thermal velocities
+            u=u_s[3:],  # Ion drift velocities
+            q=qs[1],  # Ion charge
+            Omega_c=Omega_cs[1],  # Ion cyclotron frequency
+            closure_n=closure_n,
+            closure_m=closure_m,
+            closure_p=closure_p,
+        )
+
+        # Apply Hou-Li filter in Hermite space if enabled (per-species)
         if self.use_hermite_filter:
-            # Apply filter: hermite_filter has shape (Np, Nm, Nn), broadcast over (Ns, Ny, Nx, Nz)
-            filter_broadcast = self.hermite_filter[None, :, :, :, None, None, None]  # (1, Np, Nm, Nn, 1, 1, 1)
-            dCk_s_dt = dCk_s_dt * filter_broadcast
+            # Apply per-species filters: each has shape (Np, Nm, Nn), broadcast over spatial dimensions
+            filter_broadcast_e = self.hermite_filter_electrons[:, :, :, None, None, None]
+            filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
+            dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
+            dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
 
         # Compute time derivative of magnetic field (Faraday's law)
         dBk_dt = -1j * cross_product(self.nabla, Fk[:3])
@@ -383,18 +475,25 @@ class SpectraxVectorField:
             driver = jnp.zeros_like(Fk[:3])
 
         # Compute plasma current and time derivative of electric field (Ampere's law)
-        # Use our internal 7D-native plasma current calculation
-        current = self._compute_plasma_current(Ck, qs, alpha_s, u_s)
+        # Compute current for each species and sum (with species-specific mode counts)
+        current_electrons = self._compute_plasma_current_single_species(
+            Ck_electrons, qs[0], alpha_s[:3], u_s[:3], self.Nn_electrons, self.Nm_electrons, self.Np_electrons
+        )
+        current_ions = self._compute_plasma_current_single_species(
+            Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
+        )
+        current = current_electrons + current_ions
         dEk_dt = 1j * cross_product(self.nabla, Fk[3:]) - current / Omega_cs[0] + driver
 
         # Concatenate field derivatives
         dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
 
-        # Create time derivatives dictionary
-        dy_dt = {"Ck": dCk_s_dt, "Fk": dFk_dt}
+        # Create time derivatives dictionary with keys in same order as input y
+        # This ensures pytree structure matches exactly
+        dy_dt = {}
+        dy_dt["Ck_electrons"] = dCk_electrons_dt.view(jnp.float64)
+        dy_dt["Ck_ions"] = dCk_ions_dt.view(jnp.float64)
+        dy_dt["Fk"] = dFk_dt.view(jnp.float64)
 
-        # Pack state and derivatives back to float64 views
-        y, dy_dt = self._pack_y_(y, dy_dt)
-
-        # Return dictionary with time derivatives (must match state structure)
+        # Return dictionary with time derivatives (must match state structure exactly)
         return dy_dt

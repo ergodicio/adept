@@ -194,8 +194,11 @@ def test_driven_epw(klambda_D: float | None = None):
 
     # Use EPW1D class for EPW-specific analysis and postprocessing
     config["solver"] = "hermite-epw-1d"
-    # Use 512 hermite modes
-    config["grid"]["Nn"] = 512
+    # Use per-species hermite modes: high resolution for electrons, lower for ions
+    config["grid"]["hermite_modes"] = {
+        "electrons": {"Nn": 512, "Nm": 1, "Np": 1},
+        "ions": {"Nn": 32, "Nm": 1, "Np": 1}
+    }
 
     # Calculate required thermal velocity for desired klambdaD
     Lx = config["physics"]["Lx"]

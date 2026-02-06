@@ -27,7 +27,6 @@ class HermiteFourierODE:
 
     Args:
         Nn, Nm, Np: Number of Hermite modes in x, y, z velocity directions
-        Ns: Number of species
         kx_grid, ky_grid, kz_grid: Wavenumber grids (fftshifted, shape (Ny, Nx, Nz))
         k2_grid: Squared wavenumber magnitude
         Lx, Ly, Lz: Domain lengths
@@ -43,7 +42,6 @@ class HermiteFourierODE:
         Nn: int,
         Nm: int,
         Np: int,
-        Ns: int,
         kx_grid: Array,
         ky_grid: Array,
         kz_grid: Array,
@@ -65,7 +63,6 @@ class HermiteFourierODE:
         self.Nn = Nn
         self.Nm = Nm
         self.Np = Np
-        self.Ns = Ns
 
         # Store k-space grids
         self.kx_grid = kx_grid
@@ -82,12 +79,15 @@ class HermiteFourierODE:
         self.col = col
 
         # Store Hermite ladder operators
-        self.sqrt_n_plus = sqrt_n_plus
-        self.sqrt_n_minus = sqrt_n_minus
-        self.sqrt_m_plus = sqrt_m_plus
-        self.sqrt_m_minus = sqrt_m_minus
-        self.sqrt_p_plus = sqrt_p_plus
-        self.sqrt_p_minus = sqrt_p_minus
+        # IMPORTANT: Reshape to 1D if spectrax returns broadcasted shapes
+        # These should be 1D arrays of length Nn, Nm, Np respectively
+        # Use reshape instead of squeeze to ensure we always get 1D arrays
+        self.sqrt_n_plus = jnp.reshape(sqrt_n_plus, (Nn,))
+        self.sqrt_n_minus = jnp.reshape(sqrt_n_minus, (Nn,))
+        self.sqrt_m_plus = jnp.reshape(sqrt_m_plus, (Nm,))
+        self.sqrt_m_minus = jnp.reshape(sqrt_m_minus, (Nm,))
+        self.sqrt_p_plus = jnp.reshape(sqrt_p_plus, (Np,))
+        self.sqrt_p_minus = jnp.reshape(sqrt_p_minus, (Np,))
 
         # Store dealiasing mask
         self.mask23 = mask23
@@ -97,13 +97,13 @@ class HermiteFourierODE:
         Zero-pad Hermite axes (p, m, n) by 1 on each side.
 
         Args:
-            Ck: Array with shape (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+            Ck: Array with shape (Np, Nm, Nn, Ny, Nx, Nz)
 
         Returns:
-            Padded array with shape (Ns, Np+2, Nm+2, Nn+2, Ny, Nx, Nz)
+            Padded array with shape (Np+2, Nm+2, Nn+2, Ny, Nx, Nz)
         """
-        # Pad +1 on both sides for species axis 1,2,3 (p,m,n) only
-        return jnp.pad(Ck, ((0, 0), (1, 1), (1, 1), (1, 1), (0, 0), (0, 0), (0, 0)))
+        # Pad +1 on both sides for axes 0,1,2 (p,m,n) only
+        return jnp.pad(Ck, ((1, 1), (1, 1), (1, 1), (0, 0), (0, 0), (0, 0)))
 
     def shift_multi(
         self,
@@ -127,7 +127,7 @@ class HermiteFourierODE:
         Same for dm, dp.
 
         Args:
-            Ck: Array with shape (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+            Ck: Array with shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
             dn, dm, dp: Shift amounts for n, m, p indices (values in {-1, 0, +1})
             closure_n: Optional closure for n-direction (x-velocity)
             closure_m: Optional closure for m-direction (y-velocity)
@@ -136,7 +136,7 @@ class HermiteFourierODE:
         Returns:
             Shifted array with same shape, with closure-predicted or zero-padded boundaries
         """
-        Ns, Np, Nm, Nn, Ny, Nx, Nz = Ck.shape
+        Np, Nm, Nn, Ny, Nx, Nz = Ck.shape
 
         # Start with zero-padding (default behavior)
         P = self._pad_hermite_axes(Ck)
@@ -146,29 +146,29 @@ class HermiteFourierODE:
         # N-direction closure (x-velocity)
         if dn == +1 and closure_n is not None:
             # Accessing n+1 from highest mode (n=Nn-1) -> predict mode Nn
-            # closure_n should return shape (Ns, Np, Nm, 1, Ny, Nx, Nz)
+            # closure_n should return shape (Np, Nm, 1, Ny, Nx, Nz)
             C_Nn = closure_n(Ck)
             # Insert predicted mode at the right boundary of padded array
-            # P has shape (Ns, Np+2, Nm+2, Nn+2, Ny, Nx, Nz)
+            # P has shape (Np+2, Nm+2, Nn+2, Ny, Nx, Nz)
             # The boundary is at index Nn+1 (0-indexed: 0=pad, 1...Nn=data, Nn+1=pad)
-            P = P.at[:, 1:-1, 1:-1, -1, :, :, :].set(C_Nn.squeeze(axis=3))
+            P = P.at[1:-1, 1:-1, -1, :, :, :].set(C_Nn.squeeze(axis=2))
 
         # M-direction closure (y-velocity)
         if dm == +1 and closure_m is not None:
             C_Nm = closure_m(Ck)
-            P = P.at[:, 1:-1, -1, 1:-1, :, :, :].set(C_Nm.squeeze(axis=2))
+            P = P.at[1:-1, -1, 1:-1, :, :, :].set(C_Nm.squeeze(axis=1))
 
         # P-direction closure (z-velocity)
         if dp == +1 and closure_p is not None:
             C_Np = closure_p(Ck)
-            P = P.at[:, -1, 1:-1, 1:-1, :, :, :].set(C_Np.squeeze(axis=1))
+            P = P.at[-1, 1:-1, 1:-1, :, :, :].set(C_Np.squeeze(axis=0))
 
         # Extract shifted region (same as before)
         n0 = 1 + dn  # dn=+1 -> 0 ; dn=0 -> 1 ; dn=-1 -> 2
         m0 = 1 + dm
         p0 = 1 + dp
 
-        return P[:, p0 : p0 + Np, m0 : m0 + Nm, n0 : n0 + Nn, :, :, :]
+        return P[p0 : p0 + Np, m0 : m0 + Nm, n0 : n0 + Nn, :, :, :]
 
     def __call__(
         self,
@@ -177,82 +177,85 @@ class HermiteFourierODE:
         F: Array,
         nu: float,
         D: float,
-        alpha_s: Array,
-        u_s: Array,
-        qs: Array,
-        Omega_cs: Array,
+        alpha: Array,
+        u: Array,
+        q: float,
+        Omega_c: float,
         closure_n=None,
         closure_m=None,
         closure_p=None,
     ) -> Array:
         """
-        Compute dCk/dt for the Hermite-Fourier system.
+        Compute dCk/dt for the Hermite-Fourier system for a single species.
 
-        This is a direct copy of the external spectrax.Hermite_Fourier_system() function,
-        refactored to use class attributes for grid quantities.
+        This is a refactored version that operates on a single species at a time,
+        simplifying the broadcasting operations significantly.
 
         Args:
-            Ck: Spectral Hermite coefficients, shape (Ns*Np*Nm*Nn, Ny, Nx, Nz)
-            C: Real-space Hermite coefficients, shape (Ns*Np*Nm*Nn, Ny, Nx, Nz)
+            Ck: Spectral Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
+            C: Real-space Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
             F: Real-space EM fields, shape (6, Ny, Nx, Nz) = (Ex, Ey, Ez, Bx, By, Bz)
             nu: Collision frequency
             D: Hyper-diffusion coefficient
-            alpha_s: Thermal velocities, shape (Ns*3,) or (Ns, 3)
-            u_s: Drift velocities, shape (Ns*3,) or (Ns, 3)
-            qs: Species charges, shape (Ns,)
-            Omega_cs: Cyclotron frequencies, shape (Ns,)
+            alpha: Thermal velocities for single species, shape (3,) = (alpha_x, alpha_y, alpha_z)
+            u: Drift velocities for single species, shape (3,) = (u_x, u_y, u_z)
+            q: Species charge (scalar)
+            Omega_c: Cyclotron frequency (scalar)
             closure_n: Optional closure for n-direction (x-velocity)
             closure_m: Optional closure for m-direction (y-velocity)
             closure_p: Optional closure for p-direction (z-velocity)
 
         Returns:
-            dCk/dt with shape (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+            dCk/dt with shape (Np, Nm, Nn, Ny, Nx, Nz)
         """
-        # Reshape inputs to 7D format (from 4D)
-        Ck = Ck.reshape(self.Ns, self.Np, self.Nm, self.Nn, *Ck.shape[-3:])
-        C = C.reshape(self.Ns, self.Np, self.Nm, self.Nn, *C.shape[-3:])
-        F = F[:, None, None, None, None, :, :, :]  # (6,1,1,1,1,Ny,Nx,Nz) for broadcasting
-        Ny, Nx, Nz = Ck.shape[-3], Ck.shape[-2], Ck.shape[-1]
+        # Extract shape information (Ck is already in 6D format)
+        Np, Nm, Nn, Ny, Nx, Nz = Ck.shape
 
-        # Reshape and broadcast species-specific parameters
-        alpha = alpha_s.reshape(self.Ns, 3)
-        u = u_s.reshape(self.Ns, 3)
-        a0 = alpha[:, 0][:, None, None, None, None, None, None]
-        a1 = alpha[:, 1][:, None, None, None, None, None, None]
-        a2 = alpha[:, 2][:, None, None, None, None, None, None]
-        u0 = u[:, 0][:, None, None, None, None, None, None]
-        u1 = u[:, 1][:, None, None, None, None, None, None]
-        u2 = u[:, 2][:, None, None, None, None, None, None]
-        q = qs[:, None, None, None, None, None, None]
-        Omega_c = Omega_cs[:, None, None, None, None, None, None]
+        # Broadcast fields to match Hermite dimensions
+        F = F[:, None, None, None, :, :, :]  # (6, 1, 1, 1, Ny, Nx, Nz)
+
+        # Extract thermal velocity and drift velocity components (scalars broadcast naturally)
+        a0, a1, a2 = alpha[0], alpha[1], alpha[2]
+        u0, u1, u2 = u[0], u[1], u[2]
+
+        # Reshape Hermite ladder operators for broadcasting with 6D arrays (Np, Nm, Nn, Ny, Nx, Nz)
+        # sqrt_n operates on axis 2 (Nn dimension)
+        sqrt_n_plus = self.sqrt_n_plus[None, None, :, None, None, None]  # (1, 1, Nn, 1, 1, 1)
+        sqrt_n_minus = self.sqrt_n_minus[None, None, :, None, None, None]
+        # sqrt_m operates on axis 1 (Nm dimension)
+        sqrt_m_plus = self.sqrt_m_plus[None, :, None, None, None, None]  # (1, Nm, 1, 1, 1, 1)
+        sqrt_m_minus = self.sqrt_m_minus[None, :, None, None, None, None]
+        # sqrt_p operates on axis 0 (Np dimension)
+        sqrt_p_plus = self.sqrt_p_plus[:, None, None, None, None, None]  # (Np, 1, 1, 1, 1, 1)
+        sqrt_p_minus = self.sqrt_p_minus[:, None, None, None, None, None]
 
         # Compute auxiliary velocity-space coupling fields for magnetic Lorentz force
         C_aux_x = (
-            self.sqrt_m_minus * self.sqrt_p_minus * (a2 / a1 - a1 / a2) * self.shift_multi(C, dn=0, dm=-1, dp=-1)
-            + self.sqrt_m_minus * self.sqrt_p_plus * (a2 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=1)
-            - self.sqrt_m_plus * self.sqrt_p_minus * (a1 / a2) * self.shift_multi(C, dn=0, dm=1, dp=-1)
-            + jnp.sqrt(2) * self.sqrt_m_minus * (u2 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=0)
-            - jnp.sqrt(2) * self.sqrt_p_minus * (u1 / a2) * self.shift_multi(C, dn=0, dm=0, dp=-1)
+            sqrt_m_minus * sqrt_p_minus * (a2 / a1 - a1 / a2) * self.shift_multi(C, dn=0, dm=-1, dp=-1)
+            + sqrt_m_minus * sqrt_p_plus * (a2 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=1)
+            - sqrt_m_plus * sqrt_p_minus * (a1 / a2) * self.shift_multi(C, dn=0, dm=1, dp=-1)
+            + jnp.sqrt(2) * sqrt_m_minus * (u2 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=0)
+            - jnp.sqrt(2) * sqrt_p_minus * (u1 / a2) * self.shift_multi(C, dn=0, dm=0, dp=-1)
         )
 
         C_aux_y = (
-            self.sqrt_n_minus * self.sqrt_p_minus * (a0 / a2 - a2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=-1)
-            + self.sqrt_n_plus * self.sqrt_p_minus * (a0 / a2) * self.shift_multi(C, dn=1, dm=0, dp=-1)
-            - self.sqrt_n_minus * self.sqrt_p_plus * (a2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=1)
-            + jnp.sqrt(2) * self.sqrt_p_minus * (u0 / a2) * self.shift_multi(C, dn=0, dm=0, dp=-1)
-            - jnp.sqrt(2) * self.sqrt_n_minus * (u2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=0)
+            sqrt_n_minus * sqrt_p_minus * (a0 / a2 - a2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=-1)
+            + sqrt_n_plus * sqrt_p_minus * (a0 / a2) * self.shift_multi(C, dn=1, dm=0, dp=-1)
+            - sqrt_n_minus * sqrt_p_plus * (a2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=1)
+            + jnp.sqrt(2) * sqrt_p_minus * (u0 / a2) * self.shift_multi(C, dn=0, dm=0, dp=-1)
+            - jnp.sqrt(2) * sqrt_n_minus * (u2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=0)
         )
 
         C_aux_z = (
-            self.sqrt_n_minus * self.sqrt_m_minus * (a1 / a0 - a0 / a1) * self.shift_multi(C, dn=-1, dm=-1, dp=0)
-            + self.sqrt_n_minus * self.sqrt_m_plus * (a1 / a0) * self.shift_multi(C, dn=-1, dm=1, dp=0)
-            - self.sqrt_n_plus * self.sqrt_m_minus * (a0 / a1) * self.shift_multi(C, dn=1, dm=-1, dp=0)
-            + jnp.sqrt(2) * self.sqrt_n_minus * (u1 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=0)
-            - jnp.sqrt(2) * self.sqrt_m_minus * (u0 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=0)
+            sqrt_n_minus * sqrt_m_minus * (a1 / a0 - a0 / a1) * self.shift_multi(C, dn=-1, dm=-1, dp=0)
+            + sqrt_n_minus * sqrt_m_plus * (a1 / a0) * self.shift_multi(C, dn=-1, dm=1, dp=0)
+            - sqrt_n_plus * sqrt_m_minus * (a0 / a1) * self.shift_multi(C, dn=1, dm=-1, dp=0)
+            + jnp.sqrt(2) * sqrt_n_minus * (u1 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=0)
+            - jnp.sqrt(2) * sqrt_m_minus * (u0 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=0)
         )
 
         # Collision term (hypercollisional damping)
-        Col = -nu * self.col[None, :, :, :, None, None, None] * Ck
+        Col = -nu * self.col[:, :, :, None, None, None] * Ck
 
         # Diffusion term (high-k stabilization)
         Diff = -D * self.k2_grid * Ck
@@ -264,10 +267,10 @@ class HermiteFourierODE:
             -(self.kx_grid * (1j / self.Lx))
             * a0
             * (
-                self.sqrt_n_plus
+                sqrt_n_plus
                 / jnp.sqrt(2)
                 * self.shift_multi(Ck, dn=1, dm=0, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
-                + self.sqrt_n_minus
+                + sqrt_n_minus
                 / jnp.sqrt(2)
                 * self.shift_multi(Ck, dn=-1, dm=0, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
                 + (u0 / a0) * Ck
@@ -276,10 +279,10 @@ class HermiteFourierODE:
             - (self.ky_grid * (1j / self.Ly))
             * a1
             * (
-                self.sqrt_m_plus
+                sqrt_m_plus
                 / jnp.sqrt(2)
                 * self.shift_multi(Ck, dn=0, dm=1, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
-                + self.sqrt_m_minus
+                + sqrt_m_minus
                 / jnp.sqrt(2)
                 * self.shift_multi(Ck, dn=0, dm=-1, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
                 + (u1 / a1) * Ck
@@ -288,10 +291,10 @@ class HermiteFourierODE:
             - (self.kz_grid * 1j / self.Lz)
             * a2
             * (
-                self.sqrt_p_plus
+                sqrt_p_plus
                 / jnp.sqrt(2)
                 * self.shift_multi(Ck, dn=0, dm=0, dp=1, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
-                + self.sqrt_p_minus
+                + sqrt_p_minus
                 / jnp.sqrt(2)
                 * self.shift_multi(Ck, dn=0, dm=0, dp=-1, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
                 + (u2 / a2) * Ck
@@ -302,9 +305,9 @@ class HermiteFourierODE:
             * (
                 jnp.fft.fftshift(
                     jnp.fft.fftn(
-                        (self.sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
-                        + (self.sqrt_m_minus * jnp.sqrt(2) / a1) * F[1] * self.shift_multi(C, dn=0, dm=-1, dp=0)
-                        + (self.sqrt_p_minus * jnp.sqrt(2) / a2) * F[2] * self.shift_multi(C, dn=0, dm=0, dp=-1)
+                        (sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
+                        + (sqrt_m_minus * jnp.sqrt(2) / a1) * F[1] * self.shift_multi(C, dn=0, dm=-1, dp=0)
+                        + (sqrt_p_minus * jnp.sqrt(2) / a2) * F[2] * self.shift_multi(C, dn=0, dm=0, dp=-1)
                         + F[3] * C_aux_x
                         + F[4] * C_aux_y
                         + F[5] * C_aux_z,
