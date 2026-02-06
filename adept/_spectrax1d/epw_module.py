@@ -305,11 +305,22 @@ class EPW1D(BaseSpectrax1D):
                 avg_frequency = float(np.mean(frequencies))
                 final_frequency = float(frequencies[-1])
 
+                # Compute average electrostatic energy over final 50 ωₚt
+                # Electrostatic energy density ∝ |E|² (summed over all spatial modes)
+                Ex_all = Fk_array[:, 0, :, :, :]  # Shape: (nt, Ny, Nx, Nz)
+                electrostatic_energy = np.sum(np.abs(Ex_all) ** 2, axis=(1, 2, 3))  # Sum over spatial modes
+
+                # Find time indices for final 50 ωₚt
+                t_final_window = 50.0
+                time_mask = t_array >= (t_array[-1] - t_final_window)
+                avg_es_energy_final_50 = float(np.mean(electrostatic_energy[time_mask]))
+
                 # Add to metrics
                 result["metrics"]["epw_avg_amplitude_k1"] = avg_amplitude
                 result["metrics"]["epw_final_amplitude_k1"] = final_amplitude
                 result["metrics"]["epw_avg_frequency_k1"] = avg_frequency
                 result["metrics"]["epw_final_frequency_k1"] = final_frequency
+                result["metrics"]["avg_electrostatic_energy_final_50"] = avg_es_energy_final_50
 
         # Process enhanced Hermite coefficient visualization if distribution data is available
         if "hermite" in sol.ys or "distribution" in sol.ys:
