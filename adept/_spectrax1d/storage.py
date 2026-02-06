@@ -74,7 +74,7 @@ def store_distribution_timeseries(cfg: dict, Ck_array: np.ndarray, t_array: np.n
 
     Args:
         cfg: Configuration dict with grid info
-        Ck_array: Array of shape (nt, Ns*Nn*Nm*Np, Ny, Nx, Nz)
+        Ck_array: Array of shape (nt, Ns, Np, Nm, Nn, Ny, Nx, Nz)
         t_array: Time axis for the saved data
         binary_dir: Directory path for saving netCDF files
 
@@ -90,6 +90,10 @@ def store_distribution_timeseries(cfg: dict, Ck_array: np.ndarray, t_array: np.n
     Ny = int(cfg["grid"]["Ny"])
     Nz = int(cfg["grid"]["Nz"])
 
+    # Reshape from 7D to 4D for storage: (nt, Ns, Np, Nm, Nn, Ny, Nx, Nz) -> (nt, Ns*Np*Nm*Nn, Ny, Nx, Nz)
+    nt = Ck_array.shape[0]
+    Ck_array_4d = Ck_array.reshape(nt, Ns * Np * Nm * Nn, Ny, Nx, Nz)
+
     # Create coordinate arrays
     hermite_modes = np.arange(Ns * Nn * Nm * Np)
     kx = np.fft.fftshift(np.fft.fftfreq(Nx, d=1.0 / Nx))  # Sort kx in increasing order
@@ -97,7 +101,7 @@ def store_distribution_timeseries(cfg: dict, Ck_array: np.ndarray, t_array: np.n
     kz = np.arange(Nz)
 
     # Shift the data to match the sorted kx coordinate
-    Ck_array_shifted = np.fft.fftshift(Ck_array, axes=-2)  # Shift along kx dimension
+    Ck_array_shifted = np.fft.fftshift(Ck_array_4d, axes=-2)  # Shift along kx dimension
 
     # Create Dataset with Hermite coefficients
     Ck_ds = xr.Dataset(
@@ -154,10 +158,11 @@ def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
         EM_energy = E_energy + B_energy
 
         # Get density from n=0 Hermite mode (equilibrium)
-        # Electron density (first Nn*Nm*Np modes)
-        ne_k0 = Ck[0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
-        # Ion density (second Nn*Nm*Np modes)
-        ni_k0 = Ck[Nn * Nm * Np, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
+        # Ck shape: (Ns, Np, Nm, Nn, Ny, Nx, Nz)
+        # Electron density (species 0, (p,m,n)=(0,0,0) Hermite mode at k=0)
+        ne_k0 = Ck[0, 0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
+        # Ion density (species 1, (p,m,n)=(0,0,0) Hermite mode at k=0)
+        ni_k0 = Ck[1, 0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
 
         return {
             "EM_energy": EM_energy,

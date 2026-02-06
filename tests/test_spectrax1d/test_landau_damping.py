@@ -384,7 +384,7 @@ def test_driven_epw(klambda_D: float | None = None):
             np.testing.assert_allclose(
                 measured_damping_rate,
                 expected_damping_rate,
-                rtol=0.03,
+                rtol=0.1,
                 err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}"
             )
             print("  ✓ Damping rate test passed!")

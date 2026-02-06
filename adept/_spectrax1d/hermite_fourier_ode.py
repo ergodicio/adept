@@ -92,8 +92,7 @@ class HermiteFourierODE:
         # Store dealiasing mask
         self.mask23 = mask23
 
-    @staticmethod
-    def _pad_hermite_axes(Ck: Array) -> Array:
+    def _pad_hermite_axes(self, Ck: Array) -> Array:
         """
         Zero-pad Hermite axes (p, m, n) by 1 on each side.
 
@@ -106,10 +105,21 @@ class HermiteFourierODE:
         # Pad +1 on both sides for species axis 1,2,3 (p,m,n) only
         return jnp.pad(Ck, ((0, 0), (1, 1), (1, 1), (1, 1), (0, 0), (0, 0), (0, 0)))
 
-    @staticmethod
-    def shift_multi(Ck: Array, dn: int = 0, dm: int = 0, dp: int = 0) -> Array:
+    def shift_multi(
+        self,
+        Ck: Array,
+        dn: int = 0,
+        dm: int = 0,
+        dp: int = 0,
+        closure_n = None,
+        closure_m = None,
+        closure_p = None,
+    ) -> Array:
         """
-        Zero-padded shift along Hermite axes (n, m, p).
+        Zero-padded shift along Hermite axes (n, m, p) with optional neural network closure.
+
+        If a closure function is provided for a direction, it will be called to predict
+        the value of out-of-range modes instead of using zero padding.
 
         dn=+1 means 'use source at n-1' (upshift in n)
         dn=-1 means 'use source at n+1' (downshift in n)
@@ -119,14 +129,41 @@ class HermiteFourierODE:
         Args:
             Ck: Array with shape (Ns, Np, Nm, Nn, Ny, Nx, Nz)
             dn, dm, dp: Shift amounts for n, m, p indices (values in {-1, 0, +1})
+            closure_n: Optional closure for n-direction (x-velocity)
+            closure_m: Optional closure for m-direction (y-velocity)
+            closure_p: Optional closure for p-direction (z-velocity)
 
         Returns:
-            Shifted array with same shape, zero-padded at boundaries
+            Shifted array with same shape, with closure-predicted or zero-padded boundaries
         """
-        P = HermiteFourierODE._pad_hermite_axes(Ck)
-        _, Np, Nm, Nn, _, _, _ = Ck.shape
+        Ns, Np, Nm, Nn, Ny, Nx, Nz = Ck.shape
 
-        # Start indices in the padded array
+        # Start with zero-padding (default behavior)
+        P = self._pad_hermite_axes(Ck)
+
+        # Apply neural network closures for out-of-range modes
+
+        # N-direction closure (x-velocity)
+        if dn == +1 and closure_n is not None:
+            # Accessing n+1 from highest mode (n=Nn-1) -> predict mode Nn
+            # closure_n should return shape (Ns, Np, Nm, 1, Ny, Nx, Nz)
+            C_Nn = closure_n(Ck)
+            # Insert predicted mode at the right boundary of padded array
+            # P has shape (Ns, Np+2, Nm+2, Nn+2, Ny, Nx, Nz)
+            # The boundary is at index Nn+1 (0-indexed: 0=pad, 1...Nn=data, Nn+1=pad)
+            P = P.at[:, 1:-1, 1:-1, -1, :, :, :].set(C_Nn.squeeze(axis=3))
+
+        # M-direction closure (y-velocity)
+        if dm == +1 and closure_m is not None:
+            C_Nm = closure_m(Ck)
+            P = P.at[:, 1:-1, -1, 1:-1, :, :, :].set(C_Nm.squeeze(axis=2))
+
+        # P-direction closure (z-velocity)
+        if dp == +1 and closure_p is not None:
+            C_Np = closure_p(Ck)
+            P = P.at[:, -1, 1:-1, 1:-1, :, :, :].set(C_Np.squeeze(axis=1))
+
+        # Extract shifted region (same as before)
         n0 = 1 + dn  # dn=+1 -> 0 ; dn=0 -> 1 ; dn=-1 -> 2
         m0 = 1 + dm
         p0 = 1 + dp
@@ -144,6 +181,9 @@ class HermiteFourierODE:
         u_s: Array,
         qs: Array,
         Omega_cs: Array,
+        closure_n=None,
+        closure_m=None,
+        closure_p=None,
     ) -> Array:
         """
         Compute dCk/dt for the Hermite-Fourier system.
@@ -161,6 +201,9 @@ class HermiteFourierODE:
             u_s: Drift velocities, shape (Ns*3,) or (Ns, 3)
             qs: Species charges, shape (Ns,)
             Omega_cs: Cyclotron frequencies, shape (Ns,)
+            closure_n: Optional closure for n-direction (x-velocity)
+            closure_m: Optional closure for m-direction (y-velocity)
+            closure_p: Optional closure for p-direction (z-velocity)
 
         Returns:
             dCk/dt with shape (Ns, Np, Nm, Nn, Ny, Nx, Nz)
@@ -215,30 +258,42 @@ class HermiteFourierODE:
         Diff = -D * self.k2_grid * Ck
 
         # ODEs for Hermite-Fourier coefficients
-        # Closure is achieved by setting to zero coefficients with index out of range
+        # Closure is achieved by setting to zero coefficients with index out of range (or using NN prediction)
         dCk_s_dt = (
             # Spatial advection in x-direction
             -(self.kx_grid * (1j / self.Lx))
             * a0
             * (
-                self.sqrt_n_plus / jnp.sqrt(2) * self.shift_multi(Ck, dn=1, dm=0, dp=0)
-                + self.sqrt_n_minus / jnp.sqrt(2) * self.shift_multi(Ck, dn=-1, dm=0, dp=0)
+                self.sqrt_n_plus
+                / jnp.sqrt(2)
+                * self.shift_multi(Ck, dn=1, dm=0, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
+                + self.sqrt_n_minus
+                / jnp.sqrt(2)
+                * self.shift_multi(Ck, dn=-1, dm=0, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
                 + (u0 / a0) * Ck
             )
             # Spatial advection in y-direction
             - (self.ky_grid * (1j / self.Ly))
             * a1
             * (
-                self.sqrt_m_plus / jnp.sqrt(2) * self.shift_multi(Ck, dn=0, dm=1, dp=0)
-                + self.sqrt_m_minus / jnp.sqrt(2) * self.shift_multi(Ck, dn=0, dm=-1, dp=0)
+                self.sqrt_m_plus
+                / jnp.sqrt(2)
+                * self.shift_multi(Ck, dn=0, dm=1, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
+                + self.sqrt_m_minus
+                / jnp.sqrt(2)
+                * self.shift_multi(Ck, dn=0, dm=-1, dp=0, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
                 + (u1 / a1) * Ck
             )
             # Spatial advection in z-direction
             - (self.kz_grid * 1j / self.Lz)
             * a2
             * (
-                self.sqrt_p_plus / jnp.sqrt(2) * self.shift_multi(Ck, dn=0, dm=0, dp=1)
-                + self.sqrt_p_minus / jnp.sqrt(2) * self.shift_multi(Ck, dn=0, dm=0, dp=-1)
+                self.sqrt_p_plus
+                / jnp.sqrt(2)
+                * self.shift_multi(Ck, dn=0, dm=0, dp=1, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
+                + self.sqrt_p_minus
+                / jnp.sqrt(2)
+                * self.shift_multi(Ck, dn=0, dm=0, dp=-1, closure_n=closure_n, closure_m=closure_m, closure_p=closure_p)
                 + (u2 / a2) * Ck
             )
             # Lorentz force (E-field + B-field coupling via auxiliary fields)
