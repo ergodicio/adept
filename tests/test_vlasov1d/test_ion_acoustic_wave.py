@@ -119,6 +119,8 @@ def test_ion_acoustic_simulation_runs(time_integrator):
     config["grid"]["dt"] = 0.1
     config["save"]["fields"]["t"]["tmax"] = 100.0
     config["save"]["fields"]["t"]["nt"] = 101
+    config["save"]["electron"]["t"]["tmax"] = 100.0
+    config["save"]["ion"]["t"]["tmax"] = 100.0
 
     # Modify config for this test
     config["terms"]["time"] = time_integrator
@@ -183,13 +185,10 @@ def test_ion_acoustic_dispersion(time_integrator):
     result, datasets, run_id = exo(None)
     solver_result = result["solver result"]
 
-    # Get ion density from the "n" field (computed from electron, but we want ion)
-    # The fields save includes "n" which is electron density
-    # We need to compute ion density from the default scalars or use a different approach
-    #
-    # For now, use the electron density "n" as a proxy since both oscillate together
+    # Get electron density from species-specific moments
+    # Use electron density as a proxy since both oscillate together
     # in an ion acoustic wave (quasineutral oscillation)
-    n_field = solver_result.ys["fields"]["n"]
+    n_field = solver_result.ys["fields"]["electron"]["n"]
     time_axis = solver_result.ts["fields"]
 
     # Measure frequency from density oscillations
