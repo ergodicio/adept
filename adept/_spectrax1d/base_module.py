@@ -142,9 +142,7 @@ class BaseSpectrax1D(ADEPTModule):
             denom = (N - 1) * (N - 2) * (N - 3)
             return jnp.where(N > 3, term / denom, 0.0)
 
-        col = (
-            safe_collision_term(Nn, n_grid) + safe_collision_term(Nm, m_grid) + safe_collision_term(Np, p_grid)
-        )
+        col = safe_collision_term(Nn, n_grid) + safe_collision_term(Nm, m_grid) + safe_collision_term(Np, p_grid)
 
         return {
             "sqrt_n_plus": sqrt_n_plus,
@@ -954,11 +952,7 @@ class BaseSpectrax1D(ADEPTModule):
         for i, name in enumerate(field_names):
             # Apply inverse FFT and take real part
             # For 1D case (Ny=1, Nz=1), this is essentially just ifft along x
-            field_real = np.real(
-                np.fft.ifftn(
-                    Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1), norm="forward"
-                )
-            )
+            field_real = np.real(np.fft.ifftn(Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1), norm="forward"))
             fields_real[name] = field_real
 
         return fields_real

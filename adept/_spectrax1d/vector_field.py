@@ -221,19 +221,15 @@ class SpectraxVectorField:
 
         # Thermal velocity contribution: (1/sqrt(2)) * alpha_i * C_i
         # Shape: (3, Ns, Ny, Nx, Nz)
-        term1 = (1.0 / jnp.sqrt(2.0)) * jnp.stack([
-            a0[:, None, None, None] * C100,
-            a1[:, None, None, None] * C010,
-            a2[:, None, None, None] * C001
-        ], axis=0)
+        term1 = (1.0 / jnp.sqrt(2.0)) * jnp.stack(
+            [a0[:, None, None, None] * C100, a1[:, None, None, None] * C010, a2[:, None, None, None] * C001], axis=0
+        )
 
         # Drift velocity contribution: u_i * C0
         # Shape: (3, Ns, Ny, Nx, Nz)
-        term2 = jnp.stack([
-            u0[:, None, None, None] * C0,
-            u1[:, None, None, None] * C0,
-            u2[:, None, None, None] * C0
-        ], axis=0)
+        term2 = jnp.stack(
+            [u0[:, None, None, None] * C0, u1[:, None, None, None] * C0, u2[:, None, None, None] * C0], axis=0
+        )
 
         # Current per species: (term1 + term2) * prefactor
         # Shape: (3, Ns, Ny, Nx, Nz)

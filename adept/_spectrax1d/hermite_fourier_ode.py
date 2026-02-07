@@ -27,7 +27,7 @@ class HermiteFourierODE:
 
     Args:
         Nn, Nm, Np: Number of Hermite modes in x, y, z velocity directions
-        kx_grid, ky_grid, kz_grid: Wavenumber grids (fftshifted, shape (Ny, Nx, Nz))
+        kx_grid, ky_grid, kz_grid: Wavenumber grids (standard FFT ordering, shape (Ny, Nx, Nz))
         k2_grid: Squared wavenumber magnitude
         Lx, Ly, Lz: Domain lengths
         col: Collision matrix, shape (Np, Nm, Nn)
@@ -111,9 +111,9 @@ class HermiteFourierODE:
         dn: int = 0,
         dm: int = 0,
         dp: int = 0,
-        closure_n = None,
-        closure_m = None,
-        closure_p = None,
+        closure_n=None,
+        closure_m=None,
+        closure_p=None,
     ) -> Array:
         """
         Zero-padded shift along Hermite axes (n, m, p) with optional neural network closure.
@@ -303,18 +303,15 @@ class HermiteFourierODE:
             + q
             * Omega_c
             * (
-                jnp.fft.fftshift(
-                    jnp.fft.fftn(
-                        (sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
-                        + (sqrt_m_minus * jnp.sqrt(2) / a1) * F[1] * self.shift_multi(C, dn=0, dm=-1, dp=0)
-                        + (sqrt_p_minus * jnp.sqrt(2) / a2) * F[2] * self.shift_multi(C, dn=0, dm=0, dp=-1)
-                        + F[3] * C_aux_x
-                        + F[4] * C_aux_y
-                        + F[5] * C_aux_z,
-                        axes=(-3, -2, -1),
-                        norm="forward",
-                    ),
+                jnp.fft.fftn(
+                    (sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
+                    + (sqrt_m_minus * jnp.sqrt(2) / a1) * F[1] * self.shift_multi(C, dn=0, dm=-1, dp=0)
+                    + (sqrt_p_minus * jnp.sqrt(2) / a2) * F[2] * self.shift_multi(C, dn=0, dm=0, dp=-1)
+                    + F[3] * C_aux_x
+                    + F[4] * C_aux_y
+                    + F[5] * C_aux_z,
                     axes=(-3, -2, -1),
+                    norm="forward",
                 )
                 * self.mask23
             )

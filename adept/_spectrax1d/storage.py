@@ -121,7 +121,9 @@ def store_species_distribution_timeseries(
 
     # Add metadata
     Ck_ds[f"Ck_{species_name}"].attrs["long_name"] = f"{species_name.capitalize()} Hermite-Fourier coefficients"
-    Ck_ds[f"Ck_{species_name}"].attrs["description"] = f"Distribution function for {species_name} in Hermite-Fourier basis"
+    Ck_ds[f"Ck_{species_name}"].attrs["description"] = (
+        f"Distribution function for {species_name} in Hermite-Fourier basis"
+    )
     Ck_ds[f"Ck_{species_name}"].attrs["species"] = species_name
 
     # Save to netCDF

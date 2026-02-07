@@ -20,8 +20,8 @@ from adept._spectrax1d.epw_module import EPW1D
 from adept._spectrax1d.vector_field import SpectraxVectorField
 
 __all__ = [
+    "EPW1D",
     "BaseSpectrax1D",
     "Driver",
-    "EPW1D",
     "SpectraxVectorField",
 ]
