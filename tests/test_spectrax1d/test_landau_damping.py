@@ -6,6 +6,7 @@ Test Landau damping for Spectrax-1D using Hermite-Fourier decomposition.
 This test verifies that the spectrax-1d ADEPTModule correctly reproduces
 driven EPW dynamics for klambda_D = 0.266.
 """
+
 from jax import config
 
 config.update("jax_enable_x64", True)
@@ -35,9 +36,9 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     # Random selection if not specified
     if klambda_D is None:
         klambda_D = np.random.uniform(0.26, 0.4)
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Randomly selected klambda_D = {klambda_D:.4f}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
     # Load simplified test config
     with open("tests/test_spectrax1d/configs/landau-damping-test.yaml") as file:
@@ -72,8 +73,9 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     print(f"  Calculated klambda_D = {calculated_klambdaD:.4f}")
 
     # Verify calculation is correct
-    np.testing.assert_allclose(calculated_klambdaD, klambda_D, rtol=1e-10,
-                               err_msg="Config update failed: klambdaD mismatch")
+    np.testing.assert_allclose(
+        calculated_klambdaD, klambda_D, rtol=1e-10, err_msg="Config update failed: klambdaD mismatch"
+    )
 
     # Get theoretical complex frequency
     # Pass klambda_D directly since the dispersion function expects k*lambda_D
@@ -81,7 +83,7 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
         wp_e=1.0,
         vth_e=1.0,  # Normalized to 1 since klambda_D already includes vth scaling
         k0=klambda_D,
-        maxwellian_convention_factor=2.0
+        maxwellian_convention_factor=2.0,
     )
 
     expected_damping_rate = np.imag(theoretical_root)
@@ -149,7 +151,9 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     print(f"\nDamping rate measurement:")
     print(f"  Measured: {measured_damping_rate:.6f}")
     print(f"  Expected: {expected_damping_rate:.6f}")
-    print(f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%")
+    print(
+        f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"
+    )
 
     # Assert that measured damping rate is close to expected
     # Allow 25% relative error since:
@@ -160,7 +164,7 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
         measured_damping_rate,
         expected_damping_rate,
         rtol=0.01,
-        err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}"
+        err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}",
     )
 
     print("\n✓ Test passed!")
@@ -184,9 +188,9 @@ def test_driven_epw(klambda_D: float | None = None):
     # Random selection if not specified
     if klambda_D is None:
         klambda_D = np.random.uniform(0.26, 0.34)
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Randomly selected klambda_D = {klambda_D:.4f}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
     # Load the full config with driver
     with open("configs/spectrax-1d/landau-damping.yaml") as file:
@@ -195,10 +199,7 @@ def test_driven_epw(klambda_D: float | None = None):
     # Use EPW1D class for EPW-specific analysis and postprocessing
     config["solver"] = "hermite-epw-1d"
     # Use per-species hermite modes: high resolution for electrons, lower for ions
-    config["grid"]["hermite_modes"] = {
-        "electrons": {"Nn": 512, "Nm": 1, "Np": 1},
-        "ions": {"Nn": 32, "Nm": 1, "Np": 1}
-    }
+    config["grid"]["hermite_modes"] = {"electrons": {"Nn": 512, "Nm": 1, "Np": 1}, "ions": {"Nn": 32, "Nm": 1, "Np": 1}}
 
     # Calculate required thermal velocity for desired klambdaD
     Lx = config["physics"]["Lx"]
@@ -216,10 +217,7 @@ def test_driven_epw(klambda_D: float | None = None):
 
     # Calculate expected frequency and damping rate from dispersion relation
     theoretical_root = electrostatic.get_roots_to_electrostatic_dispersion(
-        wp_e=1.0,
-        vth_e=1.0,
-        k0=klambda_D,
-        maxwellian_convention_factor=2.0
+        wp_e=1.0, vth_e=1.0, k0=klambda_D, maxwellian_convention_factor=2.0
     )
     expected_frequency = np.real(theoretical_root)
     expected_damping_rate = np.imag(theoretical_root)
@@ -250,8 +248,9 @@ def test_driven_epw(klambda_D: float | None = None):
     print(f"  Calculated klambda_D = {calculated_klambdaD:.4f}")
 
     # Verify calculation is correct
-    np.testing.assert_allclose(calculated_klambdaD, klambda_D, rtol=1e-10,
-                               err_msg="Config update failed: klambdaD mismatch")
+    np.testing.assert_allclose(
+        calculated_klambdaD, klambda_D, rtol=1e-10, err_msg="Config update failed: klambdaD mismatch"
+    )
 
     print("\nDriver configuration:")
     print(f"  Wavenumber k0: {k0:.6f}")
@@ -264,8 +263,9 @@ def test_driven_epw(klambda_D: float | None = None):
     print(f"  Expected damping rate: {expected_damping_rate:.6f}")
 
     # Verify that k0 matches the fundamental mode
-    np.testing.assert_allclose(k0, k_fundamental, rtol=1e-6,
-                               err_msg=f"Driver k0={k0} doesn't match fundamental mode k={k_fundamental}")
+    np.testing.assert_allclose(
+        k0, k_fundamental, rtol=1e-6, err_msg=f"Driver k0={k0} doesn't match fundamental mode k={k_fundamental}"
+    )
 
     print(f"✓ Configuration verified and updated for klambda_D = {klambda_D:.4f}")
 
@@ -322,10 +322,7 @@ def test_driven_epw(klambda_D: float | None = None):
     driven_indices = np.where(driven_mask)[0]
 
     if len(driven_indices) > 100:
-        print(
-            f"\n--- Frequency Measurement (driven phase: "
-            f"t={driven_start_time:.1f} to {driven_end_time:.1f}) ---"
-        )
+        print(f"\n--- Frequency Measurement (driven phase: t={driven_start_time:.1f} to {driven_end_time:.1f}) ---")
 
         # Use Hilbert transform to extract instantaneous frequency
         env, freq = electrostatic.get_nlfs(Ex_k1, dt)
@@ -346,10 +343,7 @@ def test_driven_epw(klambda_D: float | None = None):
             measured_frequency,
             expected_frequency,
             rtol=0.1,
-            err_msg=(
-                f"Frequency mismatch: measured={measured_frequency:.6f}, "
-                f"expected={expected_frequency:.6f}"
-            )
+            err_msg=(f"Frequency mismatch: measured={measured_frequency:.6f}, expected={expected_frequency:.6f}"),
         )
         print("  ✓ Frequency test passed!")
 
@@ -378,14 +372,16 @@ def test_driven_epw(klambda_D: float | None = None):
 
             print(f"  Measured damping rate: {measured_damping_rate:.6f}")
             print(f"  Expected damping rate: {expected_damping_rate:.6f}")
-            print(f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%")
+            print(
+                f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"
+            )
 
             # Assert damping rate matches (allow 1% error for damping in kinetic regime)
             np.testing.assert_allclose(
                 measured_damping_rate,
                 expected_damping_rate,
                 rtol=0.1,
-                err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}"
+                err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}",
             )
             print("  ✓ Damping rate test passed!")
         else:
