@@ -300,15 +300,12 @@ def test_driven_epw(klambda_D: float | None = None):
     Fk_timeseries = sol.ys["fields_only"]  # Shape: (nt, 6, Ny, Nx, Nz)
 
     # Extract Ex at k=1 mode (complex oscillating field)
-    Nx = config["grid"]["Nx"]
-    Ny = config["grid"]["Ny"]
-    Nz = config["grid"]["Nz"]
-    center_x = (Nx - 1) // 2
-    center_y = (Ny - 1) // 2
-    center_z = (Nz - 1) // 2
+    # With standard FFT ordering, k=1 is at index 1, k=0 is at index 0
+    idx_k1 = 1  # k=1 mode at index 1 in standard FFT ordering
+    idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
 
     # Get Ex component at k=1 Fourier mode
-    Ex_k1 = Fk_timeseries[:, 0, center_y, center_x + 1, center_z]
+    Ex_k1 = Fk_timeseries[:, 0, idx_k0, idx_k1, idx_k0]
 
     print(f"\nField time series extracted:")
     print(f"  Ex_k1 shape: {Ex_k1.shape}")

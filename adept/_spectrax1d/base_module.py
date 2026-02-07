@@ -17,6 +17,25 @@ from adept._spectrax1d.storage import (
 from adept._spectrax1d.vector_field import SpectraxVectorField
 
 
+def fft_index(k_val: int, N: int) -> int:
+    """Convert signed k-value to standard FFT array index.
+
+    Args:
+        k_val: Signed wavenumber (e.g., -2, -1, 0, 1, 2)
+        N: Grid size
+
+    Returns:
+        Array index in standard FFT ordering
+
+    Examples:
+        fft_index(0, 8) = 0
+        fft_index(1, 8) = 1
+        fft_index(-1, 8) = 7
+        fft_index(-4, 8) = 4
+    """
+    return k_val if k_val >= 0 else N + k_val
+
+
 class BaseSpectrax1D(ADEPTModule):
     """
     ADEPTModule wrapper for spectrax-based Landau damping solver.
@@ -357,18 +376,21 @@ class BaseSpectrax1D(ADEPTModule):
         L = Lx * jnp.sign(nx) + Ly * jnp.sign(ny) + Lz * jnp.sign(nz)
         E_field_component = int(jnp.sign(ny) + 2 * jnp.sign(nz))
 
-        # Set field perturbation at ±k modes using fftshifted indexing (k=0 at center)
-        # Calculate center indices
-        center_x = int((Nx - 1) / 2)
-        center_y = int((Ny - 1) / 2)
-        center_z = int((Nz - 1) / 2)
-
+        # Set field perturbation at ±k modes using standard FFT indexing (k=0 at index 0)
         if n != 0 and Omega_cs[0] != 0:
             amplitude = dn * L / (4 * jnp.pi * n * Omega_cs[0])
-            # -k mode: offset negatively from center
-            Fk_0 = Fk_0.at[E_field_component, center_y - ny, center_x - nx, center_z - nz].set(amplitude)
-            # +k mode: offset positively from center
-            Fk_0 = Fk_0.at[E_field_component, center_y + ny, center_x + nx, center_z + nz].set(amplitude)
+
+            # Set -k mode
+            idx_x_minus = fft_index(-nx, Nx)
+            idx_y_minus = fft_index(-ny, Ny)
+            idx_z_minus = fft_index(-nz, Nz)
+            Fk_0 = Fk_0.at[E_field_component, idx_y_minus, idx_x_minus, idx_z_minus].set(amplitude)
+
+            # Set +k mode
+            idx_x_plus = fft_index(nx, Nx)
+            idx_y_plus = fft_index(ny, Ny)
+            idx_z_plus = fft_index(nz, Nz)
+            Fk_0 = Fk_0.at[E_field_component, idx_y_plus, idx_x_plus, idx_z_plus].set(amplitude)
 
         input_parameters["Fk_0"] = Fk_0
 
@@ -386,10 +408,14 @@ class BaseSpectrax1D(ADEPTModule):
         Ck_0_electrons = jnp.zeros((Np_e, Nm_e, Nn_e, Ny, Nx, Nz), dtype=jnp.complex128)
         Ck_0_ions = jnp.zeros((Np_i, Nm_i, Nn_i, Ny, Nx, Nz), dtype=jnp.complex128)
 
-        # Use fftshifted indexing: k=0 at center, ±k relative to center
-        center_x = int((Nx - 1) / 2)
-        center_y = int((Ny - 1) / 2)
-        center_z = int((Nz - 1) / 2)
+        # Use standard FFT indexing: k=0 at index 0
+        # Compute FFT indices for ±k modes
+        idx_x_minus = fft_index(-nx, Nx)
+        idx_y_minus = fft_index(-ny, Ny)
+        idx_z_minus = fft_index(-nz, Nz)
+        idx_x_plus = fft_index(nx, Nx)
+        idx_y_plus = fft_index(ny, Ny)
+        idx_z_plus = fft_index(nz, Nz)
 
         # Electron distribution (only (0,0,0) Hermite mode)
         # Use alpha_s[0] for electron thermal velocity (in x-direction for 1D)
@@ -398,17 +424,18 @@ class BaseSpectrax1D(ADEPTModule):
         Ce0_0 = 1 / (alpha_e**3) + 0 * 1j  # Equilibrium
         Ce0_k = 0 - 1j * (1 / (2 * alpha_e**3)) * dn  # +k mode
 
-        # Electron modes (p=0, m=0, n=0)
-        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, center_y - ny, center_x - nx, center_z - nz].set(Ce0_mk)
-        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, center_y, center_x, center_z].set(Ce0_0)
-        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, center_y + ny, center_x + nx, center_z + nz].set(Ce0_k)
+        # Electron modes (p=0, m=0, n=0 Hermite mode)
+        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, 0, 0, 0].set(Ce0_0)  # k=0 equilibrium
+        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, idx_y_minus, idx_x_minus, idx_z_minus].set(Ce0_mk)  # -k
+        Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, idx_y_plus, idx_x_plus, idx_z_plus].set(Ce0_k)  # +k
 
         # Ion distribution (only (0,0,0) Hermite mode)
         # Use alpha_s[3] for ion thermal velocity (first component in ion triplet)
         alpha_i = input_parameters["alpha_s"][3]
         Ci0_0 = 1 / (alpha_i**3) + 0 * 1j
 
-        Ck_0_ions = Ck_0_ions.at[0, 0, 0, center_y, center_x, center_z].set(Ci0_0)  # k=0 (equilibrium)
+        # Ion distribution (equilibrium only at k=0)
+        Ck_0_ions = Ck_0_ions.at[0, 0, 0, 0, 0, 0].set(Ci0_0)
 
         input_parameters["Ck_0_electrons"] = Ck_0_electrons
         input_parameters["Ck_0_ions"] = Ck_0_ions
@@ -456,10 +483,11 @@ class BaseSpectrax1D(ADEPTModule):
         Ly = input_params["Ly"]
         Lz = input_params["Lz"]
 
-        # Fourier wavenumber grids (spectrax uses fftshift convention)
-        kx_simulation = (jnp.arange(-Nx // 2, Nx // 2) + 1) * 2 * jnp.pi
-        ky_simulation = (jnp.arange(-Ny // 2, Ny // 2) + 1) * 2 * jnp.pi
-        kz_simulation = (jnp.arange(-Nz // 2, Nz // 2) + 1) * 2 * jnp.pi
+        # Fourier wavenumber grids in standard FFT ordering: [0, 1, ..., N/2-1, -N/2, ..., -1]
+        # Grid contains integer mode numbers * 2π (physical wavenumber = k_grid / L)
+        kx_simulation = jnp.fft.fftfreq(Nx) * Nx * 2 * jnp.pi
+        ky_simulation = jnp.fft.fftfreq(Ny) * Ny * 2 * jnp.pi
+        kz_simulation = jnp.fft.fftfreq(Nz) * Nz * 2 * jnp.pi
         ky_grid, kx_grid, kz_grid = jnp.meshgrid(ky_simulation, kx_simulation, kz_simulation, indexing="ij")
         k2_grid = kx_grid**2 + ky_grid**2 + kz_grid**2
 
@@ -660,13 +688,13 @@ class BaseSpectrax1D(ADEPTModule):
         import matplotlib.pyplot as plt
         import numpy as np
 
-        center_x_ck = (Nx - 1) // 2
-        center_y_ck = (Ny - 1) // 2
-        center_z_ck = (Nz - 1) // 2
+        # k=1 mode at index 1 in standard FFT ordering
+        idx_k1 = 1
+        idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
 
-        if center_x_ck + 1 < Nx:
+        if idx_k1 < Nx:
             # Get kx=1 mode for all time steps and Hermite modes
-            kx1_mode = Ck[:, :, center_y_ck, center_x_ck + 1, center_z_ck]
+            kx1_mode = Ck[:, :, idx_k0, idx_k1, idx_k0]
 
             # Separate electron and ion contributions
             electron_modes = kx1_mode[:, : Nn * Nm * Np]
@@ -775,9 +803,8 @@ class BaseSpectrax1D(ADEPTModule):
         import matplotlib.pyplot as plt
         import numpy as np
 
-        center_x = (Nx - 1) // 2
-        center_y = (Ny - 1) // 2
-        center_z = (Nz - 1) // 2
+        # k=0 for other dimensions (1D problem in x)
+        idx_k0 = 0
 
         # Plot electric field modes
         fig, axes = plt.subplots(1, 3, figsize=(10, 4), tight_layout=True)
@@ -786,8 +813,8 @@ class BaseSpectrax1D(ADEPTModule):
         field_components = ["Ex", "Ey", "Ez"]
         for comp_idx, (ax, comp_name) in enumerate(zip(axes, field_components, strict=True)):
             for k_mode in range(1, 6):
-                if center_x + k_mode < Nx:
-                    mode_amplitude = np.abs(Fk[:, comp_idx, center_y, center_x + k_mode, center_z])
+                if k_mode < Nx:
+                    mode_amplitude = np.abs(Fk[:, comp_idx, idx_k0, k_mode, idx_k0])
                     ax.plot(t_array, mode_amplitude, label=f"k={k_mode}", linewidth=2)
 
             ax.set_xlabel(r"Time ($\omega_{pe}^{-1}$)")
@@ -808,8 +835,8 @@ class BaseSpectrax1D(ADEPTModule):
         field_components = ["Bx", "By", "Bz"]
         for comp_idx, (ax, comp_name) in enumerate(zip(axes, field_components, strict=True)):
             for k_mode in range(1, 6):
-                if center_x + k_mode < Nx:
-                    mode_amplitude = np.abs(Fk[:, 3 + comp_idx, center_y, center_x + k_mode, center_z])
+                if k_mode < Nx:
+                    mode_amplitude = np.abs(Fk[:, 3 + comp_idx, idx_k0, k_mode, idx_k0])
                     ax.plot(t_array, mode_amplitude, label=f"k={k_mode}", linewidth=2)
 
             ax.set_xlabel(r"Time ($\omega_{pe}^{-1}$)")
@@ -927,10 +954,9 @@ class BaseSpectrax1D(ADEPTModule):
         for i, name in enumerate(field_names):
             # Apply inverse FFT and take real part
             # For 1D case (Ny=1, Nz=1), this is essentially just ifft along x
-            # Use fftshifted format (spectrax convention) - need ifftshift before ifftn
             field_real = np.real(
                 np.fft.ifftn(
-                    np.fft.ifftshift(Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward"
+                    Fk_timeseries[:, i, :, :, :], axes=(-3, -2, -1), norm="forward"
                 )
             )
             fields_real[name] = field_real

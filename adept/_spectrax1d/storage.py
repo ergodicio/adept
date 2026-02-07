@@ -225,9 +225,10 @@ def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
         # Get density from n=0 Hermite mode (equilibrium)
         # Ck shape: (Np, Nm, Nn, Ny, Nx, Nz) - Per species
         # Electron density ((p,m,n)=(0,0,0) Hermite mode at k=0)
-        ne_k0 = Ck_electrons[0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
+        # k=0 mode is at index [0, 0, 0] in standard FFT ordering
+        ne_k0 = Ck_electrons[0, 0, 0, 0, 0, 0]
         # Ion density ((p,m,n)=(0,0,0) Hermite mode at k=0)
-        ni_k0 = Ck_ions[0, 0, 0, int((Ny - 1) / 2), int((Nx - 1) / 2), int((Nz - 1) / 2)]
+        ni_k0 = Ck_ions[0, 0, 0, 0, 0, 0]
 
         return {
             "EM_energy": EM_energy,

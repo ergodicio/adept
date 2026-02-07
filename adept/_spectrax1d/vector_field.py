@@ -85,7 +85,7 @@ class SpectraxVectorField:
             self.has_driver = False
 
         # Pre-compute the 2/3 dealiasing mask (only depends on grid dimensions)
-        # Use fftshifted format to match spectrax convention
+        # Uses standard FFT ordering
         self.mask23 = self._compute_twothirds_mask()
 
         # Pre-compute Hou-Li filter in Hermite space if enabled (per-species)
@@ -156,20 +156,18 @@ class SpectraxVectorField:
 
     def _compute_twothirds_mask(self) -> Array:
         """
-        Compute the 2/3 dealiasing mask in fftshifted format (spectrax convention).
+        Compute the 2/3 dealiasing mask in standard FFT ordering.
 
-        Returns a boolean mask that keeps |k| <= N//3 in each dimension.
-        Uses fftshifted ordering (DC at center) to match spectrax library.
+        Returns a boolean mask that keeps |k| <= N//3 in each dimension to prevent aliasing.
         """
 
-        def centered_modes(N):
-            # integer mode numbers in fftshifted ordering (DC at center)
-            k = jnp.fft.fftfreq(N) * N
-            return jnp.fft.fftshift(k)  # Shift to centered ordering
+        def standard_modes(N):
+            # Returns integer mode numbers in standard FFT ordering
+            return jnp.fft.fftfreq(N) * N
 
-        ky = centered_modes(self.Ny)[:, None, None]
-        kx = centered_modes(self.Nx)[None, :, None]
-        kz = centered_modes(self.Nz)[None, None, :]
+        ky = standard_modes(self.Ny)[:, None, None]
+        kx = standard_modes(self.Nx)[None, :, None]
+        kz = standard_modes(self.Nz)[None, None, :]
 
         # cutoffs (keep indices with |k| <= floor(N/3)); if N<3 this naturally keeps only k=0
         cy = self.Ny // 3
@@ -410,16 +408,11 @@ class SpectraxVectorField:
         closure_p = args.get("closure_p", None)
 
         # Apply 2/3 dealiasing and inverse FFT to get real-space fields
-        # Use fftshifted format (spectrax convention: k=0 at center)
-        F = jnp.fft.ifftn(jnp.fft.ifftshift(Fk * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward")
+        F = jnp.fft.ifftn(Fk * self.mask23, axes=(-3, -2, -1), norm="forward")
 
         # Transform each species separately
-        C_electrons = jnp.fft.ifftn(
-            jnp.fft.ifftshift(Ck_electrons * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward"
-        )
-        C_ions = jnp.fft.ifftn(
-            jnp.fft.ifftshift(Ck_ions * self.mask23, axes=(-3, -2, -1)), axes=(-3, -2, -1), norm="forward"
-        )
+        C_electrons = jnp.fft.ifftn(Ck_electrons * self.mask23, axes=(-3, -2, -1), norm="forward")
+        C_ions = jnp.fft.ifftn(Ck_ions * self.mask23, axes=(-3, -2, -1), norm="forward")
 
         # Compute time derivative of distribution function for each species
         # Returns 6D array per species: (Np, Nm, Nn, Ny, Nx, Nz)

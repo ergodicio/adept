@@ -55,11 +55,8 @@ class Driver:
 
         # Convert to Fourier space with 3D shape
         # For 1D case (Ny=1, Nz=1), expand to 3D shape: (1, Nx, 1)
-        # Use fftshifted format to match spectrax convention (k=0 at center)
         field_real_3d = total_field_real[None, :, None]
-        field_fourier_3d = jnp.fft.fftshift(
-            jnp.fft.fftn(field_real_3d, axes=(-3, -2, -1), norm="forward"), axes=(-3, -2, -1)
-        )
+        field_fourier_3d = jnp.fft.fftn(field_real_3d, axes=(-3, -2, -1), norm="forward")
 
         # Create output array with shape (3, Ny, Nx, Nz)
         # Only set the component for this driver (Ex, Ey, or Ez)

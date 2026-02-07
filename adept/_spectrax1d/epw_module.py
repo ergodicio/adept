@@ -57,14 +57,13 @@ class EPW1D(BaseSpectrax1D):
         """
         import matplotlib.pyplot as plt
 
-        # Get center indices (fftshifted convention)
-        center_x = (Nx - 1) // 2
-        center_y = (Ny - 1) // 2
-        center_z = (Nz - 1) // 2
+        # k=1 mode at index 1 in standard FFT ordering
+        idx_k1 = 1
+        idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
 
-        # Extract Ex at k=1 mode (offset +1 from center)
-        if center_x + 1 < Nx:
-            Ex_k1 = Fk[:, 0, center_y, center_x + 1, center_z]
+        # Extract Ex at k=1 mode
+        if idx_k1 < Nx:
+            Ex_k1 = Fk[:, 0, idx_k0, idx_k1, idx_k0]
 
             # Compute amplitude
             amplitude = np.abs(Ex_k1)
@@ -157,18 +156,17 @@ class EPW1D(BaseSpectrax1D):
         import matplotlib.pyplot as plt
         import xarray as xr
 
-        # Get center indices (fftshifted convention)
-        center_x = (Nx - 1) // 2
-        center_y = (Ny - 1) // 2
-        center_z = (Nz - 1) // 2
+        # k=1 mode at index 1 in standard FFT ordering
+        idx_k1 = 1
+        idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
 
-        if center_x + 1 < Nx:
+        if idx_k1 < Nx:
             # Extract k=1 mode for all time steps and all Hermite modes
             # Ck shape per species: (nt, Np, Nm, Nn, Ny, Nx, Nz)
-            # Extract at kx=1: Ck[:, :, :, :, center_y, center_x+1, center_z]
+            # Extract at kx=1: Ck[:, :, :, :, idx_k0, idx_k1, idx_k0]
             # Result shape: electrons (nt, Np_e, Nm_e, Nn_e), ions (nt, Np_i, Nm_i, Nn_i)
-            kx1_electrons = Ck_electrons[:, :, :, :, center_y, center_x + 1, center_z]
-            kx1_ions = Ck_ions[:, :, :, :, center_y, center_x + 1, center_z]
+            kx1_electrons = Ck_electrons[:, :, :, :, idx_k0, idx_k1, idx_k0]
+            kx1_ions = Ck_ions[:, :, :, :, idx_k0, idx_k1, idx_k0]
 
             # Flatten Hermite modes with per-species dimensions
             nt = kx1_electrons.shape[0]
@@ -290,12 +288,11 @@ class EPW1D(BaseSpectrax1D):
             self._plot_epw_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td)
 
             # Add EPW-specific metrics
-            center_x = (Nx - 1) // 2
-            center_y = (Ny - 1) // 2
-            center_z = (Nz - 1) // 2
+            idx_k1 = 1  # k=1 mode at index 1 in standard FFT ordering
+            idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
 
-            if center_x + 1 < Nx:
-                Ex_k1 = Fk_array[:, 0, center_y, center_x + 1, center_z]
+            if idx_k1 < Nx:
+                Ex_k1 = Fk_array[:, 0, idx_k0, idx_k1, idx_k0]
 
                 # Compute time-averaged amplitude and final frequency
                 avg_amplitude = float(np.mean(np.abs(Ex_k1)))
