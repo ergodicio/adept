@@ -152,7 +152,7 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     print(f"  Measured: {measured_damping_rate:.6f}")
     print(f"  Expected: {expected_damping_rate:.6f}")
     print(
-        f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"
+        f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"  # noqa: E501
     )
 
     # Assert that measured damping rate is close to expected
@@ -373,7 +373,7 @@ def test_driven_epw(klambda_D: float | None = None):
             print(f"  Measured damping rate: {measured_damping_rate:.6f}")
             print(f"  Expected damping rate: {expected_damping_rate:.6f}")
             print(
-                f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"
+                f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"  # noqa: E501
             )
 
             # Assert damping rate matches (allow 1% error for damping in kinetic regime)
@@ -381,7 +381,7 @@ def test_driven_epw(klambda_D: float | None = None):
                 measured_damping_rate,
                 expected_damping_rate,
                 rtol=0.1,
-                err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}",
+                err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}",  # noqa: E501
             )
             print("  ✓ Damping rate test passed!")
         else:
