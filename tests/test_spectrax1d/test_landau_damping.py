@@ -66,7 +66,7 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     k0 = k_fundamental
     calculated_klambdaD = k0 * vth_e / np.sqrt(2)
 
-    print(f"\nTest configuration:")
+    print("\nTest configuration:")
     print(f"  Target klambda_D = {klambda_D:.4f}")
     print(f"  alpha_e[0] (vth_e) = {vth_e:.6f}")
     print(f"  k_fundamental = {k0:.6f}")
@@ -89,7 +89,7 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     expected_damping_rate = np.imag(theoretical_root)
     expected_frequency = np.real(theoretical_root)
 
-    print(f"\nTheoretical values:")
+    print("\nTheoretical values:")
     print(f"  Frequency: {expected_frequency:.6f}")
     print(f"  Damping rate: {expected_damping_rate:.6f}")
 
@@ -115,10 +115,10 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     # This is directly proportional to the electric field amplitude
     if "Ex_k1" in scalar_data:
         field_amplitude = np.abs(scalar_data["Ex_k1"])
-        print(f"Using Ex_k1 for damping rate measurement")
+        print("Using Ex_k1 for damping rate measurement")
     elif "Ex_max" in scalar_data:
         field_amplitude = np.abs(scalar_data["Ex_max"])
-        print(f"Using Ex_max for damping rate measurement")
+        print("Using Ex_max for damping rate measurement")
     else:
         pytest.fail("No suitable field amplitude data found (expected Ex_k1 or Ex_max)")
 
@@ -148,7 +148,7 @@ def test_landau_damping_initial_value(klambda_D: float | None = None):
     coeffs = np.polyfit(t_fit, log_A, 1)
     measured_damping_rate = coeffs[0]
 
-    print(f"\nDamping rate measurement:")
+    print("\nDamping rate measurement:")
     print(f"  Measured: {measured_damping_rate:.6f}")
     print(f"  Expected: {expected_damping_rate:.6f}")
     print(
@@ -307,7 +307,7 @@ def test_driven_epw(klambda_D: float | None = None):
     # Get Ex component at k=1 Fourier mode
     Ex_k1 = Fk_timeseries[:, 0, idx_k0, idx_k1, idx_k0]
 
-    print(f"\nField time series extracted:")
+    print("\nField time series extracted:")
     print(f"  Ex_k1 shape: {Ex_k1.shape}")
     print(f"  Ex_k1 is complex: {np.iscomplexobj(Ex_k1)}")
     print(f"  Peak amplitude: {np.abs(Ex_k1).max():.2e}")
@@ -387,7 +387,7 @@ def test_driven_epw(klambda_D: float | None = None):
         else:
             print(f"  Warning: Not enough valid data points ({len(t_damp)}) for damping rate measurement")
     else:
-        print(f"  Warning: Not enough timesteps after driver turns off for damping measurement")
+        print("  Warning: Not enough timesteps after driver turns off for damping measurement")
 
     # Print field energy summary
     if "E_energy" in scalar_data:
