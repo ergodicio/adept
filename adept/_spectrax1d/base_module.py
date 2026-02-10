@@ -1130,6 +1130,7 @@ class BaseSpectrax1D(ADEPTModule):
 
         # Process saved time series from SubSaveAt
         saved_datasets = {}
+        has_fields_data = False
         for k in sol.ys.keys():
             if k == "default":
                 # Default scalar diagnostics
@@ -1149,17 +1150,18 @@ class BaseSpectrax1D(ADEPTModule):
                     fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
                     plt.close()
 
-            elif k in ["fields_only", "fields_only_plot"]:
+            elif k == "fields":
                 fields_data = sol.ys[k]
                 t_array = sol.ts[k]
+                has_fields_data = True
 
                 if isinstance(fields_data, dict):
                     # Interpolated fields output (x or kx)
-                    if "fields_only" in self.cfg["save"] and "x" in self.cfg["save"]["fields_only"]:
-                        axis = ("x", self.cfg["save"]["fields_only"]["x"]["ax"])
+                    if "fields" in self.cfg["save"] and "x" in self.cfg["save"]["fields"]:
+                        axis = ("x", self.cfg["save"]["fields"]["x"]["ax"])
                         axis_name = "x"
-                    elif "fields_only" in self.cfg["save"] and "kx" in self.cfg["save"]["fields_only"]:
-                        axis = ("kx", self.cfg["save"]["fields_only"]["kx"]["ax"])
+                    elif "fields" in self.cfg["save"] and "kx" in self.cfg["save"]["fields"]:
+                        axis = ("kx", self.cfg["save"]["fields"]["kx"]["ax"])
                         axis_name = "kx"
                     else:
                         axis = ("x", x)
@@ -1243,6 +1245,9 @@ class BaseSpectrax1D(ADEPTModule):
         metrics = {
             "simulation_completed": True,
         }
+
+        if not has_fields_data:
+            print("Warning: no fields data saved; skipping fields plots.")
 
         # Add timestep info from default save if available
         if "default" in sol.ts:

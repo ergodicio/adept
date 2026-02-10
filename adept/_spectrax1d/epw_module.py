@@ -280,9 +280,9 @@ class EPW1D(BaseSpectrax1D):
         Np_i = int(self.cfg["grid"]["Np_ions"])
 
         # Process EPW-specific diagnostics if field data is available
-        if "fields_only" in sol.ys:
-            Fk_array = np.asarray(sol.ys["fields_only"])
-            t_array = sol.ts["fields_only"]
+        if "fields" in sol.ys and not isinstance(sol.ys["fields"], dict):
+            Fk_array = np.asarray(sol.ys["fields"])
+            t_array = sol.ts["fields"]
 
             # Create EPW diagnostics plot
             self._plot_epw_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td)

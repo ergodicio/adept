@@ -91,7 +91,7 @@ save:
       tmin: 0 ps
       tmax: 0.02 ps
       nt: 81
-  fields_only:
+  fields:
     t:
       tmin: 0 ps
       tmax: 0.02 ps
@@ -100,11 +100,6 @@ save:
     #   xmin: 0 micron
     #   xmax: 60 micron
     #   nx: 1024
-  fields:
-    t:
-      tmin: 0 ps
-      tmax: 0.02 ps
-      nt: 41
   moments:
     t:
       tmin: 0 ps

@@ -267,7 +267,7 @@ def get_distribution_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
     return dist_save_func
 
 
-def get_fields_only_save_func(Nx, Ny, Nz):
+def get_fields_save_func(Nx, Ny, Nz):
     """
     Create a save function for electromagnetic fields only.
 
@@ -278,12 +278,12 @@ def get_fields_only_save_func(Nx, Ny, Nz):
         Callable save function
     """
 
-    def fields_only_save_func(t, y, args):
+    def fields_save_func(t, y, args):
         """Extract electromagnetic field Fourier coefficients from state."""
         # Extract Fk from state dictionary (convert from float64 view to complex128)
         return y["Fk"].view(jnp.complex128)
 
-    return fields_only_save_func
+    return fields_save_func
 
 
 def get_fields_output_save_func(cfg, Nx, Ny, Nz, save_config):
@@ -312,7 +312,7 @@ def get_fields_output_save_func(cfg, Nx, Ny, Nz, save_config):
 
         if x_ax is not None:
             if Ny != 1 or Nz != 1:
-                raise ValueError("x interpolation for fields_only currently supports Ny=Nz=1 only")
+                raise ValueError("x interpolation for fields currently supports Ny=Nz=1 only")
             F_real = jnp.real(jnp.fft.ifftn(Fk, axes=(-3, -2, -1), norm="forward"))
             F1d = F_real[:, 0, :, 0]
             F_interp = jnp.stack([_interp_real(x_ax, x_base, F1d[i]) for i in range(6)], axis=0)
@@ -327,7 +327,7 @@ def get_fields_output_save_func(cfg, Nx, Ny, Nz, save_config):
 
         if kx_ax is not None:
             if Ny != 1 or Nz != 1:
-                raise ValueError("kx interpolation for fields_only currently supports Ny=Nz=1 only")
+                raise ValueError("kx interpolation for fields currently supports Ny=Nz=1 only")
             F1d = jnp.fft.fftshift(Fk, axes=-2)[:, 0, :, 0]
             F_interp = jnp.stack([_interp_complex(kx_ax, kx_base, F1d[i]) for i in range(6)], axis=0)
             return {
@@ -612,11 +612,11 @@ def get_save_quantities(cfg: dict) -> dict:
                 x_ax=save_config.get("x", {}).get("ax", None),
                 kx_ax=save_config.get("kx", {}).get("ax", None),
             )
-        elif save_type == "fields_only":
+        elif save_type == "fields":
             if "x" in save_config or "kx" in save_config:
                 save_config["func"] = get_fields_output_save_func(cfg, Nx, Ny, Nz, save_config)
             else:
-                save_config["func"] = get_fields_only_save_func(Nx, Ny, Nz)
+                save_config["func"] = get_fields_save_func(Nx, Ny, Nz)
 
     # Always add a default save for scalar time series (respect user override if provided)
     if "default" not in cfg["save"]:
@@ -627,14 +627,6 @@ def get_save_quantities(cfg: dict) -> dict:
         cfg["save"]["default"]["t"]["ax"] = cfg["grid"]["t"]
     cfg["save"]["default"]["func"] = get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns)
 
-    # Always add fields_only save for electromagnetic fields (for spacetime plots)
-    # Use the same time axis as default
-    if "fields_only_plot" not in cfg["save"]:
-        cfg["save"]["fields_only_plot"] = {"t": {"ax": cfg["grid"]["t"]}}
-    elif "t" not in cfg["save"]["fields_only_plot"]:
-        cfg["save"]["fields_only_plot"]["t"] = {"ax": cfg["grid"]["t"]}
-    if "ax" not in cfg["save"]["fields_only_plot"]["t"]:
-        cfg["save"]["fields_only_plot"]["t"]["ax"] = cfg["grid"]["t"]
-    cfg["save"]["fields_only_plot"]["func"] = get_fields_only_save_func(Nx, Ny, Nz)
+    # Do not add fields by default; only save fields if explicitly requested.
 
     return cfg
