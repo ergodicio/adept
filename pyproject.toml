@@ -18,7 +18,7 @@ dependencies = [
     "tqdm",
     "xarray",
     "mlflow",
-    "flatdict",
+
     "h5netcdf",
     "optax",
     "boto3",
