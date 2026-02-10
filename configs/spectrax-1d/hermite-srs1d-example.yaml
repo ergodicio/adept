@@ -1,0 +1,116 @@
+# HermiteSRS1D example with real-unit normalization and Ey laser drive
+
+solver: hermite-srs-1d
+
+mlflow:
+  experiment: hermite-srs1d-examples
+  run: ey-laser-intensity
+
+units:
+  normalizing_density: 9.1e21/cc
+  normalizing_temperature: 2 keV
+  ion_temperature: 1 keV
+
+physics:
+  # Box size in real units
+  Lx: 60 micron
+  Ly: 1 micron
+  Lz: 1 micron
+
+  # Mass ratio
+  mi_me: 1836.0
+
+  # Species charges [electron, ion]
+  qs: [-1.0, 1.0]
+
+  # Bulk velocities
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Cyclotron frequencies (normalized, keep as-is)
+  Omega_cs: [1.0, 0.00054]
+
+  # Collision frequency (normalized)
+  nu: 0.0
+
+  # Perturbation mode numbers
+  nx: 1
+  ny: 0
+  nz: 0
+
+  # Normalized species densities (relative to normalizing_density)
+  n0_e: 0.25
+  n0_i: 0.25
+
+  # ODE solver tolerance
+  ode_tolerance: 1.0e-8
+
+drivers:
+  ex: {}
+  ey:
+    "0":
+      # Laser intensity and wavelength (real units)
+      intensity: 1e15 W/cm^2
+      wavelength: 351 nm
+
+      # Temporal envelope (real units)
+      t_center: 0.01 ps
+      t_width: 0.01 ps
+      t_rise: 0.005 ps
+
+      # Spatial envelope omitted: will be auto-set from boundaries
+  ez: {}
+
+# boundaries:
+#   side: left
+#   vacuum_length: 10 micron
+#   absorb_length: 5 micron
+#   sponge:
+#     sigma_max_fields: 0.2/ps
+#     sigma_max_plasma: 0.1/ps
+
+grid:
+  # Hermite modes
+  Nn: 16
+  Nm: 1
+  Np: 1
+
+  # Number of species
+  Ns: 2
+
+  # Simulation length in real units
+  tmax: 0.02 ps
+  dt: 0.02
+
+  # ODE solver
+  solver: "Dopri8"
+  adaptive_time_step: true
+
+save:
+  default:
+    t:
+      tmin: 0 ps
+      tmax: 0.02 ps
+      nt: 81
+  fields_only:
+    t:
+      tmin: 0 ps
+      tmax: 0.02 ps
+      nt: 41
+    # x:
+    #   xmin: 0 micron
+    #   xmax: 60 micron
+    #   nx: 1024
+  fields:
+    t:
+      tmin: 0 ps
+      tmax: 0.02 ps
+      nt: 41
+  moments:
+    t:
+      tmin: 0 ps
+      tmax: 0.02 ps
+      nt: 41
+    # x:
+    #   xmin: 0 micron
+    #   xmax: 60 micron
+    #   nx: 1024

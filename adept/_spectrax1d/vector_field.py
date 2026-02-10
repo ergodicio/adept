@@ -73,14 +73,20 @@ class SpectraxVectorField:
 
         # Store shared grid quantities (nabla is species-independent)
         self.nabla = grid_quantities_electrons["nabla"]
+        self.sponge_fields = grid_quantities_electrons.get("sponge_fields", None)
+        self.sponge_plasma_e = grid_quantities_electrons.get("sponge_plasma", None)
+        self.sponge_plasma_i = grid_quantities_ions.get("sponge_plasma", None)
 
-        # Initialize external field driver if configured
-        if driver_config.get("ex"):
-            self.driver = Driver(xax, Nx, Ny, Nz, driver_key="ex")
+        # Initialize external field drivers if configured
+        self.drivers = {}
+        for driver_key in ["ex", "ey", "ez"]:
+            if driver_config.get(driver_key):
+                self.drivers[driver_key] = Driver(xax, Nx, Ny, Nz, driver_key=driver_key)
+
+        if self.drivers:
             self.driver_config = driver_config
             self.has_driver = True
         else:
-            self.driver = None
             self.driver_config = None
             self.has_driver = False
 
@@ -459,7 +465,9 @@ class SpectraxVectorField:
         # Get external driver field in Fourier space (if configured)
         # Driver returns complex array of shape (3, Ny, Nx, Nz)
         if self.has_driver:
-            driver = self.driver(self.driver_config, t)
+            driver = jnp.zeros_like(Fk[:3])
+            for drv in self.drivers.values():
+                driver = driver + drv(self.driver_config, t)
         else:
             driver = jnp.zeros_like(Fk[:3])
 
@@ -473,6 +481,32 @@ class SpectraxVectorField:
         )
         current = current_electrons + current_ions
         dEk_dt = 1j * cross_product(self.nabla, Fk[3:]) - current / Omega_cs[0] + driver
+
+        # Apply sponge damping to electromagnetic fields if configured
+        if self.sponge_fields is not None:
+            sigma = self.sponge_fields
+            sigma_xyz = jnp.broadcast_to(sigma[None, :, None], (self.Ny, self.Nx, self.Nz))
+            E_real = jnp.fft.ifftn(Fk[:3], axes=(-3, -2, -1), norm="forward")
+            B_real = jnp.fft.ifftn(Fk[3:], axes=(-3, -2, -1), norm="forward")
+            dE_real = -sigma_xyz[None, ...] * E_real
+            dB_real = -sigma_xyz[None, ...] * B_real
+            dEk_dt = dEk_dt + jnp.fft.fftn(dE_real, axes=(-3, -2, -1), norm="forward")
+            dBk_dt = dBk_dt + jnp.fft.fftn(dB_real, axes=(-3, -2, -1), norm="forward")
+
+        # Apply sponge damping to plasma (distribution coefficients) if configured
+        if self.sponge_plasma_e is not None:
+            sigma = self.sponge_plasma_e
+            sigma_xyz = jnp.broadcast_to(sigma[None, :, None], (self.Ny, self.Nx, self.Nz))
+            C_real = jnp.fft.ifftn(Ck_electrons, axes=(-3, -2, -1), norm="forward")
+            dC_real = -sigma_xyz[None, None, None, ...] * C_real
+            dCk_electrons_dt = dCk_electrons_dt + jnp.fft.fftn(dC_real, axes=(-3, -2, -1), norm="forward")
+
+        if self.sponge_plasma_i is not None:
+            sigma = self.sponge_plasma_i
+            sigma_xyz = jnp.broadcast_to(sigma[None, :, None], (self.Ny, self.Nx, self.Nz))
+            C_real = jnp.fft.ifftn(Ck_ions, axes=(-3, -2, -1), norm="forward")
+            dC_real = -sigma_xyz[None, None, None, ...] * C_real
+            dCk_ions_dt = dCk_ions_dt + jnp.fft.fftn(dC_real, axes=(-3, -2, -1), norm="forward")
 
         # Concatenate field derivatives
         dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)

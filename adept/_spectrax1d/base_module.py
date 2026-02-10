@@ -1000,6 +1000,52 @@ class BaseSpectrax1D(ADEPTModule):
             plt.savefig(os.path.join(plots_dir, f"{field_name}.png"), bbox_inches="tight", dpi=150)
             plt.close()
 
+    def _plot_moments_spacetime(self, moments_xr: xr.Dataset, td: str) -> None:
+        """
+        Create spacetime plots for distribution moments.
+
+        Args:
+            moments_xr: xarray Dataset containing moments with (t, x) coordinates
+            td: Temporary directory path
+        """
+        import matplotlib.pyplot as plt
+
+        plots_dir = os.path.join(td, "plots", "moments")
+        os.makedirs(plots_dir, exist_ok=True)
+
+        for name, data in moments_xr.items():
+            if "x" not in data.dims:
+                continue
+            data.plot()
+            plt.title(f"{name} Spacetime")
+            plt.savefig(os.path.join(plots_dir, f"spacetime-{name}.png"), bbox_inches="tight", dpi=150)
+            plt.close()
+
+    def _plot_moments_lineouts(self, moments_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
+        """
+        Create facet grid plots of moments at multiple times.
+
+        Args:
+            moments_xr: xarray Dataset containing moments with (t, x) coordinates
+            td: Temporary directory path
+            n_slices: Number of time slices to show
+        """
+        import matplotlib.pyplot as plt
+
+        plots_dir = os.path.join(td, "plots", "moments", "lineouts")
+        os.makedirs(plots_dir, exist_ok=True)
+
+        for name, data in moments_xr.items():
+            if "x" not in data.dims:
+                continue
+            nt = data.coords["t"].size
+            t_skip = max(1, nt // n_slices)
+            tslice = slice(0, None, t_skip)
+
+            data[tslice].T.plot(col="t", col_wrap=3)
+            plt.savefig(os.path.join(plots_dir, f"{name}.png"), bbox_inches="tight", dpi=150)
+            plt.close()
+
     def _plot_distribution_facets(self, dist_xr: xr.Dataset, td: str, n_timesteps: int = 6) -> None:
         """
         Create facet plots of distribution in (kx, hermite_mode) space for multiple timesteps.
@@ -1103,31 +1149,53 @@ class BaseSpectrax1D(ADEPTModule):
                     fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
                     plt.close()
 
-            elif k == "fields_only":
-                # Electromagnetic fields in Fourier space - convert to real space and plot
-                Fk_array = np.asarray(sol.ys[k])  # Shape: (nt, 6, Ny, Nx, Nz)
+            elif k in ["fields_only", "fields_only_plot"]:
+                fields_data = sol.ys[k]
                 t_array = sol.ts[k]
 
-                # Convert to real space
-                fields_real = self._convert_fields_to_real_space(Fk_array)
+                if isinstance(fields_data, dict):
+                    # Interpolated fields output (x or kx)
+                    if "fields_only" in self.cfg["save"] and "x" in self.cfg["save"]["fields_only"]:
+                        axis = ("x", self.cfg["save"]["fields_only"]["x"]["ax"])
+                        axis_name = "x"
+                    elif "fields_only" in self.cfg["save"] and "kx" in self.cfg["save"]["fields_only"]:
+                        axis = ("kx", self.cfg["save"]["fields_only"]["kx"]["ax"])
+                        axis_name = "kx"
+                    else:
+                        axis = ("x", x)
+                        axis_name = "x"
 
-                # For 1D case, squeeze out y and z dimensions and create xarray datasets
-                field_names = ["Ex", "Ey", "Ez", "Bx", "By", "Bz"]
-                fields_xr_dict = {}
-                for name in field_names:
-                    # Squeeze to (nt, Nx) for 1D case
-                    field_1d = np.squeeze(fields_real[name])
-                    fields_xr_dict[name] = xr.DataArray(field_1d, coords=[("t", t_array), ("x", x)], name=name)
+                    fields_xr_dict = {
+                        name: xr.DataArray(val, coords=[("t", t_array), axis], name=name)
+                        for name, val in fields_data.items()
+                    }
+                    fields_xr = xr.Dataset(fields_xr_dict)
+                    fields_xr.to_netcdf(os.path.join(binary_dir, f"fields-{axis_name}-t={round(t_array[-1], 4)}.nc"))
+                    saved_datasets[f"fields_{axis_name}"] = fields_xr
+                else:
+                    # Electromagnetic fields in Fourier space - convert to real space and plot
+                    Fk_array = np.asarray(fields_data)  # Shape: (nt, 6, Ny, Nx, Nz)
 
-                fields_xr = xr.Dataset(fields_xr_dict)
+                    # Convert to real space
+                    fields_real = self._convert_fields_to_real_space(Fk_array)
 
-                # Save to netCDF
-                fields_xr.to_netcdf(os.path.join(binary_dir, f"fields-t={round(t_array[-1], 4)}.nc"))
-                saved_datasets["fields"] = fields_xr
+                    # For 1D case, squeeze out y and z dimensions and create xarray datasets
+                    field_names = ["Ex", "Ey", "Ez", "Bx", "By", "Bz"]
+                    fields_xr_dict = {}
+                    for name in field_names:
+                        # Squeeze to (nt, Nx) for 1D case
+                        field_1d = np.squeeze(fields_real[name])
+                        fields_xr_dict[name] = xr.DataArray(field_1d, coords=[("t", t_array), ("x", x)], name=name)
 
-                # Create plots
-                self._plot_fields_spacetime(fields_xr, td)
-                self._plot_fields_lineouts(fields_xr, td)
+                    fields_xr = xr.Dataset(fields_xr_dict)
+
+                    # Save to netCDF
+                    fields_xr.to_netcdf(os.path.join(binary_dir, f"fields-t={round(t_array[-1], 4)}.nc"))
+                    saved_datasets["fields"] = fields_xr
+
+                    # Create plots
+                    self._plot_fields_spacetime(fields_xr, td)
+                    self._plot_fields_lineouts(fields_xr, td)
 
             elif k in ["hermite", "distribution"]:
                 # Distribution function (Hermite coefficients) - per-species dict
@@ -1145,6 +1213,31 @@ class BaseSpectrax1D(ADEPTModule):
                 saved_datasets["distribution_ions"] = ions_xr
 
                 # Note: Distribution facet plots removed - use EPW1D module for enhanced visualization
+            elif k == "moments":
+                # Distribution moments in real space
+                moments_dict = sol.ys[k]
+                t_array = sol.ts[k]
+
+                moments_vars = {}
+                for name, arr in moments_dict.items():
+                    data = np.asarray(arr)
+                    if data.ndim == 4 and Ny == 1 and Nz == 1:
+                        data = np.squeeze(data, axis=(1, 3))
+                        moments_vars[name] = (["t", "x"], data)
+                    else:
+                        moments_vars[name] = (["t", "y", "x", "z"], data)
+
+                coords = {"t": t_array, "x": x}
+                if Ny != 1 or Nz != 1:
+                    coords["y"] = np.arange(Ny)
+                    coords["z"] = np.arange(Nz)
+                moments_xr = xr.Dataset(moments_vars, coords=coords)
+
+                moments_xr.to_netcdf(os.path.join(binary_dir, f"moments-t={round(t_array[-1], 4)}.nc"))
+                saved_datasets["moments"] = moments_xr
+
+                self._plot_moments_spacetime(moments_xr, td)
+                self._plot_moments_lineouts(moments_xr, td)
 
         # Compute metrics for MLflow
         metrics = {
