@@ -64,7 +64,7 @@ drivers:
       # Spatial envelope omitted: will be auto-set from boundaries
   ez: {}
 
-# Optional: Density gradient configuration
+# Optional: Density gradient and noise configuration
 # If omitted, plasma density is homogeneous at n0_e, n0_i
 # density:
 #   basis: linear              # or "exponential"
@@ -75,12 +75,35 @@ drivers:
 #   # For exponential gradients only:
 #   # gradient_scale_length: 100 micron
 #   # center: 0.5              # Normalized position of center density
+#
+#   # Per-timestep density noise (seeds plasma instabilities like SRS)
+#   noise:
+#     enabled: false           # Set to true to enable noise
+#     type: uniform            # "uniform" or "normal" (Gaussian)
+#     amplitude: 1.0e-12       # Noise amplitude in density units
+#     seed: 42                 # Random seed for reproducibility
+#
+#     # Optional: per-species control
+#     electrons:
+#       enabled: true          # Enable electron density noise
+#       amplitude: 1.0e-12     # Can override global amplitude
+#     ions:
+#       enabled: false         # Typically ions don't need noise for SRS
 
 boundaries:
+  # Simple format: single absorb_length applies to both fields and plasma
   absorb_length: 5 micron
   sponge:
     sigma_max_fields: 1.0/fs
     sigma_max_plasma: 1.0/fs
+
+  # Advanced format for laser injection from boundaries:
+  # Use separate lengths to inject laser through vacuum into plasma
+  # field_absorb_length: 3 micron    # Narrow EM field absorption at domain edges
+  # plasma_absorb_length: 8 micron   # Wider plasma damping covering vacuum regions
+  # sponge:
+  #   sigma_max_fields: 0.5/fs       # Strength of field damping
+  #   sigma_max_plasma: 0.3/fs       # Strength of plasma damping
 
 grid:
   # Hermite modes

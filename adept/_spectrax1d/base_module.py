@@ -356,7 +356,7 @@ class BaseSpectrax1D(ADEPTModule):
                 "timesteps": int(grid["nt"]),
                 "dt": float(grid["dt"]),
                 "adaptive_time_step": adaptive_time_step,
-                "solver": self._get_solver_instance(solver_name, input_parameters["ode_tolerance"]),
+                "solver": solver_name,
             }
 
         # Initialize Fk_0 (electromagnetic field Fourier components)
@@ -510,6 +510,15 @@ class BaseSpectrax1D(ADEPTModule):
         # Store driver config for VectorField initialization
         self.driver_config = self.cfg.get("drivers", {})
 
+        # Add density noise configuration if present
+        density_cfg = self.cfg.get("density", {})
+        noise_cfg = density_cfg.get("noise", {})
+        if noise_cfg:
+            self.driver_config["density_noise"] = noise_cfg
+
+        # Add dt to driver_config for time-dependent noise seeding
+        self.driver_config["dt"] = self.cfg["grid"]["dt"]
+
         # Build args dictionary for the ODE system (only time-varying physical parameters)
         self.args = {
             "qs": jnp.array(input_params["qs"]),
@@ -571,11 +580,7 @@ class BaseSpectrax1D(ADEPTModule):
         self.cfg = get_save_quantities(self.cfg)
 
         # Set time quantities (matches Vlasov1D pattern)
-        self.time_quantities = {
-            "t0": 0.0,
-            "t1": self.cfg["grid"]["tmax"],
-            "max_steps": self.cfg["grid"]["max_steps"],
-        }
+        self.time_quantities = {"t0": 0.0, "t1": self.cfg["grid"]["tmax"], "max_steps": self.cfg["grid"]["max_steps"]}
 
         # Get solver configuration
         solver_params = self.cfg["spectrax_solver"]
@@ -593,6 +598,9 @@ class BaseSpectrax1D(ADEPTModule):
         Np_i = solver_params["Np_ions"]
         Ns = solver_params["Ns"]
 
+        # Get shard_map configuration from grid config (default: False)
+        use_shard_map = self.cfg["grid"].get("use_shard_map", False)
+
         # Create VectorField instance with per-species configuration and grid quantities
         vector_field = SpectraxVectorField(
             Nx=Nx,
@@ -609,6 +617,8 @@ class BaseSpectrax1D(ADEPTModule):
             driver_config=self.driver_config,
             grid_quantities_electrons=self.grid_quantities_electrons,
             grid_quantities_ions=self.grid_quantities_ions,
+            dt=float(self.cfg["grid"]["dt"]),
+            use_shard_map=use_shard_map,
         )
 
         # Build SubSaveAt dictionary for diagnostics
@@ -620,18 +630,32 @@ class BaseSpectrax1D(ADEPTModule):
         # Get stepsize controller
         adaptive_time_step = solver_params["adaptive_time_step"]
         controllers = {
-            True: PIDController(
-                rtol=input_params["ode_tolerance"],
-                atol=input_params["ode_tolerance"],
-            ),
+            True: PIDController(rtol=input_params["ode_tolerance"], atol=input_params["ode_tolerance"]),
             False: ConstantStepSize(),
         }
         stepsize_controller = controllers[adaptive_time_step]
 
+        # Get base solver instance
+        base_solver = self._get_solver_instance(solver_params["solver"], input_params["ode_tolerance"])
+
+        # Wrap with split-step damping integrator
+        # This applies sponge damping analytically outside the RK substeps
+        from adept._spectrax1d.integrators import SplitStepDampingSolver
+
+        solver = SplitStepDampingSolver(
+            wrapped_solver=base_solver,
+            sponge_fields=self.grid_quantities_electrons.get("sponge_fields", None),
+            sponge_plasma_e=self.grid_quantities_electrons.get("sponge_plasma", None),
+            sponge_plasma_i=self.grid_quantities_ions.get("sponge_plasma", None),
+            Ny=Ny,
+            Nx=Nx,
+            Nz=Nz,
+        )
+
         # Store diffeqsolve configuration (matches pattern from other modules)
         self.diffeqsolve_quants = {
             "terms": ODETerm(vector_field),
-            "solver": solver_params["solver"],
+            "solver": solver,
             "stepsize_controller": stepsize_controller,
             "saveat": {"subs": subsaves},
         }

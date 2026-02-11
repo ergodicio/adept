@@ -5,7 +5,7 @@ solver: hermite-srs-1d
 
 mlflow:
   experiment: hermite-srs1d-gradient
-  run: linear-gradient-test
+  run: linear-gradient-test-noise
 
 units:
   normalizing_density: 9.1e21/cc
@@ -14,7 +14,7 @@ units:
 
 physics:
   # Box size in real units (needs to be large enough for vacuum + plasma + vacuum)
-  Lx: 100 micron
+  Lx: 40 micron
   Ly: 1 micron
   Lz: 1 micron
 
@@ -56,6 +56,20 @@ density:
   vacuum_length: 5 micron   # Vacuum region at boundaries (goes to 0.01)
   rise: 1 micron            # Smooth transition between vacuum and plasma
 
+# Enable per-timestep density noise
+  noise:
+    enabled: true
+    type: uniform          # or "normal" for Gaussian
+    amplitude: 1.0e-10     # Adjust based on your needs
+    seed: 42               # For reproducibility
+
+    # Optional: per-species control
+    electrons:
+      enabled: true
+      amplitude: 1.0e-10
+    ions:
+      enabled: false
+
 drivers:
   ex: {}
   ey:
@@ -65,25 +79,27 @@ drivers:
       wavelength: 351 nm
 
       # Temporal envelope (real units)
-      t_center: 0.15 ps
-      t_width: 0.1 ps
+      t_center: 50.05 ps
+      t_width: 100 ps
       t_rise: 0.02 ps
 
       # Spatial envelope: laser enters from left side
-      x_center: 7.5 micron
+      x_center: 4 micron
       x_width: 2 micron
       x_rise: 1 micron
   ez: {}
 
 boundaries:
-  absorb_length: 5 micron   # Absorbing region overlaps with vacuum
+  # Separate damping for fields vs plasma enables laser injection from boundaries
+  field_absorb_length: 2 micron    # Narrow EM field absorption at domain edges
+  plasma_absorb_length: 5 micron   # Wider plasma damping covering vacuum regions
   sponge:
-    sigma_max_fields: 0.5/ps
-    sigma_max_plasma: 0.3/ps
+    sigma_max_fields: 1.0/fs   # Strength of field damping
+    sigma_max_plasma: 0.0005/fs   # Strength of plasma damping
 
 grid:
   # Hermite modes
-  Nn: 16
+  Nn: 8
   Nm: 1
   Np: 1
 
@@ -91,26 +107,28 @@ grid:
   Ns: 2
 
   # Simulation length in real units
-  tmax: 0.4 ps
+  tmax: 0.1 ps
   dt: 0.02
 
   # ODE solver
   solver: "Dopri8"
   adaptive_time_step: true
 
+  use_shard_map: true
+
 save:
   default:
     t:
       tmin: 0 ps
-      tmax: 0.4 ps
+      tmax: 0.1 ps
       nt: 101
   fields:
     t:
       tmin: 0 ps
-      tmax: 0.4 ps
+      tmax: 0.1 ps
       nt: 51
   moments:
     t:
       tmin: 0 ps
-      tmax: 0.4 ps
+      tmax: 0.1 ps
       nt: 51

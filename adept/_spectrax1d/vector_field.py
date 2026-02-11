@@ -1,5 +1,6 @@
 """Vector field class for the Spectrax Vlasov-Maxwell system."""
 
+import jax
 from jax import Array
 from jax import numpy as jnp
 from spectrax import cross_product
@@ -57,6 +58,8 @@ class SpectraxVectorField:
         driver_config: dict,
         grid_quantities_electrons: dict,
         grid_quantities_ions: dict,
+        dt: float,
+        use_shard_map: bool = False,
     ):
         """Initialize with per-species mode counts and grid quantities."""
         # Store dimensions as attributes
@@ -73,9 +76,6 @@ class SpectraxVectorField:
 
         # Store shared grid quantities (nabla is species-independent)
         self.nabla = grid_quantities_electrons["nabla"]
-        self.sponge_fields = grid_quantities_electrons.get("sponge_fields", None)
-        self.sponge_plasma_e = grid_quantities_electrons.get("sponge_plasma", None)
-        self.sponge_plasma_i = grid_quantities_ions.get("sponge_plasma", None)
 
         # Initialize external field drivers if configured
         self.drivers = {}
@@ -89,6 +89,34 @@ class SpectraxVectorField:
         else:
             self.driver_config = None
             self.has_driver = False
+
+        # Store timestep for density noise generation
+        self.dt = dt
+
+        # Initialize density noise configuration
+        noise_config = driver_config.get("density_noise", {})
+        self.noise_enabled = noise_config.get("enabled", False)
+
+        if self.noise_enabled:
+            import numpy as np
+
+            self.noise_type = noise_config.get("type", "uniform")
+            self.noise_amplitude = float(noise_config.get("amplitude", 1.0e-12))
+            self.noise_seed = int(noise_config.get("seed", np.random.randint(2**20)))
+
+            # Per-species configuration
+            electrons_cfg = noise_config.get("electrons", {})
+            ions_cfg = noise_config.get("ions", {})
+
+            self.noise_electrons_enabled = electrons_cfg.get("enabled", True)
+            self.noise_ions_enabled = ions_cfg.get("enabled", False)
+
+            self.noise_electrons_amplitude = float(electrons_cfg.get("amplitude", self.noise_amplitude))
+            self.noise_ions_amplitude = float(ions_cfg.get("amplitude", self.noise_amplitude))
+
+            # Independent seeds for species (offset by 1000 for independence)
+            self.noise_electrons_seed = self.noise_seed
+            self.noise_ions_seed = self.noise_seed + 1000
 
         # Pre-compute the 2/3 dealiasing mask (only depends on grid dimensions)
         # Uses standard FFT ordering
@@ -112,12 +140,17 @@ class SpectraxVectorField:
             self.hermite_filter_electrons = None
             self.hermite_filter_ions = None
 
+        # Store use_shard_map flag for VectorField-level sharding
+        self.use_shard_map = use_shard_map
+
         # Create per-species HermiteFourierODE instances with species-specific parameters
+        # Note: Sharding is now handled at VectorField level, not in ODE classes
         gq_e = grid_quantities_electrons
         self.hermite_fourier_ode_electrons = HermiteFourierODE(
             Nn=Nn_electrons,
             Nm=Nm_electrons,
             Np=Np_electrons,
+            Nx=Nx,
             kx_grid=gq_e["kx_grid"],
             ky_grid=gq_e["ky_grid"],
             kz_grid=gq_e["kz_grid"],
@@ -140,6 +173,7 @@ class SpectraxVectorField:
             Nn=Nn_ions,
             Nm=Nm_ions,
             Np=Np_ions,
+            Nx=Nx,
             kx_grid=gq_i["kx_grid"],
             ky_grid=gq_i["ky_grid"],
             kz_grid=gq_i["kz_grid"],
@@ -156,6 +190,17 @@ class SpectraxVectorField:
             sqrt_p_minus=gq_i["sqrt_p_minus"],
             mask23=self.mask23,
         )
+
+        # Setup mesh for automatic sharding if enabled
+        if self.use_shard_map:
+            from jax.experimental import mesh_utils
+            from jax.sharding import Mesh
+
+            devices = mesh_utils.create_device_mesh((len(jax.devices()),))
+            self.mesh = Mesh(devices, axis_names=("x",))
+            print(f"Automatic sharding: Using {len(jax.devices())} device(s) along Nx dimension")
+        else:
+            self.mesh = None
 
         # List of state variables that are complex (for unpacking/packing)
         self.complex_state_vars = ["Ck_electrons", "Ck_ions", "Fk"]
@@ -336,6 +381,58 @@ class SpectraxVectorField:
 
         return hermite_filter
 
+    def _generate_density_noise(self, t: float, Nx: int, alpha: float, amplitude: float, seed: int) -> Array:
+        """Generate density noise in Hermite-Fourier space for (0,0,0) mode.
+
+        The (0,0,0) Hermite coefficient represents the density moment:
+            n(x) = Ck[0,0,0,0,kx,0] * alpha^3
+
+        This method generates spatial noise, transforms to k-space via FFT,
+        and converts to Hermite coefficient units.
+
+        Args:
+            t: Current time
+            Nx: Number of spatial grid points in x
+            alpha: Thermal velocity parameter (for unit conversion)
+            amplitude: Noise amplitude
+            seed: Base random seed for this species
+
+        Returns:
+            Noise array in Hermite coefficient units, shape (Nx,).
+            This should be added to Ck[0,0,0,0,:,0].
+        """
+        import jax.random
+
+        # Time-dependent seed for reproducibility (following lpse2d pattern)
+        time_seed = (t / self.dt).astype(int) + seed
+        key = jax.random.PRNGKey(time_seed)
+
+        # Generate random phases in [0, 2π)
+        phases = 2.0 * jnp.pi * jax.random.uniform(key, (Nx,))
+
+        # Generate noise based on type
+        if self.noise_type == "uniform":
+            # Uniform amplitude with random phase
+            noise_real = amplitude * jnp.exp(1j * phases)
+        elif self.noise_type == "normal":
+            # Gaussian amplitude with random phase
+            key_amp, key_phase = jax.random.split(key)
+            amplitudes = amplitude * jax.random.normal(key_amp, (Nx,))
+            phases = 2.0 * jnp.pi * jax.random.uniform(key_phase, (Nx,))
+            noise_real = amplitudes * jnp.exp(1j * phases)
+        else:
+            raise ValueError(f"Unknown noise type: {self.noise_type}")
+
+        # Transform to k-space
+        noise_k = jnp.fft.fft(noise_real, norm="forward")
+
+        # Convert from density units to Hermite coefficient units
+        # Density: n = Ck[0,0,0] * alpha^3
+        # Therefore: Ck[0,0,0] = n / alpha^3
+        noise_hermite = noise_k / (alpha**3)
+
+        return noise_hermite
+
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         """
         Unpack state from float64 views to complex128.
@@ -459,6 +556,28 @@ class SpectraxVectorField:
             dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
             dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
 
+        # Apply density noise if enabled
+        if self.noise_enabled:
+            if self.noise_electrons_enabled:
+                # Electron x-thermal velocity for unit conversion
+                alpha_e = alpha_s[0]
+                # Generate noise for electron density (0,0,0) mode
+                noise_e = self._generate_density_noise(
+                    t, self.Nx, alpha_e, self.noise_electrons_amplitude, self.noise_electrons_seed
+                )
+                # Add to (0,0,0,0,:,0) mode - density moment in k-space
+                # Note: noise is already in dCk/dt units, no need to multiply by dt here
+                dCk_electrons_dt = dCk_electrons_dt.at[0, 0, 0, 0, :, 0].add(noise_e)
+
+            if self.noise_ions_enabled:
+                # Ion x-thermal velocity for unit conversion
+                alpha_i = alpha_s[3]
+                # Generate noise for ion density (0,0,0) mode
+                noise_i = self._generate_density_noise(
+                    t, self.Nx, alpha_i, self.noise_ions_amplitude, self.noise_ions_seed
+                )
+                dCk_ions_dt = dCk_ions_dt.at[0, 0, 0, 0, :, 0].add(noise_i)
+
         # Compute time derivative of magnetic field (Faraday's law)
         dBk_dt = -1j * cross_product(self.nabla, Fk[:3])
 
@@ -482,33 +601,8 @@ class SpectraxVectorField:
         current = current_electrons + current_ions
         dEk_dt = 1j * cross_product(self.nabla, Fk[3:]) - current / Omega_cs[0] + driver
 
-        # Apply sponge damping to electromagnetic fields if configured
-        if self.sponge_fields is not None:
-            sigma = self.sponge_fields
-            sigma_xyz = jnp.broadcast_to(sigma[None, :, None], (self.Ny, self.Nx, self.Nz))
-            E_real = jnp.fft.ifftn(Fk[:3], axes=(-3, -2, -1), norm="forward")
-            B_real = jnp.fft.ifftn(Fk[3:], axes=(-3, -2, -1), norm="forward")
-            dE_real = -sigma_xyz[None, ...] * E_real
-            dB_real = -sigma_xyz[None, ...] * B_real
-            dEk_dt = dEk_dt + jnp.fft.fftn(dE_real, axes=(-3, -2, -1), norm="forward")
-            dBk_dt = dBk_dt + jnp.fft.fftn(dB_real, axes=(-3, -2, -1), norm="forward")
-
-        # Apply sponge damping to plasma (distribution coefficients) if configured
-        if self.sponge_plasma_e is not None:
-            sigma = self.sponge_plasma_e
-            sigma_xyz = jnp.broadcast_to(sigma[None, :, None], (self.Ny, self.Nx, self.Nz))
-            C_real = jnp.fft.ifftn(Ck_electrons, axes=(-3, -2, -1), norm="forward")
-            dC_real = -sigma_xyz[None, None, None, ...] * C_real
-            dCk_electrons_dt = dCk_electrons_dt + jnp.fft.fftn(dC_real, axes=(-3, -2, -1), norm="forward")
-
-        if self.sponge_plasma_i is not None:
-            sigma = self.sponge_plasma_i
-            sigma_xyz = jnp.broadcast_to(sigma[None, :, None], (self.Ny, self.Nx, self.Nz))
-            C_real = jnp.fft.ifftn(Ck_ions, axes=(-3, -2, -1), norm="forward")
-            dC_real = -sigma_xyz[None, None, None, ...] * C_real
-            dCk_ions_dt = dCk_ions_dt + jnp.fft.fftn(dC_real, axes=(-3, -2, -1), norm="forward")
-
         # Concatenate field derivatives
+        # Note: Sponge damping is now handled by the SplitStepDampingSolver integrator
         dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
 
         # Create time derivatives dictionary with keys in same order as input y

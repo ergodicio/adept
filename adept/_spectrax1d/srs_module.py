@@ -74,23 +74,60 @@ class HermiteSRS1D(BaseSpectrax1D):
                 pulse[key] = (xval / x0).to("").magnitude
 
     def _get_boundary_config(self, Lx_real):
+        """Parse boundary configuration with separate field and plasma absorbing lengths.
+
+        Supports two formats:
+        1. Legacy: absorb_length (applies to both fields and plasma)
+        2. New: field_absorb_length and plasma_absorb_length (independent control)
+
+        Args:
+            Lx_real: Domain length in meters (pint Quantity)
+
+        Returns:
+            dict with "field_absorb_length" and "plasma_absorb_length" keys
+        """
         if not isinstance(Lx_real, pint.Quantity):
             Lx_real = Lx_real * self.ureg.meter
         bcfg = self.cfg.get("boundaries", None)
         if not isinstance(bcfg, dict):
             return None
 
-        absorb = bcfg.get("absorb_length", None)
-        if absorb is None:
-            absorb = 0.1 * Lx_real
-        else:
-            absorb = self._require_quantity(absorb, "boundaries.absorb_length").to("m")
+        # Check for new format first
+        field_absorb = bcfg.get("field_absorb_length", None)
+        plasma_absorb = bcfg.get("plasma_absorb_length", None)
 
-        if 2 * absorb >= Lx_real:
-            raise ValueError("2 * boundaries.absorb_length must be < Lx (need space for both boundaries)")
+        # Backward compatibility: if only absorb_length provided, use for both
+        if field_absorb is None and plasma_absorb is None:
+            absorb = bcfg.get("absorb_length", None)
+            if absorb is None:
+                absorb = 0.1 * Lx_real
+            else:
+                absorb = self._require_quantity(absorb, "boundaries.absorb_length").to("m")
+            field_absorb = absorb
+            plasma_absorb = absorb
+        else:
+            # New format: parse separately
+            if field_absorb is None:
+                field_absorb = 0.1 * Lx_real
+            else:
+                field_absorb = self._require_quantity(field_absorb, "boundaries.field_absorb_length").to("m")
+
+            if plasma_absorb is None:
+                plasma_absorb = 0.1 * Lx_real
+            else:
+                plasma_absorb = self._require_quantity(plasma_absorb, "boundaries.plasma_absorb_length").to("m")
+
+        # Validate that absorbing regions don't overlap (use wider of the two for check)
+        max_absorb = max(field_absorb, plasma_absorb)
+        if 2 * max_absorb >= Lx_real:
+            raise ValueError(
+                f"2 * max(field_absorb_length, plasma_absorb_length) = {2 * max_absorb.to('micron').magnitude:.1f} μm "
+                f"must be < Lx = {Lx_real.to('micron').magnitude:.1f} μm (need space for both boundaries)"
+            )
 
         return {
-            "absorb_length": absorb,
+            "field_absorb_length": field_absorb,
+            "plasma_absorb_length": plasma_absorb,
         }
 
     def _get_sponge_config(self, Lx_real):
@@ -171,7 +208,9 @@ class HermiteSRS1D(BaseSpectrax1D):
             # For exponential, need scale length
             if "gradient_scale_length" not in dcfg:
                 raise ValueError("density.gradient_scale_length required for exponential basis")
-            scale_length = self._require_quantity(dcfg["gradient_scale_length"], "density.gradient_scale_length").to("m")
+            scale_length = self._require_quantity(dcfg["gradient_scale_length"], "density.gradient_scale_length").to(
+                "m"
+            )
             result["gradient_scale_length"] = scale_length
             result["center"] = float(dcfg.get("center", 0.5))  # Normalized position
         else:
@@ -186,20 +225,12 @@ class HermiteSRS1D(BaseSpectrax1D):
         """
         # Left boundary: damping from x=0 to x=absorb_len
         s_left = x_real / absorb_len
-        ramp_left = jnp.where(
-            x_real < absorb_len,
-            jnp.sin(0.5 * jnp.pi * (1.0 - s_left)) ** 2,
-            0.0
-        )
+        ramp_left = jnp.where(x_real < absorb_len, jnp.sin(0.5 * jnp.pi * (1.0 - s_left)) ** 2, 0.0)
 
         # Right boundary: damping from x=Lx-absorb_len to x=Lx
         x_right = Lx_real - x_real
         s_right = x_right / absorb_len
-        ramp_right = jnp.where(
-            x_right < absorb_len,
-            jnp.sin(0.5 * jnp.pi * (1.0 - s_right)) ** 2,
-            0.0
-        )
+        ramp_right = jnp.where(x_right < absorb_len, jnp.sin(0.5 * jnp.pi * (1.0 - s_right)) ** 2, 0.0)
 
         # Combine: max of left and right (they shouldn't overlap if validation is correct)
         return jnp.maximum(ramp_left, ramp_right)
@@ -308,7 +339,7 @@ class HermiteSRS1D(BaseSpectrax1D):
                 return None
             return xmin, xmax
 
-        # Fall back to using absorbing boundaries
+        # Fall back to using plasma absorbing boundaries
         if "boundaries" not in self.cfg:
             return None
 
@@ -316,16 +347,16 @@ class HermiteSRS1D(BaseSpectrax1D):
         if boundary_cfg is None:
             return None
 
-        absorb_norm = (boundary_cfg["absorb_length"] / x0).to("").magnitude
+        # Use plasma absorb length to define plasma region (wider than field absorb)
+        plasma_absorb_norm = (boundary_cfg["plasma_absorb_length"] / x0).to("").magnitude
 
-        # Interior region: between both absorbing boundaries
-        xmin = absorb_norm
-        xmax = Lx_norm - absorb_norm
+        # Interior region: between both plasma absorbing boundaries
+        xmin = plasma_absorb_norm
+        xmax = Lx_norm - plasma_absorb_norm
 
         if xmax <= xmin:
             return None
         return xmin, xmax
-
 
     def _plot_fields_spacetime(self, fields_xr, td: str) -> None:
         super()._plot_fields_spacetime(fields_xr, td)
@@ -451,10 +482,10 @@ class HermiteSRS1D(BaseSpectrax1D):
 
         # Create figure
         fig, ax = plt.subplots(figsize=(12, 6))
-        ax.plot(x_micron, density_profile, 'b-', linewidth=2, label='Density profile')
-        ax.set_xlabel('x (μm)', fontsize=12)
-        ax.set_ylabel('Density (normalized to $n_0$)', fontsize=12)
-        ax.set_title('Density Profile with Vacuum and Absorbing Regions', fontsize=14)
+        ax.plot(x_micron, density_profile, "b-", linewidth=2, label="Density profile")
+        ax.set_xlabel("x (μm)", fontsize=12)
+        ax.set_ylabel("Density (normalized to $n_0$)", fontsize=12)
+        ax.set_title("Density Profile with Vacuum and Absorbing Regions", fontsize=14)
         ax.grid(True, alpha=0.3)
 
         # Get region boundaries
@@ -464,46 +495,76 @@ class HermiteSRS1D(BaseSpectrax1D):
         if density_cfg is not None and density_cfg["vacuum_length"] is not None:
             vac_len_micron = density_cfg["vacuum_length"].to("micron").magnitude
             # Mark vacuum boundaries
-            ax.axvline(vac_len_micron, color='r', linestyle='--', alpha=0.7, linewidth=1.5, label='Vacuum boundary')
-            ax.axvline(x_micron[-1] - vac_len_micron, color='r', linestyle='--', alpha=0.7, linewidth=1.5)
+            ax.axvline(vac_len_micron, color="r", linestyle="--", alpha=0.7, linewidth=1.5, label="Vacuum boundary")
+            ax.axvline(x_micron[-1] - vac_len_micron, color="r", linestyle="--", alpha=0.7, linewidth=1.5)
 
             # Shade vacuum regions
-            ax.axvspan(0, vac_len_micron, alpha=0.15, color='red', label='Vacuum region')
-            ax.axvspan(x_micron[-1] - vac_len_micron, x_micron[-1], alpha=0.15, color='red')
+            ax.axvspan(0, vac_len_micron, alpha=0.15, color="red", label="Vacuum region")
+            ax.axvspan(x_micron[-1] - vac_len_micron, x_micron[-1], alpha=0.15, color="red")
 
             # Shade plasma region
-            ax.axvspan(vac_len_micron, x_micron[-1] - vac_len_micron, alpha=0.1, color='blue', label='Plasma region')
+            ax.axvspan(vac_len_micron, x_micron[-1] - vac_len_micron, alpha=0.1, color="blue", label="Plasma region")
 
         # Mark absorbing boundaries if configured
         if "boundaries" in self.cfg:
             boundary_cfg = self._get_boundary_config(Lx_real)
             if boundary_cfg is not None:
-                absorb_micron = boundary_cfg["absorb_length"].to("micron").magnitude
-                ax.axvline(absorb_micron, color='g', linestyle=':', alpha=0.7, linewidth=1.5, label='Absorb boundary')
-                ax.axvline(x_micron[-1] - absorb_micron, color='g', linestyle=':', alpha=0.7, linewidth=1.5)
+                # Field absorbing boundaries (narrow, solid green)
+                field_absorb_micron = boundary_cfg["field_absorb_length"].to("micron").magnitude
+                ax.axvline(
+                    field_absorb_micron, color="g", linestyle="-", alpha=0.7, linewidth=1.5, label="Field absorb"
+                )
+                ax.axvline(x_micron[-1] - field_absorb_micron, color="g", linestyle="-", alpha=0.7, linewidth=1.5)
+
+                # Plasma absorbing boundaries (wider, dashed orange)
+                plasma_absorb_micron = boundary_cfg["plasma_absorb_length"].to("micron").magnitude
+                ax.axvline(
+                    plasma_absorb_micron,
+                    color="orange",
+                    linestyle="--",
+                    alpha=0.7,
+                    linewidth=1.5,
+                    label="Plasma absorb",
+                )
+                ax.axvline(
+                    x_micron[-1] - plasma_absorb_micron, color="orange", linestyle="--", alpha=0.7, linewidth=1.5
+                )
 
         # Add horizontal lines for density levels
         if density_cfg is not None:
             n_min = density_cfg["min"]
             n_max = density_cfg["max"]
-            ax.axhline(n_min, color='gray', linestyle=':', alpha=0.5, linewidth=1)
-            ax.axhline(n_max, color='gray', linestyle=':', alpha=0.5, linewidth=1)
-            ax.axhline(0.01, color='gray', linestyle=':', alpha=0.5, linewidth=1)
-            ax.text(0.02, n_min, f'n_min={n_min:.2f}', transform=ax.get_yaxis_transform(),
-                   fontsize=10, verticalalignment='bottom')
-            ax.text(0.02, n_max, f'n_max={n_max:.2f}', transform=ax.get_yaxis_transform(),
-                   fontsize=10, verticalalignment='bottom')
-            ax.text(0.02, 0.01, 'n_vacuum=0.01', transform=ax.get_yaxis_transform(),
-                   fontsize=10, verticalalignment='bottom')
+            ax.axhline(n_min, color="gray", linestyle=":", alpha=0.5, linewidth=1)
+            ax.axhline(n_max, color="gray", linestyle=":", alpha=0.5, linewidth=1)
+            ax.axhline(0.01, color="gray", linestyle=":", alpha=0.5, linewidth=1)
+            ax.text(
+                0.02,
+                n_min,
+                f"n_min={n_min:.2f}",
+                transform=ax.get_yaxis_transform(),
+                fontsize=10,
+                verticalalignment="bottom",
+            )
+            ax.text(
+                0.02,
+                n_max,
+                f"n_max={n_max:.2f}",
+                transform=ax.get_yaxis_transform(),
+                fontsize=10,
+                verticalalignment="bottom",
+            )
+            ax.text(
+                0.02, 0.01, "n_vacuum=0.01", transform=ax.get_yaxis_transform(), fontsize=10, verticalalignment="bottom"
+            )
 
-        ax.legend(loc='best', fontsize=10)
+        ax.legend(loc="best", fontsize=10)
         ax.set_ylim(bottom=0)
 
         # Save plot
         plots_dir = os.path.join(td, "plots")
         os.makedirs(plots_dir, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(os.path.join(plots_dir, "density_profile.png"), bbox_inches='tight')
+        plt.savefig(os.path.join(plots_dir, "density_profile.png"), bbox_inches="tight")
         plt.close()
 
     def post_process(self, run_output: dict, td: str) -> dict:
@@ -702,16 +763,21 @@ class HermiteSRS1D(BaseSpectrax1D):
             sigma_fields = (sponge_cfg["sigma_max_fields"] * tp0).to("").magnitude
             sigma_plasma = (sponge_cfg["sigma_max_plasma"] * tp0).to("").magnitude
             x_real = jnp.linspace(0.0, Lx_real, Nx, endpoint=False)
+
             if boundary_cfg is None:
-                ramp = jnp.zeros_like(x_real)
+                # No boundaries configured - no damping
+                ramp_fields = jnp.zeros_like(x_real)
+                ramp_plasma = jnp.zeros_like(x_real)
             else:
-                ramp = self._build_sponge_profile(
-                    x_real,
-                    Lx_real,
-                    boundary_cfg["absorb_length"].to("m").magnitude,
-                )
-            grid["sponge_fields"] = jnp.asarray(ramp * sigma_fields)
-            grid["sponge_plasma"] = jnp.asarray(ramp * sigma_plasma)
+                # Build separate spatial profiles for fields and plasma
+                field_absorb_len = boundary_cfg["field_absorb_length"].to("m").magnitude
+                plasma_absorb_len = boundary_cfg["plasma_absorb_length"].to("m").magnitude
+
+                ramp_fields = self._build_sponge_profile(x_real, Lx_real, field_absorb_len)
+                ramp_plasma = self._build_sponge_profile(x_real, Lx_real, plasma_absorb_len)
+
+            grid["sponge_fields"] = jnp.asarray(ramp_fields * sigma_fields)
+            grid["sponge_plasma"] = jnp.asarray(ramp_plasma * sigma_plasma)
 
         # Initialize with homogeneous density - will be modified in init_state_and_args if gradient is specified
         Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, 0, 0, 0].set(n0_e / (alpha_e**3))

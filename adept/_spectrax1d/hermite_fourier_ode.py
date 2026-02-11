@@ -8,7 +8,7 @@ This is a refactored class-based version of the external spectrax.Hermite_Fourie
 function, with grid quantities stored as class attributes to simplify the call signature.
 """
 
-from jax import Array, jit
+from jax import Array
 from jax import numpy as jnp
 
 
@@ -42,6 +42,7 @@ class HermiteFourierODE:
         Nn: int,
         Nm: int,
         Np: int,
+        Nx: int,
         kx_grid: Array,
         ky_grid: Array,
         kz_grid: Array,
@@ -63,12 +64,7 @@ class HermiteFourierODE:
         self.Nn = Nn
         self.Nm = Nm
         self.Np = Np
-
-        # Store k-space grids
-        self.kx_grid = kx_grid
-        self.ky_grid = ky_grid
-        self.kz_grid = kz_grid
-        self.k2_grid = k2_grid
+        self.Nx = Nx
 
         # Store domain lengths
         self.Lx = Lx
@@ -89,7 +85,11 @@ class HermiteFourierODE:
         self.sqrt_p_plus = jnp.reshape(sqrt_p_plus, (Np,))
         self.sqrt_p_minus = jnp.reshape(sqrt_p_minus, (Np,))
 
-        # Store dealiasing mask
+        # Store k-space grids (no padding - sharding handled at higher level)
+        self.kx_grid = kx_grid
+        self.ky_grid = ky_grid
+        self.kz_grid = kz_grid
+        self.k2_grid = k2_grid
         self.mask23 = mask23
 
     def _pad_hermite_axes(self, Ck: Array) -> Array:
@@ -170,7 +170,7 @@ class HermiteFourierODE:
 
         return P[p0 : p0 + Np, m0 : m0 + Nm, n0 : n0 + Nn, :, :, :]
 
-    def __call__(
+    def _compute_rhs(
         self,
         Ck: Array,
         C: Array,
@@ -186,10 +186,9 @@ class HermiteFourierODE:
         closure_p=None,
     ) -> Array:
         """
-        Compute dCk/dt for the Hermite-Fourier system for a single species.
+        Compute dCk/dt for the Hermite-Fourier system (core computation).
 
-        This is a refactored version that operates on a single species at a time,
-        simplifying the broadcasting operations significantly.
+        This is the inner computation that can be called either directly or via shard_map.
 
         Args:
             Ck: Spectral Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
@@ -321,3 +320,41 @@ class HermiteFourierODE:
         )
 
         return dCk_s_dt
+
+    def __call__(
+        self,
+        Ck: Array,
+        C: Array,
+        F: Array,
+        nu: float,
+        D: float,
+        alpha: Array,
+        u: Array,
+        q: float,
+        Omega_c: float,
+        closure_n=None,
+        closure_m=None,
+        closure_p=None,
+    ) -> Array:
+        """
+        Compute dCk/dt for the Hermite-Fourier system for a single species.
+
+        Args:
+            Ck: Spectral Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
+            C: Real-space Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
+            F: Real-space EM fields, shape (6, Ny, Nx, Nz) = (Ex, Ey, Ez, Bx, By, Bz)
+            nu: Collision frequency
+            D: Hyper-diffusion coefficient
+            alpha: Thermal velocities for single species, shape (3,) = (alpha_x, alpha_y, alpha_z)
+            u: Drift velocities for single species, shape (3,) = (u_x, u_y, u_z)
+            q: Species charge (scalar)
+            Omega_c: Cyclotron frequency (scalar)
+            closure_n: Optional closure for n-direction (x-velocity)
+            closure_m: Optional closure for m-direction (y-velocity)
+            closure_p: Optional closure for p-direction (z-velocity)
+
+        Returns:
+            dCk/dt with shape (Np, Nm, Nn, Ny, Nx, Nz)
+        """
+        # Simple wrapper - sharding is now handled at higher level (VectorField)
+        return self._compute_rhs(Ck, C, F, nu, D, alpha, u, q, Omega_c, closure_n, closure_m, closure_p)
