@@ -764,7 +764,7 @@ class BaseSpectrax1D(ADEPTModule):
             axes[1, 1].set_title("Ion Species (Log Scale)")
 
             plt.tight_layout()
-            plt.savefig(os.path.join(td, "plots", "hermite_mode_amplitudes_kx1.png"), dpi=150, bbox_inches="tight")
+            plt.savefig(os.path.join(td, "plots", "hermite_mode_amplitudes_kx1.png"), bbox_inches="tight")
             plt.close()
 
     def _process_distribution_function(self, Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td: str) -> None:
@@ -823,7 +823,7 @@ class BaseSpectrax1D(ADEPTModule):
             ax.set_title(f"{comp_name} Mode Amplitudes")
 
         plt.tight_layout()
-        plt.savefig(os.path.join(td, "plots", "field_mode_amplitudes.png"), dpi=150, bbox_inches="tight")
+        plt.savefig(os.path.join(td, "plots", "field_mode_amplitudes.png"), bbox_inches="tight")
         plt.close()
 
         # Plot magnetic field modes
@@ -845,7 +845,7 @@ class BaseSpectrax1D(ADEPTModule):
             ax.set_title(f"{comp_name} Mode Amplitudes")
 
         plt.tight_layout()
-        plt.savefig(os.path.join(td, "plots", "magnetic_field_mode_amplitudes.png"), dpi=150, bbox_inches="tight")
+        plt.savefig(os.path.join(td, "plots", "magnetic_field_mode_amplitudes.png"), bbox_inches="tight")
         plt.close()
 
     def _process_electromagnetic_fields(self, Fk, t_array, Nx, Ny, Nz, td: str) -> None:
@@ -973,7 +973,7 @@ class BaseSpectrax1D(ADEPTModule):
             # Spacetime plot
             field_data.plot()
             plt.title(f"{field_name} Spacetime")
-            plt.savefig(os.path.join(plots_dir, f"spacetime-{field_name}.png"), bbox_inches="tight", dpi=150)
+            plt.savefig(os.path.join(plots_dir, f"spacetime-{field_name}.png"), bbox_inches="tight")
             plt.close()
 
     def _plot_fields_lineouts(self, fields_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
@@ -997,7 +997,7 @@ class BaseSpectrax1D(ADEPTModule):
 
             # Create facet plot
             field_data[tslice].T.plot(col="t", col_wrap=3)
-            plt.savefig(os.path.join(plots_dir, f"{field_name}.png"), bbox_inches="tight", dpi=150)
+            plt.savefig(os.path.join(plots_dir, f"{field_name}.png"), bbox_inches="tight")
             plt.close()
 
     def _plot_moments_spacetime(self, moments_xr: xr.Dataset, td: str) -> None:
@@ -1018,7 +1018,7 @@ class BaseSpectrax1D(ADEPTModule):
                 continue
             data.plot()
             plt.title(f"{name} Spacetime")
-            plt.savefig(os.path.join(plots_dir, f"spacetime-{name}.png"), bbox_inches="tight", dpi=150)
+            plt.savefig(os.path.join(plots_dir, f"spacetime-{name}.png"), bbox_inches="tight")
             plt.close()
 
     def _plot_moments_lineouts(self, moments_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
@@ -1043,7 +1043,7 @@ class BaseSpectrax1D(ADEPTModule):
             tslice = slice(0, None, t_skip)
 
             data[tslice].T.plot(col="t", col_wrap=3)
-            plt.savefig(os.path.join(plots_dir, f"{name}.png"), bbox_inches="tight", dpi=150)
+            plt.savefig(os.path.join(plots_dir, f"{name}.png"), bbox_inches="tight")
             plt.close()
 
     def _plot_distribution_facets(self, dist_xr: xr.Dataset, td: str, n_timesteps: int = 6) -> None:
@@ -1079,7 +1079,7 @@ class BaseSpectrax1D(ADEPTModule):
         amplitude.plot(
             x="kx", y="hermite_mode", col="t", col_wrap=3, cmap="viridis", cbar_kwargs={"label": r"$\log_{10}(|C_k|)$"}
         )
-        plt.savefig(os.path.join(plots_dir, "Ck_amplitude_facets.png"), bbox_inches="tight", dpi=150)
+        plt.savefig(os.path.join(plots_dir, "Ck_amplitude_facets.png"), bbox_inches="tight")
         plt.close()
 
     def post_process(self, run_output: dict, td: str) -> dict:
@@ -1167,6 +1167,7 @@ class BaseSpectrax1D(ADEPTModule):
                         axis = ("x", x)
                         axis_name = "x"
 
+                    print(fields_data)
                     fields_xr_dict = {
                         name: xr.DataArray(val, coords=[("t", t_array), axis], name=name)
                         for name, val in fields_data.items()

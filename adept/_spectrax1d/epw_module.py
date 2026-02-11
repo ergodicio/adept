@@ -244,7 +244,7 @@ class EPW1D(BaseSpectrax1D):
             axes[1, 1].set_xlabel("Hermite Mode Index (m)", fontsize=11)
             axes[1, 1].set_title("Ions - Log Scale", fontsize=12)
 
-            plt.savefig(os.path.join(td, "plots", "epw_hermite_coefficients_2x2.png"), dpi=150, bbox_inches="tight")
+            plt.savefig(os.path.join(td, "plots", "epw_hermite_coefficients_2x2.png"), bbox_inches="tight")
             plt.close()
 
     def post_process(self, run_output: dict, td: str) -> dict:

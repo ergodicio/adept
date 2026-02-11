@@ -194,56 +194,6 @@ def store_distribution_timeseries(cfg: dict, Ck_array: np.ndarray, t_array: np.n
     return Ck_ds
 
 
-def get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns):
-    """
-    Create a save function for electromagnetic fields and moments.
-
-    This function computes:
-    - Field energy (electric and magnetic)
-    - Density moments from distribution function
-    - Velocity moments
-
-    Args:
-        cfg: Configuration dict
-        Nx, Ny, Nz: Fourier mode dimensions
-        Nn, Nm, Np, Ns: Hermite mode dimensions
-
-    Returns:
-        Callable save function
-    """
-
-    def fields_save_func(t, y, args):
-        """Extract field quantities and moments from state."""
-        # Extract per-species Ck and Fk from state dictionary (convert from float64 views to complex128)
-        Ck_electrons = y["Ck_electrons"].view(jnp.complex128)
-        Ck_ions = y["Ck_ions"].view(jnp.complex128)
-        Fk = y["Fk"].view(jnp.complex128)
-
-        # Compute electromagnetic field energy
-        # E^2 + B^2 (sum over all Fourier modes)
-        E_energy = jnp.sum(jnp.abs(Fk[0:3, :, :, :]) ** 2.0)
-        B_energy = jnp.sum(jnp.abs(Fk[3:6, :, :, :]) ** 2.0)
-        EM_energy = E_energy + B_energy
-
-        # Get density from n=0 Hermite mode (equilibrium)
-        # Ck shape: (Np, Nm, Nn, Ny, Nx, Nz) - Per species
-        # Electron density ((p,m,n)=(0,0,0) Hermite mode at k=0)
-        # k=0 mode is at index [0, 0, 0] in standard FFT ordering
-        ne_k0 = Ck_electrons[0, 0, 0, 0, 0, 0]
-        # Ion density ((p,m,n)=(0,0,0) Hermite mode at k=0)
-        ni_k0 = Ck_ions[0, 0, 0, 0, 0, 0]
-
-        return {
-            "EM_energy": EM_energy,
-            "E_energy": E_energy,
-            "B_energy": B_energy,
-            "ne_k0": jnp.abs(ne_k0),
-            "ni_k0": jnp.abs(ni_k0),
-        }
-
-    return fields_save_func
-
-
 def get_distribution_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
     """
     Create a save function for distribution function (Hermite coefficients).
@@ -390,19 +340,7 @@ def get_default_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns):
 
 
 def get_moments_save_func(
-    Nx,
-    Ny,
-    Nz,
-    Nn_e,
-    Nm_e,
-    Np_e,
-    Nn_i,
-    Nm_i,
-    Np_i,
-    x_base=None,
-    kx_base=None,
-    x_ax=None,
-    kx_ax=None,
+    Nx, Ny, Nz, Nn_e, Nm_e, Np_e, Nn_i, Nm_i, Np_i, x_base=None, kx_base=None, x_ax=None, kx_ax=None
 ):
     """
     Create a save function for low-order distribution moments in real space.
@@ -580,9 +518,7 @@ def get_save_quantities(cfg: dict) -> dict:
                     dim_cfg["ax"] = np.linspace(dmin, dmax, dn)
 
         # Assign the appropriate save function based on save type
-        if save_type == "fields":
-            save_config["func"] = get_field_save_func(cfg, Nx, Ny, Nz, Nn, Nm, Np, Ns)
-        elif save_type == "hermite" or save_type == "distribution":
+        if save_type == "hermite" or save_type == "distribution":
             save_config["func"] = get_distribution_save_func(Nx, Ny, Nz, Nn, Nm, Np, Ns)
         elif save_type == "moments":
             # Use per-species Hermite mode counts if available

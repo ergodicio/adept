@@ -4,7 +4,7 @@ solver: hermite-srs-1d
 
 mlflow:
   experiment: hermite-srs1d-examples
-  run: ey-laser-intensity
+  run: absorbing-laser
 
 units:
   normalizing_density: 9.1e21/cc
@@ -13,7 +13,7 @@ units:
 
 physics:
   # Box size in real units
-  Lx: 60 micron
+  Lx: 100 micron
   Ly: 1 micron
   Lz: 1 micron
 
@@ -53,20 +53,34 @@ drivers:
       wavelength: 351 nm
 
       # Temporal envelope (real units)
-      t_center: 0.01 ps
-      t_width: 0.01 ps
-      t_rise: 0.005 ps
+      t_center: 0.07 ps
+      t_width: 0.05 ps
+      t_rise: 0.01 ps
+
+      x_center: 7 micron
+      x_width: 2 micron
+      x_rise: 1 micron
 
       # Spatial envelope omitted: will be auto-set from boundaries
   ez: {}
 
-# boundaries:
-#   side: left
-#   vacuum_length: 10 micron
-#   absorb_length: 5 micron
-#   sponge:
-#     sigma_max_fields: 0.2/ps
-#     sigma_max_plasma: 0.1/ps
+# Optional: Density gradient configuration
+# If omitted, plasma density is homogeneous at n0_e, n0_i
+# density:
+#   basis: linear              # or "exponential"
+#   min: 0.19                  # Minimum density in plasma gradient
+#   max: 0.27                  # Maximum density in plasma gradient
+#   vacuum_length: 10 micron   # Vacuum region at boundaries (goes to 0.01)
+#   rise: 3 micron             # Smoothing length for vacuum-plasma transition
+#   # For exponential gradients only:
+#   # gradient_scale_length: 100 micron
+#   # center: 0.5              # Normalized position of center density
+
+boundaries:
+  absorb_length: 5 micron
+  sponge:
+    sigma_max_fields: 1.0/fs
+    sigma_max_plasma: 1.0/fs
 
 grid:
   # Hermite modes
@@ -78,7 +92,7 @@ grid:
   Ns: 2
 
   # Simulation length in real units
-  tmax: 0.02 ps
+  tmax: 0.1 ps
   dt: 0.02
 
   # ODE solver
@@ -89,12 +103,12 @@ save:
   default:
     t:
       tmin: 0 ps
-      tmax: 0.02 ps
+      tmax: 0.1 ps
       nt: 81
   fields:
     t:
       tmin: 0 ps
-      tmax: 0.02 ps
+      tmax: 0.1 ps
       nt: 41
     # x:
     #   xmin: 0 micron
@@ -103,7 +117,7 @@ save:
   moments:
     t:
       tmin: 0 ps
-      tmax: 0.02 ps
+      tmax: 0.1 ps
       nt: 41
     # x:
     #   xmin: 0 micron
