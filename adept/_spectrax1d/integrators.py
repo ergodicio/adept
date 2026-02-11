@@ -6,8 +6,9 @@ in the Spectrax-1D solver using operator splitting methods.
 """
 
 from typing import Optional
+
 import equinox as eqx
-from diffrax import AbstractSolver, Dopri8, RESULTS
+from diffrax import RESULTS, AbstractSolver, Dopri8
 from jax import numpy as jnp
 from jax.typing import ArrayLike
 
@@ -20,10 +21,10 @@ class SplitStepDampingSolver(AbstractSolver):
     the damping exactly rather than within the RK substeps.
 
     Mathematical approach:
-        Standard ODE: dC/dt = F(C) - σ(x)*C (stiff when σ is large)
+        Standard ODE: dC/dt = F(C) - sigma(x)*C (stiff when sigma is large)   noqa: RUF003
         Split-step:
             Step 1: dC/dt = F(C)                      [RK integration]
-            Step 2: C_new = C_old * exp(-σ(x)*dt)     [Exact damping]
+            Step 2: C_new = C_old * exp(-sigma(x)*dt)     [Exact damping] # noqa: RUF003
 
     State structure (for spectrax-1d):
         y = {
@@ -39,22 +40,22 @@ class SplitStepDampingSolver(AbstractSolver):
 
     Args:
         wrapped_solver: The base diffrax solver (typically Dopri8, Tsit5, etc.)
-        sponge_fields: Spatial damping profile for EM fields σ_fields(x), shape (Nx,)
-        sponge_plasma_e: Spatial damping profile for electron distribution σ_e(x), shape (Nx,)
-        sponge_plasma_i: Spatial damping profile for ion distribution σ_i(x), shape (Nx,)
+        sponge_fields: Spatial damping profile for EM fields sigma_fields(x), shape (Nx,)
+        sponge_plasma_e: Spatial damping profile for electron distribution sigma_e(x), shape (Nx,)
+        sponge_plasma_i: Spatial damping profile for ion distribution sigma_i(x), shape (Nx,)
         Ny, Nx, Nz: Grid dimensions for proper broadcasting
 
     Benefits:
-        - Unconditionally stable for any damping rate σ
-        - More accurate than implicit methods for large σ
-        - Allows 2-10× larger timesteps in absorbing regions
+        - Unconditionally stable for any damping rate sigma
+        - More accurate than implicit methods for large sigma
+        - Allows 2-10x larger timesteps in absorbing regions
         - No modifications needed to physics equations
     """
 
     wrapped_solver: AbstractSolver
-    sponge_fields: Optional[ArrayLike]
-    sponge_plasma_e: Optional[ArrayLike]
-    sponge_plasma_i: Optional[ArrayLike]
+    sponge_fields: ArrayLike | None
+    sponge_plasma_e: ArrayLike | None
+    sponge_plasma_i: ArrayLike | None
     Ny: int
     Nx: int
     Nz: int
@@ -62,9 +63,9 @@ class SplitStepDampingSolver(AbstractSolver):
     def __init__(
         self,
         wrapped_solver: AbstractSolver = None,
-        sponge_fields: Optional[ArrayLike] = None,
-        sponge_plasma_e: Optional[ArrayLike] = None,
-        sponge_plasma_i: Optional[ArrayLike] = None,
+        sponge_fields: ArrayLike | None = None,
+        sponge_plasma_e: ArrayLike | None = None,
+        sponge_plasma_i: ArrayLike | None = None,
         Ny: int = 1,
         Nx: int = 1,
         Nz: int = 1,
@@ -134,12 +135,12 @@ class SplitStepDampingSolver(AbstractSolver):
         Apply exponential damping to state components.
 
         For each component with damping:
-            C_new(x) = C_old(x) * exp(-σ(x) * dt)
+            C_new(x) = C_old(x) * exp(-sigma(x) * dt) # noqa: RUF003
 
         Implementation details:
-        - Damping is applied in real space (σ(x) is spatially varying)
-        - σ(x) is broadcast from (Nx,) to full array shapes
-        - Uses exp(-σ*dt) multiplication (exact solution to dC/dt = -σ*C)
+        - Damping is applied in real space (sigma(x) is spatially varying)
+        - sigma(x) is broadcast from (Nx,) to full array shapes # noqa: RUF003
+        - Uses exp(-sigma*dt) multiplication (exact solution to dC/dt = -sigma*C) # noqa: RUF003
 
         Args:
             y: State dictionary with float64 views of complex arrays
@@ -156,17 +157,14 @@ class SplitStepDampingSolver(AbstractSolver):
             Fk = y["Fk"].view(jnp.complex128)
 
             # Transform to real space, apply damping, transform back
-            # This is necessary because σ(x) is spatially varying
+            # This is necessary because sigma(x) is spatially varying
             E_real = jnp.fft.ifftn(Fk[:3], axes=(-3, -2, -1), norm="forward")
             B_real = jnp.fft.ifftn(Fk[3:], axes=(-3, -2, -1), norm="forward")
 
-            # Broadcast σ(x) from (Nx,) to (Ny, Nx, Nz)
-            sigma_xyz = jnp.broadcast_to(
-                self.sponge_fields[None, :, None],
-                (self.Ny, self.Nx, self.Nz)
-            )
+            # Broadcast sigma(x) from (Nx,) to (Ny, Nx, Nz)
+            sigma_xyz = jnp.broadcast_to(self.sponge_fields[None, :, None], (self.Ny, self.Nx, self.Nz))
 
-            # Apply exponential damping: C_new = C_old * exp(-σ * dt)
+            # Apply exponential damping: C_new = C_old * exp(-sigma * dt)
             damping_factor = jnp.exp(-sigma_xyz * dt)
             E_damped = E_real * damping_factor[None, ...]  # Broadcast to (3, Ny, Nx, Nz)
             B_damped = B_real * damping_factor[None, ...]  # Broadcast to (3, Ny, Nx, Nz)
@@ -188,11 +186,8 @@ class SplitStepDampingSolver(AbstractSolver):
             # Transform to real space
             C_real_e = jnp.fft.ifftn(Ck_e, axes=(-3, -2, -1), norm="forward")
 
-            # Broadcast σ(x) from (Nx,) to (Ny, Nx, Nz)
-            sigma_xyz = jnp.broadcast_to(
-                self.sponge_plasma_e[None, :, None],
-                (self.Ny, self.Nx, self.Nz)
-            )
+            # Broadcast sigma(x) from (Nx,) to (Ny, Nx, Nz)
+            sigma_xyz = jnp.broadcast_to(self.sponge_plasma_e[None, :, None], (self.Ny, self.Nx, self.Nz))
 
             # Apply exponential damping with broadcast to (Np, Nm, Nn, Ny, Nx, Nz)
             damping_factor = jnp.exp(-sigma_xyz * dt)
@@ -212,11 +207,8 @@ class SplitStepDampingSolver(AbstractSolver):
             # Transform to real space
             C_real_i = jnp.fft.ifftn(Ck_i, axes=(-3, -2, -1), norm="forward")
 
-            # Broadcast σ(x) from (Nx,) to (Ny, Nx, Nz)
-            sigma_xyz = jnp.broadcast_to(
-                self.sponge_plasma_i[None, :, None],
-                (self.Ny, self.Nx, self.Nz)
-            )
+            # Broadcast sigma(x) from (Nx,) to (Ny, Nx, Nz)
+            sigma_xyz = jnp.broadcast_to(self.sponge_plasma_i[None, :, None], (self.Ny, self.Nx, self.Nz))
 
             # Apply exponential damping
             damping_factor = jnp.exp(-sigma_xyz * dt)
