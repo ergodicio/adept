@@ -156,32 +156,28 @@ def plot_comparison_dashboard(
     # Density conservation
     ax = axes[0, 0]
     for name, (s, times) in stacked_results.items():
-        n0 = s.density[0]
-        _plot(ax, times, (s.density - n0) / n0, colors[name], name)
+        _plot(ax, times, s.rel_density, colors[name], name)
     ax.set_xlabel("t / collision times")
     ax.set_ylabel("(n - n0) / n0")
     ax.set_title("Density Conservation")
     ax.axhline(0, color="k", linestyle="--", alpha=0.5)
 
-    # Temperature (line-style legend instead of per-result legend)
+    # Temperature (raw total-energy T, line-style legend)
     ax = axes[0, 1]
     for name, (s, times) in stacked_results.items():
         if len(times) <= 2:
-            ax.plot(times[-1], s.energy_discrete[-1], "o", color=colors[name], markersize=8)
-            ax.plot(times[-1], s.energy_self_consistent[-1], "s", color=colors[name], markersize=6, alpha=0.7)
+            ax.plot(times[-1], s.temperature_discrete[-1], "o", color=colors[name], markersize=8)
+            ax.plot(times[-1], s.temperature_sc[-1], "s", color=colors[name], markersize=6, alpha=0.7)
         else:
-            ax.plot(times, s.energy_discrete, color=colors[name], linewidth=1.5)
-            ax.plot(times, s.energy_self_consistent, color=colors[name], linestyle="--", linewidth=1.0, alpha=0.7)
-    first_result = results[sorted_names[0]]
-    ax.axhline(first_result.T_initial, color="k", linestyle=":", alpha=0.5)
+            ax.plot(times, s.temperature_discrete, color=colors[name], linewidth=1.5)
+            ax.plot(times, s.temperature_sc, color=colors[name], linestyle="--", linewidth=1.0, alpha=0.7)
     ax.set_xlabel("t / collision times")
-    ax.set_ylabel("Temperature")
-    ax.set_title("Temperature")
+    ax.set_ylabel(r"$T$ (total energy)")
+    ax.set_title("Total Energy")
     ax.legend(
         handles=[
             Line2D([], [], color="k", linestyle="--", linewidth=1.0, label="self-consistent"),
             Line2D([], [], color="k", linestyle="-", linewidth=1.5, label="discrete"),
-            Line2D([], [], color="k", linestyle=":", linewidth=1.0, label="initial"),
         ],
         fontsize=7,
     )
@@ -195,27 +191,23 @@ def plot_comparison_dashboard(
     ax.set_title("Positivity Violation")
     ax.legend(fontsize=7)
 
-    # RMSE titles depend on whether initial momentum is nonzero
-    first_s = next(iter(stacked_results.values()))[0]
-    has_shift = not np.isnan(first_s.momentum[0]) and abs(first_s.momentum[0]) > 1e-10
-    final_title = "RMSE to Expected Shifted Maxwellian" if has_shift else "RMSE to Final Maxwellian"
-    instant_title = "RMSE to Instant. Maxwellian(n,p,T)" if has_shift else "RMSE to Instantaneous Maxwellian"
-
+    # RMSE to expected equilibrium
     ax = axes[1, 0]
     for name, (s, times) in stacked_results.items():
-        _plot(ax, times, s.rmse_final_maxwellian, colors[name], name, log=True)
+        _plot(ax, times, s.rmse_expected, colors[name], name, log=True)
     ax.set_xlabel("t / collision times")
     ax.set_ylabel("RMSE")
-    ax.set_title(final_title)
+    ax.set_title("RMSE to Expected Maxwellian")
 
+    # RMSE to instantaneous Maxwellian
     ax = axes[1, 1]
     for name, (s, times) in stacked_results.items():
-        _plot(ax, times, s.rmse_instant_maxwellian, colors[name], name, log=True)
+        _plot(ax, times, s.rmse_instant, colors[name], name, log=True)
     ax.set_xlabel("t / collision times")
     ax.set_ylabel("RMSE")
-    ax.set_title(instant_title)
+    ax.set_title("RMSE to Instantaneous Maxwellian")
 
-    # Entropy
+    # Entropy (raw)
     ax = axes[1, 2]
     for name, (s, times) in stacked_results.items():
         mask = ~np.isnan(s.entropy)

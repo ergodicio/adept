@@ -19,7 +19,13 @@ from jax import Array
 from adept._base_ import Stepper
 from adept.driftdiffusion import _find_self_consistent_beta_single, discrete_temperature
 
-from .metrics import RelaxationMetrics, compute_density, compute_metrics, compute_momentum
+from .metrics import (
+    RelaxationMetrics,
+    compute_density,
+    compute_entropy,
+    compute_metrics,
+    compute_momentum,
+)
 from .registry import VelocityGrid
 
 
@@ -50,7 +56,6 @@ class RelaxationResult:
     f_initial: Array = None
     f_final: Array = None
     T_initial: float = None
-    T_final: float = None
     config: TimeStepperConfig = None
 
 
@@ -105,11 +110,9 @@ class FPVectorField(eqx.Module):
             f,
             self.v,
             self.dv,
-            rtol=1e-8,
-            atol=1e-12,
-            max_steps=self.sc_iterations,
             spherical=self.spherical,
             vbar=vbar,
+            max_steps=self.sc_iterations,
         )
 
         # Get model coefficients (D from beta, vbar already computed)
@@ -168,23 +171,23 @@ def run_relaxation(
     t_final = config.n_collision_times * tau
     n_steps = int(t_final / dt)
 
-    # Initial state
+    # Initial state — compute vbar first (needed for thermal SC temperature)
     n_initial = compute_density(f0, grid)
-    T_initial = discrete_temperature(f0, grid.v, grid.dv, spherical=grid.spherical)
     vbar_initial = compute_momentum(f0, grid)
     # For spherical (NaN), use 0.0 so reference Maxwellians are zero-centered
     vbar_initial = jnp.where(jnp.isnan(vbar_initial), 0.0, vbar_initial)
-
-    # For equilibrium temperature, use energy conservation:
-    # The final Maxwellian should have the same total energy as initial
-    # For LB/Dougherty, energy is conserved, so T_final = T_initial (in theory)
-    # But we track it for verification
-    T_final = T_initial
+    # T_initial: total energy (no vbar) — for conservation metrics
+    T_initial = discrete_temperature(f0, grid.v, grid.dv, spherical=grid.spherical)
+    # T_sc_initial: thermal SC temperature (with vbar) — for RMSE reference Maxwellians
+    beta_sc_initial = _find_self_consistent_beta_single(
+        f0, grid.v, grid.dv, spherical=grid.spherical, vbar=vbar_initial
+    )
+    T_sc_initial = 1.0 / (2.0 * beta_sc_initial)
+    entropy_initial = compute_entropy(f0, grid)
 
     result = RelaxationResult(
         f_initial=f0,
         T_initial=float(T_initial),
-        T_final=float(T_final),
         config=config,
     )
 
@@ -234,7 +237,7 @@ def run_relaxation(
     # Compute all metrics in one vectorised call
     # solution.ys: (n_snapshots, nv), solution.ts: (n_snapshots,)
     result.snapshots = jax.vmap(compute_metrics, in_axes=(0, None, 0, None, None, None))(
-        solution.ys, grid, solution.ts, T_final, n_initial, vbar_initial
+        solution.ys, grid, solution.ts, T_sc_initial, n_initial, vbar_initial
     )
     result.times = solution.ts
     result.f_history = solution.ys if store_f_history else None

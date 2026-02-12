@@ -155,10 +155,10 @@ class F0Collisions(eqx.Module):
             f0,
             self.v,
             self.dv,
-            self._sc_rtol,
-            self._sc_atol,
-            self._sc_max_steps,
-            True,  # spherical=True for positive-only grid
+            spherical=True,  # spherical=True for positive-only grid
+            rtol=self._sc_rtol,
+            atol=self._sc_atol,
+            max_steps=self._sc_max_steps,
         )
 
         # Get D from model (D = 1/(2β) = T in Buet notation)

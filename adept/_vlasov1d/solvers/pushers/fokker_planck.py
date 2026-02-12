@@ -190,10 +190,10 @@ class Collisions:
                 f,
                 v,
                 dv,
-                self._sc_rtol,
-                self._sc_atol,
-                self._sc_max_steps,
-                False,  # spherical=False for symmetric grid
+                spherical=False,  # spherical=False for symmetric grid
+                rtol=self._sc_rtol,
+                atol=self._sc_atol,
+                max_steps=self._sc_max_steps,
             )
 
             # Get D from model (D = 1/(2β) = T in Buet notation)

@@ -75,13 +75,8 @@ def bump_on_tail(grid: VelocityGrid, v_bump: float = 3.0, narrow: bool = True) -
     # Bulk Maxwellian
     f_bulk = jnp.exp(-(grid.v**2) / 2.0)
 
-    # Bump
-    if grid.spherical:
-        # For spherical, bump is at positive v
-        f_bump = 0.1 * jnp.exp(-(((grid.v - v_bump) / width) ** 2))
-    else:
-        # For cartesian, add bumps at +/- v_bump for symmetry
-        f_bump = 0.1 * (jnp.exp(-(((grid.v - v_bump) / width) ** 2)) + jnp.exp(-(((grid.v + v_bump) / width) ** 2)))
+    # Single bump at +v_bump (anisotropic for cartesian, natural for spherical)
+    f_bump = 0.1 * jnp.exp(-(((grid.v - v_bump) / width) ** 2))
 
     return _normalize(f_bulk + f_bump, grid)
 

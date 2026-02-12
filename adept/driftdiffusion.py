@@ -15,7 +15,7 @@ where:
 Key design: nu is applied as row scaling to the cell-centered flux divergence,
 NOT interpolated to edges. Each matrix row i gets multiplied by nu[i].
 
-Buet notation is used throughout: β = 1/(2T) so the Maxwellian is f = exp(-β·v²).
+Beta is defined β = 1/(2T) to recover Buet's form for the Maxwellian f = exp(-β·v²).
 This means D = 1/(2β) = T for beta-based models.
 
 Note on conventions: Buet & Le Thanh (2007) define ε = v², β = 1/T_Buet, and
@@ -38,7 +38,7 @@ Concrete models live alongside their solvers:
 - LenardBernstein, Dougherty → adept._vlasov1d.solvers.pushers.fokker_planck
 - FastVFP → adept.vfp1d.fokker_planck
 
-Type 1 (Beta-based): Use Buet β = 1/(2T) to compute D = 1/(2β) = T.
+Type 1 (Beta-based): Use Buet β = 1/(2T) to compute D(β, v)
     NOT compatible with Buet weak form scheme.
 
 Type 2 (Kernel-based): Compute D via linear kernel ∫g·f·dε.
@@ -134,11 +134,11 @@ def _find_self_consistent_beta_single(
     f: Array,
     v: Array,
     dv: float | Array,
-    rtol: float,
-    atol: float,
-    max_steps: int,
     spherical: bool,
     vbar: Array | None = None,
+    rtol: float = 1e-8,
+    atol: float = 1e-12,
+    max_steps: int = 3,
 ) -> Array:
     """
     Find beta for a single spatial point (internal, not vmapped).
@@ -152,11 +152,11 @@ def _find_self_consistent_beta_single(
         f: Distribution function, shape (nv,)
         v: Velocity grid (cell centers), shape (nv,)
         dv: Velocity grid spacing, scalar or shape (nv,) for nonuniform grids
-        rtol: Relative tolerance for Newton solver
-        atol: Absolute tolerance for Newton solver
-        max_steps: Maximum Newton iterations
         spherical: If True, use spherical moment ⟨v⁴⟩/(3⟨v²⟩) instead of ⟨v²⟩
         vbar: Mean velocity, scalar or None. If None, assumes vbar=0.
+        rtol: Relative tolerance for Newton solver (default: 1e-8)
+        atol: Absolute tolerance for Newton solver (default: 1e-12)
+        max_steps: Maximum Newton iterations (default: 3)
 
     Returns:
         beta_star: Beta value where Maxwellian has T_discrete = T_f, scalar
@@ -196,7 +196,7 @@ def _find_self_consistent_beta_single(
 # without needing a separate vmap definition.
 _find_self_consistent_beta_vmapped = eqx.filter_vmap(
     _find_self_consistent_beta_single,
-    in_axes=(0, None, None, None, None, None, None, 0),
+    in_axes=(0, None, None, None, 0, None, None, None),
 )
 
 
@@ -204,11 +204,11 @@ def find_self_consistent_beta(
     f: Array,
     v: Array,
     dv: float | Array,
-    rtol: float,
-    atol: float,
-    max_steps: int,
     spherical: bool,
     vbar: Array | None = None,
+    rtol: float = 1e-8,
+    atol: float = 1e-12,
+    max_steps: int = 3,
 ) -> Array:
     """
     Find beta such that a Maxwellian has the same discrete temperature as f.
@@ -226,16 +226,16 @@ def find_self_consistent_beta(
         f: Distribution function, shape (nx, nv)
         v: Velocity grid (cell centers), shape (nv,)
         dv: Velocity grid spacing, scalar or shape (nv,) for nonuniform grids
-        rtol: Relative tolerance for Newton solver
-        atol: Absolute tolerance for Newton solver
-        max_steps: Maximum Newton iterations (default 3)
         spherical: If True, use spherical moment ⟨v⁴⟩/(3⟨v²⟩) instead of ⟨v²⟩
         vbar: Mean velocity, shape (nx,) or None. If None, assumes vbar=0.
+        rtol: Relative tolerance for Newton solver (default: 1e-8)
+        atol: Absolute tolerance for Newton solver (default: 1e-12)
+        max_steps: Maximum Newton iterations (default: 3)
 
     Returns:
         beta_star: Beta values where Maxwellian has T_discrete = T_f, shape (nx,)
     """
-    return _find_self_consistent_beta_vmapped(f, v, dv, rtol, atol, max_steps, spherical, vbar)
+    return _find_self_consistent_beta_vmapped(f, v, dv, spherical, vbar, rtol, atol, max_steps)
 
 
 class AbstractMaxwellianPreservingModel(eqx.Module):

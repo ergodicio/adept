@@ -15,9 +15,7 @@ from pathlib import Path
 
 import mlflow
 
-from adept.driftdiffusion import discrete_temperature
-
-from .metrics import compute_density, compute_momentum, compute_rmse
+from .metrics import compute_momentum, compute_rmse
 from .plotting import plot_comparison_dashboard, plot_distribution_evolution
 from .registry import (
     MODELS,
@@ -114,26 +112,37 @@ def run_relaxation_sweep_and_assert(
             assert drift_d < drift_lb, f"Dougherty drift ({drift_d:.3f}) not better than LB ({drift_lb:.3f})"
 
 
+def _rel(val, ref):
+    """Compute (val - ref) / |ref|, guarding against near-zero reference."""
+    return (val - ref) / abs(ref) if abs(ref) > 1e-30 else val - ref
+
+
 def _log_metrics_for_result(result: RelaxationResult, config: TimeStepperConfig) -> None:
     """Log per-snapshot metrics to MLflow for a single result."""
     s = result.snapshots  # Batched pytree, each leaf shape (n_snapshots,)
     n_snapshots = s.time.shape[0]
+
+    # Reference values (index 0) for relative metrics
+    T_d0 = float(s.temperature_discrete[0])
+    T_sc0 = float(s.temperature_sc[0])
+    S0 = float(s.entropy[0])
+
     for i in range(n_snapshots):
         step = int(float(s.time[i]) * config.nu * 100)
         metrics_dict = {
-            "density": float(s.density[i]),
-            "temperature_discrete": float(s.energy_discrete[i]),
-            "temperature_sc": float(s.energy_self_consistent[i]),
+            "rel_density": float(s.rel_density[i]),
+            "rel_temperature_discrete": _rel(float(s.temperature_discrete[i]), T_d0),
+            "rel_temperature_sc": _rel(float(s.temperature_sc[i]), T_sc0),
             "positivity_violation": float(s.positivity_violation[i]),
-            "rmse_final": float(s.rmse_final_maxwellian[i]),
-            "rmse_instant": float(s.rmse_instant_maxwellian[i]),
+            "rmse_expected": float(s.rmse_expected[i]),
+            "rmse_instant": float(s.rmse_instant[i]),
         }
-        entropy_val = float(s.entropy[i])
-        if not math.isnan(entropy_val):
-            metrics_dict["entropy"] = entropy_val
-        momentum_val = float(s.momentum[i])
+        S = float(s.entropy[i])
+        if not math.isnan(S) and not math.isnan(S0):
+            metrics_dict["rel_entropy"] = _rel(S, S0)
+        momentum_val = float(s.momentum_drift[i])
         if not math.isnan(momentum_val):
-            metrics_dict["momentum"] = momentum_val
+            metrics_dict["momentum_drift"] = momentum_val
         mlflow.log_metrics(metrics_dict, step=step)
 
 
@@ -368,6 +377,7 @@ def verify_relaxation_results(
     Verify basic conservation properties for ChangCooper results only.
 
     CentralDifferencing results are logged but not asserted (less stable scheme).
+    Uses the pre-computed discrepancy metrics from the final snapshot.
 
     Args:
         results: Dict from run_relaxation_sweep (flat: name -> RelaxationResult)
@@ -377,25 +387,25 @@ def verify_relaxation_results(
         temperature_tol: Tolerance for temperature conservation
         check_rmse_improvement: Whether to check RMSE improves (skip for equilibrium)
     """
-    n0 = float(compute_density(f0, grid))
-    T0 = float(discrete_temperature(f0, grid.v, grid.dv, spherical=grid.spherical))
-
     for name, result in results.items():
         # Skip assertions for CentralDifferencing (only log results)
         if "CentralDifferencing" in name:
             continue
 
-        # Density conservation (ChangCooper only)
-        nf = float(compute_density(result.f_final, grid))
-        assert abs(nf - n0) / n0 < 1e-6, f"{name}: Density not conserved: {n0} -> {nf}"
+        s = result.snapshots  # Batched metrics
 
-        # Temperature conservation (if requested, ChangCooper only)
+        # Density conservation
+        rel_n = float(s.rel_density[-1])
+        assert abs(rel_n) < 1e-6, f"{name}: Density not conserved: rel_density={rel_n:.2e}"
+
+        # Temperature (total energy) conservation
         if check_temperature:
-            Tf = float(discrete_temperature(result.f_final, grid.v, grid.dv, spherical=grid.spherical))
-            assert abs(Tf - T0) / T0 < temperature_tol, f"{name}: Temperature changed: {T0} -> {Tf}"
+            T0 = float(s.temperature_discrete[0])
+            rel_T = _rel(float(s.temperature_discrete[-1]), T0)
+            assert abs(rel_T) < temperature_tol, f"{name}: Temperature changed: rel_T={rel_T:.2e}"
 
-        # Relaxation toward equilibrium (ChangCooper only)
+        # Relaxation toward equilibrium
         if check_rmse_improvement:
-            initial_rmse = float(result.snapshots.rmse_instant_maxwellian[0])
-            final_rmse = float(result.snapshots.rmse_instant_maxwellian[-1])
+            initial_rmse = float(s.rmse_instant[0])
+            final_rmse = float(s.rmse_instant[-1])
             assert final_rmse < initial_rmse, f"{name}: Distribution did not relax toward Maxwellian"
