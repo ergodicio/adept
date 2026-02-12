@@ -20,9 +20,10 @@ ADEPT provides several solver modules for different plasma physics applications.
 
 ### [VFP-1D](solvers/vfp1d/overview.md)
 
-Vlasov-Fokker-Planck solver for electron transport over collisional time-scales.
+Vlasov-Fokker-Planck solver for electron transport over collisional time-scales. Uses a spherical harmonic expansion with staggered spatial grid and full FLM collision operator.
 
-- [Overview](solvers/vfp1d/overview.md)
+- [Overview & Equations](solvers/vfp1d/overview.md)
+- [Configuration Reference](solvers/vfp1d/config.md)
 
 ## Envelope Solvers
 
