@@ -145,12 +145,15 @@ class BaseVFP1D(ADEPTModule):
         """
         cfg_grid = self.cfg["grid"]
 
+        cfg_grid.setdefault("boundary", "periodic")
+
         cfg_grid = {
             **cfg_grid,
             **{
                 "x": jnp.linspace(
                     cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
                 ),
+                "x_edge": jnp.linspace(cfg_grid["xmin"], cfg_grid["xmax"], cfg_grid["nx"] + 1),
                 "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
                 "v": jnp.linspace(cfg_grid["dv"] / 2, cfg_grid["vmax"] - cfg_grid["dv"] / 2, cfg_grid["nv"]),
                 "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
@@ -189,20 +192,22 @@ class BaseVFP1D(ADEPTModule):
         :param cfg:
         :return:
         """
+        nx = self.cfg["grid"]["nx"]
+        nv = self.cfg["grid"]["nv"]
         f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
 
         state = {"f0": f0}
         # not currently necessary but kept for completeness
         for il in range(1, self.cfg["grid"]["nl"] + 1):
             for im in range(0, il + 1):
-                state[f"f{il}{im}"] = jnp.zeros_like(f0)
+                state[f"f{il}{im}"] = jnp.zeros((nx + 1, nv))
 
         state["f10"] = f10
 
         for field in ["e", "b"]:
-            state[field] = jnp.zeros(self.cfg["grid"]["nx"])
+            state[field] = jnp.zeros(nx + 1)
 
-        state["Z"] = jnp.ones(self.cfg["grid"]["nx"])
+        state["Z"] = jnp.ones(nx)
         state["ni"] = ne_prof / self.cfg["units"]["Z"]
 
         self.state = state

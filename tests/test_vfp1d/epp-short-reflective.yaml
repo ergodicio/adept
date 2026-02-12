@@ -1,0 +1,75 @@
+units:
+  laser_wavelength: 351nm
+  reference electron temperature: 300eV
+  reference ion temperature: 300eV
+  reference electron density: 1.5e21/cm^3
+  Z: 6
+  Ion: Au+
+  logLambda: nrl
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    n:
+      basis: uniform
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0m
+      rise: 1m
+      bump_height: 0.0
+      width: 1m
+    T:
+      basis: cosine
+      baseline: 1.0
+      amplitude: 1.0e-3
+      wavelength: 250um
+
+grid:
+  dt: 1fs
+  nv: 256
+  nx: 8
+  tmin: 0.ps
+  tmax: 0.5ps
+  vmax: 8.0
+  xmax: 125um
+  xmin: 0.0um
+  nl: 1
+  boundary: reflective
+
+save:
+  fields:
+    t:
+      tmin: 0.0ps
+      tmax: 0.5ps
+      nt: 11
+  electron:
+    t:
+      tmin: 0.0ps
+      tmax: 0.5ps
+      nt: 6
+
+solver: vfp-1d
+
+mlflow:
+  experiment: vfp1d
+  run: epperlein-short-reflective
+
+drivers:
+  ex: {}
+  ey: {}
+
+terms:
+  fokker_planck:
+    flm:
+      ee: false
+    f00:
+      model: LenardBernstein
+      scheme: central
+  e_solver: oshun
