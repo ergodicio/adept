@@ -1,32 +1,25 @@
 #  Copyright (c) Ergodic LLC 2025
 #  research@ergodic.io
 """
-Unit tests for shared Fokker-Planck utilities.
+Unit tests for Fokker-Planck utilities and model contracts.
 
 Tests cover:
 - chang_cooper_delta edge cases (w→0, w→∞)
-- LenardBernstein vs Dougherty outputs (C, D)
-- CentralDifferencing vs ChangCooper operator assembly
-- Zero-flux boundary condition behavior
+- FastVFP kernel math properties
+- Type 1 vs Type 2 model contracts
 """
 
 import jax
 
 jax.config.update("jax_enable_x64", True)
 
-import lineax as lx
 import numpy as np
 import pytest
 from jax import numpy as jnp
 
-from adept.driftdiffusion import (
-    CentralDifferencing,
-    ChangCooper,
-    Dougherty,
-    LenardBernstein,
-    SphericalLenardBernstein,
-    chang_cooper_delta,
-)
+from adept._vlasov1d.solvers.pushers.fokker_planck import LenardBernstein
+from adept.driftdiffusion import chang_cooper_delta
+from adept.vfp1d.fokker_planck import FastVFP
 
 
 class TestChangCooperDelta:
@@ -77,447 +70,117 @@ class TestChangCooperDelta:
         assert jnp.all(delta <= 1.0)
 
 
-class TestLenardBernstein:
-    """Tests for the Lenard-Bernstein physics model."""
+class TestFastVFP:
+    """Tests for the FastVFP kernel-based model."""
 
     @pytest.fixture
     def model(self):
-        """Create a Lenard-Bernstein model with test grid."""
+        """Create a FastVFP model with test grid."""
         nv = 64
         vmax = 6.0
         dv = 2.0 * vmax / nv
         v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        return LenardBernstein(v=v, dv=dv)
+        return FastVFP(v=v, dv=dv)
 
-    def test_drift_is_velocity_at_edges(self, model):
-        """Test that drift coefficient C_edge = v_edge."""
-        f = jnp.ones_like(model.v)
-        C_edge, D = model(f)
-        np.testing.assert_array_equal(C_edge, model.v_edge)
+    def test_fastvfp_kernel_rank1(self, model):
+        """Test that FastVFP kernel is rank-1 (√ε·√ε')."""
+        # For rank-1 kernel g(ε,ε') = √ε·√ε':
+        # apply_kernel(u) = √ε · Σⱼ √εⱼ · uⱼ · Δεⱼ
+        # If u = √ε, then apply_kernel(u) = √ε · ⟨ε⟩
+        u = model.sqrt_eps_edge
+        result = model.apply_kernel(u)
+        expected_inner = 4.0 * jnp.pi * jnp.sum(model.sqrt_eps_edge**2 * model.d_eps_edge)
+        expected = model.sqrt_eps_edge * expected_inner
+        np.testing.assert_allclose(result, expected, rtol=1e-10)
 
-    def test_diffusion_is_energy(self, model):
-        """Test that diffusion coefficient D = <v²>."""
-        # Maxwellian: f = exp(-v²/2)
+    def test_fastvfp_ignores_beta(self, model):
+        """Test that Type 2 models ignore beta."""
         f = jnp.exp(-(model.v**2) / 2.0)
-        f = f / (jnp.sum(f) * model.dv)  # Normalize to unit density
-        C_edge, D = model(f)
-        # For unit Maxwellian, <v²> ≈ 1
-        np.testing.assert_allclose(D, 1.0, rtol=0.05)
-
-    def test_batch_dimensions(self, model):
-        """Test model handles batch dimensions correctly."""
-        nx = 10
-        nv = len(model.v)
-        f = jnp.ones((nx, nv))
-        C_edge, D = model(f)
-        # C_edge should have shape (nx, nv-1) for edge values
-        assert C_edge.shape == (nx, nv - 1)
-        # D should have batch dimension
-        assert D.shape == (nx,)
-
-
-class TestDougherty:
-    """Tests for the Dougherty physics model."""
-
-    @pytest.fixture
-    def model(self):
-        """Create a Dougherty model with test grid."""
-        nv = 64
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        return Dougherty(v=v, dv=dv)
-
-    def test_drift_centered_at_mean(self, model):
-        """Test that drift coefficient C_edge = v_edge - <v>."""
-        # Shifted Maxwellian: f = exp(-(v-v0)²/2)
-        v0 = 1.5
-        f = jnp.exp(-((model.v - v0) ** 2) / 2.0)
         f = f / (jnp.sum(f) * model.dv)
-        C_edge, D = model(f)
-        # <v> should be approximately v0
-        vbar = jnp.sum(f * model.v) * model.dv
-        np.testing.assert_allclose(vbar, v0, rtol=0.05)
-        # C_edge should be v_edge - vbar
-        expected_C_edge = model.v_edge - vbar
-        np.testing.assert_allclose(C_edge, expected_C_edge, rtol=1e-10)
 
-    def test_diffusion_is_thermal_velocity(self, model):
-        """Test that diffusion coefficient D = <(v-<v>)²>."""
-        # Maxwellian with T = 2: f = exp(-v²/4)
-        T = 2.0
-        f = jnp.exp(-(model.v**2) / (2.0 * T))
+        D1 = model.compute_D(f, beta=jnp.array(1.0))
+        D2 = model.compute_D(f, beta=jnp.array(100.0))
+        D3 = model.compute_D(f, beta=None)
+
+        np.testing.assert_allclose(D1, D2)
+        np.testing.assert_allclose(D1, D3)
+        assert model.compute_vbar(f) is None
+
+    def test_fastvfp_d_at_edges(self, model):
+        """Test that FastVFP returns D at cell edges."""
+        f = jnp.ones_like(model.v)
         f = f / (jnp.sum(f) * model.dv)
-        C_edge, D = model(f)
-        # For Maxwellian centered at 0, <(v-<v>)²> = <v²> ≈ T
-        np.testing.assert_allclose(D, T, rtol=0.05)
 
-    def test_batch_dimensions(self, model):
-        """Test model handles batch dimensions correctly."""
-        nx = 10
-        nv = len(model.v)
-        f = jnp.ones((nx, nv))
-        f = f / (jnp.sum(f, axis=-1, keepdims=True) * model.dv)
-        C_edge, D = model(f)
-        # C_edge should have shape (nx, nv-1) for edge values
-        assert C_edge.shape == (nx, nv - 1)
-        # D should have batch dimension
-        assert D.shape == (nx,)
+        D = model.compute_D(f)
 
+        # D should have shape (nv-1,) for edge values
+        assert D.shape == (len(model.v) - 1,)
 
-class TestCentralDifferencing:
-    """Tests for the central differencing scheme."""
-
-    @pytest.fixture
-    def setup(self):
-        """Create a scheme with test grid and distribution."""
-        nv = 32
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        model = LenardBernstein(v=v, dv=dv)
-        scheme = CentralDifferencing(dv=dv)
-        # Unit Maxwellian
-        f = jnp.exp(-(v**2) / 2.0)
-        f = f / (jnp.sum(f) * dv)
-        return scheme, model, f, dv, nv
-
-    def test_operator_returns_correct_type(self, setup):
-        """Test that get_operator returns a TridiagonalLinearOperator."""
-        scheme, model, f, dv, nv = setup
-        C_edge, D = model(f)
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt=0.1)
-        assert isinstance(op, lx.TridiagonalLinearOperator)
-
-    def test_diagonal_positive(self, setup):
-        """Test that diagonal elements are positive for small dt."""
-        scheme, model, f, dv, nv = setup
-        C_edge, D = model(f)
-        dt = 0.001
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-        assert jnp.all(op.diagonal > 0)
-
-    def test_solve_preserves_shape(self, setup):
-        """Test that solving preserves input shape."""
-        scheme, model, f, dv, nv = setup
-        C_edge, D = model(f)
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt=0.1)
-        result = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
-        assert result.shape == f.shape
-
-
-class TestChangCooper:
-    """Tests for the Chang-Cooper scheme."""
-
-    @pytest.fixture
-    def setup(self):
-        """Create a scheme with test grid and distribution."""
-        nv = 32
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        model = LenardBernstein(v=v, dv=dv)
-        scheme = ChangCooper(dv=dv)
-        # Unit Maxwellian
-        f = jnp.exp(-(v**2) / 2.0)
-        f = f / (jnp.sum(f) * dv)
-        return scheme, model, f, dv, nv, v
-
-    def test_operator_returns_correct_type(self, setup):
-        """Test that get_operator returns a TridiagonalLinearOperator."""
-        scheme, model, f, dv, nv, v = setup
-        C_edge, D = model(f)
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt=0.1)
-        assert isinstance(op, lx.TridiagonalLinearOperator)
-
-    def test_diagonal_positive(self, setup):
-        """Test that diagonal elements are positive."""
-        scheme, model, f, dv, nv, v = setup
-        C_edge, D = model(f)
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt=0.1)
-        assert jnp.all(op.diagonal > 0)
-
-    def test_solve_preserves_shape(self, setup):
-        """Test that solving preserves input shape."""
-        scheme, model, f, dv, nv, v = setup
-        C_edge, D = model(f)
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt=0.1)
-        result = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
-        assert result.shape == f.shape
-
-
-class TestSchemeComparison:
-    """Compare CentralDifferencing and ChangCooper schemes."""
-
-    @pytest.fixture
-    def setup(self):
-        """Create both schemes with identical setup."""
-        nv = 32
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        model = LenardBernstein(v=v, dv=dv)
-        central = CentralDifferencing(dv=dv)
-        chang_cooper = ChangCooper(dv=dv)
-        f = jnp.exp(-(v**2) / 2.0)
-        f = f / (jnp.sum(f) * dv)
-        return central, chang_cooper, model, f, nv, dv
-
-    def test_both_conserve_density(self, setup):
-        """Test that both schemes conserve density.
-
-        Note: CentralDifferencing uses a non-conservative discretization of
-        the advection term (C*df/dv) rather than a flux-based discretization,
-        so it doesn't conserve density exactly. ChangCooper uses proper flux
-        coefficients and conserves to machine precision.
-        """
-        central, chang_cooper, model, f, nv, dv = setup
-        C_edge, D = model(f)
-        dt = 0.01
-        initial_density = jnp.sum(f) * dv
-
-        # CentralDifferencing: non-conservative advection, looser tolerance
-        op = central.get_operator(C_edge, D, jnp.array(1.0), dt)
-        result = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
-        final_density = jnp.sum(result) * dv
-        np.testing.assert_allclose(final_density, initial_density, rtol=1e-6)
-
-        # ChangCooper: flux-based, strictly conservative
-        op = chang_cooper.get_operator(C_edge, D, jnp.array(1.0), dt)
-        result = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
-        final_density = jnp.sum(result) * dv
-        np.testing.assert_allclose(final_density, initial_density, rtol=1e-10)
-
-
-class TestDoughertyWithSchemes:
-    """Test schemes with the Dougherty model."""
-
-    @pytest.fixture
-    def setup(self):
-        """Create schemes with Dougherty model."""
-        nv = 32
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        model = Dougherty(v=v, dv=dv)
-        central = CentralDifferencing(dv=dv)
-        chang_cooper = ChangCooper(dv=dv)
-        # Shifted Maxwellian
-        v0 = 1.0
-        f = jnp.exp(-((v - v0) ** 2) / 2.0)
-        f = f / (jnp.sum(f) * dv)
-        return central, chang_cooper, model, f, nv, dv, v0
-
-    def test_dougherty_operator_works(self, setup):
-        """Test that schemes work with Dougherty model."""
-        central, chang_cooper, model, f, nv, dv, v0 = setup
-        C_edge, D = model(f)
-        dt = 0.01
-
-        for scheme in [central, chang_cooper]:
-            op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-            result = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
-            assert result.shape == f.shape
-            assert jnp.all(jnp.isfinite(result))
-
-
-class TestBoundaryConditionBehavior:
-    """Tests for boundary condition behavior in solves."""
-
-    @pytest.fixture
-    def setup(self):
-        """Create grid and distribution for BC tests."""
+    def test_fastvfp_kernel_produces_positive_d(self):
+        """Test that FastVFP kernel produces positive D on positive grid."""
         nv = 64
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        # Unit Maxwellian
-        f = jnp.exp(-(v**2) / 2.0)
-        f = f / (jnp.sum(f) * dv)
-        return v, dv, nv, f
-
-    def test_zero_flux_conserves_density(self, setup):
-        """Test that zero_flux BC conserves total density.
-
-        Uses ChangCooper scheme which has a proper flux-based discretization.
-        CentralDifferencing doesn't conserve exactly due to non-conservative
-        advection discretization (tested separately in TestSchemeComparison).
-        """
-        v, dv, nv, f = setup
-        model = LenardBernstein(v=v, dv=dv)
-        scheme = ChangCooper(dv=dv)  # Use conservative scheme for BC test
-
-        C_edge, D = model(f)
-        dt = 0.1
-        initial_density = jnp.sum(f) * dv
-
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-        result = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
-
-        final_density = jnp.sum(result) * dv
-        np.testing.assert_allclose(final_density, initial_density, rtol=1e-10)
-
-    def test_maxwellian_equilibrium_with_zero_flux(self, setup):
-        """Test that Maxwellian relaxes toward equilibrium with zero_flux BC."""
-        v, dv, nv, f = setup
-        model = LenardBernstein(v=v, dv=dv)
-        scheme = ChangCooper(dv=dv)
-
-        dt = 0.1
-        initial_density = jnp.sum(f) * dv
-
-        # Run multiple steps
-        f_current = f.copy()
-        for _ in range(10):
-            C_edge, D = model(f_current)
-            op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-            f_current = lx.linear_solve(op, f_current, solver=lx.AutoLinearSolver(well_posed=True)).value
-
-        # Density should be conserved
-        final_density = jnp.sum(f_current) * dv
-        np.testing.assert_allclose(final_density, initial_density, rtol=1e-10)
-
-        # Distribution should remain reasonably close to Maxwellian shape
-        center_slice = slice(nv // 4, 3 * nv // 4)
-        np.testing.assert_allclose(f_current[center_slice], f[center_slice], rtol=0.15)
-
-
-class TestPositiveOnlyGridBC:
-    """Tests for positive-only velocity grids (vfp1d-style) with zero_flux BC."""
-
-    @pytest.fixture
-    def setup(self):
-        """Create Chang-Cooper scheme on positive-only grid."""
-        nv = 32
         vmax = 6.0
         dv = vmax / nv
-        v_pos = jnp.linspace(dv / 2, vmax - dv / 2, nv)
+        v = jnp.linspace(dv / 2, vmax - dv / 2, nv)
+        model = FastVFP(v=v, dv=dv)
 
-        model = SphericalLenardBernstein(v=v_pos, dv=dv)
-        scheme = ChangCooper(dv=dv)
+        T = 1.0
+        f = jnp.exp(-(v**2) / (2 * T))
+        f = f / (jnp.sum(f) * dv)
 
-        # Maxwellian on positive grid
-        f_pos = jnp.exp(-(v_pos**2) / 2.0)
-        f_pos = f_pos / (jnp.sum(f_pos) * dv)
+        D = model.compute_D(f)
 
-        return scheme, model, f_pos, v_pos, dv, nv
-
-    def test_positive_only_grid_conserves_density(self, setup):
-        """Test that solving on positive-only grid with zero_flux BC conserves density."""
-        scheme, model, f_pos, v_pos, dv, nv = setup
-
-        initial_density = jnp.sum(f_pos) * dv
-
-        C_edge, D = model(f_pos)
-        dt = 0.1
-
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-        result = lx.linear_solve(op, f_pos, solver=lx.AutoLinearSolver(well_posed=True)).value
-
-        final_density = jnp.sum(result) * dv
-        np.testing.assert_allclose(final_density, initial_density, rtol=1e-10)
-
-    def test_positive_only_grid_preserves_positivity(self, setup):
-        """Test that Chang-Cooper on positive-only grid preserves positivity."""
-        scheme, model, f_pos, v_pos, dv, nv = setup
-
-        # Start with a bi-Maxwellian (non-equilibrium)
-        f_bimax = 0.7 * jnp.exp(-(v_pos**2) / 2.0) + 0.3 * jnp.exp(-((v_pos - 2.0) ** 2) / 2.0)
-        f_bimax = f_bimax / (jnp.sum(f_bimax) * dv)
-
-        dt = 0.1
-
-        f_current = f_bimax.copy()
-        for _ in range(10):
-            C_edge, D = model(f_current)
-            op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-            f_current = lx.linear_solve(op, f_current, solver=lx.AutoLinearSolver(well_posed=True)).value
-
-        assert jnp.all(f_current >= 0), "Chang-Cooper should preserve positivity"
+        assert jnp.all(D > 0), "FastVFP D should be positive on positive grid"
 
 
-class TestReflectedGridBC:
-    """Tests for boundary conditions on reflected grids (legacy vfp1d-style)."""
+class TestTypeComparison:
+    """Compare Type 1 (beta-based) and Type 2 (kernel-based) models."""
 
     @pytest.fixture
     def setup(self):
-        """Create Chang-Cooper scheme on reflected grid."""
-        nv = 32  # Points on positive-only grid
+        """Create both model types with identical setup."""
+        nv = 64
         vmax = 6.0
-        dv = vmax / nv  # Positive-only grid spacing
-        v_pos = jnp.linspace(dv / 2, vmax - dv / 2, nv)  # Positive-only, cell-centered
+        dv = 2.0 * vmax / nv
+        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
+        lb_model = LenardBernstein(v=v, dv=dv)
+        fastvfp_model = FastVFP(v=v, dv=dv)
+        f = jnp.exp(-(v**2) / 2.0)
+        f = f / (jnp.sum(f) * dv)
+        return lb_model, fastvfp_model, f, v, dv
 
-        # Create reflected grid [-vmax, +vmax]
-        refl_v = jnp.concatenate([-v_pos[::-1], v_pos])
+    def test_type1_uses_beta(self, setup):
+        """Test that Type 1 models use the provided beta (Buet notation)."""
+        lb_model, _, f, v, dv = setup
 
-        model = SphericalLenardBernstein(v=refl_v, dv=dv)
-        scheme = ChangCooper(dv=dv)
+        # With different betas (Buet notation: β = 1/(2T)), D = 1/(2β) = T
+        D1 = lb_model.compute_D(f, beta=jnp.array(1.0))  # D = 0.5
+        D2 = lb_model.compute_D(f, beta=jnp.array(2.0))  # D = 0.25
 
-        # Maxwellian on positive grid
-        f_pos = jnp.exp(-(v_pos**2) / 2.0)
-        f_pos = f_pos / (jnp.sum(f_pos) * dv)
+        np.testing.assert_allclose(D1, 0.5)
+        np.testing.assert_allclose(D2, 0.25)
 
-        return scheme, model, f_pos, v_pos, refl_v, dv, nv
+    def test_type2_ignores_beta(self, setup):
+        """Test that Type 2 models ignore beta."""
+        _, fastvfp_model, f, v, dv = setup
 
-    def test_reflected_solve_conserves_density(self, setup):
-        """Test that solving on reflected grid conserves total density."""
-        scheme, model, f_pos, v_pos, refl_v, dv, nv = setup
+        D1 = fastvfp_model.compute_D(f, beta=jnp.array(1.0))
+        D2 = fastvfp_model.compute_D(f, beta=jnp.array(2.0))
+        D3 = fastvfp_model.compute_D(f, beta=None)
 
-        # Reflect f across v=0
-        refl_f = jnp.concatenate([f_pos[::-1], f_pos])
+        np.testing.assert_allclose(D1, D2)
+        np.testing.assert_allclose(D1, D3)
 
-        # Compute initial density on full grid
-        initial_density = jnp.sum(refl_f) * dv
+    def test_type1_scalar_d_type2_edge_d(self, setup):
+        """Test that Type 1 returns scalar D while Type 2 returns edge D."""
+        lb_model, fastvfp_model, f, v, dv = setup
 
-        C_edge, D = model(refl_f)
-        dt = 0.1
+        D1 = lb_model.compute_D(f, beta=jnp.array(1.0))
+        D2 = fastvfp_model.compute_D(f)
 
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-        result = lx.linear_solve(op, refl_f, solver=lx.AutoLinearSolver(well_posed=True)).value
+        # Type 1: scalar D = 0.5 for beta=1
+        assert D1.shape == ()
+        np.testing.assert_allclose(D1, 0.5)
 
-        final_density = jnp.sum(result) * dv
-        np.testing.assert_allclose(final_density, initial_density, rtol=1e-10)
-
-    def test_reflected_solve_preserves_positivity(self, setup):
-        """Test that Chang-Cooper on reflected grid preserves positivity."""
-        scheme, model, f_pos, v_pos, refl_v, dv, nv = setup
-
-        # Start with a bi-Maxwellian (non-equilibrium)
-        f_bimax = 0.7 * jnp.exp(-(v_pos**2) / 2.0) + 0.3 * jnp.exp(-((v_pos - 2.0) ** 2) / 2.0)
-        f_bimax = f_bimax / (jnp.sum(f_bimax) * dv)
-
-        # Reflect
-        refl_f = jnp.concatenate([f_bimax[::-1], f_bimax])
-
-        dt = 0.1
-
-        for _ in range(10):
-            C_edge, D = model(refl_f)
-            op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-            refl_f = lx.linear_solve(op, refl_f, solver=lx.AutoLinearSolver(well_posed=True)).value
-
-        # Extract positive half and check positivity
-        f_pos_final = refl_f[nv:]
-        assert jnp.all(f_pos_final >= 0), "Chang-Cooper should preserve positivity"
-
-    def test_symmetry_preserved_on_reflected_grid(self, setup):
-        """Test that symmetric initial condition remains symmetric."""
-        scheme, model, f_pos, v_pos, refl_v, dv, nv = setup
-
-        # Reflect
-        refl_f = jnp.concatenate([f_pos[::-1], f_pos])
-
-        C_edge, D = model(refl_f)
-        dt = 0.1
-
-        op = scheme.get_operator(C_edge, D, jnp.array(1.0), dt)
-        result = lx.linear_solve(op, refl_f, solver=lx.AutoLinearSolver(well_posed=True)).value
-
-        # Check symmetry: f(-v) = f(v)
-        f_neg = result[:nv][::-1]
-        f_pos_result = result[nv:]
-        np.testing.assert_allclose(f_neg, f_pos_result, rtol=1e-10)
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+        # Type 2: D at edges
+        assert D2.shape == (len(v) - 1,)

@@ -20,28 +20,43 @@ from jax import numpy as jnp
 
 from adept.driftdiffusion import (
     AbstractDriftDiffusionDifferencingScheme,
-    AbstractDriftDiffusionModel,
+    AbstractKernelBasedModel,
+    AbstractMaxwellianPreservingModel,
     CentralDifferencing,
     ChangCooper,
-    Dougherty,
-    SphericalLenardBernstein,
 )
 
 
-def _get_model(model_name: str, v: Array, dv: float) -> AbstractDriftDiffusionModel:
-    """Create a drift-diffusion model from config name.
-
-    Note: For vfp1d (spherical harmonic f₀₀), LenardBernstein uses the
-    SphericalLenardBernstein which computes D = <v⁴>/<v²>/3.
+class FastVFP(AbstractKernelBasedModel):
     """
-    model_name = model_name.casefold()
-    if model_name in ("lenard_bernstein", "lenard-bernstein", "lenardbernstein", "lb"):
-        # For vfp1d, use the spherical version appropriate for f₀₀
-        return SphericalLenardBernstein(v=v, dv=dv)
-    elif model_name in ("dougherty",):
-        return Dougherty(v=v, dv=dv)
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+    Fast VFP kernel (Bell & Sherlock): g(ε, ε') = √(ε·ε').
+
+    This kernel is equivalent to using the discrete temperature ⟨v²⟩.
+    It is a rank-1 kernel, enabling O(N) computation instead of O(N²).
+
+    Compatible with Buet weak form scheme.
+
+    Reference:
+        Bell, A. R. & Sherlock, M. (2006). "Fast electron transport in laser
+        produced plasmas." Plasma Physics and Controlled Fusion.
+    """
+
+    def apply_kernel(self, edge_values: Array) -> Array:
+        """
+        Apply √(ε·ε') kernel: D(ε) = 4π · √ε · ⟨√ε' · values⟩
+
+        For rank-1 kernel, this is O(N) not O(N²):
+            D[i] = 4π · √ε[i] · Σⱼ √ε[j] · edge_values[j] · Δε[j]
+
+        Args:
+            edge_values: Values at cell edges, shape (..., nv-1)
+
+        Returns:
+            Kernel integral at cell edges, shape (..., nv-1)
+        """
+        # Inner product: 4π · ⟨√ε · values · Δε⟩
+        inner = 2.0 * jnp.pi * jnp.sum(self.sqrt_eps_edge * edge_values * self.d_eps_edge, axis=-1, keepdims=True)
+        return self.sqrt_eps_edge * inner
 
 
 def _get_scheme(
@@ -81,8 +96,11 @@ class F0Collisions(eqx.Module):
     dv: float
     nv: int
     nuee_coeff: float
-    model: AbstractDriftDiffusionModel
+    model: AbstractMaxwellianPreservingModel
     scheme: AbstractDriftDiffusionDifferencingScheme
+    _sc_max_steps: int
+    _sc_rtol: float
+    _sc_atol: float
 
     def __init__(self, cfg: dict):
         """
@@ -93,10 +111,12 @@ class F0Collisions(eqx.Module):
         - units.derived.n0, units.derived.logLambda_ee
         - terms.fokker_planck.f00.model (e.g., "spherical_lenard_bernstein")
         - terms.fokker_planck.f00.scheme (e.g., "central" or "chang_cooper")
+        - terms.fokker_planck.self_consistent_beta (optional): dict with enabled, max_steps, rtol, atol
         """
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
         self.nv = cfg["grid"]["nv"]
+        self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
 
         # Collision coefficient
         r_e = 2.8179402894e-13
@@ -106,11 +126,18 @@ class F0Collisions(eqx.Module):
         # Create model and scheme from config
         # Use original v grid with zero_flux BC (= reflective at v=0 where C=0)
         f00_cfg = cfg["terms"]["fokker_planck"]["f00"]
-        model_name = f00_cfg.get("model", "spherical_lenard_bernstein")
         scheme_name = f00_cfg.get("scheme", "central")
 
-        self.model = _get_model(model_name, self.v, self.dv)
+        self.model = FastVFP(v=self.v, dv=self.dv)
         self.scheme = _get_scheme(scheme_name, self.dv)
+
+        # Self-consistent beta config (defaults to disabled)
+        fp_cfg = cfg["terms"]["fokker_planck"]
+        sc_cfg = fp_cfg.get("self_consistent_beta", {})
+        sc_enabled = sc_cfg.get("enabled", False)
+        self._sc_max_steps = sc_cfg.get("max_steps", 3) if sc_enabled else 0
+        self._sc_rtol = sc_cfg.get("rtol", 1e-8)
+        self._sc_atol = sc_cfg.get("atol", 1e-12)
 
     def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
         """
@@ -122,11 +149,25 @@ class F0Collisions(eqx.Module):
 
         :return: updated distribution function (nv,)
         """
-        # Get C_edge, D from model
-        C_edge, D = self.model(f0[None, :])
+        from adept.driftdiffusion import _find_self_consistent_beta_single
+
+        beta = _find_self_consistent_beta_single(
+            f0,
+            self.v,
+            self.dv,
+            self._sc_rtol,
+            self._sc_atol,
+            self._sc_max_steps,
+            True,  # spherical=True for positive-only grid
+        )
+
+        # Get D from model (D = 1/(2β) = T in Buet notation)
+        D = self.model.compute_D(f0[None, :], beta[None])
         # Remove batch dimension for get_operator
-        C_edge = C_edge[0]
         D = D[0] if D.ndim > 0 else D
+
+        # Compute C_edge: v_edge for spherical LB (vbar is always None)
+        C_edge = self.v_edge
 
         nu_scalar = jnp.array(self.nuee_coeff)
         op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_scalar, dt=dt)

@@ -15,9 +15,34 @@ where:
 Key design: nu is applied as row scaling to the cell-centered flux divergence,
 NOT interpolated to edges. Each matrix row i gets multiplied by nu[i].
 
+Buet notation is used throughout: β = 1/(2T) so the Maxwellian is f = exp(-β·v²).
+This means D = 1/(2β) = T for beta-based models.
+
+Note on conventions: Buet & Le Thanh (2007) define ε = v², β = 1/T_Buet, and
+T_Buet = 2⟨v⁴⟩/(3⟨v²⟩). Their T_Buet is exactly 2x the standard kinetic temperature
+T = ⟨v²⟩ (cartesian) or ⟨v⁴⟩/(3⟨v²⟩) (spherical) used in ADEPT. The extra factor
+of 2 in our β = 1/(2T) accounts for this difference; the Maxwellian exp(-v²/(2T))
+is identical in both conventions.
+
 This module provides:
-- Model classes that define the physics (C_edge and D)
+- Model classes that define the physics (D and vbar)
 - Differencing scheme classes that define the discretization
+- find_self_consistent_beta: finds β* such that a Maxwellian has a target discrete T
+
+Class hierarchy:
+
+AbstractMaxwellianPreservingModel          (base: v, dv, compute_D, compute_vbar)
+└── AbstractKernelBasedModel               (D via kernel ∫g·f·dε)
+
+Concrete models live alongside their solvers:
+- LenardBernstein, Dougherty → adept._vlasov1d.solvers.pushers.fokker_planck
+- FastVFP → adept.vfp1d.fokker_planck
+
+Type 1 (Beta-based): Use Buet β = 1/(2T) to compute D = 1/(2β) = T.
+    NOT compatible with Buet weak form scheme.
+
+Type 2 (Kernel-based): Compute D via linear kernel ∫g·f·dε.
+    Compatible with Buet weak form scheme via apply_kernel method.
 
 All schemes use true zero-flux boundary conditions:
 - At boundaries, only the interior flux contributes to the diagonal
@@ -27,7 +52,9 @@ All schemes use true zero-flux boundary conditions:
 Composition pattern:
     model = LenardBernstein(v=v_grid, dv=dv)
     scheme = ChangCooper(dv=dv)
-    C_edge, D = model(f)
+    D = model.compute_D(f, beta)
+    vbar = model.compute_vbar(f)
+    C_edge = v_edge if vbar is None else v_edge - vbar[..., None]
     op = scheme.get_operator(C_edge, D, nu, dt)
     f_new = lx.linear_solve(op, f, solver=lx.AutoLinearSolver(well_posed=True)).value
 
@@ -39,6 +66,7 @@ from abc import abstractmethod
 
 import equinox as eqx
 import lineax as lx
+import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
 
@@ -68,137 +96,291 @@ def chang_cooper_delta(w: Array) -> Array:
     return jnp.where(small, delta_small, delta_full)
 
 
-class AbstractDriftDiffusionModel(eqx.Module):
+def discrete_temperature(
+    f: Array, v: Array, dv: float | Array, spherical: bool = False, vbar: Array | None = None
+) -> Array:
     """
-    Base class for drift-diffusion physics models.
+    Compute the discrete temperature from a distribution function.
 
-    Subclasses define the drift coefficient C and diffusion coefficient D
-    for Fokker-Planck operators of the form: df/dt = nu * d/dv (C*f + D*df/dv)
+    For a symmetric grid: T = ⟨(v-vbar)²⟩ = ∫f·(v-vbar)²·dv / ∫f·dv
+    For a spherical (positive-only) grid: T = ⟨v⁴⟩/(3⟨v²⟩)
+
+    Args:
+        f: Distribution function, shape (..., nv) where last axis is velocity.
+        v: Velocity grid (cell centers), shape (nv,)
+        dv: Velocity grid spacing, scalar or shape (nv,) for nonuniform grids
+        spherical: If True, use spherical moment ⟨v⁴⟩/(3⟨v²⟩) instead of ⟨v²⟩
+        vbar: Mean velocity, shape (...) or None. If None, assumes vbar=0.
+
+    Returns:
+        T: Discrete temperature, shape (...) matching f's batch dimensions
+    """
+    v_shifted = v if vbar is None else (v - vbar[..., None])
+    vsq = v_shifted**2
+    if spherical:
+        # For spherical (positive-only grid): T = ⟨v⁴⟩/(3⟨v²⟩)
+        # Note: spherical grids assume vbar=0, so v_shifted = v
+        v4_moment = jnp.sum(f * vsq**2 * dv, axis=-1)
+        v2_moment = jnp.sum(f * vsq * dv, axis=-1)
+        return v4_moment / (3.0 * v2_moment)
+    else:
+        # For symmetric grid: T = ⟨(v-vbar)²⟩
+        v2_moment = jnp.sum(f * vsq * dv, axis=-1)
+        norm = jnp.sum(f * dv, axis=-1)
+        return v2_moment / norm
+
+
+def _find_self_consistent_beta_single(
+    f: Array,
+    v: Array,
+    dv: float | Array,
+    rtol: float,
+    atol: float,
+    max_steps: int,
+    spherical: bool,
+    vbar: Array | None = None,
+) -> Array:
+    """
+    Find beta for a single spatial point (internal, not vmapped).
+
+    Given a distribution f, finds β* such that a Maxwellian with that β*
+    has the same discrete temperature as f.
+
+    Uses Buet notation: beta = 1/(2T) so f = exp(-beta * (v-vbar)²).
+
+    Args:
+        f: Distribution function, shape (nv,)
+        v: Velocity grid (cell centers), shape (nv,)
+        dv: Velocity grid spacing, scalar or shape (nv,) for nonuniform grids
+        rtol: Relative tolerance for Newton solver
+        atol: Absolute tolerance for Newton solver
+        max_steps: Maximum Newton iterations
+        spherical: If True, use spherical moment ⟨v⁴⟩/(3⟨v²⟩) instead of ⟨v²⟩
+        vbar: Mean velocity, scalar or None. If None, assumes vbar=0.
+
+    Returns:
+        beta_star: Beta value where Maxwellian has T_discrete = T_f, scalar
+    """
+    # Compute target temperature from f (using vbar if provided)
+    T_target = discrete_temperature(f, v, dv, spherical, vbar)
+
+    # Initial guess: Buet beta = 1/(2*T_f)
+    beta_init = 1.0 / (2.0 * T_target)
+
+    # Short-circuit: no SC iterations means just use the discrete-T beta
+    if max_steps == 0:
+        return beta_init
+
+    def residual(beta, args):
+        v, dv, T_target, spherical, vbar = args
+        # Maxwellian: f = exp(-beta * (v-vbar)²)
+        v_shifted = v if vbar is None else (v - vbar)
+        f_maxwellian = jnp.exp(-beta * v_shifted**2)
+        T_maxwellian = discrete_temperature(f_maxwellian, v, dv, spherical, vbar)
+        return T_maxwellian - T_target
+
+    solver = optx.Newton(rtol=rtol, atol=atol)
+    sol = optx.root_find(
+        fn=residual,
+        solver=solver,
+        y0=beta_init,
+        args=(v, dv, T_target, spherical, vbar),
+        max_steps=max_steps,
+        throw=False,
+    )
+    return sol.value
+
+
+# Vmapped version for batching over spatial points.
+# eqx.filter_vmap treats None leaves as static, so vbar=None passes through
+# without needing a separate vmap definition.
+_find_self_consistent_beta_vmapped = eqx.filter_vmap(
+    _find_self_consistent_beta_single,
+    in_axes=(0, None, None, None, None, None, None, 0),
+)
+
+
+def find_self_consistent_beta(
+    f: Array,
+    v: Array,
+    dv: float | Array,
+    rtol: float,
+    atol: float,
+    max_steps: int,
+    spherical: bool,
+    vbar: Array | None = None,
+) -> Array:
+    """
+    Find beta such that a Maxwellian has the same discrete temperature as f.
+
+    Given a distribution f, finds β* such that a Maxwellian with that β*
+    has the same discrete temperature as f. This eliminates equilibrium drift
+    in Chang-Cooper schemes caused by the mismatch between analytical and
+    discrete temperatures.
+
+    Uses Buet notation: beta = 1/(2T) so f = exp(-beta * (v-vbar)²).
+
+    Vmapped over f (and vbar if provided) for batching over spatial points.
+
+    Args:
+        f: Distribution function, shape (nx, nv)
+        v: Velocity grid (cell centers), shape (nv,)
+        dv: Velocity grid spacing, scalar or shape (nv,) for nonuniform grids
+        rtol: Relative tolerance for Newton solver
+        atol: Absolute tolerance for Newton solver
+        max_steps: Maximum Newton iterations (default 3)
+        spherical: If True, use spherical moment ⟨v⁴⟩/(3⟨v²⟩) instead of ⟨v²⟩
+        vbar: Mean velocity, shape (nx,) or None. If None, assumes vbar=0.
+
+    Returns:
+        beta_star: Beta values where Maxwellian has T_discrete = T_f, shape (nx,)
+    """
+    return _find_self_consistent_beta_vmapped(f, v, dv, rtol, atol, max_steps, spherical, vbar)
+
+
+class AbstractMaxwellianPreservingModel(eqx.Module):
+    """
+    Base class for all Fokker-Planck collision models.
+
+    All models share a common interface:
+    - compute_D(f, beta): diffusion coefficient
+    - compute_vbar(f): mean velocity (or None)
+
+    Type 1 (Beta-based): D = 1/(2β) = T from an external β parameter.
+        NOT compatible with Buet weak form scheme.
+        Examples: LenardBernstein, Dougherty
+
+    Type 2 (Kernel-based): D via linear kernel ∫g·f·dε (β ignored).
+        Compatible with Buet weak form scheme via apply_kernel method.
+        Examples: FastVFP, Coulombian
 
     Attributes:
         v: Velocity grid (cell centers), shape (nv,)
         dv: Velocity grid spacing
-        v_edge: Velocity grid (cell edges), shape (nv-1,)
     """
 
     v: Array
     dv: float
-    v_edge: Array
 
     def __init__(self, v: Array, dv: float):
         """Initialize model with velocity grid."""
         self.v = v
         self.dv = dv
-        self.v_edge = 0.5 * (v[1:] + v[:-1])
+
+    def compute_vbar(self, f: Array) -> Array | None:
+        """
+        Compute mean velocity from distribution (if model uses it).
+
+        Args:
+            f: Distribution function, shape (..., nv)
+
+        Returns:
+            vbar: Mean velocity, shape (...), or None if model doesn't use vbar.
+        """
+        return None  # Default for models that don't use vbar (e.g., LenardBernstein)
 
     @abstractmethod
-    def __call__(self, f: Array) -> tuple[Array, Array]:
+    def compute_D(self, f: Array, beta: Array) -> Array:
         """
-        Compute drift and diffusion coefficients from distribution function.
+        Compute diffusion coefficient from f and beta.
+
+        Uses Buet notation: β = 1/(2T), so D = 1/(2β) = T.
 
         Args:
             f: Distribution function, shape (..., nv) where nv matches len(self.v).
                Leading dimensions are batch dimensions (e.g., spatial points).
+            beta: Inverse temperature in Buet notation β = 1/(2T), shape (...).
 
         Returns:
-            Tuple of (drift C_edge, diffusion D):
-            - C_edge: Drift coefficient at cell edges, shape (..., nv-1)
-            - D: Diffusion coefficient, scalar shape (...) or edge-valued shape (..., nv-1)
+            D: Diffusion coefficient = 1/(2β) = T, shape (...)
         """
         ...
 
 
-class LenardBernstein(AbstractDriftDiffusionModel):
+class AbstractKernelBasedModel(AbstractMaxwellianPreservingModel):
     """
-    Lenard-Bernstein collision model.
+    Type 2: Kernel-based collision model.
 
-    Physics:
-        C = v (drift toward v=0)
-        D = <v²> = integral(f * v² dv) (diffusion proportional to energy)
+    Computes D via linear kernel: D = ∫g(ε, ε')·f(ε')·dε'.
+    Compatible with Buet weak form scheme via the apply_kernel method.
 
-    The equilibrium solution is a Maxwellian centered at v=0.
+    For Buet's weak form (eq 3.9):
+    - D = apply_kernel(f_edge)
+    - E = apply_kernel(Df_edge)
+
+    Attributes:
+        v: Velocity grid (cell centers), shape (nv,)
+        dv: Velocity grid spacing
+        sqrt_eps_edge: √ε = √(v²) at cell edges, shape (nv-1,)
+        d_eps_edge: Energy spacing Δε at cell edges, shape (nv-1,)
     """
 
-    def __call__(self, f: Array) -> tuple[Array, Array]:
+    sqrt_eps_edge: Array
+    d_eps_edge: Array
+
+    def __init__(self, v: Array, dv: float):
+        """Initialize model with velocity grid."""
+        super().__init__(v, dv)
+        self.sqrt_eps_edge = jnp.sqrt(0.5 * (v[1:] ** 2 + v[:-1] ** 2))
+        # d_eps = d(v²) = (v[i+1] + v[i]) * dv
+        self.d_eps_edge = (v[1:] + v[:-1]) * dv
+
+    def compute_D(self, f: Array, beta: Array | None = None) -> Array:
         """
-        Compute Lenard-Bernstein drift and diffusion coefficients.
+        Compute D from kernel. beta is IGNORED.
 
         Args:
-            f: Distribution function, shape (..., nv)
+            f: Distribution at cell centers, shape (..., nv)
+            beta: Ignored (can be None)
 
         Returns:
-            Tuple (drift C_edge, diffusion D):
-            - C_edge: velocity at cell edges broadcast to f shape, shape (..., nv-1)
-            - D: energy <v²>, shape (...)
+            D at cell edges, shape (..., nv-1)
         """
-        energy = jnp.sum(f * self.v**2, axis=-1) * self.dv
-        C_edge = jnp.broadcast_to(self.v_edge, f.shape[:-1] + (len(self.v_edge),))
-        return C_edge, energy
+        f_edge = self._log_mean_interp(f)
+        return self.apply_kernel(f_edge)
 
-
-class SphericalLenardBernstein(AbstractDriftDiffusionModel):
-    """
-    Lenard-Bernstein model for spherical harmonic (f₀₀) equations.
-
-    Physics:
-        C = v (drift toward v=0)
-        D = <v⁴>/<v²>/3 (thermal velocity for spherical case)
-
-    This model is used in the VFP1D solver for the isotropic part of the
-    distribution function. The diffusion coefficient accounts for the
-    velocity space Jacobian in spherical coordinates.
-
-    For a Maxwellian, D = <v⁴>/<v²>/3 = T, same as <v²>.
-    """
-
-    def __call__(self, f: Array) -> tuple[Array, Array]:
+    @abstractmethod
+    def apply_kernel(self, edge_values: Array) -> Array:
         """
-        Compute spherical Lenard-Bernstein drift and diffusion coefficients.
+        Apply kernel g(ε, ε') to values at cell edges.
+
+        For Buet weak form (eq 3.9):
+        - D = apply_kernel(f_edge)
+        - E = apply_kernel(Df_edge)
 
         Args:
-            f: Distribution function, shape (..., nv)
+            edge_values: Values at cell edges, shape (..., nv-1)
 
         Returns:
-            Tuple (drift C_edge, diffusion D):
-            - C_edge: velocity at cell edges broadcast to f shape, shape (..., nv-1)
-            - D: <v⁴>/<v²>/3, shape (...)
+            Kernel integral at cell edges, shape (..., nv-1)
         """
-        v4_moment = jnp.sum(f * self.v**4, axis=-1) * self.dv
-        v2_moment = jnp.sum(f * self.v**2, axis=-1) * self.dv
-        safe_v2 = jnp.maximum(v2_moment, 1.0e-30)
-        diffusion = v4_moment / safe_v2 / 3.0
-        C_edge = jnp.broadcast_to(self.v_edge, f.shape[:-1] + (len(self.v_edge),))
-        return C_edge, diffusion
+        ...
 
+    def _log_mean_interp(self, f: Array) -> Array:
+        """Interpolate cell-centered f to cell edges using log mean.
 
-class Dougherty(AbstractDriftDiffusionModel):
-    """
-    Dougherty collision model.
-
-    Physics:
-        C = v - <v> (drift toward mean velocity)
-        D = <(v - <v>)²> (thermal velocity squared)
-
-    The equilibrium solution is a Maxwellian centered at the mean velocity <v>.
-    This model conserves momentum in addition to density and energy.
-    """
-
-    def __call__(self, f: Array) -> tuple[Array, Array]:
+        Falls back to arithmetic mean when values are too small for log mean.
         """
-        Compute Dougherty drift and diffusion coefficients.
+        f_left = f[..., :-1]
+        f_right = f[..., 1:]
 
-        Args:
-            f: Distribution function, shape (..., nv)
+        # Floor to prevent log(-inf) for very small values
+        floor = 1e-300
+        f_left_safe = jnp.maximum(f_left, floor)
+        f_right_safe = jnp.maximum(f_right, floor)
 
-        Returns:
-            Tuple (drift C_edge, diffusion D):
-            - C_edge: v_edge - <v>, shape (..., nv-1)
-            - D: thermal velocity squared <(v-<v>)²>, shape (...)
-        """
-        vbar = jnp.sum(f * self.v, axis=-1) * self.dv
-        v0t_sq = jnp.sum(f * (self.v - vbar[..., None]) ** 2, axis=-1) * self.dv
-        C_edge = self.v_edge - vbar[..., None]
-        return C_edge, v0t_sq
+        # Log mean: (f_R - f_L) / (log(f_R) - log(f_L))
+        # Use safe version to handle f_L ≈ f_R
+        log_diff = jnp.log(f_right_safe) - jnp.log(f_left_safe)
+        safe_log_diff = jnp.where(jnp.abs(log_diff) < 1e-8, 1.0, log_diff)
+
+        # Use arithmetic mean when values are very small or similar
+        use_arithmetic = (jnp.abs(log_diff) < 1e-8) | (f_left < floor) | (f_right < floor)
+        return jnp.where(
+            use_arithmetic,
+            0.5 * (f_left + f_right),  # Arithmetic mean
+            (f_right - f_left) / safe_log_diff,
+        )
 
 
 class AbstractDriftDiffusionDifferencingScheme(eqx.Module):

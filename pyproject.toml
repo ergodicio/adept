@@ -74,8 +74,9 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 # Test type hints w/ typeguard - currently disabled
 # addopts = ["--typeguard-packages=adept"]
-addopts = "--import-mode=importlib --strict-markers"
-pythonpath = "."
+addopts = "--import-mode=importlib --strict-markers -m 'not slow'"
+markers = ["slow: long-running parameter sweeps"]
+pythonpath = [".", "tests"]
 testpaths = ["tests"]
 filterwarnings = [
     "error",
