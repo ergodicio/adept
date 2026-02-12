@@ -277,124 +277,62 @@ def test_driven_epw(klambda_D: float | None = None):
     print("\nRunning driven EPW simulation...")
     exo = ergoExo()
     exo.setup(config)
-    result, datasets, run_id = exo(None)
+    result, post_processing_output, run_id = exo(None)
 
-    # Extract results
-    sol = result["solver result"]
+    # Extract EPW metrics computed by EPW1D module during post-processing
+    # Metrics are in post_processing_output, not result
+    metrics = post_processing_output.get("metrics", {})
 
-    # Verify simulation completed successfully by checking we have data
-    assert "default" in sol.ys, "No default diagnostics saved"
-    scalar_data = sol.ys["default"]
-    t_array = sol.ts["default"]
-    dt = t_array[1] - t_array[0]
+    print("EPW Metrics:", metrics)
 
-    print("\nSimulation results:")
-    print(f"  Total timesteps: {len(t_array)}")
-    print(f"  Final time: {t_array[-1]:.2f}")
-    print(f"  Timestep dt: {dt:.6f}")
-    print(f"  Available diagnostics: {list(scalar_data.keys())}")
+    # Verify metrics were computed
+    assert "epw_avg_frequency_k1" in metrics, "EPW frequency metric not computed"
+    assert "epw_damping_rate_k1" in metrics, "EPW damping rate metric not computed"
 
-    # Get complex field time series from fields_only save
-    # We need the oscillating signal, not just the envelope, for Hilbert transform
-    assert "fields_only" in sol.ys, "fields_only not in saved data"
-    Fk_timeseries = sol.ys["fields_only"]  # Shape: (nt, 6, Ny, Nx, Nz)
+    measured_frequency = metrics["epw_avg_frequency_k1"]
+    measured_damping_rate = metrics["epw_damping_rate_k1"]
 
-    # Extract Ex at k=1 mode (complex oscillating field)
-    # With standard FFT ordering, k=1 is at index 1, k=0 is at index 0
-    idx_k1 = 1  # k=1 mode at index 1 in standard FFT ordering
-    idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
+    print("\nEPW Metrics (from EPW1D post-processing):")
+    print(f"  Average frequency (k=1): {measured_frequency:.6f}")
+    print(f"  Damping rate (k=1): {measured_damping_rate:.6f}")
+    print(f"  Average amplitude (k=1): {metrics['epw_avg_amplitude_k1']:.2e}")
+    print(f"  Final amplitude (k=1): {metrics['epw_final_amplitude_k1']:.2e}")
 
-    # Get Ex component at k=1 Fourier mode
-    Ex_k1 = Fk_timeseries[:, 0, idx_k0, idx_k1, idx_k0]
+    # --- 1. Validate frequency against theory ---
+    print("\n--- Frequency Validation ---")
+    print(f"  Measured frequency: {measured_frequency:.6f}")
+    print(f"  Expected frequency: {expected_frequency:.6f}")
+    rel_err_freq = 100 * abs(measured_frequency - expected_frequency) / expected_frequency
+    print(f"  Relative error: {rel_err_freq:.2f}%")
 
-    print("\nField time series extracted:")
-    print(f"  Ex_k1 shape: {Ex_k1.shape}")
-    print(f"  Ex_k1 is complex: {np.iscomplexobj(Ex_k1)}")
-    print(f"  Peak amplitude: {np.abs(Ex_k1).max():.2e}")
+    # Assert frequency matches (allow 10% error)
+    np.testing.assert_allclose(
+        measured_frequency,
+        expected_frequency,
+        rtol=0.1,
+        err_msg=f"Frequency mismatch: measured={measured_frequency:.6f}, expected={expected_frequency:.6f}",
+    )
+    print("  ✓ Frequency test passed!")
 
-    # --- 1. Measure frequency during driven phase using Hilbert transform ---
-    # Driver turns off around t_center + t_width/2 + t_rise
-    # Use data well before that for frequency measurement
-    driven_end_time = t_center + t_width / 2 + 2 * t_rise
-    driven_start_time = t_center - t_width / 2 + 2 * t_rise  # After driver ramps up
+    # --- 2. Validate damping rate against theory ---
+    print("\n--- Damping Rate Validation ---")
+    print(f"  Measured damping rate: {measured_damping_rate:.6f}")
+    print(f"  Expected damping rate: {expected_damping_rate:.6f}")
+    rel_err_damp = 100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate)
+    print(f"  Relative error: {rel_err_damp:.2f}%")
 
-    driven_mask = (t_array >= driven_start_time) & (t_array <= driven_end_time)
-    driven_indices = np.where(driven_mask)[0]
+    # Assert damping rate matches (allow 10% error for kinetic regime)
+    np.testing.assert_allclose(
+        measured_damping_rate,
+        expected_damping_rate,
+        rtol=0.1,
+        err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}",
+    )
+    print("  ✓ Damping rate test passed!")
 
-    if len(driven_indices) > 100:
-        print(f"\n--- Frequency Measurement (driven phase: t={driven_start_time:.1f} to {driven_end_time:.1f}) ---")
-
-        # Use Hilbert transform to extract instantaneous frequency
-        env, freq = electrostatic.get_nlfs(Ex_k1, dt)
-
-        # Measure frequency in the middle of the driven phase
-        start_idx = driven_indices[len(driven_indices) // 4]
-        end_idx = driven_indices[3 * len(driven_indices) // 4]
-        freq_slice = slice(start_idx, end_idx)
-        measured_frequency = np.mean(freq[freq_slice])
-
-        print(f"  Measured frequency: {measured_frequency:.6f}")
-        print(f"  Expected frequency: {expected_frequency:.6f}")
-        rel_err = 100 * abs(measured_frequency - expected_frequency) / expected_frequency
-        print(f"  Relative error: {rel_err:.2f}%")
-
-        # Assert frequency matches (allow 5% error)
-        np.testing.assert_allclose(
-            measured_frequency,
-            expected_frequency,
-            rtol=0.1,
-            err_msg=(f"Frequency mismatch: measured={measured_frequency:.6f}, expected={expected_frequency:.6f}"),
-        )
-        print("  ✓ Frequency test passed!")
-
-    # --- 2. Measure damping rate after driver turns off ---
-    # Use data after driver has fully turned off
-    damping_start_time = driven_end_time + 10.0  # Wait a bit after driver turns off
-    damping_mask = t_array >= damping_start_time
-    damping_indices = np.where(damping_mask)[0]
-
-    if len(damping_indices) > 50:
-        print(f"\n--- Damping Rate Measurement (free decay: t>{damping_start_time:.1f}) ---")
-
-        t_damp = t_array[damping_indices]
-        A_damp = np.abs(Ex_k1[damping_indices])
-
-        # Filter out very small values
-        valid_idx = A_damp > 1e-20
-        t_damp = t_damp[valid_idx]
-        A_damp = A_damp[valid_idx]
-
-        if len(t_damp) > 20:
-            # Fit exponential: ln(A) = ln(A0) + gamma * t
-            log_A = np.log(A_damp)
-            coeffs = np.polyfit(t_damp, log_A, 1)
-            measured_damping_rate = coeffs[0]
-
-            print(f"  Measured damping rate: {measured_damping_rate:.6f}")
-            print(f"  Expected damping rate: {expected_damping_rate:.6f}")
-            print(
-                f"  Relative error: {100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate):.2f}%"  # noqa: E501
-            )
-
-            # Assert damping rate matches (allow 1% error for damping in kinetic regime)
-            np.testing.assert_allclose(
-                measured_damping_rate,
-                expected_damping_rate,
-                rtol=0.1,
-                err_msg=f"Damping rate mismatch: measured={measured_damping_rate:.6f}, expected={expected_damping_rate:.6f}",  # noqa: E501
-            )
-            print("  ✓ Damping rate test passed!")
-        else:
-            print(f"  Warning: Not enough valid data points ({len(t_damp)}) for damping rate measurement")
-    else:
-        print("  Warning: Not enough timesteps after driver turns off for damping measurement")
-
-    # Print field energy summary
-    if "E_energy" in scalar_data:
-        E_energy = scalar_data["E_energy"]
-        print("\nField energy summary:")
-        print(f"  Peak: {float(np.abs(E_energy).max()):.2e}")
-        print(f"  Final: {float(np.abs(E_energy[-1])):.2e}")
+    # Print energy summary from metrics
+    if "avg_electrostatic_energy_final_50" in metrics:
+        print(f"\nElectrostatic energy (avg over final 50 ωₚt): {metrics['avg_electrostatic_energy_final_50']:.2e}")
 
     print("\n✓ All tests passed - driven EPW validated successfully!")
 

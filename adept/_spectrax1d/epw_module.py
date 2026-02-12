@@ -29,17 +29,62 @@ class EPW1D(BaseSpectrax1D):
 
         Returns:
             tuple: (frequencies, times_for_frequency)
-                frequencies: Instantaneous frequency dφ/dt at each time
+                frequencies: Instantaneous frequency ω at each time (positive)
                 times_for_frequency: Time points for frequency (centered difference)
         """
         # Extract phase
         phase = np.unwrap(np.angle(Ex_k1))
 
         # Compute instantaneous frequency using centered differences
+        # For wave e^(i(kx - ωt)), phase φ = kx - ωt, so dφ/dt = -ω
+        # Negate to get positive frequency ω
         dt = t_array[1] - t_array[0]
-        frequencies = np.gradient(phase, dt)
+        frequencies = -np.gradient(phase, dt)
 
         return frequencies, t_array
+
+    def _compute_damping_rate(self, Ex_k1: Array, t_array: Array, fraction: float = 2 / 3) -> float:
+        """
+        Compute damping rate from exponential decay of EPW amplitude.
+
+        Fits exponential decay A(t) = A0 * exp(gamma * t) to the latter portion
+        of the time series to measure the damping rate gamma.
+
+        Args:
+            Ex_k1: Complex amplitude of Ex at k=1 mode as function of time (nt,)
+            t_array: Time array (nt,)
+            fraction: Fraction of time series to use for fitting (default: 2/3)
+                     Uses the last 'fraction' of data to avoid initial transients
+
+        Returns:
+            float: Measured damping rate gamma (negative for damping)
+        """
+        # Get amplitude
+        amplitude = np.abs(Ex_k1)
+
+        # Use latter portion of simulation to avoid initial transients
+        n_points = len(t_array)
+        start_idx = int(n_points * (1 - fraction))
+        t_fit = t_array[start_idx:]
+        A_fit = amplitude[start_idx:]
+
+        # Filter out very small values to avoid log issues
+        valid_mask = A_fit > 1e-20
+        t_fit = t_fit[valid_mask]
+        A_fit = A_fit[valid_mask]
+
+        if len(t_fit) < 10:
+            return np.nan
+
+        # Fit exponential: A(t) = A0 * exp(gamma * t)
+        # Taking log: ln(A) = ln(A0) + gamma * t
+        log_A = np.log(A_fit)
+
+        # Linear fit: log(A) = log(A0) + gamma * t
+        coeffs = np.polyfit(t_fit, log_A, 1)
+        damping_rate = float(coeffs[0])
+
+        return damping_rate
 
     def _plot_epw_diagnostics(self, Fk: Array, t_array: Array, Nx: int, Ny: int, Nz: int, td: str) -> None:
         """
@@ -302,6 +347,9 @@ class EPW1D(BaseSpectrax1D):
                 avg_frequency = float(np.mean(frequencies))
                 final_frequency = float(frequencies[-1])
 
+                # Compute damping rate from exponential decay
+                damping_rate = self._compute_damping_rate(Ex_k1, t_array)
+
                 # Compute average electrostatic energy over final 50 ωₚt
                 # Electrostatic energy density ∝ |E|² (summed over all spatial modes)
                 Ex_all = Fk_array[:, 0, :, :, :]  # Shape: (nt, Ny, Nx, Nz)
@@ -317,6 +365,7 @@ class EPW1D(BaseSpectrax1D):
                 result["metrics"]["epw_final_amplitude_k1"] = final_amplitude
                 result["metrics"]["epw_avg_frequency_k1"] = avg_frequency
                 result["metrics"]["epw_final_frequency_k1"] = final_frequency
+                result["metrics"]["epw_damping_rate_k1"] = damping_rate
                 result["metrics"]["avg_electrostatic_energy_final_50"] = avg_es_energy_final_50
 
         # Process enhanced Hermite coefficient visualization if distribution data is available

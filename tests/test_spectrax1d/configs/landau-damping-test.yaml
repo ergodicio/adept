@@ -100,5 +100,10 @@ initialization:
 
 # Minimal save configuration for testing
 # The default save is automatically added by get_save_quantities()
-# and includes: total_EM_energy, E_energy, B_energy, Ex_max, Ey_max, Ez_max, ne_k1
-save: {}
+# and includes: total_EM_energy, E_energy, B_energy, Ex_max, Ey_max, Ez_max
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 100.0
+      nt: 201
