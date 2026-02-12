@@ -2,8 +2,9 @@ import os
 
 import xarray as xr
 from diffrax import Solution
-from flatdict import FlatDict
 from matplotlib import pyplot as plt
+
+from adept.utils import flatten_dict
 
 
 def save_arrays(result: Solution, td: str, cfg: dict, label: str) -> xr.Dataset:
@@ -13,10 +14,10 @@ def save_arrays(result: Solution, td: str, cfg: dict, label: str) -> xr.Dataset:
     """
     if label is None:
         label = "x"
-        flattened_dict = dict(FlatDict(result.ys, delimiter="-"))
+        flattened_dict = flatten_dict(result.ys, delimiter="-")
         save_ax = cfg["grid"]["x"]
     else:
-        flattened_dict = dict(FlatDict(result.ys[label], delimiter="-"))
+        flattened_dict = flatten_dict(result.ys[label], delimiter="-")
         save_ax = cfg["save"][label]["ax"]
     data_vars = {
         k: xr.DataArray(v, coords=(("t", cfg["save"]["t"]["ax"]), (label, save_ax))) for k, v in flattened_dict.items()

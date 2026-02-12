@@ -164,13 +164,15 @@ Simulation grid parameters.
 | Field | Type | Description |
 |-------|------|-------------|
 | `dt` | float | Timestep (normalized) |
-| `nv` | int | Number of velocity grid points |
+| `nv` | int | Number of velocity grid points (not needed for multispecies) |
 | `nx` | int | Number of spatial grid points |
 | `tmin` | float | Start time |
 | `tmax` | float | End time |
-| `vmax` | float | Maximum velocity extent |
+| `vmax` | float | Maximum velocity extent (not needed for multispecies) |
 | `xmin` | float | Domain minimum x |
 | `xmax` | float | Domain maximum x |
+
+**Note:** For multispecies simulations, `nv` and `vmax` are defined per-species in `terms.species` and the global values are not used.
 
 Example:
 ```yaml
@@ -336,6 +338,81 @@ Solver algorithm configuration.
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
+| `species` | list | (Optional) List of species configurations for multispecies simulations |
+
+### species (Multispecies Configuration)
+
+For multispecies simulations, you can define multiple particle species (e.g., electrons and ions) with independent velocity grids and charge-to-mass ratios. Each species is defined as an entry in the `terms.species` list.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Species identifier (e.g., `"electron"`, `"ion"`) |
+| `charge` | float | Charge in units of fundamental charge (e.g., `-1.0` for electrons, `10.0` for Z=10 ions) |
+| `mass` | float | Mass in units of electron mass (e.g., `1.0` for electrons, `1836.0` for protons) |
+| `vmax` | float | Maximum velocity extent for this species |
+| `nv` | int | Number of velocity grid points for this species |
+| `density_components` | list | List of density component names (from `density` section) that belong to this species |
+
+**Important notes:**
+
+- Each species can have its own velocity grid parameters (`vmax`, `nv`), allowing heavier species to use smaller velocity extents
+- The `density_components` field maps species to their density profiles defined in the `density` section
+- For single-species simulations, `terms.species` can be omitted; a default electron species will be auto-generated from the `grid.vmax`, `grid.nv`, and all `species-*` density components
+- When using multispecies, `grid.vmax` and `grid.nv` are not used (each species defines its own)
+
+#### Multispecies Example: Ion Acoustic Wave
+
+```yaml
+density:
+  quasineutrality: true
+  species-electron-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0              # Electron temperature
+    m: 2.0
+    basis: sine
+    baseline: 1.0
+    amplitude: 1.0e-3
+    wavenumber: 0.1
+  species-ion-background:
+    noise_seed: 421
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 0.01             # Ion temperature (cooler than electrons)
+    m: 2.0
+    basis: sine
+    baseline: 1.0
+    amplitude: 1.0e-3
+    wavenumber: 0.1
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: sixth
+  species:
+    - name: electron
+      charge: -1.0
+      mass: 1.0
+      vmax: 6.4           # Larger velocity range for light electrons
+      nv: 512
+      density_components:
+        - species-electron-background
+    - name: ion
+      charge: 10.0        # Z=10 ions
+      mass: 18360.0       # Ion mass relative to electron mass
+      vmax: 0.15          # Smaller velocity range for heavy ions
+      nv: 256
+      density_components:
+        - species-ion-background
+  fokker_planck:
+    is_on: False
+    # ...
+```
+
+See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` for a complete working example.
 
 ### Field Solvers
 
@@ -445,3 +522,7 @@ See `configs/vlasov-1d/srs.yaml` - electromagnetic simulation with `ey` drivers.
 ### Nonlinear EPW with Initial Condition
 
 See `configs/vlasov-1d/nlepw-ic.yaml` - large-amplitude initial perturbation without external driver.
+
+### Ion Acoustic Wave (Multispecies)
+
+See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` - two-species (electron + ion) simulation demonstrating multispecies support.

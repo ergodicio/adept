@@ -23,7 +23,22 @@ $$
 C_K(f) = \nu_K (f - f_{Mx})
 $$
 
-The ions are static but an enterprising individual should be able to reuse the electron code for the ions.
+## Multispecies Support
+
+The solver supports multiple particle species (e.g., electrons and ions) with independent velocity grids and charge-to-mass ratios. In multispecies mode, the Poisson equation becomes:
+
+$$
+\partial_x E = \sum_s q_s \int f_s \, dv_s
+$$
+
+where the sum is over all species $s$, each with its own charge $q_s$ and distribution function $f_s(t, x, v)$.
+
+Each species can have:
+- Different charge and mass (and thus charge-to-mass ratio)
+- Independent velocity grid parameters (`vmax`, `nv`)
+- Multiple density components (e.g., background + beam for the same species)
+
+See the [Configuration Reference](../solvers/vlasov1d/config.md#species-multispecies-configuration) for details on configuring multispecies simulations.
 
 ## Things You Might Care About
 

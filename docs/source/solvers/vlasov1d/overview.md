@@ -16,6 +16,22 @@ where $f$ is the distribution function, $E$ is the electric field, $C(f)$ is the
 
 The distribution function is $f = f(t, x, v)$ and the electric field is $E = E(t, x)$.
 
+## Multispecies Support
+
+The solver supports multiple particle species (e.g., electrons and ions) evolving self-consistently under a shared electric field. Each species can have:
+
+- Independent charge and mass (determining the species-specific $q/m$ ratio)
+- Independent velocity grid parameters (`vmax`, `nv`)
+- Multiple density components
+
+For multispecies simulations, the Poisson equation sums over all species:
+
+$$
+\partial_x E = \sum_s q_s \int f_s \, dv_s
+$$
+
+See the [Configuration Reference](config.md#species-multispecies-configuration) for details on configuring multispecies simulations.
+
 These simulations can be initialized via perturbing the distribution function or the electric field.
 The electric field can be "driven" using $E_D$ which is a user defined function of time and space.
 
