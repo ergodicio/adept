@@ -629,8 +629,32 @@ class BaseSpectrax1D(ADEPTModule):
 
         # Get stepsize controller
         adaptive_time_step = solver_params["adaptive_time_step"]
+
+        # Compute dtmax from laser period if driver is present
+        dtmax = None
+        if adaptive_time_step and "drivers" in self.cfg:
+            # Check if any laser drivers are configured
+            drivers_cfg = self.cfg["drivers"]
+            for field_key in ["ex", "ey", "ez"]:
+                if field_key in drivers_cfg and drivers_cfg[field_key]:
+                    for pulse_name, pulse_cfg in drivers_cfg[field_key].items():
+                        if isinstance(pulse_cfg, dict) and "w0" in pulse_cfg:
+                            # Get laser frequency (normalized units)
+                            w0 = pulse_cfg["w0"]
+                            laser_period = 2 * jnp.pi / w0
+                            # Set dtmax to resolve laser with ~20 points per period
+                            dtmax = laser_period / 20.0
+                            print(f"Auto dtmax from laser: {float(dtmax):.6e} (period={float(laser_period):.6e})")
+                            break
+                if dtmax is not None:
+                    break
+
         controllers = {
-            True: PIDController(rtol=input_params["ode_tolerance"], atol=input_params["ode_tolerance"]),
+            True: PIDController(
+                rtol=input_params["ode_tolerance"],
+                atol=input_params["ode_tolerance"],
+                dtmax=dtmax  # Limit maximum timestep to resolve laser period
+            ),
             False: ConstantStepSize(),
         }
         stepsize_controller = controllers[adaptive_time_step]
