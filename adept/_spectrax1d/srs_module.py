@@ -163,10 +163,9 @@ class HermiteSRS1D(BaseSpectrax1D):
         Config format:
             density:
                 basis: linear  # or exponential
-                min: 0.19  # minimum density in plasma gradient
-                max: 0.27  # maximum density in plasma gradient
-                vacuum_length: 20um  # length of vacuum region (goes to 0.01)
-                rise: 10um  # smoothing length for vacuum transition
+                min: 0.19  # minimum density at boundaries
+                max: 0.27  # maximum density in center
+                rise: 10um  # smoothing length for density transitions
                 # For exponential only:
                 gradient_scale_length: 100um
                 center: 0.5  # normalized position for center density
@@ -182,22 +181,16 @@ class HermiteSRS1D(BaseSpectrax1D):
         if basis == "homogeneous":
             return None
 
-        # Convert lengths to meters
-        if "vacuum_length" in dcfg:
-            vacuum_length = self._require_quantity(dcfg["vacuum_length"], "density.vacuum_length").to("m")
-        else:
-            vacuum_length = None
-
+        # Convert rise length to meters
         if "rise" in dcfg:
             rise = self._require_quantity(dcfg["rise"], "density.rise").to("m")
         else:
-            rise = 0.1 * Lx_real if vacuum_length is not None else None
+            rise = 0.1 * Lx_real
 
         result = {
             "basis": basis,
             "max": float(dcfg.get("max", 0.25)),
-            "min": float(dcfg.get("min", 0.01)),
-            "vacuum_length": vacuum_length,
+            "min": float(dcfg.get("min", 0.19)),
             "rise": rise,
         }
 
@@ -236,13 +229,13 @@ class HermiteSRS1D(BaseSpectrax1D):
         return jnp.maximum(ramp_left, ramp_right)
 
     def _build_density_profile(self, x_norm: jnp.ndarray, Lx_norm: float, density_cfg):
-        """Build density profile with vacuum regions and gradient using envelope approach.
+        """Build smooth periodic density profile without vacuum regions.
 
-        Structure: [vacuum(0.01) - plasma(min→max gradient) - vacuum(0.01)]
-        - Vacuum regions at boundaries go to fixed 0.01 density
-        - Plasma region has gradient from min to max (e.g., 0.19 to 0.27)
-        - Smooth envelopes connect vacuum to plasma regions
-        - Absorbing regions overlap with vacuum regions
+        Structure: Smooth profile from nmin at boundaries → nmax at center → nmin at boundaries
+        - Density starts at nmin on left boundary
+        - Smoothly ramps up to nmax in the center
+        - Smoothly ramps down to nmin on right boundary
+        - Profile is periodic (same density at both boundaries)
 
         Args:
             x_norm: Normalized x coordinates (in units of x0)
@@ -252,94 +245,53 @@ class HermiteSRS1D(BaseSpectrax1D):
         Returns:
             jnp.ndarray: Density profile (as multiplier of n0_e, n0_i)
         """
-        from adept._base_ import get_envelope
-
-        n_min = density_cfg["min"]  # Min density in plasma gradient (e.g., 0.19)
-        n_max = density_cfg["max"]  # Max density in plasma gradient (e.g., 0.27)
-        n_vacuum = 0.01  # Fixed vacuum density at boundaries
+        n_min = density_cfg["min"]  # Min density at boundaries
+        n_max = density_cfg["max"]  # Max density at center
         basis = density_cfg["basis"]
 
         # Get physical units for conversions
         derived = self.cfg["units"]["derived"]
         x0 = derived["x0"]
 
-        # Define plasma region (where gradient lives)
-        if density_cfg["vacuum_length"] is not None:
-            # Convert vacuum_length to normalized units
-            vac_len_norm = (density_cfg["vacuum_length"] / x0).to("").magnitude
-            rise_norm = (density_cfg["rise"] / x0).to("").magnitude
-
-            # Plasma region is in the middle, excluding vacuum regions
-            plasma_left = vac_len_norm
-            plasma_right = Lx_norm - vac_len_norm
-
-            if plasma_right <= plasma_left:
-                raise ValueError("Domain too small for vacuum regions")
-
-            plasma_center = 0.5 * (plasma_left + plasma_right)
-            plasma_width = plasma_right - plasma_left
-        else:
-            # No vacuum regions: plasma fills entire domain with gradient
-            plasma_center = 0.5 * Lx_norm
-            plasma_width = Lx_norm
-            rise_norm = 0.1 * Lx_norm
-            # In this case, use n_vacuum = n_min so there's no vacuum region
-            n_vacuum = n_min
-
-        # Build gradient profile in plasma region
         if basis == "linear":
-            # Linear gradient: density increases from n_min to n_max left to right
-            x_normalized = (x_norm - (plasma_center - plasma_width * 0.5)) / plasma_width
-            gradient = n_min + (n_max - n_min) * x_normalized
+            # Create smooth up-and-down profile using tanh transitions
+            # Normalize position: 0 at left boundary, 1 at right boundary
+            s = x_norm / Lx_norm
+
+            # Create a smooth "bump" function: goes from nmin -> nmax -> nmin
+            # Use cosine for smooth, symmetric profile
+            density = n_min + (n_max - n_min) * (1.0 - jnp.cos(2.0 * jnp.pi * s)) / 2.0
+
         elif basis == "exponential":
-            # Exponential gradient with scale length
+            # For exponential, create symmetric profile with scale lengths
             scale_length_norm = (density_cfg["gradient_scale_length"] / x0).to("").magnitude
             center_frac = density_cfg.get("center", 0.5)
-            x_center = (plasma_center - plasma_width * 0.5) + center_frac * plasma_width
-            n_center = n_min + (n_max - n_min) * center_frac
-            gradient = n_center * jnp.exp((x_norm - x_center) / scale_length_norm)
+            x_center = center_frac * Lx_norm
+
+            # Distance from center
+            dx = jnp.abs(x_norm - x_center)
+
+            # Exponential decay from center
+            # n(x) = n_max * exp(-|x - x_center| / L) + n_min * (1 - exp(-|x - x_center| / L))
+            decay = jnp.exp(-dx / scale_length_norm)
+            density = n_max * decay + n_min * (1.0 - decay)
         else:
-            gradient = 0.5 * (n_min + n_max) * jnp.ones_like(x_norm)
-
-        # Create envelope: smooth transition from 0 to 1 across plasma region
-        # get_envelope returns 0 outside [p_L, p_R] and 1 inside, with smooth transitions
-        p_L = plasma_center - plasma_width * 0.5
-        p_R = plasma_center + plasma_width * 0.5
-        envelope = get_envelope(rise_norm, rise_norm, p_L, p_R, x_norm)
-
-        # Apply envelope:
-        # - In vacuum regions (envelope=0): density = n_vacuum (0.01)
-        # - In plasma region (envelope=1): density = gradient (n_min to n_max)
-        # - In transition: smooth interpolation
-        density = n_vacuum + envelope * (gradient - n_vacuum)
+            # Fallback to constant
+            density = 0.5 * (n_min + n_max) * jnp.ones_like(x_norm)
 
         return density
 
     def _get_plasma_bounds_norm(self):
         """Get the interior plasma region bounds.
 
-        If density gradient is configured, returns bounds excluding vacuum regions.
-        Otherwise, returns bounds excluding absorbing boundaries.
-        This defines the "plasma" region for focused plotting.
+        Returns bounds excluding absorbing boundaries for focused plotting.
         """
         derived = self.cfg["units"]["derived"]
         x0 = derived["x0"]
         Lx_norm = float(self.cfg["physics"]["Lx"])
         Lx_real = Lx_norm * x0
 
-        # Check if density gradient with vacuum regions is configured
-        density_cfg = self._get_density_config(Lx_real)
-        if density_cfg is not None and density_cfg["vacuum_length"] is not None:
-            # Use vacuum length to define plasma bounds
-            vac_len_norm = (density_cfg["vacuum_length"] / x0).to("").magnitude
-            xmin = vac_len_norm
-            xmax = Lx_norm - vac_len_norm
-
-            if xmax <= xmin:
-                return None
-            return xmin, xmax
-
-        # Fall back to using plasma absorbing boundaries
+        # Use plasma absorbing boundaries to define plasma region
         if "boundaries" not in self.cfg:
             return None
 
@@ -485,25 +437,12 @@ class HermiteSRS1D(BaseSpectrax1D):
         ax.plot(x_micron, density_profile, "b-", linewidth=2, label="Density profile")
         ax.set_xlabel("x (μm)", fontsize=12)
         ax.set_ylabel("Density (normalized to $n_0$)", fontsize=12)
-        ax.set_title("Density Profile with Vacuum and Absorbing Regions", fontsize=14)
+        ax.set_title("Density Profile with Absorbing Regions", fontsize=14)
         ax.grid(True, alpha=0.3)
 
         # Get region boundaries
         Lx_real = Lx_norm * x0
         density_cfg = self._get_density_config(Lx_real)
-
-        if density_cfg is not None and density_cfg["vacuum_length"] is not None:
-            vac_len_micron = density_cfg["vacuum_length"].to("micron").magnitude
-            # Mark vacuum boundaries
-            ax.axvline(vac_len_micron, color="r", linestyle="--", alpha=0.7, linewidth=1.5, label="Vacuum boundary")
-            ax.axvline(x_micron[-1] - vac_len_micron, color="r", linestyle="--", alpha=0.7, linewidth=1.5)
-
-            # Shade vacuum regions
-            ax.axvspan(0, vac_len_micron, alpha=0.15, color="red", label="Vacuum region")
-            ax.axvspan(x_micron[-1] - vac_len_micron, x_micron[-1], alpha=0.15, color="red")
-
-            # Shade plasma region
-            ax.axvspan(vac_len_micron, x_micron[-1] - vac_len_micron, alpha=0.1, color="blue", label="Plasma region")
 
         # Mark absorbing boundaries if configured
         if "boundaries" in self.cfg:
@@ -530,13 +469,16 @@ class HermiteSRS1D(BaseSpectrax1D):
                     x_micron[-1] - plasma_absorb_micron, color="orange", linestyle="--", alpha=0.7, linewidth=1.5
                 )
 
+                # Shade absorbing regions
+                ax.axvspan(0, plasma_absorb_micron, alpha=0.15, color="orange", label="Absorbing region")
+                ax.axvspan(x_micron[-1] - plasma_absorb_micron, x_micron[-1], alpha=0.15, color="orange")
+
         # Add horizontal lines for density levels
         if density_cfg is not None:
             n_min = density_cfg["min"]
             n_max = density_cfg["max"]
             ax.axhline(n_min, color="gray", linestyle=":", alpha=0.5, linewidth=1)
             ax.axhline(n_max, color="gray", linestyle=":", alpha=0.5, linewidth=1)
-            ax.axhline(0.01, color="gray", linestyle=":", alpha=0.5, linewidth=1)
             ax.text(
                 0.02,
                 n_min,
@@ -552,9 +494,6 @@ class HermiteSRS1D(BaseSpectrax1D):
                 transform=ax.get_yaxis_transform(),
                 fontsize=10,
                 verticalalignment="bottom",
-            )
-            ax.text(
-                0.02, 0.01, "n_vacuum=0.01", transform=ax.get_yaxis_transform(), fontsize=10, verticalalignment="bottom"
             )
 
         ax.legend(loc="best", fontsize=10)

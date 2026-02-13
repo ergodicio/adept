@@ -13,7 +13,7 @@ units:
   ion_temperature: 1 keV
 
 physics:
-  # Box size in real units (needs to be large enough for vacuum + plasma + vacuum)
+  # Box size in real units
   Lx: 40 micron
   Ly: 1 micron
   Lz: 1 micron
@@ -46,15 +46,13 @@ physics:
   ode_tolerance: 1.0e-8
 
 # Density gradient configuration
-# Structure: [absorb - vacuum - plasma - vacuum - absorb]
+# Structure: Smooth periodic profile from nmin at boundaries → nmax at center → nmin at boundaries
 # Laser goes from left to right up the density gradient
-# Vacuum regions go to 0.01 (1%), plasma gradient goes from min to max
 density:
-  basis: linear              # Linear gradient from min to max in plasma region
-  min: 0.19                  # Minimum density in plasma gradient
-  max: 0.27                  # Maximum density in plasma gradient
-  vacuum_length: 5 micron   # Vacuum region at boundaries (goes to 0.01)
-  rise: 1 micron            # Smooth transition between vacuum and plasma
+  basis: linear              # Linear (cosine) profile: smooth bump from min to max to min
+  min: 0.19                  # Minimum density at left and right boundaries
+  max: 0.27                  # Maximum density at center
+  rise: 1 micron            # Optional smoothing length (not currently used in cosine profile)
 
 # Enable per-timestep density noise
   noise:
@@ -92,7 +90,7 @@ drivers:
 boundaries:
   # Separate damping for fields vs plasma enables laser injection from boundaries
   field_absorb_length: 2 micron    # Narrow EM field absorption at domain edges
-  plasma_absorb_length: 5 micron   # Wider plasma damping covering vacuum regions
+  plasma_absorb_length: 5 micron   # Wider plasma damping at boundaries
   sponge:
     sigma_max_fields: 1.0/fs   # Strength of field damping
     sigma_max_plasma: 0.0005/fs   # Strength of plasma damping
