@@ -806,24 +806,23 @@ class HermiteSRS1D(BaseSpectrax1D):
             alpha_e = float(input_parameters["alpha_s"][0])
             alpha_i = float(input_parameters["alpha_s"][3])
 
-            # Apply density profile to equilibrium Hermite coefficient
-            # The (0,0,0) Hermite coefficient represents the equilibrium distribution
+            # Apply density profile to equilibrium Hermite coefficient in state
             # For a Maxwellian: C_000(x) = n(x) / alpha^3
-            Ck_0_electrons = input_parameters["Ck_0_electrons"]
-            Ck_0_ions = input_parameters["Ck_0_ions"]
-
-            # Apply spatially varying density (vectorized)
-            # Compute local densities for all grid points at once
             n_e_profile = n0_e * density_profile / (alpha_e**3)
             n_i_profile = n0_i * density_profile / (alpha_i**3)
 
-            # Set all x-locations at once for the equilibrium Hermite mode
-            Ck_0_electrons = Ck_0_electrons.at[0, 0, 0, 0, :, 0].set(n_e_profile)
-            Ck_0_ions = Ck_0_ions.at[0, 0, 0, 0, :, 0].set(n_i_profile)
+            # Modify state directly (state stores float64 views of complex arrays)
+            # Need to convert complex profiles to float64 view for state storage
+            Ck_e_complex = self.state["Ck_electrons"].view(jnp.complex128)
+            Ck_i_complex = self.state["Ck_ions"].view(jnp.complex128)
 
-            # Update the state with modified coefficients
-            input_parameters["Ck_0_electrons"] = Ck_0_electrons
-            input_parameters["Ck_0_ions"] = Ck_0_ions
+            # Set spatially varying density for all x-locations
+            Ck_e_complex = Ck_e_complex.at[0, 0, 0, 0, :, 0].set(n_e_profile)
+            Ck_i_complex = Ck_i_complex.at[0, 0, 0, 0, :, 0].set(n_i_profile)
+
+            # Update state with modified coefficients (as float64 views)
+            self.state["Ck_electrons"] = Ck_e_complex.view(jnp.float64)
+            self.state["Ck_ions"] = Ck_i_complex.view(jnp.float64)
 
             # Store density profile for diagnostics
             grid["density_profile"] = jnp.asarray(density_profile)
