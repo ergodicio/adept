@@ -811,18 +811,51 @@ class HermiteSRS1D(BaseSpectrax1D):
             n_e_profile = n0_e * density_profile / (alpha_e**3)
             n_i_profile = n0_i * density_profile / (alpha_i**3)
 
+            # Diagnostic: Print density profile statistics
+            print("\n=== Density Profile Initialization Diagnostics ===")
+            print(f"Density profile shape: {density_profile.shape}")
+            print(f"Density profile range: [{float(jnp.min(density_profile)):.4f}, {float(jnp.max(density_profile)):.4f}]")
+            print(f"n0_e={n0_e}, n0_i={n0_i}")
+            print(f"alpha_e={alpha_e:.6f}, alpha_i={alpha_i:.6f}")
+            print(f"n_e_profile range: [{float(jnp.min(n_e_profile)):.6f}, {float(jnp.max(n_e_profile)):.6f}]")
+            print(f"n_i_profile range: [{float(jnp.min(n_i_profile)):.6f}, {float(jnp.max(n_i_profile)):.6f}]")
+
             # Modify state directly (state stores float64 views of complex arrays)
             # Need to convert complex profiles to float64 view for state storage
             Ck_e_complex = self.state["Ck_electrons"].view(jnp.complex128)
             Ck_i_complex = self.state["Ck_ions"].view(jnp.complex128)
 
-            # Set spatially varying density for all x-locations
-            Ck_e_complex = Ck_e_complex.at[0, 0, 0, 0, :, 0].set(n_e_profile)
-            Ck_i_complex = Ck_i_complex.at[0, 0, 0, 0, :, 0].set(n_i_profile)
+            print(f"Ck_e_complex shape: {Ck_e_complex.shape}")
+            print(f"Ck_e_complex[0,0,0,0,:,0] before: range=[{float(jnp.min(Ck_e_complex[0,0,0,0,:,0])):.6f}, {float(jnp.max(Ck_e_complex[0,0,0,0,:,0])):.6f}]")
+
+            # IMPORTANT: Hermite coefficients are stored in k-space (Fourier)
+            # We need to FFT the real-space density profile before setting it
+            # Shape for FFT: need (Ny, Nx, Nz) = (1, Nx, 1)
+            n_e_3d = n_e_profile[jnp.newaxis, :, jnp.newaxis]  # Shape: (1, Nx, 1)
+            n_i_3d = n_i_profile[jnp.newaxis, :, jnp.newaxis]  # Shape: (1, Nx, 1)
+
+            # FFT to k-space (forward transform with normalization)
+            n_e_k = jnp.fft.fftn(n_e_3d, axes=(-3, -2, -1), norm="forward")
+            n_i_k = jnp.fft.fftn(n_i_3d, axes=(-3, -2, -1), norm="forward")
+
+            # Extract back to 1D for setting
+            n_e_k_1d = n_e_k[0, :, 0]
+            n_i_k_1d = n_i_k[0, :, 0]
+
+            print(f"n_e_k_1d range: [{float(jnp.min(jnp.abs(n_e_k_1d))):.6f}, {float(jnp.max(jnp.abs(n_e_k_1d))):.6f}]")
+
+            # Set spatially varying density for all x-locations (in k-space)
+            Ck_e_complex = Ck_e_complex.at[0, 0, 0, 0, :, 0].set(n_e_k_1d)
+            Ck_i_complex = Ck_i_complex.at[0, 0, 0, 0, :, 0].set(n_i_k_1d)
+
+            print(f"Ck_e_complex[0,0,0,0,:,0] after: range=[{float(jnp.min(Ck_e_complex[0,0,0,0,:,0])):.6f}, {float(jnp.max(Ck_e_complex[0,0,0,0,:,0])):.6f}]")
 
             # Update state with modified coefficients (as float64 views)
             self.state["Ck_electrons"] = Ck_e_complex.view(jnp.float64)
             self.state["Ck_ions"] = Ck_i_complex.view(jnp.float64)
+
+            print("State updated successfully")
+            print("=" * 50 + "\n")
 
             # Store density profile for diagnostics
             grid["density_profile"] = jnp.asarray(density_profile)
