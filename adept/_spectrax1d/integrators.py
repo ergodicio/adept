@@ -182,6 +182,7 @@ class SplitStepDampingSolver(AbstractSolver):
         if self.sponge_plasma_e is not None:
             # Ck_electrons has shape (Np_e, Nm_e, Nn_e, Ny, Nx, Nz) as float64 view
             Ck_e = y["Ck_electrons"].view(jnp.complex128)
+            Np_e, Nm_e, Nn_e = Ck_e.shape[:3]
 
             # Transform to real space
             C_real_e = jnp.fft.ifftn(Ck_e, axes=(-3, -2, -1), norm="forward")
@@ -189,9 +190,20 @@ class SplitStepDampingSolver(AbstractSolver):
             # Broadcast sigma(x) from (Nx,) to (Ny, Nx, Nz)
             sigma_xyz = jnp.broadcast_to(self.sponge_plasma_e[None, :, None], (self.Ny, self.Nx, self.Nz))
 
-            # Apply exponential damping with broadcast to (Np, Nm, Nn, Ny, Nx, Nz)
-            damping_factor = jnp.exp(-sigma_xyz * dt)
-            C_damped_e = C_real_e * damping_factor[None, None, None, ...]
+            # Apply exponential damping ONLY to non-density Hermite modes
+            # The (p=0, m=0, n=0) mode represents density and should not be damped
+            # Create Hermite mode indices
+            p_idx = jnp.arange(Np_e)[:, None, None, None, None, None]
+            m_idx = jnp.arange(Nm_e)[None, :, None, None, None, None]
+            n_idx = jnp.arange(Nn_e)[None, None, :, None, None, None]
+
+            # Mask: 1 for density mode (no damping), exp(-sigma*dt) for wave modes
+            is_density_mode = (p_idx == 0) & (m_idx == 0) & (n_idx == 0)
+            spatial_damping = jnp.exp(-sigma_xyz * dt)[None, None, None, ...]  # (1,1,1,Ny,Nx,Nz)
+
+            # Apply damping selectively: density mode undamped, wave modes damped
+            damping_factor = jnp.where(is_density_mode, 1.0, spatial_damping)
+            C_damped_e = C_real_e * damping_factor
 
             # Transform back to k-space
             Ck_damped_e = jnp.fft.fftn(C_damped_e, axes=(-3, -2, -1), norm="forward")
@@ -203,6 +215,7 @@ class SplitStepDampingSolver(AbstractSolver):
         if self.sponge_plasma_i is not None:
             # Ck_ions has shape (Np_i, Nm_i, Nn_i, Ny, Nx, Nz) as float64 view
             Ck_i = y["Ck_ions"].view(jnp.complex128)
+            Np_i, Nm_i, Nn_i = Ck_i.shape[:3]
 
             # Transform to real space
             C_real_i = jnp.fft.ifftn(Ck_i, axes=(-3, -2, -1), norm="forward")
@@ -210,9 +223,20 @@ class SplitStepDampingSolver(AbstractSolver):
             # Broadcast sigma(x) from (Nx,) to (Ny, Nx, Nz)
             sigma_xyz = jnp.broadcast_to(self.sponge_plasma_i[None, :, None], (self.Ny, self.Nx, self.Nz))
 
-            # Apply exponential damping
-            damping_factor = jnp.exp(-sigma_xyz * dt)
-            C_damped_i = C_real_i * damping_factor[None, None, None, ...]
+            # Apply exponential damping ONLY to non-density Hermite modes
+            # The (p=0, m=0, n=0) mode represents density and should not be damped
+            # Create Hermite mode indices
+            p_idx = jnp.arange(Np_i)[:, None, None, None, None, None]
+            m_idx = jnp.arange(Nm_i)[None, :, None, None, None, None]
+            n_idx = jnp.arange(Nn_i)[None, None, :, None, None, None]
+
+            # Mask: 1 for density mode (no damping), exp(-sigma*dt) for wave modes
+            is_density_mode = (p_idx == 0) & (m_idx == 0) & (n_idx == 0)
+            spatial_damping = jnp.exp(-sigma_xyz * dt)[None, None, None, ...]  # (1,1,1,Ny,Nx,Nz)
+
+            # Apply damping selectively: density mode undamped, wave modes damped
+            damping_factor = jnp.where(is_density_mode, 1.0, spatial_damping)
+            C_damped_i = C_real_i * damping_factor
 
             # Transform back to k-space
             Ck_damped_i = jnp.fft.fftn(C_damped_i, axes=(-3, -2, -1), norm="forward")
