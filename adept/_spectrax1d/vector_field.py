@@ -3,6 +3,7 @@
 import jax
 from jax import Array
 from jax import numpy as jnp
+from spectrax import cross_product
 
 from adept._spectrax1d.driver import Driver
 from adept._spectrax1d.hermite_fourier_ode import HermiteFourierODE
@@ -578,7 +579,7 @@ class SpectraxVectorField:
                 dCk_ions_dt = dCk_ions_dt.at[0, 0, 0, 0, :, 0].add(noise_i)
 
         # Compute time derivative of magnetic field (Faraday's law)
-        dBk_dt = -1j * jnp.cross(self.nabla, Fk[:3], axis=0)
+        dBk_dt = -1j * cross_product(self.nabla, Fk[:3])
 
         # Get external driver field in Fourier space (if configured)
         # Driver returns complex array of shape (3, Ny, Nx, Nz)
@@ -598,7 +599,7 @@ class SpectraxVectorField:
             Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
         )
         current = current_electrons + current_ions
-        dEk_dt = 1j * jnp.cross(self.nabla, Fk[3:], axis=0) - current / Omega_cs[0] + driver
+        dEk_dt = 1j * cross_product(self.nabla, Fk[3:]) - current / Omega_cs[0] + driver
 
         # Concatenate field derivatives
         # Note: Sponge damping is now handled by the SplitStepDampingSolver integrator
