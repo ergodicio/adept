@@ -163,9 +163,10 @@ class HermiteSRS1D(BaseSpectrax1D):
         Config format:
             density:
                 basis: linear  # or exponential
-                min: 0.19  # minimum density at boundaries
-                max: 0.27  # maximum density in center
-                rise: 10um  # smoothing length for density transitions
+                min: 0.19  # minimum density at boundaries and in flat regions
+                max: 0.27  # maximum density in gradient region
+                edge_length: 5um  # length of flat regions at boundaries
+                rise: 1um  # smoothing length for transitions
                 # For exponential only:
                 gradient_scale_length: 100um
                 center: 0.5  # normalized position for center density
@@ -181,16 +182,22 @@ class HermiteSRS1D(BaseSpectrax1D):
         if basis == "homogeneous":
             return None
 
-        # Convert rise length to meters
+        # Convert lengths to meters
+        if "edge_length" in dcfg:
+            edge_length = self._require_quantity(dcfg["edge_length"], "density.edge_length").to("m")
+        else:
+            edge_length = None
+
         if "rise" in dcfg:
             rise = self._require_quantity(dcfg["rise"], "density.rise").to("m")
         else:
-            rise = 0.1 * Lx_real
+            rise = 0.1 * Lx_real if edge_length is not None else None
 
         result = {
             "basis": basis,
             "max": float(dcfg.get("max", 0.25)),
             "min": float(dcfg.get("min", 0.19)),
+            "edge_length": edge_length,
             "rise": rise,
         }
 
@@ -229,13 +236,12 @@ class HermiteSRS1D(BaseSpectrax1D):
         return jnp.maximum(ramp_left, ramp_right)
 
     def _build_density_profile(self, x_norm: jnp.ndarray, Lx_norm: float, density_cfg):
-        """Build smooth periodic density profile without vacuum regions.
+        """Build density profile with flat edge regions and gradient in middle.
 
-        Structure: Smooth profile from nmin at boundaries → nmax at center → nmin at boundaries
-        - Density starts at nmin on left boundary
-        - Smoothly ramps up to nmax in the center
-        - Smoothly ramps down to nmin on right boundary
-        - Profile is periodic (same density at both boundaries)
+        Structure: [flat at nmin] - [smooth transition] - [gradient nmin→nmax] - [smooth transition] - [flat at nmin]
+        - Flat regions at boundaries stay at nmin (no vacuum)
+        - Gradient region in middle goes from nmin to nmax
+        - Smooth envelope transitions connect flat to gradient regions
 
         Args:
             x_norm: Normalized x coordinates (in units of x0)
@@ -245,53 +251,91 @@ class HermiteSRS1D(BaseSpectrax1D):
         Returns:
             jnp.ndarray: Density profile (as multiplier of n0_e, n0_i)
         """
-        n_min = density_cfg["min"]  # Min density at boundaries
-        n_max = density_cfg["max"]  # Max density at center
+        from adept._base_ import get_envelope
+
+        n_min = density_cfg["min"]  # Min density at boundaries and in flat regions
+        n_max = density_cfg["max"]  # Max density in gradient region
         basis = density_cfg["basis"]
 
         # Get physical units for conversions
         derived = self.cfg["units"]["derived"]
         x0 = derived["x0"]
 
+        # Define gradient region (where density varies from min to max)
+        if density_cfg["edge_length"] is not None:
+            # Convert edge_length to normalized units
+            edge_len_norm = (density_cfg["edge_length"] / x0).to("").magnitude
+            rise_norm = (density_cfg["rise"] / x0).to("").magnitude
+
+            # Gradient region is in the middle, excluding flat edge regions
+            gradient_left = edge_len_norm
+            gradient_right = Lx_norm - edge_len_norm
+
+            if gradient_right <= gradient_left:
+                raise ValueError("Domain too small for edge regions")
+
+            gradient_center = 0.5 * (gradient_left + gradient_right)
+            gradient_width = gradient_right - gradient_left
+        else:
+            # No edge regions: gradient fills entire domain
+            gradient_center = 0.5 * Lx_norm
+            gradient_width = Lx_norm
+            rise_norm = 0.1 * Lx_norm
+
+        # Build gradient profile in gradient region
         if basis == "linear":
-            # Create smooth up-and-down profile using tanh transitions
-            # Normalize position: 0 at left boundary, 1 at right boundary
-            s = x_norm / Lx_norm
-
-            # Create a smooth "bump" function: goes from nmin -> nmax -> nmin
-            # Use cosine for smooth, symmetric profile
-            density = n_min + (n_max - n_min) * (1.0 - jnp.cos(2.0 * jnp.pi * s)) / 2.0
-
+            # Linear gradient: density increases from n_min to n_max left to right
+            x_normalized = (x_norm - (gradient_center - gradient_width * 0.5)) / gradient_width
+            gradient = n_min + (n_max - n_min) * x_normalized
         elif basis == "exponential":
-            # For exponential, create symmetric profile with scale lengths
+            # Exponential gradient with scale length
             scale_length_norm = (density_cfg["gradient_scale_length"] / x0).to("").magnitude
             center_frac = density_cfg.get("center", 0.5)
-            x_center = center_frac * Lx_norm
-
-            # Distance from center
-            dx = jnp.abs(x_norm - x_center)
-
-            # Exponential decay from center
-            # n(x) = n_max * exp(-|x - x_center| / L) + n_min * (1 - exp(-|x - x_center| / L))
-            decay = jnp.exp(-dx / scale_length_norm)
-            density = n_max * decay + n_min * (1.0 - decay)
+            x_center = (gradient_center - gradient_width * 0.5) + center_frac * gradient_width
+            n_center = n_min + (n_max - n_min) * center_frac
+            gradient = n_center * jnp.exp((x_norm - x_center) / scale_length_norm)
         else:
-            # Fallback to constant
-            density = 0.5 * (n_min + n_max) * jnp.ones_like(x_norm)
+            gradient = 0.5 * (n_min + n_max) * jnp.ones_like(x_norm)
+
+        # Create envelope: smooth transition from 0 to 1 across gradient region
+        # get_envelope returns 0 outside [g_L, g_R] and 1 inside, with smooth transitions
+        g_L = gradient_center - gradient_width * 0.5
+        g_R = gradient_center + gradient_width * 0.5
+        envelope = get_envelope(rise_norm, rise_norm, g_L, g_R, x_norm)
+
+        # Apply envelope:
+        # - In flat edge regions (envelope=0): density = n_min
+        # - In gradient region (envelope=1): density = gradient (n_min to n_max)
+        # - In transition: smooth interpolation
+        density = n_min + envelope * (gradient - n_min)
 
         return density
 
     def _get_plasma_bounds_norm(self):
         """Get the interior plasma region bounds.
 
-        Returns bounds excluding absorbing boundaries for focused plotting.
+        If density gradient is configured, returns bounds excluding flat edge regions.
+        Otherwise, returns bounds excluding absorbing boundaries.
+        This defines the "plasma" region for focused plotting.
         """
         derived = self.cfg["units"]["derived"]
         x0 = derived["x0"]
         Lx_norm = float(self.cfg["physics"]["Lx"])
         Lx_real = Lx_norm * x0
 
-        # Use plasma absorbing boundaries to define plasma region
+        # Check if density gradient with edge regions is configured
+        density_cfg = self._get_density_config(Lx_real)
+        if density_cfg is not None and density_cfg["edge_length"] is not None:
+            # Use edge length to define plasma bounds
+            edge_len_norm = (density_cfg["edge_length"] / x0).to("").magnitude
+            xmin = edge_len_norm
+            xmax = Lx_norm - edge_len_norm
+
+            if xmax <= xmin:
+                return None
+            return xmin, xmax
+
+        # Fall back to using plasma absorbing boundaries
         if "boundaries" not in self.cfg:
             return None
 
