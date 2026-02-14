@@ -297,6 +297,16 @@ class ergoExo:
 
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
+
+        elif cfg["solver"] == "spectrax-1d":
+            from adept.spectrax1d import BaseSpectrax1D as this_module
+
+        elif cfg["solver"] == "hermite-epw-1d":
+            from adept.spectrax1d import EPW1D as this_module
+
+        elif cfg["solver"] == "hermite-srs-1d":
+            from adept.spectrax1d import HermiteSRS1D as this_module
+
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 

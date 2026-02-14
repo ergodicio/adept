@@ -1,0 +1,132 @@
+# HermiteSRS1D example with density gradient for LPI simulations
+# Demonstrates laser propagating up a density gradient
+
+solver: hermite-srs-1d
+
+mlflow:
+  experiment: hermite-srs1d-gradient
+  run: linear-gradient-test-noise
+
+units:
+  normalizing_density: 9.1e21/cc
+  normalizing_temperature: 2 keV
+  ion_temperature: 1 keV
+
+physics:
+  # Box size in real units
+  Lx: 40 micron
+  Ly: 1 micron
+  Lz: 1 micron
+
+  # Mass ratio
+  mi_me: 1836.0
+
+  # Species charges [electron, ion]
+  qs: [-1.0, 1.0]
+
+  # Bulk velocities
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Cyclotron frequencies (normalized, keep as-is)
+  Omega_cs: [1.0, 0.00054]
+
+  # Collision frequency (normalized)
+  nu: 0.0
+
+  # Perturbation mode numbers
+  nx: 1
+  ny: 0
+  nz: 0
+
+  # Reference species densities (will be multiplied by density profile)
+  n0_e: 1.0
+  n0_i: 1.0
+
+  # ODE solver tolerance
+  ode_tolerance: 1.0e-8
+
+# Density gradient configuration
+# Structure: Smooth periodic profile from nmin at boundaries → nmax at center → nmin at boundaries
+# Laser goes from left to right up the density gradient
+density:
+  basis: linear              # Linear (cosine) profile: smooth bump from min to max to min
+  min: 0.19                  # Minimum density at left and right boundaries
+  max: 0.27                  # Maximum density at center
+  rise: 1 micron            # Optional smoothing length (not currently used in cosine profile)
+
+# Enable per-timestep density noise
+  noise:
+    enabled: true
+    type: uniform          # or "normal" for Gaussian
+    amplitude: 1.0e-10     # Adjust based on your needs
+    seed: 42               # For reproducibility
+
+    # Optional: per-species control
+    electrons:
+      enabled: true
+      amplitude: 1.0e-10
+    ions:
+      enabled: false
+
+drivers:
+  ex: {}
+  ey:
+    "0":
+      # Laser intensity and wavelength (real units)
+      intensity: 1e15 W/cm^2
+      wavelength: 351 nm
+
+      # Temporal envelope (real units)
+      t_center: 50.05 ps
+      t_width: 100 ps
+      t_rise: 0.02 ps
+
+      # Spatial envelope: laser enters from left side
+      x_center: 4 micron
+      x_width: 2 micron
+      x_rise: 1 micron
+  ez: {}
+
+boundaries:
+  # Separate damping for fields vs plasma enables laser injection from boundaries
+  field_absorb_length: 2 micron    # Narrow EM field absorption at domain edges
+  plasma_absorb_length: 5 micron   # Wider plasma damping at boundaries
+  sponge:
+    sigma_max_fields: 1.0/fs   # Strength of field damping
+    sigma_max_plasma: 0.0005/fs   # Strength of plasma damping
+
+grid:
+  # Hermite modes
+  Nn: 8
+  Nm: 1
+  Np: 1
+
+  # Number of species
+  Ns: 2
+
+  # Simulation length in real units
+  tmax: 0.1 ps
+  dt: 0.02
+
+  # ODE solver
+  solver: "Dopri8"
+  adaptive_time_step: true
+
+  use_shard_map: true
+
+save:
+  default:
+    t:
+      tmin: 0 ps
+      tmax: 0.1 ps
+      nt: 101
+  fields:
+    t:
+      tmin: 0 ps
+      tmax: 0.1 ps
+      nt: 51
+  moments:
+    t:
+      tmin: 0 ps
+      tmax: 0.1 ps
+      nt: 51

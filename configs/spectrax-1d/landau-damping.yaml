@@ -1,0 +1,214 @@
+# Spectrax-1D Landau Damping Configuration
+#
+# This config demonstrates wrapping the spectrax library as an ADEPTModule.
+# Parameter mapping from spectrax TOML to ADEPT YAML is documented inline.
+
+# Solver identifier (must be "spectrax-1d" for this module)
+solver: spectrax-1d
+
+# MLflow experiment tracking configuration
+mlflow:
+  experiment: spectrax-1d-tests
+  run: landau-damping-k26-n4-driven
+
+# Physical units for normalization
+# These define the reference scales for the simulation
+units:
+  normalizing_density: 1e20/cc        # Reference plasma density [1/cm^3]
+  normalizing_temperature: 1keV       # Reference temperature [eV or keV]
+  # Derived quantities (wp0, tp0, v0, x0) computed in write_units()
+
+# Physics parameters
+# Maps to spectrax input_parameters dict
+physics:
+  # Domain sizes (normalized)
+  # TOML: Lx, Ly, Lz
+  Lx: 1.0
+  Ly: 1.0
+  Lz: 1.0
+
+  # Mass and temperature ratios
+  # TOML: mi_me = 1836.0, Ti_Te = 1.0
+  mi_me: 1836.0
+  Ti_Te: 1.0
+
+  # Species charges [electron, ion]
+  # TOML: qs = [-1.0, 1.0]
+  qs: [-1.0, 1.0]
+
+  # Electron thermal velocities [vx, vy, vz]
+  # TOML: alpha_e = [0.1, 0.1, 0.1]
+  alpha_e: [0.06, 0.06, 0.06]
+
+  # Species thermal velocities [e_vx, e_vy, e_vz, i_vx, i_vy, i_vz]
+  # TOML: alpha_s = [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
+  alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
+
+  # Bulk velocities [e_ux, e_uy, e_uz, i_ux, i_uy, i_uz]
+  # TOML: u_s = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Cyclotron frequencies [electron, ion]
+  # TOML: Omega_cs = [1.0, 0.00054]
+  Omega_cs: [1.0, 0.00054]
+
+  # Collision frequency
+  # TOML: nu = 1.0
+  nu: 1.0
+
+  # Perturbation mode numbers (integers)
+  # TOML: nx = 1, ny = 0, nz = 0
+  nx: 1
+  ny: 0
+  nz: 0
+
+  # Density perturbation amplitude
+  # TOML: dn1 = 1.0e-9
+  dn1: 0.0e-12
+
+  # ODE solver tolerance
+  # TOML: ode_tolerance = 1e-8
+  ode_tolerance: 1.0e-8
+
+# External field drivers
+# Configures wave driving similar to Vlasov1D
+drivers:
+  ex:
+    '0':
+      k0: 6.283185307179586    # Wavenumber: 2π/Lx (fundamental mode for Lx=1.0)
+      w0: 1.1                 # Frequency: Bohm-Gross frequency for k*λD ≈ 0.26
+      a0: 1.0e-6               # Amplitude (linear regime)
+      t_center: 35.0           # Temporal center of pulse
+      t_width: 30.0            # Temporal width (FWHM)
+      t_rise: 14.0             # Rise/fall time (smooth turn-on)
+      x_center: 0.5            # Spatial center (middle of domain)
+      x_width: 1000.0          # Spatial width (very large = uniform in space)
+      x_rise: 0.1              # Spatial rise
+      dw0: 0.0                 # Frequency detuning
+  ey: {}
+  ez: {}
+
+  # Hou-Li exponential filter in Hermite space
+  # Smoothly damps high Hermite modes to prevent aliasing and numerical instabilities
+  hermite_filter:
+    enabled: true              # Enable/disable Hermite space filtering
+    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode (2/3 ≈ 0.6667)
+    strength: 4.0              # Filter strength parameter (higher = sharper cutoff)
+    order: 4                   # Filter order (higher = sharper transition)
+
+# Grid resolution parameters
+# Maps to spectrax solver_parameters dict
+grid:
+  # Fourier space grid dimensions
+  # TOML: Nx = 33, Ny = 1, Nz = 1
+  Nx: 17   # Number of Fourier modes in x
+  Ny: 1    # Number of Fourier modes in y
+  Nz: 1    # Number of Fourier modes in z
+
+  # Hermite polynomial expansion
+  # TOML: Nn = 40, Nm = 1, Np = 1
+  Nn: 4   # Number of Hermite modes
+  Nm: 1    # Additional mode dimension
+  Np: 1    # Additional mode dimension
+
+  # Number of species
+  # TOML: Ns = 2
+  Ns: 2
+
+  # Time integration
+  # TOML: t_max = 50.0, timesteps = 501, dt = 0.01
+  # NOTE: Can specify either (tmax + dt) OR (tmax + nt), the missing one will be calculated
+  tmax: 200.0    # Simulation end time (from TOML t_max)
+  dt: 0.025      # Timestep (will be calculated from tmax/nt)
+
+  # ODE solver
+  # TOML: solver = "Dopri8", adaptive_time_step (optional)
+  solver: "Dopri8"  # Diffrax solver name (Dopri8, Tsit5, Euler, Heun, etc.)
+  adaptive_time_step: true  # Use adaptive time-stepping (default: true)
+
+# Initial conditions configuration
+# Used by get_solver_quantities() to build Fk_0 and Ck_0 arrays
+initialization:
+  # Electromagnetic field initialization
+  fields:
+    method: fourier  # Initialize in Fourier space
+    # Perturbation setup (maps to user's Fk_0 initialization code)
+    # Sets E field at mode (±nx, ±ny, ±nz) with amplitude dn*L/(4π*n*Omega_cs[0])
+    components:
+      electric:
+        # Which component: "Ex" (ny=0,nz=0), "Ey" (ny≠0), "Ez" (nz≠0)
+        # Calculated by: E_field_component = int(sign(ny) + 2*sign(nz))
+        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
+
+  # Distribution function initialization
+  distribution:
+    method: maxwellian_with_perturbation  # Perturbed Maxwellian
+    # Maps to user's Ck_0 initialization code
+    species:
+      electron:
+        # Equilibrium: Ck_0[0, Ny/2, Nx/2, Nz/2] = 1/alpha_s[0]^3
+        # Perturbation at ±k: Ck_0[0, ...] = ±i/(2*alpha_s[0]^3) * dn
+        temperature_ratio: 1.0  # Relative to normalizing_temperature
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0  # Uses physics.density_perturbation
+
+      ion:
+        # Equilibrium only: Ck_0[Nn*Nm*Np, Ny/2, Nx/2, Nz/2] = 1/alpha_s[1]^3
+        temperature_ratio: 0.01  # Ti/Te = 0.01 (if alpha_s[1] = 0.1)
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0  # Unperturbed
+
+# Output configuration
+# Specifies which quantities to save during the simulation and at what times
+# Each save type uses SubSaveAt to interpolate/compute diagnostics at specified times
+save:
+  # Save scalar field diagnostics (energies, densities)
+  # This uses the get_field_save_func() which computes:
+  # - EM_energy, E_energy, B_energy: electromagnetic field energies
+  # - ne_k0, ni_k0: equilibrium densities
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 200.0
+      nt: 801  # Save every ~1 time unit
+
+  # Save Hermite-Fourier coefficients (full distribution function)
+  # Warning: This can be memory intensive for large Nn
+  # Comment out if not needed for analysis
+  hermite:
+    t:
+      tmin: 0.0
+      tmax: 200.0
+      nt: 101  # Save less frequently to reduce memory usage
+  # The "default" save is automatically added and tracks scalar quantities:
+  # - total_EM_energy, E_energy, B_energy
+  # - Ex_max, Ey_max, Ez_max: peak field amplitudes
+  # - ne_k1: electron density perturbation amplitude
+  # This is saved at every grid timestep (cfg["grid"]["t"])
+
+# Diagnostics (optional, for future extension)
+diagnostics:
+  compute_damping_rate: true   # Fit exponential decay to extract γ
+  compute_field_energy: true   # Track ∫|E|^2 dV vs time
+  save_moments: false          # Don't save density, velocity, temperature
+
+# Notes for implementation:
+#
+# 1. In get_solver_quantities():
+#    - Build spectrax input_parameters from physics and initialization
+#    - Build spectrax solver_parameters from grid
+#    - Initialize Fk_0 and Ck_0 arrays based on initialization config
+#    - Store as cfg["spectrax_input"] and cfg["spectrax_solver"]
+#
+# 2. In __call__():
+#    - from spectrax import simulation
+#    - from jax import block_until_ready
+#    - output = block_until_ready(simulation(cfg["spectrax_input"], **cfg["spectrax_solver"]))
+#    - return {"spectrax output": output}
+#
+# 3. In post_process():
+#    - Extract output["spectrax output"]
+#    - Convert to xarray datasets
+#    - Generate plots (can use spectrax.plot() or custom)
+#    - Compute metrics (damping rate, field energy)
+#    - Save to temporary directory for MLflow logging
