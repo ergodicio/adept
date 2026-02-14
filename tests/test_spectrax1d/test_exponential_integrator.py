@@ -70,7 +70,7 @@ def test_driven_epw_exponential(klambda_D: float | None = None):
     print(f"  alpha_e = {required_alpha_e:.6f}")
     print(f"  Expected frequency: {expected_frequency:.6f}")
     print(f"  Expected damping rate: {expected_damping_rate:.6f}")
-    print(f"  Integrator: exponential (Lawson-RK4)")
+    print("  Integrator: exponential (Lawson-RK4)")
     print(f"  dt: {cfg['grid']['dt']}")
 
     cfg["mlflow"]["experiment"] = "epw1d-exponential-test"
@@ -92,13 +92,13 @@ def test_driven_epw_exponential(klambda_D: float | None = None):
     measured_frequency = metrics["epw_avg_frequency_k1"]
     measured_damping_rate = metrics["epw_damping_rate_k1"]
 
-    print(f"\n--- Frequency ---")
+    print("\n--- Frequency ---")
     print(f"  Measured:  {measured_frequency:.6f}")
     print(f"  Expected:  {expected_frequency:.6f}")
     rel_err_freq = 100 * abs(measured_frequency - expected_frequency) / expected_frequency
     print(f"  Rel error: {rel_err_freq:.2f}%")
 
-    print(f"\n--- Damping Rate ---")
+    print("\n--- Damping Rate ---")
     print(f"  Measured:  {measured_damping_rate:.6f}")
     print(f"  Expected:  {expected_damping_rate:.6f}")
     rel_err_damp = 100 * abs(measured_damping_rate - expected_damping_rate) / abs(expected_damping_rate)
