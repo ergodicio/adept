@@ -9,9 +9,9 @@ import adept.patched_mlflow as mlflow
 from adept import ergoExo
 
 
-def _run_(Z, ee):
+def _run_(Z, ee, config_name="epp-short"):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
-    with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d/epp-short')}.yaml") as fi:
+    with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d', config_name)}.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
     cfg["units"]["Z"] = Z
@@ -49,3 +49,16 @@ def test_kappa_eh(Z, ee):
 
     else:
         _run_(Z, ee)
+
+
+@pytest.mark.parametrize("Z", list(range(1, 22, 4)) + [40, 60, 80])
+@pytest.mark.parametrize("ee", [True, False])
+def test_kappa_eh_reflective(Z, ee):
+    if not any(["gpu" == device.platform for device in devices()]):
+        if Z in [1, 21, 80]:
+            _run_(Z, ee, config_name="epp-short-reflective")
+        else:
+            pytest.skip(f"Skipping Z={Z} to save time because no GPU is available")
+
+    else:
+        _run_(Z, ee, config_name="epp-short-reflective")

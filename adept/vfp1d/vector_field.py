@@ -21,6 +21,7 @@ class OSHUN1D:
         self.dx = cfg["grid"]["dx"]
         self.dt = cfg["grid"]["dt"]
         self.nx = cfg["grid"]["nx"]
+        self.boundary = cfg["grid"].get("boundary", "periodic")
         # self.c_squared = cfg["units"]["derived"]["c_light"].magnitude ** 2.0
         self.e_solver = cfg["terms"]["e_solver"]
 
@@ -57,18 +58,34 @@ class OSHUN1D:
         temp = jnp.concatenate([-f[:, :1], f], axis=1)
         return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
 
-    def ddx(self, f: Array) -> Array:
-        """
-        Calculates the derivative of f with respect to x
+    def ddx_c2e(self, f: Array) -> Array:
+        """d/dx of center field, evaluated at edges. (nx, ...) -> (nx+1, ...)"""
+        if self.boundary == "periodic":
+            left_ghost = f[-1:]
+            right_ghost = f[:1]
+        else:  # reflective
+            left_ghost = f[:1]
+            right_ghost = f[-1:]
+        return jnp.diff(f, axis=0, prepend=left_ghost, append=right_ghost) / self.dx
 
-        Args:
-            f (Array): f(x, v)
+    def ddx_e2c(self, f: Array) -> Array:
+        """d/dx of edge field, evaluated at centers. (nx+1, ...) -> (nx, ...)"""
+        return jnp.diff(f, axis=0) / self.dx
 
-        Returns:
-            Array: df/dx
-        """
-        periodic_f = jnp.concatenate([f[-1:], f, f[:1:]], axis=0)
-        return jnp.gradient(periodic_f, self.dx, axis=0)[1:-1]
+    def interp_e2c(self, f: Array) -> Array:
+        """Average edge values to centers. (nx+1, ...) -> (nx, ...)"""
+        return 0.5 * (f[:-1] + f[1:])
+
+    def interp_c2e(self, f: Array) -> Array:
+        """Average center values to edges. (nx, ...) -> (nx+1, ...)"""
+        if self.boundary == "periodic":
+            left_ghost = f[-1:]
+            right_ghost = f[:1]
+        else:  # reflective
+            left_ghost = f[:1]
+            right_ghost = f[-1:]
+        padded = jnp.concatenate([left_ghost, f, right_ghost], axis=0)
+        return 0.5 * (padded[:-1] + padded[1:])
 
     def calc_j(self, f1: Array) -> Array:
         """
@@ -87,49 +104,44 @@ class OSHUN1D:
         """
         This is the implicit solve for the electric field. It uses the "perturbed charge" method and is a direct solve.
 
+        E and f10 live at cell edges (nx+1,) / (nx+1, nv). f0 lives at cell centers (nx, nv).
+        Z and ni live at cell centers (nx,). They are interpolated to edges for the FLM collision operator.
+
         Args:
-            Z (Array): charge
-            ni (Array): number density
-            f0 (Array): f0(x, v)
-            f10 (Array): f10(x, v)
-            e (Array): e(x)
+            Z (Array): charge (nx,)
+            ni (Array): number density (nx,)
+            f0 (Array): f0(x, v) at centers (nx, nv)
+            f10 (Array): f10(x, v) at edges (nx+1, nv)
+            e (Array): e(x) at edges (nx+1,)
 
         Returns:
-            Array: new_e(x)
+            Array: new_e(x) at edges (nx+1,)
 
         """
 
-        # Questions:
-        # Is there a better way to get ∆J/∆E? e.g. using jvp
-        # or at least reusing the two self.ei calls rather than running for a third time after?
-        # Also note that second order effects only come from v df0dx and f2 terms.
+        # Interpolate center quantities to edges for FLM collision operator
+        Z_edge = self.interp_c2e(Z)
+        ni_edge = self.interp_c2e(ni)
+        f0_at_edges = self.interp_c2e(f0)
 
         # calculate j without any e field
-        f10_after_coll = self.ei(Z=Z, ni=ni, f0=f0, f10=f10, dt=self.dt)
+        f10_after_coll = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10, dt=self.dt)
         j0 = self.calc_j(f10_after_coll)
 
         # get perturbation
         de = jnp.abs(e) * self.large_eps + self.eps
 
-        # calculate effect of dex (if we are doing it this way, would there be any harm using f0_after_dex too?)
+        # calculate effect of dex
         _, f10_after_dex = self.push_edfdv(f0, f10, de)
-        f10_after_dex = self.ei(Z=Z, ni=ni, f0=f0, f10=f10_after_dex, dt=self.dt)
+        f10_after_dex = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10_after_dex, dt=self.dt)
         jx_dx = self.calc_j(f10_after_dex)
-        # jy_dx = 0.0
-        # jz_dx = 0.0
-
-        # f10_after_dey = self.step_f10_coll(self.apply_dey(f10))
-        # jx_dy = -4 * jnp.pi / 3.0 * jnp.sum(f10_after_dey * self.v[None, :] ** 3.0, axis=1) * self.dv
-        # jy_dy = 0.0
-        # jz_dy = 0.0
-
-        # f10_after_dez = self.step_f10_coll(self.apply_dez(f10))
-        # jx_dz = -4 * jnp.pi / 3.0 * jnp.sum(f10_after_dez * self.v[None, :] ** 3.0, axis=1) * self.dv
-        # jy_dz = 0.0
-        # jz_dz = 0.0
 
         # directly solve for ex
         new_e = -j0 * de / (jx_dx - j0)
+
+        # For reflective BCs, E=0 at boundary edges (j0=jx_dx=0 there causes 0/0)
+        if self.boundary == "reflective":
+            new_e = new_e.at[0].set(0.0).at[-1].set(0.0)
 
         return new_e
 
@@ -214,6 +226,8 @@ class OSHUN1D:
         This is the edfdv solve for f0 and f1. It uses the `t, y, args` formulation for diffeqsolve
         because we step it using a 5th order integrator (but can also use Euler etc.)
 
+        f0 lives at cell centers (nx, nv), f10 and E live at cell edges (nx+1, nv) / (nx+1,).
+
         Args:
             t (float): time
             y (Dict): y0 -- just distribution functions here
@@ -226,11 +240,18 @@ class OSHUN1D:
         f10 = y["f10"]
         e_field = args["e"]
 
-        g00 = self.ddv(f0)
-        h10 = 2.0 / self.v * f10 + self.ddv_f1(f10)
+        f0_at_edges = self.interp_c2e(f0)  # (nx,nv) -> (nx+1,nv)
+        f10_at_centers = self.interp_e2c(f10)  # (nx+1,nv) -> (nx,nv)
+        e_at_centers = self.interp_e2c(e_field)  # (nx+1,) -> (nx,)
 
-        df0dt_e = e_field[:, None] / 3.0 * h10
+        g00 = self.ddv(f0_at_edges)
+        h10_c = 2.0 / self.v * f10_at_centers + self.ddv_f1(f10_at_centers)
+
+        df0dt_e = e_at_centers[:, None] / 3.0 * h10_c
         df10dt_e = e_field[:, None] * g00
+
+        if self.boundary == "reflective":
+            df10dt_e = df10dt_e.at[0].set(0.0).at[-1].set(0.0)
 
         return {"f0": df0dt_e, "f10": df10dt_e}
 
@@ -262,6 +283,8 @@ class OSHUN1D:
         This is the vdfdx solve for f0 and f1. It uses the `t, y, args` formulation for diffeqsolve
         because we step it using a 5th order integrator (but can also use Euler etc.)
 
+        f0 lives at cell centers (nx, nv), f10 lives at cell edges (nx+1, nv).
+
         Args:
             t (float): time
             y (Dict): y0 -- just distribution functions here
@@ -274,8 +297,11 @@ class OSHUN1D:
         f0 = y["f0"]
         f10 = y["f10"]
 
-        df0dt_sa = -self.v[None, :] / 3.0 * self.ddx(f10)
-        df10dt_sa = -self.v[None, :] * self.ddx(f0)
+        df0dt_sa = -self.v[None, :] / 3.0 * self.ddx_e2c(f10)  # (nx+1,nv) -> (nx,nv)
+        df10dt_sa = -self.v[None, :] * self.ddx_c2e(f0)  # (nx,nv) -> (nx+1,nv)
+
+        if self.boundary == "reflective":
+            df10dt_sa = df10dt_sa.at[0].set(0.0).at[-1].set(0.0)
 
         return {"f0": df0dt_sa, "f10": df10dt_sa}
 
@@ -326,6 +352,10 @@ class OSHUN1D:
         # implicit solve f00 coll
         f0_star = self.lb(None, f0_star, self.dt)
 
+        # Interpolate center quantities to edges for FLM collision operator
+        Z_edge = self.interp_c2e(Z)
+        ni_edge = self.interp_c2e(ni)
+
         # implicit solve for E
         if self.e_solver == "oshun":  # implicit E, explicit f0, f1 with this Taylor expansion of J method
             # taylor expansion of j(E) method from Tzoufras 2013
@@ -333,7 +363,8 @@ class OSHUN1D:
             # push e
             new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
-            new_f10 = self.ei(Z=Z, ni=ni, f0=f0_star, f10=new_f10, dt=self.dt)
+            f0_at_edges = self.interp_c2e(f0_star)
+            new_f10 = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.dt)
 
         elif self.e_solver == "edfdv-ampere-implicit":  # implicit E, f0, f1 using a nonlinear iterative inversion
             new_f0, new_f10, new_e = self.implicit_e_f0_f1_solve(f0=f0_star, f1=f10_star, e=y["e"])
@@ -343,9 +374,14 @@ class OSHUN1D:
             # push e
             new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
-            new_f10 = self.ei(Z=Z, ni=ni, f0=new_f0, f10=new_f10, dt=self.dt)
+            f0_at_edges = self.interp_c2e(new_f0)
+            new_f10 = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.dt)
 
         else:
             raise NotImplementedError
+
+        # Enforce reflective BCs on f10
+        if self.boundary == "reflective":
+            new_f10 = new_f10.at[0].set(0.0).at[-1].set(0.0)
 
         return {"f0": new_f0, "f10": new_f10, "f11": y["f11"], "e": new_e, "b": y["b"], "Z": y["Z"], "ni": y["ni"]}

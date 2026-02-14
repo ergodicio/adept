@@ -181,18 +181,27 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     :param ys:
     :return:
     """
-    xax = cfg["units"]["derived"]["x0"].to("micron").value * cfg["grid"]["x"]
+    x0_um = cfg["units"]["derived"]["x0"].to("micron").value
+    xax_center = x0_um * cfg["grid"]["x"]
+    xax_edge = x0_um * cfg["grid"]["x_edge"]
     tax = this_t["electron"] * cfg["units"]["derived"]["tp0"].to("ps").value
 
-    f_store = xr.Dataset(
-        {
-            dist: xr.DataArray(
-                ys["electron"][dist],
-                coords=(("t (ps)", tax), ("x (um)", xax), ("v (c)", cfg["grid"]["v"])),
+    das = {}
+    for dist in ys["electron"].keys():
+        data = ys["electron"][dist]
+        # f0 at centers, f10 at edges
+        if dist == "f10":
+            das[dist] = xr.DataArray(
+                data,
+                coords=(("t (ps)", tax), ("x_edge (um)", xax_edge), ("v (c)", cfg["grid"]["v"])),
             )
-            for dist in ys["electron"].keys()
-        }
-    )
+        else:
+            das[dist] = xr.DataArray(
+                data,
+                coords=(("t (ps)", tax), ("x (um)", xax_center), ("v (c)", cfg["grid"]["v"])),
+            )
+
+    f_store = xr.Dataset(das)
     f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))
 
     return f_store
@@ -268,7 +277,8 @@ def post_process(soln: Solution, cfg: dict, td: str, args: dict | None = None) -
     tslice = slice(0, -1, t_skip)
 
     for k in ["f0", "f10"]:
-        f_xr[k][tslice].plot(x="x (um)", y="v (c)", col="t (ps)", col_wrap=4)
+        x_coord = "x_edge (um)" if k == "f10" else "x (um)"
+        f_xr[k][tslice].plot(x=x_coord, y="v (c)", col="t (ps)", col_wrap=4)
         plt.savefig(os.path.join(td, "plots", "dist", f"{k}.png"))
         plt.close()
 
@@ -297,14 +307,22 @@ def get_field_save_func(cfg: dict, k: str) -> Callable:
         def _calc_f1_moment_(f1):
             return 4 / 3 * jnp.pi * jnp.sum(f1 * cfg["grid"]["v"] ** 3.0, axis=1) * cfg["grid"]["dv"]
 
+        def _interp_e2c_(f):
+            """Interpolate edge values to centers for output. (nx+1, ...) -> (nx, ...)"""
+            return 0.5 * (f[:-1] + f[1:])
+
         def fields_save_func(t, y, args):
-            temp = {"n": _calc_f0_moment_(y["f0"]), "v": _calc_f1_moment_(y["f10"])}
+            temp = {"n": _calc_f0_moment_(y["f0"])}
+            # f10 is at edges — compute moment at edges then interpolate to centers
+            v_edge = _calc_f1_moment_(y["f10"])
+            temp["v"] = _interp_e2c_(v_edge)
             temp["U"] = _calc_f0_moment_(y["f0"] * cfg["grid"]["v"] ** 2.0)
             temp["P"] = temp["U"] / 3.0
             temp["T"] = temp["P"] / temp["n"]
-            temp["q"] = _calc_f1_moment_(0.5 * y["f10"] * cfg["grid"]["v"] ** 2.0)
-            temp["e"] = y["e"]
-            temp["b"] = y["b"]
+            q_edge = _calc_f1_moment_(0.5 * y["f10"] * cfg["grid"]["v"] ** 2.0)
+            temp["q"] = _interp_e2c_(q_edge)
+            temp["e"] = _interp_e2c_(y["e"])
+            temp["b"] = _interp_e2c_(y["b"])
             temp["ni"] = y["ni"]
 
             return temp
@@ -377,15 +395,18 @@ def get_default_save_func(cfg: dict) -> Callable:
     def _calc_f1_moment_(f1):
         return 4 / 3 * jnp.pi * jnp.sum(f1 * cfg["grid"]["v"] ** 3.0, axis=1) * cfg["grid"]["dv"]
 
+    def _interp_e2c_(f):
+        """Interpolate edge values to centers. (nx+1, ...) -> (nx, ...)"""
+        return 0.5 * (f[:-1] + f[1:])
+
     def save(t, y, args):
+        # f10 is at edges (nx+1, nv), interpolate to centers for scalar means
+        f10_c = _interp_e2c_(y["f10"])
         scalars = {
             "mean_U": jnp.mean(_calc_f0_moment_(y["f0"] * v**2.0)),
-            "mean_j": jnp.mean(_calc_f1_moment_(y["f10"])),
+            "mean_j": jnp.mean(_calc_f1_moment_(f10_c)),
             "mean_n": jnp.mean(_calc_f0_moment_(y["f0"])),
-            "mean_q": jnp.mean(_calc_f1_moment_(0.5 * y["f10"] * v**2.0)),
-            # "mean_-flogf": jnp.mean(-jnp.log(jnp.abs(y["f0"])) * jnp.abs(y["electron"])),
-            # "mean_f2": jnp.mean(y["f0"] * y["f0"]),
-            # "mean_e2": jnp.mean(y["e"] ** 2.0),
+            "mean_q": jnp.mean(_calc_f1_moment_(0.5 * f10_c * v**2.0)),
         }
 
         return scalars

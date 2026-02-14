@@ -13,5 +13,6 @@ See the [full documentation](https://ergodicio.github.io/adept/) for detailed so
 
 Quick links to configuration references:
 - [Vlasov-1D Config](source/solvers/vlasov1d/config.md)
+- [VFP-1D Config](source/solvers/vfp1d/config.md)
 - [Vlasov-2D Config](source/solvers/vlasov2d/config.md)
 - [LPSE-2D Config](source/solvers/lpse2d/config.md)

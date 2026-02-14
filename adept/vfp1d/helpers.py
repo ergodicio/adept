@@ -149,7 +149,7 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
 
     f0 = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
-    f10 = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
+    f10 = np.zeros([cfg_grid["nx"] + 1, cfg_grid["nv"]])
     species_found = False
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
@@ -192,6 +192,13 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
                     profs[k] = baseline * (1.0 + amp * jnp.sin(2 * jnp.pi / ll * cfg_grid["x"]))
 
+                elif species_params[k]["basis"] == "cosine":
+                    baseline = species_params[k]["baseline"]
+                    amp = species_params[k]["amplitude"]
+                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
+
+                    profs[k] = baseline * (1.0 + amp * jnp.cos(2 * jnp.pi / ll * cfg_grid["x"]))
+
                 else:
                     raise NotImplementedError
 
@@ -223,20 +230,32 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
             big_dt = 1e12
             ni = prof_total["n"] / cfg["units"]["Z"]
-            f10_star = -big_dt * oshun.v[None, :] * oshun.ddx(f0)
+
+            # f10 lives at cell edges (nx+1, nv), use ddx_c2e to get derivative at edges
+            nx = cfg["grid"]["nx"]
+            Z_edge = oshun.interp_c2e(jnp.ones(nx))
+            ni_edge = oshun.interp_c2e(jnp.array(ni))
+            f0_at_edges = oshun.interp_c2e(jnp.array(f0))
+
+            f10_star = -big_dt * oshun.v[None, :] * oshun.ddx_c2e(jnp.array(f0))
             f10_from_adv = oshun.ei(
-                Z=jnp.ones(cfg["grid"]["nx"]),
-                ni=ni,
-                f0=f0,
+                Z=Z_edge,
+                ni=ni_edge,
+                f0=f0_at_edges,
                 f10=f10_star,
                 dt=big_dt,
                 include_ee_offdiag_explicitly=False,
             ).block_until_ready()
             jx_from_adv = oshun.calc_j(f10_from_adv)
 
-            df0dv = oshun.ddv(f0)
+            df0dv_at_edges = oshun.ddv(f0_at_edges)
             f10_from_df0dv = oshun.ei(
-                Z=jnp.ones(cfg["grid"]["nx"]), ni=ni, f0=f0, f10=df0dv, dt=big_dt, include_ee_offdiag_explicitly=False
+                Z=Z_edge,
+                ni=ni_edge,
+                f0=f0_at_edges,
+                f10=df0dv_at_edges,
+                dt=big_dt,
+                include_ee_offdiag_explicitly=False,
             )
             jx_from_df0dv = oshun.calc_j(f10_from_df0dv)
 
