@@ -321,6 +321,91 @@ class HermiteFourierODE:
 
         return dCk_s_dt
 
+    def _compute_lorentz_rhs(
+        self,
+        C: Array,
+        F: Array,
+        alpha: Array,
+        u: Array,
+        q: float,
+        Omega_c: float,
+    ) -> Array:
+        """
+        Compute only the Lorentz force (E-field + B-field) contribution to dCk/dt.
+
+        Used by the Lawson-RK4 exponential integrator where free-streaming, collision,
+        and diffusion are handled by exact exponentials.
+
+        Args:
+            C: Real-space Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
+            F: Real-space EM fields, shape (6, Ny, Nx, Nz) = (Ex, Ey, Ez, Bx, By, Bz)
+            alpha: Thermal velocities, shape (3,) = (alpha_x, alpha_y, alpha_z)
+            u: Drift velocities, shape (3,) = (u_x, u_y, u_z)
+            q: Species charge (scalar)
+            Omega_c: Cyclotron frequency (scalar)
+
+        Returns:
+            Lorentz force dCk/dt with shape (Np, Nm, Nn, Ny, Nx, Nz)
+        """
+        # Extract thermal velocity and drift velocity components
+        a0, a1, a2 = alpha[0], alpha[1], alpha[2]
+        u0, u1, u2 = u[0], u[1], u[2]
+
+        # Broadcast fields to match Hermite dimensions
+        F = F[:, None, None, None, :, :, :]  # (6, 1, 1, 1, Ny, Nx, Nz)
+
+        # Reshape Hermite ladder operators for broadcasting with 6D arrays
+        sqrt_n_minus = self.sqrt_n_minus[None, None, :, None, None, None]
+        sqrt_m_minus = self.sqrt_m_minus[None, :, None, None, None, None]
+        sqrt_p_minus = self.sqrt_p_minus[:, None, None, None, None, None]
+        sqrt_n_plus = self.sqrt_n_plus[None, None, :, None, None, None]
+        sqrt_m_plus = self.sqrt_m_plus[None, :, None, None, None, None]
+        sqrt_p_plus = self.sqrt_p_plus[:, None, None, None, None, None]
+
+        # Compute auxiliary velocity-space coupling fields for magnetic Lorentz force
+        C_aux_x = (
+            sqrt_m_minus * sqrt_p_minus * (a2 / a1 - a1 / a2) * self.shift_multi(C, dn=0, dm=-1, dp=-1)
+            + sqrt_m_minus * sqrt_p_plus * (a2 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=1)
+            - sqrt_m_plus * sqrt_p_minus * (a1 / a2) * self.shift_multi(C, dn=0, dm=1, dp=-1)
+            + jnp.sqrt(2) * sqrt_m_minus * (u2 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=0)
+            - jnp.sqrt(2) * sqrt_p_minus * (u1 / a2) * self.shift_multi(C, dn=0, dm=0, dp=-1)
+        )
+
+        C_aux_y = (
+            sqrt_n_minus * sqrt_p_minus * (a0 / a2 - a2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=-1)
+            + sqrt_n_plus * sqrt_p_minus * (a0 / a2) * self.shift_multi(C, dn=1, dm=0, dp=-1)
+            - sqrt_n_minus * sqrt_p_plus * (a2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=1)
+            + jnp.sqrt(2) * sqrt_p_minus * (u0 / a2) * self.shift_multi(C, dn=0, dm=0, dp=-1)
+            - jnp.sqrt(2) * sqrt_n_minus * (u2 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=0)
+        )
+
+        C_aux_z = (
+            sqrt_n_minus * sqrt_m_minus * (a1 / a0 - a0 / a1) * self.shift_multi(C, dn=-1, dm=-1, dp=0)
+            + sqrt_n_minus * sqrt_m_plus * (a1 / a0) * self.shift_multi(C, dn=-1, dm=1, dp=0)
+            - sqrt_n_plus * sqrt_m_minus * (a0 / a1) * self.shift_multi(C, dn=1, dm=-1, dp=0)
+            + jnp.sqrt(2) * sqrt_n_minus * (u1 / a0) * self.shift_multi(C, dn=-1, dm=0, dp=0)
+            - jnp.sqrt(2) * sqrt_m_minus * (u0 / a1) * self.shift_multi(C, dn=0, dm=-1, dp=0)
+        )
+
+        # Lorentz force: E-field + B-field coupling via auxiliary fields
+        return (
+            q
+            * Omega_c
+            * (
+                jnp.fft.fftn(
+                    (sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
+                    + (sqrt_m_minus * jnp.sqrt(2) / a1) * F[1] * self.shift_multi(C, dn=0, dm=-1, dp=0)
+                    + (sqrt_p_minus * jnp.sqrt(2) / a2) * F[2] * self.shift_multi(C, dn=0, dm=0, dp=-1)
+                    + F[3] * C_aux_x
+                    + F[4] * C_aux_y
+                    + F[5] * C_aux_z,
+                    axes=(-3, -2, -1),
+                    norm="forward",
+                )
+                * self.mask23
+            )
+        )
+
     def __call__(
         self,
         Ck: Array,

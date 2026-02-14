@@ -266,98 +266,78 @@ class BaseSpectrax1D(ADEPTModule):
         This method is called after MLflow param logging, so JAX arrays can be added here.
         Initialize the Fourier and Hermite coefficient arrays that spectrax needs.
 
-        Two modes:
-        1. If cfg["spectrax_toml_file"] is provided: Load from TOML using spectrax.load_parameters()
-        2. Otherwise: Build from YAML config (for ADEPT-native workflow)
-
         Reference: adept/_vlasov1d/modules.py lines 102-167
         """
-        # Check if TOML file is specified
-        toml_file = self.cfg.get("spectrax_toml_file", None)
 
-        if toml_file is not None:
-            # Mode 1: Load from TOML file using spectrax
-            from spectrax import load_parameters
+        physics = self.cfg["physics"]
+        grid = self.cfg["grid"]
 
-            # Resolve path relative to config file if not absolute
-            if not os.path.isabs(toml_file):
-                # If running from ADEPT root, resolve relative to that
-                toml_file = os.path.abspath(toml_file)
+        # Build input_parameters dict (matches TOML structure)
+        input_parameters = {
+            "Lx": float(physics["Lx"]),
+            "Ly": float(physics["Ly"]),
+            "Lz": float(physics["Lz"]),
+            "mi_me": float(physics["mi_me"]),
+            "Ti_Te": float(physics["Ti_Te"]),
+            "qs": physics["qs"],
+            "alpha_e": physics["alpha_e"],
+            "alpha_s": physics["alpha_s"],
+            "u_s": physics["u_s"],
+            "Omega_cs": physics["Omega_cs"],
+            "nu": float(physics["nu"]),
+            "t_max": float(grid["tmax"]),
+            "nx": int(physics["nx"]),
+            "ny": int(physics["ny"]),
+            "nz": int(physics["nz"]),
+            "dn1": float(physics["dn1"]),
+            "ode_tolerance": float(physics.get("ode_tolerance", 1e-8)),
+        }
 
-            print(f"Loading spectrax parameters from TOML: {toml_file}")
-            input_parameters, solver_parameters = load_parameters(toml_file)
-
+        # Parse per-species Hermite mode configuration with backward compatibility
+        if "hermite_modes" in grid:
+            # New per-species format
+            Nn_e = int(grid["hermite_modes"]["electrons"]["Nn"])
+            Nm_e = int(grid["hermite_modes"]["electrons"]["Nm"])
+            Np_e = int(grid["hermite_modes"]["electrons"]["Np"])
+            Nn_i = int(grid["hermite_modes"]["ions"]["Nn"])
+            Nm_i = int(grid["hermite_modes"]["ions"]["Nm"])
+            Np_i = int(grid["hermite_modes"]["ions"]["Np"])
+        elif "Nn" in grid and "Nm" in grid and "Np" in grid:
+            # Legacy format: same modes for both species
+            Nn_e = Nn_i = int(grid["Nn"])
+            Nm_e = Nm_i = int(grid["Nm"])
+            Np_e = Np_i = int(grid["Np"])
         else:
-            # Mode 2: Build from YAML config
-            physics = self.cfg["physics"]
-            grid = self.cfg["grid"]
+            raise ValueError("Must specify grid.hermite_modes or grid.Nn/Nm/Np")
 
-            # Build input_parameters dict (matches TOML structure)
-            input_parameters = {
-                "Lx": float(physics["Lx"]),
-                "Ly": float(physics["Ly"]),
-                "Lz": float(physics["Lz"]),
-                "mi_me": float(physics["mi_me"]),
-                "Ti_Te": float(physics["Ti_Te"]),
-                "qs": physics["qs"],
-                "alpha_e": physics["alpha_e"],
-                "alpha_s": physics["alpha_s"],
-                "u_s": physics["u_s"],
-                "Omega_cs": physics["Omega_cs"],
-                "nu": float(physics["nu"]),
-                "t_max": float(grid["tmax"]),
-                "nx": int(physics["nx"]),
-                "ny": int(physics["ny"]),
-                "nz": int(physics["nz"]),
-                "dn1": float(physics["dn1"]),
-                "ode_tolerance": float(physics.get("ode_tolerance", 1e-8)),
-            }
+        # Store per-species mode counts in grid config for later access
+        grid["Nn_electrons"] = Nn_e
+        grid["Nm_electrons"] = Nm_e
+        grid["Np_electrons"] = Np_e
+        grid["Nn_ions"] = Nn_i
+        grid["Nm_ions"] = Nm_i
+        grid["Np_ions"] = Np_i
 
-            # Parse per-species Hermite mode configuration with backward compatibility
-            if "hermite_modes" in grid:
-                # New per-species format
-                Nn_e = int(grid["hermite_modes"]["electrons"]["Nn"])
-                Nm_e = int(grid["hermite_modes"]["electrons"]["Nm"])
-                Np_e = int(grid["hermite_modes"]["electrons"]["Np"])
-                Nn_i = int(grid["hermite_modes"]["ions"]["Nn"])
-                Nm_i = int(grid["hermite_modes"]["ions"]["Nm"])
-                Np_i = int(grid["hermite_modes"]["ions"]["Np"])
-            elif "Nn" in grid and "Nm" in grid and "Np" in grid:
-                # Legacy format: same modes for both species
-                Nn_e = Nn_i = int(grid["Nn"])
-                Nm_e = Nm_i = int(grid["Nm"])
-                Np_e = Np_i = int(grid["Np"])
-            else:
-                raise ValueError("Must specify grid.hermite_modes or grid.Nn/Nm/Np")
+        # Build solver_parameters dict
+        solver_name = grid.get("solver", "Dopri8")
+        adaptive_time_step = grid.get("adaptive_time_step", True)
 
-            # Store per-species mode counts in grid config for later access
-            grid["Nn_electrons"] = Nn_e
-            grid["Nm_electrons"] = Nm_e
-            grid["Np_electrons"] = Np_e
-            grid["Nn_ions"] = Nn_i
-            grid["Nm_ions"] = Nm_i
-            grid["Np_ions"] = Np_i
-
-            # Build solver_parameters dict
-            solver_name = grid.get("solver", "Dopri8")
-            adaptive_time_step = grid.get("adaptive_time_step", True)
-
-            solver_parameters = {
-                "Nx": int(grid["Nx"]),
-                "Ny": int(grid["Ny"]),
-                "Nz": int(grid["Nz"]),
-                "Nn_electrons": Nn_e,
-                "Nm_electrons": Nm_e,
-                "Np_electrons": Np_e,
-                "Nn_ions": Nn_i,
-                "Nm_ions": Nm_i,
-                "Np_ions": Np_i,
-                "Ns": int(grid["Ns"]),
-                "timesteps": int(grid["nt"]),
-                "dt": float(grid["dt"]),
-                "adaptive_time_step": adaptive_time_step,
-                "solver": solver_name,
-            }
+        solver_parameters = {
+            "Nx": int(grid["Nx"]),
+            "Ny": int(grid["Ny"]),
+            "Nz": int(grid["Nz"]),
+            "Nn_electrons": Nn_e,
+            "Nm_electrons": Nm_e,
+            "Np_electrons": Np_e,
+            "Nn_ions": Nn_i,
+            "Nm_ions": Nm_i,
+            "Np_ions": Np_i,
+            "Ns": int(grid["Ns"]),
+            "timesteps": int(grid["nt"]),
+            "dt": float(grid["dt"]),
+            "adaptive_time_step": adaptive_time_step,
+            "solver": solver_name,
+        }
 
         # Initialize Fk_0 (electromagnetic field Fourier components)
         # Shape: (6, Ny, Nx, Nz) for [Ex, Ey, Ez, Bx, By, Bz]
@@ -601,25 +581,113 @@ class BaseSpectrax1D(ADEPTModule):
         # Get shard_map configuration from grid config (default: False)
         use_shard_map = self.cfg["grid"].get("use_shard_map", False)
 
-        # Create VectorField instance with per-species configuration and grid quantities
-        vector_field = SpectraxVectorField(
-            Nx=Nx,
-            Ny=Ny,
-            Nz=Nz,
-            Nn_electrons=Nn_e,
-            Nm_electrons=Nm_e,
-            Np_electrons=Np_e,
-            Nn_ions=Nn_i,
-            Nm_ions=Nm_i,
-            Np_ions=Np_i,
-            Ns=Ns,
-            xax=self.xax,
-            driver_config=self.driver_config,
-            grid_quantities_electrons=self.grid_quantities_electrons,
-            grid_quantities_ions=self.grid_quantities_ions,
-            dt=float(self.cfg["grid"]["dt"]),
-            use_shard_map=use_shard_map,
-        )
+        # Choose integrator: "explicit" (default, Dopri8) or "exponential" (Lawson-RK4)
+        integrator_type = self.cfg["grid"].get("integrator", "explicit")
+
+        if integrator_type == "exponential":
+            # --- Lawson-RK4 exponential integrator path ---
+            from adept._spectrax1d.exponential_operators import build_combined_exponential
+            from adept._spectrax1d.integrators import LawsonRK4Solver
+            from adept._spectrax1d.nonlinear_vector_field import NonlinearVectorField
+
+            # Build exponential operators for all linear terms
+            combined_exp = build_combined_exponential(
+                grid_quantities_electrons=self.grid_quantities_electrons,
+                grid_quantities_ions=self.grid_quantities_ions,
+                alpha_s=self.args["alpha_s"],
+                u_s=self.args["u_s"],
+                nu=self.args["nu"],
+                D=self.args.get("D", 0.0),
+                Nn_e=Nn_e,
+                Nm_e=Nm_e,
+                Np_e=Np_e,
+                Nn_i=Nn_i,
+                Nm_i=Nm_i,
+                Np_i=Np_i,
+                Nx=Nx,
+                Ny=Ny,
+                Nz=Nz,
+            )
+
+            # Create nonlinear-only vector field
+            vector_field = NonlinearVectorField(
+                Nx=Nx,
+                Ny=Ny,
+                Nz=Nz,
+                Nn_electrons=Nn_e,
+                Nm_electrons=Nm_e,
+                Np_electrons=Np_e,
+                Nn_ions=Nn_i,
+                Nm_ions=Nm_i,
+                Np_ions=Np_i,
+                Ns=Ns,
+                xax=self.xax,
+                driver_config=self.driver_config,
+                grid_quantities_electrons=self.grid_quantities_electrons,
+                grid_quantities_ions=self.grid_quantities_ions,
+                dt=float(self.cfg["grid"]["dt"]),
+            )
+
+            # Create Lawson-RK4 solver
+            base_solver = LawsonRK4Solver(combined_exp=combined_exp)
+
+            # Exponential integrator uses fixed timestep (stiffness removed)
+            stepsize_controller = ConstantStepSize()
+            print(f"Using Lawson-RK4 exponential integrator with fixed dt={self.cfg['grid']['dt']}")
+
+        else:
+            # --- Standard explicit integrator path (default) ---
+            # Create VectorField instance with per-species configuration and grid quantities
+            vector_field = SpectraxVectorField(
+                Nx=Nx,
+                Ny=Ny,
+                Nz=Nz,
+                Nn_electrons=Nn_e,
+                Nm_electrons=Nm_e,
+                Np_electrons=Np_e,
+                Nn_ions=Nn_i,
+                Nm_ions=Nm_i,
+                Np_ions=Np_i,
+                Ns=Ns,
+                xax=self.xax,
+                driver_config=self.driver_config,
+                grid_quantities_electrons=self.grid_quantities_electrons,
+                grid_quantities_ions=self.grid_quantities_ions,
+                dt=float(self.cfg["grid"]["dt"]),
+                use_shard_map=use_shard_map,
+            )
+
+            # Get stepsize controller
+            adaptive_time_step = solver_params["adaptive_time_step"]
+
+            # Compute dtmax from laser period if driver is present
+            dtmax = None
+            if adaptive_time_step and "drivers" in self.cfg:
+                drivers_cfg = self.cfg["drivers"]
+                for field_key in ["ex", "ey", "ez"]:
+                    if field_key in drivers_cfg and drivers_cfg[field_key]:
+                        for pulse_name, pulse_cfg in drivers_cfg[field_key].items():
+                            if isinstance(pulse_cfg, dict) and "w0" in pulse_cfg:
+                                w0 = pulse_cfg["w0"]
+                                laser_period = 2 * jnp.pi / w0
+                                dtmax = laser_period / 20.0
+                                print(f"Auto dtmax from laser: {float(dtmax):.6e} (period={float(laser_period):.6e})")
+                                break
+                    if dtmax is not None:
+                        break
+
+            controllers = {
+                True: PIDController(
+                    rtol=input_params["ode_tolerance"],
+                    atol=input_params["ode_tolerance"],
+                    dtmax=dtmax,
+                ),
+                False: ConstantStepSize(),
+            }
+            stepsize_controller = controllers[adaptive_time_step]
+
+            # Get base solver instance
+            base_solver = self._get_solver_instance(solver_params["solver"], input_params["ode_tolerance"])
 
         # Build SubSaveAt dictionary for diagnostics
         subsaves = {}
@@ -627,43 +695,8 @@ class BaseSpectrax1D(ADEPTModule):
             if isinstance(v, dict) and "t" in v and "func" in v:
                 subsaves[k] = SubSaveAt(ts=v["t"]["ax"], fn=v["func"])
 
-        # Get stepsize controller
-        adaptive_time_step = solver_params["adaptive_time_step"]
-
-        # Compute dtmax from laser period if driver is present
-        dtmax = None
-        if adaptive_time_step and "drivers" in self.cfg:
-            # Check if any laser drivers are configured
-            drivers_cfg = self.cfg["drivers"]
-            for field_key in ["ex", "ey", "ez"]:
-                if field_key in drivers_cfg and drivers_cfg[field_key]:
-                    for pulse_name, pulse_cfg in drivers_cfg[field_key].items():
-                        if isinstance(pulse_cfg, dict) and "w0" in pulse_cfg:
-                            # Get laser frequency (normalized units)
-                            w0 = pulse_cfg["w0"]
-                            laser_period = 2 * jnp.pi / w0
-                            # Set dtmax to resolve laser with ~20 points per period
-                            dtmax = laser_period / 20.0
-                            print(f"Auto dtmax from laser: {float(dtmax):.6e} (period={float(laser_period):.6e})")
-                            break
-                if dtmax is not None:
-                    break
-
-        controllers = {
-            True: PIDController(
-                rtol=input_params["ode_tolerance"],
-                atol=input_params["ode_tolerance"],
-                dtmax=dtmax  # Limit maximum timestep to resolve laser period
-            ),
-            False: ConstantStepSize(),
-        }
-        stepsize_controller = controllers[adaptive_time_step]
-
-        # Get base solver instance
-        base_solver = self._get_solver_instance(solver_params["solver"], input_params["ode_tolerance"])
-
-        # Wrap with split-step damping integrator
-        # This applies sponge damping analytically outside the RK substeps
+        # Wrap with split-step damping integrator (both paths)
+        # This applies sponge boundary damping analytically outside the solver substeps
         from adept._spectrax1d.integrators import SplitStepDampingSolver
 
         solver = SplitStepDampingSolver(

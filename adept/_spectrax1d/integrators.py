@@ -3,14 +3,22 @@ Custom diffrax integrators for Spectrax-1D module.
 
 This module contains specialized integrators that handle stiff damping terms
 in the Spectrax-1D solver using operator splitting methods.
+
+Integrators:
+  - SplitStepDampingSolver: Wraps any RK solver with analytical boundary damping
+  - LawsonRK4Solver: Exponential integrator using Lawson-RK4 method
 """
 
 from typing import Optional
 
 import equinox as eqx
-from diffrax import RESULTS, AbstractSolver, Dopri8
+import jax
+from diffrax import RESULTS, AbstractSolver, AbstractTerm, Dopri8, LocalLinearInterpolation
+from jax import Array
 from jax import numpy as jnp
 from jax.typing import ArrayLike
+
+from adept._spectrax1d.exponential_operators import CombinedLinearExponential
 
 
 class SplitStepDampingSolver(AbstractSolver):
@@ -254,3 +262,124 @@ class SplitStepDampingSolver(AbstractSolver):
         We delegate to the wrapped solver.
         """
         return self.wrapped_solver.func(terms, t0, y0, args)
+
+
+# --- Pytree arithmetic helpers for state dictionaries ---
+
+
+def _tree_add(a: dict, b: dict) -> dict:
+    """Elementwise add two state dicts."""
+    return jax.tree.map(lambda x, y: x + y, a, b)
+
+
+def _tree_scale(a: dict, c: float) -> dict:
+    """Scale all arrays in a state dict by a scalar."""
+    return jax.tree.map(lambda x: c * x, a)
+
+
+class LawsonRK4Solver(AbstractSolver):
+    """
+    Lawson-RK4 exponential integrator for the Vlasov-Maxwell system.
+
+    Solves dy/dt = L·y + N(y,t) where L is handled by exact exponentials
+    and N is advanced with classical RK4 in the integrating factor frame.
+
+    Algorithm per step (dt = t1 - t0):
+
+        Eₕ(·) = exp(L·dt/2),  Ef(·) = exp(L·dt)
+
+        N₁ = N(yₙ, tₙ)
+        y*  = Eₕ(yₙ) + (dt/2)·Eₕ(N₁)
+        N₂ = N(y*, tₙ + dt/2)
+
+        y** = Eₕ(yₙ) + (dt/2)·N₂
+        N₃ = N(y**, tₙ + dt/2)
+
+        y*** = Ef(yₙ) + dt·Eₕ(N₃)
+        N₄ = N(y***, tₙ + dt)
+
+        yₙ₊₁ = Ef(yₙ) + (dt/6)·[Ef(N₁) + 2·Eₕ(N₂) + 2·Eₕ(N₃) + N₄]
+
+    This is 4th-order accurate and treats all linear stiffness exactly.
+    Uses fixed timestep (no adaptive error estimate).
+
+    Args:
+        combined_exp: CombinedLinearExponential handling exp(L·s) for all state components
+    """
+
+    term_structure = AbstractTerm
+    interpolation_cls = LocalLinearInterpolation
+
+    combined_exp: CombinedLinearExponential
+
+    def __init__(self, combined_exp: CombinedLinearExponential):
+        self.combined_exp = combined_exp
+
+    def order(self, terms):
+        return 4
+
+    def init(self, terms, t0, t1, y0, args):
+        return None
+
+    def step(self, terms, t0, t1, y0, args, solver_state, made_jump):
+        """
+        Perform one Lawson-RK4 step.
+
+        Args:
+            terms: ODETerm wrapping the NonlinearVectorField
+            t0, t1: Step interval
+            y0: State dict (float64 views)
+            args: Physical parameters
+            solver_state: Unused (stateless)
+            made_jump: Unused
+
+        Returns:
+            (y1, y_error, dense_info, solver_state, result)
+        """
+        dt = t1 - t0
+        N = terms.vf  # NonlinearVectorField.__call__
+        exp_L = self.combined_exp.apply  # exp_L(y, s) applies exp(L·s)
+
+        # Cache repeated exponential applications
+        Eh_yn = exp_L(y0, dt / 2)
+        Ef_yn = exp_L(y0, dt)
+
+        # --- Stage 1 ---
+        N1 = N(t0, y0, args)
+
+        # --- Stage 2 ---
+        Eh_N1 = exp_L(N1, dt / 2)
+        y_star = _tree_add(Eh_yn, _tree_scale(Eh_N1, dt / 2))
+        N2 = N(t0 + dt / 2, y_star, args)
+
+        # --- Stage 3 ---
+        y_dstar = _tree_add(Eh_yn, _tree_scale(N2, dt / 2))
+        N3 = N(t0 + dt / 2, y_dstar, args)
+
+        # --- Stage 4 ---
+        Eh_N3 = exp_L(N3, dt / 2)
+        y_tstar = _tree_add(Ef_yn, _tree_scale(Eh_N3, dt))
+        N4 = N(t1, y_tstar, args)
+
+        # --- Combine ---
+        Ef_N1 = exp_L(N1, dt)  # exp(L·dt) applied to N1
+        Eh_N2 = exp_L(N2, dt / 2)
+        Eh_N3_comb = Eh_N3  # Already computed above
+
+        weighted = _tree_scale(
+            _tree_add(
+                _tree_add(Ef_N1, _tree_scale(Eh_N2, 2.0)),
+                _tree_add(_tree_scale(Eh_N3_comb, 2.0), N4),
+            ),
+            dt / 6.0,
+        )
+        y1 = _tree_add(Ef_yn, weighted)
+
+        # Dense info for interpolation (linear between endpoints)
+        dense_info = dict(y0=y0, y1=y1)
+
+        return y1, None, dense_info, solver_state, RESULTS.successful
+
+    def func(self, terms, t0, y0, args):
+        """Evaluate the nonlinear vector field (used by stepsize controllers)."""
+        return terms.vf(t0, y0, args)
