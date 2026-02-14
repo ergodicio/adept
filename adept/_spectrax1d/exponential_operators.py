@@ -67,15 +67,9 @@ class FreeStreamingExponential:
             kx_1d, ky_1d, kz_1d: 1D wavenumber arrays (2π·fftfreq·N)
         """
         # Build and diagonalize tridiagonal matrices for each direction
-        self.V_x, self.eigenvalues_x = self._build_and_diagonalize(
-            sqrt_n_plus, Nn, float(u[0] / alpha[0])
-        )
-        self.V_y, self.eigenvalues_y = self._build_and_diagonalize(
-            sqrt_m_plus, Nm, float(u[1] / alpha[1])
-        )
-        self.V_z, self.eigenvalues_z = self._build_and_diagonalize(
-            sqrt_p_plus, Np, float(u[2] / alpha[2])
-        )
+        self.V_x, self.eigenvalues_x = self._build_and_diagonalize(sqrt_n_plus, Nn, float(u[0] / alpha[0]))
+        self.V_y, self.eigenvalues_y = self._build_and_diagonalize(sqrt_m_plus, Nm, float(u[1] / alpha[1]))
+        self.V_z, self.eigenvalues_z = self._build_and_diagonalize(sqrt_p_plus, Np, float(u[2] / alpha[2]))
 
         # Prefactors: L_d = prefactor_d * k_d * T_d
         self.prefactor_x = -1j * float(alpha[0]) / Lx
@@ -136,9 +130,7 @@ class FreeStreamingExponential:
     def _apply_direction_x(self, Ck: Array, s: float) -> Array:
         """Apply x-direction free-streaming exponential (acts on n-axis, varies with kx)."""
         # exp_factors[i, kx_idx] = exp(prefactor_x * kx * s * eigenvalue_i)
-        exp_factors = jnp.exp(
-            self.prefactor_x * self.kx_1d[None, :] * s * self.eigenvalues_x[:, None]
-        )  # (Nn, Nx)
+        exp_factors = jnp.exp(self.prefactor_x * self.kx_1d[None, :] * s * self.eigenvalues_x[:, None])  # (Nn, Nx)
 
         # Project into eigenbasis: V^T @ Ck along n-axis (axis 2)
         C_eig = jnp.einsum("in,pmnyxz->pmiyxz", self.V_x.T, Ck)
@@ -151,9 +143,7 @@ class FreeStreamingExponential:
 
     def _apply_direction_y(self, Ck: Array, s: float) -> Array:
         """Apply y-direction free-streaming exponential (acts on m-axis, varies with ky)."""
-        exp_factors = jnp.exp(
-            self.prefactor_y * self.ky_1d[None, :] * s * self.eigenvalues_y[:, None]
-        )  # (Nm, Ny)
+        exp_factors = jnp.exp(self.prefactor_y * self.ky_1d[None, :] * s * self.eigenvalues_y[:, None])  # (Nm, Ny)
 
         # Project along m-axis (axis 1)
         C_eig = jnp.einsum("jm,pmnyxz->pjnyxz", self.V_y.T, Ck)
@@ -165,9 +155,7 @@ class FreeStreamingExponential:
 
     def _apply_direction_z(self, Ck: Array, s: float) -> Array:
         """Apply z-direction free-streaming exponential (acts on p-axis, varies with kz)."""
-        exp_factors = jnp.exp(
-            self.prefactor_z * self.kz_1d[None, :] * s * self.eigenvalues_z[:, None]
-        )  # (Np, Nz)
+        exp_factors = jnp.exp(self.prefactor_z * self.kz_1d[None, :] * s * self.eigenvalues_z[:, None])  # (Np, Nz)
 
         # Project along p-axis (axis 0)
         C_eig = jnp.einsum("kp,pmnyxz->kmnyxz", self.V_z.T, Ck)

@@ -665,7 +665,7 @@ class BaseSpectrax1D(ADEPTModule):
             if adaptive_time_step and "drivers" in self.cfg:
                 drivers_cfg = self.cfg["drivers"]
                 for field_key in ["ex", "ey", "ez"]:
-                    if field_key in drivers_cfg and drivers_cfg[field_key]:
+                    if drivers_cfg.get(field_key):
                         for pulse_name, pulse_cfg in drivers_cfg[field_key].items():
                             if isinstance(pulse_cfg, dict) and "w0" in pulse_cfg:
                                 w0 = pulse_cfg["w0"]

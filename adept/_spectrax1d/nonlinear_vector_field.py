@@ -3,7 +3,7 @@ Nonlinear vector field for the Lawson-RK4 exponential integrator.
 
 This vector field computes only the nonlinear terms of the Vlasov-Maxwell system:
   - E-field acceleration (convolution: E · ∇_v C)
-  - B-field Lorentz force (convolution: (v×B) · ∇_v C)
+  - B-field Lorentz force (convolution: (vxB) · ∇_v C)
   - Plasma current (J → dE/dt in Ampère's law)
   - External driver
   - Density noise
