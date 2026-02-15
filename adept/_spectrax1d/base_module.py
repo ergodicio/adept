@@ -628,8 +628,31 @@ class BaseSpectrax1D(ADEPTModule):
                 dt=float(self.cfg["grid"]["dt"]),
             )
 
+            # Build per-step Hermite filter if configured
+            filter_config = self.cfg["grid"].get("hermite_filter", {})
+            if filter_config.get("enabled", False):
+                filter_order = filter_config.get("order", 36)
+                filter_strength = filter_config.get("strength", 36.0)
+                cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
+
+                from adept._spectrax1d.exponential_operators import compute_houli_hermite_filter
+
+                hermite_filter_e = compute_houli_hermite_filter(
+                    Nn_e, Nm_e, Np_e, cutoff_fraction, filter_strength, filter_order
+                )[:, :, :, None, None, None]
+                hermite_filter_i = compute_houli_hermite_filter(
+                    Nn_i, Nm_i, Np_i, cutoff_fraction, filter_strength, filter_order
+                )[:, :, :, None, None, None]
+            else:
+                hermite_filter_e = None
+                hermite_filter_i = None
+
             # Create Lawson-RK4 solver
-            base_solver = LawsonRK4Solver(combined_exp=combined_exp)
+            base_solver = LawsonRK4Solver(
+                combined_exp=combined_exp,
+                hermite_filter_e=hermite_filter_e,
+                hermite_filter_i=hermite_filter_i,
+            )
 
             # Exponential integrator uses fixed timestep (stiffness removed)
             stepsize_controller = ConstantStepSize()
@@ -655,6 +678,7 @@ class BaseSpectrax1D(ADEPTModule):
                 grid_quantities_ions=self.grid_quantities_ions,
                 dt=float(self.cfg["grid"]["dt"]),
                 use_shard_map=use_shard_map,
+                hermite_filter_config=self.cfg["grid"].get("hermite_filter", {}),
             )
 
             # Get stepsize controller

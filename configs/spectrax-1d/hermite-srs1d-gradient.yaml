@@ -46,13 +46,14 @@ physics:
   ode_tolerance: 1.0e-8
 
 # Density gradient configuration
-# Structure: Smooth periodic profile from nmin at boundaries → nmax at center → nmin at boundaries
+# Structure: [flat at nmin] - [smooth ramp] - [linear gradient nmin→nmax] - [smooth ramp] - [flat at nmin]
 # Laser goes from left to right up the density gradient
 density:
-  basis: linear              # Linear (cosine) profile: smooth bump from min to max to min
-  min: 0.19                  # Minimum density at left and right boundaries
-  max: 0.27                  # Maximum density at center
-  rise: 1 micron            # Optional smoothing length (not currently used in cosine profile)
+  basis: linear              # Linear gradient from min to max in gradient region
+  min: 0.19                  # Minimum density in flat edge regions
+  max: 0.27                  # Maximum density at end of gradient region
+  edge_length: 5 micron     # Length of flat regions at boundaries (was vacuum_length)
+  rise: 1 micron            # Smooth transition between flat and gradient regions
 
 # Enable per-timestep density noise
   noise:
@@ -93,7 +94,7 @@ boundaries:
   plasma_absorb_length: 5 micron   # Wider plasma damping at boundaries
   sponge:
     sigma_max_fields: 1.0/fs   # Strength of field damping
-    sigma_max_plasma: 0.0005/fs   # Strength of plasma damping
+    sigma_max_plasma: 0.05/fs   # Strength of plasma damping
 
 grid:
   # Hermite modes

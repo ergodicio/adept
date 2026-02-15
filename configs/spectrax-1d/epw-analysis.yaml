@@ -76,16 +76,14 @@ drivers:
   ey: {}
   ez: {}
 
-  # Hou-Li exponential filter in Hermite space
-  # Smoothly damps high Hermite modes to prevent aliasing and numerical instabilities
-  hermite_filter:
-    enabled: false              # Enable/disable Hermite space filtering
-    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode (2/3 ≈ 0.6667)
-    strength: 36.0              # Filter strength parameter (higher = sharper cutoff)
-    order: 36                   # Filter order (higher = sharper transition)
-
 # Grid resolution parameters
 grid:
+  # Hou-Li exponential filter in Hermite space
+  hermite_filter:
+    enabled: false
+    cutoff_fraction: 0.6667
+    strength: 36.0
+    order: 36
   # Fourier space grid dimensions
   Nx: 33   # Number of Fourier modes in x
   Ny: 1    # Number of Fourier modes in y (1D problem)

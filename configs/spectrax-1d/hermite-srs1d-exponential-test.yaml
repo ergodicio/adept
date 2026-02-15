@@ -1,0 +1,80 @@
+# Quick test: SRS gradient with exponential integrator
+solver: hermite-srs-1d
+
+mlflow:
+  experiment: hermite-srs1d-gradient
+  run: exponential-integrator-test
+
+units:
+  normalizing_density: 9.1e21/cc
+  normalizing_temperature: 2 keV
+  ion_temperature: 1 keV
+
+physics:
+  Lx: 40 micron
+  Ly: 1 micron
+  Lz: 1 micron
+  mi_me: 1836.0
+  qs: [-1.0, 1.0]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  Omega_cs: [1.0, 0.00054]
+  nu: 0.0
+  nx: 1
+  ny: 0
+  nz: 0
+  n0_e: 1.0
+  n0_i: 1.0
+  ode_tolerance: 1.0e-8
+
+density:
+  basis: linear
+  min: 0.19
+  max: 0.27
+  edge_length: 5 micron
+  rise: 1 micron
+
+drivers:
+  ex: {}
+  ey:
+    "0":
+      intensity: 1e15 W/cm^2
+      wavelength: 351 nm
+      t_center: 50.05 ps
+      t_width: 100 ps
+      t_rise: 0.02 ps
+      x_center: 4 micron
+      x_width: 2 micron
+      x_rise: 1 micron
+  ez: {}
+
+boundaries:
+  field_absorb_length: 2 micron
+  plasma_absorb_length: 5 micron
+  sponge:
+    sigma_max_fields: 1.0/fs
+    sigma_max_plasma: 0.05/fs
+
+grid:
+  Nn: 8
+  Nm: 1
+  Np: 1
+  Ns: 2
+
+  # Short test
+  tmax: 0.01 ps
+
+  # Exponential integrator
+  integrator: "exponential"
+  adaptive_time_step: false
+
+save:
+  fields:
+    t:
+      tmin: 0 ps
+      tmax: 0.01 ps
+      nt: 11
+  moments:
+    t:
+      tmin: 0 ps
+      tmax: 0.01 ps
+      nt: 11

@@ -422,3 +422,30 @@ def build_combined_exponential(
         diag_e=diag_e,
         diag_i=diag_i,
     )
+
+
+def compute_houli_hermite_filter(
+    Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
+) -> Array:
+    """Compute Hou-Li exponential filter in Hermite space.
+
+    Returns array of shape (Np, Nm, Nn) with values in (0, 1].
+    Modes below cutoff_fraction * h_max are unaffected (value = 1).
+    Modes above are damped as exp(-strength * (h/h_cutoff)^order).
+
+    Args:
+        Nn, Nm, Np: Number of Hermite modes per velocity direction
+        cutoff_fraction: Fraction of max mode number where filtering starts
+        strength: Filter strength parameter
+        order: Filter order (higher = sharper cutoff)
+    """
+    n = jnp.arange(Nn)[None, None, :]
+    m = jnp.arange(Nm)[None, :, None]
+    p = jnp.arange(Np)[:, None, None]
+
+    h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
+    h_cutoff = cutoff_fraction * h_max
+    h = jnp.sqrt(n**2 + m**2 + p**2)
+
+    filter_arg = jnp.where(h > h_cutoff, strength * ((h / h_cutoff) ** order), 0.0)
+    return jnp.exp(-filter_arg)

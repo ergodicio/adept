@@ -311,9 +311,18 @@ class LawsonRK4Solver(AbstractSolver):
     interpolation_cls = LocalLinearInterpolation
 
     combined_exp: CombinedLinearExponential
+    hermite_filter_e: ArrayLike | None
+    hermite_filter_i: ArrayLike | None
 
-    def __init__(self, combined_exp: CombinedLinearExponential):
+    def __init__(
+        self,
+        combined_exp: CombinedLinearExponential,
+        hermite_filter_e: ArrayLike | None = None,
+        hermite_filter_i: ArrayLike | None = None,
+    ):
         self.combined_exp = combined_exp
+        self.hermite_filter_e = hermite_filter_e
+        self.hermite_filter_i = hermite_filter_i
 
     def order(self, terms):
         return 4
@@ -374,6 +383,16 @@ class LawsonRK4Solver(AbstractSolver):
             dt / 6.0,
         )
         y1 = _tree_add(Ef_yn, weighted)
+
+        # Apply per-step Hermite filter to prevent energy pile-up at truncation
+        if self.hermite_filter_e is not None:
+            Ck_e = y1["Ck_electrons"].view(jnp.complex128)
+            Ck_e = Ck_e * self.hermite_filter_e
+            y1 = {**y1, "Ck_electrons": Ck_e.view(jnp.float64)}
+        if self.hermite_filter_i is not None:
+            Ck_i = y1["Ck_ions"].view(jnp.complex128)
+            Ck_i = Ck_i * self.hermite_filter_i
+            y1 = {**y1, "Ck_ions": Ck_i.view(jnp.float64)}
 
         # Dense info for interpolation (linear between endpoints)
         dense_info = dict(y0=y0, y1=y1)

@@ -98,24 +98,6 @@ class NonlinearVectorField:
         # 2/3 dealiasing mask
         self.mask23 = self._compute_twothirds_mask()
 
-        # Hermite filter
-        filter_config = driver_config.get("hermite_filter", {})
-        self.use_hermite_filter = filter_config.get("enabled", False)
-        if self.use_hermite_filter:
-            filter_order = filter_config.get("order", 36)
-            filter_strength = filter_config.get("strength", 36.0)
-            cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
-
-            self.hermite_filter_electrons = self._compute_houli_hermite_filter(
-                Nn_electrons, Nm_electrons, Np_electrons, cutoff_fraction, filter_strength, filter_order
-            )
-            self.hermite_filter_ions = self._compute_houli_hermite_filter(
-                Nn_ions, Nm_ions, Np_ions, cutoff_fraction, filter_strength, filter_order
-            )
-        else:
-            self.hermite_filter_electrons = None
-            self.hermite_filter_ions = None
-
         # Create per-species HermiteFourierODE instances (reused for Lorentz force)
         gq_e = grid_quantities_electrons
         self.hermite_fourier_ode_electrons = HermiteFourierODE(
@@ -180,21 +162,6 @@ class NonlinearVectorField:
         cz = self.Nz // 3
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
-
-    def _compute_houli_hermite_filter(
-        self, Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
-    ) -> Array:
-        """Compute Hou-Li exponential filter in Hermite space."""
-        n = jnp.arange(Nn)[None, None, :]
-        m = jnp.arange(Nm)[None, :, None]
-        p = jnp.arange(Np)[:, None, None]
-
-        h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-        h_cutoff = cutoff_fraction * h_max
-        h = jnp.sqrt(n**2 + m**2 + p**2)
-
-        filter_arg = jnp.where(h > h_cutoff, strength * ((h / h_cutoff) ** order), 0.0)
-        return jnp.exp(-filter_arg)
 
     def _compute_plasma_current_single_species(
         self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int
@@ -295,13 +262,6 @@ class NonlinearVectorField:
             q=qs[1],
             Omega_c=Omega_cs[1],
         )
-
-        # Apply Hermite filter
-        if self.use_hermite_filter:
-            filter_broadcast_e = self.hermite_filter_electrons[:, :, :, None, None, None]
-            filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
-            dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
-            dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
 
         # Apply density noise
         if self.noise_enabled:
