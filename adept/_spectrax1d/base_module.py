@@ -590,7 +590,11 @@ class BaseSpectrax1D(ADEPTModule):
             from adept._spectrax1d.integrators import LawsonRK4Solver
             from adept._spectrax1d.nonlinear_vector_field import NonlinearVectorField
 
-            # Build exponential operators for all linear terms
+            # Extract mean electron density for plasma oscillation exponential
+            Ck_e_init = self.state["Ck_electrons"].view(jnp.complex128)
+            C000_mean_e = float(jnp.real(Ck_e_init[0, 0, 0, 0, 0, 0]))
+
+            # Build exponential operators for all linear terms (including plasma oscillation)
             combined_exp = build_combined_exponential(
                 grid_quantities_electrons=self.grid_quantities_electrons,
                 grid_quantities_ions=self.grid_quantities_ions,
@@ -607,9 +611,15 @@ class BaseSpectrax1D(ADEPTModule):
                 Nx=Nx,
                 Ny=Ny,
                 Nz=Nz,
+                qs=self.args["qs"],
+                Omega_cs=self.args["Omega_cs"],
+                C000_mean_e=C000_mean_e,
             )
 
-            # Create nonlinear-only vector field
+            # Get plasma oscillation coupling coefficients for NonlinearVectorField subtraction
+            plasma_osc_a = combined_exp.plasma_osc.a if combined_exp.plasma_osc is not None else None
+
+            # Create nonlinear-only vector field (with mean-density coupling subtracted)
             vector_field = NonlinearVectorField(
                 Nx=Nx,
                 Ny=Ny,
@@ -626,6 +636,8 @@ class BaseSpectrax1D(ADEPTModule):
                 grid_quantities_electrons=self.grid_quantities_electrons,
                 grid_quantities_ions=self.grid_quantities_ions,
                 dt=float(self.cfg["grid"]["dt"]),
+                plasma_current_in_exponential=True,
+                plasma_osc_a=plasma_osc_a,
             )
 
             # Build per-step Hermite filter if configured

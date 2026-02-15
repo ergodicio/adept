@@ -44,8 +44,13 @@ class NonlinearVectorField:
         grid_quantities_electrons: dict,
         grid_quantities_ions: dict,
         dt: float,
+        plasma_current_in_exponential: bool = False,
+        plasma_osc_a: Array | None = None,
     ):
         """Initialize with per-species mode counts and grid quantities."""
+        self.plasma_current_in_exponential = plasma_current_in_exponential
+        self.plasma_osc_a = plasma_osc_a
+
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = Nz
@@ -263,6 +268,21 @@ class NonlinearVectorField:
             Omega_c=Omega_cs[1],
         )
 
+        # Subtract mean-density E → C₁ coupling (now handled by exponential)
+        if self.plasma_current_in_exponential and self.plasma_osc_a is not None:
+            if self.Nn_electrons > 1:
+                dCk_electrons_dt = dCk_electrons_dt.at[0, 0, 1].add(
+                    -self.plasma_osc_a[0] * Fk[0] * self.mask23
+                )
+            if self.Nm_electrons > 1:
+                dCk_electrons_dt = dCk_electrons_dt.at[0, 1, 0].add(
+                    -self.plasma_osc_a[1] * Fk[1] * self.mask23
+                )
+            if self.Np_electrons > 1:
+                dCk_electrons_dt = dCk_electrons_dt.at[1, 0, 0].add(
+                    -self.plasma_osc_a[2] * Fk[2] * self.mask23
+                )
+
         # Apply density noise
         if self.noise_enabled:
             if self.noise_electrons_enabled:
@@ -296,6 +316,25 @@ class NonlinearVectorField:
             Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
         )
         current = current_electrons + current_ions
+
+        # Subtract electron C₁ contribution from current (now in exponential)
+        if self.plasma_current_in_exponential:
+            alpha_e = alpha_s[:3]
+            pre_e = qs[0] * alpha_e[0] * alpha_e[1] * alpha_e[2]
+            correction = jnp.zeros_like(current)
+            if self.Nn_electrons > 1:
+                correction = correction.at[0].add(
+                    pre_e * alpha_e[0] / jnp.sqrt(2.0) * Ck_electrons[0, 0, 1]
+                )
+            if self.Nm_electrons > 1:
+                correction = correction.at[1].add(
+                    pre_e * alpha_e[1] / jnp.sqrt(2.0) * Ck_electrons[0, 1, 0]
+                )
+            if self.Np_electrons > 1:
+                correction = correction.at[2].add(
+                    pre_e * alpha_e[2] / jnp.sqrt(2.0) * Ck_electrons[1, 0, 0]
+                )
+            current = current - correction
 
         # dE/dt contribution: -J/Omega_c + driver (no curl term)
         dEk_dt = -current / Omega_cs[0] + driver

@@ -59,8 +59,11 @@ class SpectraxVectorField:
         grid_quantities_ions: dict,
         dt: float,
         use_shard_map: bool = False,
+        hermite_filter_config: dict | None = None,
     ):
         """Initialize with per-species mode counts and grid quantities."""
+        if hermite_filter_config is None:
+            hermite_filter_config = {}
         # Store dimensions as attributes
         self.Nx = Nx
         self.Ny = Ny
@@ -122,17 +125,19 @@ class SpectraxVectorField:
         self.mask23 = self._compute_twothirds_mask()
 
         # Pre-compute Hou-Li filter in Hermite space if enabled (per-species)
-        filter_config = driver_config.get("hermite_filter", {})
-        self.use_hermite_filter = filter_config.get("enabled", False)
+        # Filter config is passed separately (from grid config)
+        self.use_hermite_filter = hermite_filter_config.get("enabled", False)
         if self.use_hermite_filter:
-            filter_order = filter_config.get("order", 36)
-            filter_strength = filter_config.get("strength", 36.0)
-            cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
+            from adept._spectrax1d.exponential_operators import compute_houli_hermite_filter
 
-            self.hermite_filter_electrons = self._compute_houli_hermite_filter(
+            filter_order = hermite_filter_config.get("order", 36)
+            filter_strength = hermite_filter_config.get("strength", 36.0)
+            cutoff_fraction = hermite_filter_config.get("cutoff_fraction", 2.0 / 3.0)
+
+            self.hermite_filter_electrons = compute_houli_hermite_filter(
                 Nn_electrons, Nm_electrons, Np_electrons, cutoff_fraction, filter_strength, filter_order
             )
-            self.hermite_filter_ions = self._compute_houli_hermite_filter(
+            self.hermite_filter_ions = compute_houli_hermite_filter(
                 Nn_ions, Nm_ions, Np_ions, cutoff_fraction, filter_strength, filter_order
             )
         else:
@@ -339,46 +344,6 @@ class SpectraxVectorField:
         # Current for this species: (term1 + term2) * prefactor
         # Shape: (3, Ny, Nx, Nz)
         return (term1 + term2) * pre
-
-    def _compute_houli_hermite_filter(
-        self, Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
-    ) -> Array:
-        """
-        Compute Hou-Li exponential filter in Hermite space.
-
-        The Hou-Li filter smoothly damps high Hermite modes using an exponential profile:
-            H(n, m, p) = exp(-strength * ((h/h_cutoff)^order))
-        where h = sqrt(n^2 + m^2 + p^2) is the Hermite mode magnitude.
-
-        Args:
-            Nn, Nm, Np: Number of Hermite modes in each direction
-            cutoff_fraction: Fraction of max mode where filtering begins (typically 2/3)
-            strength: Filter strength parameter (typically 36)
-            order: Filter order (typically 36 for sharp cutoff)
-
-        Returns:
-            Filter array with shape (Np, Nm, Nn) containing filter coefficients [0, 1]
-        """
-        # Create Hermite mode index grids
-        n = jnp.arange(Nn)[None, None, :]  # Shape (1, 1, Nn)
-        m = jnp.arange(Nm)[None, :, None]  # Shape (1, Nm, 1)
-        p = jnp.arange(Np)[:, None, None]  # Shape (Np, 1, 1)
-
-        # Compute maximum Hermite mode magnitude
-        h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-
-        # Cutoff at specified fraction of max
-        h_cutoff = cutoff_fraction * h_max
-
-        # Compute mode magnitude for each (n, m, p)
-        h = jnp.sqrt(n**2 + m**2 + p**2)
-
-        # Apply Hou-Li filter: exp(-strength * (h/h_cutoff)^order)
-        # Only filter modes above cutoff
-        filter_arg = jnp.where(h > h_cutoff, strength * ((h / h_cutoff) ** order), 0.0)
-        hermite_filter = jnp.exp(-filter_arg)
-
-        return hermite_filter
 
     def _generate_density_noise(self, t: float, Nx: int, alpha: float, amplitude: float, seed: int) -> Array:
         """Generate density noise in Hermite-Fourier space for (0,0,0) mode.

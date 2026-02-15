@@ -268,6 +268,113 @@ class DiagonalExponential:
         return Ck * jnp.exp(col_factor + diff_factor)
 
 
+class PlasmaOscillationExponential:
+    """
+    Exact exponential for the ωpe plasma oscillation coupling C₁ ↔ E.
+
+    The mean-density part of the Vlasov-Maxwell coupling forms a 2×2 linear
+    system at each k-point for each velocity direction d:
+
+        dC_{1d}/dt = a_d · E_d(k)
+        dE_d/dt    = -b_d · C_{1d}(k)
+
+    where:
+        a_d = q_e · Ωc_e · √2/α_d · ⟨C₀₀₀⟩_e    (E → C coupling via Lorentz force)
+        b_d = q_e · α₀α₁α₂ · α_d / (√2 · Ωc_e)   (C → E coupling via plasma current)
+
+    Exact solution is a 2×2 rotation at ω = √(a·b):
+        C_new = cos(ωs)·C + (a/ω)·sin(ωs)·E
+        E_new = cos(ωs)·E - (b/ω)·sin(ωs)·C
+    """
+
+    def __init__(
+        self,
+        q_e: float,
+        Omega_c_e: float,
+        alpha_e: Array,
+        C000_mean_e: float,
+        Nn_e: int,
+        Nm_e: int,
+        Np_e: int,
+    ):
+        """
+        Args:
+            q_e: Electron charge (scalar, typically -1)
+            Omega_c_e: Electron cyclotron frequency (scalar)
+            alpha_e: (3,) electron thermal velocities
+            C000_mean_e: Mean electron density in Hermite basis (real scalar = ⟨n_e⟩/α³)
+            Nn_e, Nm_e, Np_e: Electron Hermite mode counts
+        """
+        self.Nn_e = Nn_e
+        self.Nm_e = Nm_e
+        self.Np_e = Np_e
+
+        alpha_prod = alpha_e[0] * alpha_e[1] * alpha_e[2]
+
+        # Coupling coefficients for each direction d ∈ {x, y, z}
+        a = jnp.array([
+            q_e * Omega_c_e * jnp.sqrt(2.0) / alpha_e[d] * C000_mean_e
+            for d in range(3)
+        ])
+        b = jnp.array([
+            q_e * alpha_prod * alpha_e[d] / (jnp.sqrt(2.0) * Omega_c_e)
+            for d in range(3)
+        ])
+
+        self.a = a  # (3,) E → C coupling
+        self.b = b  # (3,) C → E coupling
+        self.omega = jnp.sqrt(jnp.abs(a * b))  # (3,) oscillation frequency per direction
+
+    def _rotate(self, C: Array, E: Array, a: float, b: float, omega: float, s: float):
+        """Apply 2×2 rotation for one direction."""
+        safe_omega = jnp.where(omega > 0, omega, 1.0)
+        cos_os = jnp.cos(safe_omega * s)
+        sin_os = jnp.sin(safe_omega * s)
+        a_over_w = jnp.where(omega > 0, a / safe_omega, 0.0)
+        b_over_w = jnp.where(omega > 0, b / safe_omega, 0.0)
+        C_new = cos_os * C + a_over_w * sin_os * E
+        E_new = cos_os * E - b_over_w * sin_os * C
+        return C_new, E_new
+
+    def apply(self, Ck_e: Array, Fk: Array, s: float):
+        """
+        Apply the plasma oscillation exponential rotation.
+
+        Args:
+            Ck_e: Electron Hermite coefficients, shape (Np, Nm, Nn, Ny, Nx, Nz)
+            Fk: EM fields, shape (6, Ny, Nx, Nz)
+            s: Time offset
+
+        Returns:
+            (Ck_e_new, Fk_new) with rotation applied
+        """
+        # Direction x: C₁₀₀ [0,0,1] ↔ E_x [0]
+        if self.Nn_e > 1:
+            C_new, E_new = self._rotate(
+                Ck_e[0, 0, 1], Fk[0], self.a[0], self.b[0], self.omega[0], s
+            )
+            Ck_e = Ck_e.at[0, 0, 1].set(C_new)
+            Fk = Fk.at[0].set(E_new)
+
+        # Direction y: C₀₁₀ [0,1,0] ↔ E_y [1]
+        if self.Nm_e > 1:
+            C_new, E_new = self._rotate(
+                Ck_e[0, 1, 0], Fk[1], self.a[1], self.b[1], self.omega[1], s
+            )
+            Ck_e = Ck_e.at[0, 1, 0].set(C_new)
+            Fk = Fk.at[1].set(E_new)
+
+        # Direction z: C₀₀₁ [1,0,0] ↔ E_z [2]
+        if self.Np_e > 1:
+            C_new, E_new = self._rotate(
+                Ck_e[1, 0, 0], Fk[2], self.a[2], self.b[2], self.omega[2], s
+            )
+            Ck_e = Ck_e.at[1, 0, 0].set(C_new)
+            Fk = Fk.at[2].set(E_new)
+
+        return Ck_e, Fk
+
+
 class CombinedLinearExponential:
     """
     Combines all linear exponentials to apply exp(L·s) to the full state dict.
@@ -282,12 +389,14 @@ class CombinedLinearExponential:
         maxwell: MaxwellExponential,
         diag_e: DiagonalExponential,
         diag_i: DiagonalExponential,
+        plasma_osc: PlasmaOscillationExponential | None = None,
     ):
         self.free_stream_e = free_stream_e
         self.free_stream_i = free_stream_i
         self.maxwell = maxwell
         self.diag_e = diag_e
         self.diag_i = diag_i
+        self.plasma_osc = plasma_osc
 
     def apply(self, y: dict, s: float) -> dict:
         """
@@ -315,6 +424,10 @@ class CombinedLinearExponential:
         # Apply Maxwell rotation to fields
         Fk = self.maxwell.apply(Fk, s)
 
+        # Apply plasma oscillation (C₁ ↔ E coupling at ωpe)
+        if self.plasma_osc is not None:
+            Ck_e, Fk = self.plasma_osc.apply(Ck_e, Fk, s)
+
         # Pack back to float64 views
         return {
             "Ck_electrons": Ck_e.view(jnp.float64),
@@ -339,6 +452,9 @@ def build_combined_exponential(
     Nx: int,
     Ny: int,
     Nz: int,
+    qs: Array | None = None,
+    Omega_cs: Array | None = None,
+    C000_mean_e: float | None = None,
 ) -> CombinedLinearExponential:
     """
     Factory function to build the CombinedLinearExponential from grid quantities.
@@ -354,6 +470,9 @@ def build_combined_exponential(
         Nn_e, Nm_e, Np_e: Electron Hermite mode counts
         Nn_i, Nm_i, Np_i: Ion Hermite mode counts
         Nx, Ny, Nz: Grid dimensions
+        qs: (2,) species charges [q_e, q_i] — needed for plasma oscillation
+        Omega_cs: (2,) cyclotron frequencies — needed for plasma oscillation
+        C000_mean_e: Mean electron C000 (real scalar) — needed for plasma oscillation
 
     Returns:
         CombinedLinearExponential instance
@@ -415,12 +534,26 @@ def build_combined_exponential(
     diag_e = DiagonalExponential(nu=nu, col=gq_e["col"], D=D, k2_grid=gq_e["k2_grid"])
     diag_i = DiagonalExponential(nu=nu, col=gq_i["col"], D=D, k2_grid=gq_i["k2_grid"])
 
+    # Build plasma oscillation exponential if parameters provided
+    plasma_osc = None
+    if qs is not None and Omega_cs is not None and C000_mean_e is not None:
+        plasma_osc = PlasmaOscillationExponential(
+            q_e=float(qs[0]),
+            Omega_c_e=float(Omega_cs[0]),
+            alpha_e=alpha_s[:3],
+            C000_mean_e=float(C000_mean_e),
+            Nn_e=Nn_e,
+            Nm_e=Nm_e,
+            Np_e=Np_e,
+        )
+
     return CombinedLinearExponential(
         free_stream_e=free_stream_e,
         free_stream_i=free_stream_i,
         maxwell=maxwell,
         diag_e=diag_e,
         diag_i=diag_i,
+        plasma_osc=plasma_osc,
     )
 
 
