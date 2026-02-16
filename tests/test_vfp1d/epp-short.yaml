@@ -69,6 +69,6 @@ terms:
     flm:
       ee: false
     f00:
-      model: LenardBernstein
+      model: FastVFP
       scheme: central
   e_solver: oshun

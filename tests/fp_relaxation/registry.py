@@ -1,18 +1,14 @@
 #  Copyright (c) Ergodic LLC 2025
 #  research@ergodic.io
 """
-Pytest fixtures for Fokker-Planck relaxation tests.
+Core utilities for Fokker-Planck relaxation tests.
 
-Provides grid setup, model/scheme instantiation, and MLflow configuration.
+Provides grid setup and MLflow utilities.
 """
 
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
-
-from adept._vlasov1d.solvers.pushers.fokker_planck import Dougherty, LenardBernstein
-from adept.driftdiffusion import CentralDifferencing, ChangCooper
-from adept.vfp1d.fokker_planck import FastVFP
 
 
 class VelocityGrid(eqx.Module):
@@ -47,18 +43,6 @@ class VelocityGrid(eqx.Module):
     def v_edge(self) -> Array:
         """Cell edges, shape (nv-1,)."""
         return 0.5 * (self.v[1:] + self.v[:-1])
-
-
-# Model/scheme registries: name -> class (all models take (v, dv), all schemes take (dv,))
-MODELS = {
-    "LenardBernstein": LenardBernstein,
-    "Dougherty": Dougherty,
-    "FastVFP": FastVFP,
-}
-SCHEMES = {
-    "ChangCooper": ChangCooper,
-    "CentralDifferencing": CentralDifferencing,
-}
 
 
 def get_git_info() -> dict[str, str]:

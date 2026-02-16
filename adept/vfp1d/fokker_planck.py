@@ -93,6 +93,7 @@ class F0Collisions(eqx.Module):
     """
 
     v: Array
+    v_edge: Array
     dv: float
     nv: int
     nuee_coeff: float
@@ -108,20 +109,30 @@ class F0Collisions(eqx.Module):
 
         Config should have:
         - grid.v, grid.dv, grid.nv
-        - units.derived.n0, units.derived.logLambda_ee
-        - terms.fokker_planck.f00.model (e.g., "spherical_lenard_bernstein")
         - terms.fokker_planck.f00.scheme (e.g., "central" or "chang_cooper")
         - terms.fokker_planck.self_consistent_beta (optional): dict with enabled, max_steps, rtol, atol
+
+        For collision frequency, provide ONE of:
+        - terms.fokker_planck.nuee_coeff: Direct override (for testing with dimensionless units)
+        - units.derived.n0, units.derived.logLambda_ee: Physical units (production)
+
+        The nuee_coeff override allows tests to use nu=1.0 without dealing with physical units.
         """
         self.v = cfg["grid"]["v"]
         self.dv = cfg["grid"]["dv"]
         self.nv = cfg["grid"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
 
-        # Collision coefficient
-        r_e = 2.8179402894e-13
-        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
-        self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
+        # Collision coefficient: allow direct override for testing
+        fp_cfg = cfg["terms"]["fokker_planck"]
+        if "nuee_coeff" in fp_cfg:
+            # Direct override for testing with dimensionless units (nu=1.0)
+            self.nuee_coeff = fp_cfg["nuee_coeff"]
+        else:
+            # Production: compute from physical units
+            r_e = 2.8179402894e-13
+            c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+            self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
 
         # Create model and scheme from config
         # Use original v grid with zero_flux BC (= reflective at v=0 where C=0)
@@ -166,11 +177,13 @@ class F0Collisions(eqx.Module):
         # Remove batch dimension for get_operator
         D = D[0] if D.ndim > 0 else D
 
-        # Compute C_edge: v_edge for spherical LB (vbar is always None)
-        C_edge = self.v_edge
+        # Compute C_edge using the general formula: C = 2*beta*D*v
+        # This ensures Chang-Cooper achieves Maxwellian equilibrium
+        C_edge = 2.0 * beta * D * self.v_edge
 
-        nu_scalar = jnp.array(self.nuee_coeff)
-        op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_scalar, dt=dt)
+        # For spherical geometry, nu ~ 1/v² to account for the Jacobian
+        nu_arr = self.nuee_coeff / self.v**2
+        op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_arr, dt=dt)
 
         return lx.linear_solve(op, f0, solver=lx.AutoLinearSolver(well_posed=True)).value
 

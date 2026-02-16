@@ -6,24 +6,25 @@ MLflow run management for Fokker-Planck relaxation tests.
 Provides proper nesting: parent run per (geometry, problem), child runs per (model, scheme).
 """
 
+from __future__ import annotations
+
 import math
 import pickle
 import tempfile
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import mlflow
 
 from .metrics import compute_momentum, compute_rmse
 from .plotting import plot_comparison_dashboard, plot_distribution_evolution
-from .registry import (
-    MODELS,
-    SCHEMES,
-    VelocityGrid,
-    get_git_info,
-)
+from .registry import VelocityGrid, get_git_info
 from .time_stepper import RelaxationResult, TimeStepperConfig, run_relaxation
+
+if TYPE_CHECKING:
+    from .factories import AbstractFPRelaxationVectorFieldFactory
 
 
 def problem_name(ic_fn) -> str:
@@ -46,8 +47,7 @@ def problem_params(ic_fn) -> dict:
 
 
 def run_relaxation_sweep_and_assert(
-    geometry: str,
-    model_names: list[str],
+    factory: AbstractFPRelaxationVectorFieldFactory,
     experiment_name: str,
     problem: dict,
     slow: bool,
@@ -60,17 +60,21 @@ def run_relaxation_sweep_and_assert(
 
     Combined entry point: calls run_relaxation_sweep, extracts base results,
     calls verify_relaxation_results, and runs any extra checks (rmse, momentum).
+
+    Args:
+        factory: Vector field factory that provides model/scheme combinations
+            and creates the appropriate vector fields for the solver.
     """
     ic_fn = problem["ic_fn"]
     name = problem_name(ic_fn)
-    grid = VelocityGrid(nv=nv, vmax=vmax, spherical=geometry == "spherical")
+    grid = VelocityGrid(nv=nv, vmax=vmax, spherical=factory.spherical)
     f0 = ic_fn(grid)
 
     extra_combos = slow_extra_combos if slow else None
+    geometry = "spherical" if factory.spherical else "cartesian"
     results = run_relaxation_sweep(
         problem_name=name,
-        geometry=geometry,
-        model_names=model_names,
+        factory=factory,
         initial_condition_fn=ic_fn,
         experiment_name=experiment_name,
         extra_params=problem_params(ic_fn),
@@ -168,8 +172,7 @@ def _make_param_label(dt_over_tau: float, sc_iterations: int) -> str:
 
 def run_relaxation_sweep(
     problem_name: str,
-    geometry: str,
-    model_names: list[str],
+    factory: AbstractFPRelaxationVectorFieldFactory,
     initial_condition_fn: Callable[[VelocityGrid], any],
     experiment_name: str = "fokker-planck-relaxation-tests",
     dt_over_tau: float = 1.0,
@@ -188,8 +191,8 @@ def run_relaxation_sweep(
 
     Args:
         problem_name: Name of the problem (e.g., "supergaussian")
-        geometry: "cartesian" or "spherical"
-        model_names: List of model names to run (e.g., ["LenardBernstein", "Dougherty"])
+        factory: Vector field factory that provides model/scheme combinations
+            and creates the appropriate vector fields for the solver.
         initial_condition_fn: Function that takes grid and returns f0
         experiment_name: MLflow experiment name
         dt_over_tau: Time step in units of collision time (base sim)
@@ -208,12 +211,11 @@ def run_relaxation_sweep(
         When extra_param_combos is provided (slow):
             Dict mapping "{model}_{scheme}" to dict mapping param label to RelaxationResult
     """
-    spherical = geometry == "spherical"
-    grid = VelocityGrid(nv=nv, vmax=vmax, spherical=spherical)
-    models = model_names
-    schemes = list(SCHEMES)
+    # Factory knows its grid geometry
+    grid = VelocityGrid(nv=nv, vmax=vmax, spherical=factory.spherical)
+    geometry = "spherical" if factory.spherical else "cartesian"
 
-    if not models:
+    if not factory.model_names:
         return {}
 
     # Create initial condition
@@ -270,26 +272,35 @@ def run_relaxation_sweep(
         mlflow.log_params(params)
 
         # Child runs for each model/scheme combination
-        for model_type in models:
-            for scheme_type in schemes:
-                child_run_name = f"{model_type}_{scheme_type}"
+        for model_name in factory.model_names:
+            for scheme_name in factory.scheme_names:
+                child_run_name = f"{model_name}_{scheme_name}"
 
                 with mlflow.start_run(run_name=child_run_name, nested=True):
-                    mlflow.log_params({"model": model_type, "scheme": scheme_type})
-
-                    model = MODELS[model_type](v=grid.v, dv=grid.dv)
-                    scheme = SCHEMES[scheme_type](dv=grid.dv)
+                    mlflow.log_params({"model": model_name, "scheme": scheme_name})
 
                     # Run all combos for this child
                     child_results = {}
                     for label, cfg, sc_iter, is_base in all_combos:
+                        # Compute dt for this combo
+                        tau = 1.0 / cfg.nu
+                        dt = cfg.dt_over_tau * tau
+
+                        # Factory creates the vector field
+                        vector_field = factory.make_vector_field(
+                            grid=grid,
+                            model_name=model_name,
+                            scheme_name=scheme_name,
+                            dt=dt,
+                            nu=cfg.nu,
+                            sc_iterations=sc_iter,
+                        )
+
                         result = run_relaxation(
                             f0,
                             grid,
-                            model,
-                            scheme,
-                            cfg,
-                            sc_iter,
+                            vector_field=vector_field,
+                            config=cfg,
                             store_f_history=True,
                         )
                         child_results[label] = result
@@ -322,14 +333,14 @@ def run_relaxation_sweep(
                         plot_distribution_evolution(
                             base_result,
                             grid,
-                            title=f"{problem_name}: {model_type}/{scheme_type} (log)",
+                            title=f"{problem_name}: {model_name}/{scheme_name} (log)",
                             output_path=tmpdir / "distribution_log.png",
                             log_scale=True,
                         )
                         plot_distribution_evolution(
                             base_result,
                             grid,
-                            title=f"{problem_name}: {model_type}/{scheme_type} (linear)",
+                            title=f"{problem_name}: {model_name}/{scheme_name} (linear)",
                             output_path=tmpdir / "distribution_linear.png",
                             log_scale=False,
                         )
@@ -338,7 +349,7 @@ def run_relaxation_sweep(
                         if is_slow:
                             plot_comparison_dashboard(
                                 child_results,
-                                title=f"{problem_name}: {model_type}/{scheme_type} sweep",
+                                title=f"{problem_name}: {model_name}/{scheme_name} sweep",
                                 output_path=tmpdir / "comparison_dashboard.png",
                             )
 

@@ -186,11 +186,15 @@ class Collisions:
 
             from adept.driftdiffusion import find_self_consistent_beta
 
+            # Compute vbar first (needed for Dougherty's thermal temperature calculation)
+            vbar = self.fp_model.compute_vbar(f)
+
             beta = find_self_consistent_beta(
                 f,
                 v,
                 dv,
                 spherical=False,  # spherical=False for symmetric grid
+                vbar=vbar,  # Pass vbar for correct thermal temperature with Dougherty
                 rtol=self._sc_rtol,
                 atol=self._sc_atol,
                 max_steps=self._sc_max_steps,
@@ -198,13 +202,11 @@ class Collisions:
 
             # Get D from model (D = 1/(2β) = T in Buet notation)
             D = self.fp_model.compute_D(f, beta)
-            vbar = self.fp_model.compute_vbar(f)
 
-            # Compute C_edge: v_edge for LB, v_edge - vbar for Dougherty
-            if vbar is None:
-                C_edge = jnp.broadcast_to(self.v_edge, f.shape[:-1] + (len(self.v_edge),))
-            else:
-                C_edge = self.v_edge - vbar[..., None]
+            # Compute C_edge using the general formula: C = 2*beta*D*v_eff
+            # This ensures correct Maxwellian equilibrium for all models
+            v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
+            C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
 
             f = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp, f, dt)
 
