@@ -1,0 +1,109 @@
+# Simplified Spectrax-1D Landau Damping Configuration for Testing
+# klambda_D = 0.266 case
+
+solver: spectrax-1d
+
+mlflow:
+  experiment: spectrax1d-test
+  run: landau-damping-k266
+
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+physics:
+  # Domain size
+  Lx: 1.0
+  Ly: 1.0
+  Lz: 1.0
+
+  # Mass and temperature ratios
+  mi_me: 1836.0
+  Ti_Te: 1.0
+
+  # Species charges [electron, ion]
+  qs: [-1.0, 1.0]
+
+  # Electron thermal velocities [vx, vy, vz]
+  # alpha_e = 0.06 gives klambda_D = 0.266 for k=2π
+  alpha_e: [0.06, 0.06, 0.06]
+
+  # Species thermal velocities [e_vx, e_vy, e_vz, i_vx, i_vy, i_vz]
+  alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
+
+  # Bulk velocities [e_ux, e_uy, e_uz, i_ux, i_uy, i_uz]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Cyclotron frequencies [electron, ion]
+  Omega_cs: [1.0, 0.00054]
+
+  # Collision frequency
+  nu: 1.0
+
+  # Perturbation mode numbers
+  nx: 1
+  ny: 0
+  nz: 0
+
+  # Density perturbation amplitude (small for linear regime)
+  dn1: 1.0e-12
+
+  # ODE solver tolerance
+  ode_tolerance: 1.0e-8
+
+# No external drivers for basic test
+drivers:
+  ex: {}
+  ey: {}
+  ez: {}
+
+grid:
+  # Fourier space grid dimensions (smaller for faster testing)
+  Nx: 17   # Fewer modes for faster testing
+  Ny: 1
+  Nz: 1
+
+  # Hermite polynomial expansion (smaller for faster testing)
+  Nn: 32   # Fewer Hermite modes
+  Nm: 1
+  Np: 1
+
+  # Number of species
+  Ns: 2
+
+  # Time integration (shorter for testing)
+  tmax: 100.0    # Shorter simulation time
+  dt: 0.05       # Larger timestep for faster testing
+
+  # ODE solver
+  solver: "Dopri8"
+  adaptive_time_step: true
+
+initialization:
+  fields:
+    method: fourier
+    components:
+      electric:
+        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
+
+  distribution:
+    method: maxwellian_with_perturbation
+    species:
+      electron:
+        temperature_ratio: 1.0
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+      ion:
+        temperature_ratio: 0.01
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+
+# Minimal save configuration for testing
+# The default save is automatically added by get_save_quantities()
+# and includes: total_EM_energy, E_energy, B_energy, Ex_max, Ey_max, Ez_max
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 100.0
+      nt: 201

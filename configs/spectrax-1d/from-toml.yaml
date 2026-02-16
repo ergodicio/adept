@@ -1,0 +1,55 @@
+# Spectrax-1D: Load from TOML file
+# Minimal config that uses spectrax's load_parameters() to read a TOML file
+
+solver: spectrax-1d
+
+mlflow:
+  experiment: spectrax-1d-tests
+  run: landau-damping-from-toml
+
+# Path to spectrax TOML file (relative to where you run the command, or absolute)
+# When this is set, spectrax.load_parameters() is used instead of building from YAML
+spectrax_toml_file: /Users/archis/Dev/code/others/SPECTRAX/Examples/input_1D_landau_damping.toml
+
+# Still need grid info for post-processing
+grid:
+  # These will be read from TOML but needed here for post-processing
+  # NOTE: Can specify either (tmax + dt) OR (tmax + nt), the missing one will be calculated
+  nt: 501
+  tmax: 50.0
+  # dt: 0.01  # Will be calculated from tmax/nt
+  Nx: 33
+  Ny: 1
+  Nz: 1
+  Nn: 40
+  Nm: 1
+  Np: 1
+  Ns: 2
+
+# Optional: Units for MLflow logging
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+# External drivers configuration (for filter only, since TOML handles field drivers)
+drivers:
+  # Hou-Li exponential filter in Hermite space
+  hermite_filter:
+    enabled: false              # Enable/disable Hermite space filtering
+    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode
+    strength: 36.0              # Filter strength parameter
+    order: 36                   # Filter order
+
+# Save configuration
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 51
+  hermite:
+    t:
+      tmin: 0.0
+      tmax: 50.0
+      nt: 51
+  reconstruct_distribution: false

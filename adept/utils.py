@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 import boto3
 import botocore
 import equinox as eqx
-import flatdict
 import jax
 import yaml
 from mlflow.tracking import MlflowClient
@@ -16,8 +15,19 @@ from pint import Quantity
 from . import patched_mlflow as mlflow
 
 
+def flatten_dict(d, delimiter=".", _prefix=""):
+    items = {}
+    for k, v in d.items():
+        key = f"{_prefix}{delimiter}{k}" if _prefix else k
+        if isinstance(v, dict):
+            items.update(flatten_dict(v, delimiter, key))
+        else:
+            items[key] = v
+    return items
+
+
 def log_params(cfg):
-    flattened_dict = dict(flatdict.FlatDict(cfg, delimiter="."))
+    flattened_dict = flatten_dict(cfg, delimiter=".")
     num_entries = len(flattened_dict.keys())
 
     flattened_dict = {k: str(v) if isinstance(v, Quantity) else v for k, v in flattened_dict.items()}

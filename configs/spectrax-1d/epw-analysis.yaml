@@ -1,0 +1,162 @@
+# EPW-1D Configuration for Electron Plasma Wave Analysis
+#
+# This config uses the EPW1D module which extends BaseSpectrax1D with
+# specialized postprocessing for EPW dynamics including:
+# - First mode amplitude and frequency tracking
+# - Enhanced 2x2 Hermite coefficient visualization (ions/electrons, linear/log)
+
+# Solver identifier (must be "hermite-epw-1d" for EPW analysis module)
+solver: hermite-epw-1d
+
+# MLflow experiment tracking configuration
+mlflow:
+  experiment: epw-1d-analysis
+  run: landau-damping-epw-tracking
+
+# Physical units for normalization
+units:
+  normalizing_density: 1e20/cc        # Reference plasma density [1/cm^3]
+  normalizing_temperature: 1keV       # Reference temperature [eV or keV]
+
+# Physics parameters
+physics:
+  # Domain sizes (normalized)
+  Lx: 1.0
+  Ly: 1.0
+  Lz: 1.0
+
+  # Mass and temperature ratios
+  mi_me: 1836.0
+  Ti_Te: 1.0
+
+  # Species charges [electron, ion]
+  qs: [-1.0, 1.0]
+
+  # Electron thermal velocities [vx, vy, vz]
+  alpha_e: [0.06, 0.06, 0.06]
+
+  # Species thermal velocities [e_vx, e_vy, e_vz, i_vx, i_vy, i_vz]
+  alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
+
+  # Bulk velocities [e_ux, e_uy, e_uz, i_ux, i_uy, i_uz]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+  # Cyclotron frequencies [electron, ion]
+  Omega_cs: [1.0, 0.00054]
+
+  # Collision frequency
+  nu: 1.0
+
+  # Perturbation mode numbers (integers)
+  # For EPW: typically nx=1, ny=0, nz=0 (1D wave in x-direction)
+  nx: 1
+  ny: 0
+  nz: 0
+
+  # Density perturbation amplitude (small for linear regime)
+  dn1: 1.0e-9
+
+  # ODE solver tolerance
+  ode_tolerance: 1.0e-8
+
+# External field drivers (optional - can be used to drive EPW)
+drivers:
+  ex:
+    '0':
+      k0: 6.283185307179586    # Wavenumber: 2π/Lx (fundamental mode)
+      w0: 1.16                 # Frequency: near Bohm-Gross frequency
+      a0: 1.0e-6               # Amplitude (linear regime)
+      t_center: 35.0           # Temporal center of pulse
+      t_width: 30.0            # Temporal width
+      t_rise: 14.0             # Rise/fall time
+      x_center: 0.5            # Spatial center
+      x_width: 1000.0          # Spatial width (uniform)
+      x_rise: 0.1              # Spatial rise
+      dw0: 0.0                 # Frequency detuning
+  ey: {}
+  ez: {}
+
+  # Hou-Li exponential filter in Hermite space
+  # Smoothly damps high Hermite modes to prevent aliasing and numerical instabilities
+  hermite_filter:
+    enabled: false              # Enable/disable Hermite space filtering
+    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode (2/3 ≈ 0.6667)
+    strength: 36.0              # Filter strength parameter (higher = sharper cutoff)
+    order: 36                   # Filter order (higher = sharper transition)
+
+# Grid resolution parameters
+grid:
+  # Fourier space grid dimensions
+  Nx: 33   # Number of Fourier modes in x
+  Ny: 1    # Number of Fourier modes in y (1D problem)
+  Nz: 1    # Number of Fourier modes in z (1D problem)
+
+  # Hermite polynomial expansion
+  # For EPW analysis, Nn determines velocity space resolution
+  Nn: 8    # Number of Hermite modes (velocity resolution)
+  Nm: 1    # Additional mode dimension (1D1V)
+  Np: 1    # Additional mode dimension (1D1V)
+
+  # Number of species
+  Ns: 2    # Electrons and ions
+
+  # Time integration
+  tmax: 200.0    # Simulation end time
+  dt: 0.025      # Timestep
+
+  # ODE solver
+  solver: "Dopri8"
+  adaptive_time_step: true
+
+# Initial conditions configuration
+initialization:
+  fields:
+    method: fourier
+    components:
+      electric:
+        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
+
+  distribution:
+    method: maxwellian_with_perturbation
+    species:
+      electron:
+        temperature_ratio: 1.0
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+
+      ion:
+        temperature_ratio: 0.01
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+
+# Output configuration
+# EPW1D module will generate additional plots:
+# - epw_mode1_diagnostics.png: Amplitude and frequency of first EPW mode
+# - epw_hermite_coefficients_2x2.png: Enhanced Hermite visualization
+save:
+  # Save field diagnostics for EPW amplitude/frequency tracking
+  fields_only:
+    t:
+      tmin: 0.0
+      tmax: 200.0
+      nt: 401  # Save frequently for accurate frequency extraction
+
+  # Save Hermite coefficients for velocity space analysis
+  hermite:
+    t:
+      tmin: 0.0
+      tmax: 200.0
+      nt: 101
+
+# Diagnostics
+diagnostics:
+  compute_damping_rate: true   # Extract Landau damping rate from amplitude decay
+  compute_field_energy: true   # Track field energy evolution
+  save_moments: false
+
+# Notes:
+# The EPW1D module automatically generates:
+# 1. EPW diagnostics: amplitude |Ex(k=1)| and frequency ω(k=1) vs time
+# 2. Enhanced Hermite plots: 2x2 grid (electrons/ions, linear/log scale)
+#    with time vertical and Hermite mode horizontal
+# 3. Additional MLflow metrics: epw_avg_amplitude_k1, epw_final_frequency_k1, etc.
