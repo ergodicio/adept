@@ -53,10 +53,10 @@ def compute_momentum(f: Array, grid: VelocityGrid) -> Array:
     Compute the mean velocity (first moment).
 
     For cartesian: <v> = integral(v * f dv) / n
-    For spherical: Not applicable (returns NaN)
+    For spherical: Returns 0 (symmetric about origin)
     """
     if grid.spherical:
-        return jnp.nan
+        return 0.0
     n = jnp.sum(f * grid.dv)
     return jnp.sum(grid.v * f * grid.dv) / n
 
@@ -135,9 +135,8 @@ def compute_metrics(
     rel_density = (density - n_initial) / n_initial
 
     # Momentum (compute before temperature — needed for vbar subtraction)
-    momentum = compute_momentum(f, grid)
-    momentum_drift = jnp.where(jnp.isnan(momentum), 0.0, momentum - vbar_initial)
-    vbar_current = jnp.where(jnp.isnan(momentum), 0.0, momentum)
+    vbar_current = compute_momentum(f, grid)
+    momentum_drift = vbar_current - vbar_initial
 
     # Raw temperatures — total energy (no vbar subtraction).
     # Relative discrepancies computed on the fly from index-0 (like entropy).

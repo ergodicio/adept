@@ -32,7 +32,6 @@ class TimeStepperConfig:
     """Configuration for the time-stepping loop."""
 
     n_collision_times: float = 10.0  # Run for this many tau = 1/nu
-    n_snapshots: int = 10  # Number of snapshots to collect
     nu: float = 1.0  # Collision frequency (tau = 1/nu)
     dt_over_tau: float = 1.0  # Time step in units of collision time
 
@@ -46,7 +45,6 @@ class RelaxationResult:
     times: Array = None  # Shape (n_snapshots,)
     f_initial: Array = None
     f_final: Array = None
-    T_initial: float = None
     config: TimeStepperConfig = None
 
 
@@ -55,7 +53,6 @@ def run_relaxation(
     grid: VelocityGrid,
     vector_field: eqx.Module,
     config: TimeStepperConfig,
-    store_f_history: bool = False,
 ) -> RelaxationResult:
     """
     Run a Fokker-Planck relaxation simulation using diffrax + Stepper.
@@ -79,41 +76,23 @@ def run_relaxation(
 
     n_initial = compute_density(f0, grid)
     vbar_initial = compute_momentum(f0, grid)
-    # For spherical (NaN), use 0.0 so reference Maxwellians are zero-centered
-    vbar_initial = jnp.where(jnp.isnan(vbar_initial), 0.0, vbar_initial)
-    # T_initial: total energy (no vbar) — for conservation metrics
-    T_initial = discrete_temperature(f0, grid.v, grid.dv, spherical=grid.spherical)
     # T_sc_initial: thermal SC temperature (with vbar) — for RMSE reference Maxwellians
     beta_sc_initial = _find_self_consistent_beta_single(
         f0, grid.v, grid.dv, spherical=grid.spherical, vbar=vbar_initial
     )
     T_sc_initial = 1.0 / (2.0 * beta_sc_initial)
 
-    result = RelaxationResult(f_initial=f0, T_initial=float(T_initial), config=config)
+    result = RelaxationResult(f_initial=f0, config=config)
 
-    # Compute snapshot times:
-    if config.dt_over_tau >= 10.0:
-        # Large time steps: only initial and final
-        snapshot_times = jnp.array([0.0, config.n_collision_times * tau])
-    else:
-        # Dump every tau (collision time)
-        n_tau_dumps = int(config.n_collision_times) + 1  # +1 for t=0
-        snapshot_times = jnp.array([i * tau for i in range(n_tau_dumps)])
-
-    # Set up diffrax solver with ADEPT's Stepper
-    term = ODETerm(vector_field)
-    stepper = Stepper()
-
-    # Run the simulation
-    # max_steps needs some headroom for diffrax internals
     solution = diffeqsolve(
-        term,
-        stepper,
+        ODETerm(vector_field),
+        Stepper(),
         t0=0.0,
         t1=config.n_collision_times * tau,
-        dt0=config.dt_over_tau * tau,
+        dt0=config.ds,
         y0=f0,
-        saveat=SaveAt(ts=snapshot_times),
+        # Save no more than once every collision time
+        saveat=SaveAt(t0=True, t1=True, n=min(1, 1 / config.dt_over_tau)),
         max_steps=int(config.n_collision_times / config.dt_over_tau) + 4,
     )
 
@@ -123,6 +102,6 @@ def run_relaxation(
         solution.ys, grid, solution.ts, T_sc_initial, n_initial, vbar_initial
     )
     result.times = solution.ts
-    result.f_history = solution.ys if store_f_history else None
+    result.f_history = solution.ys
     result.f_final = solution.ys[-1]
     return result

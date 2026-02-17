@@ -181,9 +181,6 @@ def run_relaxation_sweep(
     grid = VelocityGrid(nv=nv, vmax=vmax, spherical=factory.spherical)
     geometry = "spherical" if factory.spherical else "cartesian"
 
-    if not factory.model_names:
-        return {}
-
     # Create initial condition
     f0 = initial_condition_fn(grid)
 
@@ -215,14 +212,13 @@ def run_relaxation_sweep(
     is_slow = extra_param_combos is not None
     results = {}
     mlflow.set_experiment(experiment_name)
-    git_info = get_git_info()
 
     # Parent run for this problem
     suffix = "_sweep" if is_slow else ""
     parent_run_name = f"{problem_name}{suffix}"
     with mlflow.start_run(run_name=parent_run_name) as parent_run:
         # Log git info and common params on parent
-        for key, value in git_info.items():
+        for key, value in get_git_info().items():
             mlflow.set_tag(key, value)
         params = {
             "problem": problem_name,
@@ -267,7 +263,6 @@ def run_relaxation_sweep(
                             grid,
                             vector_field=vector_field,
                             config=cfg,
-                            store_f_history=True,
                         )
                         child_results[label] = result
 
