@@ -379,7 +379,6 @@ def run_relaxation_sweep(
 def verify_relaxation_results(
     results: dict[str, RelaxationResult],
     grid: VelocityGrid,
-    f0,
     temperature_tol: float = 5e-2,
     check_rmse_improvement: bool = True,
 ) -> None:
@@ -392,8 +391,6 @@ def verify_relaxation_results(
     Args:
         results: Dict from run_relaxation_sweep (flat: name -> RelaxationResult)
         grid: VelocityGrid used for the runs
-        f0: Initial distribution
-        check_temperature: Whether to check temperature conservation
         temperature_tol: Tolerance for temperature conservation
         check_rmse_improvement: Whether to check RMSE improves (skip for equilibrium)
     """
