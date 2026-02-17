@@ -57,23 +57,20 @@ def run_relaxation_sweep_and_assert(
             and creates the appropriate vector fields for the solver.
     """
     ic_fn = problem["ic_fn"]
-    name = problem_name(ic_fn)
     grid = VelocityGrid(nv=nv, vmax=vmax, spherical=factory.spherical)
     f0 = ic_fn(grid)
 
-    extra_combos = slow_extra_combos if slow else None
-    geometry = "spherical" if factory.spherical else "cartesian"
     results = run_relaxation_sweep(
-        problem_name=name,
+        problem_name=problem_name(ic_fn),
         factory=factory,
         f0=f0,
         experiment_name=experiment_name,
         extra_params=dict(ic_fn.keywords) if isinstance(ic_fn, partial) else {},
         nv=nv,
         vmax=vmax,
-        extra_param_combos=extra_combos,
+        extra_param_combos=slow_extra_combos if slow else None,
     )
-    assert results, f"No results for {name} ({geometry})"
+    assert results, f"No results for {problem_name(ic_fn)}"
 
     for name, result in results.items():
         # Skip assertions for CentralDifferencing (only log results)
@@ -108,21 +105,6 @@ def run_relaxation_sweep_and_assert(
             drift_d = abs(float(compute_momentum(results[d_key].f_final, grid)) - p0) / abs(p0)
             drift_lb = abs(float(compute_momentum(results[lb_key].f_final, grid)) - p0) / abs(p0)
             assert drift_d < drift_lb, f"Dougherty drift ({drift_d:.3f}) not better than LB ({drift_lb:.3f})"
-
-
-def _pickle_result(result: RelaxationResult, grid: VelocityGrid, path: Path) -> None:
-    """Pickle a RelaxationResult's distribution history to disk."""
-    dist_data = {
-        "times": result.times,
-        "f_history": result.f_history,
-        "f_initial": result.f_initial,
-        "f_final": result.f_final,
-        "v": grid.v,
-        "dv": grid.dv,
-        "spherical": grid.spherical,
-    }
-    with open(path, "wb") as f:
-        pickle.dump(dist_data, f)
 
 
 def run_relaxation_sweep(
@@ -191,7 +173,6 @@ def run_relaxation_sweep(
             )
             all_combos.append((label, cfg, combo_sc, False))
 
-    is_slow = extra_param_combos is not None
     results = {}
     mlflow.set_experiment(experiment_name)
 
@@ -199,20 +180,19 @@ def run_relaxation_sweep(
     parent_run_name = f"{problem_name}"
     with mlflow.start_run(run_name=parent_run_name) as parent_run:
         # Log git info and common params on parent
-        for key, value in get_git_info().items():
-            mlflow.set_tag(key, value)
-        params = {
-            "problem": problem_name,
-            "geometry": geometry,
-            "dt_over_tau": dt_over_tau,
-            "sc_iterations": sc_iterations,
-            "n_collision_times": n_collision_times,
-            "nv": grid.nv,
-            "vmax": float(grid.vmax),
-        }
-        if extra_params:
-            params.update(extra_params)
-        mlflow.log_params(params)
+        mlflow.set_tags(get_git_info())
+        mlflow.log_params(
+            {
+                "problem": problem_name,
+                "geometry": geometry,
+                "dt_over_tau": dt_over_tau,
+                "sc_iterations": sc_iterations,
+                "n_collision_times": n_collision_times,
+                "nv": grid.nv,
+                "vmax": float(grid.vmax),
+            }
+            | extra_params
+        )
 
         # Child runs for each model/scheme combination
         for model_name in factory.model_names:
@@ -273,13 +253,20 @@ def run_relaxation_sweep(
                     with tempfile.TemporaryDirectory() as tmpdir:
                         tmpdir = Path(tmpdir)
 
-                        # Pickle: all sims for slow, base only for fast
-                        if is_slow:
-                            for label, res in child_results.items():
-                                safe_label = label.replace("/", "_").replace("=", "")
-                                _pickle_result(res, grid, tmpdir / f"distribution_history_{safe_label}.pkl")
-                        else:
-                            _pickle_result(base_result, grid, tmpdir / "distribution_history.pkl")
+                        # Pickle distribution histories
+                        for label, res in child_results.items():
+                            suffix = f"_{label.replace('/', '_').replace('=', '')}" if len(child_results) > 1 else ""
+                            dist_data = {
+                                "times": res.times,
+                                "f_history": res.f_history,
+                                "f_initial": res.f_initial,
+                                "f_final": res.f_final,
+                                "v": grid.v,
+                                "dv": grid.dv,
+                                "spherical": grid.spherical,
+                            }
+                            with open(tmpdir / f"distribution_history{suffix}.pkl", "wb") as f:
+                                pickle.dump(dist_data, f)
 
                         # Distribution evolution plots (base sim only)
                         plot_distribution_evolution(
@@ -297,8 +284,8 @@ def run_relaxation_sweep(
                             log_scale=False,
                         )
 
-                        # Child-level comparison dashboard (slow only: all combos overlaid)
-                        if is_slow:
+                        # Child-level comparison dashboard (multiple combos overlaid)
+                        if len(child_results) > 1:
                             plot_comparison_dashboard(
                                 child_results,
                                 title=f"{problem_name}: {model_name}/{scheme_name} sweep",

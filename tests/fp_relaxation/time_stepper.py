@@ -71,9 +71,6 @@ def run_relaxation(
     Returns:
         RelaxationResult with snapshots, f_history, etc.
     """
-    # Time stepping parameters
-    tau = 1.0 / config.nu  # Collision time
-
     n_initial = compute_density(f0, grid)
     vbar_initial = compute_momentum(f0, grid)
     # T_sc_initial: thermal SC temperature (with vbar) — for RMSE reference Maxwellians
@@ -88,8 +85,8 @@ def run_relaxation(
         ODETerm(vector_field),
         Stepper(),
         t0=0.0,
-        t1=config.n_collision_times * tau,
-        dt0=config.ds,
+        t1=config.n_collision_times / config.nu,
+        dt0=config.dt_over_tau / config.nu,
         y0=f0,
         # Save no more than once every collision time
         saveat=SaveAt(t0=True, t1=True, n=min(1, 1 / config.dt_over_tau)),
