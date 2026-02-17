@@ -16,7 +16,7 @@ import pytest
 from fp_relaxation import problems
 from fp_relaxation.factories import AbstractFPRelaxationVectorFieldFactory
 from fp_relaxation.registry import VelocityGrid
-from fp_relaxation.runner import problem_name, run_relaxation_sweep_and_assert
+from fp_relaxation.runner import problem_name, run_relaxation_sweep
 from jax import Array
 
 from adept._vlasov1d.solvers.pushers.fokker_planck import Collisions
@@ -33,26 +33,14 @@ NV = 128
 TEMPERATURE_TOL = 5e-2
 
 PROBLEMS = [
-    {"ic_fn": partial(problems.maxwellian, T=1.0), "extra_checks": "rmse", "equilibrium": True},
-    {"ic_fn": partial(problems.supergaussian, m=5, T=1.0)},
-    {"ic_fn": partial(problems.two_temperature, T_cold=0.5, T_hot=2.0, frac_cold=0.7)},
-    {"ic_fn": partial(problems.bump_on_tail, narrow=True)},
-    {"ic_fn": partial(problems.bump_on_tail, narrow=False)},
-    {
-        "ic_fn": partial(problems.shifted_maxwellian, v_shift=1.8, T=0.162),
-        "extra_checks": "momentum",
-        "equilibrium": True,
-    },
-    {
-        "ic_fn": partial(problems.shifted_maxwellian, v_shift=1.0, T=1.0),
-        "extra_checks": "momentum",
-        "equilibrium": True,
-    },
+    partial(problems.maxwellian, T=1.0),
+    partial(problems.supergaussian, m=5, T=1.0),
+    partial(problems.two_temperature, T_cold=0.5, T_hot=2.0, frac_cold=0.7),
+    partial(problems.bump_on_tail, narrow=True),
+    partial(problems.bump_on_tail, narrow=False),
+    partial(problems.shifted_maxwellian, v_shift=1.8, T=0.162),
+    partial(problems.shifted_maxwellian, v_shift=1.0, T=1.0),
 ]
-
-# =============================================================================
-# Tests
-# =============================================================================
 
 SLOW_EXTRA_COMBOS = [
     {"sc_iterations": 0, "dt_over_tau": 1.0},
@@ -62,6 +50,11 @@ SLOW_EXTRA_COMBOS = [
 ]
 
 
+# =============================================================================
+# Tests
+# =============================================================================
+
+
 @pytest.mark.parametrize(
     "slow",
     [
@@ -69,20 +62,56 @@ SLOW_EXTRA_COMBOS = [
         pytest.param(True, id="slow", marks=pytest.mark.slow),
     ],
 )
-@pytest.mark.parametrize("problem", PROBLEMS, ids=lambda p: problem_name(p["ic_fn"]))
-def test_fp_relaxation(problem, slow):
+@pytest.mark.parametrize("ic_fn", PROBLEMS, ids=problem_name)
+def test_fp_relaxation(ic_fn, slow):
     """Test that production Collisions class produces correct physics."""
     factory = Vlasov1dVectorFieldFactory(model_names=MODELS, scheme_names=SCHEMES)
-    run_relaxation_sweep_and_assert(
+    grid = VelocityGrid(nv=NV, vmax=VMAX, spherical=factory.spherical)
+
+    results = run_relaxation_sweep(
+        problem_name=problem_name(ic_fn),
         factory=factory,
+        f0=ic_fn(grid),
+        grid=grid,
         experiment_name=EXPERIMENT if not slow else f"{EXPERIMENT}-slow",
-        problem=problem,
-        slow=slow,
-        slow_extra_combos=SLOW_EXTRA_COMBOS if slow else [],
-        nv=NV,
-        vmax=VMAX,
-        temperature_tol=TEMPERATURE_TOL,
+        extra_params=dict(ic_fn.keywords) if isinstance(ic_fn, partial) else {},
+        extra_param_combos=SLOW_EXTRA_COMBOS if slow else None,
     )
+    assert results, f"No results for {problem_name(ic_fn)}"
+
+    # Verify conservation properties for each model/scheme
+    for name, metrics in results.items():
+        # Skip assertions for CentralDifferencing (only log results)
+        if "CentralDifferencing" in name:
+            continue
+
+        # Density conservation
+        assert abs(metrics.rel_density[-1]) < 1e-6, (
+            f"{name}: Density not conserved: rel_density={metrics.rel_density[-1]:.2e}"
+        )
+
+        # Temperature (total energy) conservation
+        assert jnp.isclose(
+            metrics.temperature_discrete[-1], metrics.temperature_discrete[0], atol=0.0, rtol=TEMPERATURE_TOL
+        ), f"{name}: Temperature changed: rel_T={
+            metrics.temperature_discrete[-1] / metrics.temperature_discrete[0] - 1.0:.2e}"
+
+        # Relaxation to a Maxwellian
+        assert metrics.rmse_instant[-1] < 1e-4, (
+            f"{name}: Did not relax to Maxwellian: rmse_instant={metrics.rmse_instant[-1]:.2e}"
+        )
+
+        # Relaxation to expected equilibrium (skip LB - it doesn't conserve momentum)
+        if "LenardBernstein" not in name:
+            assert metrics.rmse_expected[-1] < 1e-2, (
+                f"{name}: Did not relax to expected equilibrium: rmse_expected={metrics.rmse_expected[-1]:.2e}"
+            )
+
+        # Momentum conservation (Dougherty conserves momentum, LB does not)
+        if "Dougherty" in name:
+            assert abs(metrics.momentum_drift[-1]) < 5e-5, (
+                f"{name}: Momentum not conserved: drift={metrics.momentum_drift[-1]:.2e}"
+            )
 
 
 # =============================================================================
