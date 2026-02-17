@@ -37,13 +37,6 @@ def problem_name(ic_fn) -> str:
     return ic_fn.__name__
 
 
-def problem_params(ic_fn) -> dict:
-    """Extract loggable parameters from ic_fn."""
-    if isinstance(ic_fn, partial):
-        return dict(ic_fn.keywords)
-    return {}
-
-
 def run_relaxation_sweep_and_assert(
     factory: AbstractFPRelaxationVectorFieldFactory,
     experiment_name: str,
@@ -75,7 +68,7 @@ def run_relaxation_sweep_and_assert(
         factory=factory,
         f0=f0,
         experiment_name=experiment_name,
-        extra_params=problem_params(ic_fn),
+        extra_params=dict(ic_fn.keywords) if isinstance(ic_fn, partial) else {},
         nv=nv,
         vmax=vmax,
         extra_param_combos=extra_combos,
