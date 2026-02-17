@@ -16,6 +16,7 @@ from pathlib import Path
 
 import jax.numpy as jnp
 import mlflow
+from jax import Array
 
 from .factories import AbstractFPRelaxationVectorFieldFactory
 from .metrics import compute_momentum, compute_rmse
@@ -55,8 +56,8 @@ def run_relaxation_sweep_and_assert(
 ) -> None:
     """Run relaxation sweep and verify conservation properties.
 
-    Combined entry point: calls run_relaxation_sweep, extracts base results,
-    calls verify_relaxation_results, and runs any extra checks (rmse, momentum).
+    Combined entry point: calls run_relaxation_sweep, verifies conservation,
+    and runs any extra checks (rmse, momentum).
 
     Args:
         factory: Vector field factory that provides model/scheme combinations
@@ -72,7 +73,7 @@ def run_relaxation_sweep_and_assert(
     results = run_relaxation_sweep(
         problem_name=name,
         factory=factory,
-        initial_condition_fn=ic_fn,
+        f0=f0,
         experiment_name=experiment_name,
         extra_params=problem_params(ic_fn),
         nv=nv,
@@ -81,12 +82,7 @@ def run_relaxation_sweep_and_assert(
     )
     assert results, f"No results for {name} ({geometry})"
 
-    if slow:
-        base_results = {k: v["dt=1.0/sc=2"] for k, v in results.items()}
-    else:
-        base_results = results
-
-    for name, result in base_results.items():
+    for name, result in results.items():
         # Skip assertions for CentralDifferencing (only log results)
         if "CentralDifferencing" in name:
             continue
@@ -115,9 +111,9 @@ def run_relaxation_sweep_and_assert(
         p0 = float(compute_momentum(f0, grid))
         d_key = "Dougherty_ChangCooper"
         lb_key = "LenardBernstein_ChangCooper"
-        if d_key in base_results and lb_key in base_results:
-            drift_d = abs(float(compute_momentum(base_results[d_key].f_final, grid)) - p0) / abs(p0)
-            drift_lb = abs(float(compute_momentum(base_results[lb_key].f_final, grid)) - p0) / abs(p0)
+        if d_key in results and lb_key in results:
+            drift_d = abs(float(compute_momentum(results[d_key].f_final, grid)) - p0) / abs(p0)
+            drift_lb = abs(float(compute_momentum(results[lb_key].f_final, grid)) - p0) / abs(p0)
             assert drift_d < drift_lb, f"Dougherty drift ({drift_d:.3f}) not better than LB ({drift_lb:.3f})"
 
 
@@ -139,7 +135,7 @@ def _pickle_result(result: RelaxationResult, grid: VelocityGrid, path: Path) -> 
 def run_relaxation_sweep(
     problem_name: str,
     factory: AbstractFPRelaxationVectorFieldFactory,
-    initial_condition_fn: Callable[[VelocityGrid], any],
+    f0: Array,
     experiment_name: str = "fokker-planck-relaxation-tests",
     dt_over_tau: float = 1.0,
     sc_iterations: int = 2,
@@ -148,7 +144,7 @@ def run_relaxation_sweep(
     nv: int = 128,
     vmax: float = 8.0,
     extra_param_combos: list[dict] | None = None,
-) -> dict[str, RelaxationResult] | dict[str, dict[str, RelaxationResult]]:
+) -> dict[str, RelaxationResult]:
     """
     Run relaxation for all model/scheme combinations and log to MLflow.
 
@@ -172,22 +168,16 @@ def run_relaxation_sweep(
             have keys "dt_over_tau" and "sc_iterations".
 
     Returns:
-        When extra_param_combos is None (fast):
-            Dict mapping "{model}_{scheme}" to RelaxationResult (base sim only)
-        When extra_param_combos is provided (slow):
-            Dict mapping "{model}_{scheme}" to dict mapping param label to RelaxationResult
+        Dict mapping "{model}_{scheme}" to RelaxationResult (base sim only).
+        Extra param combos (slow) are used internally for artifacts but not returned.
     """
     # Factory knows its grid geometry
     grid = VelocityGrid(nv=nv, vmax=vmax, spherical=factory.spherical)
     geometry = "spherical" if factory.spherical else "cartesian"
 
-    # Create initial condition
-    f0 = initial_condition_fn(grid)
-
     # Base config
     base_config = TimeStepperConfig(
         n_collision_times=n_collision_times,
-        n_snapshots=10,
         nu=1.0,
         dt_over_tau=dt_over_tau,
     )
@@ -203,7 +193,6 @@ def run_relaxation_sweep(
             label = "dt={combo_dt}/sc={combo_sc}"
             cfg = TimeStepperConfig(
                 n_collision_times=n_collision_times,
-                n_snapshots=10,
                 nu=1.0,
                 dt_over_tau=combo_dt,
             )
@@ -214,8 +203,7 @@ def run_relaxation_sweep(
     mlflow.set_experiment(experiment_name)
 
     # Parent run for this problem
-    suffix = "_sweep" if is_slow else ""
-    parent_run_name = f"{problem_name}{suffix}"
+    parent_run_name = f"{problem_name}"
     with mlflow.start_run(run_name=parent_run_name) as parent_run:
         # Log git info and common params on parent
         for key, value in get_git_info().items():
@@ -286,12 +274,7 @@ def run_relaxation_sweep(
                                 )
 
                     base_result = child_results[base_label]
-
-                    # Store results
-                    if is_slow:
-                        results[child_run_name] = child_results
-                    else:
-                        results[child_run_name] = base_result
+                    results[child_run_name] = base_result
 
                     # Save artifacts
                     with tempfile.TemporaryDirectory() as tmpdir:
@@ -332,18 +315,11 @@ def run_relaxation_sweep(
                         mlflow.log_artifacts(str(tmpdir))
 
         # Parent-level comparison dashboard (base sim across model/scheme)
-        base_results_for_dashboard = {}
-        for child_name in results:
-            if is_slow:
-                base_results_for_dashboard[child_name] = results[child_name][base_label]
-            else:
-                base_results_for_dashboard[child_name] = results[child_name]
-
-        if base_results_for_dashboard:
+        if results:
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmpdir = Path(tmpdir)
                 plot_comparison_dashboard(
-                    base_results_for_dashboard,
+                    results,
                     title=f"{parent_run_name}: model/scheme comparison",
                     output_path=tmpdir / "comparison_dashboard.png",
                 )
