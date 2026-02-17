@@ -8,23 +8,20 @@ Provides proper nesting: parent run per (geometry, problem), child runs per (mod
 
 from __future__ import annotations
 
-import math
 import pickle
 import tempfile
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING
 
+import jax.numpy as jnp
 import mlflow
 
+from .factories import AbstractFPRelaxationVectorFieldFactory
 from .metrics import compute_momentum, compute_rmse
 from .plotting import plot_comparison_dashboard, plot_distribution_evolution
 from .registry import VelocityGrid, get_git_info
 from .time_stepper import RelaxationResult, TimeStepperConfig, run_relaxation
-
-if TYPE_CHECKING:
-    from .factories import AbstractFPRelaxationVectorFieldFactory
 
 
 def problem_name(ic_fn) -> str:
@@ -89,21 +86,29 @@ def run_relaxation_sweep_and_assert(
     else:
         base_results = results
 
-    verify_relaxation_results(
-        base_results,
-        grid,
-        f0,
-        temperature_tol=temperature_tol,
-        check_rmse_improvement=not problem.get("equilibrium", False),
-    )
+    for name, result in base_results.items():
+        # Skip assertions for CentralDifferencing (only log results)
+        if "CentralDifferencing" in name:
+            continue
 
-    # Extra: equilibrium RMSE check
-    if problem.get("extra_checks") == "rmse":
-        for child_name, result in base_results.items():
-            if "CentralDifferencing" in child_name:
-                continue
+        s = result.snapshots  # Batched metrics
+
+        # Density conservation
+        assert abs(s.rel_density[-1]) < 1e-6, f"{name}: Density not conserved: rel_density={s.rel_density[-1]:.2e}"
+
+        # Temperature (total energy) conservation
+        assert jnp.isclose(s.temperature_discrete[-1], s.temperature_discrete[0], atol=0.0, rtol=temperature_tol), (
+            f"{name}: Temperature changed: rel_T={s.temperature_discrete[-1] / s.temperature_discrete[0] - 1.0:.2e}"
+        )
+
+        # Relaxation toward equilibrium
+        if not problem.get("equilibrium", False):
+            assert s.rmse_instant[-1] < s.rmse_instant[0], f"{name}: Distribution did not relax toward Maxwellian"
+
+        # Extra: equilibrium RMSE check
+        if problem.get("extra_checks") == "rmse":
             rmse = compute_rmse(f0, result.f_final, grid)
-            assert rmse < 1e-2, f"{child_name}: Equilibrium drifted: RMSE={rmse}"
+            assert rmse < 1e-2, f"{name}: Equilibrium drifted: RMSE={rmse}"
 
     # Extra: momentum conservation check (Dougherty vs LB)
     if problem.get("extra_checks") == "momentum":
@@ -114,40 +119,6 @@ def run_relaxation_sweep_and_assert(
             drift_d = abs(float(compute_momentum(base_results[d_key].f_final, grid)) - p0) / abs(p0)
             drift_lb = abs(float(compute_momentum(base_results[lb_key].f_final, grid)) - p0) / abs(p0)
             assert drift_d < drift_lb, f"Dougherty drift ({drift_d:.3f}) not better than LB ({drift_lb:.3f})"
-
-
-def _rel(val, ref):
-    """Compute (val - ref) / |ref|, guarding against near-zero reference."""
-    return (val - ref) / abs(ref) if abs(ref) > 1e-30 else val - ref
-
-
-def _log_metrics_for_result(result: RelaxationResult, config: TimeStepperConfig) -> None:
-    """Log per-snapshot metrics to MLflow for a single result."""
-    s = result.snapshots  # Batched pytree, each leaf shape (n_snapshots,)
-    n_snapshots = s.time.shape[0]
-
-    # Reference values (index 0) for relative metrics
-    T_d0 = float(s.temperature_discrete[0])
-    T_sc0 = float(s.temperature_sc[0])
-    S0 = float(s.entropy[0])
-
-    for i in range(n_snapshots):
-        step = int(float(s.time[i]) * config.nu * 100)
-        metrics_dict = {
-            "rel_density": float(s.rel_density[i]),
-            "rel_temperature_discrete": _rel(float(s.temperature_discrete[i]), T_d0),
-            "rel_temperature_sc": _rel(float(s.temperature_sc[i]), T_sc0),
-            "positivity_violation": float(s.positivity_violation[i]),
-            "rmse_expected": float(s.rmse_expected[i]),
-            "rmse_instant": float(s.rmse_instant[i]),
-        }
-        S = float(s.entropy[i])
-        if not math.isnan(S) and not math.isnan(S0):
-            metrics_dict["rel_entropy"] = _rel(S, S0)
-        momentum_val = float(s.momentum_drift[i])
-        if not math.isnan(momentum_val):
-            metrics_dict["momentum_drift"] = momentum_val
-        mlflow.log_metrics(metrics_dict, step=step)
 
 
 def _pickle_result(result: RelaxationResult, grid: VelocityGrid, path: Path) -> None:
@@ -163,11 +134,6 @@ def _pickle_result(result: RelaxationResult, grid: VelocityGrid, path: Path) -> 
     }
     with open(path, "wb") as f:
         pickle.dump(dist_data, f)
-
-
-def _make_param_label(dt_over_tau: float, sc_iterations: int) -> str:
-    """Create a human-readable label for a (dt, sc) parameter combo."""
-    return f"dt={dt_over_tau}/sc={sc_iterations}"
 
 
 def run_relaxation_sweep(
@@ -224,11 +190,11 @@ def run_relaxation_sweep(
     # Base config
     base_config = TimeStepperConfig(
         n_collision_times=n_collision_times,
-        n_snapshots=100,
+        n_snapshots=10,
         nu=1.0,
         dt_over_tau=dt_over_tau,
     )
-    base_label = _make_param_label(dt_over_tau, sc_iterations)
+    base_label = "dt={dt_over_tau}/sc={sc_iterations}"
 
     # Build list of all param combos to run per child
     # Each entry: (label, config, sc_iterations, is_base)
@@ -237,10 +203,10 @@ def run_relaxation_sweep(
         for combo in extra_param_combos:
             combo_dt = combo["dt_over_tau"]
             combo_sc = combo["sc_iterations"]
-            label = _make_param_label(combo_dt, combo_sc)
+            label = "dt={combo_dt}/sc={combo_sc}"
             cfg = TimeStepperConfig(
                 n_collision_times=n_collision_times,
-                n_snapshots=100,
+                n_snapshots=10,
                 nu=1.0,
                 dt_over_tau=combo_dt,
             )
@@ -307,7 +273,22 @@ def run_relaxation_sweep(
 
                         # Log MLflow metrics only for base sim
                         if is_base:
-                            _log_metrics_for_result(result, cfg)
+                            s = result.snapshots  # Batched pytree, each leaf shape (n_snapshots,)
+                            for i in range(s.time.shape[0]):
+                                mlflow.log_metrics(
+                                    {
+                                        "rel_density": float(s.rel_density[i]),
+                                        "rel_temperature_discrete": float(
+                                            s.temperature_discrete[i] / s.temperature_discrete[0] - 1.0
+                                        ),
+                                        "rel_temperature_sc": float(s.temperature_sc[i] / s.temperature_sc[0] - 1.0),
+                                        "rel_entropy": float(s.entropy[i] / s.entropy[0] - 1.0),
+                                        "positivity_violation": float(s.positivity_violation[i]),
+                                        "rmse_expected": float(s.rmse_expected[i]),
+                                        "rmse_instant": float(s.rmse_instant[i]),
+                                        "momentum_drift": float(s.momentum_drift[i]),
+                                    }
+                                )
 
                     base_result = child_results[base_label]
 
@@ -374,44 +355,3 @@ def run_relaxation_sweep(
                 mlflow.log_artifacts(str(tmpdir))
 
     return results
-
-
-def verify_relaxation_results(
-    results: dict[str, RelaxationResult],
-    grid: VelocityGrid,
-    temperature_tol: float = 5e-2,
-    check_rmse_improvement: bool = True,
-) -> None:
-    """
-    Verify basic conservation properties for ChangCooper results only.
-
-    CentralDifferencing results are logged but not asserted (less stable scheme).
-    Uses the pre-computed discrepancy metrics from the final snapshot.
-
-    Args:
-        results: Dict from run_relaxation_sweep (flat: name -> RelaxationResult)
-        grid: VelocityGrid used for the runs
-        temperature_tol: Tolerance for temperature conservation
-        check_rmse_improvement: Whether to check RMSE improves (skip for equilibrium)
-    """
-    for name, result in results.items():
-        # Skip assertions for CentralDifferencing (only log results)
-        if "CentralDifferencing" in name:
-            continue
-
-        s = result.snapshots  # Batched metrics
-
-        # Density conservation
-        rel_n = float(s.rel_density[-1])
-        assert abs(rel_n) < 1e-6, f"{name}: Density not conserved: rel_density={rel_n:.2e}"
-
-        # Temperature (total energy) conservation
-        T0 = float(s.temperature_discrete[0])
-        rel_T = _rel(float(s.temperature_discrete[-1]), T0)
-        assert abs(rel_T) < temperature_tol, f"{name}: Temperature changed: rel_T={rel_T:.2e}"
-
-        # Relaxation toward equilibrium
-        if check_rmse_improvement:
-            initial_rmse = float(s.rmse_instant[0])
-            final_rmse = float(s.rmse_instant[-1])
-            assert final_rmse < initial_rmse, f"{name}: Distribution did not relax toward Maxwellian"
