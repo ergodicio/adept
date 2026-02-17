@@ -10,19 +10,20 @@ from __future__ import annotations
 
 import pickle
 import tempfile
-from collections.abc import Callable
 from functools import partial
 from pathlib import Path
 
 import jax.numpy as jnp
 import mlflow
+from diffrax import ODETerm, SaveAt, diffeqsolve
 from jax import Array
 
+from adept._base_ import Stepper
+
 from .factories import AbstractFPRelaxationVectorFieldFactory
-from .metrics import compute_momentum, compute_rmse
+from .metrics import RelaxationMetrics, compute_metrics, compute_momentum, compute_rmse
 from .plotting import plot_comparison_dashboard, plot_distribution_evolution
 from .registry import VelocityGrid, get_git_info
-from .time_stepper import RelaxationResult, TimeStepperConfig, run_relaxation
 
 
 def problem_name(ic_fn) -> str:
@@ -64,36 +65,38 @@ def run_relaxation_sweep_and_assert(
         problem_name=problem_name(ic_fn),
         factory=factory,
         f0=f0,
+        grid=grid,
         experiment_name=experiment_name,
         extra_params=dict(ic_fn.keywords) if isinstance(ic_fn, partial) else {},
-        nv=nv,
-        vmax=vmax,
         extra_param_combos=slow_extra_combos if slow else None,
     )
     assert results, f"No results for {problem_name(ic_fn)}"
 
-    for name, result in results.items():
+    for name, (metrics, f_history) in results.items():
         # Skip assertions for CentralDifferencing (only log results)
         if "CentralDifferencing" in name:
             continue
 
-        s = result.snapshots  # Batched metrics
-
         # Density conservation
-        assert abs(s.rel_density[-1]) < 1e-6, f"{name}: Density not conserved: rel_density={s.rel_density[-1]:.2e}"
+        assert abs(metrics.rel_density[-1]) < 1e-6, (
+            f"{name}: Density not conserved: rel_density={metrics.rel_density[-1]:.2e}"
+        )
 
         # Temperature (total energy) conservation
-        assert jnp.isclose(s.temperature_discrete[-1], s.temperature_discrete[0], atol=0.0, rtol=temperature_tol), (
-            f"{name}: Temperature changed: rel_T={s.temperature_discrete[-1] / s.temperature_discrete[0] - 1.0:.2e}"
-        )
+        assert jnp.isclose(
+            metrics.temperature_discrete[-1], metrics.temperature_discrete[0], atol=0.0, rtol=temperature_tol
+        ), f"{name}: Temperature changed: rel_T={
+            metrics.temperature_discrete[-1] / metrics.temperature_discrete[0] - 1.0:.2e}"
 
         # Relaxation toward equilibrium
         if not problem.get("equilibrium", False):
-            assert s.rmse_instant[-1] < s.rmse_instant[0], f"{name}: Distribution did not relax toward Maxwellian"
+            assert metrics.rmse_instant[-1] < metrics.rmse_instant[0], (
+                f"{name}: Distribution did not relax toward Maxwellian"
+            )
 
         # Extra: equilibrium RMSE check
         if problem.get("extra_checks") == "rmse":
-            rmse = compute_rmse(f0, result.f_final, grid)
+            rmse = compute_rmse(f0, f_history[-1], grid)
             assert rmse < 1e-2, f"{name}: Equilibrium drifted: RMSE={rmse}"
 
     # Extra: momentum conservation check (Dougherty vs LB)
@@ -102,8 +105,10 @@ def run_relaxation_sweep_and_assert(
         d_key = "Dougherty_ChangCooper"
         lb_key = "LenardBernstein_ChangCooper"
         if d_key in results and lb_key in results:
-            drift_d = abs(float(compute_momentum(results[d_key].f_final, grid)) - p0) / abs(p0)
-            drift_lb = abs(float(compute_momentum(results[lb_key].f_final, grid)) - p0) / abs(p0)
+            _, f_history_d = results[d_key]
+            _, f_history_lb = results[lb_key]
+            drift_d = abs(float(compute_momentum(f_history_d[-1], grid)) - p0) / abs(p0)
+            drift_lb = abs(float(compute_momentum(f_history_lb[-1], grid)) - p0) / abs(p0)
             assert drift_d < drift_lb, f"Dougherty drift ({drift_d:.3f}) not better than LB ({drift_lb:.3f})"
 
 
@@ -111,15 +116,14 @@ def run_relaxation_sweep(
     problem_name: str,
     factory: AbstractFPRelaxationVectorFieldFactory,
     f0: Array,
+    grid: VelocityGrid,
     experiment_name: str = "fokker-planck-relaxation-tests",
     dt_over_tau: float = 1.0,
     sc_iterations: int = 2,
     n_collision_times: float = 10.0,
     extra_params: dict | None = None,
-    nv: int = 128,
-    vmax: float = 8.0,
     extra_param_combos: list[dict] | None = None,
-) -> dict[str, RelaxationResult]:
+) -> dict[str, tuple[RelaxationMetrics, Array]]:
     """
     Run relaxation for all model/scheme combinations and log to MLflow.
 
@@ -130,48 +134,34 @@ def run_relaxation_sweep(
         problem_name: Name of the problem (e.g., "supergaussian")
         factory: Vector field factory that provides model/scheme combinations
             and creates the appropriate vector fields for the solver.
-        initial_condition_fn: Function that takes grid and returns f0
+        f0: Initial distribution function
+        grid: VelocityGrid instance
         experiment_name: MLflow experiment name
         dt_over_tau: Time step in units of collision time (base sim)
         sc_iterations: Number of self-consistency iterations (base sim)
         n_collision_times: How many collision times to run
         extra_params: Additional parameters to log
-        nv: Number of velocity grid points
-        vmax: Maximum velocity
         extra_param_combos: If provided (slow test), each child runs the base sim
             plus these extra (dt_over_tau, sc_iterations) combos. Each dict must
             have keys "dt_over_tau" and "sc_iterations".
 
     Returns:
-        Dict mapping "{model}_{scheme}" to RelaxationResult (base sim only).
+        Dict mapping "{model}_{scheme}" to (RelaxationMetrics, f_history) tuple.
         Extra param combos (slow) are used internally for artifacts but not returned.
     """
-    # Factory knows its grid geometry
-    grid = VelocityGrid(nv=nv, vmax=vmax, spherical=factory.spherical)
-    geometry = "spherical" if factory.spherical else "cartesian"
+    geometry = "spherical" if grid.spherical else "cartesian"
+    nu = 1.0  # Collision frequency (tau = 1/nu)
 
-    # Base config
-    base_config = TimeStepperConfig(
-        n_collision_times=n_collision_times,
-        nu=1.0,
-        dt_over_tau=dt_over_tau,
-    )
-    base_label = "dt={dt_over_tau}/sc={sc_iterations}"
+    base_label = f"dt={dt_over_tau}/sc={sc_iterations}"
 
     # Build list of all param combos to run per child
-    # Each entry: (label, config, sc_iterations, is_base)
-    all_combos = [(base_label, base_config, sc_iterations, True)]
+    # Each entry: (label, dt_over_tau, sc_iterations, is_base)
+    all_combos = [(base_label, dt_over_tau, sc_iterations, True)]
     if extra_param_combos is not None:
         for combo in extra_param_combos:
             combo_dt = combo["dt_over_tau"]
             combo_sc = combo["sc_iterations"]
-            label = "dt={combo_dt}/sc={combo_sc}"
-            cfg = TimeStepperConfig(
-                n_collision_times=n_collision_times,
-                nu=1.0,
-                dt_over_tau=combo_dt,
-            )
-            all_combos.append((label, cfg, combo_sc, False))
+            all_combos.append((f"dt={combo_dt}/sc={combo_sc}", combo_dt, combo_sc, False))
 
     results = {}
     mlflow.set_experiment(experiment_name)
@@ -204,32 +194,36 @@ def run_relaxation_sweep(
 
                     # Run all combos for this child
                     child_results = {}
-                    for label, cfg, sc_iter, is_base in all_combos:
-                        # Compute dt for this combo
-                        tau = 1.0 / cfg.nu
-                        dt = cfg.dt_over_tau * tau
+                    for label, combo_dt, combo_sc, is_base in all_combos:
+                        dt = combo_dt / nu
 
-                        # Factory creates the vector field
                         vector_field = factory.make_vector_field(
                             grid=grid,
                             model_name=model_name,
                             scheme_name=scheme_name,
                             dt=dt,
-                            nu=cfg.nu,
-                            sc_iterations=sc_iter,
+                            nu=nu,
+                            sc_iterations=combo_sc,
                         )
 
-                        result = run_relaxation(
-                            f0,
-                            grid,
-                            vector_field=vector_field,
-                            config=cfg,
+                        solution = diffeqsolve(
+                            ODETerm(vector_field),
+                            Stepper(),
+                            t0=0.0,
+                            t1=n_collision_times / nu,
+                            dt0=dt,
+                            y0=f0,
+                            saveat=SaveAt(t0=True, t1=True),
+                            max_steps=int(n_collision_times / combo_dt) + 4,
                         )
-                        child_results[label] = result
+                        f_history = solution.ys
+
+                        metrics = compute_metrics(f_history, grid, solution.ts)
+                        child_results[label] = (metrics, f_history)
 
                         # Log MLflow metrics only for base sim
                         if is_base:
-                            s = result.snapshots  # Batched pytree, each leaf shape (n_snapshots,)
+                            s = metrics
                             for i in range(s.time.shape[0]):
                                 mlflow.log_metrics(
                                     {
@@ -246,21 +240,21 @@ def run_relaxation_sweep(
                                     }
                                 )
 
-                    base_result = child_results[base_label]
-                    results[child_run_name] = base_result
+                    base_metrics, base_f_history = child_results[base_label]
+                    results[child_run_name] = (base_metrics, base_f_history)
 
                     # Save artifacts
                     with tempfile.TemporaryDirectory() as tmpdir:
                         tmpdir = Path(tmpdir)
 
                         # Pickle distribution histories
-                        for label, res in child_results.items():
+                        for label, (m, fh) in child_results.items():
                             suffix = f"_{label.replace('/', '_').replace('=', '')}" if len(child_results) > 1 else ""
                             dist_data = {
-                                "times": res.times,
-                                "f_history": res.f_history,
-                                "f_initial": res.f_initial,
-                                "f_final": res.f_final,
+                                "times": m.time,
+                                "f_history": fh,
+                                "f_initial": fh[0],
+                                "f_final": fh[-1],
                                 "v": grid.v,
                                 "dv": grid.dv,
                                 "spherical": grid.spherical,
@@ -270,14 +264,14 @@ def run_relaxation_sweep(
 
                         # Distribution evolution plots (base sim only)
                         plot_distribution_evolution(
-                            base_result,
+                            base_f_history,
                             grid,
                             title=f"{problem_name}: {model_name}/{scheme_name} (log)",
                             output_path=tmpdir / "distribution_log.png",
                             log_scale=True,
                         )
                         plot_distribution_evolution(
-                            base_result,
+                            base_f_history,
                             grid,
                             title=f"{problem_name}: {model_name}/{scheme_name} (linear)",
                             output_path=tmpdir / "distribution_linear.png",
@@ -287,7 +281,7 @@ def run_relaxation_sweep(
                         # Child-level comparison dashboard (multiple combos overlaid)
                         if len(child_results) > 1:
                             plot_comparison_dashboard(
-                                child_results,
+                                {label: m for label, (m, _) in child_results.items()},
                                 title=f"{problem_name}: {model_name}/{scheme_name} sweep",
                                 output_path=tmpdir / "comparison_dashboard.png",
                             )
@@ -299,7 +293,7 @@ def run_relaxation_sweep(
             with tempfile.TemporaryDirectory() as tmpdir:
                 tmpdir = Path(tmpdir)
                 plot_comparison_dashboard(
-                    results,
+                    {name: m for name, (m, _) in results.items()},
                     title=f"{parent_run_name}: model/scheme comparison",
                     output_path=tmpdir / "comparison_dashboard.png",
                 )

@@ -7,6 +7,7 @@ All metrics handle both cartesian and spherical geometries appropriately.
 """
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -41,11 +42,13 @@ def compute_density(f: Array, grid: VelocityGrid) -> Array:
 
     For cartesian: n = integral(f dv)
     For spherical: n = 4*pi * integral(v^2 * f dv)
+
+    Supports arbitrary leading batch dimensions.
     """
     if grid.spherical:
-        return 4.0 * jnp.pi * jnp.sum(grid.v**2 * f * grid.dv)
+        return 4.0 * jnp.pi * jnp.sum(grid.v**2 * f * grid.dv, axis=-1)
     else:
-        return jnp.sum(f * grid.dv)
+        return jnp.sum(f * grid.dv, axis=-1)
 
 
 def compute_momentum(f: Array, grid: VelocityGrid) -> Array:
@@ -54,11 +57,13 @@ def compute_momentum(f: Array, grid: VelocityGrid) -> Array:
 
     For cartesian: <v> = integral(v * f dv) / n
     For spherical: Returns 0 (symmetric about origin)
+
+    Supports arbitrary leading batch dimensions.
     """
     if grid.spherical:
-        return 0.0
-    n = jnp.sum(f * grid.dv)
-    return jnp.sum(grid.v * f * grid.dv) / n
+        return jnp.zeros(f.shape[:-1])
+    n = jnp.sum(f * grid.dv, axis=-1)
+    return jnp.sum(grid.v * f * grid.dv, axis=-1) / n
 
 
 def compute_positivity_violation(f: Array, grid: VelocityGrid) -> Array:
@@ -66,12 +71,14 @@ def compute_positivity_violation(f: Array, grid: VelocityGrid) -> Array:
     Compute the integral of |f| where f < 0.
 
     This measures how badly positivity is violated.
+
+    Supports arbitrary leading batch dimensions.
     """
     negative_f = jnp.where(f < 0, -f, 0.0)
     if grid.spherical:
-        return 4.0 * jnp.pi * jnp.sum(grid.v**2 * negative_f * grid.dv)
+        return 4.0 * jnp.pi * jnp.sum(grid.v**2 * negative_f * grid.dv, axis=-1)
     else:
-        return jnp.sum(negative_f * grid.dv)
+        return jnp.sum(negative_f * grid.dv, axis=-1)
 
 
 def compute_entropy(f: Array, grid: VelocityGrid) -> Array:
@@ -79,13 +86,15 @@ def compute_entropy(f: Array, grid: VelocityGrid) -> Array:
     Compute the entropy: -integral(f * log(f) dv).
 
     Returns NaN if f < -1e-20 anywhere (entropy undefined).
+
+    Supports arbitrary leading batch dimensions.
     """
     safe_f = jnp.where(f > 0, f, 1.0)  # log(1)=0, so 0*0=0 for f=0 points
     if grid.spherical:
-        entropy = -4.0 * jnp.pi * jnp.sum(grid.v**2 * f * jnp.log(safe_f) * grid.dv)
+        entropy = -4.0 * jnp.pi * jnp.sum(grid.v**2 * f * jnp.log(safe_f) * grid.dv, axis=-1)
     else:
-        entropy = -jnp.sum(f * jnp.log(safe_f) * grid.dv)
-    return jnp.where(jnp.any(f < -1e-20), jnp.nan, entropy)
+        entropy = -jnp.sum(f * jnp.log(safe_f) * grid.dv, axis=-1)
+    return jnp.where(jnp.any(f < -1e-20, axis=-1), jnp.nan, entropy)
 
 
 def compute_rmse(f: Array, f_ref: Array, grid: VelocityGrid) -> Array:
@@ -94,82 +103,80 @@ def compute_rmse(f: Array, f_ref: Array, grid: VelocityGrid) -> Array:
 
     RMSE = sqrt(4π * sum(v^2 * (f - f_ref)^2 * dv))  for spherical
     RMSE = sqrt(sum((f - f_ref)^2 * dv))              for cartesian
+
+    Supports arbitrary leading batch dimensions (f and f_ref must broadcast).
     """
     diff_sq = (f - f_ref) ** 2
     if grid.spherical:
-        return jnp.sqrt(4.0 * jnp.pi * jnp.sum(grid.v**2 * diff_sq * grid.dv))
+        return jnp.sqrt(4.0 * jnp.pi * jnp.sum(grid.v**2 * diff_sq * grid.dv, axis=-1))
     else:
-        return jnp.sqrt(jnp.sum(diff_sq * grid.dv))
+        return jnp.sqrt(jnp.sum(diff_sq * grid.dv, axis=-1))
 
 
 @eqx.filter_jit
 def compute_metrics(
     f: Array,
     grid: VelocityGrid,
-    time: float,
-    T_sc_initial: float,
-    n_initial: float,
-    vbar_initial: float,
+    times: Array,
 ) -> RelaxationMetrics:
     """
-    Compute all relaxation metrics for a given distribution.
+    Compute all relaxation metrics for a batch of distributions.
 
-    Conservation quantities (temperature, entropy) are stored as raw values;
-    relative discrepancies are computed on the fly using index-0 as reference.
+    Initial values for relative/drift quantities are taken from f[0].
 
     Args:
-        f: Distribution function, shape (nv,)
+        f: Distribution functions, shape (n_snapshots, nv)
         grid: VelocityGrid instance
-        time: Current simulation time
-        T_sc_initial: Initial *thermal* self-consistent temperature (Maxwellian
-            parameter that reproduces the initial thermal discrete T on the
-            finite grid; used for the expected-equilibrium RMSE reference)
-        n_initial: Initial density
-        vbar_initial: Initial mean velocity (0.0 for spherical/symmetric)
+        times: Simulation times, shape (n_snapshots,)
 
     Returns:
-        RelaxationMetrics with all computed metrics
+        RelaxationMetrics with all arrays shape (n_snapshots,)
     """
-    # Density discrepancy
+    # Density and relative density
     density = compute_density(f, grid)
+    n_initial = density[0]
     rel_density = (density - n_initial) / n_initial
 
-    # Momentum (compute before temperature — needed for vbar subtraction)
-    vbar_current = compute_momentum(f, grid)
-    momentum_drift = vbar_current - vbar_initial
+    # Momentum and drift
+    vbar = compute_momentum(f, grid)
+    vbar_initial = vbar[0]
+    momentum_drift = vbar - vbar_initial
 
-    # Raw temperatures — total energy (no vbar subtraction).
-    # Relative discrepancies computed on the fly from index-0 (like entropy).
-    T_discrete = discrete_temperature(f, grid.v, grid.dv, spherical=grid.spherical)
-    beta_sc = _find_self_consistent_beta_single(f, grid.v, grid.dv, spherical=grid.spherical, vbar=None, max_steps=2)
+    # Temperatures (vmap the external functions)
+    T_discrete = jax.vmap(discrete_temperature, in_axes=(0, None, None, None))(f, grid.v, grid.dv, grid.spherical)
+    beta_sc = jax.vmap(_find_self_consistent_beta_single, in_axes=(0, None, None, None, None, None))(
+        f, grid.v, grid.dv, grid.spherical, None, 2
+    )
     T_sc = 1.0 / (2.0 * beta_sc)
 
-    # Positivity
+    # Positivity violation
     positivity_violation = compute_positivity_violation(f, grid)
 
-    # RMSE references — use *thermal* self-consistent temperature (with vbar)
-    # so the reference Maxwellian has the correct discrete thermal temperature.
-    beta_sc_thermal = _find_self_consistent_beta_single(
-        f, grid.v, grid.dv, spherical=grid.spherical, vbar=vbar_current, max_steps=2
+    # Thermal self-consistent temperature (with vbar subtraction) for RMSE references
+    beta_sc_thermal = jax.vmap(_find_self_consistent_beta_single, in_axes=(0, None, None, None, 0, None))(
+        f, grid.v, grid.dv, grid.spherical, vbar, 2
     )
     T_sc_thermal = 1.0 / (2.0 * beta_sc_thermal)
+    T_sc_initial = T_sc_thermal[0]
 
-    # Expected equilibrium: Maxwellian matching initial thermal temperature
+    # Expected equilibrium: Maxwellian matching initial thermal temperature (same for all)
     f_expected = shifted_maxwellian(grid, v_shift=vbar_initial, T=T_sc_initial)
     f_expected = f_expected * n_initial
+    rmse_expected = compute_rmse(f, f_expected, grid)  # f_expected broadcasts
 
-    # Instantaneous: Maxwellian matching current thermal temperature
-    f_instant = shifted_maxwellian(grid, v_shift=vbar_current, T=T_sc_thermal)
-    f_instant = f_instant * density
+    # Instantaneous: Maxwellian matching current thermal temperature (different for each)
+    def make_instant_maxwellian(vbar_i, T_i, n_i):
+        f_m = shifted_maxwellian(grid, v_shift=vbar_i, T=T_i)
+        return f_m * n_i
 
-    rmse_expected = compute_rmse(f, f_expected, grid)
+    f_instant = jax.vmap(make_instant_maxwellian)(vbar, T_sc_thermal, density)
     rmse_instant = compute_rmse(f, f_instant, grid)
 
-    # Entropy (raw; relative change computed on the fly for MLflow logging)
+    # Entropy
     entropy = compute_entropy(f, grid)
 
     return RelaxationMetrics(
-        time=jnp.asarray(time),
+        time=times,
         rel_density=rel_density,
         temperature_discrete=T_discrete,
         temperature_sc=T_sc,

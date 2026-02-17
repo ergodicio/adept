@@ -12,10 +12,11 @@ from pathlib import Path
 import jax
 import matplotlib.pyplot as plt
 import numpy as np
+from jax import Array
 from matplotlib.lines import Line2D
 
+from .metrics import RelaxationMetrics
 from .registry import VelocityGrid
-from .time_stepper import RelaxationResult
 
 
 def _setup_plot_style():
@@ -42,7 +43,7 @@ _setup_plot_style()
 
 
 def plot_distribution_evolution(
-    result: RelaxationResult,
+    f_history: Array,
     grid: VelocityGrid,
     title: str = "Distribution Evolution",
     output_path: Path | None = None,
@@ -54,7 +55,7 @@ def plot_distribution_evolution(
     Shows initial, intermediate, and final distributions.
 
     Args:
-        result: RelaxationResult from run_relaxation
+        f_history: Distribution history, shape (n_snapshots, nv)
         grid: VelocityGrid instance
         title: Figure title
         output_path: Optional path to save figure
@@ -62,27 +63,17 @@ def plot_distribution_evolution(
     """
     fig, ax = plt.subplots()
 
-    if result.f_history is not None:
-        n_snaps = result.f_history.shape[0]
-        n_curves = min(10, n_snaps)
-        indices = np.linspace(0, n_snaps - 1, n_curves, dtype=int)
-        colors = plt.cm.viridis(np.linspace(0, 1, n_curves))
+    n_snaps = f_history.shape[0]
+    n_curves = min(10, n_snaps)
+    indices = np.linspace(0, n_snaps - 1, n_curves, dtype=int)
+    colors = plt.cm.viridis(np.linspace(0, 1, n_curves))
 
-        for i, idx in enumerate(indices):
-            t = float(result.times[idx])
-            label = f"t/tau = {t * result.config.nu:.1f}"
-            if log_scale:
-                ax.semilogy(grid.v, result.f_history[idx], color=colors[i], label=label)
-            else:
-                ax.plot(grid.v, result.f_history[idx], color=colors[i], label=label)
-    else:
-        # Only initial and final
+    for i, idx in enumerate(indices):
+        label = f"t/tau = {idx / (n_snaps - 1) * 10:.1f}" if n_snaps > 1 else "t/tau = 0"
         if log_scale:
-            ax.semilogy(grid.v, result.f_initial, "b-", label="Initial", linewidth=2)
-            ax.semilogy(grid.v, result.f_final, "r--", label="Final", linewidth=2)
+            ax.semilogy(grid.v, f_history[idx], color=colors[i], label=label)
         else:
-            ax.plot(grid.v, result.f_initial, "b-", label="Initial", linewidth=2)
-            ax.plot(grid.v, result.f_final, "r--", label="Final", linewidth=2)
+            ax.plot(grid.v, f_history[idx], color=colors[i], label=label)
 
     ax.set_xlabel("v / vth")
     ax.set_ylabel("f(v)")
@@ -99,7 +90,7 @@ def plot_distribution_evolution(
 
 
 def plot_comparison_dashboard(
-    results: dict[str, RelaxationResult],
+    results: dict[str, RelaxationMetrics],
     title: str = "Comparison",
     output_path: Path | None = None,
 ) -> plt.Figure:
@@ -110,7 +101,7 @@ def plot_comparison_dashboard(
     RMSE to final Maxwellian, RMSE to instantaneous Maxwellian, entropy.
 
     Args:
-        results: Dict mapping label to RelaxationResult
+        results: Dict mapping label to RelaxationMetrics
         title: Figure title
         output_path: Optional path to save figure
 
@@ -135,12 +126,12 @@ def plot_comparison_dashboard(
     cmap = plt.cm.tab20 if n_results > 10 else plt.cm.tab10
     colors = {name: cmap(i / cmap.N) for i, name in enumerate(sorted_names)}
 
-    # Transfer batched snapshots to numpy (one transfer per result)
+    # Transfer batched metrics to numpy (one transfer per result)
     stacked_results = {}
     for name in sorted_names:
-        result = results[name]
-        s = jax.tree.map(np.asarray, result.snapshots)
-        stacked_results[name] = (s, s.time * result.config.nu)
+        metrics = results[name]
+        s = jax.tree.map(np.asarray, metrics)
+        stacked_results[name] = (s, s.time)  # times are already in collision times (nu=1)
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
     fig.suptitle(title, fontsize=16)
