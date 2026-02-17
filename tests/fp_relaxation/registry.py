@@ -39,11 +39,6 @@ class VelocityGrid(eqx.Module):
         self.nv = nv
         self.spherical = spherical
 
-    @property
-    def v_edge(self) -> Array:
-        """Cell edges, shape (nv-1,)."""
-        return 0.5 * (self.v[1:] + self.v[:-1])
-
 
 def get_git_info() -> dict[str, str]:
     """Get git repository information for MLflow tagging."""
