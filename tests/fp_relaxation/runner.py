@@ -380,7 +380,6 @@ def verify_relaxation_results(
     results: dict[str, RelaxationResult],
     grid: VelocityGrid,
     f0,
-    check_temperature: bool = True,
     temperature_tol: float = 5e-2,
     check_rmse_improvement: bool = True,
 ) -> None:
@@ -410,10 +409,9 @@ def verify_relaxation_results(
         assert abs(rel_n) < 1e-6, f"{name}: Density not conserved: rel_density={rel_n:.2e}"
 
         # Temperature (total energy) conservation
-        if check_temperature:
-            T0 = float(s.temperature_discrete[0])
-            rel_T = _rel(float(s.temperature_discrete[-1]), T0)
-            assert abs(rel_T) < temperature_tol, f"{name}: Temperature changed: rel_T={rel_T:.2e}"
+        T0 = float(s.temperature_discrete[0])
+        rel_T = _rel(float(s.temperature_discrete[-1]), T0)
+        assert abs(rel_T) < temperature_tol, f"{name}: Temperature changed: rel_T={rel_T:.2e}"
 
         # Relaxation toward equilibrium
         if check_rmse_improvement:
