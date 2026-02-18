@@ -30,7 +30,7 @@ SCHEMES = ("ChangCooper", "CentralDifferencing")
 EXPERIMENT = "vlasov1d-fokker-planck-relaxation-tests"
 VMAX = 6.0
 NV = 128
-TEMPERATURE_TOL = 5e-2
+TEMPERATURE_TOL = 5e-3
 
 PROBLEMS = [
     partial(problems.maxwellian, T=1.0),
@@ -86,7 +86,7 @@ def test_fp_relaxation(ic_fn, slow):
             continue
 
         # Density conservation
-        assert abs(metrics.rel_density[-1]) < 1e-6, (
+        assert abs(metrics.rel_density[-1]) < 2e-13, (
             f"{name}: Density not conserved: rel_density={metrics.rel_density[-1]:.2e}"
         )
 
@@ -101,14 +101,12 @@ def test_fp_relaxation(ic_fn, slow):
             f"{name}: Did not relax to Maxwellian: rmse_instant={metrics.rmse_instant[-1]:.2e}"
         )
 
-        # Relaxation to expected equilibrium (skip LB - it doesn't conserve momentum)
+        # skip LB - it doesn't conserve momentum
         if "LenardBernstein" not in name:
             assert metrics.rmse_expected[-1] < 1e-2, (
                 f"{name}: Did not relax to expected equilibrium: rmse_expected={metrics.rmse_expected[-1]:.2e}"
             )
 
-        # Momentum conservation (Dougherty conserves momentum, LB does not)
-        if "Dougherty" in name:
             assert abs(metrics.momentum_drift[-1]) < 5e-5, (
                 f"{name}: Momentum not conserved: drift={metrics.momentum_drift[-1]:.2e}"
             )

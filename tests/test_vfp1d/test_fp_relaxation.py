@@ -86,7 +86,7 @@ def test_fp_relaxation(ic_fn, slow):
             continue
 
         # Density conservation
-        assert abs(metrics.rel_density[-1]) < 1e-6, (
+        assert abs(metrics.rel_density[-1]) < 1e-13, (
             f"{name}: Density not conserved: rel_density={metrics.rel_density[-1]:.2e}"
         )
 
@@ -104,6 +104,10 @@ def test_fp_relaxation(ic_fn, slow):
         # Relaxation to expected equilibrium
         assert metrics.rmse_expected[-1] < 1e-2, (
             f"{name}: Did not relax to expected equilibrium: rmse_expected={metrics.rmse_expected[-1]:.2e}"
+        )
+
+        assert metrics.positivity_violation[-1] < 1e-20(
+            f"{name}: Violated positivity too strongly: positivity_violation={metrics.positivity_violation[-1]:.2e}"
         )
 
 
