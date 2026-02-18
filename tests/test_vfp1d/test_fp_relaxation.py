@@ -93,8 +93,10 @@ def test_fp_relaxation(ic_fn, slow):
         # Temperature (total energy) conservation
         assert jnp.isclose(
             metrics.temperature_discrete[-1], metrics.temperature_discrete[0], atol=0.0, rtol=TEMPERATURE_TOL
-        ), f"{name}: Temperature changed: rel_T={
-            metrics.temperature_discrete[-1] / metrics.temperature_discrete[0] - 1.0:.2e}"
+        ), (
+            f"{name}: Temperature changed: rel_T="
+            f"{metrics.temperature_discrete[-1] / metrics.temperature_discrete[0] - 1.0:.2e}"
+        )
 
         # Relaxation to a Maxwellian
         assert metrics.rmse_instant[-1] < 1e-4, (

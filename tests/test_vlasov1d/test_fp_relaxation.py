@@ -93,12 +93,18 @@ def test_fp_relaxation(ic_fn, slow):
         # Temperature (total energy) conservation
         assert jnp.isclose(
             metrics.temperature_discrete[-1], metrics.temperature_discrete[0], atol=0.0, rtol=TEMPERATURE_TOL
-        ), f"{name}: Temperature changed: rel_T={
-            metrics.temperature_discrete[-1] / metrics.temperature_discrete[0] - 1.0:.2e}"
+        ), (
+            f"{name}: Temperature changed: rel_T="
+            f"{metrics.temperature_discrete[-1] / metrics.temperature_discrete[0] - 1.0:.2e}"
+        )
 
         # Relaxation to a Maxwellian
         assert metrics.rmse_instant[-1] < 1e-4, (
             f"{name}: Did not relax to Maxwellian: rmse_instant={metrics.rmse_instant[-1]:.2e}"
+        )
+
+        assert metrics.positivity_violation[-1] < 1e-20(
+            f"{name}: Violated positivity too strongly: positivity_violation={metrics.positivity_violation[-1]:.2e}"
         )
 
         # skip LB - it doesn't conserve momentum
