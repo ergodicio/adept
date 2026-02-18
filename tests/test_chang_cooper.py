@@ -28,14 +28,16 @@ def test_delta_small_w():
     delta = chang_cooper_delta(w)
     # For small w, delta ≈ 0.5 - w/12
     expected = 0.5 - w / 12.0
-    np.testing.assert_allclose(delta, expected, rtol=1e-6)
+    np.testing.assert_allclose(delta[0], expected[0], atol=0.0, rtol=1e-12)
+    np.testing.assert_allclose(delta[1], expected[1], atol=0.0, rtol=1e-9)
+    np.testing.assert_allclose(delta[2], expected[2], atol=0.0, rtol=1e-7)
 
 
 def test_delta_zero():
     """Test delta(0) = 0.5 exactly."""
     w = jnp.array([0.0])
     delta = chang_cooper_delta(w)
-    np.testing.assert_allclose(delta, 0.5, rtol=1e-10)
+    np.testing.assert_allclose(delta, 0.5, atol=0.0, rtol=1e-14)
 
 
 def test_delta_large_positive_w():
@@ -44,15 +46,19 @@ def test_delta_large_positive_w():
     delta = chang_cooper_delta(w)
     # For large positive w: delta ≈ 1/w (since 1/expm1(w) → 0)
     expected = 1.0 / w
-    np.testing.assert_allclose(delta, expected, rtol=1e-2)
+    np.testing.assert_allclose(delta[0], expected[0], atol=0.0, rtol=5e-3)
+    np.testing.assert_allclose(delta[1], expected[1], atol=0.0, rtol=1e-6)
+    np.testing.assert_allclose(delta[2], expected[2], atol=0.0, rtol=1e-12)
 
 
 def test_delta_large_negative_w():
     """Test delta(w) for large negative w approaches 1."""
-    w = jnp.array([-10.0, -100.0])
+    w = jnp.array([-10.0, -100.0, -1000.0])
     delta = chang_cooper_delta(w)
     # For large negative w: delta → 1 (since 1/w → 0 and 1/expm1(w) → -1)
-    np.testing.assert_allclose(delta, 1.0, rtol=0.15)
+    np.testing.assert_allclose(delta[0], 1.0, atol=1 / abs(w[0]), rtol=1e-6)
+    np.testing.assert_allclose(delta[1], 1.0, atol=1 / abs(w[1]), rtol=1e-6)
+    np.testing.assert_allclose(delta[2], 1.0, atol=1 / abs(w[2]), rtol=1e-12)
 
 
 def test_delta_moderate_w():
@@ -61,7 +67,7 @@ def test_delta_moderate_w():
     delta = chang_cooper_delta(w)
     # Analytical: delta = 1/w - 1/(exp(w) - 1)
     expected = 1.0 / w - 1.0 / jnp.expm1(w)
-    np.testing.assert_allclose(delta, expected, rtol=1e-10)
+    np.testing.assert_allclose(delta, expected, atol=0.0, rtol=1e-14)
 
 
 def test_delta_bounded():
