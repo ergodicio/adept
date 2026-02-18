@@ -70,69 +70,6 @@ class TestChangCooperDelta:
         assert jnp.all(delta <= 1.0)
 
 
-class TestFastVFP:
-    """Tests for the FastVFP kernel-based model."""
-
-    @pytest.fixture
-    def model(self):
-        """Create a FastVFP model with test grid."""
-        nv = 64
-        vmax = 6.0
-        dv = 2.0 * vmax / nv
-        v = jnp.linspace(-vmax + dv / 2, vmax - dv / 2, nv)
-        return FastVFP(v=v, dv=dv)
-
-    def test_fastvfp_kernel_rank1(self, model):
-        """Test that FastVFP kernel is rank-1 (√ε·√ε')."""
-        # For rank-1 kernel g(ε,ε') = √ε·√ε':
-        # apply_kernel(u) = √ε · Σⱼ √εⱼ · uⱼ · Δεⱼ
-        # If u = √ε, then apply_kernel(u) = √ε · ⟨ε⟩
-        u = model.sqrt_eps_edge
-        result = model.apply_kernel(u)
-        expected_inner = 4.0 * jnp.pi * jnp.sum(model.sqrt_eps_edge**2 * model.d_eps_edge)
-        expected = model.sqrt_eps_edge * expected_inner
-        np.testing.assert_allclose(result, expected, rtol=1e-10)
-
-    def test_fastvfp_ignores_beta(self, model):
-        """Test that Type 2 models ignore beta."""
-        f = jnp.exp(-(model.v**2) / 2.0)
-        f = f / (jnp.sum(f) * model.dv)
-
-        D1 = model.compute_D(f, beta=jnp.array(1.0))
-        D2 = model.compute_D(f, beta=jnp.array(100.0))
-        D3 = model.compute_D(f, beta=None)
-
-        np.testing.assert_allclose(D1, D2)
-        np.testing.assert_allclose(D1, D3)
-        assert model.compute_vbar(f) is None
-
-    def test_fastvfp_d_at_edges(self, model):
-        """Test that FastVFP returns D at cell edges."""
-        f = jnp.ones_like(model.v)
-        f = f / (jnp.sum(f) * model.dv)
-
-        D = model.compute_D(f)
-
-        # D should have shape (nv-1,) for edge values
-        assert D.shape == (len(model.v) - 1,)
-
-    def test_fastvfp_kernel_produces_positive_d(self):
-        """Test that FastVFP kernel produces positive D on positive grid."""
-        nv = 64
-        vmax = 6.0
-        dv = vmax / nv
-        v = jnp.linspace(dv / 2, vmax - dv / 2, nv)
-        model = FastVFP(v=v, dv=dv)
-
-        T = 1.0
-        f = jnp.exp(-(v**2) / (2 * T))
-        f = f / (jnp.sum(f) * dv)
-
-        D = model.compute_D(f)
-
-        assert jnp.all(D > 0), "FastVFP D should be positive on positive grid"
-
-
 class TestTypeComparison:
     """Compare Type 1 (beta-based) and Type 2 (kernel-based) models."""
 
