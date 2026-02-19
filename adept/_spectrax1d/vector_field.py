@@ -59,8 +59,10 @@ class SpectraxVectorField:
         grid_quantities_ions: dict,
         dt: float,
         use_shard_map: bool = False,
+        static_ions: bool = False,
     ):
         """Initialize with per-species mode counts and grid quantities."""
+        self.static_ions = static_ions
         # Store dimensions as attributes
         self.Nx = Nx
         self.Ny = Ny
@@ -532,28 +534,31 @@ class SpectraxVectorField:
         )
 
         # Compute ion derivative using ion-specific ODE
-        dCk_ions_dt = self.hermite_fourier_ode_ions(
-            Ck=Ck_ions,
-            C=C_ions,
-            F=F,
-            nu=nu,
-            D=D,
-            alpha=alpha_s[3:],  # Ion thermal velocities
-            u=u_s[3:],  # Ion drift velocities
-            q=qs[1],  # Ion charge
-            Omega_c=Omega_cs[1],  # Ion cyclotron frequency
-            closure_n=closure_n,
-            closure_m=closure_m,
-            closure_p=closure_p,
-        )
+        if self.static_ions:
+            dCk_ions_dt = jnp.zeros_like(Ck_ions)
+        else:
+            dCk_ions_dt = self.hermite_fourier_ode_ions(
+                Ck=Ck_ions,
+                C=C_ions,
+                F=F,
+                nu=nu,
+                D=D,
+                alpha=alpha_s[3:],  # Ion thermal velocities
+                u=u_s[3:],  # Ion drift velocities
+                q=qs[1],  # Ion charge
+                Omega_c=Omega_cs[1],  # Ion cyclotron frequency
+                closure_n=closure_n,
+                closure_m=closure_m,
+                closure_p=closure_p,
+            )
 
         # Apply Hou-Li filter in Hermite space if enabled (per-species)
         if self.use_hermite_filter:
-            # Apply per-species filters: each has shape (Np, Nm, Nn), broadcast over spatial dimensions
             filter_broadcast_e = self.hermite_filter_electrons[:, :, :, None, None, None]
-            filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
             dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
-            dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
+            if not self.static_ions:
+                filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
+                dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
 
         # Apply density noise if enabled
         if self.noise_enabled:
@@ -568,7 +573,7 @@ class SpectraxVectorField:
                 # Note: noise is already in dCk/dt units, no need to multiply by dt here
                 dCk_electrons_dt = dCk_electrons_dt.at[0, 0, 0, 0, :, 0].add(noise_e)
 
-            if self.noise_ions_enabled:
+            if self.noise_ions_enabled and not self.static_ions:
                 # Ion x-thermal velocity for unit conversion
                 alpha_i = alpha_s[3]
                 # Generate noise for ion density (0,0,0) mode
@@ -594,10 +599,13 @@ class SpectraxVectorField:
         current_electrons = self._compute_plasma_current_single_species(
             Ck_electrons, qs[0], alpha_s[:3], u_s[:3], self.Nn_electrons, self.Nm_electrons, self.Np_electrons
         )
-        current_ions = self._compute_plasma_current_single_species(
-            Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
-        )
-        current = current_electrons + current_ions
+        if self.static_ions:
+            current = current_electrons
+        else:
+            current_ions = self._compute_plasma_current_single_species(
+                Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
+            )
+            current = current_electrons + current_ions
         dEk_dt = 1j * jnp.cross(self.nabla, Fk[3:], axis=0) - current / Omega_cs[0] + driver
 
         # Concatenate field derivatives

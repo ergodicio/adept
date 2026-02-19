@@ -577,6 +577,9 @@ class BaseSpectrax1D(ADEPTModule):
         # Get shard_map configuration from grid config (default: False)
         use_shard_map = self.cfg["grid"].get("use_shard_map", False)
 
+        # Static ions: freeze ion distribution (no Lorentz force, no current, no free-streaming)
+        static_ions = self.cfg["physics"].get("static_ions", False)
+
         # Choose integrator: "explicit" (default, Dopri8) or "exponential" (Lawson-RK4)
         integrator_type = self.cfg["grid"].get("integrator", "explicit")
 
@@ -603,6 +606,7 @@ class BaseSpectrax1D(ADEPTModule):
                 Nx=Nx,
                 Ny=Ny,
                 Nz=Nz,
+                static_ions=static_ions,
             )
 
             # Create nonlinear-only vector field
@@ -622,6 +626,7 @@ class BaseSpectrax1D(ADEPTModule):
                 grid_quantities_electrons=self.grid_quantities_electrons,
                 grid_quantities_ions=self.grid_quantities_ions,
                 dt=float(self.cfg["grid"]["dt"]),
+                static_ions=static_ions,
             )
 
             # Create Lawson-RK4 solver
@@ -651,6 +656,7 @@ class BaseSpectrax1D(ADEPTModule):
                 grid_quantities_ions=self.grid_quantities_ions,
                 dt=float(self.cfg["grid"]["dt"]),
                 use_shard_map=use_shard_map,
+                static_ions=static_ions,
             )
 
             # Get stepsize controller
