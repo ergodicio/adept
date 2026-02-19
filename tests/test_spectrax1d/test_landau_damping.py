@@ -28,7 +28,6 @@ import yaml
 
 from adept import electrostatic, ergoExo
 
-
 # ---------------------------------------------------------------------------
 # Shared helper
 # ---------------------------------------------------------------------------
@@ -108,9 +107,7 @@ def test_driven_epw_dispersion(base_cfg, integrator, static_ions):
         base_cfg["grid"]["adaptive_time_step"] = False
 
     base_cfg["mlflow"]["experiment"] = "spectrax1d-epw-test"
-    base_cfg["mlflow"]["run"] = (
-        f"epw1d-{integrator}-{'static' if static_ions else 'mobile'}-{klambda_D:.3f}"
-    )
+    base_cfg["mlflow"]["run"] = f"epw1d-{integrator}-{'static' if static_ions else 'mobile'}-{klambda_D:.3f}"
 
     measured_freq, measured_damp, expected_freq, expected_damp = _run_driven_epw(base_cfg, klambda_D)
 
@@ -163,7 +160,4 @@ if __name__ == "__main__":
             _test_cfg["grid"]["adaptive_time_step"] = False
         _test_cfg["mlflow"]["run"] = f"manual-{_integrator}-{'static' if _static_ions else 'mobile'}"
         mf, md, ef, ed = _run_driven_epw(_test_cfg, klambda_D=0.30)
-        print(
-            f"{_integrator:12s} static={str(_static_ions):5s}  "
-            f"freq: {mf:.4f}/{ef:.4f}  damp: {md:.4f}/{ed:.4f}"
-        )
+        print(f"{_integrator:12s} static={_static_ions!s:5s}  freq: {mf:.4f}/{ef:.4f}  damp: {md:.4f}/{ed:.4f}")
