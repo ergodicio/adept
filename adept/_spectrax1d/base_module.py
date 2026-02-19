@@ -9,11 +9,7 @@ from jax import Array
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule
-from adept._spectrax1d.storage import (
-    get_save_quantities,
-    store_scalars,
-    store_species_distribution_timeseries,
-)
+from adept._spectrax1d.storage import get_save_quantities, store_scalars, store_species_distribution_timeseries
 from adept._spectrax1d.vector_field import SpectraxVectorField
 
 
