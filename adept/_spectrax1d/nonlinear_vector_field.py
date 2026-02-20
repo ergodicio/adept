@@ -44,8 +44,10 @@ class NonlinearVectorField:
         grid_quantities_electrons: dict,
         grid_quantities_ions: dict,
         dt: float,
+        static_ions: bool = False,
     ):
         """Initialize with per-species mode counts and grid quantities."""
+        self.static_ions = static_ions
         self.Nx = Nx
         self.Ny = Ny
         self.Nz = Nz
@@ -287,21 +289,25 @@ class NonlinearVectorField:
             Omega_c=Omega_cs[0],
         )
 
-        dCk_ions_dt = self.hermite_fourier_ode_ions._compute_lorentz_rhs(
-            C=C_ions,
-            F=F,
-            alpha=alpha_s[3:],
-            u=u_s[3:],
-            q=qs[1],
-            Omega_c=Omega_cs[1],
-        )
+        if self.static_ions:
+            dCk_ions_dt = jnp.zeros_like(Ck_ions)
+        else:
+            dCk_ions_dt = self.hermite_fourier_ode_ions._compute_lorentz_rhs(
+                C=C_ions,
+                F=F,
+                alpha=alpha_s[3:],
+                u=u_s[3:],
+                q=qs[1],
+                Omega_c=Omega_cs[1],
+            )
 
         # Apply Hermite filter
         if self.use_hermite_filter:
             filter_broadcast_e = self.hermite_filter_electrons[:, :, :, None, None, None]
-            filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
             dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
-            dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
+            if not self.static_ions:
+                filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
+                dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
 
         # Apply density noise
         if self.noise_enabled:
@@ -312,7 +318,7 @@ class NonlinearVectorField:
                 )
                 dCk_electrons_dt = dCk_electrons_dt.at[0, 0, 0, 0, :, 0].add(noise_e)
 
-            if self.noise_ions_enabled:
+            if self.noise_ions_enabled and not self.static_ions:
                 alpha_i = alpha_s[3]
                 noise_i = self._generate_density_noise(
                     t, self.Nx, alpha_i, self.noise_ions_amplitude, self.noise_ions_seed
@@ -332,10 +338,13 @@ class NonlinearVectorField:
         current_electrons = self._compute_plasma_current_single_species(
             Ck_electrons, qs[0], alpha_s[:3], u_s[:3], self.Nn_electrons, self.Nm_electrons, self.Np_electrons
         )
-        current_ions = self._compute_plasma_current_single_species(
-            Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
-        )
-        current = current_electrons + current_ions
+        if self.static_ions:
+            current = current_electrons
+        else:
+            current_ions = self._compute_plasma_current_single_species(
+                Ck_ions, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions
+            )
+            current = current_electrons + current_ions
 
         # dE/dt contribution: -J/Omega_c + driver (no curl term)
         dEk_dt = -current / Omega_cs[0] + driver

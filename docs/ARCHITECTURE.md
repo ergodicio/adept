@@ -16,3 +16,4 @@ Quick links to configuration references:
 - [VFP-1D Config](source/solvers/vfp1d/config.md)
 - [Vlasov-2D Config](source/solvers/vlasov2d/config.md)
 - [LPSE-2D Config](source/solvers/lpse2d/config.md)
+- [Spectrax-1D Config](source/solvers/spectrax1d/config.md)
