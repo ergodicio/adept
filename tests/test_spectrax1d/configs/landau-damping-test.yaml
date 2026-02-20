@@ -17,9 +17,8 @@ physics:
   Ly: 1.0
   Lz: 1.0
 
-  # Mass and temperature ratios
+  # Mass ratio
   mi_me: 1836.0
-  Ti_Te: 1.0
 
   # Species charges [electron, ion]
   qs: [-1.0, 1.0]
