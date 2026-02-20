@@ -242,7 +242,6 @@ class BaseSpectrax1D(ADEPTModule):
             "Lz": float(physics["Lz"]),
             "mi_me": float(physics["mi_me"]),
             "qs": physics["qs"],
-            "alpha_e": physics["alpha_e"],
             "alpha_s": physics["alpha_s"],
             "u_s": physics["u_s"],
             "Omega_ce_tau": float(physics["Omega_ce_tau"]),
@@ -781,11 +780,7 @@ class BaseSpectrax1D(ADEPTModule):
 
     def _process_grid_data(self, array_outputs: dict, td: str) -> None:
         """Process and save grid data arrays."""
-        other_arrays = {
-            k: array_outputs[k]
-            for k in ["k2_grid", "collision_matrix", "alpha_e", "alpha_s", "Dmega_cs"]
-            if k in array_outputs
-        }
+        other_arrays = {k: array_outputs[k] for k in ["k2_grid", "collision_matrix", "alpha_s"] if k in array_outputs}
         if other_arrays:
             # Save each array with appropriate dimensions
             data_vars = {}
