@@ -134,15 +134,11 @@ save:
   # Save field diagnostics for EPW amplitude/frequency tracking
   fields_only:
     t:
-      tmin: 0.0
-      tmax: 200.0
       nt: 401  # Save frequently for accurate frequency extraction
 
   # Save Hermite coefficients for velocity space analysis
   hermite:
     t:
-      tmin: 0.0
-      tmax: 200.0
       nt: 101
 
 # Diagnostics

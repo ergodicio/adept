@@ -104,6 +104,14 @@ class BaseVFP1D(ADEPTModule):
         :return:
         """
         cfg_grid = self.cfg["grid"]
+
+        # Default save.*.t.tmin/tmax to grid values (preserves unit strings)
+        for save_type in self.cfg.get("save", {}).keys():
+            if "t" in self.cfg["save"][save_type]:
+                t_cfg = self.cfg["save"][save_type]["t"]
+                t_cfg.setdefault("tmin", cfg_grid.get("tmin", "0ps"))
+                t_cfg.setdefault("tmax", cfg_grid["tmax"])
+
         cfg_grid["xmax"] = (_Q(cfg_grid["xmax"]) / _Q(self.cfg["units"]["derived"]["x0"])).to("").value
         cfg_grid["xmin"] = (_Q(cfg_grid["xmin"]) / _Q(self.cfg["units"]["derived"]["x0"])).to("").value
         cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
