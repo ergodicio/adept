@@ -48,8 +48,6 @@ physics:
   # Density perturbation amplitude (small for linear regime)
   dn1: 1.0e-12
 
-  # ODE solver tolerance
-  ode_tolerance: 1.0e-8
 
 # No external drivers for basic test
 drivers:
