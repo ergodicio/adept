@@ -17,6 +17,7 @@ for backward compatibility.
 from adept._spectrax1d.base_module import BaseSpectrax1D
 from adept._spectrax1d.driver import Driver
 from adept._spectrax1d.epw_module import EPW1D
+from adept._spectrax1d.maxwell_module import Maxwell1D
 from adept._spectrax1d.vector_field import SpectraxVectorField
 
-__all__ = ["EPW1D", "BaseSpectrax1D", "Driver", "SpectraxVectorField"]
+__all__ = ["EPW1D", "BaseSpectrax1D", "Driver", "Maxwell1D", "SpectraxVectorField"]

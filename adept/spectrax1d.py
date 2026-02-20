@@ -2,3 +2,4 @@
 
 from adept._spectrax1d.modules import EPW1D as EPW1D
 from adept._spectrax1d.modules import BaseSpectrax1D as BaseSpectrax1D
+from adept._spectrax1d.modules import Maxwell1D as Maxwell1D

@@ -1,0 +1,151 @@
+# Spectrax-1D Wave-Packet Absorption Test Configuration
+#
+# Models a quarter-critical 351 nm laser pulse propagating through a 4 keV plasma
+# and being absorbed by sponge layers at both ends of the periodic domain.
+#
+# Physical correspondence (code units: time = ωpe⁻¹, length = c/ωpe, c = 1, ωpe = 1)
+# ──────────────────────────────────────────────────────────────────────────────────
+#  Condition: quarter-critical  →  ω_laser = 2 ωpe  →  k_laser = √(ω²-1) = √3
+#  Debye length:  λD = α_e c/ωpe  with  α_e = 2π/(70√3) ≈ 0.0518  (λ_laser/λD = 70)
+#  Laser wavelength: λ_laser = 2π/k_laser = 2π/√3 ≈ 3.628 code units = 70 λD
+#
+# Domain (Lx = 3500 λD = 50 laser wavelengths ≈ 181.4 code units)
+#  ┌─ 3% sponge ─┬──────── driver region (5–25%) ──────────────────┬─ 3% sponge ─┐
+#  0            5.4       9.1         27.2        45.4         176.0            181.4
+#
+# Wave-packet launch:
+#  Spatial envelope over 5–25% of domain (≈10 laser wavelengths wide)
+#  Temporal envelope: sinusoidal burst from t≈5 to t≈45 ωpe⁻¹
+#  Driver drives Ey at (k₀=√3, ω₀=2), creating a rightward-propagating EM pulse
+#
+# Absorption check:
+#  Group velocity  v_g = k/ω = √3/2 ≈ 0.866
+#  Transit time from driver centre to right sponge ≈ 172 ωpe⁻¹
+#  With σ_max = 10 and sponge width = 3% ≈ 5.4 code units, the wave is absorbed in
+#  one traversal (exp(−σ × Δt) ≈ exp(−31) ≈ 0).
+#  By t = 240 the domain is essentially empty.
+#  Test criterion: em_absorption_ratio = <E_EM, t∈[240,300]> / E_EM,peak < 0.1
+
+solver: hermite-maxwell-1d
+
+mlflow:
+  experiment: spectrax1d-maxwell-tests
+  run: wave-absorption
+
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+physics:
+  # Lx = 3500 λD = 50 λ_laser  with λ_laser = 2π/√3, λD = 2π/(70√3)
+  # Lx = 50 × 2π/√3 = 100π/√3  ≈ 181.380
+  Lx: 181.3799364655682   # 100π/√3
+  Ly: 1.0
+  Lz: 1.0
+
+  mi_me: 1836.0
+  Ti_Te: 1.0
+  qs: [-1.0, 1.0]
+
+  # α_e = λD / (c/ωpe) = 2π / (70√3) ≈ 0.051826
+  # Corresponds to 4 keV at quarter-critical density for a 351 nm laser
+  alpha_e: [0.051826, 0.051826, 0.051826]
+  alpha_s: [0.051826, 0.051826, 0.051826,
+            0.001209, 0.001209, 0.001209]   # α_i = α_e/√1836
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  Omega_cs: [1.0, 0.00054]
+  nu: 1.0
+
+  nx: 0
+  ny: 0
+  nz: 0
+  dn1: 0.0
+
+  static_ions: true   # EM wave couples negligibly to ions at electron frequencies
+
+# Sponge layers on BOTH sides (3% of domain each)
+boundary_conditions:
+  sponge:
+    enabled: true
+    width: 0.03          # 3% of domain = ≈5.4 code units = 105 λD
+    strength: 10.0       # σ_max = 10 ωpe → one-traversal absorption
+    sides: both
+
+drivers:
+  ex: {}
+  ey:
+    '0':
+      # Laser mode: k₀ = √3, ω₀ = 2  (quarter-critical EM dispersion)
+      k0: 1.7320508075688772   # √3
+      w0: 2.0
+      a0: 1.0e-6
+      # Temporal burst:  t ≈ 5 – 45  (driver mostly off before t = 50)
+      t_center: 25.0
+      t_width: 40.0
+      t_rise: 10.0
+      # Spatial envelope: 5–25% of domain  ≈10 laser wavelengths wide
+      x_center: 50.0        # 15% × Lx
+      x_width: 60.0         # 20% × Lx
+      x_rise: 10.0          # ≈4 laser wavelengths (smooth spectral rolloff)
+      dw0: 0.0
+  ez: {}
+
+  hermite_filter:
+    enabled: false
+
+grid:
+  Nx: 2048    # ≈40 grid points per laser wavelength; laser at Fourier mode ~50
+  Ny: 1
+  Nz: 1
+
+  # Minimal Hermite resolution: C₀ (density) + C₁ (current) is sufficient for EM
+  hermite_modes:
+    electrons:
+      Nn: 6
+      Nm: 6
+      Np: 1
+    ions:
+      Nn: 2
+      Nm: 1
+      Np: 1
+
+  Ns: 2
+  tmax: 300.0
+  dt: 0.05
+  integrator: "exponential"
+  adaptive_time_step: true
+
+initialization:
+  fields:
+    method: fourier
+    components:
+      electric:
+        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
+  distribution:
+    method: maxwellian_with_perturbation
+    species:
+      electron:
+        temperature_ratio: 1.0
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+      ion:
+        temperature_ratio: 0.01
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+
+save:
+  # Save real-space fields Ey(x, t) for spacetime wavepacket visualization
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 300.0
+      nt: 601      # Every 0.5 ωpe⁻¹  (≈6 saves per EM period T=π)
+    x:
+      xmin: 0.0
+      xmax: 181.3799364655682   # = Lx
+      nx: 2048
+
+diagnostics:
+  compute_damping_rate: false
+  compute_field_energy: true
+  save_moments: false

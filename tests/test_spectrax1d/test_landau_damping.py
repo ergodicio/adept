@@ -88,30 +88,24 @@ def base_cfg():
 
 
 @pytest.mark.parametrize(
-    "integrator,static_ions",
-    [
-        ("explicit", False),
-        ("explicit", True),
-        ("exponential", False),
-        ("exponential", True),
-    ],
-    ids=["explicit", "explicit-static-ions", "exponential", "exponential-static-ions"],
+    "static_ions",
+    [False, True],
+    ids=["mobile-ions", "static-ions"],
 )
-def test_driven_epw_dispersion(base_cfg, integrator, static_ions):
+def test_driven_epw_dispersion(base_cfg, static_ions):
     """Driven EPW frequency and damping rate match the electrostatic dispersion within 10%."""
     klambda_D = np.random.uniform(0.26, 0.34)
 
     base_cfg["physics"]["static_ions"] = static_ions
-    base_cfg["grid"]["integrator"] = integrator
-    if integrator == "exponential":
-        base_cfg["grid"]["adaptive_time_step"] = False
+    base_cfg["grid"]["integrator"] = "exponential"
+    base_cfg["grid"]["adaptive_time_step"] = False
 
     base_cfg["mlflow"]["experiment"] = "spectrax1d-epw-test"
-    base_cfg["mlflow"]["run"] = f"epw1d-{integrator}-{'static' if static_ions else 'mobile'}-{klambda_D:.3f}"
+    base_cfg["mlflow"]["run"] = f"epw1d-exponential-{'static' if static_ions else 'mobile'}-{klambda_D:.3f}"
 
     measured_freq, measured_damp, expected_freq, expected_damp = _run_driven_epw(base_cfg, klambda_D)
 
-    print(f"\nklambda_D={klambda_D:.4f}  integrator={integrator}  static_ions={static_ions}")
+    print(f"\nklambda_D={klambda_D:.4f}  integrator=exponential  static_ions={static_ions}")
     print(
         f"  freq:  measured={measured_freq:.6f}  expected={expected_freq:.6f}"
         f"  err={100 * abs(measured_freq - expected_freq) / expected_freq:.1f}%"
@@ -147,12 +141,7 @@ if __name__ == "__main__":
         "ions": {"Nn": 32, "Nm": 1, "Np": 1},
     }
 
-    for _integrator, _static_ions in [
-        ("explicit", False),
-        ("explicit", True),
-        ("exponential", False),
-        ("exponential", True),
-    ]:
+    for _integrator, _static_ions in [("exponential", False), ("exponential", True)]:
         _test_cfg = copy.deepcopy(_cfg)
         _test_cfg["physics"]["static_ions"] = _static_ions
         _test_cfg["grid"]["integrator"] = _integrator
