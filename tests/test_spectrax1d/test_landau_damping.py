@@ -135,7 +135,7 @@ if __name__ == "__main__":
 
     with open("configs/spectrax-1d/landau-damping.yaml") as f:
         _cfg = yaml.safe_load(f)
-    _cfg["solver"] = "test-adept-spectrax1d-epw"
+    _cfg["solver"] = "hermite-epw-1d"
     _cfg["grid"]["hermite_modes"] = {
         "electrons": {"Nn": 512, "Nm": 1, "Np": 1},
         "ions": {"Nn": 32, "Nm": 1, "Np": 1},
