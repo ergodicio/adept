@@ -23,7 +23,6 @@ class NonlinearVectorField:
     """
     Nonlinear-only RHS for the Lawson-RK4 exponential integrator.
 
-    Same structure as SpectraxVectorField but computes only nonlinear terms.
     Reuses HermiteFourierODE instances for the Lorentz force convolution.
     """
 
