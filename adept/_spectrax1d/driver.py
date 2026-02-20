@@ -48,15 +48,17 @@ class Driver:
         """
         pulse_configs = driver_config.get(self.driver_key, {})
 
-        # Compute total real-space field
-        total_field_real = jnp.zeros_like(self.xax)
+        # Compute total complex field (complex128 so exp(i·...) pulses accumulate correctly)
+        total_field = jnp.zeros(self.Nx, dtype=jnp.complex128)
         for pulse_name, pulse_params in pulse_configs.items():
-            total_field_real += self._get_single_pulse(pulse_params, t)
+            total_field = total_field + self._get_single_pulse(pulse_params, t)
 
         # Convert to Fourier space with 3D shape
         # For 1D case (Ny=1, Nz=1), expand to 3D shape: (1, Nx, 1)
-        field_real_3d = total_field_real[None, :, None]
-        field_fourier_3d = jnp.fft.fftn(field_real_3d, axes=(-3, -2, -1), norm="forward")
+        # The FFT of a complex signal is asymmetric: only the +k₀ bin is populated,
+        # giving a purely unidirectional (rightward) wave.
+        field_3d = total_field[None, :, None]
+        field_fourier_3d = jnp.fft.fftn(field_3d, axes=(-3, -2, -1), norm="forward")
 
         # Create output array with shape (3, Ny, Nx, Nz)
         # Only set the component for this driver (Ex, Ey, or Ez)
@@ -67,14 +69,18 @@ class Driver:
 
     def _get_single_pulse(self, pulse: dict, t: float) -> Array:
         """
-        Compute spatiotemporal envelope for a single pulse in real space.
+        Compute spatiotemporal envelope for a single pulse.
+
+        Uses a complex exponential exp(i(kx - ωt)) so that the Fourier transform
+        has a contribution only at k = +k₀ (rightward-traveling wave).  The FFT of
+        a complex signal has no Hermitian symmetry, so the -k₀ bin is zero.
 
         Args:
-            pulse: Pulse parameters (k0, w0, a0, envelopes, etc.)
+            pulse: Pulse parameters (k0, w0, a0, envelopes, dw0, etc.)
             t: Current time
 
         Returns:
-            Array of shape (Nx,) with real-space field
+            Complex array of shape (Nx,) with the complex-exponential field.
         """
         kk = pulse["k0"]
         ww = pulse["w0"]
@@ -95,6 +101,6 @@ class Driver:
             pulse.get("x_rise", 10.0), pulse.get("x_rise", 10.0), left_bound, right_bound, self.xax
         )
 
-        # Real-space field: a0 * sin(k*x - w*t)
-        # Note: |k0| factor matches Vlasov1D convention
-        return envelope_t * envelope_x * jnp.abs(kk) * a0 * jnp.sin(kk * self.xax - (ww + dw) * t)
+        # Complex exponential: a0 * |k0| * exp(i(k·x - ω·t))
+        # |k0| factor matches Vlasov1D convention for driver amplitude scaling.
+        return envelope_t * envelope_x * jnp.abs(kk) * a0 * jnp.exp(1j * (kk * self.xax - (ww + dw) * t))

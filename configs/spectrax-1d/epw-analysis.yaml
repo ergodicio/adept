@@ -56,9 +56,6 @@ physics:
   # Density perturbation amplitude (small for linear regime)
   dn1: 1.0e-9
 
-  # ODE solver tolerance
-  ode_tolerance: 1.0e-8
-
 # External field drivers (optional - can be used to drive EPW)
 drivers:
   ex:

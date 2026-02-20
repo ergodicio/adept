@@ -66,10 +66,6 @@ physics:
   # TOML: dn1 = 1.0e-9
   dn1: 0.0e-12
 
-  # ODE solver tolerance
-  # TOML: ode_tolerance = 1e-8
-  ode_tolerance: 1.0e-8
-
 # External field drivers
 # Configures wave driving similar to Vlasov1D
 drivers:

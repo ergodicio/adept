@@ -4,13 +4,12 @@ import os
 
 import pint
 import xarray as xr
-from diffrax import ConstantStepSize, ODETerm, PIDController, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
+from diffrax import ConstantStepSize, ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import Array
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule
 from adept._spectrax1d.storage import get_save_quantities, store_scalars, store_species_distribution_timeseries
-from adept._spectrax1d.vector_field import SpectraxVectorField
 
 
 def fft_index(k_val: int, N: int) -> int:
@@ -52,46 +51,6 @@ class BaseSpectrax1D(ADEPTModule):
         """
         super().__init__(cfg)
         self.ureg = pint.UnitRegistry()
-
-    def _get_solver_instance(self, solver_name: str, ode_tolerance: float):
-        """
-        Get a Diffrax solver instance by name.
-
-        This replicates the transformation from spectrax.load_parameters().
-
-        Args:
-            solver_name: Name of the solver (e.g., "Dopri8", "Tsit5")
-            ode_tolerance: ODE solver tolerance for implicit methods
-
-        Returns:
-            Diffrax solver instance
-        """
-        import inspect
-
-        import diffrax
-
-        # Special case for ImplicitMidpoint (not in standard diffrax)
-        if solver_name == "ImplicitMidpoint":
-            try:
-                from spectrax.helpers import ImplicitMidpoint
-
-                return ImplicitMidpoint(rtol=ode_tolerance, atol=ode_tolerance)
-            except ImportError as e:
-                raise ValueError("ImplicitMidpoint requires spectrax to be installed") from e
-
-        # Look for solver in diffrax module
-        for cls_name, cls in inspect.getmembers(diffrax, inspect.isclass):
-            if (
-                issubclass(cls, diffrax.AbstractSolver)
-                and cls is not diffrax.AbstractSolver
-                and cls_name == solver_name
-            ):
-                return cls()
-
-        raise ValueError(
-            f"Solver '{solver_name}' is not supported. Choose from Diffrax solvers "
-            "(e.g., Dopri8, Tsit5, Euler, Heun, etc.)"
-        )
 
     def _compute_hermite_parameters(self, Nn: int, Nm: int, Np: int) -> dict:
         """
@@ -286,7 +245,6 @@ class BaseSpectrax1D(ADEPTModule):
             "ny": int(physics["ny"]),
             "nz": int(physics["nz"]),
             "dn1": float(physics["dn1"]),
-            "ode_tolerance": float(physics.get("ode_tolerance", 1e-8)),
         }
 
         # Parse per-species Hermite mode configuration with backward compatibility
@@ -543,6 +501,35 @@ class BaseSpectrax1D(ADEPTModule):
             "sqrt_p_minus": hermite_params_i["sqrt_p_minus"],
         }
 
+        # Build sponge boundary layer profiles from config.
+        # Sponge is applied analytically by SplitStepDampingSolver after each RK step.
+        # Quadratic profile: sigma(x) = strength * (normalised_distance_into_sponge)²
+        # Supports right boundary only, left boundary only, or both sides.
+        boundary_cfg = self.cfg.get("boundary_conditions", {})
+        sponge_cfg = boundary_cfg.get("sponge", {})
+        if sponge_cfg.get("enabled", False):
+            sponge_strength = float(sponge_cfg.get("strength", 10.0))
+            sponge_width_frac = float(sponge_cfg.get("width", 0.2))
+            sponge_sides = sponge_cfg.get("sides", "right")
+
+            sigma_x = jnp.zeros_like(self.xax)
+
+            # Right-boundary sponge: x > Lx*(1 - width)
+            if sponge_sides in ("right", "both"):
+                x_r0 = float(Lx) * (1.0 - sponge_width_frac)
+                norm_r = jnp.clip((self.xax - x_r0) / (float(Lx) - x_r0 + 1e-10), 0.0, 1.0)
+                sigma_x = sigma_x + sponge_strength * norm_r**2
+
+            # Left-boundary sponge: x < Lx*width
+            if sponge_sides in ("left", "both"):
+                x_l1 = float(Lx) * sponge_width_frac
+                norm_l = jnp.clip((x_l1 - self.xax) / (x_l1 + 1e-10), 0.0, 1.0)
+                sigma_x = sigma_x + sponge_strength * norm_l**2
+
+            self.grid_quantities_electrons["sponge_fields"] = sigma_x
+            self.grid_quantities_electrons["sponge_plasma"] = sigma_x
+            self.grid_quantities_ions["sponge_plasma"] = sigma_x
+
     def init_diffeqsolve(self) -> None:
         """
         Initialize solver configuration with save quantities.
@@ -560,7 +547,6 @@ class BaseSpectrax1D(ADEPTModule):
 
         # Get solver configuration
         solver_params = self.cfg["spectrax_solver"]
-        input_params = self.cfg["spectrax_input"]
 
         # Get dimensions
         Nx = solver_params["Nx"]
@@ -574,14 +560,11 @@ class BaseSpectrax1D(ADEPTModule):
         Np_i = solver_params["Np_ions"]
         Ns = solver_params["Ns"]
 
-        # Get shard_map configuration from grid config (default: False)
-        use_shard_map = self.cfg["grid"].get("use_shard_map", False)
-
         # Static ions: freeze ion distribution (no Lorentz force, no current, no free-streaming)
         static_ions = self.cfg["physics"].get("static_ions", False)
 
-        # Choose integrator: "explicit" (default, Dopri8) or "exponential" (Lawson-RK4)
-        integrator_type = self.cfg["grid"].get("integrator", "explicit")
+        # Only the Lawson-RK4 exponential integrator is supported.
+        integrator_type = self.cfg["grid"].get("integrator", "exponential")
 
         if integrator_type == "exponential":
             # --- Lawson-RK4 exponential integrator path ---
@@ -637,59 +620,9 @@ class BaseSpectrax1D(ADEPTModule):
             print(f"Using Lawson-RK4 exponential integrator with fixed dt={self.cfg['grid']['dt']}")
 
         else:
-            # --- Standard explicit integrator path (default) ---
-            # Create VectorField instance with per-species configuration and grid quantities
-            vector_field = SpectraxVectorField(
-                Nx=Nx,
-                Ny=Ny,
-                Nz=Nz,
-                Nn_electrons=Nn_e,
-                Nm_electrons=Nm_e,
-                Np_electrons=Np_e,
-                Nn_ions=Nn_i,
-                Nm_ions=Nm_i,
-                Np_ions=Np_i,
-                Ns=Ns,
-                xax=self.xax,
-                driver_config=self.driver_config,
-                grid_quantities_electrons=self.grid_quantities_electrons,
-                grid_quantities_ions=self.grid_quantities_ions,
-                dt=float(self.cfg["grid"]["dt"]),
-                use_shard_map=use_shard_map,
-                static_ions=static_ions,
+            raise ValueError(
+                f"Unsupported integrator '{integrator_type}'. Only 'exponential' (Lawson-RK4) is supported."
             )
-
-            # Get stepsize controller
-            adaptive_time_step = solver_params["adaptive_time_step"]
-
-            # Compute dtmax from laser period if driver is present
-            dtmax = None
-            if adaptive_time_step and "drivers" in self.cfg:
-                drivers_cfg = self.cfg["drivers"]
-                for field_key in ["ex", "ey", "ez"]:
-                    if drivers_cfg.get(field_key):
-                        for pulse_name, pulse_cfg in drivers_cfg[field_key].items():
-                            if isinstance(pulse_cfg, dict) and "w0" in pulse_cfg:
-                                w0 = pulse_cfg["w0"]
-                                laser_period = 2 * jnp.pi / w0
-                                dtmax = laser_period / 20.0
-                                print(f"Auto dtmax from laser: {float(dtmax):.6e} (period={float(laser_period):.6e})")
-                                break
-                    if dtmax is not None:
-                        break
-
-            controllers = {
-                True: PIDController(
-                    rtol=input_params["ode_tolerance"],
-                    atol=input_params["ode_tolerance"],
-                    dtmax=dtmax,
-                ),
-                False: ConstantStepSize(),
-            }
-            stepsize_controller = controllers[adaptive_time_step]
-
-            # Get base solver instance
-            base_solver = self._get_solver_instance(solver_params["solver"], input_params["ode_tolerance"])
 
         # Build SubSaveAt dictionary for diagnostics
         subsaves = {}
@@ -1204,9 +1137,15 @@ class BaseSpectrax1D(ADEPTModule):
         Nx = int(self.cfg["grid"]["Nx"])
         Ny = int(self.cfg["grid"]["Ny"])
         Nz = int(self.cfg["grid"]["Nz"])
-        Nn = int(self.cfg["grid"]["Nn"])
-        Nm = int(self.cfg["grid"]["Nm"])
-        Np = int(self.cfg["grid"]["Np"])
+        # Support both per-species (hermite_modes) and legacy flat format
+        if "Nn_electrons" in self.cfg["grid"]:
+            Nn = int(self.cfg["grid"]["Nn_electrons"])
+            Nm = int(self.cfg["grid"]["Nm_electrons"])
+            Np = int(self.cfg["grid"]["Np_electrons"])
+        else:
+            Nn = int(self.cfg["grid"]["Nn"])
+            Nm = int(self.cfg["grid"]["Nm"])
+            Np = int(self.cfg["grid"]["Np"])
 
         # Create real-space x coordinate
         x = np.linspace(0, self.cfg["physics"]["Lx"], Nx)
@@ -1250,7 +1189,6 @@ class BaseSpectrax1D(ADEPTModule):
                         axis = ("x", x)
                         axis_name = "x"
 
-                    print(fields_data)
                     fields_xr_dict = {
                         name: xr.DataArray(val, coords=[("t", t_array), axis], name=name)
                         for name, val in fields_data.items()
@@ -1258,6 +1196,11 @@ class BaseSpectrax1D(ADEPTModule):
                     fields_xr = xr.Dataset(fields_xr_dict)
                     fields_xr.to_netcdf(os.path.join(binary_dir, f"fields-{axis_name}-t={round(t_array[-1], 4)}.nc"))
                     saved_datasets[f"fields_{axis_name}"] = fields_xr
+
+                    # Create spacetime and lineout plots (same as Fourier-space path)
+                    if axis_name == "x":
+                        self._plot_fields_spacetime(fields_xr, td)
+                        self._plot_fields_lineouts(fields_xr, td)
                 else:
                     # Electromagnetic fields in Fourier space - convert to real space and plot
                     Fk_array = np.asarray(fields_data)  # Shape: (nt, 6, Ny, Nx, Nz)

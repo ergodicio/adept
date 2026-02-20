@@ -37,7 +37,6 @@ Physical parameters for the simulation.
 | `nu` | float | — | Hypercollision frequency |
 | `nx`, `ny`, `nz` | int | — | Perturbation mode numbers for initialization |
 | `dn1` | float | — | Density perturbation amplitude |
-| `ode_tolerance` | float | `1e-8` | Adaptive ODE solver tolerance |
 | `static_ions` | bool | `false` | Freeze ion distribution (no Lorentz force, no ion current, no free-streaming). Ions retain their initial equilibrium background but do not evolve. Useful for studying pure electron physics (EPW, SRS scattering) at reduced cost. |
 
 ### `static_ions`

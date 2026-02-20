@@ -1,0 +1,139 @@
+# Spectrax-1D EM Wave Dispersion Test Configuration
+#
+# Tests that the MaxwellExponential propagates transverse EM waves at the
+# correct light speed:   ω = c|k|   (with c = 1 in code units).
+#
+# WHAT IS BEING TESTED
+# ────────────────────
+# The MaxwellExponential operator integrates the vacuum Maxwell curl equations
+# exactly:   dE/dt = i(ξ × B),   dB/dt = -i(ξ × E)
+# giving dispersion  ω = |ξ| = |kx/Lx|  (speed of light = 1 in these units).
+#
+# We use Nm=1 (no y-velocity Hermite mode) so the plasma current is exactly
+# zero:  J_y = q·α³·(α_y/√2)·C010 = 0  because C010 can't exist with Nm=1.
+# This ensures the wave propagates at vacuum light speed, decoupled from the
+# plasma.  The Lawson-RK4 then reduces to pure exponential propagation of the
+# Maxwell curls with no "nonlinear" plasma coupling at all.
+#
+# NORMALIZATION
+# ─────────────
+# Length: c/ωpe,  Time: ωpe⁻¹,  c = 1
+# For Lx = 2π and k=1 Fourier mode: ξ = kx/Lx = 2π/2π = 1
+#   ω_expected = |ξ| = 1.0  (one plasma period per light-crossing time)
+#
+# MEASUREMENT
+# ───────────
+# Driver active t ≈ 5–80;  tmax = 2000.
+# Frequency measured over last 20% (t ∈ [1600, 2000]), well after all transients.
+# Expected tolerance: within 5% of 1.0 (should be essentially exact for exponential
+# integrator since the operator is applied analytically).
+
+solver: hermite-maxwell-1d
+
+mlflow:
+  experiment: spectrax1d-maxwell-tests
+  run: em-dispersion
+
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+physics:
+  # Lx = 2π  →  k=1 mode: ξ = 2π/Lx = 1  →  ω_EM = |ξ| = 1.0  (vacuum)
+  Lx: 6.283185307179586
+  Ly: 1.0
+  Lz: 1.0
+
+  mi_me: 1836.0
+  Ti_Te: 1.0
+  qs: [-1.0, 1.0]
+
+  alpha_e: [0.06, 0.06, 0.06]
+  alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  Omega_cs: [1.0, 0.00054]
+  nu: 1.0
+
+  nx: 0
+  ny: 0
+  nz: 0
+  dn1: 0.0
+  static_ions: true
+
+drivers:
+  ex: {}
+  ey:
+    '0':
+      k0: 1.0          # k_phys = 2π/Lx = 1  (fundamental Fourier mode)
+      w0: 1.0          # ω = |ξ| = 1.0  (vacuum light speed dispersion)
+      a0: 1.0e-6
+      t_center: 35.0
+      t_width: 60.0    # Active t ≈ 5–80
+      t_rise: 15.0
+      x_center: 3.14159265
+      x_width: 1000.0  # Spatially uniform
+      x_rise: 0.1
+      dw0: 0.0
+  ez: {}
+
+  hermite_filter:
+    enabled: false
+
+grid:
+  Nx: 17
+  Ny: 1
+  Nz: 1
+
+  hermite_modes:
+    electrons:
+      Nn: 4
+      Nm: 1   # NO y-current: J_y = 0 → vacuum dispersion ω = |ξ|
+      Np: 1
+    ions:
+      Nn: 4
+      Nm: 1
+      Np: 1
+
+  Ns: 2
+  tmax: 2000.0
+  dt: 0.025
+  integrator: "exponential"
+  solver: "Dopri8"
+  adaptive_time_step: false
+
+initialization:
+  fields:
+    method: fourier
+    components:
+      electric:
+        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
+  distribution:
+    method: maxwellian_with_perturbation
+    species:
+      electron:
+        temperature_ratio: 1.0
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+      ion:
+        temperature_ratio: 0.01
+        equilibrium_density: 1.0
+        perturbation_amplitude: 0.0
+
+save:
+  default:
+    t:
+      tmin: 0.0
+      tmax: 2000.0
+      nt: 2001
+
+  # >8 saves per EM period (T=2π/1≈6.28), sufficient for phase unwrapping
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 2000.0
+      nt: 4001
+
+diagnostics:
+  compute_damping_rate: false
+  compute_field_energy: true
+  save_moments: false
