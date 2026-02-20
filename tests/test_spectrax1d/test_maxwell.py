@@ -16,7 +16,7 @@ Two test suites:
 
 2. Wave absorption (test_em_wave_absorption)
    Runs the same geometry but with a quadratic sponge layer covering the rightmost
-   30% of the domain (σ_max = 10 ωpe).  After the driver turns off at t ≈ 90, the
+   30% of the domain (sigma_max = 10 ωpe).  After the driver turns off at t ≈ 90, the
    wave is absorbed as it enters the sponge.  The test checks that
        em_absorption_ratio = <EM energy, final 20%> / peak EM energy < 0.1
    confirming that > 90% of the wave energy has been removed from the domain.
@@ -102,10 +102,7 @@ def test_em_wave_dispersion(dispersion_cfg):
         measured_freq,
         expected_freq,
         rtol=0.05,
-        err_msg=(
-            f"Vacuum EM dispersion mismatch: "
-            f"measured={measured_freq:.6f}, expected={expected_freq:.6f}"
-        ),
+        err_msg=(f"Vacuum EM dispersion mismatch: measured={measured_freq:.6f}, expected={expected_freq:.6f}"),
     )
 
 
@@ -119,8 +116,8 @@ def test_em_wave_absorption(absorption_cfg):
     Sponge on right boundary absorbs > 90% of the wave energy after driver off.
 
     The driver turns off around t ≈ 90 (t_center=50, t_width=80).  The sponge
-    (σ_max = 10 ωpe over the rightmost 30% of the domain) damps the wave on a
-    time-scale of ≈ τ × 1/Γ ≈ 3 ωpe^{-1}.  By t = 200 the EM energy should be
+    (sigma_max = 10 ωpe over the rightmost 30% of the domain) damps the wave on a
+    time-scale of ≈ τ x 1/Γ ≈ 3 ωpe^{-1}.  By t = 200 the EM energy should be
     < 10% of its peak value.
 
     em_absorption_ratio = mean(EM_energy[final 20%]) / max(EM_energy)
