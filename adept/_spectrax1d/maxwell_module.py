@@ -25,6 +25,8 @@ This follows from the Hermite-Fourier Vlasov-Maxwell equations:
   Combined → ω² = ξ² + q² = ξ² + 1  (for q = -1, Omega_cs[0] = 1)
 """
 
+import os
+
 import numpy as np
 
 from adept._spectrax1d.base_module import BaseSpectrax1D
@@ -83,6 +85,10 @@ class Maxwell1D(BaseSpectrax1D):
         result = super().post_process(run_output, td)
 
         sol = run_output["solver result"]
+
+        # Plot output directory (already created by base class)
+        plots_dir = os.path.join(td, "plots")
+
         Nx = int(self.cfg["grid"]["Nx"])
         Ny = int(self.cfg["grid"]["Ny"])
         Nz = int(self.cfg["grid"]["Nz"])
@@ -94,7 +100,7 @@ class Maxwell1D(BaseSpectrax1D):
             Fk_array = np.asarray(sol.ys["fields"])  # (nt, 6, Ny, Nx, Nz)
             t_array = np.asarray(sol.ts["fields"])
 
-            plot_em_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td)
+            plot_em_diagnostics(Fk_array, t_array, Nx, Ny, Nz, plots_dir)
 
             idx_k1 = 1
             idx_k0 = 0

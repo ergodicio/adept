@@ -7,8 +7,16 @@ import numpy as np
 import xarray as xr
 
 
-def plot_hermite_modes_at_k(Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td: str) -> None:
-    """Plot Hermite mode amplitudes at kx=1 Fourier mode."""
+def plot_hermite_modes_at_k(Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, output_dir: str) -> None:
+    """Plot Hermite mode amplitudes at kx=1 Fourier mode.
+
+    Args:
+        Ck: Distribution function coefficients
+        t_array: Time array
+        Nn, Nm, Np: Hermite mode dimensions
+        Nx, Ny, Nz: Spatial grid dimensions
+        output_dir: Directory to save output file (e.g., "plots/")
+    """
     # k=1 mode at index 1 in standard FFT ordering
     idx_k1 = 1
     idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
@@ -85,12 +93,19 @@ def plot_hermite_modes_at_k(Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td: str) -> Non
         axes[1, 1].set_title("Ion Species (Log Scale)")
 
         plt.tight_layout()
-        plt.savefig(os.path.join(td, "plots", "hermite_mode_amplitudes_kx1.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, "hermite_mode_amplitudes_kx1.png"), bbox_inches="tight")
         plt.close()
 
 
-def plot_field_mode_amplitudes(Fk, t_array, Nx, Ny, Nz, td: str) -> None:
-    """Plot field mode amplitudes for k=1...5."""
+def plot_field_mode_amplitudes(Fk, t_array, Nx, Ny, Nz, output_dir: str) -> None:
+    """Plot field mode amplitudes for k=1...5.
+
+    Args:
+        Fk: Field array of shape (nt, 6, Ny, Nx, Nz)
+        t_array: Time array
+        Nx, Ny, Nz: Grid dimensions
+        output_dir: Directory to save output files (e.g., "plots/")
+    """
     # k=0 for other dimensions (1D problem in x)
     idx_k0 = 0
 
@@ -113,7 +128,7 @@ def plot_field_mode_amplitudes(Fk, t_array, Nx, Ny, Nz, td: str) -> None:
         ax.set_title(f"{comp_name} Mode Amplitudes")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(td, "plots", "field_mode_amplitudes.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "field_mode_amplitudes.png"), bbox_inches="tight")
     plt.close()
 
     # Plot magnetic field modes
@@ -135,39 +150,33 @@ def plot_field_mode_amplitudes(Fk, t_array, Nx, Ny, Nz, td: str) -> None:
         ax.set_title(f"{comp_name} Mode Amplitudes")
 
     plt.tight_layout()
-    plt.savefig(os.path.join(td, "plots", "magnetic_field_mode_amplitudes.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "magnetic_field_mode_amplitudes.png"), bbox_inches="tight")
     plt.close()
 
 
-def plot_fields_spacetime(fields_xr: xr.Dataset, td: str) -> None:
-    """
-    Create spacetime plots for electromagnetic fields.
+def plot_fields_spacetime(fields_xr: xr.Dataset, output_dir: str) -> None:
+    """Create spacetime plots for electromagnetic fields.
 
     Args:
         fields_xr: xarray Dataset containing field data with (t, x) coordinates
-        td: Temporary directory path
+        output_dir: Directory to save output files (e.g., "plots/fields/")
     """
-    plots_dir = os.path.join(td, "plots", "fields")
-
     for field_name, field_data in fields_xr.items():
         # Spacetime plot
         field_data.plot()
         plt.title(f"{field_name} Spacetime")
-        plt.savefig(os.path.join(plots_dir, f"spacetime-{field_name}.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, f"spacetime-{field_name}.png"), bbox_inches="tight")
         plt.close()
 
 
-def plot_fields_lineouts(fields_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
-    """
-    Create facet grid plots showing field snapshots at multiple times.
+def plot_fields_lineouts(fields_xr: xr.Dataset, output_dir: str, n_slices: int = 6) -> None:
+    """Create facet grid plots showing field snapshots at multiple times.
 
     Args:
         fields_xr: xarray Dataset containing field data with (t, x) coordinates
-        td: Temporary directory path
+        output_dir: Directory to save output files (e.g., "plots/fields/lineouts/")
         n_slices: Number of time slices to show (default: 6)
     """
-    plots_dir = os.path.join(td, "plots", "fields", "lineouts")
-
     for field_name, field_data in fields_xr.items():
         # Calculate time slice indices
         nt = field_data.coords["t"].size
@@ -176,42 +185,34 @@ def plot_fields_lineouts(fields_xr: xr.Dataset, td: str, n_slices: int = 6) -> N
 
         # Create facet plot
         field_data[tslice].T.plot(col="t", col_wrap=3)
-        plt.savefig(os.path.join(plots_dir, f"{field_name}.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, f"{field_name}.png"), bbox_inches="tight")
         plt.close()
 
 
-def plot_moments_spacetime(moments_xr: xr.Dataset, td: str) -> None:
-    """
-    Create spacetime plots for distribution moments.
+def plot_moments_spacetime(moments_xr: xr.Dataset, output_dir: str) -> None:
+    """Create spacetime plots for distribution moments.
 
     Args:
         moments_xr: xarray Dataset containing moments with (t, x) coordinates
-        td: Temporary directory path
+        output_dir: Directory to save output files (e.g., "plots/moments/")
     """
-    plots_dir = os.path.join(td, "plots", "moments")
-    os.makedirs(plots_dir, exist_ok=True)
-
     for name, data in moments_xr.items():
         if "x" not in data.dims:
             continue
         data.plot()
         plt.title(f"{name} Spacetime")
-        plt.savefig(os.path.join(plots_dir, f"spacetime-{name}.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, f"spacetime-{name}.png"), bbox_inches="tight")
         plt.close()
 
 
-def plot_moments_lineouts(moments_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
-    """
-    Create facet grid plots of moments at multiple times.
+def plot_moments_lineouts(moments_xr: xr.Dataset, output_dir: str, n_slices: int = 6) -> None:
+    """Create facet grid plots of moments at multiple times.
 
     Args:
         moments_xr: xarray Dataset containing moments with (t, x) coordinates
-        td: Temporary directory path
+        output_dir: Directory to save output files (e.g., "plots/moments/lineouts/")
         n_slices: Number of time slices to show
     """
-    plots_dir = os.path.join(td, "plots", "moments", "lineouts")
-    os.makedirs(plots_dir, exist_ok=True)
-
     for name, data in moments_xr.items():
         if "x" not in data.dims:
             continue
@@ -220,21 +221,18 @@ def plot_moments_lineouts(moments_xr: xr.Dataset, td: str, n_slices: int = 6) ->
         tslice = slice(0, None, t_skip)
 
         data[tslice].T.plot(col="t", col_wrap=3)
-        plt.savefig(os.path.join(plots_dir, f"{name}.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, f"{name}.png"), bbox_inches="tight")
         plt.close()
 
 
-def plot_distribution_facets(dist_xr: xr.Dataset, td: str, n_timesteps: int = 6) -> None:
-    """
-    Create facet plots of distribution in (kx, hermite_mode) space for multiple timesteps.
+def plot_distribution_facets(dist_xr: xr.Dataset, output_dir: str, n_timesteps: int = 6) -> None:
+    """Create facet plots of distribution in (kx, hermite_mode) space for multiple timesteps.
 
     Args:
         dist_xr: xarray Dataset containing Ck with dimensions (t, hermite_mode, ky, kx, kz)
-        td: Temporary directory path
+        output_dir: Directory to save output files (e.g., "plots/distributions/")
         n_timesteps: Number of timesteps to show (default: 6)
     """
-    plots_dir = os.path.join(td, "plots", "distributions")
-
     Ck = dist_xr["Ck"]
 
     # Get center indices for y and z (assume 1D in x)
@@ -254,13 +252,14 @@ def plot_distribution_facets(dist_xr: xr.Dataset, td: str, n_timesteps: int = 6)
     amplitude.plot(
         x="kx", y="hermite_mode", col="t", col_wrap=3, cmap="viridis", cbar_kwargs={"label": r"$\log_{10}(|C_k|)$"}
     )
-    plt.savefig(os.path.join(plots_dir, "Ck_amplitude_facets.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "Ck_amplitude_facets.png"), bbox_inches="tight")
     plt.close()
 
 
-def plot_epw_diagnostics(Fk, t_array, Nx: int, Ny: int, Nz: int, td: str, driver_config: dict | None = None) -> None:
-    """
-    Plot EPW amplitude and frequency for the first mode over time.
+def plot_epw_diagnostics(
+    Fk, t_array, Nx: int, Ny: int, Nz: int, output_dir: str, driver_config: dict | None = None
+) -> None:
+    """Plot EPW amplitude and frequency for the first mode over time.
 
     Creates a 2-panel figure:
     - Left: Amplitude |Ex(k=1)| vs time (log scale) - full time range
@@ -270,7 +269,7 @@ def plot_epw_diagnostics(Fk, t_array, Nx: int, Ny: int, Nz: int, td: str, driver
         Fk: Field array of shape (nt, 6, Ny, Nx, Nz)
         t_array: Time array
         Nx, Ny, Nz: Grid dimensions
-        td: Temporary directory for plots
+        output_dir: Directory to save output file (e.g., "plots/")
         driver_config: Driver configuration dict (optional)
     """
     # k=1 mode at index 1 in standard FFT ordering
@@ -331,7 +330,7 @@ def plot_epw_diagnostics(Fk, t_array, Nx: int, Ny: int, Nz: int, td: str, driver
         axes[1].set_title(f"EPW Frequency (t={t_start:.1f} to {t_end:.1f})", fontsize=12)
         axes[1].grid(True, alpha=0.3)
 
-        plt.savefig(os.path.join(td, "plots", "epw_mode1_diagnostics.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, "epw_mode1_diagnostics.png"), bbox_inches="tight")
         plt.close()
 
 
@@ -348,10 +347,9 @@ def plot_hermite_coefficients_enhanced(
     Nx: int,
     Ny: int,
     Nz: int,
-    td: str,
+    output_dir: str,
 ) -> None:
-    """
-    Enhanced visualization of Hermite coefficients at k=1 mode.
+    """Enhanced visualization of Hermite coefficients at k=1 mode.
 
     Creates a 2x2 plot grid:
     - Top row: Electron species (linear and log scale)
@@ -368,7 +366,7 @@ def plot_hermite_coefficients_enhanced(
         Nn_e, Nm_e, Np_e: Electron Hermite mode dimensions
         Nn_i, Nm_i, Np_i: Ion Hermite mode dimensions
         Nx, Ny, Nz: Spatial grid dimensions
-        td: Temporary directory for plots
+        output_dir: Directory to save output file (e.g., "plots/")
     """
     # k=1 mode at index 1 in standard FFT ordering
     idx_k1 = 1
@@ -458,7 +456,7 @@ def plot_hermite_coefficients_enhanced(
         axes[1, 1].set_xlabel("Hermite Mode Index (m)", fontsize=11)
         axes[1, 1].set_title("Ions - Log Scale", fontsize=12)
 
-        plt.savefig(os.path.join(td, "plots", "epw_hermite_coefficients_2x2.png"), bbox_inches="tight")
+        plt.savefig(os.path.join(output_dir, "epw_hermite_coefficients_2x2.png"), bbox_inches="tight")
         plt.close()
 
 
@@ -468,10 +466,9 @@ def plot_em_diagnostics(
     Nx: int,
     Ny: int,
     Nz: int,
-    td: str,
+    output_dir: str,
 ) -> None:
-    """
-    Plot Ey amplitude (log scale) and instantaneous frequency for the k=1 mode.
+    """Plot Ey amplitude (log scale) and instantaneous frequency for the k=1 mode.
 
     Creates a 2-panel figure saved as em_wave_k1_diagnostics.png.
 
@@ -479,7 +476,7 @@ def plot_em_diagnostics(
         Fk: Field array of shape (nt, 6, Ny, Nx, Nz)
         t_array: Time array
         Nx, Ny, Nz: Grid dimensions
-        td: Temporary directory for plots
+        output_dir: Directory to save output file (e.g., "plots/")
     """
     idx_k1 = 1
     idx_k0 = 0
@@ -510,13 +507,12 @@ def plot_em_diagnostics(
     axes[1].legend(loc="best", fontsize=9)
     axes[1].grid(True, alpha=0.3)
 
-    plt.savefig(os.path.join(td, "plots", "em_wave_k1_diagnostics.png"), bbox_inches="tight")
+    plt.savefig(os.path.join(output_dir, "em_wave_k1_diagnostics.png"), bbox_inches="tight")
     plt.close()
 
 
 def _compute_em_frequency(field_k1, t_array):
-    """
-    Compute instantaneous frequency from phase evolution of a complex mode amplitude.
+    """Compute instantaneous frequency from phase evolution of a complex mode amplitude.
 
     Uses phase unwrapping and centred finite differences.  For a wave
     Ey_k1(t) ~ A(t) exp(-iω t), the phase advances at rate -ω, so
@@ -535,8 +531,7 @@ def _compute_em_frequency(field_k1, t_array):
 
 
 def _compute_epw_frequency(Ex_k1, t_array):
-    """
-    Compute instantaneous frequency of the first EPW mode from phase evolution.
+    """Compute instantaneous frequency of the first EPW mode from phase evolution.
 
     Args:
         Ex_k1: Complex amplitude of Ex at k=1 mode as function of time (nt,)
