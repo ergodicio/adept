@@ -1,17 +1,25 @@
 """External field driver for Spectrax-1D (Hermite-Fourier solver)."""
 
+import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 
 
-class Driver:
+class Driver(eqx.Module):
     """External field driver for Spectrax-1D (Hermite-Fourier solver).
 
     Computes external driving fields and returns them in 3D Fourier space format
     ready for use in the VectorField. Handles all FFT transformations internally.
     """
+
+    xax: Array
+    Nx: int
+    Ny: int
+    Nz: int
+    driver_key: str
+    component_idx: int
 
     def __init__(self, xax: Array, Nx: int, Ny: int, Nz: int, driver_key: str = "ex"):
         """
@@ -31,8 +39,8 @@ class Driver:
         self.driver_key = driver_key
 
         # Determine which component index this driver targets
-        self.component_map = {"ex": 0, "ey": 1, "ez": 2}
-        self.component_idx = self.component_map[driver_key]
+        component_map = {"ex": 0, "ey": 1, "ez": 2}
+        self.component_idx = component_map[driver_key]
 
     def __call__(self, driver_config: dict, t: float) -> Array:
         """
