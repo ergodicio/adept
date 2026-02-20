@@ -29,7 +29,6 @@ Physical parameters for the simulation.
 | `Lz` | float | — | Domain length in z (normalized) |
 | `mi_me` | float | — | Ion-to-electron mass ratio |
 | `qs` | list[float] | — | Species charges `[q_electron, q_ion]`, e.g. `[-1.0, 1.0]` |
-| `alpha_e` | list[float] | — | Electron thermal velocities `[αx, αy, αz]` |
 | `alpha_s` | list[float] | — | All-species thermal velocities `[αx_e, αy_e, αz_e, αx_i, αy_i, αz_i]` |
 | `u_s` | list[float] | — | All-species drift velocities (same layout as `alpha_s`) |
 | `Omega_ce_tau` | float | — | Reference cyclotron frequency (electron mass normalized). Species cyclotron frequency is `(q/m) * Omega_ce_tau`. |

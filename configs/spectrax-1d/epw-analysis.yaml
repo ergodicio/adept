@@ -31,9 +31,6 @@ physics:
   # Species charges [electron, ion]
   qs: [-1.0, 1.0]
 
-  # Electron thermal velocities [vx, vy, vz]
-  alpha_e: [0.06, 0.06, 0.06]
-
   # Species thermal velocities [e_vx, e_vy, e_vz, i_vx, i_vy, i_vz]
   alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
 
