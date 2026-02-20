@@ -8,11 +8,12 @@ This is a refactored class-based version of the external spectrax.Hermite_Fourie
 function, with grid quantities stored as class attributes to simplify the call signature.
 """
 
+import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
 
-class HermiteFourierODE:
+class HermiteFourierODE(eqx.Module):
     """
     Compute time derivative of distribution function in Hermite-Fourier basis.
 
@@ -36,6 +37,35 @@ class HermiteFourierODE:
         sqrt_p_plus, sqrt_p_minus: Hermite ladder operators for p (z-velocity)
         mask23: 2/3 dealiasing mask in Fourier space
     """
+
+    # Grid dimensions
+    Nn: int
+    Nm: int
+    Np: int
+    Nx: int
+
+    # Domain lengths
+    Lx: float
+    Ly: float
+    Lz: float
+
+    # Collision matrix
+    col: Array
+
+    # Hermite ladder operators (1D arrays)
+    sqrt_n_plus: Array
+    sqrt_n_minus: Array
+    sqrt_m_plus: Array
+    sqrt_m_minus: Array
+    sqrt_p_plus: Array
+    sqrt_p_minus: Array
+
+    # k-space grids
+    kx_grid: Array
+    ky_grid: Array
+    kz_grid: Array
+    k2_grid: Array
+    mask23: Array
 
     def __init__(
         self,
