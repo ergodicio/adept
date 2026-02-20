@@ -115,24 +115,6 @@ grid:
   integrator: "exponential"
   adaptive_time_step: true
 
-initialization:
-  fields:
-    method: fourier
-    components:
-      electric:
-        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
-  distribution:
-    method: maxwellian_with_perturbation
-    species:
-      electron:
-        temperature_ratio: 1.0
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0
-      ion:
-        temperature_ratio: 0.01
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0
-
 save:
   # Save real-space fields Ey(x, t) for spacetime wavepacket visualization
   fields:

@@ -122,38 +122,6 @@ grid:
   solver: "Dopri8"  # Diffrax solver name (Dopri8, Tsit5, Euler, Heun, etc.)
   adaptive_time_step: true  # Use adaptive time-stepping (default: true)
 
-# Initial conditions configuration
-# Used by get_solver_quantities() to build Fk_0 and Ck_0 arrays
-initialization:
-  # Electromagnetic field initialization
-  fields:
-    method: fourier  # Initialize in Fourier space
-    # Perturbation setup (maps to user's Fk_0 initialization code)
-    # Sets E field at mode (±nx, ±ny, ±nz) with amplitude dn*L/(4π*n*Omega_cs[0])
-    components:
-      electric:
-        # Which component: "Ex" (ny=0,nz=0), "Ey" (ny≠0), "Ez" (nz≠0)
-        # Calculated by: E_field_component = int(sign(ny) + 2*sign(nz))
-        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
-
-  # Distribution function initialization
-  distribution:
-    method: maxwellian_with_perturbation  # Perturbed Maxwellian
-    # Maps to user's Ck_0 initialization code
-    species:
-      electron:
-        # Equilibrium: Ck_0[0, Ny/2, Nx/2, Nz/2] = 1/alpha_s[0]^3
-        # Perturbation at ±k: Ck_0[0, ...] = ±i/(2*alpha_s[0]^3) * dn
-        temperature_ratio: 1.0  # Relative to normalizing_temperature
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0  # Uses physics.density_perturbation
-
-      ion:
-        # Equilibrium only: Ck_0[Nn*Nm*Np, Ny/2, Nx/2, Nz/2] = 1/alpha_s[1]^3
-        temperature_ratio: 0.01  # Ti/Te = 0.01 (if alpha_s[1] = 0.1)
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0  # Unperturbed
-
 # Output configuration
 # Specifies which quantities to save during the simulation and at what times
 # Each save type uses SubSaveAt to interpolate/compute diagnostics at specified times
