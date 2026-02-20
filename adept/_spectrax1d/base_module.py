@@ -241,7 +241,6 @@ class BaseSpectrax1D(ADEPTModule):
             "Ly": float(physics["Ly"]),
             "Lz": float(physics["Lz"]),
             "mi_me": float(physics["mi_me"]),
-            "Ti_Te": float(physics["Ti_Te"]),
             "qs": physics["qs"],
             "alpha_e": physics["alpha_e"],
             "alpha_s": physics["alpha_s"],

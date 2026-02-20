@@ -27,10 +27,9 @@ physics:
   Ly: 1.0
   Lz: 1.0
 
-  # Mass and temperature ratios
-  # TOML: mi_me = 1836.0, Ti_Te = 1.0
+  # Mass ratio
+  # TOML: mi_me = 1836.0
   mi_me: 1836.0
-  Ti_Te: 1.0
 
   # Species charges [electron, ion]
   # TOML: qs = [-1.0, 1.0]

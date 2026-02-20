@@ -28,7 +28,6 @@ Physical parameters for the simulation.
 | `Ly` | float | — | Domain length in y (normalized) |
 | `Lz` | float | — | Domain length in z (normalized) |
 | `mi_me` | float | — | Ion-to-electron mass ratio |
-| `Ti_Te` | float | — | Ion-to-electron temperature ratio |
 | `qs` | list[float] | — | Species charges `[q_electron, q_ion]`, e.g. `[-1.0, 1.0]` |
 | `alpha_e` | list[float] | — | Electron thermal velocities `[αx, αy, αz]` |
 | `alpha_s` | list[float] | — | All-species thermal velocities `[αx_e, αy_e, αz_e, αx_i, αy_i, αz_i]` |
