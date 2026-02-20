@@ -1,5 +1,7 @@
 """Specialized ADEPTModule for 1D Electron Plasma Wave (EPW) analysis."""
 
+import os
+
 import numpy as np
 from jax import Array
 
@@ -106,6 +108,9 @@ class EPW1D(BaseSpectrax1D):
         # Extract solution
         sol = run_output["solver result"]
 
+        # Plot output directory (already created by base class)
+        plots_dir = os.path.join(td, "plots")
+
         # Get grid parameters
         Nx = int(self.cfg["grid"]["Nx"])
         Ny = int(self.cfg["grid"]["Ny"])
@@ -123,7 +128,7 @@ class EPW1D(BaseSpectrax1D):
             t_array = sol.ts["fields"]
 
             # Create EPW diagnostics plot
-            plot_epw_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td, driver_config=self.cfg.get("drivers", {}))
+            plot_epw_diagnostics(Fk_array, t_array, Nx, Ny, Nz, plots_dir, driver_config=self.cfg.get("drivers", {}))
 
             # Add EPW-specific metrics
             idx_k1 = 1  # k=1 mode at index 1 in standard FFT ordering
@@ -173,7 +178,7 @@ class EPW1D(BaseSpectrax1D):
 
             # Create enhanced Hermite coefficient plot
             plot_hermite_coefficients_enhanced(
-                Ck_electrons, Ck_ions, t_array, Nn_e, Nm_e, Np_e, Nn_i, Nm_i, Np_i, Nx, Ny, Nz, td
+                Ck_electrons, Ck_ions, t_array, Nn_e, Nm_e, Np_e, Nn_i, Nm_i, Np_i, Nx, Ny, Nz, plots_dir
             )
 
         return result

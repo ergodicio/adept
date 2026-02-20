@@ -869,14 +869,23 @@ class BaseSpectrax1D(ADEPTModule):
         sol = run_output["solver result"]
 
         # Create directory structure
-        os.makedirs(os.path.join(td, "binary"), exist_ok=True)
-        os.makedirs(os.path.join(td, "plots"), exist_ok=True)
-        os.makedirs(os.path.join(td, "plots", "scalars"), exist_ok=True)
-        os.makedirs(os.path.join(td, "plots", "fields"), exist_ok=True)
-        os.makedirs(os.path.join(td, "plots", "fields", "lineouts"), exist_ok=True)
-        os.makedirs(os.path.join(td, "plots", "distributions"), exist_ok=True)
-
         binary_dir = os.path.join(td, "binary")
+        plots_dir = os.path.join(td, "plots")
+        scalars_dir = os.path.join(plots_dir, "scalars")
+        fields_dir = os.path.join(plots_dir, "fields")
+        fields_lineouts_dir = os.path.join(fields_dir, "lineouts")
+        distributions_dir = os.path.join(plots_dir, "distributions")
+        moments_dir = os.path.join(plots_dir, "moments")
+        moments_lineouts_dir = os.path.join(moments_dir, "lineouts")
+
+        os.makedirs(binary_dir, exist_ok=True)
+        os.makedirs(plots_dir, exist_ok=True)
+        os.makedirs(scalars_dir, exist_ok=True)
+        os.makedirs(fields_dir, exist_ok=True)
+        os.makedirs(fields_lineouts_dir, exist_ok=True)
+        os.makedirs(distributions_dir, exist_ok=True)
+        os.makedirs(moments_dir, exist_ok=True)
+        os.makedirs(moments_lineouts_dir, exist_ok=True)
 
         # Get grid parameters
         Nx = int(self.cfg["grid"]["Nx"])
@@ -914,7 +923,7 @@ class BaseSpectrax1D(ADEPTModule):
                     ax[1].grid()
                     ax[1].set_ylabel(f"$log_{{10}}$(|{nm}|)")
                     ax[1].set_title("Log scale")
-                    fig.savefig(os.path.join(td, "plots", "scalars", f"{nm}.png"), bbox_inches="tight")
+                    fig.savefig(os.path.join(scalars_dir, f"{nm}.png"), bbox_inches="tight")
                     plt.close()
 
             elif k == "fields":
@@ -944,8 +953,8 @@ class BaseSpectrax1D(ADEPTModule):
 
                     # Create spacetime and lineout plots (same as Fourier-space path)
                     if axis_name == "x":
-                        plot_fields_spacetime(fields_xr, td)
-                        plot_fields_lineouts(fields_xr, td)
+                        plot_fields_spacetime(fields_xr, fields_dir)
+                        plot_fields_lineouts(fields_xr, fields_lineouts_dir)
                 else:
                     # Electromagnetic fields in Fourier space - convert to real space and plot
                     Fk_array = np.asarray(fields_data)  # Shape: (nt, 6, Ny, Nx, Nz)
@@ -968,8 +977,8 @@ class BaseSpectrax1D(ADEPTModule):
                     saved_datasets["fields"] = fields_xr
 
                     # Create plots
-                    plot_fields_spacetime(fields_xr, td)
-                    plot_fields_lineouts(fields_xr, td)
+                    plot_fields_spacetime(fields_xr, fields_dir)
+                    plot_fields_lineouts(fields_xr, fields_lineouts_dir)
 
             elif k in ["hermite", "distribution"]:
                 # Distribution function (Hermite coefficients) - per-species dict
@@ -1010,8 +1019,8 @@ class BaseSpectrax1D(ADEPTModule):
                 moments_xr.to_netcdf(os.path.join(binary_dir, f"moments-t={round(t_array[-1], 4)}.nc"))
                 saved_datasets["moments"] = moments_xr
 
-                plot_moments_spacetime(moments_xr, td)
-                plot_moments_lineouts(moments_xr, td)
+                plot_moments_spacetime(moments_xr, moments_dir)
+                plot_moments_lineouts(moments_xr, moments_lineouts_dir)
 
         # Compute metrics for MLflow
         metrics = {
