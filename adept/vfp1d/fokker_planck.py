@@ -1,100 +1,212 @@
+#  Copyright (c) Ergodic LLC 2023
+#  research@ergodic.io
+"""
+Fokker-Planck collision operators for the VFP-1D solver.
+
+The VFP-1D solver uses a positive-only velocity grid (0 to vmax) with reflecting
+boundary conditions at v=0. This is different from the symmetric grid used in
+Vlasov-1D.
+
+This module provides:
+- F0Collisions: Collision operator for isotropic (f₀₀) component
+- FLMCollisions: Full FLM collision operator for higher-order harmonics
+"""
+
+import equinox as eqx
 import lineax as lx
 import numpy as np
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from adept.driftdiffusion import (
+    AbstractDriftDiffusionDifferencingScheme,
+    AbstractKernelBasedModel,
+    AbstractMaxwellianPreservingModel,
+    CentralDifferencing,
+    ChangCooper,
+)
 
-class LenardBernstein:
+
+class FastVFP(AbstractKernelBasedModel):
     """
-    The Lenard-Bernstein operator serves as the collision operator for the f00 equation
+    Fast VFP kernel (Bell & Sherlock): g(ε, ε') = √(ε·ε').
 
-    It would be better to have a Chang-Cooper or Epperlein implementation here. That would
-    also support inverse bremsstrahlung
+    This kernel is equivalent to using the discrete temperature ⟨v²⟩.
+    It is a rank-1 kernel, enabling O(N) computation instead of O(N²).
 
+    Compatible with Buet weak form scheme.
+
+    Reference:
+        Bell, A. R. & Sherlock, M. (2006). "Fast electron transport in laser
+        produced plasmas." Plasma Physics and Controlled Fusion.
     """
+
+    def apply_kernel(self, edge_values: Array) -> Array:
+        """
+        Apply √(ε·ε') kernel: D(ε) = 4π · √ε · ⟨√ε' · values⟩
+
+        For rank-1 kernel, this is O(N) not O(N²):
+            D[i] = 4π · √ε[i] · Σⱼ √ε[j] · edge_values[j] · Δε[j]
+
+        Args:
+            edge_values: Values at cell edges, shape (..., nv-1)
+
+        Returns:
+            Kernel integral at cell edges, shape (..., nv-1)
+        """
+        # Inner product: 4π · ⟨√ε · values · Δε⟩
+        inner = 2.0 * jnp.pi * jnp.sum(self.sqrt_eps_edge * edge_values * self.d_eps_edge, axis=-1, keepdims=True)
+        return self.sqrt_eps_edge * inner
+
+
+def _get_scheme(
+    scheme_name: str,
+    dv: float,
+) -> AbstractDriftDiffusionDifferencingScheme:
+    """Create a differencing scheme from config name.
+
+    Args:
+        scheme_name: Name of the differencing scheme ("central", "chang_cooper", etc.)
+        dv: Velocity grid spacing
+
+    Returns:
+        A differencing scheme instance (all schemes use zero-flux BC).
+    """
+    scheme_name = scheme_name.casefold()
+    if scheme_name in ("central", "central_differencing", "central-differencing"):
+        return CentralDifferencing(dv=dv)
+    elif scheme_name in ("chang_cooper", "chang-cooper", "cc"):
+        return ChangCooper(dv=dv)
+    else:
+        raise ValueError(f"Unknown scheme: {scheme_name}")
+
+
+class F0Collisions(eqx.Module):
+    """
+    Collision operator for the isotropic (f₀₀) component.
+
+    Uses a positive-only velocity grid (0 to vmax) with zero-flux boundary conditions.
+    At v=0, where the drift coefficient C=v=0, zero-flux is equivalent to a reflective
+    boundary condition, correctly representing the physics of the isotropic distribution.
+
+    The model and scheme are configurable via config["terms"]["fokker_planck"]["f00"].
+    """
+
+    v: Array
+    v_edge: Array
+    dv: float
+    nv: int
+    nuee_coeff: float
+    model: AbstractMaxwellianPreservingModel
+    scheme: AbstractDriftDiffusionDifferencingScheme
+    _sc_max_steps: int
+    _sc_rtol: float
+    _sc_atol: float
 
     def __init__(self, cfg: dict):
-        self.cfg = cfg
-        self.v = self.cfg["grid"]["v"]
-        self.dv = self.cfg["grid"]["dv"]
+        """
+        Initialize F0Collisions from config.
 
-        # these are twice as large for the solver
-        self.ones = jnp.ones(2 * self.cfg["grid"]["nv"])
-        self.refl_v = jnp.concatenate([-self.v[::-1], self.v])
-        self.midpt = self.cfg["grid"]["nv"]
-        r_e = 2.8179402894e-13
-        c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
-        self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
+        Config should have:
+        - grid.v, grid.dv, grid.nv
+        - terms.fokker_planck.f00.scheme (e.g., "central" or "chang_cooper")
+        - terms.fokker_planck.self_consistent_beta (optional): dict with enabled, max_steps, rtol, atol
 
-        # For debugging/experimentation, boosting/reducing isotropic ee collisions has no impact on LOCAL fields
-        # i.e. this is a way to artificially tune dgree of nonlocality without affecting anything else
-        # collision_boost = 50
-        # print('isotropic ee collisions boosted by factor of {}, '.format(collision_boost)
-        #     + 'note this has no impact on the effect on nonlocality from electron inertia')
-        # self.nu_ee_coeff = collision_boost*self.nu_ee_coeff
+        For collision frequency, provide ONE of:
+        - terms.fokker_planck.nuee_coeff: Direct override (for testing with dimensionless units)
+        - units.derived.n0, units.derived.logLambda_ee: Physical units (production)
+
+        The nuee_coeff override allows tests to use nu=1.0 without dealing with physical units.
+        """
+        self.v = cfg["grid"]["v"]
+        self.dv = cfg["grid"]["dv"]
+        self.nv = cfg["grid"]["nv"]
+        self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
+
+        # Collision coefficient: allow direct override for testing
+        fp_cfg = cfg["terms"]["fokker_planck"]
+        if "nuee_coeff" in fp_cfg:
+            # Direct override for testing with dimensionless units (nu=1.0)
+            self.nuee_coeff = fp_cfg["nuee_coeff"]
+        else:
+            # Production: compute from physical units
+            r_e = 2.8179402894e-13
+            c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+            self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
+
+        # Create model and scheme from config
+        # Use original v grid with zero_flux BC (= reflective at v=0 where C=0)
+        f00_cfg = cfg["terms"]["fokker_planck"]["f00"]
+        scheme_name = f00_cfg.get("scheme", "central")
+
+        self.model = FastVFP(v=self.v, dv=self.dv)
+        self.scheme = _get_scheme(scheme_name, self.dv)
+
+        # Self-consistent beta config (defaults to disabled)
+        fp_cfg = cfg["terms"]["fokker_planck"]
+        sc_cfg = fp_cfg.get("self_consistent_beta", {})
+        sc_enabled = sc_cfg.get("enabled", False)
+        self._sc_max_steps = sc_cfg.get("max_steps", 3) if sc_enabled else 0
+        self._sc_rtol = sc_cfg.get("rtol", 1e-8)
+        self._sc_atol = sc_cfg.get("atol", 1e-12)
 
     def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
         """
-        Solves the Lenard-Bernstein collision operator at a single location in space
+        Solve the collision operator at a single location in space.
 
-        the shape of f0 is (nv,)
+        :param nu: collision frequency (unused, we use nuee_coeff)
+        :param f0: distribution function at a single location (nv,)
+        :param dt: time step
 
-        :param nu: collision frequency
-        :param f0: the distribution function at a single location in space (nv, )
-        :param dt: the time step
-
-        :return: the distribution function after the collision operator has been applied (nv,)
+        :return: updated distribution function (nv,)
         """
-        operator = self._get_operator_(nu, f0, dt)
-        refl_f0 = jnp.concatenate([f0[::-1], f0])
-        return lx.linear_solve(operator, refl_f0, solver=lx.Tridiagonal()).value[self.midpt :]
+        from adept.driftdiffusion import _find_self_consistent_beta_single
 
-    def _get_operator_(self, nu: float, f0: Array, dt: float) -> lx.TridiagonalLinearOperator:
-        """
-        Returns the tridiagonal operator for the Lenard-Bernstein collision operator
-        Cee0 = - nuee0 (kb Te d2fdv + v dfdv)
-
-        This is called at each location in space because the f0 is different
-
-        :param nu: collision frequency
-        :param f0: the distribution function at a single location in space (nv, )
-        :param dt: the time step
-
-        :return: the tridiagonal operator for the Lenard-Bernstein collision operator for use with `lineax`
-
-        """
-        half_vth_sq = (
-            jnp.sum(f0 * (self.v[None, :]) ** 4.0, axis=1) / jnp.sum(f0 * (self.v[None, :]) ** 2.0, axis=1) / 3.0
+        beta = _find_self_consistent_beta_single(
+            f0,
+            self.v,
+            self.dv,
+            spherical=True,  # spherical=True for positive-only grid
+            rtol=self._sc_rtol,
+            atol=self._sc_atol,
+            max_steps=self._sc_max_steps,
         )
 
-        lower_diagonal = self.nuee_coeff * dt * (-half_vth_sq / self.dv**2.0 + (self.refl_v[:-1]) / 2.0 / self.dv)
-        diagonal = 1.0 + self.nuee_coeff * dt * self.ones * (2.0 * half_vth_sq / self.dv**2.0)
-        upper_diagonal = self.nuee_coeff * dt * (-half_vth_sq / self.dv**2.0 - (self.refl_v[1:]) / 2.0 / self.dv)
-        return lx.TridiagonalLinearOperator(
-            diagonal=diagonal, upper_diagonal=upper_diagonal, lower_diagonal=lower_diagonal
-        )
+        # Get D from model (D = 1/(2β) = T in Buet notation)
+        D = self.model.compute_D(f0[None, :], beta[None])
+        # Remove batch dimension for get_operator
+        D = D[0] if D.ndim > 0 else D
+
+        # Compute C_edge using the general formula: C = 2*beta*D*v
+        # This ensures Chang-Cooper achieves Maxwellian equilibrium
+        C_edge = 2.0 * beta * D * self.v_edge
+
+        # For spherical geometry, nu ~ 1/v² to account for the Jacobian
+        nu_arr = self.nuee_coeff / self.v**2
+        op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_arr, dt=dt)
+
+        return lx.linear_solve(op, f0, solver=lx.AutoLinearSolver(well_posed=True)).value
 
     def __call__(self, nu: float, f0x: Array, dt: float) -> Array:
         """
-        Solves the Lenard-Bernstein collision operator at all locations in space
+        Solve the collision operator at all locations in space.
 
-        :param nu: collision frequency
-        :param f_xv: the distribution function at all locations in space (nx, nv)
-        :param dt: the time step
+        :param nu: collision frequency (unused, we use nuee_coeff)
+        :param f0x: distribution function at all locations (nx, nv)
+        :param dt: time step
 
-        :return: the distribution function after the collision operator has been applied (nx, nv)
+        :return: updated distribution function (nx, nv)
         """
-
         return vmap(self._solve_one_vslice_, in_axes=(None, 0, None))(nu, f0x, dt)
 
 
 class FLMCollisions:
     """
-    The FLM collision operator is as described in Tzoufras2014
+    The FLM collision operator is as described in Tzoufras2014.
 
     It also has an implementation of electron-electron hack
     where the off-diagonal terms in the electron-electron collision
-    operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z
+    operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z.
     """
 
     def __init__(self, cfg: dict):
@@ -134,7 +246,7 @@ class FLMCollisions:
 
     def calc_ros_i(self, flm: Array, power: int) -> Array:
         r"""
-        Calculates the Rosenbluth I integral
+        Calculates the Rosenbluth I integral.
 
         $$4 \pi v^{-i} \int_0^v' [   f(v') v'^(2+i)  ] dv'$$
 
@@ -147,7 +259,7 @@ class FLMCollisions:
 
     def calc_ros_j(self, flm: Array, power: int) -> Array:
         r"""
-        Calculates the Rosenbluth J integral
+        Calculates the Rosenbluth J integral.
 
         $$4 \pi v^{-j} \int_v^\infty [  f(v') v'^(2+j)  ] dv'$$
 
@@ -162,7 +274,7 @@ class FLMCollisions:
 
     def get_ee_offdiagonal_contrib(self, t, y: Array, args: dict) -> Array:
         """
-        The off-diagonal terms in the electron-electron collision operator are calculated explicitly
+        The off-diagonal terms in the electron-electron collision operator are calculated explicitly.
 
         :param t: time
         :param y: the distribution function (nx, nv)
@@ -185,7 +297,7 @@ class FLMCollisions:
 
     def get_ee_diagonal_contrib(self, f0: Array) -> Array:
         """
-        Returns the tridiagonal operator for the electron-electron collision operator
+        Returns the tridiagonal operator for the electron-electron collision operator.
 
         :param f0: the distribution function (nx, nv)
 
@@ -219,16 +331,16 @@ class FLMCollisions:
 
     def _solve_one_x_tridiag_(self, diag: Array, upper: Array, lower: Array, f10: Array) -> Array:
         """
-        Solves a tridiagonal system of equations
+        Solves a tridiagonal system of equations.
         """
         op = lx.TridiagonalLinearOperator(diagonal=diag, upper_diagonal=upper, lower_diagonal=lower)
-        return lx.linear_solve(op, f10, solver=lx.Tridiagonal()).value
+        return lx.linear_solve(op, f10, solver=lx.AutoLinearSolver(well_posed=True)).value
 
     def __call__(self, Z, ni, f0, f10, dt, include_ee_offdiag_explicitly=True):
         """
-        Solves the FLM collision operator for all l and m
+        Solves the FLM collision operator for all l and m.
 
-        The solve has two options
+        The solve has two options:
 
         1. The full ee + ei collision operator is used.
         This is done by solving the tridiagonal ee + ei implicitly and calculating the

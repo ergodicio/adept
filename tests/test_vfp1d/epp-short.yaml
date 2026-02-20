@@ -69,5 +69,6 @@ terms:
     flm:
       ee: false
     f00:
-      type: Dougherty
+      model: FastVFP
+      scheme: central
   e_solver: oshun
