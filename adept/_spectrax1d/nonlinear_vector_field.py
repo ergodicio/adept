@@ -12,6 +12,9 @@ Linear terms (free-streaming, Maxwell curls, collision, diffusion) are handled
 by the exact exponential operators in the LawsonRK4Solver.
 """
 
+from typing import Optional
+
+import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
@@ -19,13 +22,62 @@ from adept._spectrax1d.driver import Driver
 from adept._spectrax1d.hermite_fourier_ode import HermiteFourierODE
 
 
-class NonlinearVectorField:
+class NonlinearVectorField(eqx.Module):
     """
     Nonlinear-only RHS for the Lawson-RK4 exponential integrator.
 
     Same structure as SpectraxVectorField but computes only nonlinear terms.
     Reuses HermiteFourierODE instances for the Lorentz force convolution.
     """
+
+    # Static ions flag
+    static_ions: bool
+
+    # Grid dimension (only Nx needed after init for noise generation)
+    Nx: int
+
+    # Electron Hermite mode counts
+    Nn_electrons: int
+    Nm_electrons: int
+    Np_electrons: int
+
+    # Ion Hermite mode counts
+    Nn_ions: int
+    Nm_ions: int
+    Np_ions: int
+
+    # Time step
+    dt: float
+
+    # Driver configuration
+    drivers: dict
+    driver_config: dict | None
+    has_driver: bool
+
+    # Noise configuration
+    noise_enabled: bool
+    noise_type: str | None
+    noise_electrons_enabled: bool | None
+    noise_ions_enabled: bool | None
+    noise_electrons_amplitude: float | None
+    noise_ions_amplitude: float | None
+    noise_electrons_seed: int | None
+    noise_ions_seed: int | None
+
+    # 2/3 dealiasing mask
+    mask23: Array
+
+    # Hermite filter
+    use_hermite_filter: bool
+    hermite_filter_electrons: Array | None
+    hermite_filter_ions: Array | None
+
+    # Per-species HermiteFourierODE instances
+    hermite_fourier_ode_electrons: HermiteFourierODE
+    hermite_fourier_ode_ions: HermiteFourierODE
+
+    # Complex state variable names
+    complex_state_vars: list
 
     def __init__(
         self,
@@ -47,21 +99,16 @@ class NonlinearVectorField:
         static_ions: bool = False,
     ):
         """Initialize with per-species mode counts and grid quantities."""
+        # Note: Ny, Nz, Ns only used locally in __init__, not stored as fields
         self.static_ions = static_ions
         self.Nx = Nx
-        self.Ny = Ny
-        self.Nz = Nz
         self.Nn_electrons = Nn_electrons
         self.Nm_electrons = Nm_electrons
         self.Np_electrons = Np_electrons
         self.Nn_ions = Nn_ions
         self.Nm_ions = Nm_ions
         self.Np_ions = Np_ions
-        self.Ns = Ns
         self.dt = dt
-
-        # Shared grid quantities
-        self.nabla = grid_quantities_electrons["nabla"]
 
         # Initialize external field drivers
         self.drivers = {}
@@ -84,21 +131,30 @@ class NonlinearVectorField:
             import numpy as np
 
             self.noise_type = noise_config.get("type", "uniform")
-            self.noise_amplitude = float(noise_config.get("amplitude", 1.0e-12))
-            self.noise_seed = int(noise_config.get("seed", np.random.randint(2**20)))
+            # noise_amplitude and noise_seed only used locally to compute per-species values
+            noise_amplitude = float(noise_config.get("amplitude", 1.0e-12))
+            noise_seed = int(noise_config.get("seed", np.random.randint(2**20)))
 
             electrons_cfg = noise_config.get("electrons", {})
             ions_cfg = noise_config.get("ions", {})
 
             self.noise_electrons_enabled = electrons_cfg.get("enabled", True)
             self.noise_ions_enabled = ions_cfg.get("enabled", False)
-            self.noise_electrons_amplitude = float(electrons_cfg.get("amplitude", self.noise_amplitude))
-            self.noise_ions_amplitude = float(ions_cfg.get("amplitude", self.noise_amplitude))
-            self.noise_electrons_seed = self.noise_seed
-            self.noise_ions_seed = self.noise_seed + 1000
+            self.noise_electrons_amplitude = float(electrons_cfg.get("amplitude", noise_amplitude))
+            self.noise_ions_amplitude = float(ions_cfg.get("amplitude", noise_amplitude))
+            self.noise_electrons_seed = noise_seed
+            self.noise_ions_seed = noise_seed + 1000
+        else:
+            self.noise_type = None
+            self.noise_electrons_enabled = None
+            self.noise_ions_enabled = None
+            self.noise_electrons_amplitude = None
+            self.noise_ions_amplitude = None
+            self.noise_electrons_seed = None
+            self.noise_ions_seed = None
 
         # 2/3 dealiasing mask
-        self.mask23 = self._compute_twothirds_mask()
+        self.mask23 = self._compute_twothirds_mask(Nx, Ny, Nz)
 
         # Hermite filter
         filter_config = driver_config.get("hermite_filter", {})
@@ -167,19 +223,20 @@ class NonlinearVectorField:
 
         self.complex_state_vars = ["Ck_electrons", "Ck_ions", "Fk"]
 
-    def _compute_twothirds_mask(self) -> Array:
+    @staticmethod
+    def _compute_twothirds_mask(Nx: int, Ny: int, Nz: int) -> Array:
         """Compute 2/3 dealiasing mask in standard FFT ordering."""
 
         def standard_modes(N):
             return jnp.fft.fftfreq(N) * N
 
-        ky = standard_modes(self.Ny)[:, None, None]
-        kx = standard_modes(self.Nx)[None, :, None]
-        kz = standard_modes(self.Nz)[None, None, :]
+        ky = standard_modes(Ny)[:, None, None]
+        kx = standard_modes(Nx)[None, :, None]
+        kz = standard_modes(Nz)[None, None, :]
 
-        cy = self.Ny // 3
-        cx = self.Nx // 3
-        cz = self.Nz // 3
+        cy = Ny // 3
+        cx = Nx // 3
+        cz = Nz // 3
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
