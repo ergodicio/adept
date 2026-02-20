@@ -32,7 +32,7 @@ Physical parameters for the simulation.
 | `alpha_e` | list[float] | — | Electron thermal velocities `[αx, αy, αz]` |
 | `alpha_s` | list[float] | — | All-species thermal velocities `[αx_e, αy_e, αz_e, αx_i, αy_i, αz_i]` |
 | `u_s` | list[float] | — | All-species drift velocities (same layout as `alpha_s`) |
-| `Omega_cs` | list[float] | — | Cyclotron frequencies `[Ωce, Ωci]` |
+| `Omega_ce_tau` | float | — | Reference cyclotron frequency (electron mass normalized). Species cyclotron frequency is `(q/m) * Omega_ce_tau`. |
 | `nu` | float | — | Hypercollision frequency |
 | `nx`, `ny`, `nz` | int | — | Perturbation mode numbers for initialization |
 | `dn1` | float | — | Density perturbation amplitude |

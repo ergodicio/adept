@@ -47,9 +47,8 @@ physics:
   # TOML: u_s = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-  # Cyclotron frequencies [electron, ion]
-  # TOML: Omega_cs = [1.0, 0.00054]
-  Omega_cs: [1.0, 0.00054]
+  # Cyclotron frequency (nondimensional, electron mass normalized)
+  Omega_ce_tau: 1.0
 
   # Collision frequency
   # TOML: nu = 1.0

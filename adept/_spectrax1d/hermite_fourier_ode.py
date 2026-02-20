@@ -210,7 +210,8 @@ class HermiteFourierODE(eqx.Module):
         alpha: Array,
         u: Array,
         q: float,
-        Omega_c: float,
+        Omega_ce_tau: float,
+        m: float,
         closure_n=None,
         closure_m=None,
         closure_p=None,
@@ -229,7 +230,8 @@ class HermiteFourierODE(eqx.Module):
             alpha: Thermal velocities for single species, shape (3,) = (alpha_x, alpha_y, alpha_z)
             u: Drift velocities for single species, shape (3,) = (u_x, u_y, u_z)
             q: Species charge (scalar)
-            Omega_c: Cyclotron frequency (scalar)
+            Omega_ce_tau: Reference cyclotron frequency (electron mass normalized)
+            m: Species mass (1.0 for electrons, mi_me for ions)
             closure_n: Optional closure for n-direction (x-velocity)
             closure_m: Optional closure for m-direction (y-velocity)
             closure_p: Optional closure for p-direction (z-velocity)
@@ -329,8 +331,8 @@ class HermiteFourierODE(eqx.Module):
                 + (u2 / a2) * Ck
             )
             # Lorentz force (E-field + B-field coupling via auxiliary fields)
-            + q
-            * Omega_c
+            + (q / m)
+            * Omega_ce_tau
             * (
                 jnp.fft.fftn(
                     (sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
@@ -358,7 +360,8 @@ class HermiteFourierODE(eqx.Module):
         alpha: Array,
         u: Array,
         q: float,
-        Omega_c: float,
+        Omega_ce_tau: float,
+        m: float,
     ) -> Array:
         """
         Compute only the Lorentz force (E-field + B-field) contribution to dCk/dt.
@@ -372,7 +375,8 @@ class HermiteFourierODE(eqx.Module):
             alpha: Thermal velocities, shape (3,) = (alpha_x, alpha_y, alpha_z)
             u: Drift velocities, shape (3,) = (u_x, u_y, u_z)
             q: Species charge (scalar)
-            Omega_c: Cyclotron frequency (scalar)
+            Omega_ce_tau: Reference cyclotron frequency (electron mass normalized)
+            m: Species mass (1.0 for electrons, mi_me for ions)
 
         Returns:
             Lorentz force dCk/dt with shape (Np, Nm, Nn, Ny, Nx, Nz)
@@ -419,8 +423,8 @@ class HermiteFourierODE(eqx.Module):
 
         # Lorentz force: E-field + B-field coupling via auxiliary fields
         return (
-            q
-            * Omega_c
+            (q / m)
+            * Omega_ce_tau
             * (
                 jnp.fft.fftn(
                     (sqrt_n_minus * jnp.sqrt(2) / a0) * F[0] * self.shift_multi(C, dn=-1, dm=0, dp=0)
@@ -446,7 +450,8 @@ class HermiteFourierODE(eqx.Module):
         alpha: Array,
         u: Array,
         q: float,
-        Omega_c: float,
+        Omega_ce_tau: float,
+        m: float,
         closure_n=None,
         closure_m=None,
         closure_p=None,
@@ -463,7 +468,8 @@ class HermiteFourierODE(eqx.Module):
             alpha: Thermal velocities for single species, shape (3,) = (alpha_x, alpha_y, alpha_z)
             u: Drift velocities for single species, shape (3,) = (u_x, u_y, u_z)
             q: Species charge (scalar)
-            Omega_c: Cyclotron frequency (scalar)
+            Omega_ce_tau: Reference cyclotron frequency (electron mass normalized)
+            m: Species mass (1.0 for electrons, mi_me for ions)
             closure_n: Optional closure for n-direction (x-velocity)
             closure_m: Optional closure for m-direction (y-velocity)
             closure_p: Optional closure for p-direction (z-velocity)
@@ -472,4 +478,4 @@ class HermiteFourierODE(eqx.Module):
             dCk/dt with shape (Np, Nm, Nn, Ny, Nx, Nz)
         """
         # Simple wrapper - sharding is now handled at higher level (VectorField)
-        return self._compute_rhs(Ck, C, F, nu, D, alpha, u, q, Omega_c, closure_n, closure_m, closure_p)
+        return self._compute_rhs(Ck, C, F, nu, D, alpha, u, q, Omega_ce_tau, m, closure_n, closure_m, closure_p)
