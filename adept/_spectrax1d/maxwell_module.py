@@ -25,11 +25,10 @@ This follows from the Hermite-Fourier Vlasov-Maxwell equations:
   Combined → ω² = ξ² + q² = ξ² + 1  (for q = -1, Omega_cs[0] = 1)
 """
 
-import os
-
 import numpy as np
 
 from adept._spectrax1d.base_module import BaseSpectrax1D
+from adept._spectrax1d.plotting import plot_em_diagnostics
 
 
 class Maxwell1D(BaseSpectrax1D):
@@ -53,54 +52,6 @@ class Maxwell1D(BaseSpectrax1D):
         phase = np.unwrap(np.angle(field_k1))
         dt = t_array[1] - t_array[0]
         return -np.gradient(phase, dt), t_array
-
-    def _plot_em_diagnostics(
-        self,
-        Fk: np.ndarray,
-        t_array: np.ndarray,
-        Nx: int,
-        Ny: int,
-        Nz: int,
-        td: str,
-    ) -> None:
-        """
-        Plot Ey amplitude (log scale) and instantaneous frequency for the k=1 mode.
-
-        Creates a 2-panel figure saved as em_wave_k1_diagnostics.png.
-        """
-        import matplotlib.pyplot as plt
-
-        idx_k1 = 1
-        idx_k0 = 0
-        if idx_k1 >= Nx:
-            return
-
-        Ey_k1 = Fk[:, 1, idx_k0, idx_k1, idx_k0]
-        amplitude = np.abs(Ey_k1)
-        frequencies, _ = self._compute_em_frequency(Ey_k1, t_array)
-
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
-        fig.suptitle("EM Wave k=1 Diagnostics (Ey component)", fontsize=14)
-
-        # Left: amplitude on log scale
-        safe_amplitude = np.maximum(amplitude, 1e-30)
-        axes[0].semilogy(t_array, safe_amplitude, "b-", linewidth=2)
-        axes[0].set_xlabel(r"Time ($\omega_{pe}^{-1}$)")
-        axes[0].set_ylabel(r"$|E_y(k=1)|$")
-        axes[0].set_title("EM Wave Amplitude")
-        axes[0].grid(True, alpha=0.3)
-
-        # Right: instantaneous frequency
-        axes[1].plot(t_array, frequencies, "r-", linewidth=2)
-        axes[1].axhline(y=np.sqrt(2.0), color="k", linestyle="--", alpha=0.5, label=r"$\sqrt{2}$ (ξ=1, ωpe=1)")
-        axes[1].set_xlabel(r"Time ($\omega_{pe}^{-1}$)")
-        axes[1].set_ylabel(r"$\omega$ ($\omega_{pe}$)")
-        axes[1].set_title("EM Wave Instantaneous Frequency")
-        axes[1].legend(loc="best", fontsize=9)
-        axes[1].grid(True, alpha=0.3)
-
-        plt.savefig(os.path.join(td, "plots", "em_wave_k1_diagnostics.png"), bbox_inches="tight")
-        plt.close()
 
     def post_process(self, run_output: dict, td: str) -> dict:
         """
@@ -143,7 +94,7 @@ class Maxwell1D(BaseSpectrax1D):
             Fk_array = np.asarray(sol.ys["fields"])  # (nt, 6, Ny, Nx, Nz)
             t_array = np.asarray(sol.ts["fields"])
 
-            self._plot_em_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td)
+            plot_em_diagnostics(Fk_array, t_array, Nx, Ny, Nz, td)
 
             idx_k1 = 1
             idx_k0 = 0

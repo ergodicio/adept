@@ -9,6 +9,14 @@ from jax import Array
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule
+from adept._spectrax1d.plotting import (
+    plot_field_mode_amplitudes,
+    plot_fields_lineouts,
+    plot_fields_spacetime,
+    plot_hermite_modes_at_k,
+    plot_moments_lineouts,
+    plot_moments_spacetime,
+)
 from adept._spectrax1d.storage import get_save_quantities, store_scalars, store_species_distribution_timeseries
 
 
@@ -697,92 +705,6 @@ class BaseSpectrax1D(ADEPTModule):
             for key, value in sorted(scalar_outputs.items()):
                 f.write(f"{key}: {value}\n")
 
-    def _plot_hermite_modes_at_k(self, Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td: str) -> None:
-        """Plot Hermite mode amplitudes at kx=1 Fourier mode."""
-        import matplotlib.pyplot as plt
-        import numpy as np
-
-        # k=1 mode at index 1 in standard FFT ordering
-        idx_k1 = 1
-        idx_k0 = 0  # k=0 for other dimensions (1D problem in x)
-
-        if idx_k1 < Nx:
-            # Get kx=1 mode for all time steps and Hermite modes
-            kx1_mode = Ck[:, :, idx_k0, idx_k1, idx_k0]
-
-            # Separate electron and ion contributions
-            electron_modes = kx1_mode[:, : Nn * Nm * Np]
-            ion_modes = kx1_mode[:, Nn * Nm * Np :]
-
-            # Create xarray DataArrays for plotting
-            hermite_mode_indices = np.arange(Nn * Nm * Np)
-
-            electron_amp_da = xr.DataArray(
-                np.abs(electron_modes),
-                coords={"t": t_array, "hermite_mode": hermite_mode_indices},
-                dims=["t", "hermite_mode"],
-                name="electron_amplitude",
-            )
-
-            ion_amp_da = xr.DataArray(
-                np.abs(ion_modes),
-                coords={"t": t_array, "hermite_mode": hermite_mode_indices},
-                dims=["t", "hermite_mode"],
-                name="ion_amplitude",
-            )
-
-            # Create figure with 4 subplots
-            fig, axes = plt.subplots(2, 2, figsize=(8, 4), tight_layout=True)
-            fig.suptitle("Hermite Mode Amplitudes at kx=1", fontsize=14)
-
-            # Electron - Linear scale (time vertical)
-            electron_amp_da.plot(
-                ax=axes[0, 0], y="t", x="hermite_mode", cmap="viridis", cbar_kwargs={"label": r"$|C_{n,m,p}|$"}
-            )
-            axes[0, 0].set_ylabel(r"Time ($\omega_{pe}^{-1}$)")
-            axes[0, 0].set_xlabel("Hermite Mode Index")
-            axes[0, 0].set_title("Electron Species (Linear Scale)")
-
-            # Electron - Log scale (time vertical)
-            (np.log10(electron_amp_da + 1e-20)).plot(
-                ax=axes[0, 1],
-                y="t",
-                x="hermite_mode",
-                cmap="viridis",
-                vmin=-10,
-                vmax=0,
-                cbar_kwargs={"label": r"$\log_{10}(|C_{n,m,p}|)$"},
-            )
-            axes[0, 1].set_ylabel(r"Time ($\omega_{pe}^{-1}$)")
-            axes[0, 1].set_xlabel("Hermite Mode Index")
-            axes[0, 1].set_title("Electron Species (Log Scale)")
-
-            # Ion - Linear scale (time vertical)
-            ion_amp_da.plot(
-                ax=axes[1, 0], y="t", x="hermite_mode", cmap="viridis", cbar_kwargs={"label": r"$|C_{n,m,p}|$"}
-            )
-            axes[1, 0].set_ylabel(r"Time ($\omega_{pe}^{-1}$)")
-            axes[1, 0].set_xlabel("Hermite Mode Index")
-            axes[1, 0].set_title("Ion Species (Linear Scale)")
-
-            # Ion - Log scale (time vertical)
-            (np.log10(ion_amp_da + 1e-20)).plot(
-                ax=axes[1, 1],
-                y="t",
-                x="hermite_mode",
-                cmap="viridis",
-                vmin=-10,
-                vmax=0,
-                cbar_kwargs={"label": r"$\log_{10}(|C_{n,m,p}|)$"},
-            )
-            axes[1, 1].set_ylabel(r"Time ($\omega_{pe}^{-1}$)")
-            axes[1, 1].set_xlabel("Hermite Mode Index")
-            axes[1, 1].set_title("Ion Species (Log Scale)")
-
-            plt.tight_layout()
-            plt.savefig(os.path.join(td, "plots", "hermite_mode_amplitudes_kx1.png"), bbox_inches="tight")
-            plt.close()
-
     def _process_distribution_function(self, Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td: str) -> None:
         """Process and save distribution function (Hermite-Fourier coefficients)."""
         import numpy as np
@@ -810,59 +732,7 @@ class BaseSpectrax1D(ADEPTModule):
         Ck_ds.to_netcdf(os.path.join(td, "binary", "distribution.nc"))
 
         # Create Hermite mode amplitude plots (use original unshifted data)
-        self._plot_hermite_modes_at_k(Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td)
-
-    def _plot_field_mode_amplitudes(self, Fk, t_array, Nx, Ny, Nz, td: str) -> None:
-        """Plot field mode amplitudes for k=1...5."""
-        import matplotlib.pyplot as plt
-        import numpy as np
-
-        # k=0 for other dimensions (1D problem in x)
-        idx_k0 = 0
-
-        # Plot electric field modes
-        fig, axes = plt.subplots(1, 3, figsize=(10, 4), tight_layout=True)
-        fig.suptitle("Electric Field Mode Amplitudes (k=1...5)", fontsize=14)
-
-        field_components = ["Ex", "Ey", "Ez"]
-        for comp_idx, (ax, comp_name) in enumerate(zip(axes, field_components, strict=True)):
-            for k_mode in range(1, 6):
-                if k_mode < Nx:
-                    mode_amplitude = np.abs(Fk[:, comp_idx, idx_k0, k_mode, idx_k0])
-                    ax.plot(t_array, mode_amplitude, label=f"k={k_mode}", linewidth=2)
-
-            ax.set_xlabel(r"Time ($\omega_{pe}^{-1}$)")
-            ax.set_ylabel(f"|{comp_name}|")
-            ax.set_yscale("log")
-            ax.legend(loc="best")
-            ax.grid(True, alpha=0.3)
-            ax.set_title(f"{comp_name} Mode Amplitudes")
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(td, "plots", "field_mode_amplitudes.png"), bbox_inches="tight")
-        plt.close()
-
-        # Plot magnetic field modes
-        fig, axes = plt.subplots(1, 3, figsize=(10, 4), tight_layout=True)
-        fig.suptitle("Magnetic Field Mode Amplitudes (k=1...5)", fontsize=14)
-
-        field_components = ["Bx", "By", "Bz"]
-        for comp_idx, (ax, comp_name) in enumerate(zip(axes, field_components, strict=True)):
-            for k_mode in range(1, 6):
-                if k_mode < Nx:
-                    mode_amplitude = np.abs(Fk[:, 3 + comp_idx, idx_k0, k_mode, idx_k0])
-                    ax.plot(t_array, mode_amplitude, label=f"k={k_mode}", linewidth=2)
-
-            ax.set_xlabel(r"Time ($\omega_{pe}^{-1}$)")
-            ax.set_ylabel(f"|{comp_name}|")
-            ax.set_yscale("log")
-            ax.legend(loc="best")
-            ax.grid(True, alpha=0.3)
-            ax.set_title(f"{comp_name} Mode Amplitudes")
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(td, "plots", "magnetic_field_mode_amplitudes.png"), bbox_inches="tight")
-        plt.close()
+        plot_hermite_modes_at_k(Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td)
 
     def _process_electromagnetic_fields(self, Fk, t_array, Nx, Ny, Nz, td: str) -> None:
         """Process and save electromagnetic fields."""
@@ -893,7 +763,7 @@ class BaseSpectrax1D(ADEPTModule):
         Fk_ds.to_netcdf(os.path.join(td, "binary", "fields.nc"))
 
         # Create field mode amplitude plots (use original unshifted data)
-        self._plot_field_mode_amplitudes(Fk, t_array, Nx, Ny, Nz, td)
+        plot_field_mode_amplitudes(Fk, t_array, Nx, Ny, Nz, td)
 
     def _process_energy_diagnostics(self, array_outputs: dict, t_array, td: str) -> None:
         """Process and save energy diagnostics."""
@@ -972,131 +842,6 @@ class BaseSpectrax1D(ADEPTModule):
             fields_real[name] = field_real
 
         return fields_real
-
-    def _plot_fields_spacetime(self, fields_xr: xr.Dataset, td: str) -> None:
-        """
-        Create spacetime plots for electromagnetic fields.
-
-        Args:
-            fields_xr: xarray Dataset containing field data with (t, x) coordinates
-            td: Temporary directory path
-        """
-        import matplotlib.pyplot as plt
-
-        plots_dir = os.path.join(td, "plots", "fields")
-
-        for field_name, field_data in fields_xr.items():
-            # Spacetime plot
-            field_data.plot()
-            plt.title(f"{field_name} Spacetime")
-            plt.savefig(os.path.join(plots_dir, f"spacetime-{field_name}.png"), bbox_inches="tight")
-            plt.close()
-
-    def _plot_fields_lineouts(self, fields_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
-        """
-        Create facet grid plots showing field snapshots at multiple times.
-
-        Args:
-            fields_xr: xarray Dataset containing field data with (t, x) coordinates
-            td: Temporary directory path
-            n_slices: Number of time slices to show (default: 6)
-        """
-        import matplotlib.pyplot as plt
-
-        plots_dir = os.path.join(td, "plots", "fields", "lineouts")
-
-        for field_name, field_data in fields_xr.items():
-            # Calculate time slice indices
-            nt = field_data.coords["t"].size
-            t_skip = max(1, nt // n_slices)
-            tslice = slice(0, None, t_skip)
-
-            # Create facet plot
-            field_data[tslice].T.plot(col="t", col_wrap=3)
-            plt.savefig(os.path.join(plots_dir, f"{field_name}.png"), bbox_inches="tight")
-            plt.close()
-
-    def _plot_moments_spacetime(self, moments_xr: xr.Dataset, td: str) -> None:
-        """
-        Create spacetime plots for distribution moments.
-
-        Args:
-            moments_xr: xarray Dataset containing moments with (t, x) coordinates
-            td: Temporary directory path
-        """
-        import matplotlib.pyplot as plt
-
-        plots_dir = os.path.join(td, "plots", "moments")
-        os.makedirs(plots_dir, exist_ok=True)
-
-        for name, data in moments_xr.items():
-            if "x" not in data.dims:
-                continue
-            data.plot()
-            plt.title(f"{name} Spacetime")
-            plt.savefig(os.path.join(plots_dir, f"spacetime-{name}.png"), bbox_inches="tight")
-            plt.close()
-
-    def _plot_moments_lineouts(self, moments_xr: xr.Dataset, td: str, n_slices: int = 6) -> None:
-        """
-        Create facet grid plots of moments at multiple times.
-
-        Args:
-            moments_xr: xarray Dataset containing moments with (t, x) coordinates
-            td: Temporary directory path
-            n_slices: Number of time slices to show
-        """
-        import matplotlib.pyplot as plt
-
-        plots_dir = os.path.join(td, "plots", "moments", "lineouts")
-        os.makedirs(plots_dir, exist_ok=True)
-
-        for name, data in moments_xr.items():
-            if "x" not in data.dims:
-                continue
-            nt = data.coords["t"].size
-            t_skip = max(1, nt // n_slices)
-            tslice = slice(0, None, t_skip)
-
-            data[tslice].T.plot(col="t", col_wrap=3)
-            plt.savefig(os.path.join(plots_dir, f"{name}.png"), bbox_inches="tight")
-            plt.close()
-
-    def _plot_distribution_facets(self, dist_xr: xr.Dataset, td: str, n_timesteps: int = 6) -> None:
-        """
-        Create facet plots of distribution in (kx, hermite_mode) space for multiple timesteps.
-
-        Args:
-            dist_xr: xarray Dataset containing Ck with dimensions (t, hermite_mode, ky, kx, kz)
-            td: Temporary directory path
-            n_timesteps: Number of timesteps to show (default: 6)
-        """
-        import matplotlib.pyplot as plt
-        import numpy as np
-
-        plots_dir = os.path.join(td, "plots", "distributions")
-
-        Ck = dist_xr["Ck"]
-
-        # Get center indices for y and z (assume 1D in x)
-        center_y = int((Ck.coords["ky"].size - 1) / 2)
-        center_z = int((Ck.coords["kz"].size - 1) / 2)
-
-        # Slice to get (t, hermite_mode, kx) at center ky, kz
-        Ck_slice = Ck[:, :, center_y, :, center_z]
-
-        # Select timesteps
-        nt = Ck_slice.coords["t"].size
-        t_indices = np.linspace(0, nt - 1, n_timesteps, dtype=int)
-        Ck_selected = Ck_slice.isel(t=t_indices)
-
-        # Plot amplitude (log scale)
-        amplitude = np.log10(np.abs(Ck_selected) + 1e-20)
-        amplitude.plot(
-            x="kx", y="hermite_mode", col="t", col_wrap=3, cmap="viridis", cbar_kwargs={"label": r"$\log_{10}(|C_k|)$"}
-        )
-        plt.savefig(os.path.join(plots_dir, "Ck_amplitude_facets.png"), bbox_inches="tight")
-        plt.close()
 
     def post_process(self, run_output: dict, td: str) -> dict:
         """
@@ -1199,8 +944,8 @@ class BaseSpectrax1D(ADEPTModule):
 
                     # Create spacetime and lineout plots (same as Fourier-space path)
                     if axis_name == "x":
-                        self._plot_fields_spacetime(fields_xr, td)
-                        self._plot_fields_lineouts(fields_xr, td)
+                        plot_fields_spacetime(fields_xr, td)
+                        plot_fields_lineouts(fields_xr, td)
                 else:
                     # Electromagnetic fields in Fourier space - convert to real space and plot
                     Fk_array = np.asarray(fields_data)  # Shape: (nt, 6, Ny, Nx, Nz)
@@ -1223,8 +968,8 @@ class BaseSpectrax1D(ADEPTModule):
                     saved_datasets["fields"] = fields_xr
 
                     # Create plots
-                    self._plot_fields_spacetime(fields_xr, td)
-                    self._plot_fields_lineouts(fields_xr, td)
+                    plot_fields_spacetime(fields_xr, td)
+                    plot_fields_lineouts(fields_xr, td)
 
             elif k in ["hermite", "distribution"]:
                 # Distribution function (Hermite coefficients) - per-species dict
@@ -1265,8 +1010,8 @@ class BaseSpectrax1D(ADEPTModule):
                 moments_xr.to_netcdf(os.path.join(binary_dir, f"moments-t={round(t_array[-1], 4)}.nc"))
                 saved_datasets["moments"] = moments_xr
 
-                self._plot_moments_spacetime(moments_xr, td)
-                self._plot_moments_lineouts(moments_xr, td)
+                plot_moments_spacetime(moments_xr, td)
+                plot_moments_lineouts(moments_xr, td)
 
         # Compute metrics for MLflow
         metrics = {
