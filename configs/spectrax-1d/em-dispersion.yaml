@@ -45,13 +45,11 @@ physics:
   Lz: 1.0
 
   mi_me: 1836.0
-  Ti_Te: 1.0
   qs: [-1.0, 1.0]
 
-  alpha_e: [0.06, 0.06, 0.06]
   alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
   u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
-  Omega_cs: [1.0, 0.00054]
+  Omega_ce_tau: 1.0
   nu: 1.0
 
   nx: 0
@@ -100,24 +98,6 @@ grid:
   integrator: "exponential"
   solver: "Dopri8"
   adaptive_time_step: false
-
-initialization:
-  fields:
-    method: fourier
-    components:
-      electric:
-        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
-  distribution:
-    method: maxwellian_with_perturbation
-    species:
-      electron:
-        temperature_ratio: 1.0
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0
-      ion:
-        temperature_ratio: 0.01
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0
 
 save:
   default:

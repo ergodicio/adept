@@ -326,7 +326,8 @@ class NonlinearVectorField(eqx.Module):
 
         # Unpack physical parameters
         qs = args["qs"]
-        Omega_cs = args["Omega_cs"]
+        Omega_ce_tau = args["Omega_ce_tau"]
+        mi_me = args["mi_me"]
         alpha_s = args["alpha_s"]
         u_s = args["u_s"]
 
@@ -336,13 +337,15 @@ class NonlinearVectorField(eqx.Module):
         C_ions = jnp.fft.ifftn(Ck_ions * self.mask23, axes=(-3, -2, -1), norm="forward")
 
         # Compute Lorentz force (E-field + B-field coupling) for each species
+        # Species mass: electrons = 1.0 (reference), ions = mi_me
         dCk_electrons_dt = self.hermite_fourier_ode_electrons._compute_lorentz_rhs(
             C=C_electrons,
             F=F,
             alpha=alpha_s[:3],
             u=u_s[:3],
             q=qs[0],
-            Omega_c=Omega_cs[0],
+            Omega_ce_tau=Omega_ce_tau,
+            m=1.0,
         )
 
         if self.static_ions:
@@ -354,7 +357,8 @@ class NonlinearVectorField(eqx.Module):
                 alpha=alpha_s[3:],
                 u=u_s[3:],
                 q=qs[1],
-                Omega_c=Omega_cs[1],
+                Omega_ce_tau=Omega_ce_tau,
+                m=mi_me,
             )
 
         # Apply Hermite filter
@@ -402,8 +406,8 @@ class NonlinearVectorField(eqx.Module):
             )
             current = current_electrons + current_ions
 
-        # dE/dt contribution: -J/Omega_c + driver (no curl term)
-        dEk_dt = -current / Omega_cs[0] + driver
+        # dE/dt contribution: -J/Omega_ce_tau + driver (no curl term)
+        dEk_dt = -current / Omega_ce_tau + driver
 
         # dB/dt = 0 from nonlinear terms (Faraday curls are linear, handled by exponential)
         dBk_dt = jnp.zeros_like(Fk[3:])

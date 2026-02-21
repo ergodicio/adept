@@ -17,25 +17,21 @@ physics:
   Ly: 1.0
   Lz: 1.0
 
-  # Mass and temperature ratios
+  # Mass ratio
   mi_me: 1836.0
-  Ti_Te: 1.0
 
   # Species charges [electron, ion]
   qs: [-1.0, 1.0]
 
-  # Electron thermal velocities [vx, vy, vz]
-  # alpha_e = 0.06 gives klambda_D = 0.266 for k=2π
-  alpha_e: [0.06, 0.06, 0.06]
-
   # Species thermal velocities [e_vx, e_vy, e_vz, i_vx, i_vy, i_vz]
+  # alpha_e = 0.06 gives klambda_D = 0.266 for k=2π
   alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
 
   # Bulk velocities [e_ux, e_uy, e_uz, i_ux, i_uy, i_uz]
   u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-  # Cyclotron frequencies [electron, ion]
-  Omega_cs: [1.0, 0.00054]
+  # Cyclotron frequency (nondimensional, electron mass normalized)
+  Omega_ce_tau: 1.0
 
   # Collision frequency
   nu: 1.0

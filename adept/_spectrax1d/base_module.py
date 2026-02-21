@@ -248,12 +248,10 @@ class BaseSpectrax1D(ADEPTModule):
             "Ly": float(physics["Ly"]),
             "Lz": float(physics["Lz"]),
             "mi_me": float(physics["mi_me"]),
-            "Ti_Te": float(physics["Ti_Te"]),
             "qs": physics["qs"],
-            "alpha_e": physics["alpha_e"],
             "alpha_s": physics["alpha_s"],
             "u_s": physics["u_s"],
-            "Omega_cs": physics["Omega_cs"],
+            "Omega_ce_tau": float(physics["Omega_ce_tau"]),
             "nu": float(physics["nu"]),
             "t_max": float(grid["tmax"]),
             "nx": int(physics["nx"]),
@@ -317,15 +315,15 @@ class BaseSpectrax1D(ADEPTModule):
         nx, ny, nz = input_parameters["nx"], input_parameters["ny"], input_parameters["nz"]
         Lx, Ly, Lz = input_parameters["Lx"], input_parameters["Ly"], input_parameters["Lz"]
         dn = input_parameters["dn1"]
-        Omega_cs = input_parameters["Omega_cs"]
+        Omega_ce_tau = input_parameters["Omega_ce_tau"]
 
         n = nx + ny + nz
         L = Lx * jnp.sign(nx) + Ly * jnp.sign(ny) + Lz * jnp.sign(nz)
         E_field_component = int(jnp.sign(ny) + 2 * jnp.sign(nz))
 
         # Set field perturbation at ±k modes using standard FFT indexing (k=0 at index 0)
-        if n != 0 and Omega_cs[0] != 0:
-            amplitude = dn * L / (4 * jnp.pi * n * Omega_cs[0])
+        if n != 0 and Omega_ce_tau != 0:
+            amplitude = dn * L / (4 * jnp.pi * n * Omega_ce_tau)
 
             # Set -k mode
             idx_x_minus = fft_index(-nx, Nx)
@@ -473,7 +471,8 @@ class BaseSpectrax1D(ADEPTModule):
             "qs": jnp.array(input_params["qs"]),
             "nu": float(input_params["nu"]),
             "D": 0.0,  # Diffusion coefficient (typically zero unless specified)
-            "Omega_cs": jnp.array(input_params["Omega_cs"]),
+            "Omega_ce_tau": float(input_params["Omega_ce_tau"]),
+            "mi_me": float(input_params["mi_me"]),
             "alpha_s": jnp.array(input_params["alpha_s"]),
             "u_s": jnp.array(input_params["u_s"]),
         }
@@ -788,11 +787,7 @@ class BaseSpectrax1D(ADEPTModule):
 
     def _process_grid_data(self, array_outputs: dict, td: str) -> None:
         """Process and save grid data arrays."""
-        other_arrays = {
-            k: array_outputs[k]
-            for k in ["k2_grid", "collision_matrix", "alpha_e", "alpha_s", "Dmega_cs"]
-            if k in array_outputs
-        }
+        other_arrays = {k: array_outputs[k] for k in ["k2_grid", "collision_matrix", "alpha_s"] if k in array_outputs}
         if other_arrays:
             # Save each array with appropriate dimensions
             data_vars = {}

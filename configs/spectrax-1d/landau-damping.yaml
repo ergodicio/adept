@@ -27,30 +27,23 @@ physics:
   Ly: 1.0
   Lz: 1.0
 
-  # Mass and temperature ratios
-  # TOML: mi_me = 1836.0, Ti_Te = 1.0
+  # Mass ratio
+  # TOML: mi_me = 1836.0
   mi_me: 1836.0
-  Ti_Te: 1.0
 
   # Species charges [electron, ion]
   # TOML: qs = [-1.0, 1.0]
   qs: [-1.0, 1.0]
 
-  # Electron thermal velocities [vx, vy, vz]
-  # TOML: alpha_e = [0.1, 0.1, 0.1]
-  alpha_e: [0.06, 0.06, 0.06]
-
   # Species thermal velocities [e_vx, e_vy, e_vz, i_vx, i_vy, i_vz]
-  # TOML: alpha_s = [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
   alpha_s: [0.06, 0.06, 0.06, 0.0023, 0.0023, 0.0023]
 
   # Bulk velocities [e_ux, e_uy, e_uz, i_ux, i_uy, i_uz]
   # TOML: u_s = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
   u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
-  # Cyclotron frequencies [electron, ion]
-  # TOML: Omega_cs = [1.0, 0.00054]
-  Omega_cs: [1.0, 0.00054]
+  # Cyclotron frequency (nondimensional, electron mass normalized)
+  Omega_ce_tau: 1.0
 
   # Collision frequency
   # TOML: nu = 1.0
@@ -121,38 +114,6 @@ grid:
   # TOML: solver = "Dopri8", adaptive_time_step (optional)
   solver: "Dopri8"  # Diffrax solver name (Dopri8, Tsit5, Euler, Heun, etc.)
   adaptive_time_step: true  # Use adaptive time-stepping (default: true)
-
-# Initial conditions configuration
-# Used by get_solver_quantities() to build Fk_0 and Ck_0 arrays
-initialization:
-  # Electromagnetic field initialization
-  fields:
-    method: fourier  # Initialize in Fourier space
-    # Perturbation setup (maps to user's Fk_0 initialization code)
-    # Sets E field at mode (±nx, ±ny, ±nz) with amplitude dn*L/(4π*n*Omega_cs[0])
-    components:
-      electric:
-        # Which component: "Ex" (ny=0,nz=0), "Ey" (ny≠0), "Ez" (nz≠0)
-        # Calculated by: E_field_component = int(sign(ny) + 2*sign(nz))
-        amplitude_formula: "dn * L / (4 * pi * n * Omega_cs[0])"
-
-  # Distribution function initialization
-  distribution:
-    method: maxwellian_with_perturbation  # Perturbed Maxwellian
-    # Maps to user's Ck_0 initialization code
-    species:
-      electron:
-        # Equilibrium: Ck_0[0, Ny/2, Nx/2, Nz/2] = 1/alpha_s[0]^3
-        # Perturbation at ±k: Ck_0[0, ...] = ±i/(2*alpha_s[0]^3) * dn
-        temperature_ratio: 1.0  # Relative to normalizing_temperature
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0  # Uses physics.density_perturbation
-
-      ion:
-        # Equilibrium only: Ck_0[Nn*Nm*Np, Ny/2, Nx/2, Nz/2] = 1/alpha_s[1]^3
-        temperature_ratio: 0.01  # Ti/Te = 0.01 (if alpha_s[1] = 0.1)
-        equilibrium_density: 1.0
-        perturbation_amplitude: 0.0  # Unperturbed
 
 # Output configuration
 # Specifies which quantities to save during the simulation and at what times
