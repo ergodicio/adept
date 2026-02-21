@@ -27,7 +27,7 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
     defaults["drivers"]["ex"]["0"]["w0"] = float(np.real(root))
     xmax = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = xmax
-    defaults["mlflow"]["experiment"] = "vlasov1d-test-resonance"
+    defaults["mlflow"]["experiment"] = "test-adept-vlasov1d-landau-damping"
 
     return defaults, root
 
@@ -86,4 +86,4 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
 
 
 if __name__ == "__main__":
-    test_single_resonance(real_or_imag="real")
+    test_single_resonance(real_or_imag="real", time="leapfrog", field="poisson", edfdv="exponential")

@@ -3,7 +3,7 @@
 
 import numpy as np
 import pint
-from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
+from diffrax import ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import numpy as jnp
 
 from adept import ADEPTModule
@@ -300,6 +300,7 @@ class BaseVlasov1D(ADEPTModule):
             y0=self.state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+            progress_meter=TqdmProgressMeter(refresh_steps=self.cfg["grid"]["max_steps"] // 100),
         )
 
         return {"solver result": solver_result}
