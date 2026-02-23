@@ -46,6 +46,14 @@ save:
       tmin: 0.0
       tmax: 480.0
       nt: 9
+    x:
+      xmin: 0.0
+      xmax: 20.94
+      nx: 24
+    v:
+      vmin: -6.4
+      vmax: 6.4
+      nv: 384
 
 solver: vlasov-1d
 
@@ -70,7 +78,7 @@ drivers:
 
 terms:
   field: poisson
-  edfdv: cubic-spline
+  edfdv: exponential
   time: leapfrog
   diags: false
   fokker_planck:
