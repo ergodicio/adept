@@ -167,7 +167,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         out_shape = kxq.shape
 
         def dist_save_func(t, y, args):
-            fkx = jnp.fft.rfft(y[dist_key], axes=0)
+            fkx = jnp.abs(jnp.fft.rfft(y[dist_key], axes=0))
             return interp2d(kxq_flat, vq_flat, axes["kx"], axes["v"], fkx, method="linear").reshape(out_shape)
 
     elif {"t", "x", "kv"} == set(dist_save_config.keys()):
