@@ -26,6 +26,7 @@ dependencies = [
     { name = "h5netcdf" },
     { name = "interpax" },
     { name = "jax" },
+    { name = "jpu" },
     { name = "lineax" },
     { name = "matplotlib" },
     { name = "mlflow" },
@@ -81,6 +82,7 @@ requires-dist = [
     { name = "interpax", git = "https://github.com/f0uriest/interpax.git" },
     { name = "jax" },
     { name = "jax", extras = ["cuda12"], marker = "extra == 'gpu'" },
+    { name = "jpu", specifier = ">=0.0.5" },
     { name = "lineax" },
     { name = "matplotlib" },
     { name = "mlflow" },
@@ -1343,6 +1345,19 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/41/f2/d34e8b3a08a9cc79a50b2208a93dce981fe615b64d5a4d4abee421d898df/joblib-1.5.3.tar.gz", hash = "sha256:8561a3269e6801106863fd0d6d84bb737be9e7631e33aaed3fb9ce5953688da3", size = 331603, upload-time = "2025-12-15T08:41:46.427Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7b/91/984aca2ec129e2757d1e4e3c81c3fcda9d0f85b74670a094cc443d9ee949/joblib-1.5.3-py3-none-any.whl", hash = "sha256:5fc3c5039fc5ca8c0276333a188bbd59d6b7ab37fe6632daa76bc7f9ec18e713", size = 309071, upload-time = "2025-12-15T08:41:44.973Z" },
+]
+
+[[package]]
+name = "jpu"
+version = "0.0.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "jax" },
+    { name = "pint" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/01/09/0664eb92c03d1e80e2b6fd852c76ed08cbbb9b96859534322906b34c5b6c/jpu-0.0.5.tar.gz", hash = "sha256:e0b7e879e5f56dbd2e496813aaae2da0ccb68120aba3f77cbbff0faa1456fc4b", size = 19026, upload-time = "2025-04-26T18:20:38.421Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ff/d4/ac67e27bd9a95c3839b5808239fa0ae6b925a130a9b89cfb4f0a5bb8b94e/jpu-0.0.5-py3-none-any.whl", hash = "sha256:89a4f35f96e8c49fe3be8813e2f3bf122dacf4386fb7471ed97ba1a41e3d31aa", size = 15946, upload-time = "2025-04-26T18:20:37.283Z" },
 ]
 
 [[package]]
