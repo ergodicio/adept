@@ -1,4 +1,5 @@
 import os
+from functools import partial
 
 import numpy as np
 import xarray as xr
@@ -69,8 +70,16 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
 
     data_vars = {}
     for spc in species_to_save:
-        v = cfg["grid"]["species_grids"][spc]["v"]
-        data_vars[spc] = xr.DataArray(ys[spc], coords=(("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v)))
+        spc_save_cfg = cfg["save"][spc]
+        save_keys = set(spc_save_cfg.keys()) - {"t", "func"}
+        if {"x", "v"} <= save_keys:
+            coords = (("t", this_t[spc]), ("x", spc_save_cfg["x"]["ax"]), ("v", spc_save_cfg["v"]["ax"]))
+        elif {"kx", "v"} <= save_keys:
+            coords = (("t", this_t[spc]), ("kx", spc_save_cfg["kx"]["ax"]), ("v", spc_save_cfg["v"]["ax"]))
+        else:
+            v = cfg["grid"]["species_grids"][spc]["v"]
+            coords = (("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v))
+        data_vars[spc] = xr.DataArray(ys[spc], coords=coords)
 
     f_store = xr.Dataset(data_vars)
     f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))
@@ -145,30 +154,21 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
             return y[dist_key]
 
     elif {"t", "x", "v"} == set(dist_save_config.keys()):
+        xq, vq = jnp.meshgrid(dist_save_config["x"]["ax"], dist_save_config["v"]["ax"], indexing="ij")
+        xq_flat, vq_flat = xq.ravel(), vq.ravel()
+        out_shape = xq.shape
 
         def dist_save_func(t, y, args):
-            fkx = jnp.fft.rfft(y[dist_key], axes=0)
-            return interp2d(
-                dist_save_config["x"]["ax"],
-                dist_save_config["v"]["ax"],
-                axes["x"],
-                axes["v"],
-                fkx,
-                kind="linear",
-            )
+            return interp2d(xq_flat, vq_flat, axes["x"], axes["v"], y[dist_key], method="linear").reshape(out_shape)
 
     elif {"t", "kx", "v"} == set(dist_save_config.keys()):
+        kxq, vq = jnp.meshgrid(dist_save_config["kx"]["ax"], dist_save_config["v"]["ax"], indexing="ij")
+        kxq_flat, vq_flat = kxq.ravel(), vq.ravel()
+        out_shape = kxq.shape
 
         def dist_save_func(t, y, args):
             fkx = jnp.fft.rfft(y[dist_key], axes=0)
-            return interp2d(
-                dist_save_config["kx"]["ax"],
-                dist_save_config["v"]["ax"],
-                axes["kx"],
-                axes["v"],
-                fkx,
-                kind="linear",
-            )
+            return interp2d(kxq_flat, vq_flat, axes["kx"], axes["v"], fkx, method="linear").reshape(out_shape)
 
     elif {"t", "x", "kv"} == set(dist_save_config.keys()):
         pass
