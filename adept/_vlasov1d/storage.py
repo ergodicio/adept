@@ -77,9 +77,7 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
         elif {"kx", "v"} <= save_keys:
             coords = (("t", this_t[spc]), ("kx", spc_save_cfg["kx"]["ax"]), ("v", spc_save_cfg["v"]["ax"]))
         else:
-            warnings.warn(
-                f"Saving distribution for species '{spc}' at full resolution.", stacklevel=2, category=ResourceWarning
-            )
+            warnings.warn(f"Saving distribution for species '{spc}' at full resolution.", stacklevel=2)
             v = cfg["grid"]["species_grids"][spc]["v"]
             coords = (("t", this_t[spc]), ("x", cfg["grid"]["x"]), ("v", v))
         data_vars[spc] = xr.DataArray(ys[spc], coords=coords)
