@@ -99,7 +99,7 @@ def test_driven_epw_dispersion(base_cfg, static_ions):
     base_cfg["grid"]["integrator"] = "exponential"
     base_cfg["grid"]["adaptive_time_step"] = False
 
-    base_cfg["mlflow"]["experiment"] = "spectrax1d-epw-test"
+    base_cfg["mlflow"]["experiment"] = "test-adept-spectrax1d-epw"
     base_cfg["mlflow"]["run"] = f"epw1d-exponential-{'static' if static_ions else 'mobile'}-{klambda_D:.3f}"
 
     measured_freq, measured_damp, expected_freq, expected_damp = _run_driven_epw(base_cfg, klambda_D)
