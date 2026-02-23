@@ -45,7 +45,6 @@ def _run_driven_epw(cfg: dict, klambda_D: float) -> tuple[float, float, float, f
     alpha_e = klambda_D * np.sqrt(2) / k
     alpha_i = alpha_e * np.sqrt(1e-3)  # cold ions: Ti/Te = 0.001
 
-    cfg["physics"]["alpha_e"] = [alpha_e] * 3
     cfg["physics"]["alpha_s"][:3] = [alpha_e] * 3
     cfg["physics"]["alpha_s"][3:6] = [alpha_i] * 3
 
