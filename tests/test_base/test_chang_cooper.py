@@ -5,8 +5,6 @@ Unit tests for Fokker-Planck utilities and model contracts.
 
 Tests cover:
 - chang_cooper_delta edge cases (w→0, w→∞)
-- FastVFP kernel math properties
-- Type 1 vs Type 2 model contracts
 """
 
 import jax
@@ -17,9 +15,7 @@ import numpy as np
 import pytest
 from jax import numpy as jnp
 
-from adept._vlasov1d.solvers.pushers.fokker_planck import LenardBernstein
 from adept.driftdiffusion import chang_cooper_delta
-from adept.vfp1d.fokker_planck import FastVFP
 
 
 def test_delta_small_w():
