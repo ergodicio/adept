@@ -13,12 +13,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v6
 
-    - uses: actions/setup-python@v6
-      with:
-          python-version-file: "pyproject.toml"
+    - uses: astral-sh/setup-uv@v6
 
     - name: Install pre-commit
-      run: pip install pre-commit
+      run: uv tool install pre-commit --with pre-commit-uv
 
     - name: Run pre-commit autoupdate
       run: pre-commit autoupdate
