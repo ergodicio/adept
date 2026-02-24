@@ -109,8 +109,8 @@ class GridModel(BaseModel):
 
 class TimeSaveModel(BaseModel):
     dt: str
-    tmax: str
-    tmin: str
+    tmax: str | None = None  # Optional: defaults to grid.tmax at runtime
+    tmin: str | None = None  # Optional: defaults to grid.tmin at runtime
 
 
 class XSaveModel(BaseModel):

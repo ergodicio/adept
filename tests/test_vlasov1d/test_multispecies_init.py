@@ -50,7 +50,7 @@ def test_multispecies_state_initialization():
     # Check ion velocity grid
     ion_grid = module.cfg["grid"]["species_grids"]["ion"]
     assert ion_grid["nv"] == 256
-    assert ion_grid["vmax"] == 0.15
+    assert ion_grid["vmax"] == 0.005
     assert len(ion_grid["v"]) == 256
 
     # Check species_params

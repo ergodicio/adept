@@ -282,12 +282,14 @@ class CombinedLinearExponential:
         maxwell: MaxwellExponential,
         diag_e: DiagonalExponential,
         diag_i: DiagonalExponential,
+        static_ions: bool = False,
     ):
         self.free_stream_e = free_stream_e
         self.free_stream_i = free_stream_i
         self.maxwell = maxwell
         self.diag_e = diag_e
         self.diag_i = diag_i
+        self.static_ions = static_ions
 
     def apply(self, y: dict, s: float) -> dict:
         """
@@ -309,8 +311,9 @@ class CombinedLinearExponential:
         Ck_e = self.free_stream_e.apply(Ck_e, s)
         Ck_e = self.diag_e.apply(Ck_e, s)
 
-        Ck_i = self.free_stream_i.apply(Ck_i, s)
-        Ck_i = self.diag_i.apply(Ck_i, s)
+        if not self.static_ions:
+            Ck_i = self.free_stream_i.apply(Ck_i, s)
+            Ck_i = self.diag_i.apply(Ck_i, s)
 
         # Apply Maxwell rotation to fields
         Fk = self.maxwell.apply(Fk, s)
@@ -339,6 +342,7 @@ def build_combined_exponential(
     Nx: int,
     Ny: int,
     Nz: int,
+    static_ions: bool = False,
 ) -> CombinedLinearExponential:
     """
     Factory function to build the CombinedLinearExponential from grid quantities.
@@ -421,4 +425,5 @@ def build_combined_exponential(
         maxwell=maxwell,
         diag_e=diag_e,
         diag_i=diag_i,
+        static_ions=static_ions,
     )

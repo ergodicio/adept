@@ -51,8 +51,8 @@ class GridModel(BaseModel):
 
 
 class TimeSaveModel(BaseModel):
-    tmin: float
-    tmax: float
+    tmin: float | None = None  # Optional: defaults to grid.tmin at runtime
+    tmax: float | None = None  # Optional: defaults to grid.tmax at runtime
     nt: int
 
 
