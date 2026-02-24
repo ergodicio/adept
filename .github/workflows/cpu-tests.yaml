@@ -1,8 +1,5 @@
-# This is a basic workflow to help you get started with Actions
-
 name: cpu-tests
 
-# Controls when the action will run.
 on:
   pull_request:
 
@@ -18,104 +15,53 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   test-base:
     runs-on: ubuntu-latest
     steps:
-    - name: set up Git repository
-      uses: actions/checkout@v6
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v6
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install .[dev]
-
     - name: Test with pytest
-      run: |
-        pytest tests/test_base
+      run: uv run --locked pytest tests/test_base
 
   test-lpse2d:
     runs-on: ubuntu-latest
     steps:
-    - name: set up Git repository
-      uses: actions/checkout@v6
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v6
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install .[dev]
-
     - name: Test with pytest
-      run: |
-        pytest tests/test_lpse2d
+      run: uv run --locked pytest tests/test_lpse2d
 
   test-vlasov1d:
     runs-on: ubuntu-latest
     steps:
-    - name: set up Git repository
-      uses: actions/checkout@v6
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v6
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install .[dev]
-
     - name: Test with pytest
-      run: |
-        pytest tests/test_vlasov1d
+      run: uv run --locked pytest tests/test_vlasov1d
 
   test-vfp1d:
     runs-on: ubuntu-latest
     steps:
-    - name: set up Git repository
-      uses: actions/checkout@v6
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v6
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install .[dev]
-
     - name: Test with pytest
-      run: |
-        pytest tests/test_vfp1d
+      run: uv run --locked pytest tests/test_vfp1d
 
   test-spectrax1d:
     runs-on: ubuntu-latest
     steps:
-    - name: set up Git repository
-      uses: actions/checkout@v6
-
-    - name: Set up Python 3.11
-      uses: actions/setup-python@v6
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
-
-    - name: Install dependencies
-      run: |
-        pip install --upgrade pip
-        pip install .[dev]
-
     - name: Test with pytest
-      run: |
-        pytest tests/test_spectrax1d
+      run: uv run --locked pytest tests/test_spectrax1d

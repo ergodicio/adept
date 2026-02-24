@@ -25,6 +25,11 @@ repos:
   hooks:
   - id: validate-pyproject
 
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.10.5
+  hooks:
+  - id: uv-lock
+
 - repo: https://github.com/astral-sh/ruff-pre-commit
   # Ruff version.
   rev: v0.15.2
