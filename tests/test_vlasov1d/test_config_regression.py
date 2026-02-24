@@ -27,6 +27,21 @@ CONFIG_FILES = [
 ]
 
 
+def round_float(value, sig_figs=14):
+    """Round a float to a given number of significant figures.
+
+    This avoids platform-specific floating-point representation differences
+    (e.g., 1.9625000000000001 vs 1.9625) that cause test failures when
+    comparing across macOS and Linux.
+    """
+    if value == 0:
+        return 0.0
+    from math import floor, log10
+
+    magnitude = floor(log10(abs(value)))
+    return round(value, sig_figs - 1 - magnitude)
+
+
 def normalize_for_regression(obj):
     """Recursively convert JAX/numpy arrays and Pint quantities for regression testing."""
     # Check for Pint Quantity first (has magnitude and units attributes)
@@ -34,9 +49,15 @@ def normalize_for_regression(obj):
         return str(obj)
     # Handle numpy scalar types (np.float64, np.int64, etc.)
     elif isinstance(obj, (np.floating, np.integer)):
-        return obj.item()
+        val = obj.item()
+        if isinstance(val, float):
+            return round_float(val)
+        return val
+    elif isinstance(obj, float):
+        return round_float(obj)
     elif hasattr(obj, "tolist"):
-        return np.array(obj).tolist()
+        # Convert array to list first, then normalize each element
+        return normalize_for_regression(np.array(obj).tolist())
     elif isinstance(obj, dict):
         return {k: normalize_for_regression(v) for k, v in obj.items()}
     elif isinstance(obj, (list, tuple)):

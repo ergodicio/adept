@@ -34,7 +34,7 @@ drivers:
       x_width: 4000000.0
   ey: {}
 grid:
-  beta: 0.08847488187977433
+  beta: 0.088474881879774
   dt: 0.25
   dx: 0.654375
   max_steps: 1925
@@ -124,11 +124,11 @@ units:
   Zp: 10
   derived:
     T0: 2000 electron_volt
-    beta: 0.08847488187977433
+    beta: 0.088474881879774
     box_length: 0.25420273080193445 micron
     box_width: inf
-    c_light: 11.302642950785375
-    logLambda_ee: -11.781233290653248
+    c_light: 11.302642950785
+    logLambda_ee: -11.781233290653
     n0: 1.5e+21 / cubic_centimeter
     nuee: -574949910190.1326 hertz
     sim_duration: 0.21968685788110393 picosecond
