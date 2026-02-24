@@ -51,6 +51,7 @@ docs = [
     "adept"
 ]
 dev = [
+    "gitpython",
     "pre-commit",
     "pytest",
     "pytest-cov",

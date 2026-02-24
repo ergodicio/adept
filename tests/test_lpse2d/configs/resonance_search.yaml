@@ -72,7 +72,7 @@ grid:
   dt: 0.5
 
 mlflow:
-  experiment: epw
+  experiment: test-adept-lpse2d-resonance-search
   run: compare-against-vlasov
 
 terms:

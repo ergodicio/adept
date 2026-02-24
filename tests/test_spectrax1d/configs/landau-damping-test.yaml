@@ -4,7 +4,7 @@
 solver: spectrax-1d
 
 mlflow:
-  experiment: spectrax1d-test
+  experiment: test-adept-spectrax1d-landau-damping
   run: landau-damping-k266
 
 units:

@@ -30,6 +30,7 @@ import numpy as np
 import pytest
 import yaml
 
+import adept.patched_mlflow as mlflow
 from adept import ergoExo
 
 # ---------------------------------------------------------------------------
@@ -37,10 +38,13 @@ from adept import ergoExo
 # ---------------------------------------------------------------------------
 
 
-def _run_maxwell(cfg: dict) -> dict:
+def _run_maxwell(cfg: dict, tags: dict | None = None) -> dict:
     """Run a hermite-maxwell-1d simulation and return the post-process metrics dict."""
     exo = ergoExo()
     exo.setup(cfg)
+    if tags is not None:
+        with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+            mlflow.set_tags(tags)
     _, post, _ = exo(None)
     return post["metrics"]
 
@@ -67,7 +71,7 @@ def absorption_cfg():
 # ---------------------------------------------------------------------------
 
 
-def test_em_wave_dispersion(dispersion_cfg):
+def test_em_wave_dispersion(dispersion_cfg, tags):
     """
     MaxwellExponential propagates vacuum EM waves at the correct light speed ω = c|k|.
 
@@ -90,7 +94,7 @@ def test_em_wave_dispersion(dispersion_cfg):
     dispersion_cfg["mlflow"]["experiment"] = "test-adept-spectrax1d-wave-dispersion"
     dispersion_cfg["mlflow"]["run"] = "em-dispersion-exponential"
 
-    metrics = _run_maxwell(dispersion_cfg)
+    metrics = _run_maxwell(dispersion_cfg, tags)
     measured_freq = metrics["em_avg_frequency_k1"]
 
     print("\nEM vacuum dispersion test (Lawson-RK4)")
@@ -111,7 +115,7 @@ def test_em_wave_dispersion(dispersion_cfg):
 # ---------------------------------------------------------------------------
 
 
-def test_em_wave_absorption(absorption_cfg):
+def test_em_wave_absorption(absorption_cfg, tags):
     """
     Sponge on right boundary absorbs > 90% of the wave energy after driver off.
 
@@ -125,7 +129,7 @@ def test_em_wave_absorption(absorption_cfg):
     absorption_cfg["mlflow"]["experiment"] = "test-adept-spectrax1d-wave-absorption"
     absorption_cfg["mlflow"]["run"] = "wave-absorption-exponential"
 
-    metrics = _run_maxwell(absorption_cfg)
+    metrics = _run_maxwell(absorption_cfg, tags)
     absorption_ratio = metrics["em_absorption_ratio"]
     peak_energy = metrics["em_peak_energy"]
     final_energy = metrics["em_final_energy"]

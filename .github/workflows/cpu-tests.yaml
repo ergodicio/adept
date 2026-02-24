@@ -13,6 +13,15 @@ on:
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
+# Environment variables available to all jobs
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_UPLOAD }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_UPLOAD }}
+  MLFLOW_TRACKING_URI: "https://continuum.ergodic.io/experiments/"
+  MLFLOW_TRACKING_USERNAME: "githubactions-bot"
+  MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_TRACKING_PASSWORD }}
+
 # Cancel in-progress tests on new commits to the same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

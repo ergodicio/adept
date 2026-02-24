@@ -58,7 +58,7 @@ save:
 solver: vlasov-1d
 
 mlflow:
-  experiment: vlasov1d
+  experiment: test-adept-vlasov1d
   run: test
 
 drivers:

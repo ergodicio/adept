@@ -1,7 +1,7 @@
 solver: tf-1d
 
 mlflow:
-  experiment: tf1d-ions-test
+  experiment: test-adept-tf1d
   run: test
 
 grid:
