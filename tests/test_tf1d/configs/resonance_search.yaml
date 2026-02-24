@@ -1,8 +1,8 @@
 solver: tf-1d
 
 mlflow:
-  experiment: tf1d-resonance-search
-  run: test
+  experiment: test-tf1d
+  run: resonance-search
 
 adjoint: Backsolve
 

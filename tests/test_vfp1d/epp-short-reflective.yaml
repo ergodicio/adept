@@ -58,7 +58,7 @@ save:
 solver: vfp-1d
 
 mlflow:
-  experiment: vfp1d
+  experiment: test-vfp1d-eppshort
   run: epperlein-short-reflective
 
 drivers:

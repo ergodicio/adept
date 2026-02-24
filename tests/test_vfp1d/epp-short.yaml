@@ -57,8 +57,8 @@ save:
 solver: vfp-1d
 
 mlflow:
-  experiment: vfp1d
-  run: epperlein-short
+  experiment: test-vfp1d-eppshort
+  run: epperlein-short-periodic
 
 drivers:
   ex: {}

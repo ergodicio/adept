@@ -45,6 +45,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "gitpython" },
     { name = "pre-commit" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -77,6 +78,7 @@ requires-dist = [
     { name = "adept", extras = ["docs"], marker = "extra == 'dev'" },
     { name = "boto3" },
     { name = "diffrax" },
+    { name = "gitpython", marker = "extra == 'dev'" },
     { name = "h5netcdf" },
     { name = "interpax", git = "https://github.com/f0uriest/interpax.git" },
     { name = "jax" },
