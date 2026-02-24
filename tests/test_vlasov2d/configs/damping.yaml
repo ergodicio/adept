@@ -82,7 +82,7 @@ machine: s-t4
 # solver: vlasov-2d
 
 mlflow:
-  experiment: ld-2d2v
+  experiment: test-adept-vlasov2d-landau-damping
   run: envelope-driver-small-amp
 
 drivers:

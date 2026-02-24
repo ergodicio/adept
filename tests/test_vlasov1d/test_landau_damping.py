@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import yaml
 
+import adept.patched_mlflow as mlflow
 from adept import electrostatic, ergoExo
 
 
@@ -38,7 +39,7 @@ def _modify_defaults_(defaults, rng, real_or_imag, time, field, edfdv):
         ["real", "imag"], ["sixth", "leapfrog"], ["poisson", "ampere", "hampere"], ["exponential", "cubic-spline"]
     ),
 )
-def test_single_resonance(real_or_imag, time, field, edfdv):
+def test_single_resonance(real_or_imag, time, field, edfdv, tags):
     if (time == "sixth") and (field == "ampere"):
         print("not implemented - skipping test")
     elif (time == "sixth") and (field == "hampere"):
@@ -56,6 +57,8 @@ def test_single_resonance(real_or_imag, time, field, edfdv):
 
         exo = ergoExo()
         exo.setup(mod_defaults)
+        with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+            mlflow.set_tags(tags)
         result, datasets, run_id = exo(None)
         result = result["solver result"]
         efs = result.ys["fields"]["e"]

@@ -47,7 +47,7 @@ save:
 solver: vlasov-1d
 
 mlflow:
-  experiment: multispecies-test
+  experiment: test-adept-vlasov1d-ion-acoustic
   run: ion-acoustic-wave
 
 drivers:

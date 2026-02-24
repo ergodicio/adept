@@ -9,7 +9,7 @@ import adept.patched_mlflow as mlflow
 from adept import ergoExo
 
 
-def _run_(Z, ee, config_name="epp-short"):
+def _run_(Z, ee, config_name="epp-short", tags=None):
     # with open("configs/tf-1d/damping.yaml", "r") as fi:
     with open(f"{os.path.join(os.getcwd(), 'tests/test_vfp1d', config_name)}.yaml") as fi:
         cfg = yaml.safe_load(fi)
@@ -22,6 +22,9 @@ def _run_(Z, ee, config_name="epp-short"):
 
     exo = ergoExo()
     exo.setup(cfg)
+    if tags is not None:
+        with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+            mlflow.set_tags(tags)
 
     sol, datasets, run_id = exo(None)
     dataT = datasets["fields"]["fields-T keV"].data
@@ -40,10 +43,10 @@ def _run_(Z, ee, config_name="epp-short"):
 
 @pytest.mark.parametrize("Z", list(range(1, 22, 4)) + [40, 60, 80])
 @pytest.mark.parametrize("ee", [True, False])
-def test_kappa_eh(Z, ee):
+def test_kappa_eh(Z, ee, tags):
     if not any(["gpu" == device.platform for device in devices()]):
         if Z in [1, 21, 80]:
-            _run_(Z, ee)
+            _run_(Z, ee, tags=tags)
         else:
             pytest.skip(f"Skipping Z={Z} to save time because no GPU is available")
 
@@ -53,10 +56,10 @@ def test_kappa_eh(Z, ee):
 
 @pytest.mark.parametrize("Z", list(range(1, 22, 4)) + [40, 60, 80])
 @pytest.mark.parametrize("ee", [True, False])
-def test_kappa_eh_reflective(Z, ee):
+def test_kappa_eh_reflective(Z, ee, tags):
     if not any(["gpu" == device.platform for device in devices()]):
         if Z in [1, 21, 80]:
-            _run_(Z, ee, config_name="epp-short-reflective")
+            _run_(Z, ee, config_name="epp-short-reflective", tags=tags)
         else:
             pytest.skip(f"Skipping Z={Z} to save time because no GPU is available")
 

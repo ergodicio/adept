@@ -98,7 +98,7 @@ krook:
     width: 100000.0
 machine: local
 mlflow:
-  experiment: landau_damping
+  experiment: test-adept-vlasov1d-landau-damping
   run: test
 nu:
   time-profile:

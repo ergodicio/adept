@@ -4,6 +4,7 @@ import numpy as np
 import xarray as xr
 import yaml
 
+import adept.patched_mlflow as mlflow
 from adept import electrostatic, ergoExo
 
 
@@ -21,12 +22,12 @@ def _modify_defaults_(defaults):
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
     defaults["save"]["kx"]["kxmax"] = rand_k0
-    defaults["mlflow"]["experiment"] = "test-against-vlasov"
+    defaults["mlflow"]["experiment"] = "test-adept-tf1d-against-vlasov"
 
     return defaults, float(np.imag(root))
 
 
-def test_single_resonance():
+def test_single_resonance(tags):
     with open("tests/test_tf1d/configs/vlasov_comparison.yaml") as file:
         defaults = yaml.safe_load(file)
 
@@ -35,6 +36,8 @@ def test_single_resonance():
 
     exo = ergoExo()
     exo.setup(mod_defaults)
+    with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+        mlflow.set_tags(tags)
     result, datasets, run_id = exo(None)
     result = result["solver result"]
     vds = xr.open_dataset("tests/test_tf1d/vlasov-reference/all-fields-kx.nc", engine="h5netcdf")

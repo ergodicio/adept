@@ -33,7 +33,7 @@ grid:
   ymin: -1um
 
 mlflow:
-  experiment: test-lpse
+  experiment: test-adept-lpse2d-epw
   run: epw-test
 save:
   fields:

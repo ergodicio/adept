@@ -5,6 +5,7 @@ import pytest
 import yaml
 from jax import numpy as jnp
 
+import adept.patched_mlflow as mlflow
 from adept import electrostatic, ergoExo
 
 
@@ -22,13 +23,13 @@ def _modify_defaults_(defaults, rng, gamma):
     xmax = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
-    defaults["mlflow"]["experiment"] = "test-resonance"
+    defaults["mlflow"]["experiment"] = "test-adept-tf1d-resonance"
 
     return defaults, float(root)
 
 
 @pytest.mark.parametrize("gamma", ["kinetic", 3.0])
-def test_single_resonance(gamma):
+def test_single_resonance(gamma, tags):
     with open("tests/test_tf1d/configs/resonance.yaml") as file:
         defaults = yaml.safe_load(file)
 
@@ -39,6 +40,8 @@ def test_single_resonance(gamma):
     # run
     exo = ergoExo()
     exo.setup(mod_defaults)
+    with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+        mlflow.set_tags(tags)
     result, datasets, run_id = exo(None)
     result = result["solver result"]
 

@@ -22,12 +22,12 @@ def _modify_defaults_(defaults, rng):
     defaults["grid"]["xmax"] = xmax
     defaults["save"]["x"]["xmax"] = xmax
     defaults["save"]["kx"]["kxmax"] = rand_k0
-    defaults["mlflow"]["experiment"] = "test-landau-damping"
+    defaults["mlflow"]["experiment"] = "test-adept-tf1d-landau-damping"
 
     return defaults, float(np.imag(root))
 
 
-def test_single_resonance():
+def test_single_resonance(tags):
     with open("tests/test_tf1d/configs/resonance.yaml") as file:
         defaults = yaml.safe_load(file)
 
@@ -41,6 +41,7 @@ def test_single_resonance():
     result = result["solver result"]
 
     with mlflow.start_run(run_id=run_id, log_system_metrics=True) as mlflow_run:
+        mlflow.set_tags(tags)
         kx = (
             np.fft.fftfreq(
                 mod_defaults["save"]["x"]["nx"],

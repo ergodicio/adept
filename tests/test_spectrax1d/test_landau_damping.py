@@ -26,6 +26,7 @@ import numpy as np
 import pytest
 import yaml
 
+import adept.patched_mlflow as mlflow
 from adept import electrostatic, ergoExo
 
 # ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ from adept import electrostatic, ergoExo
 # ---------------------------------------------------------------------------
 
 
-def _run_driven_epw(cfg: dict, klambda_D: float) -> tuple[float, float, float, float]:
+def _run_driven_epw(cfg: dict, klambda_D: float, tags: dict | None = None) -> tuple[float, float, float, float]:
     """
     Configure klambda_D, run a driven EPW simulation, return measured and expected values.
 
@@ -58,6 +59,9 @@ def _run_driven_epw(cfg: dict, klambda_D: float) -> tuple[float, float, float, f
 
     exo = ergoExo()
     exo.setup(cfg)
+    if tags is not None:
+        with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+            mlflow.set_tags(tags)
     _, post, _ = exo(None)
 
     metrics = post["metrics"]
@@ -91,7 +95,7 @@ def base_cfg():
     [False, True],
     ids=["mobile-ions", "static-ions"],
 )
-def test_driven_epw_dispersion(base_cfg, static_ions):
+def test_driven_epw_dispersion(base_cfg, static_ions, tags):
     """Driven EPW frequency and damping rate match the electrostatic dispersion within 10%."""
     klambda_D = np.random.uniform(0.26, 0.34)
 
@@ -102,7 +106,7 @@ def test_driven_epw_dispersion(base_cfg, static_ions):
     base_cfg["mlflow"]["experiment"] = "test-adept-spectrax1d-epw"
     base_cfg["mlflow"]["run"] = f"epw1d-exponential-{'static' if static_ions else 'mobile'}-{klambda_D:.3f}"
 
-    measured_freq, measured_damp, expected_freq, expected_damp = _run_driven_epw(base_cfg, klambda_D)
+    measured_freq, measured_damp, expected_freq, expected_damp = _run_driven_epw(base_cfg, klambda_D, tags)
 
     print(f"\nklambda_D={klambda_D:.4f}  integrator=exponential  static_ions={static_ions}")
     print(

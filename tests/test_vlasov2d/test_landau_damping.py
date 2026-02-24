@@ -23,7 +23,7 @@ def _modify_defaults_(defaults, rng, real_or_imag):
     defaults["drivers"]["ex"]["0"]["w0"] = float(np.real(root))
     xmax = float(2.0 * np.pi / rand_k0)
     defaults["grid"]["xmax"] = xmax
-    defaults["mlflow"]["experiment"] = "vlasov2d-test"
+    defaults["mlflow"]["experiment"] = "test-adept-vlasov2d-landau-damping"
 
     return defaults, root
 

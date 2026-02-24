@@ -5,9 +5,10 @@ from jax import devices
 from adept.lpse2d import calc_threshold_intensity
 
 
-def run_once(L, Te, I0):
+def run_once(L, Te, I0, tags=None):
     import yaml
 
+    import adept.patched_mlflow as mlflow
     from adept import ergoExo
 
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
@@ -17,17 +18,20 @@ def run_once(L, Te, I0):
     cfg["density"]["gradient scale length"] = f"{L}um"
     cfg["units"]["reference electron temperature"] = f"{Te}keV"
     cfg["mlflow"]["run"] = f"{I0}W/cm^2"  # I0
-    cfg["mlflow"]["experiment"] = f"I2-threshold-L={L}um, Te={Te}keV"
+    cfg["mlflow"]["experiment"] = f"test-adept-lpse2d-tpd-threshold-L={L}um-Te={Te}keV"
 
     exo = ergoExo()
     modules = exo.setup(cfg)
+    if tags is not None:
+        with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+            mlflow.set_tags(tags)
     sol, ppo, mlrunid = exo(modules)
     es = ppo["metrics"]["log10_total_e_sq"]
 
     return es
 
 
-def test_threshold():
+def test_threshold(tags):
     if not any(["gpu" == device.platform for device in devices()]):
         pytest.skip("Takes too long without a GPU")
     else:
@@ -44,7 +48,7 @@ def test_threshold():
             I_scan = np.round(I_scan, 2)
 
             for I0 in I_scan:
-                es = run_once(L, Te, I0)
+                es = run_once(L, Te, I0, tags)
                 ess.append(es)
 
             # ess = np.array(ess)

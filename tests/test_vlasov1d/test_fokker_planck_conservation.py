@@ -19,11 +19,12 @@ import numpy as np
 import pytest
 import yaml
 
+import adept.patched_mlflow as mlflow
 from adept import ergoExo
 
 
 @pytest.mark.parametrize("operator_type", ["chang_cooper_dougherty", "chang_cooper", "Dougherty", "Lenard_Bernstein"])
-def test_fokker_planck_conservation(operator_type):
+def test_fokker_planck_conservation(operator_type, tags):
     """
     Test that Fokker-Planck operators conserve density and energy.
 
@@ -39,6 +40,8 @@ def test_fokker_planck_conservation(operator_type):
     # Run simulation
     exo = ergoExo()
     exo.setup(config)
+    with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+        mlflow.set_tags(tags)
     result, datasets, run_id = exo(None)
     result = result["solver result"]
 
@@ -96,7 +99,7 @@ def test_fokker_planck_conservation(operator_type):
 
 
 @pytest.mark.parametrize("operator_type", ["chang_cooper", "Lenard_Bernstein", "Dougherty"])
-def test_fokker_planck_thermalization(operator_type):
+def test_fokker_planck_thermalization(operator_type, tags):
     """
     Test that Fokker-Planck operators drive distribution toward Maxwellian.
 
@@ -122,6 +125,8 @@ def test_fokker_planck_thermalization(operator_type):
     # Run simulation
     exo = ergoExo()
     exo.setup(config)
+    with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+        mlflow.set_tags(tags)
     result, datasets, run_id = exo(None)
     result = result["solver result"]
 

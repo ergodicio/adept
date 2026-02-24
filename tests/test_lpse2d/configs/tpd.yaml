@@ -36,7 +36,7 @@ grid:
   ymax: 3um
   ymin: -3um
 mlflow:
-  experiment: tpd
+  experiment: test-adept-lpse2d-tpd
   run: 1.5e14
 save:
   fields:

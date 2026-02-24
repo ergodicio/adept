@@ -20,6 +20,7 @@ import numpy as np
 import pytest
 import yaml
 
+import adept.patched_mlflow as mlflow
 from adept import ergoExo
 
 
@@ -96,7 +97,7 @@ def compute_ion_density(f_ion, dv):
 
 
 @pytest.mark.parametrize("time_integrator", ["sixth"])
-def test_ion_acoustic_simulation_runs(time_integrator):
+def test_ion_acoustic_simulation_runs(time_integrator, tags):
     """
     Smoke test that multi-species ion acoustic simulation runs end-to-end.
 
@@ -122,12 +123,14 @@ def test_ion_acoustic_simulation_runs(time_integrator):
 
     # Modify config for this test
     config["terms"]["time"] = time_integrator
-    config["mlflow"]["experiment"] = "vlasov1d-test-ion-acoustic"
+    config["mlflow"]["experiment"] = "test-adept-vlasov1d-ion-acoustic"
     config["mlflow"]["run"] = f"ion-acoustic-smoke-{time_integrator}"
 
     # Run simulation
     exo = ergoExo()
     exo.setup(config)
+    with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+        mlflow.set_tags(tags)
     result, datasets, run_id = exo(None)
     solver_result = result["solver result"]
 
@@ -148,7 +151,7 @@ def test_ion_acoustic_simulation_runs(time_integrator):
 
 
 @pytest.mark.parametrize("time_integrator", ["sixth"])
-def test_ion_acoustic_dispersion(time_integrator):
+def test_ion_acoustic_dispersion(time_integrator, tags):
     """
     Test that ion acoustic wave frequency matches theoretical prediction.
 
@@ -165,7 +168,7 @@ def test_ion_acoustic_dispersion(time_integrator):
     # Modify config for this test
     config["grid"]["nx"] = 64  # Override for better resolution
     config["terms"]["time"] = time_integrator
-    config["mlflow"]["experiment"] = "vlasov1d-test-ion-acoustic"
+    config["mlflow"]["experiment"] = "test-adept-vlasov1d-ion-acoustic"
     config["mlflow"]["run"] = f"ion-acoustic-dispersion-{time_integrator}"
 
     # Extract physical parameters
@@ -180,6 +183,8 @@ def test_ion_acoustic_dispersion(time_integrator):
     # Run simulation
     exo = ergoExo()
     exo.setup(config)
+    with mlflow.start_run(run_id=exo.mlflow_run_id, nested=exo.mlflow_nested):
+        mlflow.set_tags(tags)
     result, datasets, run_id = exo(None)
     solver_result = result["solver result"]
 
