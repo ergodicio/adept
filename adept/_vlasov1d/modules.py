@@ -138,11 +138,6 @@ class BaseVlasov1D(ADEPTModule):
         # Merge all grid values (including arrays) from the Grid object
         cfg_grid.update(asdict(grid))
 
-        cfg_grid["nuprof"] = 1.0
-        # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
-        cfg_grid["ktprof"] = 1.0
-        # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-
         # Initialize distributions (always returns dict format)
         dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
         cfg_grid["species_distributions"] = dist_result
