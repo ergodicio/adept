@@ -9,7 +9,7 @@ from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.grid import grid_from_cfg
+from adept._vlasov1d.grid import grid_from_dimensionless_cfg
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.normalization import electron_debye_normalization
 from adept._vlasov1d.simulation import Vlasov1DSimulation
@@ -19,13 +19,15 @@ from adept.utils import filter_scalars
 
 
 def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
-    """Construct a Vlasov1DSimulation from a config dict."""
+    """Construct a Vlasov1DSimulation from a base config dict."""
     plasma_norm = electron_debye_normalization(
         cfg["units"]["normalizing_density"],
         cfg["units"]["normalizing_temperature"],
     )
     beta = 1.0 / plasma_norm.speed_of_light_norm()
-    grid = grid_from_cfg(cfg, beta)
+    has_ey_driver = len(cfg.get("drivers", {}).get("ey", {}).keys()) > 0
+    grid = grid_from_dimensionless_cfg(cfg["grid"], beta, 
+                                       should_override_dt_for_em_waves=has_ey_driver)
     return Vlasov1DSimulation(plasma_norm, grid)
 
 
