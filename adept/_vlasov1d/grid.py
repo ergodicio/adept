@@ -4,6 +4,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from adept._vlasov1d.normalization import UREG, PlasmaNormalization
+
 
 class Grid(eqx.Module):
     """Configuration space grid (x, t, and their Fourier duals).
@@ -96,6 +98,34 @@ def grid_from_dimensionless_cfg(cfg_grid: dict, beta: float, should_override_dt_
         tmin=cfg_grid.get("tmin", 0.0),
         tmax_requested=cfg_grid["tmax"],
         dt_requested=cfg_grid["dt"],
+        should_override_dt_for_em_waves=should_override_dt_for_em_waves,
+        beta=beta,
+    )
+
+
+def grid_from_physical_units_cfg(
+    cfg_grid: dict, should_override_dt_for_em_waves: bool, plasma_norm: PlasmaNormalization
+) -> Grid:
+    """Construct Grid from config dict with physical units.
+
+    Args:
+        cfg_grid: Dictionary of grid configuration
+        should_override_dt_for_em_waves: Whether dt should be limited to ensure stability of EM waves.
+        plasma_norm: The PlasmaNormalization to use to convert dimensional quantities to simulation quantities.
+    """
+    dimensionless = lambda q: q.to("").magnitude
+    length = lambda s: dimensionless(UREG.Quantity(s) / plasma_norm.L0)
+    time = lambda s: dimensionless(UREG.Quantity(s) / plasma_norm.tau)
+
+    beta = 1.0 / plasma_norm.speed_of_light_norm()
+
+    return Grid(
+        xmin=length(cfg_grid["xmin"]),
+        xmax=length(cfg_grid["xmax"]),
+        nx=cfg_grid["nx"],
+        tmin=time(cfg_grid.get("tmin", "0.0 s")),
+        tmax_requested=time(cfg_grid["tmax"]),
+        dt_requested=time(cfg_grid["dt"]),
         should_override_dt_for_em_waves=should_override_dt_for_em_waves,
         beta=beta,
     )

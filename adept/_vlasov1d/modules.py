@@ -26,8 +26,7 @@ def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
     )
     beta = 1.0 / plasma_norm.speed_of_light_norm()
     has_ey_driver = len(cfg.get("drivers", {}).get("ey", {}).keys()) > 0
-    grid = grid_from_dimensionless_cfg(cfg["grid"], beta, 
-                                       should_override_dt_for_em_waves=has_ey_driver)
+    grid = grid_from_dimensionless_cfg(cfg["grid"], beta, should_override_dt_for_em_waves=has_ey_driver)
     return Vlasov1DSimulation(plasma_norm, grid)
 
 
