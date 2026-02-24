@@ -2,6 +2,7 @@ from jax import Array
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
+from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
 
 
@@ -14,15 +15,16 @@ class TimeIntegrator:
     The only solver for v df/dx is "exponential"
 
     :param cfg: Dict
+    :param grid: Grid object for configuration space
 
     """
 
-    def __init__(self, cfg: dict):
-        self.field_solve = field.ElectricFieldSolver(cfg)
+    def __init__(self, cfg: dict, grid: Grid):
+        self.field_solve = field.ElectricFieldSolver(cfg, grid)
         self.species_grids = cfg["grid"]["species_grids"]
         self.species_params = cfg["grid"]["species_params"]
         self.edfdv = self.get_edfdv(cfg)
-        self.vdfdx = vlasov.SpaceExponential(cfg["grid"]["x"], self.species_grids)
+        self.vdfdx = vlasov.SpaceExponential(grid.x, self.species_grids)
 
     def get_edfdv(self, cfg: dict):
         if cfg["terms"]["edfdv"] == "exponential":
@@ -44,11 +46,12 @@ class LeapfrogIntegrator(TimeIntegrator):
 
     Args:
         cfg: Configuration dictionary
+        grid: Grid object for configuration space
     """
 
-    def __init__(self, cfg: dict):
-        super().__init__(cfg)
-        self.dt = cfg["grid"]["dt"]
+    def __init__(self, cfg: dict, grid: Grid):
+        super().__init__(cfg, grid)
+        self.dt = grid.dt
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
 
     def __call__(self, f_dict: dict, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, dict]:
@@ -86,11 +89,12 @@ class SixthOrderHamIntegrator(TimeIntegrator):
 
     Args:
         cfg: Configuration dictionary
+        grid: Grid object for configuration space
     """
 
-    def __init__(self, cfg):
-        super().__init__(cfg)
-        self.dt = cfg["grid"]["dt"]
+    def __init__(self, cfg: dict, grid: Grid):
+        super().__init__(cfg, grid)
+        self.dt = grid.dt
 
         self.a1 = 0.168735950563437422448196
         self.a2 = 0.377851589220928303880766
@@ -179,22 +183,23 @@ class VlasovPoissonFokkerPlanck:
 
     Args:
         cfg: Configuration dictionary
+        grid: Grid object for configuration space
 
     Returns:
         Tuple of (electric_field, f_dict, diagnostics_dict)
     """
 
-    def __init__(self, cfg: dict):
-        self.dt = cfg["grid"]["dt"]
+    def __init__(self, cfg: dict, grid: Grid):
+        self.dt = grid.dt
         if cfg["terms"]["time"] == "sixth":
-            self.vlasov_poisson = SixthOrderHamIntegrator(cfg)
+            self.vlasov_poisson = SixthOrderHamIntegrator(cfg, grid)
             self.dex_save = 3
         elif cfg["terms"]["time"] == "leapfrog":
-            self.vlasov_poisson = LeapfrogIntegrator(cfg)
+            self.vlasov_poisson = LeapfrogIntegrator(cfg, grid)
             self.dex_save = 0
         else:
             raise NotImplementedError
-        self.fp = fokker_planck.Collisions(cfg=cfg)
+        self.fp = fokker_planck.Collisions(cfg=cfg, grid=grid)
         self.vlasov_dfdt = cfg["diagnostics"]["diag-vlasov-dfdt"]
         self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
 
@@ -223,23 +228,27 @@ class VlasovMaxwell:
     This class contains the Vlasov-Poisson + Fokker-Planck timestep and the wave equation solver
 
     :param cfg:
+    :param grid: Grid object for configuration space
     """
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, grid: Grid):
         self.cfg = cfg
-        self.vpfp = VlasovPoissonFokkerPlanck(cfg)
-        self.wave_solver = field.WaveSolver(c=1.0 / cfg["grid"]["beta"], dx=cfg["grid"]["dx"], dt=cfg["grid"]["dt"])
+        self.grid = grid
+        self.vpfp = VlasovPoissonFokkerPlanck(cfg, grid)
+        # beta = 1/c_norm is still read from cfg["grid"] for now
+        beta = cfg["grid"]["beta"]
+        self.wave_solver = field.WaveSolver(c=1.0 / beta, dx=grid.dx, dt=grid.dt)
 
-        self.dt = self.cfg["grid"]["dt"]
-        self.ey_driver = field.Driver(cfg["grid"]["x_a"], driver_key="ey")
-        self.ex_driver = field.Driver(cfg["grid"]["x"], driver_key="ex")
+        self.dt = grid.dt
+        self.ey_driver = field.Driver(grid.x_a, driver_key="ey")
+        self.ex_driver = field.Driver(grid.x, driver_key="ex")
 
     def compute_charges(self, f_dict):
         """Compute charge density from distribution functions.
 
         For a dict of species distributions, sum over all species with their charge-to-mass ratios.
         """
-        charge_density = jnp.zeros_like(self.cfg["grid"]["x"])
+        charge_density = jnp.zeros_like(self.grid.x)
         for species_name, f in f_dict.items():
             dv = self.cfg["grid"]["species_grids"][species_name]["dv"]
             charge = self.cfg["grid"]["species_params"][species_name]["charge"]
@@ -262,7 +271,7 @@ class VlasovMaxwell:
             nu_time = 1 - nu_time
         nu_time = nu_args["time"]["baseline"] + nu_args["time"]["bump_height"] * nu_time
 
-        nu_prof = get_envelope(x_wL, x_wR, x_L, x_R, self.cfg["grid"]["x"])
+        nu_prof = get_envelope(x_wL, x_wR, x_L, x_R, self.grid.x)
         if nu_args["space"]["bump_or_trough"] == "trough":
             nu_prof = 1 - nu_prof
         nu_prof = nu_args["space"]["baseline"] + nu_args["space"]["bump_height"] * nu_prof
