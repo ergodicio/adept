@@ -18,7 +18,6 @@ dependencies = [
     "tqdm",
     "xarray",
     "mlflow",
-
     "h5netcdf",
     "optax",
     "boto3",
@@ -29,7 +28,8 @@ dependencies = [
     "tabulate",
     "pydantic",
     "scienceplots",
-    "jax"
+    "jax",
+    "jpu>=0.0.5",
 ]
 
 [project.urls]

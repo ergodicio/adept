@@ -9,6 +9,7 @@ from jax import numpy as jnp
 from adept import ADEPTModule
 from adept._base_ import Stepper
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
+from adept._vlasov1d.normalization import electron_debye_normalization
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
 
@@ -22,43 +23,32 @@ class BaseVlasov1D(ADEPTModule):
         return post_process(run_output["solver result"], self.cfg, td, self.args)
 
     def write_units(self) -> dict:
-        _Q = self.ureg.Quantity
+        norm = electron_debye_normalization(
+            self.cfg["units"]["normalizing_density"], self.cfg["units"]["normalizing_temperature"]
+        )
 
-        n0 = _Q(self.cfg["units"]["normalizing_density"]).to("1/cc")
-        T0 = _Q(self.cfg["units"]["normalizing_temperature"]).to("eV")
-
-        wp0 = np.sqrt(n0 * self.ureg.e**2.0 / (self.ureg.m_e * self.ureg.epsilon_0)).to("rad/s")
-        tp0 = (1 / wp0).to("fs")
-
-        v0 = np.sqrt(2.0 * T0 / self.ureg.m_e).to("m/s")
-        x0 = (v0 / wp0).to("nm")
-        c_light = _Q(1.0 * self.ureg.c).to("m/s") / v0
-        beta = (v0 / self.ureg.c).to("dimensionless")
-
-        box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * x0).to("microns")
+        box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * norm.L0).to("microns")
         if "ymax" in self.cfg["grid"].keys():
-            box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * x0).to("microns")
+            box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * norm.L0).to("microns")
         else:
             box_width = "inf"
-        sim_duration = (self.cfg["grid"]["tmax"] * tp0).to("ps")
+        sim_duration = (self.cfg["grid"]["tmax"] * norm.tau).to("ps")
 
-        # collisions
-        logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
-        logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
-        nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
-        nuee_norm = nuee / wp0
+        nu_ee = norm.approximate_ee_collision_frequency()
+
+        beta = 1.0 / norm.speed_of_light_norm()
 
         all_quantities = {
-            "wp0": wp0,
-            "tp0": tp0,
-            "n0": n0,
-            "v0": v0,
-            "T0": T0,
-            "c_light": c_light,
+            "wp0": (1 / norm.tau).to("rad/s"),
+            "tp0": norm.tau.to("fs"),
+            "n0": norm.n0.to("1/cc"),
+            "v0": norm.v0.to("m/s"),
+            "T0": norm.T0.to("eV"),
+            "c_light": norm.speed_of_light_norm(),
             "beta": beta,
-            "x0": x0,
-            "nuee": nuee,
-            "logLambda_ee": logLambda_ee,
+            "x0": norm.L0.to("nm"),
+            "nuee": nu_ee.to("Hz"),
+            "logLambda_ee": norm.logLambda_ee(),
             "box_length": box_length,
             "box_width": box_width,
             "sim_duration": sim_duration,
@@ -66,7 +56,7 @@ class BaseVlasov1D(ADEPTModule):
 
         self.cfg["units"]["derived"] = all_quantities
 
-        self.cfg["grid"]["beta"] = beta.magnitude
+        self.cfg["grid"]["beta"] = beta
 
         return all_quantities
 
