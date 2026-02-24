@@ -4,8 +4,12 @@
 from collections.abc import Mapping
 from typing import Any
 
+import jax
 import numpy as np
 from jax import numpy as jnp
+from jax import shard_map
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
 from adept.vlasov2d.solver.tridiagonal import TridiagonalSolver
 
@@ -23,6 +27,9 @@ class Collisions:
         self.fp = self.__init_fp_operator__()
         self.krook = Krook(self.cfg)
         self.td_solver = TridiagonalSolver(self.cfg)
+        self.x_parallel = cfg["terms"]["x_parallel"]
+        if self.x_parallel:
+            self._mesh = Mesh(np.array(jax.devices()), ("x",))
 
     def __init_fp_operator__(self) -> "LenardBernstein | ChangCooperLenardBernstein | ChangCooperDougherty | Dougherty":
         """
@@ -68,16 +75,27 @@ class Collisions:
 
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
-        if self.cfg["terms"]["fokker_planck"]["is_on"]:
-            # The three diagonals representing collision operator for all x
-            cee_a, cee_b, cee_c = self.fp(nu=nu_fp, f_xv=f, dt=dt)
-            # Solve over all x
-            f = self.td_solver(cee_a, cee_b, cee_c, f)
+        # Substitute dummy zeros for disabled operators so shard_map receives valid arrays.
+        nu_fp_in = nu_fp if nu_fp is not None else jnp.zeros(f.shape[0])
+        nu_K_in = nu_K if nu_K is not None else jnp.zeros(f.shape[0])
 
-        if self.cfg["terms"]["krook"]["is_on"]:
-            f = self.krook(nu_K, f, dt)
+        def _collide(f_shard, nu_fp_shard, nu_K_shard):
+            if self.cfg["terms"]["fokker_planck"]["is_on"]:
+                cee_a, cee_b, cee_c = self.fp(nu=nu_fp_shard, f_xv=f_shard, dt=dt)
+                f_shard = self.td_solver(cee_a, cee_b, cee_c, f_shard)
+            if self.cfg["terms"]["krook"]["is_on"]:
+                f_shard = self.krook(nu_K_shard, f_shard, dt)
+            return f_shard
 
-        return f
+        if self.x_parallel:
+            return shard_map(
+                _collide,
+                mesh=self._mesh,
+                in_specs=(P("x", None), P("x"), P("x")),
+                out_specs=P("x", None),
+            )(f, nu_fp_in, nu_K_in)
+        else:
+            return _collide(f, nu_fp_in, nu_K_in)
 
 
 class Krook:
@@ -124,8 +142,6 @@ class _DriftDiffusionBase:
         # TODO(gh-173): For multi-species, use electron grid for FP for now
         self.v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -142,7 +158,7 @@ class _DriftDiffusionBase:
             * dt
             * (-v0t_sq[:, None] / self.dv**2.0 + (jnp.roll(self.v, 1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
         )
-        b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
+        b = jnp.ones_like(f_xv) + nu[:, None] * dt * (2.0 * v0t_sq[:, None] / self.dv**2.0)
         c = (
             nu[:, None]
             * dt
@@ -191,9 +207,7 @@ class ChangCooperLenardBernstein:
         self.cfg = cfg
         self.v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -234,15 +248,16 @@ class ChangCooperLenardBernstein:
         alpha = drift * delta + diff / self.dv
         beta = drift * (1.0 - delta) - diff / self.dv
 
+        nx = f_xv.shape[0]
         lam = dt / self.dv
-        a = jnp.zeros_like(self.ones)
+        a = jnp.zeros_like(f_xv)
         a = a.at[:, 1:].set(-lam * alpha)
-        c = jnp.zeros_like(self.ones)
+        c = jnp.zeros_like(f_xv)
         c = c.at[:, :-1].set(lam * beta)
 
-        beta_l = jnp.concatenate([jnp.zeros((self.cfg["grid"]["nx"], 1)), beta], axis=1)
-        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.cfg["grid"]["nx"], 1))], axis=1)
-        diag = self.ones + lam * (alpha_r - beta_l)
+        beta_l = jnp.concatenate([jnp.zeros((nx, 1)), beta], axis=1)
+        alpha_r = jnp.concatenate([alpha, jnp.zeros((nx, 1))], axis=1)
+        diag = jnp.ones_like(f_xv) + lam * (alpha_r - beta_l)
 
         return a, diag, c
 
@@ -259,9 +274,7 @@ class ChangCooperDougherty:
         self.cfg = cfg
         self.v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -302,15 +315,16 @@ class ChangCooperDougherty:
         alpha = drift * delta + diff / self.dv
         beta = drift * (1.0 - delta) - diff / self.dv
 
+        nx = f_xv.shape[0]
         lam = dt / self.dv
-        a = jnp.zeros_like(self.ones)
+        a = jnp.zeros_like(f_xv)
         a = a.at[:, 1:].set(-lam * alpha)
-        c = jnp.zeros_like(self.ones)
+        c = jnp.zeros_like(f_xv)
         c = c.at[:, :-1].set(lam * beta)
 
-        beta_l = jnp.concatenate([jnp.zeros((self.cfg["grid"]["nx"], 1)), beta], axis=1)
-        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.cfg["grid"]["nx"], 1))], axis=1)
-        diag = self.ones + lam * (alpha_r - beta_l)
+        beta_l = jnp.concatenate([jnp.zeros((nx, 1)), beta], axis=1)
+        alpha_r = jnp.concatenate([alpha, jnp.zeros((nx, 1))], axis=1)
+        diag = jnp.ones_like(f_xv) + lam * (alpha_r - beta_l)
 
         return a, diag, c
 

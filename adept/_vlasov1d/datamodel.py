@@ -147,6 +147,7 @@ class TermsModel(BaseModel):
     field: str
     edfdv: str
     time: str
+    x_parallel: bool = False
     species: list[SpeciesConfig] | None = None
     fokker_planck: FokkerPlanckModel
     krook: KrookModel

@@ -2,9 +2,13 @@ from collections.abc import Callable
 from functools import partial
 
 import equinox as eqx
+import jax
+import numpy as np
 from interpax import interp1d, interp2d
 from jax import numpy as jnp
-from jax import vmap
+from jax import shard_map, vmap
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
 
 class VlasovExternalE(eqx.Module):
@@ -49,11 +53,21 @@ class VlasovExternalE(eqx.Module):
 
 
 class VelocityExponential:
-    def __init__(self, species_grids, species_params):
+    def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+            self.__call__ = shard_map(
+                self.push,
+                mesh=self.mesh,
+                in_specs=(P("x", None), P("x"), P("x")),
+                out_specs=P("x", None),
+            )
+        else:
+            self.__call__ = self.push
 
-    def __call__(self, f_dict, e, dt):
+    def push(self, f_dict, e, dt):
         result = {}
         for species_name, f in f_dict.items():
             kv_real = self.species_grids[species_name]["kvr"]
@@ -65,12 +79,22 @@ class VelocityExponential:
 
 
 class VelocityCubicSpline:
-    def __init__(self, species_grids, species_params):
+    def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
         self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+            self.__call__ = shard_map(
+                self.push,
+                mesh=self.mesh,
+                in_specs=(P("x", None), P("x"), P("x")),
+                out_specs=P("x", None),
+            )
+        else:
+            self.__call__ = self.push
 
-    def __call__(self, f_dict, e, dt):
+    def push(self, f_dict, e, dt):
         result = {}
         for species_name, f in f_dict.items():
             v = self.species_grids[species_name]["v"]

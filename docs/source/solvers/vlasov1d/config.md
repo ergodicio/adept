@@ -336,6 +336,7 @@ Solver algorithm configuration.
 | `field` | string | Electric field solver: `"poisson"`, `"ampere"`, or `"hampere"` |
 | `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
+| `x_parallel` | bool | Shard the `edfdv` push and collision operator across x using `jax.shard_map`. Defaults to `false`. Requires `nx` divisible by the number of JAX devices. |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
