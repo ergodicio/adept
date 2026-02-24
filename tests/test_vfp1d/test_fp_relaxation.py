@@ -108,7 +108,7 @@ def test_fp_relaxation(ic_fn, slow):
             f"{name}: Did not relax to expected equilibrium: rmse_expected={metrics.rmse_expected[-1]:.2e}"
         )
 
-        assert metrics.positivity_violation[-1] < 1e-20(
+        assert metrics.positivity_violation[-1] < 1e-20, (
             f"{name}: Violated positivity too strongly: positivity_violation={metrics.positivity_violation[-1]:.2e}"
         )
 
