@@ -56,16 +56,9 @@ class VelocityExponential:
     def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
+        self.parallel = parallel
         if parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
-            self.__call__ = shard_map(
-                self.push,
-                mesh=self.mesh,
-                in_specs=(P("x", None), P("x"), P("x")),
-                out_specs=P("x", None),
-            )
-        else:
-            self.__call__ = self.push
 
     def push(self, f_dict, e, dt):
         result = {}
@@ -77,22 +70,23 @@ class VelocityExponential:
             )
         return result
 
+    def __call__(self, f_dict, e, dt):
+        if self.parallel:
+            return shard_map(
+                self.push, mesh=self.mesh, in_specs=(P("device", None), P("device"), P()), out_specs=P("device", None)
+            )(f_dict, e, dt)
+        else:
+            return self.push(f_dict, e, dt)
+
 
 class VelocityCubicSpline:
     def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
         self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)
-        if parallel:
+        self.parallel = parallel
+        if self.parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
-            self.__call__ = shard_map(
-                self.push,
-                mesh=self.mesh,
-                in_specs=(P("x", None), P("x"), P("x")),
-                out_specs=P("x", None),
-            )
-        else:
-            self.__call__ = self.push
 
     def push(self, f_dict, e, dt):
         result = {}
@@ -104,6 +98,14 @@ class VelocityCubicSpline:
             vq = v_repeated - qm * e[:, None] * dt
             result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
         return result
+
+    def __call__(self, f_dict, e, dt):
+        if self.parallel:
+            return shard_map(
+                self.push, mesh=self.mesh, in_specs=(P("device", None), P("device"), P()), out_specs=P("device", None)
+            )(f_dict, e, dt)
+        else:
+            return self.push(f_dict, e, dt)
 
 
 class SpaceExponential:

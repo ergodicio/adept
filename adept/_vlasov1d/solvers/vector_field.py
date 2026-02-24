@@ -27,9 +27,9 @@ class TimeIntegrator:
     def get_edfdv(self, cfg: dict):
         x_parallel = cfg["terms"]["x_parallel"]
         if cfg["terms"]["edfdv"] == "exponential":
-            return vlasov.VelocityExponential(self.species_grids, self.species_params, x_parallel=x_parallel)
+            return vlasov.VelocityExponential(self.species_grids, self.species_params, parallel=x_parallel)
         elif cfg["terms"]["edfdv"] == "cubic-spline":
-            return vlasov.VelocityCubicSpline(self.species_grids, self.species_params, x_parallel=x_parallel)
+            return vlasov.VelocityCubicSpline(self.species_grids, self.species_params, parallel=x_parallel)
         else:
             raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
 

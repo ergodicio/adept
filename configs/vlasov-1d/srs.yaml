@@ -9,26 +9,28 @@ units:
 density:
   quasineutrality: true
   species-background:
-    noise_seed: 420
-    noise_type: gaussian
-    noise_val: 0.0
+    noise_seed: 42
+    noise_type: uniform
+    noise_val: 1.0e-6
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: tanh
+    basis: linear
     baseline: 0.001
     bump_or_trough: bump
     center: 2000.0
+    val at center: 0.23
+    gradient scale length: 800um
     rise: 25.0
     bump_height: 0.999
-    width: 3900.0
+    width: 3500.0
 
 grid:
   dt: 0.5
   nv: 4096
   nx: 4096
   tmin: 0.
-  tmax: 8000.0
+  tmax: 2000.0
   vmax: 6.4
   xmax: 4000
   xmin: 0.0
@@ -37,7 +39,7 @@ save:
   fields:
     t:
       tmin: 0.0
-      tmax: 8000.0
+      tmax: 2000.0
       nt: 2001
   electron:
     t:
@@ -60,13 +62,13 @@ drivers:
       t_center: 4000.0
       t_rise: 20.0
       t_width: 7900.0
-      w0: 2.79
+      w0: 1.0
       dw0: 0.
       x_center: 50.0
       x_rise: 0.1
       x_width: 1.0
     '1':
-      a0: 1.e-6
+      a0: 0.0
       k0: 1.0
       t_center: 4000.0
       t_rise: 20.0
@@ -82,6 +84,7 @@ diagnostics:
   diag-fp-dfdt: False
 
 terms:
+  x_parallel: False
   field: poisson
   edfdv: exponential
   time: leapfrog

@@ -29,7 +29,7 @@ class Collisions:
         self.td_solver = TridiagonalSolver(self.cfg)
         self.x_parallel = cfg["terms"]["x_parallel"]
         if self.x_parallel:
-            self._mesh = Mesh(np.array(jax.devices()), ("x",))
+            self._mesh = Mesh(np.array(jax.devices()), ("device",))
 
     def __init_fp_operator__(self) -> "LenardBernstein | ChangCooperLenardBernstein | ChangCooperDougherty | Dougherty":
         """
@@ -91,8 +91,8 @@ class Collisions:
             return shard_map(
                 _collide,
                 mesh=self._mesh,
-                in_specs=(P("x", None), P("x"), P("x")),
-                out_specs=P("x", None),
+                in_specs=(P("device", None), P("device"), P("device")),
+                out_specs=P("device", None),
             )(f, nu_fp_in, nu_K_in)
         else:
             return _collide(f, nu_fp_in, nu_K_in)

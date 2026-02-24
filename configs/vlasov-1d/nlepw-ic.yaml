@@ -57,6 +57,7 @@ diagnostics:
   diag-fp-dfdt: False
 
 terms:
+  x_parallel: False
   field: poisson
   edfdv: exponential
   time: sixth

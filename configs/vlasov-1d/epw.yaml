@@ -81,6 +81,7 @@ diagnostics:
   diag-fp-dfdt: True
 
 terms:
+  x_parallel: False
   field: poisson
   edfdv: cubic-spline
   time: sixth
