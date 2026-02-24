@@ -77,9 +77,7 @@ class Grid(eqx.Module):
         one_over_kxr[1:] = 1.0 / np.array(self.kxr)[1:]
         self.one_over_kxr = jnp.array(one_over_kxr)
 
-        self.x_a = jnp.concatenate(
-            [jnp.array([self.x[0] - self.dx]), self.x, jnp.array([self.x[-1] + self.dx])]
-        )
+        self.x_a = jnp.concatenate([jnp.array([self.x[0] - self.dx]), self.x, jnp.array([self.x[-1] + self.dx])])
 
 
 def grid_from_cfg(cfg: dict, beta: float) -> Grid:

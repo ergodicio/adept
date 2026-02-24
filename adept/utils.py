@@ -273,9 +273,8 @@ def robust_log_artifacts(directory, retries=5, delay=5):
 
 def is_scalar(value) -> bool:
     """Check if a value is a scalar (not an array)."""
-    import numpy as np
-
     import jax.numpy as jnp
+    import numpy as np
 
     if isinstance(value, (int, float, bool, str, type(None))):
         return True

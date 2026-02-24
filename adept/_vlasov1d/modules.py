@@ -9,8 +9,8 @@ from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.grid import grid_from_cfg
+from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.normalization import electron_debye_normalization
 from adept._vlasov1d.simulation import Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
