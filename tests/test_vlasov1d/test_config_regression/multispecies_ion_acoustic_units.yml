@@ -1,8 +1,8 @@
 T0: 2000 electron_volt
-beta: 0.08847488187977433 dimensionless
+beta: 0.08847488187977433
 box_length: 3.8137571970393944 micron
 box_width: inf
-c_light: 11.302642950785375 dimensionless
+c_light: 11.302642950785375
 logLambda_ee: -11.781233290653248
 n0: 1.5e+21 / cubic_centimeter
 nuee: -574949910190.1326 hertz

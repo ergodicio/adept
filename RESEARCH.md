@@ -1,243 +1,230 @@
-# Research: Configuration Logging Regression Tests for Vlasov1D
+# Research: Introducing Vlasov1DSimulation with PlasmaNormalization
 
-## Overview
+## Task Summary
 
-This document captures research findings for implementing regression tests for the Vlasov1D configuration logging. The goal is to create tests that verify the exact contents of configuration files dumped during `ergoExo._setup_()`.
-
-## Context: The Refactoring Goal
-
-The broader refactoring effort aims to:
-1. Replace `cfg`-based data threading with domain objects (`Vlasov1DSimulation`, `PlasmaNormalization`, `XGrid`, `Species`, `VGrid`)
-2. Move simulation setup into the constructor of a new `Vlasov1DSimulation` class
-3. Maintain backwards compatibility by constructing domain objects upfront, then "pretending" to construct them bit-by-bit in lifecycle methods
-
-**Why regression tests first?** These tests will ensure the configuration logging output doesn't change during refactoring, catching any accidental behavioral changes.
+Introduce a new `Vlasov1DSimulation` class that will gradually "eat up" the initialization logic from `BaseVlasov1D`. In this first step, the simulation holds only a `PlasmaNormalization` object.
 
 ---
 
-## Configuration Files to Test
+## Current Architecture
 
-### Vlasov1D Test Configs
+### Lifecycle Flow
 
-Located in `tests/test_vlasov1d/configs/`:
+The `ergoExo` class manages simulation lifecycle by calling methods on `ADEPTModule` subclasses:
 
-| Config File | Description | Key Features |
-|-------------|-------------|--------------|
-| `resonance.yaml` | Landau damping resonance tests | Single species (electron), Poisson field, leapfrog time |
-| `fokker_planck_conservation.yaml` | Fokker-Planck conservation tests | Single species, Lenard-Bernstein FP operator |
-| `multispecies_ion_acoustic.yaml` | Multi-species ion acoustic wave | Electron + ion species, sixth-order time integration |
+```
+ergoExo._setup_()
+  ├── ADEPTModule.__init__(cfg)     # Store cfg
+  ├── write_units()                  # Compute derived units, log to units.yaml
+  ├── get_derived_quantities()       # Compute grid scalars, log to derived_config.yaml
+  ├── get_solver_quantities()        # Compute arrays, log to array_config.pkl
+  ├── init_state_and_args()          # Initialize simulation state
+  └── init_diffeqsolve()             # Setup ODE solver
+```
+
+Each lifecycle method modifies `self.cfg` and the `ergoExo` logs the config state after certain methods.
+
+### Current BaseVlasov1D Structure (`adept/_vlasov1d/modules.py`)
+
+```python
+class BaseVlasov1D(ADEPTModule):
+    def __init__(self, cfg) -> None:
+        super().__init__(cfg)
+        self.ureg = pint.UnitRegistry()  # Note: unused after refactor
+
+    def write_units(self) -> dict:
+        norm = electron_debye_normalization(
+            self.cfg["units"]["normalizing_density"],
+            self.cfg["units"]["normalizing_temperature"]
+        )
+        # Uses norm.L0, norm.tau, norm.n0, norm.v0, norm.T0, etc.
+        # Sets self.cfg["units"]["derived"] and self.cfg["grid"]["beta"]
+        ...
+```
+
+Key observation: `write_units()` already creates a `PlasmaNormalization` via `electron_debye_normalization()`, uses it, but doesn't store it. The refactoring will store this object in `self.simulation.plasma_norm`.
 
 ---
 
-## Configuration Logging Flow
+## PlasmaNormalization Class (`adept/_vlasov1d/normalization.py`)
 
-### ergoExo._setup_() (adept/_base_.py:315-354)
+Already implemented:
 
-The `_setup_()` method writes **4 files** to a temporary directory:
-
-```
-1. config.yaml          - Raw config (deepcopy of input)
-2. units.yaml           - Output of write_units() - derived physical units
-3. derived_config.yaml  - Config after get_derived_quantities() - scalars computed
-4. array_config.pkl     - Config after get_solver_quantities() - contains JAX arrays
-```
-
-### Lifecycle Method Sequence
-
-```
-write_units()            -> cfg["units"]["derived"], cfg["grid"]["beta"]
-get_derived_quantities() -> cfg["grid"]["dx"], cfg["grid"]["dt"], cfg["grid"]["nt"],
-                            cfg["grid"]["tmax"], cfg["terms"]["species"] normalized
-get_solver_quantities()  -> cfg["grid"] arrays (x, t, kx, species_grids, etc.)
-init_state_and_args()    -> self.state, self.args (not logged)
-init_diffeqsolve()       -> cfg["save"] updated with axes/functions (not logged)
-```
-
-### Key Config Modifications Per Stage
-
-**After write_units():**
 ```python
-cfg["units"]["derived"] = {
-    "wp0": plasma_frequency,
-    "tp0": time_scale,
-    "n0": density,
-    "v0": velocity,
-    "T0": temperature,
-    "c_light": speed_of_light,
-    "beta": v0/c,
-    "x0": spatial_scale,
-    "nuee": collision_freq,
-    "logLambda_ee": coulomb_log,
-    "box_length", "box_width", "sim_duration"
-}
-cfg["grid"]["beta"] = float_value
+@dataclass
+class PlasmaNormalization:
+    m0: UREG.Quantity      # Unit mass
+    q0: UREG.Quantity      # Unit charge
+    n0: UREG.Quantity      # Reference density [particles/m^3]
+    T0: UREG.Quantity      # Reference temperature [eV]
+    L0: UREG.Quantity      # Reference length [m]
+    v0: UREG.Quantity      # Reference velocity [m/s]
+    tau: UREG.Quantity     # Reference time [s]
+
+    def logLambda_ee(self) -> float: ...
+    def approximate_ee_collision_frequency(self) -> UREG.Quantity: ...
+    def speed_of_light_norm(self) -> float: ...
 ```
 
-**After get_derived_quantities():**
+Constructor function:
+
 ```python
-cfg["grid"]["dx"] = xmax / nx
-cfg["grid"]["dt"] = possibly_adjusted
-cfg["grid"]["nt"] = int
-cfg["grid"]["max_steps"] = int
-cfg["grid"]["tmax"] = adjusted
-cfg["save"][type]["t"]["tmin"/"tmax"] = defaults
-cfg["terms"]["species"] = normalized_species_list  # with density_components
+def electron_debye_normalization(n0_str, T0_str) -> PlasmaNormalization:
+    """
+    Creates electron thermal normalization:
+    - L0 = Debye length
+    - v0 = electron thermal velocity
+    - tau = 1/wp0 (Langmuir oscillation period)
+    """
 ```
 
-**After get_solver_quantities() (in array_config.pkl):**
+This uses `jpu.UnitRegistry()` (JAX-compatible Pint) instead of vanilla `pint.UnitRegistry()`.
+
+---
+
+## Existing Regression Tests
+
+Located at `tests/test_vlasov1d/test_config_regression.py`.
+
+Tests all 4 logged artifacts against baseline files:
+- `config.yaml` - raw config
+- `units.yaml` - derived units (Pint quantities as strings)
+- `derived_config.yaml` - after `get_derived_quantities()`
+- `array_config.pkl` - after `get_solver_quantities()` (contains JAX arrays)
+
+Test configs:
+- `resonance.yaml` - single species electron
+- `fokker_planck_conservation.yaml` - single species with FP collisions
+- `multispecies_ion_acoustic.yaml` - electron + ion species
+
+These tests will catch any unintended changes to the logged output.
+
+---
+
+## Implementation Plan
+
+### Step 1: Create Vlasov1DSimulation Class
+
+Create new file `adept/_vlasov1d/simulation.py`:
+
 ```python
-cfg["grid"]["x"] = jax_array
-cfg["grid"]["t"] = jax_array
-cfg["grid"]["kx"], cfg["grid"]["kxr"] = jax_arrays
-cfg["grid"]["species_grids"] = {name: {v, dv, nv, vmax, kv, ...}}
-cfg["grid"]["species_params"] = {name: {charge, mass, charge_to_mass}}
-cfg["grid"]["species_distributions"] = {name: (n_prof, f_s, v_ax)}
+class Vlasov1DSimulation:
+    """
+    Domain object representing a Vlasov-1D simulation setup.
+    Holds the physical parameters computed from config.
+    """
+    def __init__(self, plasma_norm: PlasmaNormalization):
+        self.plasma_norm = plasma_norm
+```
+
+### Step 2: Create sim_from_cfg() Factory Function
+
+In `adept/_vlasov1d/modules.py`:
+
+```python
+def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
+    """Construct a Vlasov1DSimulation from a config dict."""
+    plasma_norm = electron_debye_normalization(
+        cfg["units"]["normalizing_density"],
+        cfg["units"]["normalizing_temperature"]
+    )
+    return Vlasov1DSimulation(plasma_norm)
+```
+
+### Step 3: Modify BaseVlasov1D Constructor
+
+In `adept/_vlasov1d/modules.py`, add import and modify constructor:
+
+```python
+from adept._vlasov1d.simulation import Vlasov1DSimulation
+
+class BaseVlasov1D(ADEPTModule):
+    def __init__(self, cfg) -> None:
+        super().__init__(cfg)
+        self.simulation = sim_from_cfg(cfg)
+        # Remove self.ureg - no longer used
+```
+
+### Step 4: Modify write_units() to Use self.simulation
+
+In `adept/_vlasov1d/modules.py`:
+
+```python
+def write_units(self) -> dict:
+    norm = self.simulation.plasma_norm  # Use stored object instead of creating new
+
+    box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * norm.L0).to("microns")
+    # ... rest unchanged
 ```
 
 ---
 
-## Testing Approach Analysis
+## What Changes
 
-### Current Test Setup
-
-- Tests use `ergoExo().setup(cfg)` which requires MLflow
-- No pytest-regression currently in use (not in pyproject.toml)
-- Tests use `np.testing.assert_almost_equal()` for numerical comparisons
-
-### _setup_() Method Signature
-
-```python
-def _setup_(self, cfg: dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> dict[str, Module]:
-```
-
-The `log` parameter controls whether files are written. We can call `_setup_()` directly with a temp directory, bypassing MLflow.
-
-### Approach
-
-**MLflow bypass:** Call `_setup_()` directly with a temp directory. This avoids MLflow entirely and is the simplest approach.
-
-**Pickle file with JAX arrays:** Convert JAX arrays to numpy, then use `num_regression` with numerical tolerance for comparison.
-
-**YAML dict ordering:** Load YAML back to dict and use `data_regression` for comparison (handles ordering automatically).
-
-**Pint quantities in units.yaml:** String comparison is deterministic and sufficient.
+| Component | Current | After Refactor |
+|-----------|---------|----------------|
+| `simulation.py` | Does not exist | New file with `Vlasov1DSimulation` class |
+| `modules.py` | Has `BaseVlasov1D` | Adds `sim_from_cfg()` factory function |
+| `BaseVlasov1D.__init__` | Creates `self.ureg` (unused) | Creates `self.simulation` via `sim_from_cfg()` |
+| `write_units()` | Calls `electron_debye_normalization()` | Uses `self.simulation.plasma_norm` |
+| `self.ureg` | Exists but unused | Removed |
+| Config logging | No change | No change (same data flows) |
 
 ---
 
-## pytest-regression
+## Backwards Compatibility
 
-### What It Does
+The refactoring maintains backwards compatibility by:
 
-`pytest-regression` provides fixtures for regression testing:
-- `data_regression` - compares dicts/lists to YAML files
-- `file_regression` - compares text file contents
-- `num_regression` - compares numpy arrays with tolerance
+1. **Same config structure**: `sim_from_cfg()` reads from existing config keys (`units.normalizing_density`, `units.normalizing_temperature`)
 
-### Installation
+2. **Same logged output**: `write_units()` writes the same values to `cfg["units"]["derived"]` and `cfg["grid"]["beta"]`
 
-Add to `pyproject.toml` dev dependencies:
-```toml
-dev = [
-    ...
-    "pytest-regressions",  # note: the package name has an 's'
-]
-```
-
-### Usage Pattern
-
-```python
-def test_config_regression(data_regression):
-    result = compute_config()
-    data_regression.check(result)  # Compares to tests/test_foo/test_config_regression.yml
-```
-
-On first run, creates the baseline file. On subsequent runs, compares against it.
+3. **Same lifecycle**: `ergoExo` calls methods in the same order; we're just moving *when* normalization is computed (init vs write_units)
 
 ---
 
-## Key Files to Modify/Create
+## Files to Modify
 
-| File | Purpose |
+| File | Changes |
 |------|---------|
-| `pyproject.toml` | Add pytest-regressions to dev dependencies |
-| `tests/test_vlasov1d/test_config_regression.py` | New test file |
-| `tests/test_vlasov1d/test_config_regression/` | Directory for regression baselines (auto-created) |
+| `adept/_vlasov1d/simulation.py` | **New file**: `Vlasov1DSimulation` class |
+| `adept/_vlasov1d/modules.py` | Add `sim_from_cfg()`, import `Vlasov1DSimulation`, modify `BaseVlasov1D.__init__`, modify `write_units()`, remove unused `self.ureg` |
 
 ---
 
-## Implementation
+## Testing Strategy
 
-### Test Pattern
+1. **Run existing regression tests**: These verify logged config doesn't change
+   ```bash
+   uv run pytest tests/test_vlasov1d/test_config_regression.py -v
+   ```
 
-```python
-from adept import ergoExo
-import tempfile
-import yaml
-
-def test_config_logging(data_regression):
-    with open("tests/test_vlasov1d/configs/resonance.yaml") as f:
-        cfg = yaml.safe_load(f)
-
-    exo = ergoExo()
-    with tempfile.TemporaryDirectory() as td:
-        exo._setup_(cfg, td, log=True)
-
-        # Load and compare each file
-        with open(f"{td}/config.yaml") as f:
-            config = yaml.safe_load(f)
-        data_regression.check(config, basename="resonance_config")
-```
-
-### Handling array_config.pkl
-
-```python
-import pickle
-import numpy as np
-
-def normalize_config_for_regression(cfg):
-    """Convert JAX arrays to lists for regression testing"""
-    result = {}
-    for key, value in cfg.items():
-        if hasattr(value, 'tolist'):  # JAX/numpy array
-            result[key] = np.array(value).tolist()
-        elif isinstance(value, dict):
-            result[key] = normalize_config_for_regression(value)
-        else:
-            result[key] = value
-    return result
-```
-
-### Handling Pint Quantities in units.yaml
-
-Pint quantities serialize as deterministic strings (e.g., `"1.5e+21 1 / centimeter ** 3"`). String comparison via `data_regression` is sufficient.
+2. **Run full vlasov1d test suite**: Verify simulation behavior unchanged
+   ```bash
+   uv run pytest tests/test_vlasov1d/ -v
+   ```
 
 ---
 
-## Test Structure
+## Future Steps (Not This PR)
 
-```
-tests/test_vlasov1d/
-├── test_config_regression.py          # New test file
-├── test_config_regression/             # Baseline files (auto-created)
-│   ├── test_resonance_config_config.yml
-│   ├── test_resonance_config_units.yml
-│   ├── test_resonance_config_derived.yml
-│   ├── test_fokker_planck_config_config.yml
-│   └── ...
-└── configs/
-    ├── resonance.yaml
-    ├── fokker_planck_conservation.yaml
-    └── multispecies_ion_acoustic.yaml
-```
+The `Vlasov1DSimulation` class will eventually hold:
+- `x_grid: XGrid` - spatial grid parameters
+- `species: dict[str, Species]` - species definitions
+- `v_grids: dict[str, VGrid]` - velocity grids per species
+
+Each future PR will:
+1. Add a new domain object to `Vlasov1DSimulation`
+2. Construct it in `sim_from_cfg()`
+3. Extract static methods on `BaseVlasov1D` to convert domain objects back to config dicts for logging
 
 ---
 
-## Resolved Decisions
+## Notes
 
-1. **Array tolerance**: Use `num_regression` with numerical tolerance for array comparisons.
+- The `jpu` package provides a JAX-compatible Pint unit registry. The normalization code already uses `jpu.UnitRegistry()` instead of vanilla `pint`.
 
-2. **Baseline regeneration**: Use pytest-regression's `--force-regen` flag when intentional changes are made.
+- The `self.ureg = pint.UnitRegistry()` line in the current constructor appears to be dead code (leftover from before the normalization refactor). It can be safely removed.
 
-3. **CI integration**: Tests will be fast and run on every PR, piggybacking on the existing vlasov1d workflow (no CI config changes needed).
-
-4. **units.yaml determinism**: Pint string representations are deterministic across runs/platforms.
+- The `beta` value in `cfg["grid"]["beta"]` is computed as `1.0 / norm.speed_of_light_norm()` which equals `v0 / c`. This is the relativistic beta factor.

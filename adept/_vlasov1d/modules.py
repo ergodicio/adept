@@ -2,7 +2,6 @@
 #  research@ergodic.io
 
 import numpy as np
-import pint
 from diffrax import ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import numpy as jnp
 
@@ -10,22 +9,30 @@ from adept import ADEPTModule
 from adept._base_ import Stepper
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.normalization import electron_debye_normalization
+from adept._vlasov1d.simulation import Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
+
+
+def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
+    """Construct a Vlasov1DSimulation from a config dict."""
+    plasma_norm = electron_debye_normalization(
+        cfg["units"]["normalizing_density"],
+        cfg["units"]["normalizing_temperature"],
+    )
+    return Vlasov1DSimulation(plasma_norm)
 
 
 class BaseVlasov1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        self.ureg = pint.UnitRegistry()
+        self.simulation = sim_from_cfg(cfg)
 
     def post_process(self, run_output: dict, td: str):
         return post_process(run_output["solver result"], self.cfg, td, self.args)
 
     def write_units(self) -> dict:
-        norm = electron_debye_normalization(
-            self.cfg["units"]["normalizing_density"], self.cfg["units"]["normalizing_temperature"]
-        )
+        norm = self.simulation.plasma_norm
 
         box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * norm.L0).to("microns")
         if "ymax" in self.cfg["grid"].keys():
