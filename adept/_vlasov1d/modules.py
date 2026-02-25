@@ -11,11 +11,11 @@ from adept import ADEPTModule
 from adept._base_ import Stepper
 from adept._vlasov1d.grid import grid_from_dimensionless_cfg
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
-from adept._vlasov1d.normalization import electron_debye_normalization
 from adept._vlasov1d.simulation import Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
 from adept.functions import SpaceTimeEnvelopeFunction
+from adept.normalization import electron_debye_normalization
 from adept.utils import filter_scalars
 
 

@@ -1,6 +1,7 @@
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.normalization import PlasmaNormalization
-from adept.functions import SpaceTimeEnvelopeFunction
+from adept.normalization import PlasmaNormalization
+from adept.utils import SpaceTimeEnvelopeFunction
 
 
 class Vlasov1DSimulation:
