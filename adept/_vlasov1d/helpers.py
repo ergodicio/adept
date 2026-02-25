@@ -4,15 +4,15 @@ import os
 from time import time
 
 import numpy as np
-import pint
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
 from matplotlib import pyplot as plt
 from scipy.special import gamma
 
-from adept._base_ import get_envelope
+from adept._vlasov1d.simulation import SubspeciesDistributionSpec
 from adept._vlasov1d.storage import store_f, store_fields
+from adept.normalization import PlasmaNormalization
 
 from .. import patched_mlflow as mlflow
 
@@ -39,9 +39,6 @@ def _initialize_supergaussian_distribution_(
     mass=1.0,
     vmax=6.0,
     n_prof=np.ones(1),
-    noise_val=0.0,
-    noise_seed=42,
-    noise_type="Uniform",
 ):
     """
     Initialize a supergaussian distribution function.
@@ -56,16 +53,11 @@ def _initialize_supergaussian_distribution_(
         T0: temperature
         mass: species mass for thermal velocity calculation
         vmax: maximum absolute value of v
-        n_prof: density profile
-        noise_val: noise amplitude
-        noise_seed: random seed for noise
-        noise_type: type of noise ("Uniform")
+        n_prof: density profile (noise should already be applied)
 
     Returns:
         Tuple of (f[nx, nv], vax[nv])
     """
-    noise_generator = np.random.default_rng(seed=noise_seed)
-
     dv = 2.0 * vmax / nv
     vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
 
@@ -78,9 +70,7 @@ def _initialize_supergaussian_distribution_(
     single_dist = -(np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
 
     single_dist = np.exp(single_dist)
-    # single_dist = np.exp(-(vaxs[0][None, None, :, None]**2.+vaxs[1][None, None, None, :]**2.)/2/T0)
 
-    # for ix in range(nx):
     f = np.repeat(single_dist, nx, axis=0)
     # normalize
     f = f / np.trapz(f, dx=dv, axis=1)[:, None]
@@ -89,21 +79,21 @@ def _initialize_supergaussian_distribution_(
         # scale by density profile
         f = n_prof[:, None] * f
 
-    if noise_type.casefold() == "uniform":
-        f = (1.0 + noise_generator.uniform(-noise_val, noise_val, nx)[:, None]) * f
-    # elif noise_type.casefold() == "gaussian":
-    #     f = (1.0 + noise_generator.normal(-noise_val, noise_val, nx)[:, None]) * f
-
     return f, vax
 
 
-def _initialize_total_distribution_(cfg, grid):
+def _initialize_total_distribution_(cfg, grid, norm: PlasmaNormalization | None = None):
     """
-    Initialize distribution functions for all species.
+    Initialize distribution functions for all species using domain models.
 
     The species config is normalized in modules.py:get_derived_quantities() so that
     a species config always exists (for backward compatibility with single-species
     config files, a default electron species is generated).
+
+    Args:
+        cfg: Configuration dictionary
+        grid: Grid object with spatial coordinates
+        norm: PlasmaNormalization for unit conversion (required for linear/exponential profiles)
 
     Returns:
         dict mapping species_name -> (n_prof, f_s, v_ax)
@@ -117,6 +107,7 @@ def _initialize_total_distribution_(cfg, grid):
         density_components = species_cfg["density_components"]
         vmax = species_cfg["vmax"]
         nv = species_cfg["nv"]
+        mass = species_cfg["mass"]
 
         # Initialize arrays for this species
         n_prof_species = np.zeros([grid.nx])
@@ -130,32 +121,24 @@ def _initialize_total_distribution_(cfg, grid):
                 raise ValueError(f"Density component '{component_name}' not found in config")
 
             species_params = cfg["density"][component_name]
-            v0 = species_params["v0"]
-            T0 = species_params["T0"]
 
-            # Supergaussian order from density config (default 2.0 = Maxwell-Boltzmann)
-            supergaussian_order = species_params.get("m", 2.0)
+            # Build domain model from config
+            distribution_spec = SubspeciesDistributionSpec.from_config(species_params, norm=norm)
 
-            # Mass from species config for thermal velocity calculation
-            mass = species_cfg["mass"]
-
-            # Get density profile
-            nprof = _get_density_profile(species_params, cfg, grid)
+            # Evaluate density profile (noise is applied by the domain model)
+            nprof = np.array(distribution_spec.density_profile(grid.x))
             n_prof_species += nprof
 
-            # Distribution function for this component
+            # Initialize distribution
             temp_f, _ = _initialize_supergaussian_distribution_(
                 nx=grid.nx,
                 nv=nv,
-                v0=v0,
-                supergaussian_order=supergaussian_order,
-                T0=T0,
+                v0=distribution_spec.v0,
+                supergaussian_order=distribution_spec.supergaussian_order,
+                T0=distribution_spec.T0,
                 mass=mass,
                 vmax=vmax,
                 n_prof=nprof,
-                noise_val=species_params["noise_val"],
-                noise_seed=int(species_params["noise_seed"]),
-                noise_type=species_params["noise_type"],
             )
             f_species += temp_f
             species_found = True
@@ -166,64 +149,6 @@ def _initialize_total_distribution_(cfg, grid):
         raise ValueError("No species found! Check the config")
 
     return species_distributions
-
-
-def _get_density_profile(species_params, cfg, grid):
-    """Extract density profile generation logic into a helper function."""
-    if species_params["basis"] == "uniform":
-        nprof = np.ones([grid.nx])
-
-    elif species_params["basis"] == "linear":
-        left = species_params["center"] - species_params["width"] * 0.5
-        right = species_params["center"] + species_params["width"] * 0.5
-        rise = species_params["rise"]
-        mask = get_envelope(rise, rise, left, right, grid.x)
-
-        ureg = pint.UnitRegistry()
-        _Q = ureg.Quantity
-
-        L = (
-            _Q(species_params["gradient scale length"]).to("nm").magnitude
-            / cfg["units"]["derived"]["x0"].to("nm").magnitude
-        )
-        nprof = species_params["val at center"] + (grid.x - species_params["center"]) / L
-        nprof = mask * nprof
-
-    elif species_params["basis"] == "exponential":
-        left = species_params["center"] - species_params["width"] * 0.5
-        right = species_params["center"] + species_params["width"] * 0.5
-        rise = species_params["rise"]
-        mask = get_envelope(rise, rise, left, right, grid.x)
-
-        ureg = pint.UnitRegistry()
-        _Q = ureg.Quantity
-
-        L = (
-            _Q(species_params["gradient scale length"]).to("nm").magnitude
-            / cfg["units"]["derived"]["x0"].to("nm").magnitude
-        )
-        nprof = species_params["val at center"] * np.exp((grid.x - species_params["center"]) / L)
-        nprof = mask * nprof
-
-    elif species_params["basis"] == "tanh":
-        left = species_params["center"] - species_params["width"] * 0.5
-        right = species_params["center"] + species_params["width"] * 0.5
-        rise = species_params["rise"]
-        nprof = get_envelope(rise, rise, left, right, grid.x)
-
-        if species_params["bump_or_trough"] == "trough":
-            nprof = 1 - nprof
-        nprof = species_params["baseline"] + species_params["bump_height"] * nprof
-
-    elif species_params["basis"] == "sine":
-        baseline = species_params["baseline"]
-        amp = species_params["amplitude"]
-        kk = species_params["wavenumber"]
-        nprof = baseline * (1.0 + amp * jnp.sin(kk * grid.x))
-    else:
-        raise NotImplementedError
-
-    return nprof
 
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
