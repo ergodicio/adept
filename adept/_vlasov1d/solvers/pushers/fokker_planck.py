@@ -7,19 +7,22 @@ from typing import Any
 import numpy as np
 from jax import numpy as jnp
 
+from adept._vlasov1d.grid import Grid
 from adept.vlasov2d.solver.tridiagonal import TridiagonalSolver
 
 
 class Collisions:
     """High-level collision operator that wraps Fokker-Planck and Krook terms."""
 
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], grid: Grid):
         """
         Build collision pushers from configuration.
 
         :param cfg: Simulation configuration containing term toggles and grid parameters.
+        :param grid: Grid object for configuration space.
         """
         self.cfg = cfg
+        self.grid = grid
         self.fp = self.__init_fp_operator__()
         self.krook = Krook(self.cfg)
         self.td_solver = TridiagonalSolver(self.cfg)
@@ -32,13 +35,13 @@ class Collisions:
         """
         fp_type = self.cfg["terms"]["fokker_planck"]["type"].casefold()
         if fp_type == "lenard_bernstein":
-            return LenardBernstein(self.cfg)
+            return LenardBernstein(self.cfg, self.grid)
         elif fp_type in ("chang_cooper", "lenard_bernstein_chang_cooper"):
-            return ChangCooperLenardBernstein(self.cfg)
+            return ChangCooperLenardBernstein(self.cfg, self.grid)
         elif fp_type in ("chang_cooper_dougherty", "dougherty_chang_cooper"):
-            return ChangCooperDougherty(self.cfg)
+            return ChangCooperDougherty(self.cfg, self.grid)
         elif fp_type == "dougherty":
-            return Dougherty(self.cfg)
+            return Dougherty(self.cfg, self.grid)
         else:
             raise NotImplementedError
 
@@ -119,13 +122,14 @@ class Krook:
 class _DriftDiffusionBase:
     """Shared utilities for drift-diffusion-style Fokker-Planck operators."""
 
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], grid: Grid):
         self.cfg = cfg
+        self.grid = grid
         # TODO(gh-173): For multi-species, use electron grid for FP for now
         self.v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
         nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
+        self.ones = jnp.ones((grid.nx, nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -154,13 +158,14 @@ class _DriftDiffusionBase:
 class LenardBernstein(_DriftDiffusionBase):
     """Classic Lenard-Bernstein Fokker-Planck operator."""
 
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], grid: Grid):
         """
         Initialize Lenard-Bernstein coefficients.
 
         :param cfg: Simulation configuration providing grid metadata.
+        :param grid: Grid object for configuration space.
         """
-        super().__init__(cfg)
+        super().__init__(cfg, grid)
 
     def __call__(
         self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64
@@ -182,18 +187,20 @@ class LenardBernstein(_DriftDiffusionBase):
 class ChangCooperLenardBernstein:
     """Chang-Cooper discretization of the Lenard-Bernstein operator."""
 
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], grid: Grid):
         """
         Precompute velocity grid helpers for Chang-Cooper coefficients.
 
         :param cfg: Simulation configuration providing grid metadata.
+        :param grid: Grid object for configuration space.
         """
         self.cfg = cfg
+        self.grid = grid
         self.v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
         nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
+        self.ones = jnp.ones((grid.nx, nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -240,8 +247,8 @@ class ChangCooperLenardBernstein:
         c = jnp.zeros_like(self.ones)
         c = c.at[:, :-1].set(lam * beta)
 
-        beta_l = jnp.concatenate([jnp.zeros((self.cfg["grid"]["nx"], 1)), beta], axis=1)
-        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.cfg["grid"]["nx"], 1))], axis=1)
+        beta_l = jnp.concatenate([jnp.zeros((self.grid.nx, 1)), beta], axis=1)
+        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.grid.nx, 1))], axis=1)
         diag = self.ones + lam * (alpha_r - beta_l)
 
         return a, diag, c
@@ -250,18 +257,20 @@ class ChangCooperLenardBernstein:
 class ChangCooperDougherty:
     """Chang-Cooper discretization of the Dougherty operator."""
 
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], grid: Grid):
         """
         Precompute velocity grid helpers for Chang-Cooper coefficients.
 
         :param cfg: Simulation configuration providing grid metadata.
+        :param grid: Grid object for configuration space.
         """
         self.cfg = cfg
+        self.grid = grid
         self.v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
         nv = cfg["grid"]["species_grids"]["electron"]["nv"]
         self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
+        self.ones = jnp.ones((grid.nx, nv))
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
         """Compute density n(x) by integrating over velocity."""
@@ -308,8 +317,8 @@ class ChangCooperDougherty:
         c = jnp.zeros_like(self.ones)
         c = c.at[:, :-1].set(lam * beta)
 
-        beta_l = jnp.concatenate([jnp.zeros((self.cfg["grid"]["nx"], 1)), beta], axis=1)
-        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.cfg["grid"]["nx"], 1))], axis=1)
+        beta_l = jnp.concatenate([jnp.zeros((self.grid.nx, 1)), beta], axis=1)
+        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.grid.nx, 1))], axis=1)
         diag = self.ones + lam * (alpha_r - beta_l)
 
         return a, diag, c
@@ -318,13 +327,14 @@ class ChangCooperDougherty:
 class Dougherty(_DriftDiffusionBase):
     """Dougherty collision operator using a thermalized drift term."""
 
-    def __init__(self, cfg: Mapping[str, Any]):
+    def __init__(self, cfg: Mapping[str, Any], grid: Grid):
         """
         Initialize Dougherty coefficients.
 
         :param cfg: Simulation configuration providing grid metadata.
+        :param grid: Grid object for configuration space.
         """
-        super().__init__(cfg)
+        super().__init__(cfg, grid)
 
     def __call__(
         self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64

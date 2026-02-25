@@ -269,3 +269,34 @@ def robust_log_artifacts(directory, retries=5, delay=5):
 
     else:
         print(f"Failed to log artifacts after {retries} attempts.")
+
+
+def is_scalar(value) -> bool:
+    """Check if a value is a scalar (not an array)."""
+    import jax.numpy as jnp
+    import numpy as np
+
+    if isinstance(value, (int, float, bool, str, type(None))):
+        return True
+    if isinstance(value, (np.ndarray, jnp.ndarray)):
+        return False
+    # Handle numpy scalar types
+    if hasattr(value, "ndim") and value.ndim == 0:
+        return True
+    return False
+
+
+def filter_scalars(d: dict) -> dict:
+    """Filter a dict to only include scalar values (recursively).
+
+    Useful for logging domain object contents before array quantities are needed.
+    """
+    result = {}
+    for k, v in d.items():
+        if isinstance(v, dict):
+            filtered = filter_scalars(v)
+            if filtered:  # Only include non-empty dicts
+                result[k] = filtered
+        elif is_scalar(v):
+            result[k] = v
+    return result
