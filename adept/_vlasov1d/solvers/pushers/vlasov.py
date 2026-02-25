@@ -118,9 +118,7 @@ class SpaceExponential:
 
     def push(self, f, v):
         return jnp.real(
-            jnp.fft.irfft(
-                jnp.exp(-1j * self.kx_real[:, None] * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0
-            )
+            jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
         )
 
     def __call__(self, f_dict, dt):

@@ -30,9 +30,7 @@ class TimeIntegrator:
         self.species_params = cfg["grid"]["species_params"]
         parallel = cfg["grid"].get("parallel", False)
         self.edfdv = self.get_edfdv(cfg, parallel)
-        self.vdfdx = vlasov.SpaceExponential(
-            cfg["grid"]["x"], self.species_grids, parallel=_is_parallel(parallel, "v")
-        )
+        self.vdfdx = vlasov.SpaceExponential(cfg["grid"]["x"], self.species_grids, parallel=_is_parallel(parallel, "v"))
 
     def get_edfdv(self, cfg: dict, parallel):
         if cfg["terms"]["edfdv"] == "exponential":
