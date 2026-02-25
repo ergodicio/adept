@@ -10,17 +10,15 @@ The operators are built on shared abstractions from adept.driftdiffusion.
 from collections.abc import Mapping
 from typing import Any
 
-import lineax as lx
 import jax
+import lineax as lx
 import numpy as np
-from jax import Array, vmap
+from jax import Array, shard_map, vmap
 from jax import numpy as jnp
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
-from adept.driftdiffusion import (
-    AbstractMaxwellianPreservingModel,
-    CentralDifferencing,
-    ChangCooper,
-)
+from adept.driftdiffusion import AbstractMaxwellianPreservingModel, CentralDifferencing, ChangCooper
 
 
 class LenardBernstein(AbstractMaxwellianPreservingModel):
@@ -114,6 +112,11 @@ class Collisions:
         v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.v_edge = 0.5 * (v[1:] + v[:-1])
 
+        parallel = cfg["grid"].get("parallel", False)
+        self.x_parallel = bool(parallel) and "x" in parallel
+        if self.x_parallel:
+            self._mesh = Mesh(np.array(jax.devices()), ("device",))
+
         # Self-consistent beta config (defaults to disabled)
         fp_cfg = cfg["terms"]["fokker_planck"]
         sc_cfg = fp_cfg.get("self_consistent_beta", {})
@@ -181,50 +184,36 @@ class Collisions:
 
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
-        if self.cfg["terms"]["fokker_planck"]["is_on"]:
-            v = self.cfg["grid"]["species_grids"]["electron"]["v"]
-            dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
-
-            from adept.driftdiffusion import find_self_consistent_beta
-
-            # Compute vbar first (needed for Dougherty's thermal temperature calculation)
-            vbar = self.fp_model.compute_vbar(f)
-
-            beta = find_self_consistent_beta(
-                f,
-                v,
-                dv,
-                spherical=False,  # spherical=False for symmetric grid
-                vbar=vbar,  # Pass vbar for correct thermal temperature with Dougherty
-                rtol=self._sc_rtol,
-                atol=self._sc_atol,
-                max_steps=self._sc_max_steps,
-            )
-
-            # Get D from model (D = 1/(2β) = T in Buet notation)
-            D = self.fp_model.compute_D(f, beta)
-
-            # Compute C_edge using the general formula: C = 2*beta*D*v_eff
-            # This ensures correct Maxwellian equilibrium for all models
-            v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
-            C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
-
-            f = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp, f, dt)
-
-        if self.cfg["terms"]["krook"]["is_on"]:
-            f = self.krook(nu_K, f, dt)
-
-        return f
-        # Substitute dummy zeros for disabled operators so shard_map receives valid arrays.
+        # Substitute dummy zeros for disabled operators so shard_map always receives valid arrays.
         nu_fp_in = nu_fp if nu_fp is not None else jnp.zeros(f.shape[0])
         nu_K_in = nu_K if nu_K is not None else jnp.zeros(f.shape[0])
 
+        v = self.cfg["grid"]["species_grids"]["electron"]["v"]
+        dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+
+        from adept.driftdiffusion import find_self_consistent_beta
+
         def _collide(f_shard, nu_fp_shard, nu_K_shard):
             if self.cfg["terms"]["fokker_planck"]["is_on"]:
-                cee_a, cee_b, cee_c = self.fp(nu=nu_fp_shard, f_xv=f_shard, dt=dt)
-                f_shard = self.td_solver(cee_a, cee_b, cee_c, f_shard)
+                vbar = self.fp_model.compute_vbar(f_shard)
+                beta = find_self_consistent_beta(
+                    f_shard,
+                    v,
+                    dv,
+                    spherical=False,
+                    vbar=vbar,
+                    rtol=self._sc_rtol,
+                    atol=self._sc_atol,
+                    max_steps=self._sc_max_steps,
+                )
+                D = self.fp_model.compute_D(f_shard, beta)
+                v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
+                C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
+                f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
+
             if self.cfg["terms"]["krook"]["is_on"]:
                 f_shard = self.krook(nu_K_shard, f_shard, dt)
+
             return f_shard
 
         if self.x_parallel:
@@ -272,230 +261,3 @@ class Krook:
         n_prof = self.vx_moment(f_xv)
 
         return f_xv * exp_nuKxdt + n_prof[:, None] * self.f_mx * (1.0 - exp_nuKxdt)
-
-
-class _DriftDiffusionBase:
-    """Shared utilities for drift-diffusion-style Fokker-Planck operators."""
-
-    def __init__(self, cfg: Mapping[str, Any]):
-        self.cfg = cfg
-        # TODO(gh-173): For multi-species, use electron grid for FP for now
-        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
-        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
-
-    def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
-        """Compute density n(x) by integrating over velocity."""
-        return jnp.sum(f_xv, axis=1) * self.dv
-
-    def _build_tridiagonal(
-        self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64, vbar: jnp.ndarray
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """Assemble tridiagonal coefficients given a drift velocity vbar."""
-        v0t_sq = self.vx_moment(f_xv * (self.v[None, :] - vbar[:, None]) ** 2.0)
-
-        a = (
-            nu[:, None]
-            * dt
-            * (-v0t_sq[:, None] / self.dv**2.0 + (jnp.roll(self.v, 1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
-        )
-        b = 1.0 + nu[:, None] * dt * self.ones * (2.0 * v0t_sq[:, None] / self.dv**2.0)
-        c = (
-            nu[:, None]
-            * dt
-            * (-v0t_sq[:, None] / self.dv**2.0 - (jnp.roll(self.v, -1)[None, :] - vbar[:, None]) / 2.0 / self.dv)
-        )
-        return a, b, c
-
-
-class LenardBernstein(_DriftDiffusionBase):
-    """Classic Lenard-Bernstein Fokker-Planck operator."""
-
-    def __init__(self, cfg: Mapping[str, Any]):
-        """
-        Initialize Lenard-Bernstein coefficients.
-
-        :param cfg: Simulation configuration providing grid metadata.
-        """
-        super().__init__(cfg)
-
-    def __call__(
-        self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Assemble tridiagonal coefficients for the Lenard-Bernstein operator.
-
-        NB: The equilbrium solution has a mean velocity of 0.
-
-        :param nu: Collision frequency profile (shape: nx).
-        :param f_xv: Distribution function f(x, v) (shape: nx x nv).
-        :param dt: Time step size.
-        :return: tuple of (lower, diagonal, upper) tridiagonal diagonals.
-        """
-        vbar = jnp.zeros_like(nu)
-        return self._build_tridiagonal(nu, f_xv, dt, vbar)
-
-
-class ChangCooperLenardBernstein:
-    """Chang-Cooper discretization of the Lenard-Bernstein operator."""
-
-    def __init__(self, cfg: Mapping[str, Any]):
-        """
-        Precompute velocity grid helpers for Chang-Cooper coefficients.
-
-        :param cfg: Simulation configuration providing grid metadata.
-        """
-        self.cfg = cfg
-        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
-        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
-
-    def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
-        """Compute density n(x) by integrating over velocity."""
-        return jnp.sum(f_xv, axis=1) * self.dv
-
-    @staticmethod
-    def _chang_cooper_delta(w: jnp.ndarray) -> jnp.ndarray:
-        """Compute Chang-Cooper weighting factor delta(w)."""
-        small = jnp.abs(w) < 1.0e-8
-        delta_small = 0.5 - w / 12.0 + w**3 / 720.0
-        delta_full = 1.0 / w - 1.0 / jnp.expm1(w)
-        return jnp.where(small, delta_small, delta_full)
-
-    def __call__(
-        self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Assemble Chang-Cooper tridiagonal coefficients for Lenard-Bernstein.
-
-        B = v f
-        C = <v^2> df/dv
-
-        :param nu: Collision frequency profile (shape: nx).
-        :param f_xv: Distribution function f(x, v) (shape: nx x nv).
-        :param dt: Time step size.
-        :return: tuple of (lower, diagonal, upper) tridiagonal diagonals.
-        """
-        energy = self.vx_moment(f_xv * self.v[None, :] ** 2.0)
-        safe_energy = jnp.maximum(energy, 1.0e-30)
-
-        # Chang-Cooper weights are independent of nu because drift/diffusion share it.
-        w = -self.v_edge[None, :] * self.dv / safe_energy[:, None]
-        delta = self._chang_cooper_delta(w)
-
-        nu = nu[:, None]
-        diff = nu * energy[:, None]
-        drift = -nu * self.v_edge[None, :]
-        alpha = drift * delta + diff / self.dv
-        beta = drift * (1.0 - delta) - diff / self.dv
-
-        lam = dt / self.dv
-        a = jnp.zeros_like(self.ones)
-        a = a.at[:, 1:].set(-lam * alpha)
-        c = jnp.zeros_like(self.ones)
-        c = c.at[:, :-1].set(lam * beta)
-
-        beta_l = jnp.concatenate([jnp.zeros((self.cfg["grid"]["nx"], 1)), beta], axis=1)
-        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.cfg["grid"]["nx"], 1))], axis=1)
-        diag = self.ones + lam * (alpha_r - beta_l)
-
-        return a, diag, c
-
-
-class ChangCooperDougherty:
-    """Chang-Cooper discretization of the Dougherty operator."""
-
-    def __init__(self, cfg: Mapping[str, Any]):
-        """
-        Precompute velocity grid helpers for Chang-Cooper coefficients.
-
-        :param cfg: Simulation configuration providing grid metadata.
-        """
-        self.cfg = cfg
-        self.v = cfg["grid"]["species_grids"]["electron"]["v"]
-        self.dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        nv = cfg["grid"]["species_grids"]["electron"]["nv"]
-        self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
-        self.ones = jnp.ones((self.cfg["grid"]["nx"], nv))
-
-    def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:
-        """Compute density n(x) by integrating over velocity."""
-        return jnp.sum(f_xv, axis=1) * self.dv
-
-    @staticmethod
-    def _chang_cooper_delta(w: jnp.ndarray) -> jnp.ndarray:
-        """Compute Chang-Cooper weighting factor delta(w)."""
-        small = jnp.abs(w) < 1.0e-8
-        delta_small = 0.5 - w / 12.0 + w**3 / 720.0
-        delta_full = 1.0 / w - 1.0 / jnp.expm1(w)
-        return jnp.where(small, delta_small, delta_full)
-
-    def __call__(
-        self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Assemble Chang-Cooper tridiagonal coefficients for the Dougherty operator.
-
-        B = (v - <v>) f
-        C = <(v-<v>)^2> df/dv
-
-        :param nu: Collision frequency profile (shape: nx).
-        :param f_xv: Distribution function f(x, v) (shape: nx x nv).
-        :param dt: Time step size.
-        :return: tuple of (lower, diagonal, upper) tridiagonal diagonals.
-        """
-        vbar = self.vx_moment(f_xv * self.v[None, :])
-        v0t_sq = self.vx_moment(f_xv * (self.v[None, :] - vbar[:, None]) ** 2.0)
-        safe_v0t_sq = jnp.maximum(v0t_sq, 1.0e-30)
-
-        w = -(self.v_edge[None, :] - vbar[:, None]) * self.dv / safe_v0t_sq[:, None]
-        delta = self._chang_cooper_delta(w)
-
-        nu = nu[:, None]
-        diff = nu * safe_v0t_sq[:, None]
-        drift = -nu * (self.v_edge[None, :] - vbar[:, None])
-        alpha = drift * delta + diff / self.dv
-        beta = drift * (1.0 - delta) - diff / self.dv
-
-        lam = dt / self.dv
-        a = jnp.zeros_like(self.ones)
-        a = a.at[:, 1:].set(-lam * alpha)
-        c = jnp.zeros_like(self.ones)
-        c = c.at[:, :-1].set(lam * beta)
-
-        beta_l = jnp.concatenate([jnp.zeros((self.cfg["grid"]["nx"], 1)), beta], axis=1)
-        alpha_r = jnp.concatenate([alpha, jnp.zeros((self.cfg["grid"]["nx"], 1))], axis=1)
-        diag = self.ones + lam * (alpha_r - beta_l)
-
-        return a, diag, c
-
-
-class Dougherty(_DriftDiffusionBase):
-    """Dougherty collision operator using a thermalized drift term."""
-
-    def __init__(self, cfg: Mapping[str, Any]):
-        """
-        Initialize Dougherty coefficients.
-
-        :param cfg: Simulation configuration providing grid metadata.
-        """
-        super().__init__(cfg)
-
-    def __call__(
-        self, nu: jnp.ndarray, f_xv: jnp.ndarray, dt: jnp.float64
-    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
-        """
-        Assemble tridiagonal coefficients for the Dougherty operator.
-
-        NB: The equilbrium solution has a non-zero and self-consistent mean velocity.
-
-        :param nu: Collision frequency profile (shape: nx).
-        :param f_xv: Distribution function f(x, v) (shape: nx x nv).
-        :param dt: Time step size.
-        :return: tuple of (lower, diagonal, upper) tridiagonal diagonals.
-        """
-        vbar = self.vx_moment(f_xv * self.v[None, :])
-        return self._build_tridiagonal(nu, f_xv, dt, vbar)
