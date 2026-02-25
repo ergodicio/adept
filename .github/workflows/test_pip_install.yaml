@@ -1,0 +1,27 @@
+name: test-pip-install
+
+on:
+  pull_request:
+
+  push:
+    branches:
+      - main
+
+jobs:
+  test-pip-install:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install .[dev]
+
+    - name: Test import
+      run: pytest tests/import_test.py

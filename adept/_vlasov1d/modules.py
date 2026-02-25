@@ -1,64 +1,67 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
+from dataclasses import asdict
+
 import numpy as np
-import pint
 from diffrax import ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
+from adept._vlasov1d.grid import grid_from_cfg
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
+from adept._vlasov1d.normalization import electron_debye_normalization
+from adept._vlasov1d.simulation import Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
+from adept.utils import filter_scalars
+
+
+def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
+    """Construct a Vlasov1DSimulation from a config dict."""
+    plasma_norm = electron_debye_normalization(
+        cfg["units"]["normalizing_density"],
+        cfg["units"]["normalizing_temperature"],
+    )
+    beta = 1.0 / plasma_norm.speed_of_light_norm()
+    grid = grid_from_cfg(cfg, beta)
+    return Vlasov1DSimulation(plasma_norm, grid)
 
 
 class BaseVlasov1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        self.ureg = pint.UnitRegistry()
+        self.simulation = sim_from_cfg(cfg)
 
     def post_process(self, run_output: dict, td: str):
         return post_process(run_output["solver result"], self.cfg, td, self.args)
 
     def write_units(self) -> dict:
-        _Q = self.ureg.Quantity
+        norm = self.simulation.plasma_norm
 
-        n0 = _Q(self.cfg["units"]["normalizing_density"]).to("1/cc")
-        T0 = _Q(self.cfg["units"]["normalizing_temperature"]).to("eV")
-
-        wp0 = np.sqrt(n0 * self.ureg.e**2.0 / (self.ureg.m_e * self.ureg.epsilon_0)).to("rad/s")
-        tp0 = (1 / wp0).to("fs")
-
-        v0 = np.sqrt(2.0 * T0 / self.ureg.m_e).to("m/s")
-        x0 = (v0 / wp0).to("nm")
-        c_light = _Q(1.0 * self.ureg.c).to("m/s") / v0
-        beta = (v0 / self.ureg.c).to("dimensionless")
-
-        box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * x0).to("microns")
+        box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * norm.L0).to("microns")
         if "ymax" in self.cfg["grid"].keys():
-            box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * x0).to("microns")
+            box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * norm.L0).to("microns")
         else:
             box_width = "inf"
-        sim_duration = (self.cfg["grid"]["tmax"] * tp0).to("ps")
+        sim_duration = (self.cfg["grid"]["tmax"] * norm.tau).to("ps")
 
-        # collisions
-        logLambda_ee = 23.5 - np.log(n0.magnitude**0.5 / T0.magnitude**-1.25)
-        logLambda_ee -= (1e-5 + (np.log(T0.magnitude) - 2) ** 2.0 / 16) ** 0.5
-        nuee = _Q(2.91e-6 * n0.magnitude * logLambda_ee / T0.magnitude**1.5, "Hz")
-        nuee_norm = nuee / wp0
+        nu_ee = norm.approximate_ee_collision_frequency()
+
+        beta = 1.0 / norm.speed_of_light_norm()
 
         all_quantities = {
-            "wp0": wp0,
-            "tp0": tp0,
-            "n0": n0,
-            "v0": v0,
-            "T0": T0,
-            "c_light": c_light,
+            "wp0": (1 / norm.tau).to("rad/s"),
+            "tp0": norm.tau.to("fs"),
+            "n0": norm.n0.to("1/cc"),
+            "v0": norm.v0.to("m/s"),
+            "T0": norm.T0.to("eV"),
+            "c_light": norm.speed_of_light_norm(),
             "beta": beta,
-            "x0": x0,
-            "nuee": nuee,
-            "logLambda_ee": logLambda_ee,
+            "x0": norm.L0.to("nm"),
+            "nuee": nu_ee.to("Hz"),
+            "logLambda_ee": norm.logLambda_ee(),
             "box_length": box_length,
             "box_width": box_width,
             "sim_duration": sim_duration,
@@ -66,7 +69,7 @@ class BaseVlasov1D(ADEPTModule):
 
         self.cfg["units"]["derived"] = all_quantities
 
-        self.cfg["grid"]["beta"] = beta.magnitude
+        self.cfg["grid"]["beta"] = beta
 
         return all_quantities
 
@@ -80,15 +83,17 @@ class BaseVlasov1D(ADEPTModule):
         :return:
         """
         cfg_grid = self.cfg["grid"]
+        grid = self.simulation.grid
 
-        # Default save.*.t.tmin/tmax to grid values
+        # Merge grid scalar values from the Grid object
+        cfg_grid.update(filter_scalars(asdict(grid)))
+
+        # Default save.*.t.tmin/tmax to computed grid values
         for save_type in self.cfg.get("save", {}).keys():
             if "t" in self.cfg["save"][save_type]:
                 t_cfg = self.cfg["save"][save_type]["t"]
-                t_cfg.setdefault("tmin", cfg_grid.get("tmin", 0.0))
-                t_cfg.setdefault("tmax", cfg_grid["tmax"])
-
-        cfg_grid["dx"] = cfg_grid["xmax"] / cfg_grid["nx"]
+                t_cfg.setdefault("tmin", grid.tmin)
+                t_cfg.setdefault("tmax", grid.tmax)
 
         # Normalize species config: if not provided, generate a default electron species
         if self.cfg["terms"].get("species", None) is None:
@@ -109,19 +114,13 @@ class BaseVlasov1D(ADEPTModule):
                 }
             ]
 
+        # Print message if dt was overridden for EM wave stability
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
-            cfg_grid["dt"] = float(0.95 * cfg_grid["dx"] / self.cfg["units"]["derived"]["c_light"].magnitude)
 
-        cfg_grid["nt"] = int(cfg_grid["tmax"] / cfg_grid["dt"] + 1)
-
-        if cfg_grid["nt"] > 1e6:
-            cfg_grid["max_steps"] = int(1e6)
+        if grid.nt > 1e6:
             print(r"Only running $10^6$ steps")
-        else:
-            cfg_grid["max_steps"] = cfg_grid["nt"] + 4
 
-        cfg_grid["tmax"] = cfg_grid["dt"] * cfg_grid["nt"]
         self.cfg["grid"] = cfg_grid
 
     def get_solver_quantities(self) -> dict:
@@ -134,32 +133,10 @@ class BaseVlasov1D(ADEPTModule):
         :return:
         """
         cfg_grid = self.cfg["grid"]
+        grid = self.simulation.grid
 
-        cfg_grid = {
-            **cfg_grid,
-            **{
-                "x": jnp.linspace(
-                    cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
-                ),
-                "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-                "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-                "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-            },
-        }
-
-        # config axes
-        one_over_kx = np.zeros_like(cfg_grid["kx"])
-        one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
-        cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
-
-        one_over_kxr = np.zeros_like(cfg_grid["kxr"])
-        one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
-        cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
-
-        cfg_grid["nuprof"] = 1.0
-        # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
-        cfg_grid["ktprof"] = 1.0
-        # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
+        # Merge all grid values (including arrays) from the Grid object
+        cfg_grid.update(asdict(grid))
 
         # Initialize distributions (always returns dict format)
         dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
@@ -229,17 +206,6 @@ class BaseVlasov1D(ADEPTModule):
             cfg_grid["one_over_kv"] = cfg_grid["species_grids"]["electron"]["one_over_kv"]
             cfg_grid["one_over_kvr"] = cfg_grid["species_grids"]["electron"]["one_over_kvr"]
 
-        cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
-        # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
-        cfg_grid["x_a"] = np.concatenate(
-            [
-                [cfg_grid["x"][0] - cfg_grid["dx"]],
-                cfg_grid["x"],
-                [cfg_grid["x"][-1] + cfg_grid["dx"]],
-            ]
-        )
-
         self.cfg["grid"] = cfg_grid
 
     def init_state_and_args(self) -> dict:
@@ -249,6 +215,8 @@ class BaseVlasov1D(ADEPTModule):
         :param cfg:
         :return:
         """
+        grid = self.simulation.grid
+
         # Initialize distributions (always returns dict format)
         dist_result = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
 
@@ -265,10 +233,10 @@ class BaseVlasov1D(ADEPTModule):
 
         # Field quantities (same for all modes)
         for field in ["e", "de"]:
-            state[field] = jnp.zeros(self.cfg["grid"]["nx"])
+            state[field] = jnp.zeros(grid.nx)
 
         for field in ["a", "da", "prev_a"]:
-            state[field] = jnp.zeros(self.cfg["grid"]["nx"] + 2)  # need boundary cells
+            state[field] = jnp.zeros(grid.nx + 2)  # need boundary cells
 
         # Diagnostics (use reference distribution shape)
         for k in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
@@ -280,9 +248,10 @@ class BaseVlasov1D(ADEPTModule):
 
     def init_diffeqsolve(self):
         self.cfg = get_save_quantities(self.cfg)
-        self.time_quantities = {"t0": 0.0, "t1": self.cfg["grid"]["tmax"], "max_steps": self.cfg["grid"]["max_steps"]}
+        grid = self.simulation.grid
+        self.time_quantities = {"t0": 0.0, "t1": grid.tmax, "max_steps": grid.max_steps}
         self.diffeqsolve_quants = dict(
-            terms=ODETerm(VlasovMaxwell(self.cfg)),
+            terms=ODETerm(VlasovMaxwell(self.cfg, grid)),
             solver=Stepper(),
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
@@ -290,17 +259,18 @@ class BaseVlasov1D(ADEPTModule):
     def __call__(self, trainable_modules: dict, args: dict | None = None):
         if args is None:
             args = self.args
+        grid = self.simulation.grid
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],
             solver=self.diffeqsolve_quants["solver"],
             t0=self.time_quantities["t0"],
             t1=self.time_quantities["t1"],
-            max_steps=self.cfg["grid"]["max_steps"],
-            dt0=self.cfg["grid"]["dt"],
+            max_steps=grid.max_steps,
+            dt0=grid.dt,
             y0=self.state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
-            progress_meter=TqdmProgressMeter(refresh_steps=self.cfg["grid"]["max_steps"] // 100),
+            progress_meter=TqdmProgressMeter(refresh_steps=grid.max_steps // 100),
         )
 
         return {"solver result": solver_result}

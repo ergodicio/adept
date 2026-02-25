@@ -18,7 +18,6 @@ dependencies = [
     "tqdm",
     "xarray",
     "mlflow",
-
     "h5netcdf",
     "optax",
     "boto3",
@@ -29,7 +28,8 @@ dependencies = [
     "tabulate",
     "pydantic",
     "scienceplots",
-    "jax"
+    "jax",
+    "jpu>=0.0.5",
 ]
 
 [project.urls]
@@ -54,6 +54,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-cov",
+    "pytest-regressions",
     "typeguard",
     "adept[docs]",
 ]
@@ -74,8 +75,9 @@ allow-direct-references = true
 [tool.pytest.ini_options]
 # Test type hints w/ typeguard - currently disabled
 # addopts = ["--typeguard-packages=adept"]
-addopts = "--import-mode=importlib --strict-markers"
-pythonpath = "."
+addopts = "--import-mode=importlib --strict-markers -m 'not slow'"
+markers = ["slow: long-running parameter sweeps"]
+pythonpath = [".", "tests"]
 testpaths = ["tests"]
 filterwarnings = [
     "error",

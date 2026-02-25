@@ -1,0 +1,25 @@
+name: Setup adept repo
+description: "Checkout and install adept with dev dependencies"
+
+inputs:
+  python-version:
+    description: "Python version to use"
+    required: true
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+
+    - name: Install package
+      run: uv sync --extra dev --frozen
+      shell: bash

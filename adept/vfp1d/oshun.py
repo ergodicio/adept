@@ -3,7 +3,7 @@ import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
 
-from adept.vfp1d.fokker_planck import FLMCollisions, LenardBernstein
+from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions
 
 
 class OSHUN1D:
@@ -25,7 +25,7 @@ class OSHUN1D:
         self.e_solver = cfg["terms"]["e_solver"]
 
         self.ampere_coeff = 1e-6
-        self.lb = LenardBernstein(cfg)
+        self.lb = F0Collisions(cfg)
         self.ei = FLMCollisions(cfg)
 
         self.large_eps = 1e-6

@@ -4,6 +4,7 @@
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
+from adept._vlasov1d.grid import Grid
 
 
 class Driver:
@@ -289,7 +290,7 @@ class ElectricFieldSolver:
     with the ponderomotive force from laser fields.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg: dict, grid: Grid):
         super().__init__()
 
         species_grids = cfg["grid"]["species_grids"]
@@ -297,7 +298,7 @@ class ElectricFieldSolver:
 
         if cfg["terms"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(
-                one_over_kx=cfg["grid"]["one_over_kx"],
+                one_over_kx=grid.one_over_kx,
                 species_grids=species_grids,
                 species_params=species_params,
             )
@@ -314,8 +315,8 @@ class ElectricFieldSolver:
         elif cfg["terms"]["field"] == "hampere":
             if cfg["terms"]["time"] == "leapfrog":
                 self.es_field_solver = HampereSolver(
-                    kx=cfg["grid"]["kx"],
-                    one_over_kx=cfg["grid"]["one_over_kx"],
+                    kx=grid.kx,
+                    one_over_kx=grid.one_over_kx,
                     species_grids=species_grids,
                     species_params=species_params,
                 )
@@ -324,7 +325,7 @@ class ElectricFieldSolver:
                 raise NotImplementedError(f"ampere + {cfg['terms']['time']} has not yet been implemented")
         else:
             raise NotImplementedError("Field Solver: <" + cfg["solver"]["field"] + "> has not yet been implemented")
-        self.dx = cfg["grid"]["dx"]
+        self.dx = grid.dx
 
     def __call__(self, f_dict: dict, a: jnp.ndarray, prev_ex: jnp.ndarray, dt: jnp.float64):
         """Compute total electrostatic field for the Vlasov equation.
