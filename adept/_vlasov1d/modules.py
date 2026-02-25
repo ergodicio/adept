@@ -206,9 +206,6 @@ class BaseVlasov1D(ADEPTModule):
             cfg_grid["one_over_kv"] = cfg_grid["species_grids"]["electron"]["one_over_kv"]
             cfg_grid["one_over_kvr"] = cfg_grid["species_grids"]["electron"]["one_over_kvr"]
 
-        cfg_grid["kprof"] = np.ones_like(cfg_grid["n_prof_total"])
-        # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
         self.cfg["grid"] = cfg_grid
 
     def init_state_and_args(self) -> dict:
