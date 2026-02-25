@@ -242,8 +242,18 @@ Isotropic ($f_0$) collision operator.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `model` | string | Collision model: `"LenardBernstein"` or `"Dougherty"` |
+| `model` | string | Collision model (see below) |
 | `scheme` | string | Differencing scheme: `"central"` or `"chang_cooper"` |
+
+**Available models:**
+
+| Model | Description |
+|-------|-------------|
+| `CoulombianKernel` | Standard Landau/Rosenbluth operator with kernel $g(\varepsilon,\varepsilon') = \min(\varepsilon^{3/2}, \varepsilon'^{3/2})$. Default. |
+| `AsymptoticLocal` | Rank-1 kernel $g(\varepsilon,\varepsilon') = \sqrt{\varepsilon \cdot \varepsilon'}$ from high-velocity limit of linearized collision operator. O(N) computation. |
+| `FastVFP` | Beta-based model with $D = 1/(2\beta v)$, giving constant drift $C = 1$. From Bell & Sherlock (2024). |
+
+**Note:** Energy is not conserved for non-Maxwellian distributions with the current Chang-Cooper scheme. A proper Buet weak-form scheme is planned for improved energy conservation.
 
 #### fokker_planck.flm
 
@@ -260,8 +270,8 @@ terms:
   e_solver: oshun
   fokker_planck:
     f00:
-      model: LenardBernstein
-      scheme: central
+      model: CoulombianKernel
+      scheme: chang_cooper
     flm:
       ee: true
 ```

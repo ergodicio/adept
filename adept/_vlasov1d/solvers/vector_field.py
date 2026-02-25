@@ -199,7 +199,7 @@ class VlasovPoissonFokkerPlanck:
             self.dex_save = 0
         else:
             raise NotImplementedError
-        self.fp = fokker_planck.Collisions(cfg=cfg, grid=grid)
+        self.fp = fokker_planck.Collisions(cfg=cfg)
         self.vlasov_dfdt = cfg["diagnostics"]["diag-vlasov-dfdt"]
         self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
 
