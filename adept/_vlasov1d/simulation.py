@@ -12,6 +12,7 @@ from adept.functions import (
     UniformFunction,
 )
 from adept.normalization import PlasmaNormalization
+from adept.utils import SpaceTimeEnvelopeFunction
 
 
 class Species(eqx.Module):
