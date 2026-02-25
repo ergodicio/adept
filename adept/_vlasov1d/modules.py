@@ -137,13 +137,13 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid.update(asdict(grid))
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
+        dist_result = _initialize_total_distribution_(self.cfg, grid)
         cfg_grid["species_distributions"] = dist_result
 
         # Build species_grids and species_params
         cfg_grid["species_grids"] = {}
         cfg_grid["species_params"] = {}
-        n_prof_total = np.zeros([cfg_grid["nx"]])
+        n_prof_total = np.zeros([grid.nx])
 
         for species_name, (n_prof, f_s, v_ax) in dist_result.items():
             n_prof_total += n_prof
@@ -216,7 +216,7 @@ class BaseVlasov1D(ADEPTModule):
         grid = self.simulation.grid
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
+        dist_result = _initialize_total_distribution_(self.cfg, self.simulation.grid)
 
         state = {}
 
