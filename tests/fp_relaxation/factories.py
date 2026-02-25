@@ -57,7 +57,7 @@ class AbstractFPRelaxationVectorFieldFactory(eqx.Module):
 
         Args:
             grid: Velocity grid
-            model_name: Name of model (e.g., "LenardBernstein", "FastVFP")
+            model_name: Name of model (e.g., "LenardBernstein", "CoulombianKernel")
             scheme_name: Name of scheme (e.g., "ChangCooper")
             dt: Time step
             nu: Collision frequency

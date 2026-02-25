@@ -36,7 +36,7 @@ AbstractMaxwellianPreservingModel          (base: v, dv, compute_D, compute_vbar
 
 Concrete models live alongside their solvers:
 - LenardBernstein, Dougherty → adept._vlasov1d.solvers.pushers.fokker_planck
-- FastVFP → adept.vfp1d.fokker_planck
+- CoulombianKernel, AsymptoticLocal, FastVFP → adept.vfp1d.fokker_planck
 
 Type 1 (Beta-based): Use Buet β = 1/(2T) to compute D(β, v)
     NOT compatible with Buet weak form scheme.
@@ -248,11 +248,11 @@ class AbstractMaxwellianPreservingModel(eqx.Module):
 
     Type 1 (Beta-based): D = 1/(2β) = T from an external β parameter.
         NOT compatible with Buet weak form scheme.
-        Examples: LenardBernstein, Dougherty
+        Examples: LenardBernstein, Dougherty, FastVFP
 
     Type 2 (Kernel-based): D via linear kernel ∫g·f·dε (β ignored).
         Compatible with Buet weak form scheme via apply_kernel method.
-        Examples: FastVFP, Coulombian
+        Examples: CoulombianKernel, AsymptoticLocal
 
     Attributes:
         v: Velocity grid (cell centers), shape (nv,)
@@ -322,22 +322,25 @@ class AbstractKernelBasedModel(AbstractMaxwellianPreservingModel):
         """Initialize model with velocity grid."""
         super().__init__(v, dv)
         self.sqrt_eps_edge = jnp.sqrt(0.5 * (v[1:] ** 2 + v[:-1] ** 2))
-        # d_eps = d(v²) = (v[i+1] + v[i]) * dv
-        self.d_eps_edge = (v[1:] + v[:-1]) * dv
+        self.d_eps_edge = (v[1:] + v[:-1]) * dv  # = d(v²)
 
     def compute_D(self, f: Array, beta: Array | None = None) -> Array:
         """
-        Compute D from kernel. beta is IGNORED.
+        Compute D(v) from kernel. beta is IGNORED.
+
+        The kernel integral gives D(ε). Converting from energy to velocity space:
+        ∂/∂ε = (1/2v) ∂/∂v, so D(v) = D(ε) / (2v).
 
         Args:
             f: Distribution at cell centers, shape (..., nv)
             beta: Ignored (can be None)
 
         Returns:
-            D at cell edges, shape (..., nv-1)
+            D(v) at cell edges, shape (..., nv-1)
         """
         f_edge = self._log_mean_interp(f)
-        return self.apply_kernel(f_edge)
+        D_eps = self.apply_kernel(f_edge)
+        return D_eps / (2.0 * self.sqrt_eps_edge)
 
     @abstractmethod
     def apply_kernel(self, edge_values: Array) -> Array:
@@ -364,22 +367,20 @@ class AbstractKernelBasedModel(AbstractMaxwellianPreservingModel):
         f_left = f[..., :-1]
         f_right = f[..., 1:]
 
-        # Floor to prevent log(-inf) for very small values
+        # Floor both to prevent log(0)
         floor = 1e-300
         f_left_safe = jnp.maximum(f_left, floor)
         f_right_safe = jnp.maximum(f_right, floor)
 
-        # Log mean: (f_R - f_L) / (log(f_R) - log(f_L))
-        # Use safe version to handle f_L ≈ f_R
-        log_diff = jnp.log(f_right_safe) - jnp.log(f_left_safe)
-        safe_log_diff = jnp.where(jnp.abs(log_diff) < 1e-8, 1.0, log_diff)
+        # Log of ratio is more stable when f_left ≈ f_right
+        log_diff = jnp.log(f_right_safe / f_left_safe)
 
-        # Use arithmetic mean when values are very small or similar
+        # Use arithmetic mean when ratio is ~1 or values are very small
         use_arithmetic = (jnp.abs(log_diff) < 1e-8) | (f_left < floor) | (f_right < floor)
         return jnp.where(
             use_arithmetic,
             0.5 * (f_left + f_right),  # Arithmetic mean
-            (f_right - f_left) / safe_log_diff,
+            (f_right - f_left) / jnp.where(use_arithmetic, 1.0, log_diff),
         )
 
 

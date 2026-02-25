@@ -14,6 +14,7 @@ import tempfile
 from functools import partial
 from pathlib import Path
 
+import jax.numpy as jnp
 import mlflow
 from diffrax import ODETerm, SaveAt, diffeqsolve
 from jax import Array
@@ -133,11 +134,11 @@ def run_relaxation_sweep(
                         t1=n_collision_times / nu,
                         dt0=dt,
                         y0=f0,
-                        saveat=SaveAt(t0=True, t1=True),
-                        max_steps=int(n_collision_times / combo_dt) + 4,
+                        saveat=SaveAt(t0=True, t1=True, steps=max(1, int(1 / combo_dt))),
+                        max_steps=int(n_collision_times / combo_dt),
                     )
                     f_history = solution.ys
-
+                    assert len(solution.ts) > 2, solution.ts
                     metrics = compute_metrics(f_history, grid, solution.ts)
                     child_results[label] = (metrics, f_history)
 

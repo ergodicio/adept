@@ -27,26 +27,61 @@ from adept.driftdiffusion import (
 )
 
 
-class FastVFP(AbstractKernelBasedModel):
+class FastVFP(AbstractMaxwellianPreservingModel):
     """
-    Fast VFP kernel (Bell & Sherlock): g(ε, ε') = √(ε·ε').
+    FastVFP model: D = 1/(2β·v).
 
-    This kernel is equivalent to using the discrete temperature ⟨v²⟩.
-    It is a rank-1 kernel, enabling O(N) computation instead of O(N²).
+    This model computes D directly from the self-consistent β parameter,
+    giving a constant drift coefficient C = 1.
 
-    Compatible with Buet weak form scheme.
+    Does not conserve energy for non-Maxwellian distributions with the
+    current Chang-Cooper scheme. A proper Buet weak-form scheme is needed.
 
     Reference:
-        Bell, A. R. & Sherlock, M. (2006). "Fast electron transport in laser
-        produced plasmas." Plasma Physics and Controlled Fusion.
+        Bell, A. R. & Sherlock, M. (2024). "The fastVFP code for solution
+        of the Vlasov–Fokker–Planck equation." Plasma Phys. Control. Fusion 66 035014.
+    """
+
+    v_edge: Array
+
+    def __init__(self, v: Array, dv: float):
+        """Initialize model with velocity grid."""
+        super().__init__(v, dv)
+        self.v_edge = 0.5 * (v[1:] + v[:-1])
+
+    def compute_D(self, f: Array, beta: Array) -> Array:
+        """
+        Compute diffusion coefficient D = 1/(2β·v_edge).
+
+        Args:
+            f: Distribution function, shape (..., nv) - unused for this model
+            beta: Inverse temperature β = 1/(2T), shape (...)
+
+        Returns:
+            D at cell edges, shape (..., nv-1)
+        """
+        del f  # Unused
+        return 1.0 / (2.0 * beta[..., None] * self.v_edge)
+
+
+class AsymptoticLocal(AbstractKernelBasedModel):
+    """
+    Asymptotic local kernel: g(ε, ε') = √(ε·ε').
+
+    This rank-1 kernel is derived from the high-velocity limit of the
+    linearized collision operator, neglecting integral terms. It enables
+    O(N) computation instead of O(N²).
+
+    Does not conserve energy for non-Maxwellian distributions with the
+    current Chang-Cooper scheme. A proper Buet weak-form scheme is needed.
     """
 
     def apply_kernel(self, edge_values: Array) -> Array:
         """
-        Apply √(ε·ε') kernel: D(ε) = 4π · √ε · ⟨√ε' · values⟩
+        Apply √(ε·ε') kernel: D(ε) = √ε · ⟨√ε' · values⟩
 
         For rank-1 kernel, this is O(N) not O(N²):
-            D[i] = 4π · √ε[i] · Σⱼ √ε[j] · edge_values[j] · Δε[j]
+            D[i] = √ε[i] · Σⱼ √ε[j] · edge_values[j] · Δε[j]
 
         Args:
             edge_values: Values at cell edges, shape (..., nv-1)
@@ -54,9 +89,83 @@ class FastVFP(AbstractKernelBasedModel):
         Returns:
             Kernel integral at cell edges, shape (..., nv-1)
         """
-        # Inner product: 4π · ⟨√ε · values · Δε⟩
-        inner = 2.0 * jnp.pi * jnp.sum(self.sqrt_eps_edge * edge_values * self.d_eps_edge, axis=-1, keepdims=True)
+        inner = 4.0 * jnp.pi * jnp.sum(self.sqrt_eps_edge * edge_values * self.d_eps_edge, axis=-1, keepdims=True)
         return self.sqrt_eps_edge * inner
+
+
+class CoulombianKernel(AbstractKernelBasedModel):
+    """
+    Coulombian kernel: g(ε, ε') = min(ε^(3/2), ε'^(3/2)).
+
+    This kernel corresponds to the standard Landau/Rosenbluth collision operator.
+    It is NOT separable but can be computed efficiently in O(N) via two cumulative sums.
+
+    Compatible with Buet weak form scheme.
+
+    Reference:
+        Buet, C. & Le Thanh, K. C. (2007). "A fully discretized scheme for
+        kinetic equations with Fokker-Planck collision operator."
+    """
+
+    def apply_kernel(self, edge_values: Array) -> Array:
+        """
+        Apply min(ε^(3/2), ε'^(3/2)) kernel with symmetric discretization.
+
+        D(ε_i) = Σ_j min(ε_i^(3/2), ε_j^(3/2)) · f_j · dε_j
+               = Σ_{j<i} ε_j^(3/2) · f_j · dε_j + ε_i^(3/2) · Σ_{j>=i} f_j · dε_j
+               = lower(ε_i) + ε_i^(3/2) · upper(ε_i)
+
+        Uses inclusive upper (j>=i) to preserve bilinear symmetry for Buet weak form:
+            Σ_i K[A]_i · B_i = Σ_i K[B]_i · A_i
+
+        Args:
+            edge_values: Values at cell edges, shape (..., nv-1)
+
+        Returns:
+            Kernel integral at cell edges, shape (..., nv-1)
+        """
+        eps_edge_3_2 = self.sqrt_eps_edge**3  # ε^(3/2) at edges
+
+        # Weighted values for lower integral: ε'^(3/2) · f · dε
+        weighted_vals = eps_edge_3_2 * edge_values * self.d_eps_edge
+        # Unweighted values for upper integral: f · dε
+        unweighted_vals = edge_values * self.d_eps_edge
+
+        # lower[i] = Σ_{j<i} ε_j^(3/2) · values[j] · dε[j]  (exclusive cumsum from below)
+        lower_cumsum = jnp.cumsum(weighted_vals, axis=-1)
+        batch_shape = edge_values.shape[:-1]
+        lower = jnp.concatenate([jnp.zeros((*batch_shape, 1)), lower_cumsum[..., :-1]], axis=-1)
+
+        # upper[i] = Σ_{j>=i} values[j] · dε[j]  (inclusive reverse cumsum for symmetry)
+        upper = jnp.cumsum(unweighted_vals[..., ::-1], axis=-1)[..., ::-1]
+
+        return 4.0 * jnp.pi * (lower + eps_edge_3_2 * upper)
+
+
+def _get_model(
+    model_name: str,
+    v: Array,
+    dv: float,
+) -> AbstractMaxwellianPreservingModel:
+    """Create a collision model from config name.
+
+    Args:
+        model_name: Name of the model ("CoulombianKernel", "AsymptoticLocal", "BetaBased")
+        v: Velocity grid (cell centers)
+        dv: Velocity grid spacing
+
+    Returns:
+        A collision model instance.
+    """
+    model_name = model_name.casefold()
+    if model_name in ("coulombian", "coulombiankernel", "coulombian_kernel", "coulombian-kernel", "landau"):
+        return CoulombianKernel(v=v, dv=dv)
+    elif model_name in ("asymptoticlocal", "asymptotic_local", "asymptotic-local", "sqrt"):
+        return AsymptoticLocal(v=v, dv=dv)
+    elif model_name in ("fastvfp", "fast_vfp", "fast-vfp"):
+        return FastVFP(v=v, dv=dv)
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
 
 
 def _get_scheme(
@@ -97,7 +206,7 @@ class F0Collisions(eqx.Module):
     dv: float
     nv: int
     nuee_coeff: float
-    model: AbstractMaxwellianPreservingModel
+    model: AbstractKernelBasedModel
     scheme: AbstractDriftDiffusionDifferencingScheme
     _sc_max_steps: int
     _sc_rtol: float
@@ -109,6 +218,7 @@ class F0Collisions(eqx.Module):
 
         Config should have:
         - grid.v, grid.dv, grid.nv
+        - terms.fokker_planck.f00.model (e.g., "CoulombianKernel")
         - terms.fokker_planck.f00.scheme (e.g., "central" or "chang_cooper")
         - terms.fokker_planck.self_consistent_beta (optional): dict with enabled, max_steps, rtol, atol
 
@@ -137,9 +247,10 @@ class F0Collisions(eqx.Module):
         # Create model and scheme from config
         # Use original v grid with zero_flux BC (= reflective at v=0 where C=0)
         f00_cfg = cfg["terms"]["fokker_planck"]["f00"]
+        model_name = f00_cfg.get("model", "CoulombianKernel")
         scheme_name = f00_cfg.get("scheme", "central")
 
-        self.model = FastVFP(v=self.v, dv=self.dv)
+        self.model = _get_model(model_name, self.v, self.dv)
         self.scheme = _get_scheme(scheme_name, self.dv)
 
         # Self-consistent beta config (defaults to disabled)
