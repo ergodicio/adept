@@ -78,6 +78,17 @@ class SaveModel(BaseModel):
     # These are validated as dict[str, TimeSaveModel] when accessed
 
 
+class EnvelopeModel(BaseModel):
+    center: str | float
+    rise: str | float
+    width: str | float
+
+
+class SpaceTimeEnvelopeModel(BaseModel):
+    space: EnvelopeModel
+    time: EnvelopeModel
+
+
 class ExDriverModel(BaseModel):
     a0: float
     k0: float
