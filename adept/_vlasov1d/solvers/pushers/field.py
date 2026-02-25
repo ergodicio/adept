@@ -5,36 +5,27 @@ from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.grid import Grid
+from adept._vlasov1d.simulation import EMDriver
 
 
 class Driver:
-    def __init__(self, xax, driver_key="ex"):
+    def __init__(self, xax, drivers: list[EMDriver]):
         self.xax = xax
-        self.driver_key = driver_key
+        self.drivers = drivers
 
-    def get_this_pulse(self, this_pulse: dict, current_time: jnp.float64):
-        kk = this_pulse["k0"]
-        ww = this_pulse["w0"]
-        dw = this_pulse["dw0"]
-        t_L = this_pulse["t_center"] - this_pulse["t_width"] * 0.5
-        t_R = this_pulse["t_center"] + this_pulse["t_width"] * 0.5
-        t_wL = this_pulse["t_rise"]
-        t_wR = this_pulse["t_rise"]
-        x_L = this_pulse["x_center"] - this_pulse["x_width"] * 0.5
-        x_R = this_pulse["x_center"] + this_pulse["x_width"] * 0.5
-        x_wL = this_pulse["x_rise"]
-        x_wR = this_pulse["x_rise"]
-        envelope_t = get_envelope(t_wL, t_wR, t_L, t_R, current_time)
-        envelope_x = get_envelope(x_wL, x_wR, x_L, x_R, self.xax)
+    def get_this_pulse(self, this_pulse: EMDriver, current_time: jnp.float64):
+        kk = this_pulse.k0
+        ww = this_pulse.w0
+        dw = this_pulse.dw0
 
-        return (
-            envelope_t * envelope_x * jnp.abs(kk) * this_pulse["a0"] * jnp.sin(kk * self.xax - (ww + dw) * current_time)
-        )
+        factor = this_pulse.envelope(self.xax, current_time)
+
+        return factor * jnp.abs(kk) * this_pulse.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
     def __call__(self, t, args):
         total_de = jnp.zeros_like(self.xax)
 
-        for _, pulse in args["drivers"][self.driver_key].items():
+        for pulse in self.drivers:
             total_de += self.get_this_pulse(pulse, t)
 
         return total_de

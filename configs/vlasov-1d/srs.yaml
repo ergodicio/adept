@@ -11,38 +11,35 @@ density:
   species-background:
     noise_seed: 420
     noise_type: gaussian
-    noise_val: 0.0
+    noise_val: 0.001
     v0: 0.0
     T0: 1.0
     m: 2.0
-    basis: tanh
-    baseline: 0.001
-    bump_or_trough: bump
-    center: 2000.0
-    rise: 25.0
-    bump_height: 0.999
-    width: 3900.0
+    basis: exponential
+    gradient scale length: 200um
+    val at center: 1.0
+    center: 50um
+    rise: 5um
+    width: 40um
 
 grid:
-  dt: 0.5
-  nv: 4096
+  dt: 0.005ps
+  tmin: 0.0ps
+  tmax: 8.0ps
+
   nx: 4096
-  tmin: 0.
-  tmax: 8000.0
+  xmin: 0.0um
+  xmax: 100um
+
+  nv: 4096
   vmax: 6.4
-  xmax: 4000
-  xmin: 0.0
 
 save:
   fields:
     t:
-      tmin: 0.0
-      tmax: 8000.0
       nt: 2001
   electron:
     t:
-      tmin: 0.0
-      tmax: 2000.0
       nt: 21
 
 solver: vlasov-1d
@@ -55,27 +52,35 @@ drivers:
   ex: {}
   ey:
     '0':
-      a0: 1.0
-      k0: 1.0
-      t_center: 4000.0
-      t_rise: 20.0
-      t_width: 7900.0
-      w0: 2.79
-      dw0: 0.
-      x_center: 50.0
-      x_rise: 0.1
-      x_width: 1.0
+      params:
+        a0: 1.0
+        k0: 1.0
+        w0: 2.79
+        dw0: 0.
+      envelope:
+        time:
+          center: 4000.0ps
+          rise: 20.0fs
+          width: 7900.0fs
+        space:
+          center: 50.0um
+          rise: 0.1um
+          width: 1.0um
     '1':
-      a0: 1.e-6
-      k0: 1.0
-      t_center: 4000.0
-      t_rise: 20.0
-      t_width: 7900.0
-      w0: 1.63
-      dw0: 0.
-      x_center: 3950.0
-      x_rise: 0.1
-      x_width: 1.0
+      params:
+        a0: 1.e-6
+        k0: 1.0
+        w0: 1.63
+        dw0: 0.
+      envelope:
+        time:
+          center: 4000.0fs
+          rise: 20.0fs
+          width: 7900.0fs
+        space:
+          center: 50um
+          rise: 0.1um
+          width: 1.0um
 
 diagnostics:
   diag-vlasov-dfdt: False
@@ -110,15 +115,13 @@ terms:
       baseline: 1.0
       bump_or_trough: bump
       center: 2000.0
-      rise: 25.0
-      slope: 0.0
+      rise: 2.5
       bump_height: 0.0
-      width: 10000000.0
+      width: 1s
     space:
       baseline: 0.0
       bump_or_trough: trough
-      center: 2000.0
-      rise: 10.0
-      slope: 0.0
+      center: 50.0um
+      rise: 5.0um
       bump_height: 10.0
-      width: 3800.0
+      width: 90um

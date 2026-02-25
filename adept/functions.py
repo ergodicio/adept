@@ -2,7 +2,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
-from adept.normalization import UREG, PlasmaNormalization
+from adept.normalization import UREG, PlasmaNormalization, normalize
 
 
 class EnvelopeFunction(eqx.Module):
@@ -42,7 +42,7 @@ class EnvelopeFunction(eqx.Module):
         return self.baseline + self.bump_height * env
 
     @staticmethod
-    def from_config(cfg: dict) -> "EnvelopeFunction":
+    def from_config(cfg: dict, norm: PlasmaNormalization | None = None, dim: str = "x") -> "EnvelopeFunction":
         """Construct an EnvelopeFunction from a config dict.
 
         Args:
@@ -53,9 +53,9 @@ class EnvelopeFunction(eqx.Module):
             EnvelopeFunction instance
         """
         return EnvelopeFunction(
-            center=cfg["center"],
-            width=cfg["width"],
-            rise=cfg["rise"],
+            center=normalize(cfg["center"], norm, dim),
+            width=normalize(cfg["width"], norm, dim),
+            rise=normalize(cfg["rise"], norm, dim),
             baseline=cfg.get("baseline", 0.0),
             bump_height=cfg.get("bump_height", 1.0),
             is_trough=(cfg.get("bump_or_trough", "bump") == "trough"),
@@ -80,7 +80,7 @@ class SpaceTimeEnvelopeFunction(eqx.Module):
         return self.time_envelope(t) * self.space_envelope(x)
 
     @staticmethod
-    def from_config(term_config: dict) -> "SpaceTimeEnvelopeFunction":
+    def from_config(term_config: dict, norm: PlasmaNormalization | None = None) -> "SpaceTimeEnvelopeFunction":
         """Construct a SpaceTimeEnvelopeFunction from a fokker_planck or krook config dict.
 
         Args:
@@ -90,8 +90,8 @@ class SpaceTimeEnvelopeFunction(eqx.Module):
         Returns:
             SpaceTimeEnvelopeFunction ready to be called with (x, t)
         """
-        time_env = EnvelopeFunction.from_config(term_config["time"])
-        space_env = EnvelopeFunction.from_config(term_config["space"])
+        time_env = EnvelopeFunction.from_config(term_config["time"], norm, dim="t")
+        space_env = EnvelopeFunction.from_config(term_config["space"], norm, dim="x")
         return SpaceTimeEnvelopeFunction(time_envelope=time_env, space_envelope=space_env)
 
 
@@ -115,12 +115,11 @@ class LinearFunction(eqx.Module):
         return self.val_at_center + (x - self.center) / self.gradient_scale_length
 
     @staticmethod
-    def from_physical_units_cfg(cfg: dict, norm: PlasmaNormalization) -> "LinearFunction":
-        L = UREG.Quantity(cfg["gradient scale length"]) / norm.L0
+    def from_config(cfg: dict, norm: PlasmaNormalization) -> "LinearFunction":
         return LinearFunction(
-            center=cfg["center"],
-            gradient_scale_length=L.to("").magnitude,
-            val_at_center=cfg["val at center"],
+            center=normalize(cfg["center"], norm, dim="x"),
+            gradient_scale_length=normalize(cfg["gradient scale length"], norm, dim="x"),
+            val_at_center=normalize(cfg["val at center"], norm, dim="x"),
         )
 
 
@@ -135,12 +134,11 @@ class ExponentialFunction(eqx.Module):
         return self.val_at_center * jnp.exp((x - self.center) / self.gradient_scale_length)
 
     @staticmethod
-    def from_physical_units_cfg(cfg: dict, norm: PlasmaNormalization) -> "ExponentialFunction":
-        L = UREG.Quantity(cfg["gradient scale length"]) / norm.L0
+    def from_config(cfg: dict, norm: PlasmaNormalization) -> "ExponentialFunction":
         return ExponentialFunction(
-            center=cfg["center"],
-            gradient_scale_length=L.to("").magnitude,
-            val_at_center=cfg["val at center"],
+            center=normalize(cfg["center"], norm, dim="x"),
+            gradient_scale_length=normalize(cfg["gradient scale length"], norm, dim="x"),
+            val_at_center=normalize(cfg["val at center"], norm, dim="x"),
         )
 
 
@@ -159,7 +157,7 @@ class SineFunction(eqx.Module):
         return SineFunction(
             baseline=cfg["baseline"],
             amplitude=cfg["amplitude"],
-            wavenumber=cfg["wavenumber"],
+            wavenumber=normalize(cfg["wavenumber"], norm, dim="k"),
         )
 
 

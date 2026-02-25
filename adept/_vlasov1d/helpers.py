@@ -10,7 +10,7 @@ from jax import numpy as jnp
 from matplotlib import pyplot as plt
 from scipy.special import gamma
 
-from adept._vlasov1d.simulation import SubspeciesDistributionSpec
+from adept._vlasov1d.simulation import SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.storage import store_f, store_fields
 from adept.normalization import PlasmaNormalization
 
@@ -82,7 +82,7 @@ def _initialize_supergaussian_distribution_(
     return f, vax
 
 
-def _initialize_total_distribution_(cfg, grid, norm: PlasmaNormalization | None = None):
+def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
     """
     Initialize distribution functions for all species using domain models.
 
@@ -93,21 +93,26 @@ def _initialize_total_distribution_(cfg, grid, norm: PlasmaNormalization | None 
     Args:
         cfg: Configuration dictionary
         grid: Grid object with spatial coordinates
+        species_distribution_specs: Dictionary from species name to the list of SubspeciesDistributionSpecs for it.
         norm: PlasmaNormalization for unit conversion (required for linear/exponential profiles)
 
     Returns:
         dict mapping species_name -> (n_prof, f_s, v_ax)
     """
-    species_configs = cfg["terms"]["species"]
     species_distributions = {}
     species_found = False
 
+    norm = simulation.plasma_norm
+    grid = simulation.grid
+    species_configs = simulation.species
+    species_distribution_specs = simulation.species_distributions
+
     for species_cfg in species_configs:
-        species_name = species_cfg["name"]
-        density_components = species_cfg["density_components"]
-        vmax = species_cfg["vmax"]
-        nv = species_cfg["nv"]
-        mass = species_cfg["mass"]
+        species_name = species_cfg.name
+        density_components = species_distribution_specs[species_name]
+        vmax = species_cfg.vmax
+        nv = species_cfg.nv
+        mass = species_cfg.mass
 
         # Initialize arrays for this species
         n_prof_species = np.zeros([grid.nx])
@@ -116,15 +121,7 @@ def _initialize_total_distribution_(cfg, grid, norm: PlasmaNormalization | None 
         f_species = np.zeros([grid.nx, nv])
 
         # Sum contributions from all density components
-        for component_name in density_components:
-            if component_name not in cfg["density"]:
-                raise ValueError(f"Density component '{component_name}' not found in config")
-
-            species_params = cfg["density"][component_name]
-
-            # Build domain model from config
-            distribution_spec = SubspeciesDistributionSpec.from_config(species_params, norm=norm)
-
+        for distribution_spec in density_components:
             # Evaluate density profile (noise is applied by the domain model)
             nprof = np.array(distribution_spec.density_profile(grid.x))
             n_prof_species += nprof
