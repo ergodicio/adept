@@ -171,6 +171,7 @@ Simulation grid parameters.
 | `vmax` | float | Maximum velocity extent (not needed for multispecies) |
 | `xmin` | float | Domain minimum x |
 | `xmax` | float | Domain maximum x |
+| `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. |
 
 **Note:** For multispecies simulations, `nv` and `vmax` are defined per-species in `terms.species` and the global values are not used.
 
@@ -185,6 +186,7 @@ grid:
   vmax: 6.4
   xmin: 0.0
   xmax: 20.94
+  parallel: ["x", "v"]   # shard edfdv+collisions over x, vdfdx over v
 ```
 
 ## save

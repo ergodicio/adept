@@ -2,9 +2,13 @@ from collections.abc import Callable
 from functools import partial
 
 import equinox as eqx
+import jax
+import numpy as np
 from interpax import interp1d, interp2d
 from jax import numpy as jnp
-from jax import vmap
+from jax import shard_map, vmap
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
 
 class VlasovExternalE(eqx.Module):
@@ -49,11 +53,14 @@ class VlasovExternalE(eqx.Module):
 
 
 class VelocityExponential:
-    def __init__(self, species_grids, species_params):
+    def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
+        self.parallel = parallel
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
-    def __call__(self, f_dict, e, dt):
+    def push(self, f_dict, e, dt):
         result = {}
         for species_name, f in f_dict.items():
             kv_real = self.species_grids[species_name]["kvr"]
@@ -63,14 +70,25 @@ class VelocityExponential:
             )
         return result
 
+    def __call__(self, f_dict, e, dt):
+        if self.parallel:
+            return shard_map(
+                self.push, mesh=self.mesh, in_specs=(P("device", None), P("device"), P()), out_specs=P("device", None)
+            )(f_dict, e, dt)
+        else:
+            return self.push(f_dict, e, dt)
+
 
 class VelocityCubicSpline:
-    def __init__(self, species_grids, species_params):
+    def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
         self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)
+        self.parallel = parallel
+        if self.parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
-    def __call__(self, f_dict, e, dt):
+    def push(self, f_dict, e, dt):
         result = {}
         for species_name, f in f_dict.items():
             v = self.species_grids[species_name]["v"]
@@ -81,17 +99,36 @@ class VelocityCubicSpline:
             result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
         return result
 
+    def __call__(self, f_dict, e, dt):
+        if self.parallel:
+            return shard_map(
+                self.push, mesh=self.mesh, in_specs=(P("device", None), P("device"), P()), out_specs=P("device", None)
+            )(f_dict, e, dt)
+        else:
+            return self.push(f_dict, e, dt)
+
 
 class SpaceExponential:
-    def __init__(self, x, species_grids):
+    def __init__(self, x, species_grids, parallel=False):
         self.kx_real = jnp.fft.rfftfreq(len(x), d=x[1] - x[0]) * 2 * jnp.pi
         self.species_grids = species_grids
+        self.parallel = parallel
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+
+    def push(self, f, v):
+        return jnp.real(
+            jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
+        )
 
     def __call__(self, f_dict, dt):
         result = {}
         for species_name, f in f_dict.items():
-            v = self.species_grids[species_name]["v"]
-            result[species_name] = jnp.real(
-                jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * dt * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
-            )
+            v = self.species_grids[species_name]["v"] * dt
+            if self.parallel:
+                result[species_name] = shard_map(
+                    self.push, mesh=self.mesh, in_specs=(P(None, "device"), P("device")), out_specs=P(None, "device")
+                )(f, v)
+            else:
+                result[species_name] = self.push(f, v)
         return result

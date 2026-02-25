@@ -10,16 +10,15 @@ The operators are built on shared abstractions from adept.driftdiffusion.
 from collections.abc import Mapping
 from typing import Any
 
+import jax
 import lineax as lx
 import numpy as np
-from jax import Array, vmap
+from jax import Array, shard_map, vmap
 from jax import numpy as jnp
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
-from adept.driftdiffusion import (
-    AbstractMaxwellianPreservingModel,
-    CentralDifferencing,
-    ChangCooper,
-)
+from adept.driftdiffusion import AbstractMaxwellianPreservingModel, CentralDifferencing, ChangCooper
 
 
 class LenardBernstein(AbstractMaxwellianPreservingModel):
@@ -113,6 +112,11 @@ class Collisions:
         v = cfg["grid"]["species_grids"]["electron"]["v"]
         self.v_edge = 0.5 * (v[1:] + v[:-1])
 
+        parallel = cfg["grid"].get("parallel", False)
+        self.x_parallel = bool(parallel) and "x" in parallel
+        if self.x_parallel:
+            self._mesh = Mesh(np.array(jax.devices()), ("device",))
+
         # Self-consistent beta config (defaults to disabled)
         fp_cfg = cfg["terms"]["fokker_planck"]
         sc_cfg = fp_cfg.get("self_consistent_beta", {})
@@ -180,40 +184,47 @@ class Collisions:
 
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
-        if self.cfg["terms"]["fokker_planck"]["is_on"]:
-            v = self.cfg["grid"]["species_grids"]["electron"]["v"]
-            dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+        # Substitute dummy zeros for disabled operators so shard_map always receives valid arrays.
+        nu_fp_in = nu_fp if nu_fp is not None else jnp.zeros(f.shape[0])
+        nu_K_in = nu_K if nu_K is not None else jnp.zeros(f.shape[0])
 
-            from adept.driftdiffusion import find_self_consistent_beta
+        v = self.cfg["grid"]["species_grids"]["electron"]["v"]
+        dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
 
-            # Compute vbar first (needed for Dougherty's thermal temperature calculation)
-            vbar = self.fp_model.compute_vbar(f)
+        from adept.driftdiffusion import find_self_consistent_beta
 
-            beta = find_self_consistent_beta(
-                f,
-                v,
-                dv,
-                spherical=False,  # spherical=False for symmetric grid
-                vbar=vbar,  # Pass vbar for correct thermal temperature with Dougherty
-                rtol=self._sc_rtol,
-                atol=self._sc_atol,
-                max_steps=self._sc_max_steps,
-            )
+        def _collide(f_shard, nu_fp_shard, nu_K_shard):
+            if self.cfg["terms"]["fokker_planck"]["is_on"]:
+                vbar = self.fp_model.compute_vbar(f_shard)
+                beta = find_self_consistent_beta(
+                    f_shard,
+                    v,
+                    dv,
+                    spherical=False,
+                    vbar=vbar,
+                    rtol=self._sc_rtol,
+                    atol=self._sc_atol,
+                    max_steps=self._sc_max_steps,
+                )
+                D = self.fp_model.compute_D(f_shard, beta)
+                v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
+                C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
+                f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
 
-            # Get D from model (D = 1/(2β) = T in Buet notation)
-            D = self.fp_model.compute_D(f, beta)
+            if self.cfg["terms"]["krook"]["is_on"]:
+                f_shard = self.krook(nu_K_shard, f_shard, dt)
 
-            # Compute C_edge using the general formula: C = 2*beta*D*v_eff
-            # This ensures correct Maxwellian equilibrium for all models
-            v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
-            C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
+            return f_shard
 
-            f = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp, f, dt)
-
-        if self.cfg["terms"]["krook"]["is_on"]:
-            f = self.krook(nu_K, f, dt)
-
-        return f
+        if self.x_parallel:
+            return shard_map(
+                _collide,
+                mesh=self._mesh,
+                in_specs=(P("device", None), P("device"), P("device")),
+                out_specs=P("device", None),
+            )(f, nu_fp_in, nu_K_in)
+        else:
+            return _collide(f, nu_fp_in, nu_K_in)
 
 
 class Krook:
