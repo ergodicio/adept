@@ -15,7 +15,8 @@ from adept._vlasov1d.normalization import electron_debye_normalization
 from adept._vlasov1d.simulation import Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
-from adept.utils import SpaceTimeEnvelopeFunction, filter_scalars
+from adept.functions import SpaceTimeEnvelopeFunction
+from adept.utils import filter_scalars
 
 
 def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:

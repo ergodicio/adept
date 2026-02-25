@@ -3,7 +3,7 @@ from jax import numpy as jnp
 
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
-from adept.utils import SpaceTimeEnvelopeFunction
+from adept.functions import SpaceTimeEnvelopeFunction
 
 
 def _is_parallel(parallel, axis: str) -> bool:

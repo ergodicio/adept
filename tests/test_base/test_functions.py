@@ -2,7 +2,7 @@
 
 import jax.numpy as jnp
 
-from adept.utils import EnvelopeFunction, SpaceTimeEnvelopeFunction
+from adept.functions import EnvelopeFunction, SpaceTimeEnvelopeFunction
 
 
 class TestEnvelopeFunction:
