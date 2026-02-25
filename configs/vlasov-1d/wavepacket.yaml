@@ -1,6 +1,6 @@
 density:
   quasineutrality: true
-  species-electron-background:
+  species-background:
     T0: 1.0
     basis: uniform
     m: 2.0
@@ -16,17 +16,6 @@ density:
       wall_height: 0.0
       width: 100000.0
     v0: 0.0
-  species-ion-background:
-    noise_seed: 421
-    noise_type: gaussian
-    noise_val: 0.0
-    v0: 0.0
-    T0: 0.01
-    m: 2.0
-    basis: sine
-    baseline: 1.0
-    amplitude: 0.0e-3
-    wavenumber: 0.1
 drivers:
   ex:
     '0':
@@ -44,17 +33,16 @@ drivers:
 grid:
   c_light: 10
   dt: 0.1
+  nv: 6144
   nx: 4096
-  parallel: ["x"]
   tmax: 1000.0
   tmin: 0.0
+  vmax: 6.4
   xmax: 4000.0
   xmin: 0.0
-  nv: 2048
-  vmax: 6.4
 mlflow:
-  experiment: wavepacket-parallel
-  run: test
+  experiment: wavepacket-k-nu-a-vlasov-hr-sl
+  run: vlasov-absorbing
 solver: vlasov-1d
 save:
   electron:
@@ -62,15 +50,6 @@ save:
       nt: 51
       tmax: 1000.0
       tmin: 0.0
-    x:
-      nx: 256
-      xmax: 4000.0
-      xmin: 0.0
-    v:
-      nv: 256
-      vmax: 6.4
-      vmin: -6.4
-
   fields:
     t:
       nt: 1001
@@ -85,22 +64,6 @@ terms:
   field: poisson
   edfdv: cubic-spline
   time: leapfrog
-
-  # species:
-  #   - name: electron
-  #     charge: -1.0
-  #     mass: 1.0
-  #     vmax: 6.4
-  #     nv: 2048
-  #     density_components:
-  #       - species-electron-background
-  #   - name: ion
-  #     charge: 1.0
-  #     mass: 183600.0
-  #     vmax: 0.15
-  #     nv: 256
-  #     density_components:
-  #       - species-ion-background
   fokker_planck:
     is_on: true
     space:
@@ -121,7 +84,7 @@ terms:
       width: 100000.0
     type: Dougherty
   krook:
-    is_on: False
+    is_on: true
     space:
       baseline: 0.0001
       bump_height: 1.0
