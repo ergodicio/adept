@@ -49,6 +49,27 @@ class PlasmaNormalization:
         return (UREG.c / self.v0).to("").magnitude
 
 
+def normalize(s: float | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
+    if isinstance(s, float):
+        return s
+
+    if norm is None:
+        raise ValueError(f"No PlasmaNormalization was supplied to normalize quantity `{s}`")
+
+    if dim == "x":
+        return (UREG.Quantity(s) / norm.L0).to("").magnitude
+    elif dim == "t":
+        return (UREG.Quantity(s) / norm.tau).to("").magnitude
+    elif dim == "v":
+        return (UREG.Quantity(s) / norm.v0).to("").magnitude
+    elif dim == "temp":
+        return (UREG.Quantity(s) / norm.T0).to("").magnitude
+    elif dim == "k":
+        return (UREG.Quantity(s) * norm.L0).to("").magnitude
+    else:
+        raise ValueError(f"Don't know how to normalize dimensional quantities for dimension {dim}")
+
+
 def electron_debye_normalization(n0_str, T0_str):
     """
     Returns the electron thermal normalization for the given density and temperature.
