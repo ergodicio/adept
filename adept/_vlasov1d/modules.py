@@ -9,9 +9,10 @@ from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.grid import grid_from_dimensionless_cfg
+from adept._vlasov1d.datamodel import EMDriverSetModel
+from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
-from adept._vlasov1d.simulation import Species, SubspeciesDistributionSpec, Vlasov1DSimulation
+from adept._vlasov1d.simulation import EMDriverSet, Species, SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
 from adept.functions import SpaceTimeEnvelopeFunction
@@ -52,16 +53,16 @@ def sim_from_cfg(
     )
     beta = 1.0 / plasma_norm.speed_of_light_norm()
     has_ey_driver = len(cfg.get("drivers", {}).get("ey", {}).keys()) > 0
-    grid = grid_from_dimensionless_cfg(cfg["grid"], beta, should_override_dt_for_em_waves=has_ey_driver)
+    grid = Grid.from_config(cfg["grid"], beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
 
     # Construct collision frequency profiles if enabled
     nu_fp_prof = None
     if cfg["terms"]["fokker_planck"]["is_on"]:
-        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["fokker_planck"])
+        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["fokker_planck"], norm=plasma_norm)
 
     nu_K_prof = None
     if cfg["terms"]["krook"]["is_on"]:
-        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["krook"])
+        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["krook"], norm=plasma_norm)
 
     species = species_set_from_cfg(cfg)
     species_distribution_specs = {
@@ -71,7 +72,17 @@ def sim_from_cfg(
         ]
         for s in species
     }
-    return Vlasov1DSimulation(plasma_norm, grid, species, species_distribution_specs, nu_fp_prof, nu_K_prof)
+    drivers = EMDriverSet.from_model(EMDriverSetModel.model_validate(cfg["drivers"]), norm=plasma_norm)
+
+    return Vlasov1DSimulation(
+        plasma_norm,
+        grid,
+        species,
+        species_distribution_specs,
+        drivers,
+        nu_fp_prof,
+        nu_K_prof,
+    )
 
 
 class BaseVlasov1D(ADEPTModule):
@@ -84,13 +95,14 @@ class BaseVlasov1D(ADEPTModule):
 
     def write_units(self) -> dict:
         norm = self.simulation.plasma_norm
+        grid = self.simulation.grid
 
-        box_length = ((self.cfg["grid"]["xmax"] - self.cfg["grid"]["xmin"]) * norm.L0).to("microns")
+        box_length = ((grid.xmax - grid.xmin) * norm.L0).to("microns")
         if "ymax" in self.cfg["grid"].keys():
             box_width = ((self.cfg["grid"]["ymax"] - self.cfg["grid"]["ymin"]) * norm.L0).to("microns")
         else:
             box_width = "inf"
-        sim_duration = (self.cfg["grid"]["tmax"] * norm.tau).to("ps")
+        sim_duration = (grid.tmax * norm.tau).to("ps")
 
         nu_ee = norm.approximate_ee_collision_frequency()
 
@@ -147,25 +159,6 @@ class BaseVlasov1D(ADEPTModule):
                         label_config["t"].setdefault("tmin", grid.tmin)
                         label_config["t"].setdefault("tmax", grid.tmax)
 
-        # Normalize species config: if not provided, generate a default electron species
-        if self.cfg["terms"].get("species", None) is None:
-            # Collect all density components (keys starting with "species-")
-            density_components = [name for name in self.cfg["density"].keys() if name.startswith("species-")]
-            if not density_components:
-                raise ValueError("No density components found (expected keys starting with 'species-')")
-
-            # Generate default electron species config
-            self.cfg["terms"]["species"] = [
-                {
-                    "name": "electron",
-                    "charge": -1.0,
-                    "mass": 1.0,
-                    "vmax": cfg_grid["vmax"],
-                    "nv": cfg_grid["nv"],
-                    "density_components": density_components,
-                }
-            ]
-
         # Print message if dt was overridden for EM wave stability
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
@@ -188,7 +181,7 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid.update(asdict(grid))
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, grid, norm=self.simulation.plasma_norm)
+        dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
         cfg_grid["species_distributions"] = dist_result
 
         # Build species_grids and species_params
@@ -200,12 +193,12 @@ class BaseVlasov1D(ADEPTModule):
             n_prof_total += n_prof
 
             # Find the species config (always exists due to normalization in get_derived_quantities)
-            species_cfg = next((s for s in self.cfg["terms"]["species"] if s["name"] == species_name), None)
+            species_cfg = self.simulation.species_dict[species_name]
             if species_cfg is None:
                 raise ValueError(f"Species '{species_name}' not found in config['terms']['species']")
 
-            nv = species_cfg["nv"]
-            vmax = species_cfg["vmax"]
+            nv = species_cfg.nv
+            vmax = species_cfg.vmax
 
             dv = 2.0 * vmax / nv
 
@@ -231,9 +224,9 @@ class BaseVlasov1D(ADEPTModule):
 
             # Build species parameters (charge, mass, charge-to-mass ratio)
             cfg_grid["species_params"][species_name] = {
-                "charge": species_cfg["charge"],
-                "mass": species_cfg["mass"],
-                "charge_to_mass": species_cfg["charge"] / species_cfg["mass"],
+                "charge": species_cfg.charge,
+                "mass": species_cfg.mass,
+                "charge_to_mass": species_cfg.charge / species_cfg.mass,
             }
 
         cfg_grid["n_prof_total"] = n_prof_total
@@ -241,7 +234,7 @@ class BaseVlasov1D(ADEPTModule):
         # Quasineutrality handling
         # For single-species electron-only sims, assume static ion background
         # For multi-species, quasineutrality is handled by the species themselves
-        has_multiple_species = len(self.cfg["terms"]["species"]) > 1
+        has_multiple_species = len(self.simulation.species) > 1
         if has_multiple_species:
             cfg_grid["ion_charge"] = np.zeros_like(n_prof_total)
         else:
@@ -267,7 +260,7 @@ class BaseVlasov1D(ADEPTModule):
         grid = self.simulation.grid
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, grid, norm=self.simulation.plasma_norm)
+        dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
 
         state = {}
 
@@ -293,7 +286,7 @@ class BaseVlasov1D(ADEPTModule):
                 state[k] = jnp.zeros_like(f_ref)
 
         self.state = state
-        self.args = {"drivers": self.cfg["drivers"], "terms": self.cfg["terms"]}
+        self.args = {"drivers": self.simulation.drivers, "terms": self.cfg["terms"]}
 
     def init_diffeqsolve(self):
         self.cfg = get_save_quantities(self.cfg)
@@ -304,6 +297,7 @@ class BaseVlasov1D(ADEPTModule):
                 VlasovMaxwell(
                     self.cfg,
                     grid,
+                    self.simulation.drivers,
                     nu_fp_prof=self.simulation.nu_fp_prof,
                     nu_K_prof=self.simulation.nu_K_prof,
                 )
