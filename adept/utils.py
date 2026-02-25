@@ -13,6 +13,15 @@ from mlflow.tracking import MlflowClient
 from pint import Quantity
 
 from . import patched_mlflow as mlflow
+from .functions import (
+    EnvelopeFunction,
+    ExponentialFunction,
+    LinearFunction,
+    NoiseProfile,
+    SineFunction,
+    SpaceTimeEnvelopeFunction,
+    UniformFunction,
+)
 
 
 def flatten_dict(d, delimiter=".", _prefix=""):
