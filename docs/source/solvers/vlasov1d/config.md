@@ -171,6 +171,7 @@ Simulation grid parameters.
 | `vmax` | float | Maximum velocity extent (not needed for multispecies) |
 | `xmin` | float | Domain minimum x |
 | `xmax` | float | Domain maximum x |
+| `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. |
 
 **Note:** For multispecies simulations, `nv` and `vmax` are defined per-species in `terms.species` and the global values are not used.
 
@@ -185,6 +186,7 @@ grid:
   vmax: 6.4
   xmin: 0.0
   xmax: 20.94
+  parallel: ["x", "v"]   # shard edfdv+collisions over x, vdfdx over v
 ```
 
 ## save
@@ -336,7 +338,6 @@ Solver algorithm configuration.
 | `field` | string | Electric field solver: `"poisson"`, `"ampere"`, or `"hampere"` |
 | `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
-| `x_parallel` | bool | Shard the `edfdv` push and collision operator across x using `jax.shard_map`. Defaults to `false`. Requires `nx` divisible by the number of JAX devices. |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |

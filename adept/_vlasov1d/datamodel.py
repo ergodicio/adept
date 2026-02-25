@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class SpaceProfileModel(BaseModel):
@@ -48,6 +48,20 @@ class GridModel(BaseModel):
     vmax: float | None = None  # Optional: for backward compatibility with single-species config files
     xmax: float
     xmin: float
+    parallel: tuple[str, ...] | bool = False
+
+    @field_validator("parallel", mode="before")
+    @classmethod
+    def validate_parallel(cls, v):
+        if v is False or v is None:
+            return False
+        if isinstance(v, (list, tuple)):
+            valid = {"x", "v"}
+            invalid = set(v) - valid
+            if invalid:
+                raise ValueError(f"parallel axes must be 'x' and/or 'v', got unknown: {invalid}")
+            return tuple(v)
+        raise ValueError(f"parallel must be False or a sequence of axes ('x', 'v'), got: {v!r}")
 
 
 class TimeSaveModel(BaseModel):
@@ -147,7 +161,6 @@ class TermsModel(BaseModel):
     field: str
     edfdv: str
     time: str
-    x_parallel: bool = False
     species: list[SpeciesConfig] | None = None
     fokker_planck: FokkerPlanckModel
     krook: KrookModel

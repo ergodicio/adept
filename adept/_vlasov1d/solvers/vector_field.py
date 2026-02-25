@@ -5,6 +5,13 @@ from adept._base_ import get_envelope
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
 
 
+def _is_parallel(parallel, axis: str) -> bool:
+    """Return True if `axis` is requested in the parallel config tuple."""
+    if not parallel:
+        return False
+    return axis in parallel
+
+
 class TimeIntegrator:
     """
     This is the base class for all time integrators. This makes it so that we dont have to
@@ -21,15 +28,21 @@ class TimeIntegrator:
         self.field_solve = field.ElectricFieldSolver(cfg)
         self.species_grids = cfg["grid"]["species_grids"]
         self.species_params = cfg["grid"]["species_params"]
-        self.edfdv = self.get_edfdv(cfg)
-        self.vdfdx = vlasov.SpaceExponential(cfg["grid"]["x"], self.species_grids)
+        parallel = cfg["grid"].get("parallel", False)
+        self.edfdv = self.get_edfdv(cfg, parallel)
+        self.vdfdx = vlasov.SpaceExponential(
+            cfg["grid"]["x"], self.species_grids, parallel=_is_parallel(parallel, "v")
+        )
 
-    def get_edfdv(self, cfg: dict):
-        x_parallel = cfg["terms"]["x_parallel"]
+    def get_edfdv(self, cfg: dict, parallel):
         if cfg["terms"]["edfdv"] == "exponential":
-            return vlasov.VelocityExponential(self.species_grids, self.species_params, parallel=x_parallel)
+            return vlasov.VelocityExponential(
+                self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
+            )
         elif cfg["terms"]["edfdv"] == "cubic-spline":
-            return vlasov.VelocityCubicSpline(self.species_grids, self.species_params, parallel=x_parallel)
+            return vlasov.VelocityCubicSpline(
+                self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
+            )
         else:
             raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
 

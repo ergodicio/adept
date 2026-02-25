@@ -27,7 +27,8 @@ class Collisions:
         self.fp = self.__init_fp_operator__()
         self.krook = Krook(self.cfg)
         self.td_solver = TridiagonalSolver(self.cfg)
-        self.x_parallel = cfg["terms"]["x_parallel"]
+        parallel = cfg["grid"].get("parallel", False)
+        self.x_parallel = bool(parallel) and "x" in parallel
         if self.x_parallel:
             self._mesh = Mesh(np.array(jax.devices()), ("device",))
 

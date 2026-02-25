@@ -109,15 +109,28 @@ class VelocityCubicSpline:
 
 
 class SpaceExponential:
-    def __init__(self, x, species_grids):
+    def __init__(self, x, species_grids, parallel=False):
         self.kx_real = jnp.fft.rfftfreq(len(x), d=x[1] - x[0]) * 2 * jnp.pi
         self.species_grids = species_grids
+        self.parallel = parallel
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+
+    def push(self, f, v):
+        return jnp.real(
+            jnp.fft.irfft(
+                jnp.exp(-1j * self.kx_real[:, None] * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0
+            )
+        )
 
     def __call__(self, f_dict, dt):
         result = {}
         for species_name, f in f_dict.items():
-            v = self.species_grids[species_name]["v"]
-            result[species_name] = jnp.real(
-                jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * dt * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
-            )
+            v = self.species_grids[species_name]["v"] * dt
+            if self.parallel:
+                result[species_name] = shard_map(
+                    self.push, mesh=self.mesh, in_specs=(P(None, "device"), P("device")), out_specs=P(None, "device")
+                )(f, v)
+            else:
+                result[species_name] = self.push(f, v)
         return result

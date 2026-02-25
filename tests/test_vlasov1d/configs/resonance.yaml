@@ -77,7 +77,6 @@ drivers:
   ey: {}
 
 terms:
-  x_parallel: False
   field: poisson
   edfdv: exponential
   time: leapfrog

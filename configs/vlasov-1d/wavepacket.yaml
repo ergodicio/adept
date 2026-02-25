@@ -45,6 +45,7 @@ grid:
   c_light: 10
   dt: 0.1
   nx: 4096
+  parallel: ["x"]
   tmax: 1000.0
   tmin: 0.0
   xmax: 4000.0
@@ -84,7 +85,7 @@ terms:
   field: poisson
   edfdv: cubic-spline
   time: leapfrog
-  x_parallel: true
+
   # species:
   #   - name: electron
   #     charge: -1.0
