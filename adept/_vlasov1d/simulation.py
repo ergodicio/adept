@@ -1,3 +1,6 @@
+import math
+import warnings
+
 import equinox as eqx
 import jax
 
@@ -83,7 +86,6 @@ class EMDriverSet(eqx.Module):
         return EMDriverSet(ex, ey)
 
 
-
 class Species(eqx.Module):
     """Specification for a single species"""
 
@@ -135,12 +137,11 @@ class SubspeciesDensityProfile(eqx.Module):
             density = UniformFunction()
             envelope = EnvelopeFunction.from_config(cfg)
         elif basis == "linear":
-            density = LinearFunction.from_physical_units_cfg(cfg, norm)
-            # Uses defaults: baseline=0.0, bump_height=1.0 (masking envelope)
-            envelope = EnvelopeFunction.from_config(cfg)
+            density = LinearFunction.from_config(cfg, norm)
+            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "exponential":
-            density = ExponentialFunction.from_physical_units_cfg(cfg, norm)
-            envelope = EnvelopeFunction.from_config(cfg)
+            density = ExponentialFunction.from_config(cfg, norm)
+            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "sine":
             density = SineFunction.from_config(cfg)
             envelope = None
@@ -182,6 +183,7 @@ class Vlasov1DSimulation:
         grid: Grid,
         species: list[Species],
         species_distributions: dict[str, list[SubspeciesDistributionSpec]],
+        drivers: EMDriverSet,
         nu_fp_prof: SpaceTimeEnvelopeFunction | None = None,
         nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
     ):
@@ -191,6 +193,7 @@ class Vlasov1DSimulation:
         self.species_distributions = species_distributions
         self.nu_fp_prof = nu_fp_prof
         self.nu_K_prof = nu_K_prof
+        self.drivers = drivers
 
     @property
     def species_dict(self) -> dict[str, Species]:

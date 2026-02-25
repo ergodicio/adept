@@ -2,6 +2,7 @@ from jax import Array
 from jax import numpy as jnp
 
 from adept._vlasov1d.grid import Grid
+from adept._vlasov1d.simulation import EMDriverSet
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
 from adept.functions import SpaceTimeEnvelopeFunction
 
@@ -267,6 +268,7 @@ class VlasovMaxwell:
         self,
         cfg: dict,
         grid: Grid,
+        drivers: EMDriverSet,
         nu_fp_prof: SpaceTimeEnvelopeFunction | None = None,
         nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
     ):
@@ -280,8 +282,8 @@ class VlasovMaxwell:
         self.wave_solver = field.WaveSolver(c=1.0 / beta, dx=grid.dx, dt=grid.dt)
 
         self.dt = grid.dt
-        self.ey_driver = field.Driver(grid.x_a, driver_key="ey")
-        self.ex_driver = field.Driver(grid.x, driver_key="ex")
+        self.ey_driver = field.Driver(grid.x_a, drivers=drivers.ey)
+        self.ex_driver = field.Driver(grid.x, drivers=drivers.ex)
 
     def compute_charges(self, f_dict):
         """Compute charge density from distribution functions.
