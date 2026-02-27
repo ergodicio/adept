@@ -209,7 +209,11 @@ class Collisions:
                 D = self.fp_model.compute_D(f_shard, beta)
                 v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
                 C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
-                f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
+                # f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
+                dl, d, du = vmap(self.fp_scheme.compute_operator_diagonals, in_axes=(0, 0, 0, None))(
+                    C_edge, D, nu_fp_shard, dt
+                )
+                f_shard = jax.lax.linalg.tridiagonal_solve(dl, d, du, f_shard)
 
             if self.cfg["terms"]["krook"]["is_on"]:
                 f_shard = self.krook(nu_K_shard, f_shard, dt)
