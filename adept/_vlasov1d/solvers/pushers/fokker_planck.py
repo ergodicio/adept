@@ -183,7 +183,6 @@ class Collisions:
         dl_padded = jnp.pad(op.lower_diagonal, (1, 0))
         du_padded = jnp.pad(op.upper_diagonal, (0, 1))
         return jax.lax.linalg.tridiagonal_solve(dl_padded, op.diagonal, du_padded, f_v[..., None])[..., 0]
-        # return lx.linear_solve(op, f_v, solver=lx.AutoLinearSolver(well_posed=True)).value
 
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
