@@ -478,7 +478,7 @@ class CentralDifferencing(AbstractDriftDiffusionDifferencingScheme):
         diag = 1.0 - dt * nu_full * bare_diag
         upper_diag = -dt * nu_full[:-1] * bare_upper
         lower_diag = -dt * nu_full[1:] * bare_lower
-        return diag,upper_diag,lower_diag
+        return diag, upper_diag, lower_diag
 
 
 class ChangCooper(AbstractDriftDiffusionDifferencingScheme):
@@ -540,4 +540,4 @@ class ChangCooper(AbstractDriftDiffusionDifferencingScheme):
         diag = 1.0 - dt * nu_full * bare_diag
         upper_diag = -dt * nu_full[:-1] * bare_upper
         lower_diag = -dt * nu_full[1:] * bare_lower
-        return diag,upper_diag,lower_diag
+        return diag, upper_diag, lower_diag
