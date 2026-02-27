@@ -62,7 +62,7 @@ class Grid(eqx.Module):
         # Compute nt and adjust tmax
         self.nt = int(tmax_requested / self.dt + 1)
         self.tmax = self.dt * self.nt
-        self.max_steps = min(self.nt + 4, int(1e6))
+        self.max_steps = (self.nt + 4, int(1e8))
 
         # Build arrays
         self.x = jnp.linspace(xmin + self.dx / 2, xmax - self.dx / 2, nx)
