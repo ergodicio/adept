@@ -203,9 +203,7 @@ class Collisions:
                 D = self.fp_model.compute_D(f_shard, beta)
                 v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
                 C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
-                d, du, dl = vmap(self.fp_scheme.compute_operator_diagonals, in_axes=(0, 0, 0, None))(
-                    C_edge, D, nu_fp_shard, dt
-                )
+                d, du, dl = vmap(self.fp_scheme.get_operator, in_axes=(0, 0, 0, None))(C_edge, D, nu_fp_shard, dt)
                 # tridiagonal_solve requires all diagonals of length n (ignores dl[...,0] and du[...,-1])
                 # and b of shape (*batch, n, nrhs)
                 dl_padded = jnp.pad(dl, ((0, 0), (1, 0)))
