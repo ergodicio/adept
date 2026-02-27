@@ -151,7 +151,7 @@ def _initialize_total_distribution_(cfg, grid, norm: PlasmaNormalization | None 
     return species_distributions
 
 
-def post_process(result: Solution, cfg: dict, td: str, args: dict):
+def post_process(result: Solution, cfg: dict, td: str, args: dict, simulation: Vlasov1DSimulation):
     t0 = time()
 
     # Get species names for directory creation
@@ -193,7 +193,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
     for k in result.ys.keys():
         if k.startswith("field"):
             # store_fields now returns dict with species names and "fields" keys
-            fields_dict = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k)
+            fields_dict = store_fields(cfg, binary_dir, result.ys[k], result.ts[k], k, simulation)
 
             # Plot species-specific moments in fields/{species}/
             for species_name in species_names:
@@ -285,7 +285,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                     fig.savefig(os.path.join(scalars_base_dir, f"{nm}.png"), bbox_inches="tight")
                 plt.close()
 
-    f_xr = store_f(cfg, result.ts, td, result.ys)
+    f_xr = store_f(cfg, result.ts, td, result.ys, simulation)
 
     # Plot velocity space distributions for each species
     for species_name in species_names:

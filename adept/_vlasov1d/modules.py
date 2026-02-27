@@ -80,7 +80,7 @@ class BaseVlasov1D(ADEPTModule):
         self.simulation = sim_from_cfg(cfg)
 
     def post_process(self, run_output: dict, td: str):
-        return post_process(run_output["solver result"], self.cfg, td, self.args)
+        return post_process(run_output["solver result"], self.cfg, td, self.args, self.simulation)
 
     def write_units(self) -> dict:
         norm = self.simulation.plasma_norm
