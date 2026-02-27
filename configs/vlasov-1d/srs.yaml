@@ -56,10 +56,8 @@ drivers:
   ey:
     '0':
       params:
-        a0: 1.0
-        k0: 1.0
-        w0: 2.79
-        dw0: 0.
+        intensity: 1e14W/m^2
+        wavelength: 350nm
       envelope:
         time:
           center: 4000.0ps
@@ -71,10 +69,8 @@ drivers:
           width: 1.0um
     '1':
       params:
-        a0: 1.e-6
-        k0: 1.0
-        w0: 1.63
-        dw0: 0.
+        intensity: 1e14W/m^2
+        wavelength: 360nm
       envelope:
         time:
           center: 4000.0fs
