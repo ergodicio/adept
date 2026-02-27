@@ -66,7 +66,7 @@ class Grid(eqx.Module):
         max_steps = 1e8
         if self.nt > max_steps:
             print(f"Requested {self.nt} steps, only running {int(max_steps)} steps")
-        self.max_steps = (self.nt + 4, int(max_steps))
+        self.max_steps = min(self.nt + 4, int(max_steps))
 
         # Build arrays
         self.x = jnp.linspace(xmin + self.dx / 2, xmax - self.dx / 2, nx)
