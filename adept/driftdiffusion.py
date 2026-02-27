@@ -469,7 +469,12 @@ class CentralDifferencing(AbstractDriftDiffusionDifferencingScheme):
         diag = 1.0 - dt * nu_full * bare_diag
         upper_diag = -dt * nu_full[:-1] * bare_upper
         lower_diag = -dt * nu_full[1:] * bare_lower
-        return diag, upper_diag, lower_diag
+
+        return lx.TridiagonalLinearOperator(
+            diagonal=diag,
+            upper_diagonal=upper_diag,
+            lower_diagonal=lower_diag,
+        )
 
 
 class ChangCooper(AbstractDriftDiffusionDifferencingScheme):
@@ -503,7 +508,6 @@ class ChangCooper(AbstractDriftDiffusionDifferencingScheme):
         Returns:
             A lineax.TridiagonalLinearOperator ready for lx.linear_solve()
         """
-
         nv = C_edge.shape[-1] + 1
         nu_full = jnp.broadcast_to(nu, (nv,)) if nu.ndim == 0 else nu
 
@@ -523,4 +527,9 @@ class ChangCooper(AbstractDriftDiffusionDifferencingScheme):
         diag = 1.0 - dt * nu_full * bare_diag
         upper_diag = -dt * nu_full[:-1] * bare_upper
         lower_diag = -dt * nu_full[1:] * bare_lower
-        return diag, upper_diag, lower_diag
+
+        return lx.TridiagonalLinearOperator(
+            diagonal=diag,
+            upper_diagonal=upper_diag,
+            lower_diagonal=lower_diag,
+        )

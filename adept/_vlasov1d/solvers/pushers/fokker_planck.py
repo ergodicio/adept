@@ -11,6 +11,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import jax
+import lineax as lx
 import numpy as np
 from jax import Array, shard_map, vmap
 from jax import numpy as jnp
@@ -176,6 +177,14 @@ class Collisions:
         else:
             return self._apply_collisions(nu_fp, nu_K, f, dt)
 
+    def _solve_one_x(self, C_edge: Array, D_scalar: Array, nu: Array, f_v: Array, dt: float) -> Array:
+        """Solve the collision operator at a single location in space."""
+        op = self.fp_scheme.get_operator(C_edge=C_edge, D=D_scalar, nu=nu, dt=dt)
+        dl_padded = jnp.pad(op.lower_diagonal, (1, 0))
+        du_padded = jnp.pad(op.upper_diagonal, (0, 1))
+        return jax.lax.linalg.tridiagonal_solve(dl_padded, op.diagonal, du_padded, f_v[..., None])[..., 0]
+        # return lx.linear_solve(op, f_v, solver=lx.AutoLinearSolver(well_posed=True)).value
+
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
         # Substitute dummy zeros for disabled operators so shard_map always receives valid arrays.
@@ -203,12 +212,7 @@ class Collisions:
                 D = self.fp_model.compute_D(f_shard, beta)
                 v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
                 C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
-                d, du, dl = vmap(self.fp_scheme.get_operator, in_axes=(0, 0, 0, None))(C_edge, D, nu_fp_shard, dt)
-                # tridiagonal_solve requires all diagonals of length n (ignores dl[...,0] and du[...,-1])
-                # and b of shape (*batch, n, nrhs)
-                dl_padded = jnp.pad(dl, ((0, 0), (1, 0)))
-                du_padded = jnp.pad(du, ((0, 0), (0, 1)))
-                f_shard = jax.lax.linalg.tridiagonal_solve(dl_padded, d, du_padded, f_shard[..., None])[..., 0]
+                f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
 
             if self.cfg["terms"]["krook"]["is_on"]:
                 f_shard = self.krook(nu_K_shard, f_shard, dt)
