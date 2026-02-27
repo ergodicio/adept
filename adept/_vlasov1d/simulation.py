@@ -49,8 +49,8 @@ class EMDriver(eqx.Module):
                 return EMDriver(params.a0, k0, w0, params.dw0, envelope)
 
             case EMDriverIntensityWavelengthParametrization(intensity=intensity, wavelength=wavelength):
-                I = UREG.Quantity(intensity).to("W/m^2")
-                L = UREG.Quantity(wavelength).to("nm")
+                intensity = UREG.Quantity(intensity).to("W/m^2")
+                wavelength = UREG.Quantity(wavelength).to("nm")
 
                 e = UREG.e
                 m_e = UREG.m_e
@@ -58,9 +58,9 @@ class EMDriver(eqx.Module):
                 c = UREG.c
 
                 # Standard a0 = eE0/(m_e c w0) — identical to HermiteSRS1D formula
-                a0_std = ((e * L / (m_e * math.pi)) * (intensity / (2 * eps0 * c**5)) ** 0.5).to("").magnitude
+                a0_std = ((e * wavelength / (m_e * math.pi)) * (intensity / (2 * eps0 * c**5)) ** 0.5).to("").magnitude
                 # Vlasov normalization: a0_vlasov = a0_std / β  (β = v0/c)
-                a0 = a0 * norm.speed_of_light_norm()
+                a0 = a0_std * norm.speed_of_light_norm()
 
                 # k0 in Debye-length units: k0_vlasov = k_phys x v0/wp0
                 k0_phys = (2 * math.pi / wavelength).to("1/m")
