@@ -17,7 +17,6 @@ from adept.functions import (
     LinearFunction,
     NoiseProfile,
     SineFunction,
-    SpaceTimeEnvelopeFunction,
     UniformFunction,
 )
 from adept.normalization import UREG, PlasmaNormalization, normalize
@@ -135,7 +134,7 @@ class SubspeciesDensityProfile(eqx.Module):
             envelope = None
         elif basis == "tanh":
             density = UniformFunction()
-            envelope = EnvelopeFunction.from_config(cfg)
+            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "linear":
             density = LinearFunction.from_config(cfg, norm)
             envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
