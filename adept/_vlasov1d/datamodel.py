@@ -120,6 +120,12 @@ class SpaceTermModel(BaseModel):
     width: float
 
 
+class HouLiFilterModel(BaseModel):
+    is_on: bool
+    alpha: float = 36.0
+    order: int = 8
+
+
 class FokkerPlanckModel(BaseModel):
     is_on: bool
     type: str
@@ -164,6 +170,7 @@ class TermsModel(BaseModel):
     species: list[SpeciesConfig] | None = None
     fokker_planck: FokkerPlanckModel
     krook: KrookModel
+    hou_li_filter: HouLiFilterModel = HouLiFilterModel(is_on=False)
 
 
 class MLFlowModel(BaseModel):

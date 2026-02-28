@@ -340,6 +340,7 @@ Solver algorithm configuration.
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
+| `hou_li_filter` | object | Hou-Li spectral filter in velocity space (optional, default off) |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
 
 ### species (Multispecies Configuration)
@@ -415,6 +416,35 @@ terms:
 ```
 
 See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` for a complete working example.
+
+### hou_li_filter
+
+Hou-Li exponential spectral filter applied in velocity space after each timestep. Damps high-wavenumber modes to suppress numerical oscillations without significantly affecting well-resolved physics.
+
+The filter kernel in Fourier (velocity) space is:
+
+```
+sigma(j) = exp(-alpha * (j / N)^(2*order))
+```
+
+where `j` is the mode index, `N = nv//2` is the Nyquist mode, and modes near `j = N` are damped strongly while low modes are left nearly unchanged.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `is_on` | bool | — | Enable/disable the filter |
+| `alpha` | float | `36.0` | Filter strength. The default `36.0 ≈ -log(float64 machine epsilon)` ensures the Nyquist mode is zeroed to machine precision |
+| `order` | int | `8` | Filter order; higher values give a sharper roll-off that preserves more low-wavenumber content |
+
+Example:
+```yaml
+terms:
+  hou_li_filter:
+    is_on: True
+    alpha: 36.0   # damp Nyquist to machine epsilon
+    order: 8      # smooth but fairly sharp roll-off
+```
+
+If `hou_li_filter` is omitted entirely, it defaults to `is_on: False`.
 
 ### Field Solvers
 

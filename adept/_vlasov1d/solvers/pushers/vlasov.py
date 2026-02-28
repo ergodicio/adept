@@ -108,6 +108,48 @@ class VelocityCubicSpline:
             return self.push(f_dict, e, dt)
 
 
+class HouLiFilter:
+    """Hou-Li spectral filter in velocity space.
+
+    Applies the exponential filter from Hou & Li (2007) along the velocity
+    axis to damp high-frequency numerical oscillations without affecting
+    well-resolved modes.
+
+    The filter kernel in Fourier space is:
+
+        sigma(j) = exp(-alpha * (j / N)^(2*order))
+
+    where j is the mode index (0 to nv//2), N = nv//2 is the maximum mode,
+    and alpha = -log(machine_epsilon) ~ 36 for float64.
+
+    References:
+        Hou, T.Y. & Li, R. (2007). Computing nearly singular solutions using
+        pseudo-spectral methods. J. Comput. Phys., 226(1), 379-397.
+
+    Args:
+        species_grids: dict of per-species grid info (must contain "nv")
+        alpha: filter strength; default 36.0 ~ -log(float64 machine epsilon)
+        order: filter order; higher values give sharper roll-off near k_max
+    """
+
+    def __init__(self, species_grids: dict, alpha: float, order: int):
+        self.filters = {}
+        for species_name, sg in species_grids.items():
+            nv = sg["nv"]
+            j = jnp.arange(nv // 2 + 1)
+            eta = j / (nv // 2)
+            self.filters[species_name] = jnp.exp(-alpha * eta ** (2 * order))
+
+    def __call__(self, f_dict: dict) -> dict:
+        result = {}
+        for species_name, f in f_dict.items():
+            sigma = self.filters[species_name]
+            result[species_name] = jnp.real(
+                jnp.fft.irfft(sigma[None, :] * jnp.fft.rfft(f, axis=1), axis=1)
+            )
+        return result
+
+
 class SpaceExponential:
     def __init__(self, x, species_grids, parallel=False):
         self.kx_real = jnp.fft.rfftfreq(len(x), d=x[1] - x[0]) * 2 * jnp.pi
