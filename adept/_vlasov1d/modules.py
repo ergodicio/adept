@@ -119,9 +119,6 @@ class BaseVlasov1D(ADEPTModule):
         if len(self.cfg["drivers"]["ey"].keys()) > 0:
             print("overriding dt to ensure wave solver stability")
 
-        if grid.nt > 1e6:
-            print(r"Only running $10^6$ steps")
-
         self.cfg["grid"] = cfg_grid
 
     def get_solver_quantities(self) -> dict:
