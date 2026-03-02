@@ -123,7 +123,7 @@ class SpaceTermModel(BaseModel):
 class HouLiFilterModel(BaseModel):
     is_on: bool
     alpha: float = 36.0
-    order: int = 8
+    order: int = 36
     dimensions: list[str] = ["x", "v"]
 
 

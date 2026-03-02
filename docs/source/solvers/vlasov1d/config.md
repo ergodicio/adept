@@ -433,7 +433,7 @@ where `j` is the mode index, `N` is the Nyquist mode, and modes near `j = N` are
 |-------|------|---------|-------------|
 | `is_on` | bool | — | Enable/disable the filter |
 | `alpha` | float | `36.0` | Filter strength. The default `36.0 ≈ -log(float64 machine epsilon)` ensures the Nyquist mode is zeroed to machine precision |
-| `order` | int | `8` | Filter order; higher values give a sharper roll-off that preserves more low-wavenumber content |
+| `order` | int | `36` | Filter order; higher values give a sharper roll-off that preserves more low-wavenumber content |
 | `dimensions` | list | `["x", "v"]` | Dimensions to filter. Can be `[]`, `["x"]`, `["v"]`, or `["x", "v"]` |
 
 Example:
@@ -442,7 +442,7 @@ terms:
   hou_li_filter:
     is_on: True
     alpha: 36.0
-    order: 8
+    order: 36
     dimensions: ["x", "v"]
 ```
 

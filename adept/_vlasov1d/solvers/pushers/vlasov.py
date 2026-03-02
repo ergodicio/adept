@@ -149,17 +149,11 @@ class HouLiFilter:
             filtered = f
 
             if self.filter_x is not None:
-                filtered = jnp.real(jnp.fft.irfft(
-                    self.filter_x[:, None] * jnp.fft.rfft(filtered, axis=0),
-                    axis=0
-                ))
+                filtered = jnp.real(jnp.fft.irfft(self.filter_x[:, None] * jnp.fft.rfft(filtered, axis=0), axis=0))
 
             if species_name in self.filters_v:
                 sigma_v = self.filters_v[species_name]
-                filtered = jnp.real(jnp.fft.irfft(
-                    sigma_v[None, :] * jnp.fft.rfft(filtered, axis=1),
-                    axis=1
-                ))
+                filtered = jnp.real(jnp.fft.irfft(sigma_v[None, :] * jnp.fft.rfft(filtered, axis=1), axis=1))
 
             result[species_name] = filtered
         return result
