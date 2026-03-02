@@ -144,9 +144,7 @@ class HouLiFilter:
         result = {}
         for species_name, f in f_dict.items():
             sigma = self.filters[species_name]
-            result[species_name] = jnp.real(
-                jnp.fft.irfft(sigma[None, :] * jnp.fft.rfft(f, axis=1), axis=1)
-            )
+            result[species_name] = jnp.real(jnp.fft.irfft(sigma[None, :] * jnp.fft.rfft(f, axis=1), axis=1))
         return result
 
 
