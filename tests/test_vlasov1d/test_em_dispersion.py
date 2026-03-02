@@ -10,6 +10,7 @@ import math
 
 import numpy as np
 import yaml
+from adept._vlasov1d.normalization import UREG
 from scipy import signal
 
 from adept import ergoExo
@@ -159,7 +160,7 @@ def test_em_wave_dispersion():
     # Check driver parameters
     if sim.drivers.ey:
         driver = sim.drivers.ey[0]
-        print(f"\nDriver info:")
+        print("\nDriver info:")
         print(f"  a0 = {driver.a0:.6e}")
         print(f"  k0 = {driver.k0:.4f}")
         print(f"  w0 = {driver.w0:.4f}")
@@ -209,10 +210,7 @@ def test_em_wave_dispersion():
     # Find valid region: where we have significant amplitude, valid measurements, and k is measured
     amp_threshold = 0.1 * np.max(amplitude_t)
     valid_region = (
-        (amplitude_t > amp_threshold)
-        & np.isfinite(omega_measured)
-        & (omega_measured > 0)
-        & np.isfinite(k_measured)
+        (amplitude_t > amp_threshold) & np.isfinite(omega_measured) & (omega_measured > 0) & np.isfinite(k_measured)
     )
 
     # Trim edges to avoid Hilbert transform boundary artifacts
@@ -246,7 +244,7 @@ def test_em_wave_dispersion():
     relative_error = np.abs(residual) / omega_sq
 
     # Print diagnostics
-    print(f"\nEM Dispersion Relation Test")
+    print("\nEM Dispersion Relation Test")
     print(f"  Speed of light c = {c_light:.4f}")
     print(f"  Valid region: {np.sum(valid_region)} points")
     print(f"  Mean ω_measured = {np.mean(omega_valid):.4f}")
@@ -258,12 +256,8 @@ def test_em_wave_dispersion():
     # Assert dispersion relation is satisfied within tolerance
     mean_rel_error = np.mean(relative_error)
     max_rel_error = np.max(relative_error)
-    assert mean_rel_error < 0.02, (
-        f"Dispersion relation not satisfied: mean relative error {mean_rel_error:.4f} > 0.02"
-    )
-    assert max_rel_error < 0.15, (
-        f"Dispersion relation not satisfied: max relative error {max_rel_error:.4f} > 0.15"
-    )
+    assert mean_rel_error < 0.02, f"Dispersion relation not satisfied: mean relative error {mean_rel_error:.4f} > 0.02"
+    assert max_rel_error < 0.15, f"Dispersion relation not satisfied: max relative error {max_rel_error:.4f} > 0.15"
 
 
 if __name__ == "__main__":
