@@ -220,7 +220,11 @@ class VlasovPoissonFokkerPlanck:
             self.hou_li_filter_on = hl_cfg["is_on"]
             if self.hou_li_filter_on:
                 self.hou_li_filter = vlasov.HouLiFilter(
-                    cfg["grid"]["species_grids"], alpha=hl_cfg["alpha"], order=hl_cfg["order"]
+                    species_grids=cfg["grid"]["species_grids"],
+                    nx=cfg["grid"]["nx"],
+                    alpha=hl_cfg["alpha"],
+                    order=hl_cfg["order"],
+                    dimensions=hl_cfg["dimensions"],
                 )
         else:
             self.hou_li_filter_on = False
