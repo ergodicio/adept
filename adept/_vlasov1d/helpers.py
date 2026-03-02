@@ -97,7 +97,7 @@ def _initialize_supergaussian_distribution_(
     return f, vax
 
 
-def _initialize_total_distribution_(cfg, cfg_grid):
+def _initialize_total_distribution_(cfg, grid):
     """
     Initialize distribution functions for all species.
 
@@ -119,10 +119,10 @@ def _initialize_total_distribution_(cfg, cfg_grid):
         nv = species_cfg["nv"]
 
         # Initialize arrays for this species
-        n_prof_species = np.zeros([cfg_grid["nx"]])
+        n_prof_species = np.zeros([grid.nx])
         dv = 2.0 * vmax / nv
         vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
-        f_species = np.zeros([cfg_grid["nx"], nv])
+        f_species = np.zeros([grid.nx, nv])
 
         # Sum contributions from all density components
         for component_name in density_components:
@@ -140,12 +140,12 @@ def _initialize_total_distribution_(cfg, cfg_grid):
             mass = species_cfg["mass"]
 
             # Get density profile
-            nprof = _get_density_profile(species_params, cfg, cfg_grid)
+            nprof = _get_density_profile(species_params, cfg, grid)
             n_prof_species += nprof
 
             # Distribution function for this component
             temp_f, _ = _initialize_supergaussian_distribution_(
-                nx=int(cfg_grid["nx"]),
+                nx=grid.nx,
                 nv=nv,
                 v0=v0,
                 supergaussian_order=supergaussian_order,
@@ -168,16 +168,16 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     return species_distributions
 
 
-def _get_density_profile(species_params, cfg, cfg_grid):
+def _get_density_profile(species_params, cfg, grid):
     """Extract density profile generation logic into a helper function."""
     if species_params["basis"] == "uniform":
-        nprof = np.ones([cfg_grid["nx"]])
+        nprof = np.ones([grid.nx])
 
     elif species_params["basis"] == "linear":
         left = species_params["center"] - species_params["width"] * 0.5
         right = species_params["center"] + species_params["width"] * 0.5
         rise = species_params["rise"]
-        mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+        mask = get_envelope(rise, rise, left, right, grid.x)
 
         ureg = pint.UnitRegistry()
         _Q = ureg.Quantity
@@ -186,14 +186,14 @@ def _get_density_profile(species_params, cfg, cfg_grid):
             _Q(species_params["gradient scale length"]).to("nm").magnitude
             / cfg["units"]["derived"]["x0"].to("nm").magnitude
         )
-        nprof = species_params["val at center"] + (cfg_grid["x"] - species_params["center"]) / L
+        nprof = species_params["val at center"] + (grid.x - species_params["center"]) / L
         nprof = mask * nprof
 
     elif species_params["basis"] == "exponential":
         left = species_params["center"] - species_params["width"] * 0.5
         right = species_params["center"] + species_params["width"] * 0.5
         rise = species_params["rise"]
-        mask = get_envelope(rise, rise, left, right, cfg_grid["x"])
+        mask = get_envelope(rise, rise, left, right, grid.x)
 
         ureg = pint.UnitRegistry()
         _Q = ureg.Quantity
@@ -202,14 +202,14 @@ def _get_density_profile(species_params, cfg, cfg_grid):
             _Q(species_params["gradient scale length"]).to("nm").magnitude
             / cfg["units"]["derived"]["x0"].to("nm").magnitude
         )
-        nprof = species_params["val at center"] * np.exp((cfg_grid["x"] - species_params["center"]) / L)
+        nprof = species_params["val at center"] * np.exp((grid.x - species_params["center"]) / L)
         nprof = mask * nprof
 
     elif species_params["basis"] == "tanh":
         left = species_params["center"] - species_params["width"] * 0.5
         right = species_params["center"] + species_params["width"] * 0.5
         rise = species_params["rise"]
-        nprof = get_envelope(rise, rise, left, right, cfg_grid["x"])
+        nprof = get_envelope(rise, rise, left, right, grid.x)
 
         if species_params["bump_or_trough"] == "trough":
             nprof = 1 - nprof
@@ -219,7 +219,7 @@ def _get_density_profile(species_params, cfg, cfg_grid):
         baseline = species_params["baseline"]
         amp = species_params["amplitude"]
         kk = species_params["wavenumber"]
-        nprof = baseline * (1.0 + amp * jnp.sin(kk * cfg_grid["x"]))
+        nprof = baseline * (1.0 + amp * jnp.sin(kk * grid.x))
     else:
         raise NotImplementedError
 
