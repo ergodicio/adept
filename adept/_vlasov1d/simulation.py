@@ -131,7 +131,7 @@ class SubspeciesDensityProfile(eqx.Module):
         basis = cfg["basis"]
 
         if basis == "uniform":
-            density = UniformFunction()
+            density = UniformFunction(cfg.get("rise", 1.0))
             envelope = None
         elif basis == "tanh":
             density = UniformFunction()
