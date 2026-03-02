@@ -92,6 +92,7 @@ class SpaceTimeEnvelopeModel(BaseModel):
 class EMDriverIntensityWavelengthParametrization(BaseModel):
     intensity: str
     wavelength: str
+    leftgoing: bool = False
 
 
 class EMDriverAKWParametrization(BaseModel):
