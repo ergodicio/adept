@@ -286,8 +286,7 @@ class VlasovMaxwell:
         self.ex_driver = field.Driver(grid.x, drivers=drivers.ex)
 
     def compute_electron_charge_density(self, f_dict):
-        """Compute charge density from the electron distribution function.
-        """
+        """Compute charge density from the electron distribution function."""
         charge_density = jnp.zeros_like(self.grid.x)
         if "electron" in f_dict:
             dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
@@ -332,7 +331,10 @@ class VlasovMaxwell:
         electron_charge_density_np1 = self.compute_electron_charge_density(f_dict_new)
 
         a = self.wave_solver(
-            a=y["a"], aold=y["prev_a"], djy_array=djy, electron_density=-0.5 * (electron_charge_density_n + electron_charge_density_np1)
+            a=y["a"],
+            aold=y["prev_a"],
+            djy_array=djy,
+            electron_density=-0.5 * (electron_charge_density_n + electron_charge_density_np1),
         )
 
         # Build result dict with all species distributions

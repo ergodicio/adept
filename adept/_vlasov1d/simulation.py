@@ -48,8 +48,9 @@ class EMDriver(eqx.Module):
 
                 return EMDriver(params.a0, k0, w0, params.dw0, envelope)
 
-            case EMDriverIntensityWavelengthParametrization(intensity=intensity, wavelength=wavelength, 
-                                                            leftgoing=leftgoing):
+            case EMDriverIntensityWavelengthParametrization(
+                intensity=intensity, wavelength=wavelength, leftgoing=leftgoing
+            ):
                 intensity = UREG.Quantity(intensity).to("W/m^2")
                 wavelength = UREG.Quantity(wavelength).to("nm")
 
