@@ -218,9 +218,9 @@ class VlasovPoissonFokkerPlanck:
     def __call__(
         self, f_dict: dict, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
     ) -> tuple[Array, dict, dict]:
-        f_fp_h = self.fp(nu_fp, nu_K, f_dict, dt=0.5*self.dt)
+        f_fp_h = self.fp(nu_fp, nu_K, f_dict, dt=0.5 * self.dt)
         e, f_vlasov = self.vlasov_poisson(f_fp_h, a, dex_array, prev_ex)
-        f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=0.5*self.dt)
+        f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=0.5 * self.dt)
         diags = {}
 
         if self.vlasov_dfdt:
