@@ -111,23 +111,27 @@ class SpectralPoissonSolver:
     For quasineutral plasmas, the total charge should sum to zero at initialization.
     """
 
-    def __init__(self, one_over_kx, species_grids, species_params):
+    def __init__(self, one_over_kx, species_grids, species_params, static_charge_density=None):
         """Initialize the Poisson solver.
 
         Args:
             one_over_kx: 1/kx array for spectral solve (with 0 for k=0 mode)
             species_grids: dict mapping species_name -> {"dv": dv, "v": v, ...}
             species_params: dict mapping species_name -> {"charge": q, "mass": m, ...}
+            static_charge_density: Optional static background charge density array[nx].
+                For single-species electron sims, this is the ion background that
+                enforces quasineutrality.
         """
         super().__init__()
         self.one_over_kx = one_over_kx
         self.species_grids = species_grids
         self.species_params = species_params
+        self.static_charge_density = static_charge_density
 
     def compute_charge_density(self, f_dict):
-        """Compute total charge density from all species.
+        """Compute total charge density from all species plus static background.
 
-        rho = sum_s q_s * integral(f_s dv_s) = sum_s q_s * n_s
+        rho = sum_s q_s * integral(f_s dv_s) + static_charge_density
 
         Args:
             f_dict: dict mapping species_name -> f[nx, nv] distribution
@@ -142,6 +146,9 @@ class SpectralPoissonSolver:
             dv_s = self.species_grids[species_name]["dv"]
             n_s = jnp.sum(f_s, axis=1) * dv_s
             rho = rho + q_s * n_s
+
+        if self.static_charge_density is not None:
+            rho = rho + self.static_charge_density
 
         return rho
 
@@ -295,12 +302,14 @@ class ElectricFieldSolver:
 
         species_grids = cfg["grid"]["species_grids"]
         species_params = cfg["grid"]["species_params"]
+        static_charge_density = cfg["grid"].get("ion_charge")
 
         if cfg["terms"]["field"] == "poisson":
             self.es_field_solver = SpectralPoissonSolver(
                 one_over_kx=grid.one_over_kx,
                 species_grids=species_grids,
                 species_params=species_params,
+                static_charge_density=static_charge_density,
             )
             self.hampere = False
         elif cfg["terms"]["field"] == "ampere":
