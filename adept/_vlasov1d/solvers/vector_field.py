@@ -1,9 +1,9 @@
 from jax import Array
 from jax import numpy as jnp
 
-from adept._base_ import get_envelope
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.solvers.pushers import field, fokker_planck, vlasov
+from adept.functions import SpaceTimeEnvelopeFunction
 
 
 def _is_parallel(parallel, axis: str) -> bool:
@@ -241,11 +241,21 @@ class VlasovMaxwell:
 
     :param cfg:
     :param grid: Grid object for configuration space
+    :param nu_fp_prof: Optional SpaceTimeEnvelopeFunction for Fokker-Planck collision frequency
+    :param nu_K_prof: Optional SpaceTimeEnvelopeFunction for Krook collision frequency
     """
 
-    def __init__(self, cfg: dict, grid: Grid):
+    def __init__(
+        self,
+        cfg: dict,
+        grid: Grid,
+        nu_fp_prof: SpaceTimeEnvelopeFunction | None = None,
+        nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
+    ):
         self.cfg = cfg
         self.grid = grid
+        self.nu_fp_prof = nu_fp_prof
+        self.nu_K_prof = nu_K_prof
         self.vpfp = VlasovPoissonFokkerPlanck(cfg, grid)
         # beta = 1/c_norm is still read from cfg["grid"] for now
         beta = cfg["grid"]["beta"]
@@ -268,28 +278,6 @@ class VlasovMaxwell:
             charge_density += charge * jnp.sum(f, axis=1) * dv
         return charge_density
 
-    def nu_prof(self, t, nu_args):
-        t_L = nu_args["time"]["center"] - nu_args["time"]["width"] * 0.5
-        t_R = nu_args["time"]["center"] + nu_args["time"]["width"] * 0.5
-        t_wL = nu_args["time"]["rise"]
-        t_wR = nu_args["time"]["rise"]
-        x_L = nu_args["space"]["center"] - nu_args["space"]["width"] * 0.5
-        x_R = nu_args["space"]["center"] + nu_args["space"]["width"] * 0.5
-        x_wL = nu_args["space"]["rise"]
-        x_wR = nu_args["space"]["rise"]
-
-        nu_time = get_envelope(t_wL, t_wR, t_L, t_R, t)
-        if nu_args["time"]["bump_or_trough"] == "trough":
-            nu_time = 1 - nu_time
-        nu_time = nu_args["time"]["baseline"] + nu_args["time"]["bump_height"] * nu_time
-
-        nu_prof = get_envelope(x_wL, x_wR, x_L, x_R, self.grid.x)
-        if nu_args["space"]["bump_or_trough"] == "trough":
-            nu_prof = 1 - nu_prof
-        nu_prof = nu_args["space"]["baseline"] + nu_args["space"]["bump_height"] * nu_prof
-
-        return nu_time * nu_prof
-
     def __call__(self, t, y, args):
         """
         This is just a wrapper around a Vlasov-Poisson + Fokker-Planck timestep
@@ -304,22 +292,23 @@ class VlasovMaxwell:
         dex = [self.ex_driver(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
         djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
 
+        # Evaluate collision frequency profiles at current time
         if self.cfg["terms"]["fokker_planck"]["is_on"]:
-            nu_fp_prof = self.nu_prof(t=t, nu_args=args["terms"]["fokker_planck"])
+            nu_fp_val = self.nu_fp_prof(self.grid.x, t)
         else:
-            nu_fp_prof = None
+            nu_fp_val = None
 
         if self.cfg["terms"]["krook"]["is_on"]:
-            nu_K_prof = self.nu_prof(t=t, nu_args=args["terms"]["krook"])
+            nu_K_val = self.nu_K_prof(self.grid.x, t)
         else:
-            nu_K_prof = None
+            nu_K_val = None
 
         # Extract all species distributions from state
         f_dict = {k: v for k, v in y.items() if k in self.cfg["grid"]["species_grids"]}
 
         electron_density_n = self.compute_charges(f_dict)
         e, f_dict_new, diags = self.vpfp(
-            f_dict=f_dict, a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_prof, nu_K=nu_K_prof
+            f_dict=f_dict, a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_val, nu_K=nu_K_val
         )
         electron_density_np1 = self.compute_charges(f_dict_new)
 
