@@ -19,16 +19,20 @@ density:
 drivers:
   ex:
     '0':
-      a0: 0.01
-      dw0: 0.0
-      k0: 0.28
-      t_center: 60.0
-      t_rise: 5.0
-      t_width: 80.0
-      w0: 1.1370461486881023
-      x_center: 600.0
-      x_rise: 20.0
-      x_width: 900.0
+      params:
+        a0: 0.01
+        k0: 0.28
+        w0: 1.1370461486881023
+        dw0: 0.0
+      envelope:
+        time:
+          center: 60.0
+          rise: 5.0
+          width: 80.0
+        space:
+          center: 600.0
+          rise: 20.0
+          width: 900.0
   ey: {}
 grid:
   c_light: 10
