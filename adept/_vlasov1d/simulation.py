@@ -142,7 +142,7 @@ class SubspeciesDensityProfile(eqx.Module):
             density = ExponentialFunction.from_config(cfg, norm)
             envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "sine":
-            density = SineFunction.from_config(cfg)
+            density = SineFunction.from_config(cfg, norm)
             envelope = None
         else:
             raise NotImplementedError(f"Unknown density basis: {basis}")
