@@ -1,7 +1,8 @@
 """Tests that all vlasov-1d config files pass schema validation.
 
-This test ensures that configuration files in configs/vlasov-1d/ can be
-successfully loaded and validated by the BaseVlasov1D constructor.
+This test ensures that configuration files in configs/vlasov-1d/ and
+tests/test_vlasov1d/configs/ can be successfully loaded and validated
+by the BaseVlasov1D constructor.
 """
 
 from pathlib import Path
@@ -11,12 +12,14 @@ import yaml
 
 from adept.vlasov1d import BaseVlasov1D
 
-CONFIGS_DIR = Path(__file__).parent.parent.parent / "configs" / "vlasov-1d"
+PROJECT_ROOT = Path(__file__).parent.parent.parent
+CONFIGS_DIR = PROJECT_ROOT / "configs" / "vlasov-1d"
+TEST_CONFIGS_DIR = Path(__file__).parent / "configs"
 
 
 def get_config_files():
-    """Get all YAML config files from configs/vlasov-1d/."""
-    return list(CONFIGS_DIR.glob("*.yaml"))
+    """Get all YAML config files from configs/vlasov-1d/ and tests/test_vlasov1d/configs/."""
+    return list(CONFIGS_DIR.glob("*.yaml")) + list(TEST_CONFIGS_DIR.glob("*.yaml"))
 
 
 @pytest.mark.parametrize("config_path", get_config_files(), ids=lambda p: p.name)
