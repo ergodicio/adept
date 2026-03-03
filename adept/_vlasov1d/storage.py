@@ -74,8 +74,7 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
     :return: dict mapping save_key -> xr.Dataset
     """
     dist_save_keys = [
-        k for k in ys.keys()
-        if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})
+        k for k in ys.keys() if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})
     ]
 
     result = {}
