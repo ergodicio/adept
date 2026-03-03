@@ -254,10 +254,11 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
     for species_name in species_names:
         os.makedirs(os.path.join(td, "plots", "scalars", species_name), exist_ok=True)
 
-    # Create dists directory for distribution function snapshots
+    # Create dists directory for distribution function snapshots (one subdir per dist save key)
     os.makedirs(os.path.join(td, "plots", "dists"), exist_ok=True)
-    for species_name in species_names:
-        os.makedirs(os.path.join(td, "plots", "dists", species_name), exist_ok=True)
+    for save_key, save_cfg in cfg["save"].items():
+        if "_species_name" in save_cfg:
+            os.makedirs(os.path.join(td, "plots", "dists", save_key), exist_ok=True)
 
     binary_dir = os.path.join(td, "binary")
     os.makedirs(binary_dir)
@@ -360,15 +361,15 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                     fig.savefig(os.path.join(scalars_base_dir, f"{nm}.png"), bbox_inches="tight")
                 plt.close()
 
-    f_xr = store_f(cfg, result.ts, td, result.ys)
+    f_result = store_f(cfg, result.ts, td, result.ys)
 
-    # Plot velocity space distributions for each species
-    for species_name in species_names:
-        if species_name not in f_xr.data_vars:
+    # Plot velocity space distributions for each species dist save key (skip diag saves)
+    for save_key, f_xr in f_result.items():
+        if "_species_name" not in cfg["save"][save_key]:
             continue
-
-        f_species = f_xr[species_name]
-        species_dist_dir = os.path.join(td, "plots", "dists", species_name)
+        species_name = cfg["save"][save_key]["_species_name"]
+        f_species = f_xr[save_key]
+        species_dist_dir = os.path.join(td, "plots", "dists", save_key)
 
         # Select ~8 time snapshots for facet plot
         t_skip = int(f_species.coords["t"].data.size // 8)
@@ -423,17 +424,6 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
         plt.savefig(os.path.join(species_dist_dir, "phase_space.png"), bbox_inches="tight")
         plt.close()
 
-    diags_dict = {}
-    for k in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
-        if cfg["diagnostics"][k]:
-            diags_dict[k] = xarray.DataArray(
-                result.ys[k], coords=(("t", result.ts[k]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
-            )
-
-    if len(diags_dict.keys()):
-        diags_xr = xarray.Dataset(diags_dict)
-        diags_xr.to_netcdf(os.path.join(td, "binary", "diags.nc"))
-
     mlflow.log_metrics({"postprocess_time_min": round((time() - t0) / 60, 3)})
 
-    return {"fields": fields_result, "dists": f_xr, "scalars": scalars_xr}
+    return {"fields": fields_result, "dists": f_result, "scalars": scalars_xr}

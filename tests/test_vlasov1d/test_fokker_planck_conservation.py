@@ -43,8 +43,8 @@ def test_fokker_planck_conservation(operator_type):
     result = result["solver result"]
 
     # Extract distribution function over time
-    f_xvt = result.ys["electron"]  # Shape: (nt, nx, nv)
-    times = result.ts["electron"]
+    f_xvt = result.ys["electron.main"]  # Shape: (nt, nx, nv)
+    times = result.ts["electron.main"]
 
     # Get grid parameters from the actual config (cell-centered grid)
     # The code constructs v as: linspace(-vmax + dv/2, vmax - dv/2, nv)

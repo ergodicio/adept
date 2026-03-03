@@ -40,10 +40,11 @@ save:
       tmax: 100.0
       nt: 601
   electron:
-    t:
-      tmin: 0.0
-      tmax: 100.0
-      nt: 11
+    main:
+      t:
+        tmin: 0.0
+        tmax: 100.0
+        nt: 11
   diag-vlasov-dfdt:
     t:
       tmin: 0.0

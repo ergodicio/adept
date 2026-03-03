@@ -42,10 +42,11 @@ save:
       tmax: 480.0
       nt: 961
   electron:
-    t:
-      tmin: 0.0
-      tmax: 480.0
-      nt: 9
+    main:
+      t:
+        tmin: 0.0
+        tmax: 480.0
+        nt: 9
 
 solver: vlasov-1d
 

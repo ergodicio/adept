@@ -37,10 +37,11 @@ save:
       tmax: 1000.0
       nt: 1001
   electron:
-    t:
-      tmin: 0.0
-      tmax: 1000.0
-      nt: 21
+    main:
+      t:
+        tmin: 0.0
+        tmax: 1000.0
+        nt: 21
 
 solver: vlasov-1d
 
