@@ -14,10 +14,10 @@ from adept._vlasov1d.grid import Grid
 from adept.functions import (
     EnvelopeFunction,
     ExponentialFunction,
-    SpaceTimeEnvelopeFunction,
     LinearFunction,
     NoiseProfile,
     SineFunction,
+    SpaceTimeEnvelopeFunction,
     UniformFunction,
 )
 from adept.normalization import UREG, PlasmaNormalization, normalize

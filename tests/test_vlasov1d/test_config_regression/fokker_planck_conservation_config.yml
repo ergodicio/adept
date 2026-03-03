@@ -22,16 +22,20 @@ diagnostics:
 drivers:
   ex:
     '0':
-      a0: 0.0
-      dw0: 0.0
-      k0: 1.0
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.0
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      envelope:
+        space:
+          center: 0.0
+          rise: 10.0
+          width: 4000000.0
+        time:
+          center: 40.0
+          rise: 5.0
+          width: 30.0
+      params:
+        a0: 0.0
+        dw0: 0.0
+        k0: 1.0
+        w0: 1.0
   ey: {}
 grid:
   dt: 0.1
