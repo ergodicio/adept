@@ -7,7 +7,7 @@ from interpax import interp2d
 from jax import numpy as jnp
 
 
-def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str) -> dict:
+def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str, simulation) -> dict:
     """
     Stores fields to netcdf, handling multispecies data.
 
@@ -16,6 +16,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     :param binary_dir:
     :param fields: dict with species names as keys (each containing moment dicts) and shared field keys at top level
     :param this_t:
+    :param simulation: Vlasov1DSimulation object
     :return: dict mapping species names to xr.Dataset of moments, plus "fields" key for shared fields
     """
     result = {}
@@ -23,12 +24,15 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     shared_field_keys = {"e", "de", "a", "prev_a", "pond", "ep", "em"}
     species_names = [k for k in fields.keys() if k not in shared_field_keys]
 
+    grid = simulation.grid
+    x = grid.x
+
     # Store species-specific moments
     for species_name in species_names:
         species_moments = fields[species_name]
         das = {}
         for k, v in species_moments.items():
-            das[f"{prefix}-{k}"] = xr.DataArray(v, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
+            das[f"{prefix}-{k}"] = xr.DataArray(v, coords=(("t", this_t), ("x", x)))
 
         species_xr = xr.Dataset(das)
         species_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-{species_name}-t={round(this_t[-1], 4)}.nc"))
@@ -40,18 +44,19 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
         if k in fields:
             v = fields[k]
             das[f"{prefix}-{k}"] = xr.DataArray(
-                v[:, 1:-1] if k in ["a", "prev_a"] else v, coords=(("t", this_t), ("x", cfg["grid"]["x"]))
+                v[:, 1:-1] if k in ["a", "prev_a"] else v, coords=(("t", this_t), ("x", x))
             )
 
-    if len(cfg["drivers"]["ey"].keys()) > 0 and "a" in fields and "prev_a" in fields:
-        ey = -(fields["a"][:, 1:-1] - fields["prev_a"][:, 1:-1]) / cfg["grid"]["dt"]
-        bz = jnp.gradient(fields["a"], cfg["grid"]["dx"], axis=1)[:, 1:-1]
+    if len(simulation.drivers.ey) > 0 and "a" in fields and "prev_a" in fields:
+        ey = -(fields["a"][:, 1:-1] - fields["prev_a"][:, 1:-1]) / grid.dt
+        bz = jnp.gradient(fields["a"], grid.dx, axis=1)[:, 1:-1]
 
-        ep = ey + cfg["units"]["derived"]["c_light"].magnitude * bz
-        em = ey - cfg["units"]["derived"]["c_light"].magnitude * bz
+        c_light = simulation.plasma_norm.speed_of_light_norm()
+        ep = ey + c_light * bz
+        em = ey - c_light * bz
 
-        das[f"{prefix}-ep"] = xr.DataArray(ep, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
-        das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
+        das[f"{prefix}-ep"] = xr.DataArray(ep, coords=(("t", this_t), ("x", x)))
+        das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", x)))
 
     fields_xr = xr.Dataset(das)
     fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-shared-t={round(this_t[-1], 4)}.nc"))
@@ -60,7 +65,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     return result
 
 
-def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
+def store_f(cfg: dict, this_t: dict, td: str, ys: dict, simulation) -> xr.Dataset:
     """
     Stores f to netcdf
 
@@ -68,6 +73,7 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     :param this_t:
     :param td:
     :param ys:
+    :param simulation: Vlasov1DSimulation object
     :return:
     """
     # Find which species distributions were saved
@@ -88,7 +94,7 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
         else:
             warnings.warn(f"Saving distribution for species '{spc}' at full resolution.", stacklevel=2)
             v = cfg["grid"]["species_grids"][spc]["v"]
-            coords = (("t", this_t[spc]), ("x", cfg["grid"]["x"]), (v_dim, v))
+            coords = (("t", this_t[spc]), ("x", simulation.grid.x), (v_dim, v))
         data_vars[spc] = xr.DataArray(ys[spc], coords=coords)
 
     f_store = xr.Dataset(data_vars)
