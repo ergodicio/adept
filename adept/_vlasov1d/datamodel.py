@@ -225,5 +225,5 @@ class ConfigModel(BaseModel):
     save: SaveModel
     solver: str
     mlflow: MLFlowModel
-    drivers: DriversModel
+    drivers: EMDriverSetModel
     terms: TermsModel
