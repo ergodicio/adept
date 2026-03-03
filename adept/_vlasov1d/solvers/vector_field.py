@@ -215,12 +215,30 @@ class VlasovPoissonFokkerPlanck:
         self.vlasov_dfdt = cfg["diagnostics"]["diag-vlasov-dfdt"]
         self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
 
+        if "hou_li_filter" in cfg["terms"]:
+            hl_cfg = cfg["terms"]["hou_li_filter"]
+            self.hou_li_filter_on = hl_cfg["is_on"]
+            if self.hou_li_filter_on:
+                self.hou_li_filter = vlasov.HouLiFilter(
+                    species_grids=cfg["grid"]["species_grids"],
+                    nx=cfg["grid"]["nx"],
+                    alpha=hl_cfg["alpha"],
+                    order=hl_cfg["order"],
+                    dimensions=hl_cfg["dimensions"],
+                )
+        else:
+            self.hou_li_filter_on = False
+
     def __call__(
         self, f_dict: dict, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
     ) -> tuple[Array, dict, dict]:
         e, f_vlasov = self.vlasov_poisson(f_dict, a, dex_array, prev_ex)
 
         f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=self.dt)
+
+        if self.hou_li_filter_on:
+            f_fp = self.hou_li_filter(f_fp)
+
         diags = {}
 
         if self.vlasov_dfdt:

@@ -108,6 +108,57 @@ class VelocityCubicSpline:
             return self.push(f_dict, e, dt)
 
 
+class HouLiFilter:
+    """Hou-Li spectral filter.
+
+    Applies the exponential filter from Hou & Li (2007) to damp high-frequency
+    numerical oscillations without affecting well-resolved modes. Can filter
+    in x (position), v (velocity), or both dimensions.
+
+    The filter kernel in Fourier space is:
+
+        sigma(j) = exp(-alpha * (j / N)^(2*order))
+
+    where j is the mode index, N is the maximum mode, and
+    alpha = -log(machine_epsilon) ~ 36 for float64.
+
+    References:
+        Hou, T.Y. & Li, R. (2007). Computing nearly singular solutions using
+        pseudo-spectral methods. J. Comput. Phys., 226(1), 379-397.
+    """
+
+    def __init__(self, species_grids: dict, nx: int, alpha: float, order: int, dimensions: list[str]):
+        if "x" in dimensions:
+            j_x = jnp.arange(nx // 2 + 1)
+            eta_x = j_x / (nx // 2)
+            self.filter_x = jnp.exp(-alpha * eta_x ** (2 * order))
+        else:
+            self.filter_x = None
+
+        self.filters_v = {}
+        if "v" in dimensions:
+            for species_name, sg in species_grids.items():
+                nv = sg["nv"]
+                j = jnp.arange(nv // 2 + 1)
+                eta = j / (nv // 2)
+                self.filters_v[species_name] = jnp.exp(-alpha * eta ** (2 * order))
+
+    def __call__(self, f_dict: dict) -> dict:
+        result = {}
+        for species_name, f in f_dict.items():
+            filtered = f
+
+            if self.filter_x is not None:
+                filtered = jnp.real(jnp.fft.irfft(self.filter_x[:, None] * jnp.fft.rfft(filtered, axis=0), axis=0))
+
+            if species_name in self.filters_v:
+                sigma_v = self.filters_v[species_name]
+                filtered = jnp.real(jnp.fft.irfft(sigma_v[None, :] * jnp.fft.rfft(filtered, axis=1), axis=1))
+
+            result[species_name] = filtered
+        return result
+
+
 class SpaceExponential:
     def __init__(self, x, species_grids, parallel=False):
         self.kx_real = jnp.fft.rfftfreq(len(x), d=x[1] - x[0]) * 2 * jnp.pi
