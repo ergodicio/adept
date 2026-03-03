@@ -153,7 +153,7 @@ class SineFunction(eqx.Module):
         return self.baseline * (1.0 + self.amplitude * jnp.sin(self.wavenumber * x))
 
     @staticmethod
-    def from_config(cfg: dict) -> "SineFunction":
+    def from_config(cfg: dict, norm: PlasmaNormalization | None = None) -> "SineFunction":
         return SineFunction(
             baseline=cfg["baseline"],
             amplitude=cfg["amplitude"],
