@@ -55,10 +55,11 @@ mlflow:
   run: conservation-test
 save:
   electron:
-    t:
-      nt: 101
-      tmax: 10.0
-      tmin: 0.0
+    main:
+      t:
+        nt: 101
+        tmax: 10.0
+        tmin: 0.0
   fields:
     t:
       nt: 101

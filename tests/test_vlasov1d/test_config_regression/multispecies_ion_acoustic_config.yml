@@ -40,18 +40,20 @@ mlflow:
   run: ion-acoustic-wave
 save:
   electron:
-    t:
-      nt: 11
-      tmax: 5000.0
-      tmin: 0.0
+    main:
+      t:
+        nt: 11
+        tmax: 5000.0
+        tmin: 0.0
   fields:
     t:
       nt: 1001
   ion:
-    t:
-      nt: 11
-      tmax: 5000.0
-      tmin: 0.0
+    main:
+      t:
+        nt: 11
+        tmax: 5000.0
+        tmin: 0.0
 solver: vlasov-1d
 terms:
   edfdv: exponential
