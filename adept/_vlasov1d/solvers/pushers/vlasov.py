@@ -96,7 +96,7 @@ class VelocityCubicSpline:
             nx = f.shape[0]
             v_repeated = jnp.repeat(v[None, :], repeats=nx, axis=0)
             vq = v_repeated - qm * e[:, None] * dt
-            result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
+            result[species_name] = self.interp(xq=vq, x=v_repeated, f=f, extrap=1.0e-30)
         return result
 
     def __call__(self, f_dict, e, dt):
