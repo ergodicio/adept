@@ -1,0 +1,113 @@
+# Test config for em/ep diagnostic split validation
+# A rightgoing driver should produce ep >> em (em ≈ 0)
+
+units:
+  laser_wavelength: 1.0um
+  normalizing_temperature: 1000eV
+  normalizing_density: 1e19/cc  # Low density so wave propagates easily
+  Z: 1
+  Zp: 1
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 42
+    noise_type: none
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: tanh
+    baseline: 0.01  # Low uniform density
+    bump_height: 0.0  # No bump - flat profile
+    bump_or_trough: bump
+    center: 10um
+    rise: 1um
+    width: 100um  # Very wide to be effectively uniform
+
+grid:
+  dt: 0.001ps
+  tmin: 0.0ps
+  tmax: 0.5ps
+  nx: 512
+  xmin: 0.0um
+  xmax: 20um
+  nv: 32
+  vmax: 4.0
+
+save:
+  fields:
+    t:
+      nt: 101
+  electron:
+    main:
+      t:
+        nt: 11
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: test-vlasov1d-em-ep-split
+  run: test
+
+drivers:
+  ex: {}
+  ey:
+    '0':
+      params:
+        intensity: 1e12W/m^2
+        wavelength: 0.5um  # Well below critical wavelength
+        leftgoing: false   # Rightgoing wave
+      envelope:
+        time:
+          center: 1ps
+          rise: 0.05ps
+          width: 1.9ps
+        space:
+          center: 2.0um
+          rise: 1.0um
+          width: 3.0um
+
+diagnostics:
+  diag-vlasov-dfdt: false
+  diag-fp-dfdt: false
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: leapfrog
+  fokker_planck:
+    is_on: false
+    type: Dougherty
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 1.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 1.0
+    space:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 1.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 1.0
+  krook:
+    is_on: false
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 1.0
+      bump_height: 0.0
+      width: 1.0
+    space:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 1.0
+      bump_height: 0.0
+      width: 1.0
