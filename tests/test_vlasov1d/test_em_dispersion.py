@@ -10,7 +10,6 @@ import math
 
 import numpy as np
 import yaml
-from adept._vlasov1d.normalization import UREG
 from scipy import signal
 
 from adept import ergoExo
