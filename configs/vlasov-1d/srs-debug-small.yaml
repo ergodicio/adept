@@ -1,0 +1,127 @@
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+  Z: 10
+  Zp: 10
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.001
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: exponential
+    gradient scale length: 200um
+    val at center: 1.0
+    center: 50um
+    rise: 5um
+    width: 40um
+
+grid:
+  dt: 0.005ps
+  tmin: 0.0ps
+  tmax: 2.0ps
+
+  nx: 1028
+  xmin: 0.0um
+  xmax: 100um
+
+  nv: 64
+  vmax: 6.4
+
+save:
+  fields:
+    t:
+      nt: 501
+  electron:
+    t:
+      nt: 11
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: vlasov1d-srs
+  run: debug-small
+
+drivers:
+  ex: {}
+  ey:
+    '0':
+      params:
+        a0: 1.0
+        k0: 1.0
+        w0: 2.79
+        dw0: 0.
+      envelope:
+        time:
+          center: 4000.0ps
+          rise: 20.0fs
+          width: 7900.0fs
+        space:
+          center: 50.0um
+          rise: 0.1um
+          width: 1.0um
+    '1':
+      params:
+        a0: 1.e-6
+        k0: 1.0
+        w0: 1.63
+        dw0: 0.
+      envelope:
+        time:
+          center: 4000.0fs
+          rise: 20.0fs
+          width: 7900.0fs
+        space:
+          center: 50um
+          rise: 0.1um
+          width: 1.0um
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: leapfrog
+  fokker_planck:
+    is_on: false
+    type: Dougherty
+    time:
+      baseline: 1.0e-5
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: True
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 2000.0
+      rise: 2.5
+      bump_height: 0.0
+      width: 1s
+    space:
+      baseline: 0.0
+      bump_or_trough: trough
+      center: 50.0um
+      rise: 5.0um
+      bump_height: 10.0
+      width: 90um
