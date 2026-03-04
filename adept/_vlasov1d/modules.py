@@ -133,12 +133,19 @@ class BaseVlasov1D(ADEPTModule):
         # Merge grid scalar values from the Grid object
         cfg_grid.update(filter_scalars(asdict(grid)))
 
-        # Default save.*.t.tmin/tmax to computed grid values
-        for save_type in self.cfg.get("save", {}).keys():
-            if "t" in self.cfg["save"][save_type]:
-                t_cfg = self.cfg["save"][save_type]["t"]
-                t_cfg.setdefault("tmin", grid.tmin)
-                t_cfg.setdefault("tmax", grid.tmax)
+        # Default save.*.t.tmin/tmax to computed grid values.
+        # Species saves are nested ({label: {t: ...}}); fields/diags are flat ({t: ...}).
+        for save_val in self.cfg.get("save", {}).values():
+            if "t" in save_val:
+                # Flat save (fields, diags)
+                save_val["t"].setdefault("tmin", grid.tmin)
+                save_val["t"].setdefault("tmax", grid.tmax)
+            else:
+                # Nested species save: {label: {t: {...}, ...}}
+                for label_config in save_val.values():
+                    if isinstance(label_config, dict) and "t" in label_config:
+                        label_config["t"].setdefault("tmin", grid.tmin)
+                        label_config["t"].setdefault("tmax", grid.tmax)
 
         # Normalize species config: if not provided, generate a default electron species
         if self.cfg["terms"].get("species", None) is None:

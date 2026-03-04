@@ -44,15 +44,17 @@ save:
     t:
       nt: 1001
   electron:
-    t:
-      tmin: 0.0
-      tmax: 5000.0
-      nt: 11
+    main:
+      t:
+        tmin: 0.0
+        tmax: 5000.0
+        nt: 11
   ion:
-    t:
-      tmin: 0.0
-      tmax: 5000.0
-      nt: 11
+    main:
+      t:
+        tmin: 0.0
+        tmax: 5000.0
+        nt: 11
 
 solver: vlasov-1d
 

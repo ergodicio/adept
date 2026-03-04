@@ -60,72 +60,51 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     return result
 
 
-def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
+def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
     """
-    Stores f to netcdf
+    Stores distribution function saves to netcdf.
+
+    Handles species dist saves (keyed by "_species_name") and diagnostic dist saves
+    (keyed by "_diag"), writing one netcdf file per save key.
 
     :param cfg:
     :param this_t:
     :param td:
     :param ys:
-    :return:
+    :return: dict mapping save_key -> xr.Dataset
     """
-    # Find which species distributions were saved
-    species_names = list(cfg["grid"]["species_grids"].keys())
-    species_to_save = [spc for spc in species_names if spc in ys]
+    dist_save_keys = [
+        k for k in ys.keys() if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})
+    ]
 
-    data_vars = {}
-    for spc in species_to_save:
-        # Use species-specific velocity dimension name to avoid coordinate conflicts
-        # when different species have different velocity grids
-        v_dim = f"v_{spc}"
-        spc_save_cfg = cfg["save"][spc]
-        save_keys = set(spc_save_cfg.keys()) - {"t", "func"}
-        if {"x", "v"} <= save_keys:
-            coords = (("t", this_t[spc]), ("x", spc_save_cfg["x"]["ax"]), (v_dim, spc_save_cfg["v"]["ax"]))
-        elif {"kx", "v"} <= save_keys:
-            coords = (("t", this_t[spc]), ("kx", spc_save_cfg["kx"]["ax"]), (v_dim, spc_save_cfg["v"]["ax"]))
+    result = {}
+    for save_key in dist_save_keys:
+        spc_save_cfg = cfg["save"][save_key]
+
+        if "_species_name" in spc_save_cfg:
+            species_name = spc_save_cfg["_species_name"]
+            v_dim = f"v_{species_name}"
+            full_v = cfg["grid"]["species_grids"][species_name]["v"]
+            meta_keys = {"t", "func", "_species_name"}
         else:
-            warnings.warn(f"Saving distribution for species '{spc}' at full resolution.", stacklevel=2)
-            v = cfg["grid"]["species_grids"][spc]["v"]
-            coords = (("t", this_t[spc]), ("x", cfg["grid"]["x"]), (v_dim, v))
-        data_vars[spc] = xr.DataArray(ys[spc], coords=coords)
+            v_dim = "v"
+            full_v = cfg["grid"]["species_grids"]["electron"]["v"]
+            meta_keys = {"t", "func", "_diag"}
 
-    f_store = xr.Dataset(data_vars)
-    f_store.to_netcdf(os.path.join(td, "binary", "dist.nc"))
+        save_keys = set(spc_save_cfg.keys()) - meta_keys
+        if {"x", "v"} <= save_keys:
+            coords = (("t", this_t[save_key]), ("x", spc_save_cfg["x"]["ax"]), (v_dim, spc_save_cfg["v"]["ax"]))
+        elif {"kx", "v"} <= save_keys:
+            coords = (("t", this_t[save_key]), ("kx", spc_save_cfg["kx"]["ax"]), (v_dim, spc_save_cfg["v"]["ax"]))
+        else:
+            warnings.warn(f"Saving distribution for '{save_key}' at full resolution.", stacklevel=2)
+            coords = (("t", this_t[save_key]), ("x", cfg["grid"]["x"]), (v_dim, full_v))
 
-    return f_store
+        f_store = xr.Dataset({save_key: xr.DataArray(ys[save_key], coords=coords)})
+        f_store.to_netcdf(os.path.join(td, "binary", f"dist-{save_key}.nc"))
+        result[save_key] = f_store
 
-
-def store_diags(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
-    """
-    Stores diagnostics to netcdf
-
-    :param cfg:
-    :param this_t:
-    :param td:
-    :param ys:
-    :return:
-    """
-    assert cfg["save"]["diag-vlasov-dfdt"] == cfg["diagnostics"]["diag-fp-dfdt"]
-
-    if {"t"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
-    elif {"t", "x", "v"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("v", cfg["grid"]["v"]))
-    elif {"t", "kx", "v"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov-dfdt"]), ("kx", cfg["grid"]["kx"]), ("v", cfg["grid"]["v"]))
-    elif {"t", "x", "kv"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov-dfdt"]), ("x", cfg["grid"]["x"]), ("kv", cfg["grid"]["kv"]))
-    elif {"t", "kx", "kv"} == set(cfg["save"]["diags"].keys()):
-        axes = (("t", this_t["diag-vlasov-dfdt"]), ("kx", cfg["grid"]["kx"]), ("kv", cfg["grid"]["kv"]))
-    else:
-        raise NotImplementedError
-
-    diags_store = xr.Dataset({spc: xr.DataArray(ys[spc], coords=axes) for spc in ["diag-vlasov-dfdt", "diag-fp-dfdt"]})
-    diags_store.to_netcdf(os.path.join(td, "binary", "diagnostics.nc"))
-
-    return diags_store
+    return result
 
 
 def get_field_save_func(cfg):
@@ -205,54 +184,82 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
     return dist_save_func
 
 
+def _add_dim_axes(save_config: dict) -> None:
+    """Add 'ax' numpy array to each dimension sub-dict in a save config."""
+    for dim_key, dim_config in save_config.items():
+        if not isinstance(dim_config, dict) or f"n{dim_key}" not in dim_config:
+            continue
+        if dim_key == "x":
+            dx = (dim_config[f"{dim_key}max"] - dim_config[f"{dim_key}min"]) / dim_config[f"n{dim_key}"]
+        else:
+            dx = 0.0
+        dim_config["ax"] = np.linspace(
+            dim_config[f"{dim_key}min"] + dx / 2.0,
+            dim_config[f"{dim_key}max"] - dx / 2.0,
+            dim_config[f"n{dim_key}"],
+        )
+
+
 def get_save_quantities(cfg: dict) -> dict:
     """
-    This function updates the config with the quantities required for the diagnostics and saving routines
+    Expand the save config into a flat dict keyed by save identifier and attach
+    JAX-callable save functions.
 
-    :param cfg:
-    :return:
+    Species distribution saves use a nested YAML structure::
+
+        save:
+          electron:
+            main:
+              t: {nt: 11}
+            full:
+              t: {nt: 5}
+              x: {xmin: 0.0, xmax: 20.94, nx: 32}
+              v: {vmin: -6.4, vmax: 6.4, nv: 512}
+
+    Each ``<species>/<label>`` pair becomes a flat key in the internal save dict,
+    e.g. ``"electron.main"``, ``"electron.full"``.  Field and diagnostic saves are
+    kept as-is.
     """
-    # Get species names from config for dynamic handling
     species_names = list(cfg["grid"]["species_grids"].keys())
     diag_types = ["diag-vlasov-dfdt", "diag-fp-dfdt"]
 
-    for save_type, save_config in cfg["save"].items():  # this can be fields or species name or diags
-        for dim_key, dim_config in save_config.items():  # this can be t, x, y, kx, ky (eventually)
-            if dim_key == "x":
-                dx = (dim_config[f"{dim_key}max"] - dim_config[f"{dim_key}min"]) / dim_config[f"n{dim_key}"]
-            else:
-                dx = 0.0
+    new_save: dict = {}
 
-            dim_config["ax"] = np.linspace(
-                dim_config[f"{dim_key}min"] + dx / 2.0,
-                dim_config[f"{dim_key}max"] - dx / 2.0,
-                dim_config[f"n{dim_key}"],
-            )
-
+    for save_type, save_config in cfg["save"].items():
         if save_type.startswith("fields"):
+            _add_dim_axes(save_config)
             save_config["func"] = get_field_save_func(cfg)
+            new_save[save_type] = save_config
 
-        elif save_type.casefold() in [s.casefold() for s in species_names]:
-            # Species distribution - use species-specific velocity grid
+        elif save_type in species_names:
+            # Nested: {label: {t: {...}, x: {...} (optional), v: {...} (optional)}}
             species_grid = cfg["grid"]["species_grids"][save_type]
-            save_config["func"] = get_dist_save_func(
-                axes={"x": cfg["grid"]["x"], "v": species_grid["v"], "kx": cfg["grid"]["kx"]},
-                dist_save_config=save_config,
-                dist_key=save_type,
-            )
+            for label, label_config in save_config.items():
+                _add_dim_axes(label_config)
+                label_config["func"] = get_dist_save_func(
+                    axes={"x": cfg["grid"]["x"], "v": species_grid["v"], "kx": cfg["grid"]["kx"]},
+                    dist_save_config=label_config,
+                    dist_key=save_type,
+                )
+                # Set after func so it doesn't interfere with key-set matching inside get_dist_save_func
+                label_config["_species_name"] = save_type
+                new_save[f"{save_type}.{label}"] = label_config
 
         elif save_type in diag_types:
-            # Diagnostics - use electron grid as default
+            _add_dim_axes(save_config)
             electron_grid = cfg["grid"]["species_grids"]["electron"]
             save_config["func"] = get_dist_save_func(
                 axes={"x": cfg["grid"]["x"], "v": electron_grid["v"], "kx": cfg["grid"]["kx"]},
                 dist_save_config=save_config,
                 dist_key=save_type,
             )
+            save_config["_diag"] = True
+            new_save[save_type] = save_config
 
         else:
             raise NotImplementedError(f"Unknown save type: {save_type}")
 
+    cfg["save"] = new_save
     cfg["save"]["default"] = {"t": {"ax": cfg["grid"]["t"]}, "func": get_default_save_func(cfg)}
     return cfg
 

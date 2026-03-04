@@ -42,18 +42,19 @@ save:
       tmax: 480.0
       nt: 961
   electron:
-    t:
-      tmin: 0.0
-      tmax: 480.0
-      nt: 9
-    x:
-      xmin: 0.0
-      xmax: 20.94
-      nx: 24
-    v:
-      vmin: -6.4
-      vmax: 6.4
-      nv: 384
+    main:
+      t:
+        tmin: 0.0
+        tmax: 480.0
+        nt: 9
+      x:
+        xmin: 0.0
+        xmax: 20.94
+        nx: 24
+      v:
+        vmin: -6.4
+        vmax: 6.4
+        nv: 384
 
 solver: vlasov-1d
 

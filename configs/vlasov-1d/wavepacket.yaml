@@ -46,10 +46,11 @@ mlflow:
 solver: vlasov-1d
 save:
   electron:
-    t:
-      nt: 51
-      tmax: 1000.0
-      tmin: 0.0
+    main:
+      t:
+        nt: 51
+        tmax: 1000.0
+        tmin: 0.0
   fields:
     t:
       nt: 1001

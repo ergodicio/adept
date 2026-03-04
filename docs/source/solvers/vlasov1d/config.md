@@ -203,20 +203,66 @@ save:
       tmax: 100.0
       nt: 601
   electron:
-    t:
-      tmin: 0.0
-      tmax: 100.0
-      nt: 11
+    main:
+      t:
+        tmin: 0.0
+        tmax: 100.0
+        nt: 11
 ```
 
 | Save Key | Description |
 |----------|-------------|
 | `fields` | Electric and magnetic field data |
-| `electron` | Electron distribution function |
+| `<species>` | Dict of named distribution function saves for that species |
 | `diag-vlasov-dfdt` | Time derivative from Vlasov operator (optional) |
 | `diag-fp-dfdt` | Time derivative from Fokker-Planck operator (optional) |
 
-Each save key contains a `t` sub-key with:
+### Multiple distribution saves per species
+
+Each species section is a dict of **named saves** (`main`, `full`, `monitor`, etc.).
+Multiple saves with different resolutions and time cadences can be configured under
+the same species key. Each produces a `dist-<species>/<label>.nc` file in `binary/`
+and is accessible as `result.ys["<species>/<label>"]`.
+
+```yaml
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 100.0
+      nt: 601
+  electron:
+    # Full-resolution dump, saved infrequently
+    full:
+      t:
+        tmin: 0.0
+        tmax: 100.0
+        nt: 5
+      x:
+        xmin: 0.0
+        xmax: 20.94
+        nx: 32
+      v:
+        vmin: -6.4
+        vmax: 6.4
+        nv: 512
+    # Coarser dump at higher frequency for monitoring
+    monitor:
+      t:
+        tmin: 0.0
+        tmax: 100.0
+        nt: 101
+      x:
+        xmin: 0.0
+        xmax: 20.94
+        nx: 16
+      v:
+        vmin: -3.0
+        vmax: 3.0
+        nv: 128
+```
+
+Each named save contains a `t` sub-key with:
 
 | Field | Type | Description |
 |-------|------|-------------|
