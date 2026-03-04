@@ -386,6 +386,7 @@ Solver algorithm configuration.
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
+| `hou_li_filter` | object | Hou-Li spectral filter (optional, default off) |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
 
 ### species (Multispecies Configuration)
@@ -461,6 +462,37 @@ terms:
 ```
 
 See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` for a complete working example.
+
+### hou_li_filter
+
+Hou-Li exponential spectral filter applied after each timestep. Damps high-wavenumber modes to suppress numerical oscillations without significantly affecting well-resolved physics. Can be applied in position space (x), velocity space (v), or both.
+
+The filter kernel in Fourier space is:
+
+```
+sigma(j) = exp(-alpha * (j / N)^(2*order))
+```
+
+where `j` is the mode index, `N` is the Nyquist mode, and modes near `j = N` are damped strongly while low modes are left nearly unchanged.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `is_on` | bool | — | Enable/disable the filter |
+| `alpha` | float | `36.0` | Filter strength. The default `36.0 ≈ -log(float64 machine epsilon)` ensures the Nyquist mode is zeroed to machine precision |
+| `order` | int | `36` | Filter order; higher values give a sharper roll-off that preserves more low-wavenumber content |
+| `dimensions` | list | `["x", "v"]` | Dimensions to filter. Can be `[]`, `["x"]`, `["v"]`, or `["x", "v"]` |
+
+Example:
+```yaml
+terms:
+  hou_li_filter:
+    is_on: True
+    alpha: 36.0
+    order: 36
+    dimensions: ["x", "v"]
+```
+
+If `hou_li_filter` is omitted entirely, it defaults to `is_on: False`.
 
 ### Field Solvers
 

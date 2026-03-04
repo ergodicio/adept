@@ -2,6 +2,7 @@ import os
 import pickle
 import tempfile
 import time
+import warnings
 from collections.abc import Callable
 from copy import deepcopy
 
@@ -18,6 +19,11 @@ from .utils import robust_log_artifacts
 
 
 def get_envelope(p_wL, p_wR, p_L, p_R, ax):
+    warnings.warn(
+        "get_envelope is deprecated. Use adept.utils.EnvelopeFunction instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
 
 

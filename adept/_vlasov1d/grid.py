@@ -4,7 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
-from adept._vlasov1d.normalization import UREG, PlasmaNormalization
+from adept.normalization import UREG, PlasmaNormalization
 
 
 class Grid(eqx.Module):

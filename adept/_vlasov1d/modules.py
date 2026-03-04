@@ -11,14 +11,40 @@ from adept import ADEPTModule
 from adept._base_ import Stepper
 from adept._vlasov1d.grid import grid_from_dimensionless_cfg
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
-from adept._vlasov1d.normalization import electron_debye_normalization
-from adept._vlasov1d.simulation import Vlasov1DSimulation
+from adept._vlasov1d.simulation import Species, SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
+from adept.functions import SpaceTimeEnvelopeFunction
+from adept.normalization import electron_debye_normalization
 from adept.utils import filter_scalars
 
 
-def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
+def species_set_from_cfg(cfg: dict) -> list[Species]:
+    if cfg["terms"].get("species", None):
+        return [Species.from_config(cfg_species) for cfg_species in cfg["terms"]["species"]]
+    else:
+        # Collect all density components (keys starting with "species-")
+        density_components = [name for name in cfg["density"].keys() if name.startswith("species-")]
+        if not density_components:
+            raise ValueError("No density components found (expected keys starting with 'species-')")
+
+        return [
+            Species.from_config(
+                {
+                    "name": "electron",
+                    "charge": -1.0,
+                    "mass": 1.0,
+                    "vmax": cfg["grid"]["vmax"],
+                    "nv": cfg["grid"]["nv"],
+                    "density_components": density_components,
+                }
+            )
+        ]
+
+
+def sim_from_cfg(
+    cfg: dict,
+) -> Vlasov1DSimulation:
     """Construct a Vlasov1DSimulation from a base config dict."""
     plasma_norm = electron_debye_normalization(
         cfg["units"]["normalizing_density"],
@@ -27,7 +53,25 @@ def sim_from_cfg(cfg: dict) -> Vlasov1DSimulation:
     beta = 1.0 / plasma_norm.speed_of_light_norm()
     has_ey_driver = len(cfg.get("drivers", {}).get("ey", {}).keys()) > 0
     grid = grid_from_dimensionless_cfg(cfg["grid"], beta, should_override_dt_for_em_waves=has_ey_driver)
-    return Vlasov1DSimulation(plasma_norm, grid)
+
+    # Construct collision frequency profiles if enabled
+    nu_fp_prof = None
+    if cfg["terms"]["fokker_planck"]["is_on"]:
+        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["fokker_planck"])
+
+    nu_K_prof = None
+    if cfg["terms"]["krook"]["is_on"]:
+        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["krook"])
+
+    species = species_set_from_cfg(cfg)
+    species_distribution_specs = {
+        s.name: [
+            SubspeciesDistributionSpec.from_config(cfg["density"][component_name], norm=plasma_norm)
+            for component_name in s.density_components
+        ]
+        for s in species
+    }
+    return Vlasov1DSimulation(plasma_norm, grid, species, species_distribution_specs, nu_fp_prof, nu_K_prof)
 
 
 class BaseVlasov1D(ADEPTModule):
@@ -144,13 +188,13 @@ class BaseVlasov1D(ADEPTModule):
         cfg_grid.update(asdict(grid))
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, cfg_grid)
+        dist_result = _initialize_total_distribution_(self.cfg, grid, norm=self.simulation.plasma_norm)
         cfg_grid["species_distributions"] = dist_result
 
         # Build species_grids and species_params
         cfg_grid["species_grids"] = {}
         cfg_grid["species_params"] = {}
-        n_prof_total = np.zeros([cfg_grid["nx"]])
+        n_prof_total = np.zeros([grid.nx])
 
         for species_name, (n_prof, f_s, v_ax) in dist_result.items():
             n_prof_total += n_prof
@@ -223,7 +267,7 @@ class BaseVlasov1D(ADEPTModule):
         grid = self.simulation.grid
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, self.cfg["grid"])
+        dist_result = _initialize_total_distribution_(self.cfg, grid, norm=self.simulation.plasma_norm)
 
         state = {}
 
@@ -256,7 +300,14 @@ class BaseVlasov1D(ADEPTModule):
         grid = self.simulation.grid
         self.time_quantities = {"t0": 0.0, "t1": grid.tmax, "max_steps": grid.max_steps}
         self.diffeqsolve_quants = dict(
-            terms=ODETerm(VlasovMaxwell(self.cfg, grid)),
+            terms=ODETerm(
+                VlasovMaxwell(
+                    self.cfg,
+                    grid,
+                    nu_fp_prof=self.simulation.nu_fp_prof,
+                    nu_K_prof=self.simulation.nu_K_prof,
+                )
+            ),
             solver=Stepper(),
             saveat=dict(subs={k: SubSaveAt(ts=v["t"]["ax"], fn=v["func"]) for k, v in self.cfg["save"].items()}),
         )
