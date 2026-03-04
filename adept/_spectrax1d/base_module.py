@@ -1,10 +1,11 @@
 """Base ADEPTModule wrapper for spectrax-based Hermite-Fourier Vlasov-Maxwell solver."""
 
 import os
+import sys
 
 import pint
 import xarray as xr
-from diffrax import ConstantStepSize, ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
+from diffrax import ConstantStepSize, NoProgressMeter, ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import Array
 from jax import numpy as jnp
 
@@ -698,7 +699,7 @@ class BaseSpectrax1D(ADEPTModule):
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
             max_steps=self.time_quantities["max_steps"],
-            progress_meter=TqdmProgressMeter(),
+            progress_meter=TqdmProgressMeter() if sys.stdout.isatty() else NoProgressMeter(),
         )
 
         return {"solver result": sol}
