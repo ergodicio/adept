@@ -1,10 +1,11 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
+import sys
 from dataclasses import asdict
 
 import numpy as np
-from diffrax import ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
+from diffrax import NoProgressMeter, ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
 from jax import numpy as jnp
 
 from adept import ADEPTModule
@@ -320,7 +321,9 @@ class BaseVlasov1D(ADEPTModule):
             y0=self.state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
-            progress_meter=TqdmProgressMeter(refresh_steps=grid.max_steps // 100),
+            progress_meter=TqdmProgressMeter(refresh_steps=grid.max_steps // 100)
+            if sys.stdout.isatty()
+            else NoProgressMeter(),
         )
 
         return {"solver result": solver_result}
