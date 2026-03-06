@@ -83,7 +83,7 @@ class VelocityCubicSpline:
     def __init__(self, species_grids, species_params, parallel=False):
         self.species_grids = species_grids
         self.species_params = species_params
-        self.interp = vmap(partial(interp1d, extrap=True), in_axes=0)
+        self.interp = vmap(partial(interp1d, extrap=1.0e-30), in_axes=0)
         self.parallel = parallel
         if self.parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
