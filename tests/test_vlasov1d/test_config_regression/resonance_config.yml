@@ -22,16 +22,20 @@ diagnostics:
 drivers:
   ex:
     '0':
-      a0: 1.0e-06
-      dw0: 0.0
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      envelope:
+        space:
+          center: 0.0
+          rise: 10.0
+          width: 4000000.0
+        time:
+          center: 40.0
+          rise: 5.0
+          width: 30.0
+      params:
+        a0: 1.0e-06
+        dw0: 0.0
+        k0: 0.3
+        w0: 1.1598
   ey: {}
 grid:
   dt: 0.25
@@ -47,18 +51,19 @@ mlflow:
   run: test
 save:
   electron:
-    t:
-      nt: 9
-      tmax: 480.0
-      tmin: 0.0
-    v:
-      nv: 384
-      vmax: 6.4
-      vmin: -6.4
-    x:
-      nx: 24
-      xmax: 20.94
-      xmin: 0.0
+    main:
+      t:
+        nt: 9
+        tmax: 480.0
+        tmin: 0.0
+      v:
+        nv: 384
+        vmax: 6.4
+        vmin: -6.4
+      x:
+        nx: 24
+        xmax: 20.94
+        xmin: 0.0
   fields:
     t:
       nt: 961

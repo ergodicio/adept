@@ -1,6 +1,15 @@
+import math
+import warnings
+
 import equinox as eqx
 import jax
 
+from adept._vlasov1d.datamodel import (
+    EMDriverAKWParametrization,
+    EMDriverIntensityWavelengthParametrization,
+    EMDriverModel,
+    EMDriverSetModel,
+)
 from adept._vlasov1d.grid import Grid
 from adept.functions import (
     EnvelopeFunction,
@@ -11,7 +20,70 @@ from adept.functions import (
     SpaceTimeEnvelopeFunction,
     UniformFunction,
 )
-from adept.normalization import PlasmaNormalization
+from adept.normalization import UREG, PlasmaNormalization, normalize
+
+
+class EMDriver(eqx.Module):
+    a0: float
+    k0: float
+    w0: float
+    dw0: float
+    envelope: SpaceTimeEnvelopeFunction
+
+    @staticmethod
+    def from_model(model: EMDriverModel, norm: PlasmaNormalization | None = None) -> "EMDriver":
+        envelope = SpaceTimeEnvelopeFunction.from_config(model.envelope.model_dump(), norm)
+
+        params = model.params
+
+        match model.params:
+            case EMDriverAKWParametrization():
+                c = norm.speed_of_light_norm()
+                if params.k0 is None:
+                    w0 = c * params.k0
+                elif params.w0 is None:
+                    k0 = params.w0 / c
+                else:
+                    k0, w0 = params.k0, params.w0
+
+                return EMDriver(params.a0, k0, w0, params.dw0, envelope)
+
+            case EMDriverIntensityWavelengthParametrization(intensity=intensity, wavelength=wavelength):
+                intensity = UREG.Quantity(intensity).to("W/m^2")
+                wavelength = UREG.Quantity(wavelength).to("nm")
+
+                e = UREG.e
+                m_e = UREG.m_e
+                eps0 = UREG.epsilon_0
+                c = UREG.c
+
+                # Standard a0 = eE0/(m_e c w0) — identical to HermiteSRS1D formula
+                a0_std = ((e * wavelength / (m_e * math.pi)) * (intensity / (2 * eps0 * c**5)) ** 0.5).to("").magnitude
+                # Vlasov normalization: a0_vlasov = a0_std / β  (β = v0/c)
+                a0 = a0_std * norm.speed_of_light_norm()
+
+                # k0 in Debye-length units: k0_vlasov = k_phys x v0/wp0
+                k0_phys = (2 * math.pi / wavelength).to("1/m")
+                k0 = float((k0_phys * norm.L0).to("").magnitude)
+
+                # w0 normalized to wp0 (same normalization as Hermite)
+                w0_phys = (2 * math.pi * c / wavelength).to("1/s")
+                w0 = float((w0_phys * norm.tau).to("").magnitude)
+
+                dw0 = 0.0  # ???
+
+                return EMDriver(a0, k0, w0, dw0, envelope)
+
+
+class EMDriverSet(eqx.Module):
+    ex: list[EMDriver]
+    ey: list[EMDriver]
+
+    @staticmethod
+    def from_model(model: EMDriverSetModel, norm: PlasmaNormalization | None = None) -> "EMDriverSet":
+        ex = [EMDriver.from_model(ex_model, norm) for ex_model in model.ex.values()]
+        ey = [EMDriver.from_model(ey_model, norm) for ey_model in model.ey.values()]
+        return EMDriverSet(ex, ey)
 
 
 class Species(eqx.Module):
@@ -63,16 +135,15 @@ class SubspeciesDensityProfile(eqx.Module):
             envelope = None
         elif basis == "tanh":
             density = UniformFunction()
-            envelope = EnvelopeFunction.from_config(cfg)
+            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "linear":
-            density = LinearFunction.from_physical_units_cfg(cfg, norm)
-            # Uses defaults: baseline=0.0, bump_height=1.0 (masking envelope)
-            envelope = EnvelopeFunction.from_config(cfg)
+            density = LinearFunction.from_config(cfg, norm)
+            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "exponential":
-            density = ExponentialFunction.from_physical_units_cfg(cfg, norm)
-            envelope = EnvelopeFunction.from_config(cfg)
+            density = ExponentialFunction.from_config(cfg, norm)
+            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
         elif basis == "sine":
-            density = SineFunction.from_config(cfg)
+            density = SineFunction.from_config(cfg, norm)
             envelope = None
         else:
             raise NotImplementedError(f"Unknown density basis: {basis}")
@@ -112,6 +183,7 @@ class Vlasov1DSimulation:
         grid: Grid,
         species: list[Species],
         species_distributions: dict[str, list[SubspeciesDistributionSpec]],
+        drivers: EMDriverSet,
         nu_fp_prof: SpaceTimeEnvelopeFunction | None = None,
         nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
     ):
@@ -121,6 +193,7 @@ class Vlasov1DSimulation:
         self.species_distributions = species_distributions
         self.nu_fp_prof = nu_fp_prof
         self.nu_K_prof = nu_K_prof
+        self.drivers = drivers
 
     @property
     def species_dict(self) -> dict[str, Species]:

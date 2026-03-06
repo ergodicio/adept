@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
 class SpaceProfileModel(BaseModel):
@@ -76,6 +76,45 @@ class SaveModel(BaseModel):
     fields: dict[str, TimeSaveModel]
     # Note: Allow arbitrary species save sections (electron, ion, etc.)
     # These are validated as dict[str, TimeSaveModel] when accessed
+
+
+class EnvelopeModel(BaseModel):
+    center: str | float
+    rise: str | float
+    width: str | float
+
+
+class SpaceTimeEnvelopeModel(BaseModel):
+    space: EnvelopeModel
+    time: EnvelopeModel
+
+
+class EMDriverIntensityWavelengthParametrization(BaseModel):
+    intensity: str
+    wavelength: str
+
+
+class EMDriverAKWParametrization(BaseModel):
+    a0: float
+    k0: float | None = None
+    w0: float | None = None
+    dw0: float
+
+    @model_validator(mode="after")
+    def check_w_or_k(self) -> "EMDriverAKWParametrization":
+        if self.k0 is None and self.w0 is None:
+            raise ValueError("You must specify at least one of k0 or w0.")
+        return self
+
+
+class EMDriverModel(BaseModel):
+    params: EMDriverIntensityWavelengthParametrization | EMDriverAKWParametrization
+    envelope: SpaceTimeEnvelopeModel
+
+
+class EMDriverSetModel(BaseModel):
+    ex: dict[str, EMDriverModel]
+    ey: dict[str, EMDriverModel]
 
 
 class ExDriverModel(BaseModel):
@@ -186,5 +225,5 @@ class ConfigModel(BaseModel):
     save: SaveModel
     solver: str
     mlflow: MLFlowModel
-    drivers: DriversModel
+    drivers: EMDriverSetModel
     terms: TermsModel

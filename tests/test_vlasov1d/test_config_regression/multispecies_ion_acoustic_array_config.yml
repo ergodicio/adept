@@ -38797,20 +38797,22 @@ mlflow:
   run: ion-acoustic-wave
 save:
   electron:
-    t:
-      nt: 11
-      tmax: 5000.0
-      tmin: 0.0
+    main:
+      t:
+        nt: 11
+        tmax: 5000.0
+        tmin: 0.0
   fields:
     t:
       nt: 1001
       tmax: 5000.5
       tmin: 0.0
   ion:
-    t:
-      nt: 11
-      tmax: 5000.0
-      tmin: 0.0
+    main:
+      t:
+        nt: 11
+        tmax: 5000.0
+        tmin: 0.0
 solver: vlasov-1d
 terms:
   edfdv: exponential
@@ -38880,7 +38882,7 @@ units:
     logLambda_ee: -11.781233290653
     n0: 1.5e+21 / cubic_centimeter
     nuee: -574949910190.1326 hertz
-    sim_duration: 2.2884047695948326 picosecond
+    sim_duration: 2.288633610071792 picosecond
     tp0: 0.45768095391896646 femtosecond
     v0: 26524102.30999721 meter / second
     wp0: 2184928150138955.5 radian / second

@@ -22,16 +22,20 @@ diagnostics:
 drivers:
   ex:
     '0':
-      a0: 1.0e-06
-      dw0: 0.0
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      envelope:
+        space:
+          center: 0.0
+          rise: 10.0
+          width: 4000000.0
+        time:
+          center: 40.0
+          rise: 5.0
+          width: 30.0
+      params:
+        a0: 1.0e-06
+        dw0: 0.0
+        k0: 0.3
+        w0: 1.1598
   ey: {}
 grid:
   beta: 0.088474881879774
@@ -23259,18 +23263,19 @@ mlflow:
   run: test
 save:
   electron:
-    t:
-      nt: 9
-      tmax: 480.0
-      tmin: 0.0
-    v:
-      nv: 384
-      vmax: 6.4
-      vmin: -6.4
-    x:
-      nx: 24
-      xmax: 20.94
-      xmin: 0.0
+    main:
+      t:
+        nt: 9
+        tmax: 480.0
+        tmin: 0.0
+      v:
+        nv: 384
+        vmax: 6.4
+        vmin: -6.4
+      x:
+        nx: 24
+        xmax: 20.94
+        xmin: 0.0
   fields:
     t:
       nt: 961
@@ -23318,14 +23323,6 @@ terms:
       rise: 25.0
       slope: 0.0
       width: 100000.0
-  species:
-  - charge: -1.0
-    density_components:
-    - species-background
-    mass: 1.0
-    name: electron
-    nv: 512
-    vmax: 6.4
   time: leapfrog
 units:
   Z: 10
@@ -23339,7 +23336,7 @@ units:
     logLambda_ee: -11.781233290653
     n0: 1.5e+21 / cubic_centimeter
     nuee: -574949910190.1326 hertz
-    sim_duration: 0.21968685788110393 picosecond
+    sim_duration: 0.21980127811958367 picosecond
     tp0: 0.45768095391896646 femtosecond
     v0: 26524102.30999721 meter / second
     wp0: 2184928150138955.5 radian / second
