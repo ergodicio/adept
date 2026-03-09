@@ -283,6 +283,13 @@ class ergoExo:
 
 
         """
+        # Enforce float64 for kinetic solvers (density conservation requires it)
+        if cfg["solver"] != "envelope-2d":
+            if not jax.config.jax_enable_x64:
+                raise RuntimeError(
+                    f"Solver '{cfg['solver']}' requires float64 for numerical precision. "
+                    "Set jax.config.update('jax_enable_x64', True) before importing adept."
+                )
 
         if cfg["solver"] == "tf-1d":
             from adept.tf1d import BaseTwoFluid1D as this_module
