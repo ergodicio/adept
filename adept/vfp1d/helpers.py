@@ -2,7 +2,6 @@
 #  research@ergodic.io
 
 
-import jax
 import numpy as np
 from astropy.units import Quantity as _Q
 from jax import Array
@@ -40,7 +39,9 @@ def gamma_5_over_m(m: float) -> Array:
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
-def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int, ion_species: str) -> tuple[float, float]:
+def calc_logLambda(
+    cfg: dict, ne: float, Te: float, Z: int, ion_species: str, force_ee_equal_ei: bool = False
+) -> tuple[float, float]:
     """
     Calculate the Coulomb logarithm
 
@@ -49,6 +50,7 @@ def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int, ion_species: str) ->
     :param Te: float
     :param Z: int
     :param ion_species: str
+    :param force_ee_equal_ei: if True, set logLambda_ee = logLambda_ei
 
     :return: Tuple[float, float]
 
@@ -73,70 +75,49 @@ def calc_logLambda(cfg: dict, ne: float, Te: float, Z: int, ion_species: str) ->
     elif isinstance(cfg["units"]["logLambda"], int | float):
         logLambda_ei = cfg["units"]["logLambda"]
         logLambda_ee = cfg["units"]["logLambda"]
+
+    if force_ee_equal_ei:
+        logLambda_ee = logLambda_ei
+
     return logLambda_ei, logLambda_ee
 
 
 def _initialize_distribution_(
-    nx: int,
     nv: int,
-    v0=0.0,
-    m=2.0,
-    vth=1.0,
-    vmax=6.0,
-    n_prof=np.ones(1),
-    T_prof=np.ones(1),
-    noise_val=0.0,
-    noise_seed=42,
-    noise_type="Uniform",
-):
+    m: float = 2.0,
+    vth: float = 1.0,
+    vmax: float = 6.0,
+    n_prof: Array = np.ones(1),
+    T_prof: Array = np.ones(1),
+) -> tuple[Array, Array]:
     """
+    Initializes a super-Gaussian distribution function on a positive-only velocity grid.
 
-    :param nxs:
-    :param nvs:
-    :param n_prof:
-    :param vmax:
-    :return:
-    """
-    """
-    Initializes a Maxwell-Boltzmann distribution
+    Uses the Ridgers2008 parameterization which reduces to Maxwell-Boltzmann when m=2.
 
-    TODO: temperature and density pertubations (JPB - this is done right so can delete this line?)
-
-    :param nx: size of grid in x (single int)
     :param nv: size of grid in v (single int)
+    :param m: super-Gaussian exponent (2.0 = Maxwellian)
+    :param vth: thermal velocity
     :param vmax: maximum absolute value of v (single float)
+    :param n_prof: density profile (nx,)
+    :param T_prof: temperature profile (nx,)
     :return: f, vax (nx, nv), (nv,)
     """
 
-    # noise_generator = np.random.default_rng(seed=noise_seed)
-
     dv = vmax / nv
-    vax = np.linspace(dv / 2.0, vmax - dv / 2.0, nv)
+    vax = jnp.linspace(dv / 2.0, vmax - dv / 2.0, nv)
 
-    f = np.zeros([nx, nv])
-    # obviously not a bottleneck as initialisation, but this should be trivial to vectorize
-    for ix, (tn, tt) in enumerate(zip(n_prof, T_prof, strict=False)):
-        # eq 4-51b in Shkarofsky
-        # redundant
-        # single_dist = (2 * np.pi * tt * (vth**2.0 / 2)) ** -1.5 * np.exp(-(vax**2.0) / (2 * tt * (vth**2.0 / 2)))
-
-        # from Ridgers2008, allows initialisation as a super-Gaussian with temperature tt
-        vth_x = np.sqrt(tt) * vth
-        alpha = np.sqrt(3.0 * gamma_3_over_m(m) / 2.0 / gamma_5_over_m(m))
-        cst = m / (4 * np.pi * alpha**3.0 * gamma_3_over_m(m))
-        single_dist = cst / vth_x**3.0 * np.exp(-((vax / alpha / vth_x) ** m))
-
-        f[ix, :] = tn * single_dist
-
-    # if noise_type.casefold() == "uniform":
-    #     f = (1.0 + noise_generator.uniform(-noise_val, noise_val, nx)[:, None]) * f
-    # elif noise_type.casefold() == "gaussian":
-    #     f = (1.0 + noise_generator.normal(-noise_val, noise_val, nx)[:, None]) * f
+    # from Ridgers2008, allows initialisation as a super-Gaussian with temperature tt
+    alpha = jnp.sqrt(3.0 * gamma_3_over_m(m) / 2.0 / gamma_5_over_m(m))
+    cst = m / (4 * jnp.pi * alpha**3.0 * gamma_3_over_m(m))
+    vth_x = jnp.sqrt(T_prof) * vth  # (nx,)
+    single_dist = cst / vth_x[:, None] ** 3.0 * jnp.exp(-((vax[None, :] / alpha / vth_x[:, None]) ** m))
+    f = n_prof[:, None] * single_dist
 
     return f, vax
 
 
-def _initialize_total_distribution_(cfg, cfg_grid):
+def _initialize_total_distribution_(cfg: dict, cfg_grid: dict) -> tuple[Array, Array, Array]:
     """
     This function initializes the distribution function as a sum of the individual species
 
@@ -154,16 +135,8 @@ def _initialize_total_distribution_(cfg, cfg_grid):
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
             profs = {}
-            v0 = species_params["v0"]
-            T0 = species_params["T0"]
             m = species_params["m"]
             if name in params:
-                if "v0" in params[name]:
-                    v0 = params[name]["v0"]
-
-                if "T0" in params[name]:
-                    T0 = params[name]["T0"]
-
                 if "m" in params[name]:
                     m = params[name]["m"]
 
@@ -208,17 +181,12 @@ def _initialize_total_distribution_(cfg, cfg_grid):
 
             # Distribution function
             temp_f0, _ = _initialize_distribution_(
-                nx=int(cfg_grid["nx"]),
                 nv=int(cfg_grid["nv"]),
-                v0=v0,
                 m=m,
                 vth=cfg_grid["beta"],
                 vmax=cfg_grid["vmax"],
                 n_prof=profs["n"],
                 T_prof=profs["T"],
-                noise_val=species_params["noise_val"],
-                noise_seed=int(species_params["noise_seed"]),
-                noise_type=species_params["noise_type"],
             )
             f0 += temp_f0
 
