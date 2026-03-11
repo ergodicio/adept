@@ -139,7 +139,7 @@ class CoulombianKernel(AbstractKernelBasedModel):
         # upper[i] = Σ_{j>=i} values[j] · dε[j]  (inclusive reverse cumsum for symmetry)
         upper = jnp.cumsum(unweighted_vals[..., ::-1], axis=-1)[..., ::-1]
 
-        return 4.0 * jnp.pi * (lower + eps_edge_3_2 * upper)
+        return 4.0 * jnp.pi * (lower + eps_edge_3_2 * upper) / 3.0
 
 
 def _get_model(
@@ -240,9 +240,13 @@ class F0Collisions(eqx.Module):
             self.nuee_coeff = fp_cfg["nuee_coeff"]
         else:
             # Production: compute from physical units
-            r_e = 2.8179402894e-13
-            c_kpre = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
-            self.nuee_coeff = 4.0 * np.pi / 3 * c_kpre * cfg["units"]["derived"]["logLambda_ee"]
+            # collision frequency nu_ee0 of electron moving at speed of light
+            # normalised to background plasma frequency ω_p0 
+            #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
+            # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
+            r_e = 2.8179403205e-13 # Classical electron radius in cm (CODATA 2022 value)
+            kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+            self.nuee_coeff = kp0re * cfg["units"]["derived"]["logLambda_ee"]
 
         # Create model and scheme from config
         # Use original v grid with zero_flux BC (= reflective at v=0 where C=0)
