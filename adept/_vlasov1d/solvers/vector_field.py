@@ -85,7 +85,7 @@ class LeapfrogIntegrator(TimeIntegrator):
         else:
             f_for_field = f_after_v
         pond, e = self.field_solve(f_dict=f_for_field, a=a, prev_ex=prev_ex, dt=self.dt)
-        f_dict = self.edfdv(f_after_v, e=pond + e + dex_array[0], dt=self.dt)
+        f_dict = self.edfdv(f_after_v, e=e + dex_array[0], pond=pond, dt=self.dt)
 
         return e, f_dict
 
@@ -149,39 +149,33 @@ class SixthOrderHamIntegrator(TimeIntegrator):
         Returns:
             Tuple of (electric_field[nx], updated_f_dict)
         """
-        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[0] + self_consistent_ex
-        f_dict = self.edfdv(f_dict, e=force, dt=self.D1 * self.dt)
+        pond, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
+        f_dict = self.edfdv(f_dict, e=dex_array[0] + self_consistent_ex, pond=pond, dt=self.D1 * self.dt)
 
         f_dict = self.vdfdx(f_dict, dt=self.a1 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[1] + self_consistent_ex
+        pond, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
 
-        f_dict = self.edfdv(f_dict, e=force, dt=self.D2 * self.dt)
+        f_dict = self.edfdv(f_dict, e=dex_array[1] + self_consistent_ex, pond=pond, dt=self.D2 * self.dt)
 
         f_dict = self.vdfdx(f_dict, dt=self.a2 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[2] + self_consistent_ex
+        pond, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
 
-        f_dict = self.edfdv(f_dict, e=force, dt=self.D3 * self.dt)
+        f_dict = self.edfdv(f_dict, e=dex_array[2] + self_consistent_ex, pond=pond, dt=self.D3 * self.dt)
 
         f_dict = self.vdfdx(f_dict, dt=self.a3 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[3] + self_consistent_ex
+        pond, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
 
-        f_dict = self.edfdv(f_dict, e=force, dt=self.D3 * self.dt)
+        f_dict = self.edfdv(f_dict, e=dex_array[3] + self_consistent_ex, pond=pond, dt=self.D3 * self.dt)
 
         f_dict = self.vdfdx(f_dict, dt=self.a2 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[4] + self_consistent_ex
+        pond, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
 
-        f_dict = self.edfdv(f_dict, e=force, dt=self.D2 * self.dt)
+        f_dict = self.edfdv(f_dict, e=dex_array[4] + self_consistent_ex, pond=pond, dt=self.D2 * self.dt)
 
         f_dict = self.vdfdx(f_dict, dt=self.a1 * self.dt)
-        ponderomotive_force, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
-        force = ponderomotive_force + dex_array[5] + self_consistent_ex
+        pond, self_consistent_ex = self.field_solve(f_dict=f_dict, a=a, prev_ex=None, dt=None)
 
-        f_dict = self.edfdv(f_dict, e=force, dt=self.D1 * self.dt)
+        f_dict = self.edfdv(f_dict, e=dex_array[5] + self_consistent_ex, pond=pond, dt=self.D1 * self.dt)
 
         return self_consistent_ex, f_dict
 
@@ -282,8 +276,8 @@ class VlasovMaxwell:
         self.wave_solver = field.WaveSolver(c=1.0 / beta, dx=grid.dx, dt=grid.dt)
 
         self.dt = grid.dt
-        self.ey_driver = field.Driver(grid.x_a, drivers=drivers.ey)
-        self.ex_driver = field.Driver(grid.x, drivers=drivers.ex)
+        self.ey_driver = field.TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey)
+        self.ex_driver = field.LongitudinalElectricFieldDriver(grid.x, drivers=drivers.ex)
 
     def compute_charges(self, f_dict):
         """Compute charge density from distribution functions.

@@ -8,27 +8,46 @@ from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.simulation import EMDriver
 
 
-class Driver:
+class LongitudinalElectricFieldDriver:
+    """Computes normalized E_tilde = ω * a0 * sin(kx - ωt) from EM drivers."""
+
     def __init__(self, xax, drivers: list[EMDriver]):
         self.xax = xax
         self.drivers = drivers
 
-    def get_this_pulse(self, this_pulse: EMDriver, current_time: jnp.float64):
-        kk = this_pulse.k0
-        ww = this_pulse.w0
-        dw = this_pulse.dw0
-
-        factor = this_pulse.envelope(self.xax, current_time)
-
-        return factor * jnp.abs(kk) * this_pulse.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
+    def _single_driver_field(self, driver: EMDriver, current_time):
+        kk = driver.k0
+        ww = driver.w0
+        dw = driver.dw0
+        factor = driver.envelope(self.xax, current_time)
+        return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
     def __call__(self, t, args):
         total_de = jnp.zeros_like(self.xax)
-
         for pulse in self.drivers:
-            total_de += self.get_this_pulse(pulse, t)
-
+            total_de += self._single_driver_field(pulse, t)
         return total_de
+
+
+class TransverseCurrentSourceDriver:
+    """Computes normalized source S_tilde = -ω² * a0 * sin(kx - ωt) for wave equation."""
+
+    def __init__(self, xax, drivers: list[EMDriver]):
+        self.xax = xax
+        self.drivers = drivers
+
+    def _single_driver_source(self, driver: EMDriver, current_time):
+        kk = driver.k0
+        ww = driver.w0
+        dw = driver.dw0
+        factor = driver.envelope(self.xax, current_time)
+        return -factor * (ww + dw) ** 2 * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
+
+    def __call__(self, t, args):
+        total = jnp.zeros_like(self.xax)
+        for pulse in self.drivers:
+            total += self._single_driver_source(pulse, t)
+        return total
 
 
 class WaveSolver:

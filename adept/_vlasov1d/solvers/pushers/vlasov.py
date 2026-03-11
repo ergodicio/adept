@@ -60,23 +60,34 @@ class VelocityExponential:
         if parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
-    def push(self, f_dict, e, dt):
+    def push(self, f_dict, e, pond, dt):
         result = {}
         for species_name, f in f_dict.items():
             kv_real = self.species_grids[species_name]["kvr"]
-            qm = self.species_params[species_name]["charge_to_mass"]
+            q = self.species_params[species_name]["charge"]
+            m = self.species_params[species_name]["mass"]
+            # force = q*E + (q²/m)*pond where pond = -(1/2)*grad(a²)
+            # accel = force / m
+            force = q * e + (q**2 / m) * pond
+            accel = force / m
             result[species_name] = jnp.real(
-                jnp.fft.irfft(jnp.exp(-1j * kv_real[None, :] * dt * qm * e[:, None]) * jnp.fft.rfft(f, axis=1), axis=1)
+                jnp.fft.irfft(
+                    jnp.exp(-1j * kv_real[None, :] * dt * accel[:, None]) * jnp.fft.rfft(f, axis=1),
+                    axis=1,
+                )
             )
         return result
 
-    def __call__(self, f_dict, e, dt):
+    def __call__(self, f_dict, e, pond, dt):
         if self.parallel:
             return shard_map(
-                self.push, mesh=self.mesh, in_specs=(P("device", None), P("device"), P()), out_specs=P("device", None)
-            )(f_dict, e, dt)
+                self.push,
+                mesh=self.mesh,
+                in_specs=(P("device", None), P("device"), P("device"), P()),
+                out_specs=P("device", None),
+            )(f_dict, e, pond, dt)
         else:
-            return self.push(f_dict, e, dt)
+            return self.push(f_dict, e, pond, dt)
 
 
 class VelocityCubicSpline:
@@ -88,24 +99,30 @@ class VelocityCubicSpline:
         if self.parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
-    def push(self, f_dict, e, dt):
+    def push(self, f_dict, e, pond, dt):
         result = {}
         for species_name, f in f_dict.items():
             v = self.species_grids[species_name]["v"]
-            qm = self.species_params[species_name]["charge_to_mass"]
+            q = self.species_params[species_name]["charge"]
+            m = self.species_params[species_name]["mass"]
             nx = f.shape[0]
             v_repeated = jnp.repeat(v[None, :], repeats=nx, axis=0)
-            vq = v_repeated - qm * e[:, None] * dt
+            force = q * e + (q**2 / m) * pond
+            accel = force / m
+            vq = v_repeated - accel[:, None] * dt
             result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
         return result
 
-    def __call__(self, f_dict, e, dt):
+    def __call__(self, f_dict, e, pond, dt):
         if self.parallel:
             return shard_map(
-                self.push, mesh=self.mesh, in_specs=(P("device", None), P("device"), P()), out_specs=P("device", None)
-            )(f_dict, e, dt)
+                self.push,
+                mesh=self.mesh,
+                in_specs=(P("device", None), P("device"), P("device"), P()),
+                out_specs=P("device", None),
+            )(f_dict, e, pond, dt)
         else:
-            return self.push(f_dict, e, dt)
+            return self.push(f_dict, e, pond, dt)
 
 
 class HouLiFilter:
