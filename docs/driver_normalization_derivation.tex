@@ -1,0 +1,247 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{physics}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10}
+}
+
+\title{Analysis of Driver Normalization Issues in Vlasov-1D}
+\author{ADEPT Documentation}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\tableofcontents
+\newpage
+
+\section{Overview}
+
+This document analyzes normalization issues in the electromagnetic drivers of the Vlasov-1D module. We identify that the \texttt{Driver} class in \texttt{field.py} is used for two physically distinct purposes that require different normalization factors.
+
+\section{Normalization Scheme}
+
+The Vlasov-1D module uses electron-Debye normalization:
+\begin{align}
+    \tau &= \frac{1}{\omega_{p0}} & &\text{(reference time)} \\[4pt]
+    v_0 &= \sqrt{\frac{2T_0}{m_e}} & &\text{(thermal velocity)} \\[4pt]
+    L_0 &= \frac{v_0}{\omega_{p0}} & &\text{(Debye length)} \\[4pt]
+    c_{\text{norm}} &= \frac{c}{v_0} & &\text{(normalized speed of light)}
+\end{align}
+
+The normalized vector potential used in the code is:
+\begin{equation}
+    \tilde{a} = \frac{eA}{m_e v_0} = a_0^{\text{std}} \cdot c_{\text{norm}}
+\end{equation}
+where $a_0^{\text{std}} = eA_0/(m_e c)$ is the standard relativistic normalization.
+
+\section{The Two Driver Use Cases}
+
+The \texttt{Driver} class (\texttt{field.py:11-31}) computes:
+\begin{lstlisting}[language=Python]
+def get_this_pulse(self, this_pulse, current_time):
+    kk = this_pulse.k0
+    ww = this_pulse.w0
+    factor = this_pulse.envelope(self.xax, current_time)
+    return factor * jnp.abs(kk) * this_pulse.a0 * jnp.sin(kk * self.xax - ww * current_time)
+\end{lstlisting}
+
+This same function is used for two different physical quantities:
+
+\subsection{Use Case 1: Direct Electric Field Driver (\texttt{ex\_driver})}
+
+The \texttt{ex\_driver} output is added directly to the electric field in the Vlasov equation:
+\begin{lstlisting}[language=Python]
+# vector_field.py:88
+f_dict = self.edfdv(f_after_v, e=pond + e + dex_array[0], dt=self.dt)
+\end{lstlisting}
+
+\textbf{Physical meaning:} This represents the normalized electric field $\tilde{E}_x$ that accelerates electrons.
+
+\subsection{Use Case 2: Wave Equation Source (\texttt{ey\_driver})}
+
+The \texttt{ey\_driver} output is used as a source term in the wave equation:
+\begin{lstlisting}[language=Python]
+# vector_field.py:311
+djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
+# ...
+# vector_field.py:333-338
+a = self.wave_solver(a=y["a"], aold=y["prev_a"], djy_array=djy, ...)
+\end{lstlisting}
+
+The wave equation discretization (\texttt{field.py:85-88}):
+\begin{lstlisting}[language=Python]
+anew = 2.0*a - aold + dt**2 * (c_sq*d2dx2 - electron_density*a + djy_array)
+\end{lstlisting}
+
+This implements:
+\begin{equation}
+    \frac{\partial^2 a}{\partial t^2} = c^2 \frac{\partial^2 a}{\partial x^2} - n_e \cdot a + \text{djy}
+\end{equation}
+
+\textbf{Physical meaning:} The \texttt{djy} term has dimensions of $\partial^2 a / \partial t^2$.
+
+\newpage
+\section{Derivation of Correct Normalization}
+
+\subsection{Case 1: Electric Field Driver (\texttt{ex\_driver})}
+
+\subsubsection{SI Electric Field}
+For a plane wave $A = A_0 \sin(kx - \omega t)$:
+\begin{equation}
+    E = -\frac{\partial A}{\partial t} = \omega A_0 \cos(kx - \omega t)
+\end{equation}
+
+\subsubsection{Normalized Electric Field}
+The electron equation of motion normalizes as:
+\begin{equation}
+    \frac{d\tilde{v}}{d\tilde{t}} = -\tilde{E}, \quad \text{where} \quad \tilde{E} = \frac{eE}{m_e v_0 \omega_{p0}}
+\end{equation}
+
+Substituting the SI field and using $\tilde{a}_0 = eA_0/(m_e v_0)$:
+\begin{align}
+    \tilde{E} &= \frac{e}{m_e v_0 \omega_{p0}} \cdot \omega A_0 \cos(kx - \omega t) \\[6pt]
+    &= \frac{\omega}{\omega_{p0}} \cdot \frac{eA_0}{m_e v_0} \cos(\tilde{k}\tilde{x} - \tilde{\omega}\tilde{t}) \\[6pt]
+    &= \tilde{\omega} \cdot \tilde{a}_0 \cos(\tilde{k}\tilde{x} - \tilde{\omega}\tilde{t})
+\end{align}
+
+\subsubsection{Result for \texttt{ex\_driver}}
+\begin{equation}
+    \boxed{\tilde{E}_{\text{driver}} = \tilde{\omega} \cdot \tilde{a}_0 \cdot \cos(\tilde{k}\tilde{x} - \tilde{\omega}\tilde{t})}
+\end{equation}
+
+\textbf{Current code:} $|\tilde{k}| \cdot \tilde{a}_0 \cdot \sin(...)$
+
+\textbf{Missing factor:} $\displaystyle\frac{\tilde{\omega}}{|\tilde{k}|} = c_{\text{norm}}$ (using vacuum dispersion $\omega = ck$)
+
+\newpage
+\subsection{Case 2: Wave Equation Source (\texttt{ey\_driver})}
+
+\subsubsection{SI Wave Equation}
+The wave equation for vector potential with external current:
+\begin{equation}
+    \frac{\partial^2 A}{\partial t^2} = c^2 \frac{\partial^2 A}{\partial x^2} - \omega_p^2 A - \frac{j_{\text{ext}}}{\varepsilon_0}
+\end{equation}
+
+\subsubsection{Interpretation as Direct Forcing}
+If \texttt{djy} represents a direct forcing term to excite a wave $A_{\text{ext}} = A_0 \sin(kx - \omega t)$:
+\begin{equation}
+    \frac{\partial^2 A_{\text{ext}}}{\partial t^2} = -\omega^2 A_0 \sin(kx - \omega t)
+\end{equation}
+
+\subsubsection{Normalized Form}
+In normalized units:
+\begin{equation}
+    \frac{\partial^2 \tilde{a}_{\text{ext}}}{\partial \tilde{t}^2} = -\tilde{\omega}^2 \tilde{a}_0 \sin(\tilde{k}\tilde{x} - \tilde{\omega}\tilde{t})
+\end{equation}
+
+\subsubsection{Result for \texttt{ey\_driver}}
+\begin{equation}
+    \boxed{\text{djy} = -\tilde{\omega}^2 \cdot \tilde{a}_0 \cdot \sin(\tilde{k}\tilde{x} - \tilde{\omega}\tilde{t})}
+\end{equation}
+
+\textbf{Current code:} $|\tilde{k}| \cdot \tilde{a}_0 \cdot \sin(...)$
+
+\textbf{Missing factor:} $\displaystyle\frac{\tilde{\omega}^2}{|\tilde{k}|} = c_{\text{norm}}^2 \cdot |\tilde{k}|$ (plus sign difference)
+
+\newpage
+\section{Summary of Discrepancies}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Driver} & \textbf{Current Code} & \textbf{Correct} & \textbf{Missing Factor} \\
+\midrule
+\texttt{ex\_driver} & $|\tilde{k}| \cdot \tilde{a}_0$ & $\tilde{\omega} \cdot \tilde{a}_0$ & $c_{\text{norm}} = c/v_0$ \\[6pt]
+\texttt{ey\_driver} & $|\tilde{k}| \cdot \tilde{a}_0$ & $\tilde{\omega}^2 \cdot \tilde{a}_0$ & $c_{\text{norm}}^2 \cdot |\tilde{k}|$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\colorbox{yellow!30}{\parbox{0.9\textwidth}{
+\textbf{Key Problem:} The two drivers require \emph{different} correction factors, but they share the same \texttt{Driver} class and the same \texttt{a0} value from \texttt{simulation.py}.
+}}
+\end{center}
+
+\section{Additional Concern: Ponderomotive Force}
+
+The ponderomotive force is computed in \texttt{field.py:346}:
+\begin{lstlisting}[language=Python]
+ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)[1:-1]
+\end{lstlisting}
+
+\subsection{Derivation}
+The SI ponderomotive force is:
+\begin{equation}
+    F_{\text{pond}} = -\frac{e^2}{4 m_e} \nabla(A^2)
+\end{equation}
+
+With $\tilde{a} = eA/(m_e v_0)$, the normalized force for the Vlasov equation is:
+\begin{equation}
+    \tilde{F}_{\text{pond}} = -\frac{1}{4} \tilde{\nabla}(\tilde{a}^2)
+\end{equation}
+
+\textbf{Current code:} $-\frac{1}{2} \nabla(a^2)$
+
+\textbf{Potential issue:} Factor of 2 discrepancy (coefficient should be $1/4$, not $1/2$).
+
+\newpage
+\section{Recommended Actions}
+
+\subsection{Option A: Fix in \texttt{field.py}}
+Modify the \texttt{Driver} class to use the correct factors:
+
+\begin{lstlisting}[language=Python]
+# For ex_driver (electric field): use omega instead of |k|
+return factor * ww * this_pulse.a0 * jnp.sin(...)
+
+# For ey_driver (wave equation source): use omega^2 instead of |k|
+return factor * ww**2 * this_pulse.a0 * jnp.sin(...)
+\end{lstlisting}
+
+This requires either:
+\begin{itemize}
+    \item Splitting into two driver classes, or
+    \item Adding a parameter to select the driver type
+\end{itemize}
+
+\subsection{Option B: Fix in \texttt{simulation.py}}
+Adjust \texttt{a0} differently for \texttt{ex} vs \texttt{ey} drivers:
+\begin{itemize}
+    \item \texttt{ex\_driver}: multiply \texttt{a0} by $c_{\text{norm}}$
+    \item \texttt{ey\_driver}: multiply \texttt{a0} by $c_{\text{norm}}^2 \cdot |k|$
+\end{itemize}
+
+This is more complex because the correction for \texttt{ey\_driver} depends on $|k|$.
+
+\subsection{Option C: Reconsider the physics}
+The interpretation of \texttt{djy} as $\partial^2 A/\partial t^2$ may not be the intended design. Alternative interpretations:
+\begin{itemize}
+    \item \texttt{djy} represents an external current $j_{\text{ext}}$
+    \item \texttt{djy} represents the electric field $E_y$ directly
+    \item The wave equation source should use boundary conditions instead
+\end{itemize}
+
+Further investigation or consultation with the original author may be needed.
+
+\section{Questions for Discussion}
+
+\begin{enumerate}
+    \item What is the intended physical interpretation of \texttt{djy}?
+    \item Should the ponderomotive force coefficient be $1/4$ or $1/2$?
+    \item Is the $\sin$ vs $\cos$ phase difference intentional (polarization/phase convention)?
+    \item Should we fix at the \texttt{Driver} class level or at the \texttt{a0} computation level?
+\end{enumerate}
+
+\end{document}
