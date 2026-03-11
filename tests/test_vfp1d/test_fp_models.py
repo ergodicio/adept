@@ -9,7 +9,6 @@ from functools import partial
 import jax.numpy as jnp
 import numpy as np
 import pytest
-
 from fp_relaxation import problems
 from fp_relaxation.registry import VelocityGrid
 
@@ -95,6 +94,5 @@ def test_coulombian_high_v_limit_matches_fast_vfp(case):
         D_fastvfp[start_idx:],
         rtol=5e-4,
         atol=0.0,
-        err_msg=f"CoulombianKernel D does not match FastVFP D = 1/(2βv) for v >= {v_min} "
-        f"(beta={beta:.4f})",
+        err_msg=f"CoulombianKernel D does not match FastVFP D = 1/(2βv) for v >= {v_min} (beta={beta:.4f})",
     )

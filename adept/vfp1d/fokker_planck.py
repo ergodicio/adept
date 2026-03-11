@@ -241,10 +241,10 @@ class F0Collisions(eqx.Module):
         else:
             # Production: compute from physical units
             # collision frequency nu_ee0 of electron moving at speed of light
-            # normalised to background plasma frequency ω_p0 
+            # normalised to background plasma frequency ω_p0
             #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
             # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
-            r_e = 2.8179403205e-13 # Classical electron radius in cm (CODATA 2022 value)
+            r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022 value)
             kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
             self.nuee_coeff = kp0re * cfg["units"]["derived"]["logLambda_ee"]
 
