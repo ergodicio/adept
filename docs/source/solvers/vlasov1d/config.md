@@ -38,20 +38,14 @@ Physical unit normalizations for the simulation.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `laser_wavelength` | string | Laser wavelength with unit, e.g., `"351nm"` |
 | `normalizing_temperature` | string | Reference temperature with unit, e.g., `"2000eV"` |
 | `normalizing_density` | string | Reference density with unit, e.g., `"1.5e21/cc"` |
-| `Z` | int | Ionization state |
-| `Zp` | int | Plasma Z |
 
 Example:
 ```yaml
 units:
-  laser_wavelength: 351nm
   normalizing_temperature: 2000eV
   normalizing_density: 1.5e21/cc
-  Z: 10
-  Zp: 10
 ```
 
 ## density
