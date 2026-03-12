@@ -125,6 +125,76 @@ class VelocityCubicSpline:
             return self.push(f_dict, e, pond, dt)
 
 
+def _minmod(a, b):
+    """Minmod slope limiter: returns the smaller magnitude slope when signs agree, else zero."""
+    return jnp.where(a * b > 0, jnp.sign(a) * jnp.minimum(jnp.abs(a), jnp.abs(b)), 0.0)
+
+
+class VelocityMUSCL:
+    def __init__(self, species_grids, species_params, parallel=False):
+        self.species_grids = species_grids
+        self.species_params = species_params
+        self.parallel = parallel
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+
+    def push(self, f_dict, e, pond, dt):
+        result = {}
+        for species_name, f in f_dict.items():
+            v = self.species_grids[species_name]["v"]
+            dv = self.species_grids[species_name]["dv"]
+            q = self.species_params[species_name]["charge"]
+            m = self.species_params[species_name]["mass"]
+            # acceleration: a[nx]
+            force = q * e + (q**2 / m) * pond
+            accel = force / m  # shape (nx,)
+
+            nx, nv = f.shape
+            # CFL number per spatial point: shape (nx,)
+            cfl = accel * dt / dv
+
+            # Slopes between adjacent cells in velocity: shape (nx, nv-1)
+            delta = f[:, 1:] - f[:, :-1]
+
+            # Minmod limited slopes: shape (nx, nv)
+            # Interior slopes use minmod of left and right differences
+            # Boundary slopes are zero (zero-slope extrapolation)
+            slopes = jnp.zeros_like(f)
+            slopes = slopes.at[:, 1:-1].set(_minmod(delta[:, :-1], delta[:, 1:]))
+
+            # Reconstruct interface values at i+1/2 for i = 0..nv-2
+            # f_L[i+1/2] = f[i] + 0.5 * slope[i]    (left state)
+            # f_R[i+1/2] = f[i+1] - 0.5 * slope[i+1] (right state)
+            f_L = f[:, :-1] + 0.5 * slopes[:, :-1]  # shape (nx, nv-1)
+            f_R = f[:, 1:] - 0.5 * slopes[:, 1:]    # shape (nx, nv-1)
+
+            # Upwind flux at each interface: flux[i+1/2]
+            # For linear advection with velocity-independent acceleration,
+            # the characteristic speed is accel (same at all interfaces)
+            a_pos = jnp.maximum(accel, 0.0)[:, None]  # shape (nx, 1)
+            a_neg = jnp.minimum(accel, 0.0)[:, None]
+            flux = a_pos * f_L + a_neg * f_R  # shape (nx, nv-1)
+
+            # Zero-flux boundaries: pad with zeros at v_min-1/2 and v_max+1/2
+            flux_padded = jnp.pad(flux, ((0, 0), (1, 1)), mode="constant")  # shape (nx, nv+1)
+
+            # Conservative update: f_new[i] = f[i] - (dt/dv) * (flux[i+1/2] - flux[i-1/2])
+            result[species_name] = f - (dt / dv) * (flux_padded[:, 1:] - flux_padded[:, :-1])
+
+        return result
+
+    def __call__(self, f_dict, e, pond, dt):
+        if self.parallel:
+            return shard_map(
+                self.push,
+                mesh=self.mesh,
+                in_specs=(P("device", None), P("device"), P("device"), P()),
+                out_specs=P("device", None),
+            )(f_dict, e, pond, dt)
+        else:
+            return self.push(f_dict, e, pond, dt)
+
+
 class HouLiFilter:
     """Hou-Li spectral filter.
 
