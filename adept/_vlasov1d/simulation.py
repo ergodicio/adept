@@ -102,7 +102,7 @@ class Species(eqx.Module):
             name=cfg["name"],
             mass=float(cfg["mass"]),
             charge=float(cfg["charge"]),
-            vmax=cfg["vmax"],
+            vmax=float(cfg["vmax"]),
             nv=int(cfg["nv"]),
             density_components=cfg["density_components"],
         )
@@ -165,9 +165,9 @@ class SubspeciesDistributionSpec(eqx.Module):
         """Parse density component config into domain model."""
         return SubspeciesDistributionSpec(
             density_profile=SubspeciesDensityProfile.from_config(cfg, norm),
-            v0=cfg["v0"],
-            T0=cfg["T0"],
-            supergaussian_order=cfg.get("m", 2.0),
+            v0=float(cfg["v0"]),
+            T0=float(cfg["T0"]),
+            supergaussian_order=float(cfg.get("m", 2.0)),
         )
 
 
