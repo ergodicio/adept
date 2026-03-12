@@ -196,14 +196,17 @@ def _add_dim_axes(save_config: dict) -> None:
     for dim_key, dim_config in save_config.items():
         if not isinstance(dim_config, dict) or f"n{dim_key}" not in dim_config:
             continue
+        dim_min = float(dim_config[f"{dim_key}min"])
+        dim_max = float(dim_config[f"{dim_key}max"])
+        dim_n = int(dim_config[f"n{dim_key}"])
         if dim_key == "x":
-            dx = (dim_config[f"{dim_key}max"] - dim_config[f"{dim_key}min"]) / dim_config[f"n{dim_key}"]
+            dx = (dim_max - dim_min) / dim_n
         else:
             dx = 0.0
         dim_config["ax"] = np.linspace(
-            dim_config[f"{dim_key}min"] + dx / 2.0,
-            dim_config[f"{dim_key}max"] - dx / 2.0,
-            dim_config[f"n{dim_key}"],
+            dim_min + dx / 2.0,
+            dim_max - dx / 2.0,
+            dim_n,
         )
 
 

@@ -56,8 +56,8 @@ class EnvelopeFunction(eqx.Module):
             center=normalize(cfg["center"], norm, dim),
             width=normalize(cfg["width"], norm, dim),
             rise=normalize(cfg["rise"], norm, dim),
-            baseline=cfg.get("baseline", 0.0),
-            bump_height=cfg.get("bump_height", 1.0),
+            baseline=float(cfg.get("baseline", 0.0)),
+            bump_height=float(cfg.get("bump_height", 1.0)),
             is_trough=(cfg.get("bump_or_trough", "bump") == "trough"),
         )
 
@@ -155,8 +155,8 @@ class SineFunction(eqx.Module):
     @staticmethod
     def from_config(cfg: dict, norm: PlasmaNormalization | None = None) -> "SineFunction":
         return SineFunction(
-            baseline=cfg["baseline"],
-            amplitude=cfg["amplitude"],
+            baseline=float(cfg["baseline"]),
+            amplitude=float(cfg["amplitude"]),
             wavenumber=normalize(cfg["wavenumber"], norm, dim="k"),
         )
 
@@ -182,6 +182,6 @@ class NoiseProfile(eqx.Module):
     def from_config(cfg: dict) -> "NoiseProfile":
         return NoiseProfile(
             noise_type=cfg.get("noise_type", "uniform"),
-            noise_val=cfg.get("noise_val", 0.0),
+            noise_val=float(cfg.get("noise_val", 0.0)),
             noise_seed=int(cfg.get("noise_seed", 42)),
         )
