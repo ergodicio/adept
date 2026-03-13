@@ -223,6 +223,10 @@ class ergoExo:
         self.ran_setup = False
         self.cfg = None
 
+        from .run_logging import AdeptLogger
+
+        self.logger = AdeptLogger()
+
     def setup(self, cfg: dict, adept_module: ADEPTModule = None) -> dict[str, Module]:
         """
         This function sets up the differentiable simulation by getting the chosen solver and setting it up
@@ -251,6 +255,8 @@ class ergoExo:
 
         cfg = deepcopy(cfg)
 
+        self.logger.start()
+
         with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
             if self.mlflow_run_id is None:
                 mlflow.set_experiment(cfg["mlflow"]["experiment"])
@@ -271,6 +277,7 @@ class ergoExo:
                     robust_log_artifacts(td)  # logs the temporary directory to mlflow
 
         self.cfg = cfg
+        self.logger.attach(self.mlflow_run_id)
 
         return modules
 
@@ -403,6 +410,9 @@ class ergoExo:
                     mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
 
+        if self.mlflow_nested:
+            self.logger.stop()
+
         return run_output, post_processing_output, self.mlflow_run_id
 
     def val_and_grad(
@@ -448,6 +458,10 @@ class ergoExo:
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})
+
+            if self.mlflow_nested:
+                self.logger.stop()
+
             return val, grad, (run_output, post_processing_output, self.mlflow_run_id)
 
     def _log_flops_(_run_: Callable, models: dict, state: dict, args: dict, tqs):
