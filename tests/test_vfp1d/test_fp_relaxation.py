@@ -19,7 +19,7 @@ from fp_relaxation.registry import VelocityGrid
 from fp_relaxation.runner import problem_name, run_relaxation_sweep
 from jax import Array
 
-from adept.vfp1d.fokker_planck import F0Collisions
+from adept.vfp1d.fokker_planck import F0Collisions, SelfConsistentBetaConfig, _get_model, _get_scheme
 from adept.vfp1d.grid import Grid
 
 # =============================================================================
@@ -159,7 +159,10 @@ class Vfp1dVectorFieldFactory(AbstractFPRelaxationVectorFieldFactory):
         sc_iterations: int,
     ) -> eqx.Module:
         """Create an F0Collisions vector field for the given model/scheme combo."""
-        cfg = self._make_config(grid, model_name, scheme_name, nu, sc_iterations)
+        scheme_map = {
+            "ChangCooper": "chang_cooper",
+            "CentralDifferencing": "central",
+        }
 
         # Build a vfp1d Grid with dummy spatial/temporal values (F0Collisions only uses velocity fields)
         vfp_grid = Grid(
@@ -175,35 +178,11 @@ class Vfp1dVectorFieldFactory(AbstractFPRelaxationVectorFieldFactory):
             boundary="periodic",
         )
 
-        collisions = F0Collisions(cfg, vfp_grid)
+        collisions = F0Collisions(
+            nuee_coeff=nu,
+            grid=vfp_grid,
+            model=_get_model(model_name, vfp_grid.v, vfp_grid.dv),
+            scheme=_get_scheme(scheme_map.get(scheme_name, scheme_name.lower()), vfp_grid.dv),
+            sc_beta=SelfConsistentBetaConfig(max_steps=sc_iterations if sc_iterations > 0 else 0),
+        )
         return F0CollisionsVectorField(collisions=collisions, dt=dt)
-
-    def _make_config(
-        self,
-        grid: VelocityGrid,
-        model_name: str,
-        scheme_name: str,
-        nu: float,
-        sc_iterations: int,
-    ) -> dict:
-        """Build F0Collisions config dict."""
-        scheme_map = {
-            "ChangCooper": "chang_cooper",
-            "CentralDifferencing": "central",
-        }
-        return {
-            "terms": {
-                "fokker_planck": {
-                    # Direct nuee_coeff override for dimensionless testing
-                    "nuee_coeff": nu,
-                    "f00": {
-                        "model": model_name,
-                        "scheme": scheme_map.get(scheme_name, scheme_name.lower()),
-                    },
-                    "self_consistent_beta": {
-                        "enabled": sc_iterations > 0,
-                        "max_steps": sc_iterations,
-                    },
-                },
-            },
-        }
