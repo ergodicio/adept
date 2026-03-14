@@ -3,7 +3,7 @@ import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
 
-from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions
+from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions, SelfConsistentBetaConfig, _get_model, _get_scheme
 
 
 class OSHUN1D:
@@ -19,8 +19,34 @@ class OSHUN1D:
         self.e_solver = cfg["terms"]["e_solver"]
 
         self.ampere_coeff = 1e-6
-        self.lb = F0Collisions(cfg, grid)
-        self.ei = FLMCollisions(cfg, grid)
+        fp_cfg = cfg["terms"]["fokker_planck"]
+        f00_cfg = fp_cfg.get("f00", {})
+        nuee_coeff = fp_cfg.get("nuee_coeff", cfg["units"]["derived"]["nuee_coeff"])
+        model = _get_model(f00_cfg.get("model", "CoulombianKernel"), grid.v, grid.dv)
+        scheme = _get_scheme(f00_cfg.get("scheme", "central"), grid.dv)
+
+        sc_cfg = fp_cfg.get("self_consistent_beta", {})
+        sc_enabled = sc_cfg.get("enabled", False)
+        sc_beta = SelfConsistentBetaConfig(
+            max_steps=sc_cfg.get("max_steps", 3) if sc_enabled else 0,
+            rtol=sc_cfg.get("rtol", 1e-8),
+            atol=sc_cfg.get("atol", 1e-12),
+        )
+
+        self.solve_Cee0 = F0Collisions(
+            nuee_coeff=nuee_coeff,
+            grid=grid,
+            model=model,
+            scheme=scheme,
+            sc_beta=sc_beta,
+        )
+        self.solve_aniso = FLMCollisions(
+            Z=cfg["units"]["Z"],
+            grid=grid,
+            nuee_coeff=cfg["units"]["derived"]["nuee_coeff"],
+            logLam_ratio=cfg["units"]["derived"]["logLam_ratio"],
+            full_aniso_ee=cfg["terms"]["fokker_planck"]["flm"]["ee"],
+        )
 
         self.large_eps = 1e-6
         self.eps = 1e-12
@@ -118,7 +144,7 @@ class OSHUN1D:
         f0_at_edges = self.interp_c2e(f0)
 
         # calculate j without any e field
-        f10_after_coll = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10, dt=self.grid.dt)
+        f10_after_coll = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10, dt=self.grid.dt)
         j0 = self.calc_j(f10_after_coll)
 
         # get perturbation
@@ -126,7 +152,7 @@ class OSHUN1D:
 
         # calculate effect of dex
         _, f10_after_dex = self.push_edfdv(f0, f10, de)
-        f10_after_dex = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10_after_dex, dt=self.grid.dt)
+        f10_after_dex = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10_after_dex, dt=self.grid.dt)
         jx_dx = self.calc_j(f10_after_dex)
 
         # directly solve for ex
@@ -331,7 +357,7 @@ class OSHUN1D:
         # explicit push for v df/dx
         f0_star, f10_star = self.push_vdfdx(f0, f10)
         # implicit solve f00 coll
-        f0_star = self.lb(None, f0_star, self.grid.dt)
+        f0_star = self.solve_Cee0(None, f0_star, self.grid.dt)
 
         # Interpolate center quantities to edges for FLM collision operator
         Z_edge = self.interp_c2e(Z)
@@ -345,7 +371,7 @@ class OSHUN1D:
             new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
             f0_at_edges = self.interp_c2e(f0_star)
-            new_f10 = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.grid.dt)
+            new_f10 = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.grid.dt)
 
         elif self.e_solver == "edfdv-ampere-implicit":  # implicit E, f0, f1 using a nonlinear iterative inversion
             new_f0, new_f10, new_e = self.implicit_e_f0_f1_solve(f0=f0_star, f1=f10_star, e=y["e"])
@@ -356,7 +382,7 @@ class OSHUN1D:
             new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
             f0_at_edges = self.interp_c2e(new_f0)
-            new_f10 = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.grid.dt)
+            new_f10 = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.grid.dt)
 
         else:
             raise NotImplementedError
