@@ -143,7 +143,7 @@ class CoulombianKernel(AbstractKernelBasedModel):
         return 4.0 * jnp.pi * (lower + eps_edge_3_2 * upper) / 3.0
 
 
-def _get_model(
+def get_model(
     model_name: str,
     v: Array,
     dv: float,
@@ -169,7 +169,7 @@ def _get_model(
         raise ValueError(f"Unknown model: {model_name}")
 
 
-def _get_scheme(
+def get_scheme(
     scheme_name: str,
     dv: float,
 ) -> AbstractDriftDiffusionDifferencingScheme:

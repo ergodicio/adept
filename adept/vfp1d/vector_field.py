@@ -3,7 +3,7 @@ import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
 
-from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions, SelfConsistentBetaConfig, _get_model, _get_scheme
+from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions, SelfConsistentBetaConfig, get_model, get_scheme
 
 
 class OSHUN1D:
@@ -22,8 +22,8 @@ class OSHUN1D:
         fp_cfg = cfg["terms"]["fokker_planck"]
         f00_cfg = fp_cfg.get("f00", {})
         nuee_coeff = fp_cfg.get("nuee_coeff", cfg["units"]["derived"]["nuee_coeff"])
-        model = _get_model(f00_cfg.get("model", "CoulombianKernel"), grid.v, grid.dv)
-        scheme = _get_scheme(f00_cfg.get("scheme", "central"), grid.dv)
+        model = get_model(f00_cfg.get("model", "CoulombianKernel"), grid.v, grid.dv)
+        scheme = get_scheme(f00_cfg.get("scheme", "central"), grid.dv)
 
         sc_cfg = fp_cfg.get("self_consistent_beta", {})
         sc_enabled = sc_cfg.get("enabled", False)

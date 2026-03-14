@@ -19,7 +19,7 @@ from fp_relaxation.registry import VelocityGrid
 from fp_relaxation.runner import problem_name, run_relaxation_sweep
 from jax import Array
 
-from adept.vfp1d.fokker_planck import F0Collisions, SelfConsistentBetaConfig, _get_model, _get_scheme
+from adept.vfp1d.fokker_planck import F0Collisions, SelfConsistentBetaConfig, get_model, get_scheme
 from adept.vfp1d.grid import Grid
 
 # =============================================================================
@@ -181,8 +181,8 @@ class Vfp1dVectorFieldFactory(AbstractFPRelaxationVectorFieldFactory):
         collisions = F0Collisions(
             nuee_coeff=nu,
             grid=vfp_grid,
-            model=_get_model(model_name, vfp_grid.v, vfp_grid.dv),
-            scheme=_get_scheme(scheme_map.get(scheme_name, scheme_name.lower()), vfp_grid.dv),
+            model=get_model(model_name, vfp_grid.v, vfp_grid.dv),
+            scheme=get_scheme(scheme_map.get(scheme_name, scheme_name.lower()), vfp_grid.dv),
             sc_beta=SelfConsistentBetaConfig(max_steps=sc_iterations if sc_iterations > 0 else 0),
         )
         return F0CollisionsVectorField(collisions=collisions, dt=dt)
