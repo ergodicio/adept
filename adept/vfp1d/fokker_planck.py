@@ -285,22 +285,23 @@ class FLMCollisions:
         self.Z_nuei_scaling = (Z + 4.2) / (Z + 0.24)
 
         nl = grid.nl
-        self.a1, self.a2, self.b1, self.b2, self.b3, self.b4 = (
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-        )
+        il = np.arange(1, nl + 1)
+        denom_plus = (2 * il + 1) * (2 * il + 3)
+        denom_minus = (2 * il + 1) * (2 * il - 1)
+        ll = il * (il + 1) / 2
 
-        for il in range(1, nl + 1):
-            self.a1[il] = (il + 1) * (il + 2) / (2 * il + 1) / (2 * il + 3)
-            self.a2[il] = -(il - 1) * il / (2 * il + 1) / (2 * il - 1)
-            self.b1[il] = (-il * (il + 1) / 2 - (il + 1)) / (2 * il + 1) / (2 * il + 3)
-            self.b2[il] = (il * (il + 1) / 2 + (il + 2)) / (2 * il + 1) / (2 * il + 3)
-            self.b3[il] = (il * (il + 1) / 2 + (il - 1)) / (2 * il + 1) / (2 * il - 1)
-            self.b4[il] = (il * (il + 1) / 2 - il) / (2 * il + 1) / (2 * il - 1)
+        self.a_coeffs = np.zeros((2, nl + 1))
+        self.a_coeffs[:, 1:] = np.stack([(il + 1) * (il + 2) / denom_plus, -(il - 1) * il / denom_minus])
+
+        self.b_coeffs = np.zeros((4, nl + 1))
+        self.b_coeffs[:, 1:] = np.stack(
+            [
+                (-ll - (il + 1)) / denom_plus,
+                (ll + (il + 2)) / denom_plus,
+                (ll + (il - 1)) / denom_minus,
+                (ll - il) / denom_minus,
+            ]
+        )
 
     def calc_ros_i(self, flm: Array, power: int) -> Array:
         r"""
@@ -351,11 +352,13 @@ class FLMCollisions:
         il = args["il"]
         flm = y
 
-        contrib = (self.a1[il] * d2dv2 + self.b1[il] * ddv) * self.calc_ros_i(flm, power=2.0 + il)
-        contrib += (self.a1[il] * d2dv2 + self.b2[il] * ddv) * self.calc_ros_j(flm, power=-il - 1.0)
-        contrib += (self.a2[il] * d2dv2 + self.b3[il] * ddv) * self.calc_ros_i(flm, power=il)
+        contrib = (self.a_coeffs[0, il] * d2dv2 + self.b_coeffs[0, il] * ddv) * self.calc_ros_i(flm, power=2.0 + il)
+        contrib += (self.a_coeffs[0, il] * d2dv2 + self.b_coeffs[1, il] * ddv) * self.calc_ros_j(flm, power=-il - 1.0)
+        contrib += (self.a_coeffs[1, il] * d2dv2 + self.b_coeffs[2, il] * ddv) * self.calc_ros_i(flm, power=il)
         if il > 1:
-            contrib += (self.a2[il] * d2dv2 + self.b4[il] * ddv) * self.calc_ros_j(flm, power=1.0 - il)
+            contrib += (self.a_coeffs[1, il] * d2dv2 + self.b_coeffs[3, il] * ddv) * self.calc_ros_j(
+                flm, power=1.0 - il
+            )
 
         return contrib
 
