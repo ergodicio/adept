@@ -13,7 +13,7 @@ density:
       center: 0.0
       rise: 25.0
       slope: 0.0
-      wall_height: 0.0
+      bump_height: 0.0
       width: 100000.0
     v0: 0.0
 drivers:

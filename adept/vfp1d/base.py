@@ -37,8 +37,7 @@ class BaseVFP1D(ADEPTModule):
 
         beta = vth / csts.c
 
-        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, ne, Te, Z, ion_species)
-        logLambda_ee = logLambda_ei
+        logLambda_ei, logLambda_ee = calc_logLambda(self.cfg, ne, Te, Z, ion_species, force_ee_equal_ei=True)
 
         nD_NRL = 1.72e9 * Te.value**1.5 / np.sqrt(ne.value)
         nD_Shkarofsky = np.exp(logLambda_ei) * Z / 9
@@ -84,9 +83,6 @@ class BaseVFP1D(ADEPTModule):
             "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
             "nD_NRL": nD_NRL,
             "nD_Shkarofsky": nD_Shkarofsky,
-            # "box_length": box_length,
-            # "box_width": box_width,
-            # "sim_duration": sim_duration,
         }
 
         self.cfg["units"]["derived"] = all_quantities
@@ -168,28 +164,6 @@ class BaseVFP1D(ADEPTModule):
                 "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
             },
         }
-
-        # config axes
-        one_over_kx = np.zeros_like(cfg_grid["kx"])
-        one_over_kx[1:] = 1.0 / cfg_grid["kx"][1:]
-        cfg_grid["one_over_kx"] = jnp.array(one_over_kx)
-
-        one_over_kxr = np.zeros_like(cfg_grid["kxr"])
-        one_over_kxr[1:] = 1.0 / cfg_grid["kxr"][1:]
-        cfg_grid["one_over_kxr"] = jnp.array(one_over_kxr)
-
-        cfg_grid["nuprof"] = 1.0
-        # get_profile_with_mask(cfg["nu"]["time-profile"], t, cfg["nu"]["time-profile"]["bump_or_trough"])
-        cfg_grid["ktprof"] = 1.0
-        # get_profile_with_mask(cfg["krook"]["time-profile"], t, cfg["krook"]["time-profile"]["bump_or_trough"])
-        cfg_grid["kprof"] = np.ones_like(cfg_grid["x"])
-        # get_profile_with_mask(cfg["krook"]["space-profile"], xs, cfg["krook"]["space-profile"]["bump_or_trough"])
-
-        cfg_grid["ion_charge"] = np.zeros_like(cfg_grid["x"]) + cfg_grid["x"]
-
-        cfg_grid["x_a"] = np.concatenate(
-            [[cfg_grid["x"][0] - cfg_grid["dx"]], cfg_grid["x"], [cfg_grid["x"][-1] + cfg_grid["dx"]]]
-        )
 
         self.cfg["grid"] = cfg_grid
 

@@ -44,11 +44,18 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
             )
 
     if len(cfg["drivers"]["ey"].keys()) > 0 and "a" in fields and "prev_a" in fields:
+        # ey = -dA/dt computed from (a - prev_a)/dt gives E_y at time t - dt/2
         ey = -(fields["a"][:, 1:-1] - fields["prev_a"][:, 1:-1]) / cfg["grid"]["dt"]
-        bz = jnp.gradient(fields["a"], cfg["grid"]["dx"], axis=1)[:, 1:-1]
 
-        ep = ey + cfg["units"]["derived"]["c_light"].magnitude * bz
-        em = ey - cfg["units"]["derived"]["c_light"].magnitude * bz
+        # bz = dA/dx must be computed at the same time t - dt/2 for correct em/ep split
+        # Average the gradient at t and t-dt to get the value at t - dt/2
+        bz_t = jnp.gradient(fields["a"], cfg["grid"]["dx"], axis=1)[:, 1:-1]
+        bz_prev = jnp.gradient(fields["prev_a"], cfg["grid"]["dx"], axis=1)[:, 1:-1]
+        bz = 0.5 * (bz_t + bz_prev)
+
+        c_light = cfg["units"]["derived"]["c_light"]
+        ep = ey + c_light * bz
+        em = ey - c_light * bz
 
         das[f"{prefix}-ep"] = xr.DataArray(ep, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
         das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
@@ -189,14 +196,17 @@ def _add_dim_axes(save_config: dict) -> None:
     for dim_key, dim_config in save_config.items():
         if not isinstance(dim_config, dict) or f"n{dim_key}" not in dim_config:
             continue
+        dim_min = float(dim_config[f"{dim_key}min"])
+        dim_max = float(dim_config[f"{dim_key}max"])
+        dim_n = int(dim_config[f"n{dim_key}"])
         if dim_key == "x":
-            dx = (dim_config[f"{dim_key}max"] - dim_config[f"{dim_key}min"]) / dim_config[f"n{dim_key}"]
+            dx = (dim_max - dim_min) / dim_n
         else:
             dx = 0.0
         dim_config["ax"] = np.linspace(
-            dim_config[f"{dim_key}min"] + dx / 2.0,
-            dim_config[f"{dim_key}max"] - dx / 2.0,
-            dim_config[f"n{dim_key}"],
+            dim_min + dx / 2.0,
+            dim_max - dx / 2.0,
+            dim_n,
         )
 
 
