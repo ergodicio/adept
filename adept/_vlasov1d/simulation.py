@@ -48,7 +48,9 @@ class EMDriver(eqx.Module):
 
                 return EMDriver(params.a0, k0, w0, params.dw0, envelope)
 
-            case EMDriverIntensityWavelengthParametrization(intensity=intensity, wavelength=wavelength):
+            case EMDriverIntensityWavelengthParametrization(
+                intensity=intensity, wavelength=wavelength, leftgoing=leftgoing
+            ):
                 intensity = UREG.Quantity(intensity).to("W/m^2")
                 wavelength = UREG.Quantity(wavelength).to("nm")
 
@@ -64,7 +66,8 @@ class EMDriver(eqx.Module):
 
                 # k0 in Debye-length units: k0_vlasov = k_phys x v0/wp0
                 k0_phys = (2 * math.pi / wavelength).to("1/m")
-                k0 = float((k0_phys * norm.L0).to("").magnitude)
+                k_sign = -1.0 if leftgoing else 1.0
+                k0 = k_sign * float((k0_phys * norm.L0).to("").magnitude)
 
                 # w0 normalized to wp0 (same normalization as Hermite)
                 w0_phys = (2 * math.pi * c / wavelength).to("1/s")
@@ -131,7 +134,7 @@ class SubspeciesDensityProfile(eqx.Module):
         basis = cfg["basis"]
 
         if basis == "uniform":
-            density = UniformFunction()
+            density = UniformFunction(cfg.get("rise", 1.0))
             envelope = None
         elif basis == "tanh":
             density = UniformFunction()

@@ -283,16 +283,14 @@ class VlasovMaxwell:
         self.ey_driver = field.TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey)
         self.ex_driver = field.LongitudinalElectricFieldDriver(grid.x, drivers=drivers.ex)
 
-    def compute_charges(self, f_dict):
-        """Compute charge density from distribution functions.
-
-        For a dict of species distributions, sum over all species with their charge-to-mass ratios.
-        """
+    def compute_electron_charge_density(self, f_dict):
+        """Compute charge density from the electron distribution function."""
         charge_density = jnp.zeros_like(self.grid.x)
-        for species_name, f in f_dict.items():
-            dv = self.cfg["grid"]["species_grids"][species_name]["dv"]
-            charge = self.cfg["grid"]["species_params"][species_name]["charge"]
+        if "electron" in f_dict:
+            dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+            charge = self.cfg["grid"]["species_params"]["electron"]["charge"]
             # Sum over velocity axis (axis=1) to get spatial density, then multiply by charge
+            f = f_dict["electron"]
             charge_density += charge * jnp.sum(f, axis=1) * dv
         return charge_density
 
@@ -324,14 +322,17 @@ class VlasovMaxwell:
         # Extract all species distributions from state
         f_dict = {k: v for k, v in y.items() if k in self.cfg["grid"]["species_grids"]}
 
-        electron_density_n = self.compute_charges(f_dict)
+        electron_charge_density_n = self.compute_electron_charge_density(f_dict)
         e, f_dict_new, diags = self.vpfp(
             f_dict=f_dict, a=y["a"], prev_ex=y["e"], dex_array=dex, nu_fp=nu_fp_val, nu_K=nu_K_val
         )
-        electron_density_np1 = self.compute_charges(f_dict_new)
+        electron_charge_density_np1 = self.compute_electron_charge_density(f_dict_new)
 
         a = self.wave_solver(
-            a=y["a"], aold=y["prev_a"], djy_array=djy, electron_charge=0.5 * (electron_density_n + electron_density_np1)
+            a=y["a"],
+            aold=y["prev_a"],
+            djy_array=djy,
+            electron_density=-0.5 * (electron_charge_density_n + electron_charge_density_np1),
         )
 
         # Build result dict with all species distributions
