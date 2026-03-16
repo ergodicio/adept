@@ -55,7 +55,7 @@ class Grid(eqx.Module):
         # Override dt for EM wave stability if needed
         if should_override_dt_for_em_waves:
             c_light = 1.0 / beta
-            self.dt = float(0.95 * self.dx / c_light)
+            self.dt = min(dt_requested, float(0.95 * self.dx / c_light))
         else:
             self.dt = dt_requested
 
