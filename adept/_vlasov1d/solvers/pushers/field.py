@@ -77,7 +77,7 @@ class WaveSolver:
 
         return jnp.concatenate([a_left, anew, a_right])
 
-    def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_charge: jnp.ndarray):
+    def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_density: jnp.ndarray):
         if self.c > 0:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
@@ -85,7 +85,7 @@ class WaveSolver:
             anew = (
                 2.0 * a[1:-1]
                 - aold[1:-1]
-                + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a[1:-1] + djy_array[1:-1])
+                + self.dt**2.0 * (self.c_sq * d2dx2 - electron_density * a[1:-1] + djy_array[1:-1])
             )
             # anew = 2.0 * a - aold + self.dt**2.0 * (self.c_sq * d2dx2 - electron_charge * a + djy_array)
             return {"a": self.apply_2nd_order_abc(aold, a, anew), "prev_a": a}

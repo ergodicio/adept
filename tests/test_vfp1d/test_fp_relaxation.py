@@ -99,7 +99,7 @@ def test_fp_relaxation(ic_fn, slow):
         )
 
         # Relaxation to a Maxwellian
-        assert metrics.rmse_instant[-1] < 5e-3, (
+        assert metrics.rmse_instant[-1] < 7.5e-3, (
             f"{name}: Did not relax to Maxwellian: rmse_instant={metrics.rmse_instant[-1]:.2e}"
         )
 

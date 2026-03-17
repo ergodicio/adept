@@ -22,7 +22,6 @@ class OSHUN1D:
         self.dt = cfg["grid"]["dt"]
         self.nx = cfg["grid"]["nx"]
         self.boundary = cfg["grid"].get("boundary", "periodic")
-        # self.c_squared = cfg["units"]["derived"]["c_light"].magnitude ** 2.0
         self.e_solver = cfg["terms"]["e_solver"]
 
         self.ampere_coeff = 1e-6
@@ -145,26 +144,11 @@ class OSHUN1D:
 
         return new_e
 
-    def linear_implicit_e_f0_f1_operator(self, this_y):
-        """
-        UNUSED
-
-        """
-        f0, f1, e = this_y["f0"], this_y["f1"], this_y["e"]
-
-        prev_f0_approx = f0 + self.dt * (-e[:, None] / 3 * (self.ddv_f1(f1) + 2 / self.v * f1))
-        # C_f1 = self.step_f10_coll(f1)
-        prev_f1_approx = f1 + self.dt * (-e[:, None] * self.ddv(f0) + self.ei.nuei_coeff * f1 / self.v[None, :] ** 3.0)
-
-        j = -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
-        prev_e_approx = e + self.dt * j
-
-        return {"f0": prev_f0_approx, "f1": prev_f1_approx, "e": prev_e_approx}
-
     def nonlinear_implicit_e_f0_f1_operator(self, y, args):
         """
-        UNUSED
+        Residual function for the implicit coupled E-f0-f1 solve.
 
+        Used by `implicit_e_f0_f1_solve` when `e_solver == "edfdv-ampere-implicit"`.
         """
         new_f0, new_f1, new_e = y["f0"], y["f1"], y["e"]
         old_f0, old_f1, old_e = args["f0"], args["f1"], args["e"]
@@ -184,8 +168,10 @@ class OSHUN1D:
 
     def implicit_e_f0_f1_solve(self, f0, f1, e):
         """
-        UNUSED
+        Implicit nonlinear solve for coupled E, f0, f1 system.
 
+        Uses optimistix to minimise the residual of the coupled system.
+        Active when `e_solver == "edfdv-ampere-implicit"`.
         """
 
         sol = optx.minimise(

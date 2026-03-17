@@ -49,9 +49,9 @@ class PlasmaNormalization:
         return (UREG.c / self.v0).to("").magnitude
 
 
-def normalize(s: float | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
-    if isinstance(s, float):
-        return s
+def normalize(s: float | int | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
+    if isinstance(s, (int, float)) and not isinstance(s, bool):
+        return float(s)
 
     if norm is None:
         raise ValueError(f"No PlasmaNormalization was supplied to normalize quantity `{s}`")
