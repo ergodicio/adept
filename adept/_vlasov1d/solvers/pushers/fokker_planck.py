@@ -18,10 +18,10 @@ from jax import numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
-from adept.driftdiffusion import AbstractMaxwellianPreservingModel, CentralDifferencing, ChangCooper
+from adept.driftdiffusion import AbstractBetaBasedModel, CentralDifferencing, ChangCooper
 
 
-class LenardBernstein(AbstractMaxwellianPreservingModel):
+class LenardBernstein(AbstractBetaBasedModel):
     """
     Lenard-Bernstein collision model using Buet notation.
 
@@ -51,7 +51,7 @@ class LenardBernstein(AbstractMaxwellianPreservingModel):
         return 1.0 / (2.0 * beta)
 
 
-class Dougherty(AbstractMaxwellianPreservingModel):
+class Dougherty(AbstractBetaBasedModel):
     """
     Dougherty collision model using Buet notation.
 
@@ -182,7 +182,10 @@ class Collisions:
         op = self.fp_scheme.get_operator(C_edge=C_edge, D=D_scalar, nu=nu, dt=dt)
         dl_padded = jnp.pad(op.lower_diagonal, (1, 0))
         du_padded = jnp.pad(op.upper_diagonal, (0, 1))
-        return jax.lax.linalg.tridiagonal_solve(dl_padded, op.diagonal, du_padded, f_v[..., None])[..., 0]
+        # Delta formulation: solve for increment to reduce floating-point error
+        rhs = f_v - op.mv(f_v)
+        delta = jax.lax.linalg.tridiagonal_solve(dl_padded, op.diagonal, du_padded, rhs[..., None])[..., 0]
+        return f_v + delta
 
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
@@ -208,9 +211,7 @@ class Collisions:
                     atol=self._sc_atol,
                     max_steps=self._sc_max_steps,
                 )
-                D = self.fp_model.compute_D(f_shard, beta)
-                v_eff = self.v_edge if vbar is None else (self.v_edge - vbar[..., None])
-                C_edge = 2.0 * beta[..., None] * D[..., None] * v_eff
+                C_edge, D = self.fp_model.compute_C_and_D(f_shard, beta)
                 f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
 
             if self.cfg["terms"]["krook"]["is_on"]:
