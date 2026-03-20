@@ -5,17 +5,23 @@ import equinox as eqx
 import jax
 
 from adept._vlasov1d.datamodel import (
-    EMDriverAKWParametrization,
-    EMDriverIntensityWavelengthParametrization,
-    EMDriverModel,
-    EMDriverSetModel,
+    AKWDriverConfig,
+    EMDriverConfig,
+    EMDriverSetConfig,
+    IntensityWavelengthDriverConfig,
+    SpeciesComponentConfig,
+    SpeciesConfig,
 )
 from adept._vlasov1d.grid import Grid
 from adept.functions import (
+    EnvelopeConfig,
     EnvelopeFunction,
     ExponentialFunction,
+    GradientDensityConfig,
     LinearFunction,
+    NoiseConfig,
     NoiseProfile,
+    SineDensityConfig,
     SineFunction,
     SpaceTimeEnvelopeFunction,
     UniformFunction,
@@ -31,13 +37,13 @@ class EMDriver(eqx.Module):
     envelope: SpaceTimeEnvelopeFunction
 
     @staticmethod
-    def from_model(model: EMDriverModel, norm: PlasmaNormalization | None = None) -> "EMDriver":
-        envelope = SpaceTimeEnvelopeFunction.from_config(model.envelope.model_dump(), norm)
+    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> "EMDriver":
+        envelope = SpaceTimeEnvelopeFunction.from_config(cfg.envelope, norm)
 
-        params = model.params
+        params = cfg.params
 
-        match model.params:
-            case EMDriverAKWParametrization():
+        match cfg.params:
+            case AKWDriverConfig():
                 c = norm.speed_of_light_norm()
                 if params.k0 is None:
                     w0 = c * params.k0
@@ -48,9 +54,7 @@ class EMDriver(eqx.Module):
 
                 return EMDriver(params.a0, k0, w0, params.dw0, envelope)
 
-            case EMDriverIntensityWavelengthParametrization(
-                intensity=intensity, wavelength=wavelength, leftgoing=leftgoing
-            ):
+            case IntensityWavelengthDriverConfig(intensity=intensity, wavelength=wavelength, leftgoing=leftgoing):
                 intensity = UREG.Quantity(intensity).to("W/m^2")
                 wavelength = UREG.Quantity(wavelength).to("nm")
 
@@ -83,9 +87,9 @@ class EMDriverSet(eqx.Module):
     ey: list[EMDriver]
 
     @staticmethod
-    def from_model(model: EMDriverSetModel, norm: PlasmaNormalization | None = None) -> "EMDriverSet":
-        ex = [EMDriver.from_model(ex_model, norm) for ex_model in model.ex.values()]
-        ey = [EMDriver.from_model(ey_model, norm) for ey_model in model.ey.values()]
+    def from_config(cfg: EMDriverSetConfig, norm: PlasmaNormalization | None = None) -> "EMDriverSet":
+        ex = [EMDriver.from_config(ex_cfg, norm) for ex_cfg in cfg.ex.values()]
+        ey = [EMDriver.from_config(ey_cfg, norm) for ey_cfg in cfg.ey.values()]
         return EMDriverSet(ex, ey)
 
 
@@ -100,14 +104,14 @@ class Species(eqx.Module):
     density_components: list[str]
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization | None = None) -> "Species":
+    def from_config(cfg: SpeciesConfig) -> "Species":
         return Species(
-            name=cfg["name"],
-            mass=float(cfg["mass"]),
-            charge=float(cfg["charge"]),
-            vmax=cfg["vmax"],
-            nv=int(cfg["nv"]),
-            density_components=cfg["density_components"],
+            name=cfg.name,
+            mass=float(cfg.mass),
+            charge=float(cfg.charge),
+            vmax=float(cfg.vmax),
+            nv=int(cfg.nv),
+            density_components=cfg.density_components,
         )
 
 
@@ -129,29 +133,52 @@ class SubspeciesDensityProfile(eqx.Module):
         return profile * (1.0 + self.noise_profile(profile.shape))
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization | None = None) -> "SubspeciesDensityProfile":
-        """Parse existing config format into domain model."""
-        basis = cfg["basis"]
+    def from_config(cfg: SpeciesComponentConfig, norm: PlasmaNormalization | None = None) -> "SubspeciesDensityProfile":
+        """Parse config into domain model."""
+        basis = cfg.basis
 
         if basis == "uniform":
-            density = UniformFunction(cfg.get("rise", 1.0))
+            density = UniformFunction(float(cfg.baseline) if cfg.baseline is not None else 1.0)
             envelope = None
         elif basis == "tanh":
             density = UniformFunction()
-            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
+            envelope_cfg = EnvelopeConfig.model_validate(cfg.model_dump(exclude_none=True))
+            envelope = EnvelopeFunction.from_config(envelope_cfg, norm, dim="x")
         elif basis == "linear":
-            density = LinearFunction.from_config(cfg, norm)
-            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
+            grad_cfg = GradientDensityConfig(
+                center=cfg.center,
+                gradient_scale_length=cfg.gradient_scale_length,
+                val_at_center=cfg.val_at_center,
+            )
+            density = LinearFunction.from_config(grad_cfg, norm)
+            envelope_cfg = EnvelopeConfig.model_validate(cfg.model_dump(exclude_none=True))
+            envelope = EnvelopeFunction.from_config(envelope_cfg, norm, dim="x")
         elif basis == "exponential":
-            density = ExponentialFunction.from_config(cfg, norm)
-            envelope = EnvelopeFunction.from_config(cfg, norm, dim="x")
+            grad_cfg = GradientDensityConfig(
+                center=cfg.center,
+                gradient_scale_length=cfg.gradient_scale_length,
+                val_at_center=cfg.val_at_center,
+            )
+            density = ExponentialFunction.from_config(grad_cfg, norm)
+            envelope_cfg = EnvelopeConfig.model_validate(cfg.model_dump(exclude_none=True))
+            envelope = EnvelopeFunction.from_config(envelope_cfg, norm, dim="x")
         elif basis == "sine":
-            density = SineFunction.from_config(cfg, norm)
+            sine_cfg = SineDensityConfig(
+                baseline=cfg.baseline,
+                amplitude=cfg.amplitude,
+                wavenumber=cfg.wavenumber,
+            )
+            density = SineFunction.from_config(sine_cfg, norm)
             envelope = None
         else:
             raise NotImplementedError(f"Unknown density basis: {basis}")
 
-        noise = NoiseProfile.from_config(cfg)
+        noise_cfg = NoiseConfig(
+            noise_type=cfg.noise_type,
+            noise_val=cfg.noise_val,
+            noise_seed=cfg.noise_seed,
+        )
+        noise = NoiseProfile.from_config(noise_cfg)
         return SubspeciesDensityProfile(density=density, envelope=envelope, noise_profile=noise)
 
 
@@ -164,13 +191,15 @@ class SubspeciesDistributionSpec(eqx.Module):
     supergaussian_order: float  # 2.0 = Maxwellian
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization | None = None) -> "SubspeciesDistributionSpec":
+    def from_config(
+        cfg: SpeciesComponentConfig, norm: PlasmaNormalization | None = None
+    ) -> "SubspeciesDistributionSpec":
         """Parse density component config into domain model."""
         return SubspeciesDistributionSpec(
             density_profile=SubspeciesDensityProfile.from_config(cfg, norm),
-            v0=cfg["v0"],
-            T0=cfg["T0"],
-            supergaussian_order=cfg.get("m", 2.0),
+            v0=float(cfg.v0),
+            T0=float(cfg.T0),
+            supergaussian_order=float(cfg.m),
         )
 
 

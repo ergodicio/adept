@@ -40,7 +40,6 @@ ignore = [
     "F401", # module imported in `__init__.py` but unused; consider removing or adding to `__all__`
     "F841", # Local variable (e.g. mlflow_run) is assigned to but never used
     "NPY002", # Replace legacy `np.random.uniform` call with `np.random.Generator`
-    "NPY201", # `np.trapz` will be removed in NumPy 2.0. Use `numpy.trapezoid` on NumPy 2.0
     "RUF005", # Consider unpacking instad of concatenation
     "RUF059", # Unpacked variable never used
 ]

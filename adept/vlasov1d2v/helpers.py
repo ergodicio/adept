@@ -78,7 +78,7 @@ def _initialize_distribution_(
     # for ix in range(nx):
     f = np.repeat(single_dist, nx, axis=0)
     # normalize
-    f = f / np.trapz(np.trapz(f, dx=dv, axis=2), dx=dv, axis=1)[:, None, None]
+    f = f / np.sum(np.sum(f, axis=2), axis=1)[:, None, None] / dv**2
 
     # if n_prof.size > 1:
     #     # scale by density profile

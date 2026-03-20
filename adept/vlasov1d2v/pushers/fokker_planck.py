@@ -56,7 +56,7 @@ class Krook:
     def __init__(self, cfg):
         self.cfg = cfg
         f_mx = np.exp(-(self.cfg["grid"]["v"][None, :] ** 2.0) / 2.0)
-        self.f_mx = f_mx / np.trapz(f_mx, dx=self.cfg["grid"]["dv"], axis=1)[:, None]
+        self.f_mx = f_mx / np.sum(f_mx, axis=1)[:, None] / self.cfg["grid"]["dv"]
         self.dv = self.cfg["grid"]["dv"]
 
     def vx_moment(self, f_xv):

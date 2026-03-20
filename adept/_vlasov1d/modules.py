@@ -10,70 +10,72 @@ from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.datamodel import EMDriverSetModel
+from adept._vlasov1d.datamodel import SpeciesConfig, Vlasov1DConfig
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.simulation import EMDriverSet, Species, SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
-from adept.functions import SpaceTimeEnvelopeFunction
+from adept.functions import SpaceTimeEnvelopeConfig, SpaceTimeEnvelopeFunction
 from adept.normalization import electron_debye_normalization
 from adept.utils import filter_scalars
 
 
-def species_set_from_cfg(cfg: dict) -> list[Species]:
-    if cfg["terms"].get("species", None):
-        return [Species.from_config(cfg_species) for cfg_species in cfg["terms"]["species"]]
+def species_set_from_config(cfg: Vlasov1DConfig) -> list[Species]:
+    if cfg.terms.species:
+        return [Species.from_config(species_cfg) for species_cfg in cfg.terms.species]
     else:
         # Collect all density components (keys starting with "species-")
-        density_components = [name for name in cfg["density"].keys() if name.startswith("species-")]
+        density_components = [name for name in cfg.density.model_extra.keys() if name.startswith("species-")]
         if not density_components:
             raise ValueError("No density components found (expected keys starting with 'species-')")
 
         return [
             Species.from_config(
-                {
-                    "name": "electron",
-                    "charge": -1.0,
-                    "mass": 1.0,
-                    "vmax": cfg["grid"]["vmax"],
-                    "nv": cfg["grid"]["nv"],
-                    "density_components": density_components,
-                }
+                SpeciesConfig(
+                    name="electron",
+                    charge=-1.0,
+                    mass=1.0,
+                    vmax=cfg.grid.vmax,
+                    nv=cfg.grid.nv,
+                    density_components=density_components,
+                )
             )
         ]
 
 
-def sim_from_cfg(
-    cfg: dict,
+def sim_from_config(
+    cfg: Vlasov1DConfig,
 ) -> Vlasov1DSimulation:
-    """Construct a Vlasov1DSimulation from a base config dict."""
+    """Construct a Vlasov1DSimulation from a Vlasov1DConfig."""
     plasma_norm = electron_debye_normalization(
-        cfg["units"]["normalizing_density"],
-        cfg["units"]["normalizing_temperature"],
+        cfg.units.normalizing_density,
+        cfg.units.normalizing_temperature,
     )
     beta = 1.0 / plasma_norm.speed_of_light_norm()
-    has_ey_driver = len(cfg.get("drivers", {}).get("ey", {}).keys()) > 0
-    grid = Grid.from_config(cfg["grid"], beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
+    has_ey_driver = len(cfg.drivers.ey) > 0
+    grid = Grid.from_config(cfg.grid, beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
 
     # Construct collision frequency profiles if enabled
     nu_fp_prof = None
-    if cfg["terms"]["fokker_planck"]["is_on"]:
-        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["fokker_planck"], norm=plasma_norm)
+    if cfg.terms.fokker_planck.is_on:
+        st_cfg = SpaceTimeEnvelopeConfig(time=cfg.terms.fokker_planck.time, space=cfg.terms.fokker_planck.space)
+        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(st_cfg, norm=plasma_norm)
 
     nu_K_prof = None
-    if cfg["terms"]["krook"]["is_on"]:
-        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["krook"], norm=plasma_norm)
+    if cfg.terms.krook.is_on:
+        st_cfg = SpaceTimeEnvelopeConfig(time=cfg.terms.krook.time, space=cfg.terms.krook.space)
+        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(st_cfg, norm=plasma_norm)
 
-    species = species_set_from_cfg(cfg)
+    species = species_set_from_config(cfg)
     species_distribution_specs = {
         s.name: [
-            SubspeciesDistributionSpec.from_config(cfg["density"][component_name], norm=plasma_norm)
+            SubspeciesDistributionSpec.from_config(cfg.density.get_component(component_name), norm=plasma_norm)
             for component_name in s.density_components
         ]
         for s in species
     }
-    drivers = EMDriverSet.from_model(EMDriverSetModel.model_validate(cfg["drivers"]), norm=plasma_norm)
+    drivers = EMDriverSet.from_config(cfg.drivers, norm=plasma_norm)
 
     return Vlasov1DSimulation(
         plasma_norm,
@@ -89,7 +91,8 @@ def sim_from_cfg(
 class BaseVlasov1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        self.simulation = sim_from_cfg(cfg)
+        self.config_model = Vlasov1DConfig.model_validate(cfg)
+        self.simulation = sim_from_config(self.config_model)
 
     def post_process(self, run_output: dict, td: str):
         return post_process(run_output["solver result"], self.cfg, td, self.args)
