@@ -7,11 +7,8 @@ class MLFlowModel(BaseModel):
 
 
 class UnitsModel(BaseModel):
-    laser_wavelength: str
     normalizing_temperature: str
     normalizing_density: str
-    Z: int
-    Zp: int
 
 
 class GridModel(BaseModel):

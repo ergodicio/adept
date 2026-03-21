@@ -8,11 +8,9 @@ from typing import TYPE_CHECKING
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
-from astropy import constants as csts
-from astropy.units import Quantity as _Q
 
 if TYPE_CHECKING:
-    from adept.vfp1d.normalization import PlasmaNorm
+    from adept.normalization import PlasmaNormalization
 
 
 class Grid(eqx.Module):
@@ -103,19 +101,22 @@ class Grid(eqx.Module):
         self.boundary = boundary
 
     @staticmethod
-    def from_config(cfg_grid: dict, norm: PlasmaNorm) -> Grid:
+    def from_config(cfg_grid: dict, norm: PlasmaNormalization) -> Grid:
         """Construct Grid from config dict and plasma normalization.
 
         Args:
             cfg_grid: The ``cfg["grid"]`` dict (raw, with unit strings).
-            norm: Plasma normalization (provides x0, tp0, Te for unit conversion).
+            norm: Plasma normalization (provides L0, tau, T0 for unit conversion).
         """
-        xmax = (_Q(cfg_grid["xmax"]) / norm.x0).to("").value
-        xmin = (_Q(cfg_grid["xmin"]) / norm.x0).to("").value
-        tmax = (_Q(cfg_grid["tmax"]) / norm.tp0).to("").value
-        dt = (_Q(cfg_grid["dt"]) / norm.tp0).to("").value
+        from adept.normalization import normalize
 
-        vmax = 8 * np.sqrt((norm.Te / (csts.m_e * csts.c**2.0)).to("")).value
+        xmax = normalize(cfg_grid["xmax"], norm, dim="x")
+        xmin = normalize(cfg_grid["xmin"], norm, dim="x")
+        tmax = normalize(cfg_grid["tmax"], norm, dim="t")
+        dt = normalize(cfg_grid["dt"], norm, dim="t")
+
+        beta = 1.0 / norm.speed_of_light_norm()
+        vmax = 8.0 * beta / np.sqrt(2.0)
 
         return Grid(
             xmin=xmin,
