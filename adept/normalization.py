@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import jax.numpy as jnp
 import jpu
@@ -31,6 +31,12 @@ class PlasmaNormalization:
     # Reference time [s]
     tau: UREG.Quantity
 
+    # Electron density (may differ from normalization density n0)
+    ne: UREG.Quantity | None = None
+    # Coulomb logarithms
+    logLambda_ei_val: float | None = None
+    logLambda_ee_val: float | None = None
+
     def logLambda_ee(self) -> float:
         n0_cc = self.n0.to("1/cc").magnitude
         T0_eV = self.T0.to("eV").magnitude
@@ -49,9 +55,9 @@ class PlasmaNormalization:
         return (UREG.c / self.v0).to("").magnitude
 
 
-def normalize(s: float | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
-    if isinstance(s, float):
-        return s
+def normalize(s: float | int | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
+    if isinstance(s, (int, float)) and not isinstance(s, bool):
+        return float(s)
 
     if norm is None:
         raise ValueError(f"No PlasmaNormalization was supplied to normalize quantity `{s}`")
@@ -88,3 +94,41 @@ def electron_debye_normalization(n0_str, T0_str):
     x0 = (v0 / wp0).to("nm")
 
     return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
+
+
+def vfp1d_normalization(cfg_units: dict):
+    """
+    Returns the VFP-1D normalization with fixed n0 = 9.0663e21 cm^-3.
+    Unit quantities are:
+        - c/wp0 (collisionless skin depth)
+        - Electron thermal velocity
+        - 1/wp0
+    """
+    from adept.vfp1d.helpers import calc_logLambda
+
+    T0 = UREG.Quantity(cfg_units["reference electron temperature"])
+    ne = UREG.Quantity(cfg_units["reference electron density"]).to("1/cc")
+    n0 = UREG.Quantity("9.0663e21/cm^3")
+
+    wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
+    tau = 1 / wp0
+
+    v0 = ((2.0 * T0 / UREG.m_e) ** 0.5).to("m/s")
+    x0 = (UREG.c / wp0).to("nm")
+
+    logLambda_ei, logLambda_ee = calc_logLambda(
+        {"units": cfg_units}, ne, T0.to("eV"), cfg_units["Z"], cfg_units["Ion"], force_ee_equal_ei=True
+    )
+
+    return PlasmaNormalization(
+        m0=UREG.m_e,
+        q0=UREG.e,
+        n0=n0,
+        T0=T0,
+        L0=x0,
+        v0=v0,
+        tau=tau,
+        ne=ne,
+        logLambda_ei_val=logLambda_ei,
+        logLambda_ee_val=logLambda_ee,
+    )

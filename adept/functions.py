@@ -1,8 +1,46 @@
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+from pydantic import BaseModel, ConfigDict, Field
 
 from adept.normalization import UREG, PlasmaNormalization, normalize
+
+
+class EnvelopeConfig(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    center: float | str
+    rise: float | str
+    width: float | str
+    baseline: float | str = 0.0
+    bump_height: float | str = 1.0
+    bump_or_trough: str = "bump"
+    slope: float | str = 0.0
+
+
+class SpaceTimeEnvelopeConfig(BaseModel):
+    time: EnvelopeConfig
+    space: EnvelopeConfig
+
+
+class GradientDensityConfig(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    center: float | str
+    gradient_scale_length: float | str = Field(alias="gradient scale length")
+    val_at_center: float | str = Field(alias="val at center")
+
+
+class SineDensityConfig(BaseModel):
+    baseline: float
+    amplitude: float
+    wavenumber: float
+
+
+class NoiseConfig(BaseModel):
+    noise_type: str = "uniform"
+    noise_val: float = 0.0
+    noise_seed: int = 42
 
 
 class EnvelopeFunction(eqx.Module):
@@ -42,23 +80,23 @@ class EnvelopeFunction(eqx.Module):
         return self.baseline + self.bump_height * env
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization | None = None, dim: str = "x") -> "EnvelopeFunction":
-        """Construct an EnvelopeFunction from a config dict.
+    def from_config(cfg: EnvelopeConfig, norm: PlasmaNormalization | None = None, dim: str = "x") -> "EnvelopeFunction":
+        """Construct an EnvelopeFunction from an EnvelopeConfig.
 
         Args:
-            cfg: Dict containing center, width, rise, and optionally
+            cfg: EnvelopeConfig with center, width, rise, and optionally
                  baseline (default 0.0), bump_height (default 1.0), bump_or_trough
 
         Returns:
             EnvelopeFunction instance
         """
         return EnvelopeFunction(
-            center=normalize(cfg["center"], norm, dim),
-            width=normalize(cfg["width"], norm, dim),
-            rise=normalize(cfg["rise"], norm, dim),
-            baseline=cfg.get("baseline", 0.0),
-            bump_height=cfg.get("bump_height", 1.0),
-            is_trough=(cfg.get("bump_or_trough", "bump") == "trough"),
+            center=normalize(cfg.center, norm, dim),
+            width=normalize(cfg.width, norm, dim),
+            rise=normalize(cfg.rise, norm, dim),
+            baseline=float(cfg.baseline),
+            bump_height=float(cfg.bump_height),
+            is_trough=(cfg.bump_or_trough == "trough"),
         )
 
 
@@ -80,18 +118,19 @@ class SpaceTimeEnvelopeFunction(eqx.Module):
         return self.time_envelope(t) * self.space_envelope(x)
 
     @staticmethod
-    def from_config(term_config: dict, norm: PlasmaNormalization | None = None) -> "SpaceTimeEnvelopeFunction":
-        """Construct a SpaceTimeEnvelopeFunction from a fokker_planck or krook config dict.
+    def from_config(
+        cfg: SpaceTimeEnvelopeConfig, norm: PlasmaNormalization | None = None
+    ) -> "SpaceTimeEnvelopeFunction":
+        """Construct a SpaceTimeEnvelopeFunction from a SpaceTimeEnvelopeConfig.
 
         Args:
-            term_config: Dict with 'time' and 'space' sub-dicts, each containing
-                         center, width, rise, baseline, bump_height, bump_or_trough
+            cfg: SpaceTimeEnvelopeConfig with 'time' and 'space' EnvelopeConfigs
 
         Returns:
             SpaceTimeEnvelopeFunction ready to be called with (x, t)
         """
-        time_env = EnvelopeFunction.from_config(term_config["time"], norm, dim="t")
-        space_env = EnvelopeFunction.from_config(term_config["space"], norm, dim="x")
+        time_env = EnvelopeFunction.from_config(cfg.time, norm, dim="t")
+        space_env = EnvelopeFunction.from_config(cfg.space, norm, dim="x")
         return SpaceTimeEnvelopeFunction(time_envelope=time_env, space_envelope=space_env)
 
 
@@ -115,11 +154,11 @@ class LinearFunction(eqx.Module):
         return self.val_at_center + (x - self.center) / self.gradient_scale_length
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization) -> "LinearFunction":
+    def from_config(cfg: GradientDensityConfig, norm: PlasmaNormalization) -> "LinearFunction":
         return LinearFunction(
-            center=normalize(cfg["center"], norm, dim="x"),
-            gradient_scale_length=normalize(cfg["gradient scale length"], norm, dim="x"),
-            val_at_center=normalize(cfg["val at center"], norm, dim="x"),
+            center=normalize(cfg.center, norm, dim="x"),
+            gradient_scale_length=normalize(cfg.gradient_scale_length, norm, dim="x"),
+            val_at_center=normalize(cfg.val_at_center, norm, dim="x"),
         )
 
 
@@ -134,11 +173,11 @@ class ExponentialFunction(eqx.Module):
         return self.val_at_center * jnp.exp((x - self.center) / self.gradient_scale_length)
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization) -> "ExponentialFunction":
+    def from_config(cfg: GradientDensityConfig, norm: PlasmaNormalization) -> "ExponentialFunction":
         return ExponentialFunction(
-            center=normalize(cfg["center"], norm, dim="x"),
-            gradient_scale_length=normalize(cfg["gradient scale length"], norm, dim="x"),
-            val_at_center=normalize(cfg["val at center"], norm, dim="x"),
+            center=normalize(cfg.center, norm, dim="x"),
+            gradient_scale_length=normalize(cfg.gradient_scale_length, norm, dim="x"),
+            val_at_center=normalize(cfg.val_at_center, norm, dim="x"),
         )
 
 
@@ -153,11 +192,11 @@ class SineFunction(eqx.Module):
         return self.baseline * (1.0 + self.amplitude * jnp.sin(self.wavenumber * x))
 
     @staticmethod
-    def from_config(cfg: dict, norm: PlasmaNormalization | None = None) -> "SineFunction":
+    def from_config(cfg: SineDensityConfig, norm: PlasmaNormalization | None = None) -> "SineFunction":
         return SineFunction(
-            baseline=cfg["baseline"],
-            amplitude=cfg["amplitude"],
-            wavenumber=normalize(cfg["wavenumber"], norm, dim="k"),
+            baseline=float(cfg.baseline),
+            amplitude=float(cfg.amplitude),
+            wavenumber=normalize(cfg.wavenumber, norm, dim="k"),
         )
 
 
@@ -179,9 +218,9 @@ class NoiseProfile(eqx.Module):
         return jnp.zeros(shape)
 
     @staticmethod
-    def from_config(cfg: dict) -> "NoiseProfile":
+    def from_config(cfg: NoiseConfig) -> "NoiseProfile":
         return NoiseProfile(
-            noise_type=cfg.get("noise_type", "uniform"),
-            noise_val=cfg.get("noise_val", 0.0),
-            noise_seed=int(cfg.get("noise_seed", 42)),
+            noise_type=cfg.noise_type,
+            noise_val=float(cfg.noise_val),
+            noise_seed=cfg.noise_seed,
         )

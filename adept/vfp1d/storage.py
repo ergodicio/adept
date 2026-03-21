@@ -3,10 +3,11 @@ from collections.abc import Callable
 
 import numpy as np
 import xarray as xr
-from astropy.units import Quantity as _Q
 from diffrax import Solution
 from jax import numpy as jnp
 from matplotlib import pyplot as plt
+
+from adept.normalization import PlasmaNormalization, normalize
 
 
 def calc_EH(this_Z: int, this_wt: float) -> float:
@@ -96,8 +97,8 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     :return:
     """
 
-    xax = cfg["units"]["derived"]["x0"].to("micron").value * cfg["grid"]["x"]
-    tax = this_t * cfg["units"]["derived"]["tp0"].to("ps").value
+    xax = cfg["units"]["derived"]["x0"].to("micron").magnitude * cfg["grid"]["x"]
+    tax = this_t * cfg["units"]["derived"]["tp0"].to("ps").magnitude
 
     if any(x in ["x", "kx"] for x in cfg["save"][prefix].keys()):
         crds = set(cfg["save"][prefix].keys()) - {"t", "func"}
@@ -146,7 +147,7 @@ def calc_kappa(cfg: dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> 
         / n.data
         / T.data
         / np.gradient(T.data, cfg["grid"]["dx"], axis=1)
-        * (cfg["units"]["derived"]["nuei_epphaines"] / cfg["units"]["derived"]["wp0"]).to("").value
+        * (cfg["units"]["derived"]["nuei_epphaines"] / cfg["units"]["derived"]["wp0"]).to("").magnitude
     )
 
     return xr.DataArray(kappa, coords=(("t (ps)", T.coords["t (ps)"].data), ("x (um)", T.coords["x (um)"].data)))
@@ -181,10 +182,10 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> xr.Dataset:
     :param ys:
     :return:
     """
-    x0_um = cfg["units"]["derived"]["x0"].to("micron").value
+    x0_um = cfg["units"]["derived"]["x0"].to("micron").magnitude
     xax_center = x0_um * cfg["grid"]["x"]
     xax_edge = x0_um * cfg["grid"]["x_edge"]
-    tax = this_t["electron"] * cfg["units"]["derived"]["tp0"].to("ps").value
+    tax = this_t["electron"] * cfg["units"]["derived"]["tp0"].to("ps").magnitude
 
     das = {}
     for dist in ys["electron"].keys():
@@ -254,7 +255,7 @@ def post_process(soln: Solution, cfg: dict, td: str, args: dict | None = None) -
                 plt.close()
 
         elif k.startswith("default"):
-            tax = soln.ts["default"] * cfg["units"]["derived"]["tp0"].to("ps").value
+            tax = soln.ts["default"] * cfg["units"]["derived"]["tp0"].to("ps").magnitude
             scalars_xr = xr.Dataset(
                 {k: xr.DataArray(v, coords=(("t (ps)", tax),)) for k, v in soln.ys["default"].items()}
             )
@@ -354,17 +355,18 @@ def get_dist_save_func(cfg: dict, k: str) -> Callable:
     return dist_save_func
 
 
-def get_save_quantities(cfg: dict) -> dict:
+def get_save_quantities(cfg: dict, norm: PlasmaNormalization) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
 
     :param cfg:
+    :param norm: Plasma normalization
     :return: The updated config
     """
 
     for k in cfg["save"].keys():  # this can be fields or electron or scalar?
-        tmin = (_Q(cfg["save"][k]["t"]["tmin"]) / cfg["units"]["derived"]["tp0"]).to("").value
-        tmax = (_Q(cfg["save"][k]["t"]["tmax"]) / cfg["units"]["derived"]["tp0"]).to("").value
+        tmin = normalize(cfg["save"][k]["t"]["tmin"], norm, dim="t")
+        tmax = normalize(cfg["save"][k]["t"]["tmax"], norm, dim="t")
         cfg["save"][k]["t"]["ax"] = jnp.linspace(tmin, tmax, cfg["save"][k]["t"]["nt"])
 
         if k.startswith("fields"):

@@ -243,7 +243,7 @@ class Krook:
         v = cfg["grid"]["species_grids"]["electron"]["v"]
         dv = cfg["grid"]["species_grids"]["electron"]["dv"]
         f_mx = np.exp(-(v[None, :] ** 2.0) / 2.0)
-        self.f_mx = f_mx / np.trapz(f_mx, dx=dv, axis=1)[:, None]
+        self.f_mx = f_mx / np.sum(f_mx, axis=1)[:, None] / dv
         self.dv = dv
 
     def vx_moment(self, f_xv: jnp.ndarray) -> jnp.ndarray:

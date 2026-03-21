@@ -3,12 +3,12 @@
 
 
 import numpy as np
-from astropy.units import Quantity as _Q
 from jax import Array
 from jax import numpy as jnp
 from scipy.special import gamma
 
 from adept._base_ import get_envelope
+from adept.normalization import PlasmaNormalization, normalize
 
 # ideally this should be passed as as an argument and not re-initialised
 from adept.vfp1d.vector_field import OSHUN1D
@@ -57,15 +57,15 @@ def calc_logLambda(
     """
     if isinstance(cfg["units"]["logLambda"], str):
         if cfg["units"]["logLambda"].casefold() == "nrl":
-            log_ne = np.log(ne.to("1/cm^3").value)
-            log_Te = np.log(Te.to("eV").value)
+            log_ne = np.log(ne.to("1/cc").magnitude)
+            log_Te = np.log(Te.to("eV").magnitude)
             log_Z = np.log(Z)
 
             logLambda_ee = max(
                 2.0, 23.5 - 0.5 * log_ne + 1.25 * log_Te - np.sqrt(1e-5 + 0.0625 * (log_Te - 2.0) ** 2.0)
             )
 
-            if Te.to("eV").value > 10 * Z**2.0:
+            if Te.to("eV").magnitude > 10 * Z**2.0:
                 logLambda_ei = max(2.0, 24.0 - 0.5 * log_ne + log_Te)
             else:
                 logLambda_ei = max(2.0, 23.0 - 0.5 * log_ne + 1.5 * log_Te - log_Z)
@@ -117,13 +117,16 @@ def _initialize_distribution_(
     return f, vax
 
 
-def _initialize_total_distribution_(cfg: dict, grid, plasma_norm) -> tuple[Array, Array, Array]:
+def _initialize_total_distribution_(
+    cfg: dict, grid, beta: float, norm: PlasmaNormalization
+) -> tuple[Array, Array, Array]:
     """
     This function initializes the distribution function as a sum of the individual species
 
     :param cfg: Dict
     :param grid: Grid object
-    :param plasma_norm: PlasmaNorm object (provides beta for thermal velocity)
+    :param beta: vth/c (dimensionless thermal velocity)
+    :param norm: Plasma normalization
     :return: distribution function, density profile (nx, nv), (nx,)
 
     """
@@ -146,9 +149,9 @@ def _initialize_total_distribution_(cfg: dict, grid, plasma_norm) -> tuple[Array
                     profs[k] = species_params[k]["baseline"] * np.ones_like(prof_total[k])
 
                 elif species_params[k]["basis"] == "tanh":
-                    center = (_Q(species_params[k]["center"]) / cfg["units"]["derived"]["x0"]).to("").value
-                    width = (_Q(species_params[k]["width"]) / cfg["units"]["derived"]["x0"]).to("").value
-                    rise = (_Q(species_params[k]["rise"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    center = normalize(species_params[k]["center"], norm, dim="x")
+                    width = normalize(species_params[k]["width"], norm, dim="x")
+                    rise = normalize(species_params[k]["rise"], norm, dim="x")
 
                     left = center - width * 0.5
                     right = center + width * 0.5
@@ -161,29 +164,29 @@ def _initialize_total_distribution_(cfg: dict, grid, plasma_norm) -> tuple[Array
                 elif species_params[k]["basis"] == "sine":
                     baseline = species_params[k]["baseline"]
                     amp = species_params[k]["amplitude"]
-                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    ll = normalize(species_params[k]["wavelength"], norm, dim="x")
 
                     profs[k] = baseline * (1.0 + amp * jnp.sin(2 * jnp.pi / ll * grid.x))
 
                 elif species_params[k]["basis"] == "cosine":
                     baseline = species_params[k]["baseline"]
                     amp = species_params[k]["amplitude"]
-                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    ll = normalize(species_params[k]["wavelength"], norm, dim="x")
 
                     profs[k] = baseline * (1.0 + amp * jnp.cos(2 * jnp.pi / ll * grid.x))
 
                 else:
                     raise NotImplementedError
 
-            profs["n"] *= (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
+            profs["n"] *= (norm.ne / norm.n0).to("").magnitude
 
             prof_total["n"] += profs["n"]
 
             # Distribution function
             temp_f0, _ = _initialize_distribution_(
-                nv=int(grid.nv),
+                nv=grid.nv,
                 m=m,
-                vth=plasma_norm.beta,
+                vth=beta,
                 vmax=grid.vmax,
                 n_prof=profs["n"],
                 T_prof=profs["T"],
