@@ -1,14 +1,12 @@
 import numpy as np
-from astropy import constants as csts
-from astropy import units as u
 from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule, Stepper
+from adept.normalization import UREG, vfp1d_normalization
 from adept.utils import filter_scalars
 from adept.vfp1d.grid import Grid
 from adept.vfp1d.helpers import _initialize_total_distribution_
-from adept.vfp1d.normalization import PlasmaNorm
 from adept.vfp1d.storage import get_save_quantities, post_process
 from adept.vfp1d.vector_field import OSHUN1D
 
@@ -16,7 +14,7 @@ from adept.vfp1d.vector_field import OSHUN1D
 class BaseVFP1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        self.plasma_norm = PlasmaNorm.from_config(cfg["units"])
+        self.plasma_norm = vfp1d_normalization(cfg["units"])
         self.grid = Grid.from_config(cfg["grid"], self.plasma_norm)
 
     def post_process(self, solver_result: dict, td: str) -> dict:
@@ -26,53 +24,61 @@ class BaseVFP1D(ADEPTModule):
         norm = self.plasma_norm
         Z = self.cfg["units"]["Z"]
         ne = norm.ne
-        Te = norm.Te
-        logLambda_ei = norm.logLambda_ei
+        Te = norm.T0.to("eV")
+        logLambda_ei = norm.logLambda_ei_val
+        logLambda_ee = norm.logLambda_ee_val
 
-        nD_NRL = 1.72e9 * Te.value**1.5 / np.sqrt(ne.value)
+        # Local aliases for quantities used in multiple expressions below
+        wp0 = (1 / norm.tau).to("rad/s")
+        vth = norm.v0.to("m/s")
+        beta = 1.0 / norm.speed_of_light_norm()
+        # Elementary charge in Gaussian CGS units (Franklin)
+        e_gauss = UREG.Quantity(4.803204712570263e-10, "Fr")
 
-        nuei_shk = np.sqrt(2.0 / np.pi) * norm.wp0 * logLambda_ei / np.exp(logLambda_ei)
+        nD_NRL = 1.72e9 * Te.magnitude**1.5 / np.sqrt(ne.magnitude)
+
+        nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
         # JPB - Maybe comment which page/eq this is from? There are lots of collision times in NRL
         # For example, nu_ei on page 32 does include Z^2
-        nuei_nrl = np.sqrt(2.0 / np.pi) * norm.wp0 * logLambda_ei / nD_NRL
+        nuei_nrl = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / nD_NRL
 
         nuei_epphaines = (
             1
             / (
                 0.75
-                * np.sqrt(csts.m_e)
+                * UREG.Quantity(1, "electron_mass") ** 0.5
                 * Te**1.5
-                / (np.sqrt(2 * np.pi) * (ne / Z) * Z**2.0 * csts.e.gauss**4.0 * logLambda_ei)
+                / (np.sqrt(2 * np.pi) * (ne / Z) * Z**2.0 * e_gauss**4.0 * logLambda_ei)
             )
         ).to("Hz")
 
         all_quantities = {
-            "wp0": norm.wp0,
-            "n0": norm.n0,
-            "tp0": norm.tp0,
+            "wp0": wp0,
+            "n0": norm.n0.to("1/cc"),
+            "tp0": norm.tau.to("fs"),
             "ne": ne,
-            "vth": norm.vth,
+            "vth": vth,
             "Te": Te,
-            "Ti": u.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV"),
+            "Ti": UREG.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV"),
             "logLambda_ei": logLambda_ei,
-            "logLambda_ee": norm.logLambda_ee,
-            "beta": norm.beta,
-            "x0": norm.x0,
+            "logLambda_ee": logLambda_ee,
+            "beta": beta,
+            "x0": norm.L0.to("nm"),
             "nuei_shk": nuei_shk,
             "nuei_nrl": nuei_nrl,
             "nuei_epphaines": nuei_epphaines,
-            "nuei_shk_norm": nuei_shk / norm.wp0,
-            "nuei_nrl_norm": nuei_nrl / norm.wp0,
-            "nuei_epphaines_norm": nuei_epphaines / norm.wp0,
-            "lambda_mfp_shk": (norm.vth / nuei_shk).to("micron"),
-            "lambda_mfp_nrl": (norm.vth / nuei_nrl).to("micron"),
-            "lambda_mfp_epphaines": (norm.vth / nuei_epphaines).to("micron"),
+            "nuei_shk_norm": (nuei_shk / wp0).to(""),
+            "nuei_nrl_norm": (nuei_nrl / wp0).to(""),
+            "nuei_epphaines_norm": (nuei_epphaines / wp0).to(""),
+            "lambda_mfp_shk": (vth / nuei_shk).to("micron"),
+            "lambda_mfp_nrl": (vth / nuei_nrl).to("micron"),
+            "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
             "nD_NRL": nD_NRL,
             "nD_Shkarofsky": np.exp(logLambda_ei) * Z / 9,
         }
 
         self.cfg["units"]["derived"] = all_quantities
-        self.cfg["grid"]["beta"] = norm.beta
+        self.cfg["grid"]["beta"] = beta
 
         return {k: str(v) for k, v in all_quantities.items()}
 
@@ -105,7 +111,8 @@ class BaseVFP1D(ADEPTModule):
 
     def init_state_and_args(self) -> dict:
         grid = self.grid
-        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, self.plasma_norm)
+        beta = 1.0 / self.plasma_norm.speed_of_light_norm()
+        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm)
 
         state = {"f0": f0}
         # not currently necessary but kept for completeness
@@ -126,7 +133,7 @@ class BaseVFP1D(ADEPTModule):
 
     def init_diffeqsolve(self):
         grid = self.grid
-        self.cfg = get_save_quantities(self.cfg)
+        self.cfg = get_save_quantities(self.cfg, self.plasma_norm)
         self.time_quantities = {
             "t0": 0.0,
             "t1": grid.tmax,

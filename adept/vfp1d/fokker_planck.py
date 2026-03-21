@@ -233,7 +233,7 @@ class F0Collisions(eqx.Module):
             #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
             # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
             r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022 value)
-            kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+            kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cc").magnitude * r_e)
             self.nuee_coeff = kp0re * cfg["units"]["derived"]["logLambda_ee"]
 
         # Create model and scheme from config
@@ -318,7 +318,7 @@ class FLMCollisions:
         self.Z = cfg["units"]["Z"]
 
         r_e = 2.8179402894e-13
-        kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cc").magnitude * r_e)
         kpre = r_e * kp
         self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
         self.nuei_coeff = (
