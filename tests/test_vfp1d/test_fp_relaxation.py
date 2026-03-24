@@ -70,8 +70,10 @@ def test_fp_relaxation(ic_fn, slow):
     grid = VelocityGrid(nv=NV, vmax=VMAX, spherical=factory.spherical)
 
     # Two-temperature needs longer to fully thermalise
-    is_two_temp = isinstance(ic_fn, partial) and ic_fn.func is problems.two_temperature
-    n_collision_times = 50.0 if is_two_temp else 10.0
+    if ic_fn.func in [problems.two_temperature, problems.shifted_maxwellian]:
+        n_collision_times = 50.0
+    else:
+        n_collision_times = 10.0
 
     results = run_relaxation_sweep(
         problem_name=problem_name(ic_fn),
