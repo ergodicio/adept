@@ -238,12 +238,10 @@ class NonlinearVectorField(eqx.Module):
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
-    def _compute_houli_hermite_filter(
-        self, Nn: int, Nm: int, Np: int, strength: float, order: int
-    ) -> Array:
+    def _compute_houli_hermite_filter(self, Nn: int, Nm: int, Np: int, strength: float, order: int) -> Array:
         """Compute Hou-Li exponential filter in Hermite space.
 
-        Applies σ(h) = exp(-strength * (h / h_max)^order) to all modes,
+        Applies sigma(h) = exp(-strength * (h / h_max)^order) to all modes,
         where h_max is the Euclidean norm of the highest-index mode corner.
         """
         n = jnp.arange(Nn)[None, None, :]
