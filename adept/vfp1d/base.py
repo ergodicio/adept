@@ -23,8 +23,8 @@ class BaseVFP1D(ADEPTModule):
     def write_units(self) -> dict:
         norm = self.plasma_norm
         Z = self.cfg["units"]["Z"]
-        ne = norm.ne
-        Te = norm.T0.to("eV")
+        ne = UREG.Quantity(self.cfg["units"]["reference electron density"]).to("1/cc")
+        Te_eV = norm.T0.to("eV")
         logLambda_ei = norm.logLambda_ei_val
         logLambda_ee = norm.logLambda_ee_val
 
@@ -32,10 +32,11 @@ class BaseVFP1D(ADEPTModule):
         wp0 = (1 / norm.tau).to("rad/s")
         vth = norm.v0.to("m/s")
         beta = 1.0 / norm.speed_of_light_norm()
-        # Elementary charge in Gaussian CGS units (Franklin)
+        # Elementary charge in Gaussian CGS (pint cannot convert SI↔Gaussian charge dimensions)
         e_gauss = UREG.Quantity(4.803204712570263e-10, "Fr")
 
-        nD_NRL = 1.72e9 * Te.magnitude**1.5 / np.sqrt(ne.magnitude)
+        ne_cc = ne.to("1/cc").magnitude
+        nD_NRL = 1.72e9 * Te_eV.magnitude**1.5 / np.sqrt(ne_cc)
 
         nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
         # JPB - Maybe comment which page/eq this is from? There are lots of collision times in NRL
@@ -47,7 +48,7 @@ class BaseVFP1D(ADEPTModule):
             / (
                 0.75
                 * UREG.Quantity(1, "electron_mass") ** 0.5
-                * Te**1.5
+                * Te_eV**1.5
                 / (np.sqrt(2 * np.pi) * (ne / Z) * Z**2.0 * e_gauss**4.0 * logLambda_ei)
             )
         ).to("Hz")
@@ -58,7 +59,7 @@ class BaseVFP1D(ADEPTModule):
             "tp0": norm.tau.to("fs"),
             "ne": ne,
             "vth": vth,
-            "Te": Te,
+            "Te": Te_eV,
             "Ti": UREG.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV"),
             "logLambda_ei": logLambda_ei,
             "logLambda_ee": logLambda_ee,
@@ -112,7 +113,9 @@ class BaseVFP1D(ADEPTModule):
     def init_state_and_args(self) -> dict:
         grid = self.grid
         beta = 1.0 / self.plasma_norm.speed_of_light_norm()
-        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm)
+        ne = UREG.Quantity(self.cfg["units"]["reference electron density"])
+        ne_over_n0 = (ne / self.plasma_norm.n0).to("").magnitude
+        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm, ne_over_n0)
 
         state = {"f0": f0}
         # not currently necessary but kept for completeness

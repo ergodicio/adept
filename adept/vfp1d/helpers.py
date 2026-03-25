@@ -118,7 +118,7 @@ def _initialize_distribution_(
 
 
 def _initialize_total_distribution_(
-    cfg: dict, grid, beta: float, norm: PlasmaNormalization
+    cfg: dict, grid, beta: float, norm: PlasmaNormalization, ne_over_n0: float
 ) -> tuple[Array, Array, Array]:
     """
     This function initializes the distribution function as a sum of the individual species
@@ -126,7 +126,8 @@ def _initialize_total_distribution_(
     :param cfg: Dict
     :param grid: Grid object
     :param beta: vth/c (dimensionless thermal velocity)
-    :param norm: Plasma normalization
+    :param norm: Plasma normalization (used for unit conversion of spatial profiles)
+    :param ne_over_n0: Ratio of physical electron density to normalization density
     :return: distribution function, density profile (nx, nv), (nx,)
 
     """
@@ -178,7 +179,7 @@ def _initialize_total_distribution_(
                 else:
                     raise NotImplementedError
 
-            profs["n"] *= (norm.ne / norm.n0).to("").magnitude
+            profs["n"] *= ne_over_n0
 
             prof_total["n"] += profs["n"]
 
