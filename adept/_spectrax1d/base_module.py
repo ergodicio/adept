@@ -654,6 +654,8 @@ class BaseSpectrax1D(ADEPTModule):
             sponge_fields=self.grid_quantities_electrons.get("sponge_fields", None),
             sponge_plasma_e=self.grid_quantities_electrons.get("sponge_plasma", None),
             sponge_plasma_i=self.grid_quantities_ions.get("sponge_plasma", None),
+            hermite_filter_e=vector_field.hermite_filter_electrons if vector_field.use_hermite_filter else None,
+            hermite_filter_i=vector_field.hermite_filter_ions if vector_field.use_hermite_filter else None,
             Ny=Ny,
             Nx=Nx,
             Nz=Nz,
