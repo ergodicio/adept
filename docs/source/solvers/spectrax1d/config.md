@@ -141,13 +141,16 @@ density:
 
 Hou-Li exponential damping of high Hermite modes (prevents filamentation).
 
+Applies σ(h) = exp(-strength * (h / h_max)^order) to all modes, where h is the
+Euclidean norm of the mode index triple (n, m, p) and h_max is the norm at the
+highest-index corner of the mode grid.
+
 ```yaml
 drivers:
   hermite_filter:
     enabled: true
-    cutoff_fraction: 0.6667    # filter onset at this fraction of max mode
-    strength: 4.0              # filter strength
-    order: 4                   # filter order
+    strength: 4.0              # filter strength (higher = more aggressive damping)
+    order: 4                   # filter order (higher = sharper roll-off near h_max)
 ```
 
 ---
