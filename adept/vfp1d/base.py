@@ -113,9 +113,13 @@ class BaseVFP1D(ADEPTModule):
     def init_state_and_args(self) -> dict:
         grid = self.grid
         beta = 1.0 / self.plasma_norm.speed_of_light_norm()
+        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm)
+
+        # Scale density to physical ne (f10 is invariant in the big-dt collision limit)
         ne = UREG.Quantity(self.cfg["units"]["reference electron density"])
         ne_over_n0 = (ne / self.plasma_norm.n0).to("").magnitude
-        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm, ne_over_n0)
+        f0 *= ne_over_n0
+        ne_prof *= ne_over_n0
 
         state = {"f0": f0}
         # not currently necessary but kept for completeness
