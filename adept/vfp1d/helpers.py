@@ -126,7 +126,7 @@ def _initialize_total_distribution_(
     :param cfg: Dict
     :param grid: Grid object
     :param beta: vth/c (dimensionless thermal velocity)
-    :param norm: Plasma normalization
+    :param norm: Plasma normalization (used for unit conversion of spatial profiles)
     :return: distribution function, density profile (nx, nv), (nx,)
 
     """
@@ -177,8 +177,6 @@ def _initialize_total_distribution_(
 
                 else:
                     raise NotImplementedError
-
-            profs["n"] *= (norm.ne / norm.n0).to("").magnitude
 
             prof_total["n"] += profs["n"]
 
