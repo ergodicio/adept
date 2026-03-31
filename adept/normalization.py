@@ -31,8 +31,6 @@ class PlasmaNormalization:
     # Reference time [s]
     tau: UREG.Quantity
 
-    # Electron density (may differ from normalization density n0)
-    ne: UREG.Quantity | None = None
     # Coulomb logarithms
     logLambda_ei_val: float | None = None
     logLambda_ee_val: float | None = None
@@ -128,7 +126,6 @@ def vfp1d_normalization(cfg_units: dict):
         L0=x0,
         v0=v0,
         tau=tau,
-        ne=ne,
         logLambda_ei_val=logLambda_ei,
         logLambda_ee_val=logLambda_ee,
     )
