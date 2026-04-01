@@ -72,8 +72,12 @@ class SpectraxVectorField:
 
             self.noise_electrons_enabled = noise_config.get("electrons", {}).get("enabled", True)
             self.noise_ions_enabled = noise_config.get("ions", {}).get("enabled", False)
-            self.noise_electrons_amplitude = float(noise_config.get("electrons", {}).get("amplitude", noise_config.get("amplitude", 1e-12)))
-            self.noise_ions_amplitude = float(noise_config.get("ions", {}).get("amplitude", noise_config.get("amplitude", 1e-12)))
+            self.noise_electrons_amplitude = float(
+                noise_config.get("electrons", {}).get("amplitude", noise_config.get("amplitude", 1e-12))
+            )
+            self.noise_ions_amplitude = float(
+                noise_config.get("ions", {}).get("amplitude", noise_config.get("amplitude", 1e-12))
+            )
             seed = int(noise_config.get("seed", np.random.randint(2**20)))
             self.noise_electrons_seed = seed
             self.noise_ions_seed = seed + 1000
@@ -94,7 +98,9 @@ class SpectraxVectorField:
             strength = float(filter_cfg.get("strength", 36.0))
             order = int(filter_cfg.get("order", 36))
             cutoff_fraction = float(filter_cfg.get("cutoff_fraction", 1.0))
-            self.hermite_filter_electrons = self._houli_filter(Nn_electrons, Nm_electrons, Np_electrons, strength, order, cutoff_fraction)
+            self.hermite_filter_electrons = self._houli_filter(
+                Nn_electrons, Nm_electrons, Np_electrons, strength, order, cutoff_fraction
+            )
             self.hermite_filter_ions = self._houli_filter(Nn_ions, Nm_ions, Np_ions, strength, order, cutoff_fraction)
         else:
             self.hermite_filter_electrons = None
@@ -103,22 +109,46 @@ class SpectraxVectorField:
         # HermiteFourierODE instances (one per species)
         gq_e = grid_quantities_electrons
         self.ode_e = HermiteFourierODE(
-            Nn=Nn_electrons, Nm=Nm_electrons, Np=Np_electrons, Nx=Nx,
-            kx_grid=gq_e["kx_grid"], ky_grid=gq_e["ky_grid"], kz_grid=gq_e["kz_grid"],
-            k2_grid=gq_e["k2_grid"], Lx=gq_e["Lx"], Ly=gq_e["Ly"], Lz=gq_e["Lz"],
-            col=gq_e["col"], sqrt_n_plus=gq_e["sqrt_n_plus"], sqrt_n_minus=gq_e["sqrt_n_minus"],
-            sqrt_m_plus=gq_e["sqrt_m_plus"], sqrt_m_minus=gq_e["sqrt_m_minus"],
-            sqrt_p_plus=gq_e["sqrt_p_plus"], sqrt_p_minus=gq_e["sqrt_p_minus"],
+            Nn=Nn_electrons,
+            Nm=Nm_electrons,
+            Np=Np_electrons,
+            Nx=Nx,
+            kx_grid=gq_e["kx_grid"],
+            ky_grid=gq_e["ky_grid"],
+            kz_grid=gq_e["kz_grid"],
+            k2_grid=gq_e["k2_grid"],
+            Lx=gq_e["Lx"],
+            Ly=gq_e["Ly"],
+            Lz=gq_e["Lz"],
+            col=gq_e["col"],
+            sqrt_n_plus=gq_e["sqrt_n_plus"],
+            sqrt_n_minus=gq_e["sqrt_n_minus"],
+            sqrt_m_plus=gq_e["sqrt_m_plus"],
+            sqrt_m_minus=gq_e["sqrt_m_minus"],
+            sqrt_p_plus=gq_e["sqrt_p_plus"],
+            sqrt_p_minus=gq_e["sqrt_p_minus"],
             mask23=self.mask23,
         )
         gq_i = grid_quantities_ions
         self.ode_i = HermiteFourierODE(
-            Nn=Nn_ions, Nm=Nm_ions, Np=Np_ions, Nx=Nx,
-            kx_grid=gq_i["kx_grid"], ky_grid=gq_i["ky_grid"], kz_grid=gq_i["kz_grid"],
-            k2_grid=gq_i["k2_grid"], Lx=gq_i["Lx"], Ly=gq_i["Ly"], Lz=gq_i["Lz"],
-            col=gq_i["col"], sqrt_n_plus=gq_i["sqrt_n_plus"], sqrt_n_minus=gq_i["sqrt_n_minus"],
-            sqrt_m_plus=gq_i["sqrt_m_plus"], sqrt_m_minus=gq_i["sqrt_m_minus"],
-            sqrt_p_plus=gq_i["sqrt_p_plus"], sqrt_p_minus=gq_i["sqrt_p_minus"],
+            Nn=Nn_ions,
+            Nm=Nm_ions,
+            Np=Np_ions,
+            Nx=Nx,
+            kx_grid=gq_i["kx_grid"],
+            ky_grid=gq_i["ky_grid"],
+            kz_grid=gq_i["kz_grid"],
+            k2_grid=gq_i["k2_grid"],
+            Lx=gq_i["Lx"],
+            Ly=gq_i["Ly"],
+            Lz=gq_i["Lz"],
+            col=gq_i["col"],
+            sqrt_n_plus=gq_i["sqrt_n_plus"],
+            sqrt_n_minus=gq_i["sqrt_n_minus"],
+            sqrt_m_plus=gq_i["sqrt_m_plus"],
+            sqrt_m_minus=gq_i["sqrt_m_minus"],
+            sqrt_p_plus=gq_i["sqrt_p_plus"],
+            sqrt_p_minus=gq_i["sqrt_p_minus"],
             mask23=self.mask23,
         )
 
@@ -177,18 +207,32 @@ class SpectraxVectorField:
 
         # Full electron RHS (free-streaming + Lorentz + collisions + diffusion)
         dCk_e_dt = self.ode_e(
-            Ck=Ck_e, C=C_e, F=F, nu=nu, D=D,
-            alpha=alpha_s[:3], u=u_s[:3], q=qs[0],
-            Omega_ce_tau=Omega_ce_tau, m=1.0,
+            Ck=Ck_e,
+            C=C_e,
+            F=F,
+            nu=nu,
+            D=D,
+            alpha=alpha_s[:3],
+            u=u_s[:3],
+            q=qs[0],
+            Omega_ce_tau=Omega_ce_tau,
+            m=1.0,
         )
 
         if self.static_ions:
             dCk_i_dt = jnp.zeros_like(Ck_i)
         else:
             dCk_i_dt = self.ode_i(
-                Ck=Ck_i, C=C_i, F=F, nu=nu, D=D,
-                alpha=alpha_s[3:], u=u_s[3:], q=qs[1],
-                Omega_ce_tau=Omega_ce_tau, m=mi_me,
+                Ck=Ck_i,
+                C=C_i,
+                F=F,
+                nu=nu,
+                D=D,
+                alpha=alpha_s[3:],
+                u=u_s[3:],
+                q=qs[1],
+                Omega_ce_tau=Omega_ce_tau,
+                m=mi_me,
             )
 
         if self.use_hermite_filter:
@@ -198,17 +242,25 @@ class SpectraxVectorField:
 
         if self.noise_enabled:
             if self.noise_electrons_enabled:
-                noise_e = self._generate_density_noise(t, self.Nx, alpha_s[0], self.noise_electrons_amplitude, self.noise_electrons_seed)
+                noise_e = self._generate_density_noise(
+                    t, self.Nx, alpha_s[0], self.noise_electrons_amplitude, self.noise_electrons_seed
+                )
                 dCk_e_dt = dCk_e_dt.at[0, 0, 0, 0, :, 0].add(noise_e)
             if self.noise_ions_enabled and not self.static_ions:
-                noise_i = self._generate_density_noise(t, self.Nx, alpha_s[3], self.noise_ions_amplitude, self.noise_ions_seed)
+                noise_i = self._generate_density_noise(
+                    t, self.Nx, alpha_s[3], self.noise_ions_amplitude, self.noise_ions_seed
+                )
                 dCk_i_dt = dCk_i_dt.at[0, 0, 0, 0, :, 0].add(noise_i)
 
         # Maxwell: curls + plasma current + driver
         dBk_dt = -1j * jnp.cross(self.nabla, Fk[:3], axis=0)
 
         J_e = self._current(Ck_e, qs[0], alpha_s[:3], u_s[:3], self.Nn_electrons, self.Nm_electrons, self.Np_electrons)
-        J = J_e if self.static_ions else J_e + self._current(Ck_i, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions)
+        J = (
+            J_e
+            if self.static_ions
+            else J_e + self._current(Ck_i, qs[1], alpha_s[3:], u_s[3:], self.Nn_ions, self.Nm_ions, self.Np_ions)
+        )
 
         driver = jnp.zeros_like(Fk[:3])
         if self.has_driver:

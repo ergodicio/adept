@@ -640,7 +640,7 @@ class BaseSpectrax1D(ADEPTModule):
                 filter_order=filter_order,
             )
             print(
-                f"Free-streaming exponential: Hou-Li filter {f'enabled (strength={filter_strength}, order={filter_order})' if filter_enabled else 'disabled'}"
+                f"Free-streaming exponential: Hou-Li filter {f'enabled (strength={filter_strength}, order={filter_order})' if filter_enabled else 'disabled'}"  # noqa: E501
             )
 
             # Create nonlinear-only vector field
@@ -733,7 +733,7 @@ class BaseSpectrax1D(ADEPTModule):
                     break
             if base_solver is None:
                 raise ValueError(
-                    f"Unknown integrator '{integrator_type}'. Use 'exponential' or a diffrax solver name (e.g. 'Dopri8')."
+                    f"Unknown integrator '{integrator_type}'. Use 'exponential' or a diffrax solver name (e.g. 'Dopri8')."  # noqa: E501
                 )
             print(f"Using explicit integrator: {solver_name} (adaptive={adaptive_time_step})")
 
