@@ -391,10 +391,17 @@ class LawsonRK4Solver(AbstractSolver):
         )
         y1 = _tree_add(Ef_yn, weighted)
 
+        # Embedded 2nd-order companion (Lawson-Heun) for adaptive step control.
+        # Uses already-computed Ef_N1 and N4 — no extra nonlinear evaluations.
+        # y1_2nd = Ef(y0) + (dt/2) * (Ef(N1) + N4)   [trapezoid rule in IF frame]
+        # error = y1 - y1_2nd = O(dt^3), valid for PIDController with order=2.
+        y1_2nd = _tree_add(Ef_yn, _tree_scale(_tree_add(Ef_N1, N4), dt / 2.0))
+        y_error = jax.tree.map(lambda a, b: a - b, y1, y1_2nd)
+
         # Dense info for interpolation (linear between endpoints)
         dense_info = dict(y0=y0, y1=y1)
 
-        return y1, None, dense_info, solver_state, RESULTS.successful
+        return y1, y_error, dense_info, solver_state, RESULTS.successful
 
     def func(self, terms, t0, y0, args):
         """Evaluate the nonlinear vector field (used by stepsize controllers)."""
