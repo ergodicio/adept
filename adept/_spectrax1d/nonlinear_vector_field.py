@@ -161,13 +161,11 @@ class NonlinearVectorField(eqx.Module):
         if self.use_hermite_filter:
             filter_order = filter_config.get("order", 36)
             filter_strength = filter_config.get("strength", 36.0)
-            cutoff_fraction = filter_config.get("cutoff_fraction", 1.0)
-
             self.hermite_filter_electrons = self._compute_houli_hermite_filter(
-                Nn_electrons, Nm_electrons, Np_electrons, filter_strength, filter_order, cutoff_fraction
+                Nn_electrons, Nm_electrons, Np_electrons, filter_strength, filter_order
             )
             self.hermite_filter_ions = self._compute_houli_hermite_filter(
-                Nn_ions, Nm_ions, Np_ions, filter_strength, filter_order, cutoff_fraction
+                Nn_ions, Nm_ions, Np_ions, filter_strength, filter_order
             )
         else:
             self.hermite_filter_electrons = None
@@ -240,32 +238,23 @@ class NonlinearVectorField(eqx.Module):
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
     def _compute_houli_hermite_filter(
-        self, Nn: int, Nm: int, Np: int, strength: float, order: int, cutoff_fraction: float = 1.0
+        self, Nn: int, Nm: int, Np: int, strength: float, order: int
     ) -> Array:
         """Compute Hou-Li exponential filter in Hermite space.
 
-        sigma(h) = exp(-strength * (h/h_max)^order) for h > cutoff_fraction * h_max,
-                 = 1                                  otherwise.
+        sigma(h) = exp(-strength * (h/h_max)^order)
 
-        cutoff_fraction=0.0: filter applied to all modes with h > 0 (only the DC mode
-            n=m=p=0 is unfiltered).
-        cutoff_fraction<1.0 (e.g. 2/3): modes with h <= cutoff_fraction * h_max are
-            unfiltered; only the top (1 - cutoff_fraction) fraction of modes are damped.
-        cutoff_fraction=1.0 (default): no modes are filtered — h > h_max is never true
-            since h is at most h_max.
+        where h = sqrt(n^2 + m^2 + p^2) and h_max = sqrt((Nn-1)^2 + (Nm-1)^2 + (Np-1)^2).
+        The highest-index corner mode gets exactly exp(-strength); lower modes are less damped.
         """
         n = jnp.arange(Nn)[None, None, :]
         m = jnp.arange(Nm)[None, :, None]
         p = jnp.arange(Np)[:, None, None]
 
         h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-        h_cutoff = cutoff_fraction * h_max
         h = jnp.sqrt(n**2 + m**2 + p**2)
 
-        # Always scale by h_max so the exponent reaches `strength` at the highest mode.
-        # cutoff_fraction < 1 zeros out modes below the threshold (they see no damping).
-        filter_arg = jnp.where(h > h_cutoff, strength * (h / h_max) ** order, 0.0)
-        return jnp.exp(-filter_arg)
+        return jnp.exp(-strength * (h / h_max) ** order)
 
     def _compute_plasma_current_single_species(
         self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int

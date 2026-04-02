@@ -97,11 +97,10 @@ class SpectraxVectorField:
         if self.use_hermite_filter:
             strength = float(filter_cfg.get("strength", 36.0))
             order = int(filter_cfg.get("order", 36))
-            cutoff_fraction = float(filter_cfg.get("cutoff_fraction", 1.0))
             self.hermite_filter_electrons = self._houli_filter(
-                Nn_electrons, Nm_electrons, Np_electrons, strength, order, cutoff_fraction
+                Nn_electrons, Nm_electrons, Np_electrons, strength, order
             )
-            self.hermite_filter_ions = self._houli_filter(Nn_ions, Nm_ions, Np_ions, strength, order, cutoff_fraction)
+            self.hermite_filter_ions = self._houli_filter(Nn_ions, Nm_ions, Np_ions, strength, order)
         else:
             self.hermite_filter_electrons = None
             self.hermite_filter_ions = None
@@ -155,17 +154,13 @@ class SpectraxVectorField:
         self.complex_state_vars = ["Ck_electrons", "Ck_ions", "Fk"]
 
     @staticmethod
-    def _houli_filter(Nn: int, Nm: int, Np: int, strength: float, order: int, cutoff_fraction: float = 1.0) -> Array:
+    def _houli_filter(Nn: int, Nm: int, Np: int, strength: float, order: int) -> Array:
         n = jnp.arange(Nn, dtype=jnp.float64)[None, None, :]
         m = jnp.arange(Nm, dtype=jnp.float64)[None, :, None]
         p = jnp.arange(Np, dtype=jnp.float64)[:, None, None]
         h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-        h_cutoff = cutoff_fraction * h_max
         h = jnp.sqrt(n**2 + m**2 + p**2)
-        # Always scale by h_max so the exponent reaches `strength` at the highest mode.
-        # cutoff_fraction < 1 zeros out modes below the threshold (they see no damping).
-        filter_arg = jnp.where(h > h_cutoff, strength * (h / h_max) ** order, 0.0)
-        return jnp.exp(-filter_arg)
+        return jnp.exp(-strength * (h / h_max) ** order)
 
     def _current(self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int) -> Array:
         C0 = Ck[0, 0, 0]
