@@ -64,9 +64,9 @@ Simulation grid and time-integration parameters.
 | `tmax` | float | — | Simulation end time |
 | `dt` | float | — | Timestep (calculated from `tmax/nt` if omitted) |
 | `nt` | int | — | Number of timesteps (calculated from `tmax/dt` if omitted) |
-| `solver` | string | `"Dopri8"` | Diffrax solver name (`"Dopri8"`, `"Tsit5"`, etc.) |
-| `adaptive_time_step` | bool | `true` | Use PID adaptive step-size controller |
-| `integrator` | string | `"explicit"` | Time integrator: `"explicit"` (Runge-Kutta via Diffrax) or `"exponential"` (Lawson-RK4) |
+| `solver` | string | `"Dopri8"` | Diffrax solver name for `"explicit"` integrator (`"Dopri8"`, `"Tsit5"`, etc.) |
+| `adaptive_time_step` | bool | `false` | Adaptive step-size control. For `"explicit"`: PID on the full ODE. For `"exponential"`: PID on the nonlinear term via embedded Lawson-Heun companion. |
+| `integrator` | string | `"exponential"` | Time integrator: `"exponential"` (Lawson-RK4, recommended) or `"explicit"` (plain Runge-Kutta via Diffrax) |
 | `use_shard_map` | bool | `false` | Enable multi-device sharding along Nx |
 
 ### Per-species Hermite modes
@@ -92,8 +92,16 @@ grid:
 time-stepping resolves light waves and free-streaming stiffness.
 
 **`exponential`** (Lawson-RK4): Factors out the linear part (free-streaming, Maxwell
-curls, collision) into exact matrix exponentials, removing CFL stiffness. Must be
-paired with `adaptive_time_step: false` and a suitable fixed `dt`.
+curls, collision) into exact matrix exponentials, removing CFL stiffness from the
+linear terms. Supports both fixed and adaptive time-stepping:
+
+- `adaptive_time_step: false` (default) — fixed `dt`, fastest per-step cost.
+- `adaptive_time_step: true` — enables a `PIDController` (rtol=1e-3, atol=1e-6)
+  using a zero-cost embedded 2nd-order companion (Lawson-Heun). The controller
+  shrinks `dt` when the nonlinear term (Lorentz force, plasma current) becomes
+  stiff, e.g. for strongly driven EPW. `dt` in the config sets the initial step;
+  `dtmax` is automatically set to `2π / (10 * w0)` from the highest-frequency
+  driver if present. Use this mode to stabilize strongly driven simulations.
 
 ---
 
@@ -141,13 +149,18 @@ density:
 
 Hou-Li exponential damping of high Hermite modes (prevents filamentation).
 
+Applies σ(h) = exp(-strength * (h / h_cutoff)^order) to modes where h > h_cutoff,
+where h is the Euclidean norm of the mode index triple (n, m, p), h_max is the
+norm at the highest-index corner, and h_cutoff = cutoff_fraction * h_max.
+Modes below the cutoff are unfiltered (σ=1).
+
 ```yaml
 drivers:
   hermite_filter:
     enabled: true
-    cutoff_fraction: 0.6667    # filter onset at this fraction of max mode
-    strength: 4.0              # filter strength
-    order: 4                   # filter order
+    strength: 4.0              # filter strength (higher = more aggressive damping)
+    order: 4                   # filter order (higher = sharper roll-off near h_cutoff)
+    cutoff_fraction: 0.6667    # fraction of h_max below which filter is inactive (default: 1.0)
 ```
 
 ---

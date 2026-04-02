@@ -1,0 +1,82 @@
+# Minimum Working Example: strongly driven EPW with adaptive Lawson-RK4
+#
+# Physics parameters match experiment 188671 (kλ_D ≈ 0.28, static ions).
+# Grid is reduced to Nn=32, Nx=17 for CPU feasibility.
+#
+# Purpose: verify that adaptive_time_step: true resolves the nonlinear
+# instability that fixed-step Lawson-RK4 develops for strong driving.
+# The actual production runs (Nn > 2048) must be run on GPU.
+#
+# To reproduce the instability baseline, set adaptive_time_step: false.
+
+solver: spectrax-1d
+
+mlflow:
+  experiment: epw-driven-mwe
+  run: kld028-nn32-adaptive
+
+physics:
+  Lx: 1.0
+  Ly: 1.0
+  Lz: 1.0
+  mi_me: 1836.0
+  qs: [-1.0, 1.0]
+  # alpha_s from exp 188671: kλ_D = k * alpha_e / sqrt(2) = 2π * 0.063 / 1.414 ≈ 0.28
+  alpha_s: [0.06302214213099744, 0.06302214213099744, 0.06302214213099744,
+            0.002, 0.002, 0.002]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  Omega_ce_tau: 1.0
+  nu: 1.0e-6       # nearly collisionless — allows high Hermite modes to fill up
+  nx: 1
+  ny: 0
+  nz: 0
+  dn1: 0.0
+  static_ions: true
+
+drivers:
+  ex:
+    '0':
+      k0: 6.283185307179586    # 2π/Lx (n=1 Fourier mode)
+      w0: 1.1370461486881047   # EPW frequency for kλ_D=0.28 (from exp 188671)
+      a0: 1.0e-4               # Instability threshold in exp 188671 is ~3e-5 (NaN at Nn=4096).
+                               # 1e-4 is safely above threshold for testing the fix.
+      t_center: 35.0
+      t_width: 30.0
+      t_rise: 14.0
+      x_center: 0.5
+      x_width: 1000.0
+      x_rise: 0.1
+      dw0: 0.0
+  ey: {}
+  ez: {}
+  hermite_filter:
+    enabled: true
+    strength: 36.0
+    order: 36
+
+grid:
+  Nx: 17
+  Ny: 1
+  Nz: 1
+  hermite_modes:
+    electrons:
+      Nn: 32
+      Nm: 1
+      Np: 1
+    ions:
+      Nn: 4    # ions frozen (static_ions: true) but need valid Nn
+      Nm: 1
+      Np: 1
+  Ns: 2
+  tmax: 100.0
+  dt: 0.025
+  integrator: "exponential"
+  adaptive_time_step: true    # set false to reproduce fixed-step instability
+
+save:
+  fields:
+    t:
+      nt: 201
+  hermite:
+    t:
+      nt: 51

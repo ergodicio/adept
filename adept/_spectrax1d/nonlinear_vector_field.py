@@ -161,13 +161,13 @@ class NonlinearVectorField(eqx.Module):
         if self.use_hermite_filter:
             filter_order = filter_config.get("order", 36)
             filter_strength = filter_config.get("strength", 36.0)
-            cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
+            cutoff_fraction = filter_config.get("cutoff_fraction", 1.0)
 
             self.hermite_filter_electrons = self._compute_houli_hermite_filter(
-                Nn_electrons, Nm_electrons, Np_electrons, cutoff_fraction, filter_strength, filter_order
+                Nn_electrons, Nm_electrons, Np_electrons, filter_strength, filter_order, cutoff_fraction
             )
             self.hermite_filter_ions = self._compute_houli_hermite_filter(
-                Nn_ions, Nm_ions, Np_ions, cutoff_fraction, filter_strength, filter_order
+                Nn_ions, Nm_ions, Np_ions, filter_strength, filter_order, cutoff_fraction
             )
         else:
             self.hermite_filter_electrons = None
@@ -240,9 +240,17 @@ class NonlinearVectorField(eqx.Module):
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
     def _compute_houli_hermite_filter(
-        self, Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
+        self, Nn: int, Nm: int, Np: int, strength: float, order: int, cutoff_fraction: float = 1.0
     ) -> Array:
-        """Compute Hou-Li exponential filter in Hermite space."""
+        """Compute Hou-Li exponential filter in Hermite space.
+
+        sigma(h) = exp(-strength * (h/h_max)^order) for h > cutoff_fraction * h_max,
+                 = 1                                  otherwise.
+
+        cutoff_fraction=1.0 (default): full Hou-Li filter applied to all modes.
+        cutoff_fraction<1.0 (e.g. 2/3): modes below the threshold are unfiltered;
+        only the top (1-cutoff_fraction) fraction of modes are damped.
+        """
         n = jnp.arange(Nn)[None, None, :]
         m = jnp.arange(Nm)[None, :, None]
         p = jnp.arange(Np)[:, None, None]
@@ -251,7 +259,9 @@ class NonlinearVectorField(eqx.Module):
         h_cutoff = cutoff_fraction * h_max
         h = jnp.sqrt(n**2 + m**2 + p**2)
 
-        filter_arg = jnp.where(h > h_cutoff, strength * ((h / h_cutoff) ** order), 0.0)
+        # Always scale by h_max so the exponent reaches `strength` at the highest mode.
+        # cutoff_fraction < 1 zeros out modes below the threshold (they see no damping).
+        filter_arg = jnp.where(h > h_cutoff, strength * (h / h_max) ** order, 0.0)
         return jnp.exp(-filter_arg)
 
     def _compute_plasma_current_single_species(
@@ -360,14 +370,6 @@ class NonlinearVectorField(eqx.Module):
                 Omega_ce_tau=Omega_ce_tau,
                 m=mi_me,
             )
-
-        # Apply Hermite filter
-        if self.use_hermite_filter:
-            filter_broadcast_e = self.hermite_filter_electrons[:, :, :, None, None, None]
-            dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
-            if not self.static_ions:
-                filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
-                dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
 
         # Apply density noise
         if self.noise_enabled:

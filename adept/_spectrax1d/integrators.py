@@ -64,6 +64,8 @@ class SplitStepDampingSolver(AbstractSolver):
     sponge_fields: ArrayLike | None
     sponge_plasma_e: ArrayLike | None
     sponge_plasma_i: ArrayLike | None
+    hermite_filter_e: ArrayLike | None
+    hermite_filter_i: ArrayLike | None
     Ny: int
     Nx: int
     Nz: int
@@ -74,6 +76,8 @@ class SplitStepDampingSolver(AbstractSolver):
         sponge_fields: ArrayLike | None = None,
         sponge_plasma_e: ArrayLike | None = None,
         sponge_plasma_i: ArrayLike | None = None,
+        hermite_filter_e: ArrayLike | None = None,
+        hermite_filter_i: ArrayLike | None = None,
         Ny: int = 1,
         Nx: int = 1,
         Nz: int = 1,
@@ -83,6 +87,8 @@ class SplitStepDampingSolver(AbstractSolver):
         self.sponge_fields = sponge_fields
         self.sponge_plasma_e = sponge_plasma_e
         self.sponge_plasma_i = sponge_plasma_i
+        self.hermite_filter_e = hermite_filter_e
+        self.hermite_filter_i = hermite_filter_i
         self.Ny = Ny
         self.Nx = Nx
         self.Nz = Nz
@@ -252,6 +258,16 @@ class SplitStepDampingSolver(AbstractSolver):
         else:
             y_damped["Ck_ions"] = y["Ck_ions"]
 
+        # Apply Hermite filter to electron distribution (diagonal in mode space — no FFT needed)
+        if self.hermite_filter_e is not None:
+            Ck_e = y_damped["Ck_electrons"].view(jnp.complex128)
+            y_damped["Ck_electrons"] = (Ck_e * self.hermite_filter_e[:, :, :, None, None, None]).view(jnp.float64)
+
+        # Apply Hermite filter to ion distribution
+        if self.hermite_filter_i is not None:
+            Ck_i = y_damped["Ck_ions"].view(jnp.complex128)
+            y_damped["Ck_ions"] = (Ck_i * self.hermite_filter_i[:, :, :, None, None, None]).view(jnp.float64)
+
         return y_damped
 
     def func(self, terms, t0, y0, args):
@@ -375,10 +391,17 @@ class LawsonRK4Solver(AbstractSolver):
         )
         y1 = _tree_add(Ef_yn, weighted)
 
+        # Embedded 2nd-order companion (Lawson-Heun) for adaptive step control.
+        # Uses already-computed Ef_N1 and N4 — no extra nonlinear evaluations.
+        # y1_2nd = Ef(y0) + (dt/2) * (Ef(N1) + N4)   [trapezoid rule in IF frame]
+        # error = y1 - y1_2nd = O(dt^3), valid for PIDController with order=2.
+        y1_2nd = _tree_add(Ef_yn, _tree_scale(_tree_add(Ef_N1, N4), dt / 2.0))
+        y_error = jax.tree.map(lambda a, b: a - b, y1, y1_2nd)
+
         # Dense info for interpolation (linear between endpoints)
         dense_info = dict(y0=y0, y1=y1)
 
-        return y1, None, dense_info, solver_state, RESULTS.successful
+        return y1, y_error, dense_info, solver_state, RESULTS.successful
 
     def func(self, terms, t0, y0, args):
         """Evaluate the nonlinear vector field (used by stepsize controllers)."""

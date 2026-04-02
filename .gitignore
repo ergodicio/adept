@@ -134,3 +134,6 @@ mlflow.db
 
 # hatchling-generated version file
 **/_version.py
+.idea
+.vscode
+.DS_Store
