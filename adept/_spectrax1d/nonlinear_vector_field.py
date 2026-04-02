@@ -247,9 +247,12 @@ class NonlinearVectorField(eqx.Module):
         sigma(h) = exp(-strength * (h/h_max)^order) for h > cutoff_fraction * h_max,
                  = 1                                  otherwise.
 
-        cutoff_fraction=1.0 (default): full Hou-Li filter applied to all modes.
-        cutoff_fraction<1.0 (e.g. 2/3): modes below the threshold are unfiltered;
-        only the top (1-cutoff_fraction) fraction of modes are damped.
+        cutoff_fraction=0.0: filter applied to all modes with h > 0 (only the DC mode
+            n=m=p=0 is unfiltered).
+        cutoff_fraction<1.0 (e.g. 2/3): modes with h <= cutoff_fraction * h_max are
+            unfiltered; only the top (1 - cutoff_fraction) fraction of modes are damped.
+        cutoff_fraction=1.0 (default): no modes are filtered — h > h_max is never true
+            since h is at most h_max.
         """
         n = jnp.arange(Nn)[None, None, :]
         m = jnp.arange(Nm)[None, :, None]
