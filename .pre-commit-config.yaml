@@ -21,18 +21,18 @@ repos:
 
 
 - repo: https://github.com/henryiii/validate-pyproject-schema-store
-  rev: 2026.03.15
+  rev: 2026.03.29
   hooks:
   - id: validate-pyproject
 
 - repo: https://github.com/astral-sh/uv-pre-commit
-  rev: 0.10.12
+  rev: 0.11.2
   hooks:
   - id: uv-lock
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
   # Ruff version.
-  rev: v0.15.7
+  rev: v0.15.8
   hooks:
   # Run the linter.
   - id: ruff
