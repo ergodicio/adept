@@ -3,10 +3,10 @@ from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule, Stepper
-from adept.normalization import UREG, vfp1d_normalization
+from adept.normalization import UREG, skin_depth_normalization
 from adept.utils import filter_scalars
 from adept.vfp1d.grid import Grid
-from adept.vfp1d.helpers import _initialize_total_distribution_
+from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
 from adept.vfp1d.storage import get_save_quantities, post_process
 from adept.vfp1d.vector_field import OSHUN1D
 
@@ -14,7 +14,8 @@ from adept.vfp1d.vector_field import OSHUN1D
 class BaseVFP1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        self.plasma_norm = vfp1d_normalization(cfg["units"])
+        # n0 = critical density for 351nm (3ω Nd:glass)
+        self.plasma_norm = skin_depth_normalization("9.0663e21/cm^3", cfg["units"]["reference electron temperature"])
         self.grid = Grid.from_config(cfg["grid"], self.plasma_norm)
 
     def post_process(self, solver_result: dict, td: str) -> dict:
@@ -25,8 +26,9 @@ class BaseVFP1D(ADEPTModule):
         Z = self.cfg["units"]["Z"]
         ne = UREG.Quantity(self.cfg["units"]["reference electron density"]).to("1/cc")
         Te_eV = norm.T0.to("eV")
-        logLambda_ei = norm.logLambda_ei_val
-        logLambda_ee = norm.logLambda_ee_val
+        logLambda_ei, logLambda_ee = calc_logLambda(
+            self.cfg, ne, Te_eV, Z, self.cfg["units"]["Ion"], force_ee_equal_ei=True
+        )
 
         # Local aliases for quantities used in multiple expressions below
         wp0 = (1 / norm.tau).to("rad/s")

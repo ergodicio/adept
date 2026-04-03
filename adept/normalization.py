@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import jax.numpy as jnp
 import jpu
@@ -30,10 +30,6 @@ class PlasmaNormalization:
     v0: UREG.Quantity
     # Reference time [s]
     tau: UREG.Quantity
-
-    # Coulomb logarithms
-    logLambda_ei_val: float | None = None
-    logLambda_ee_val: float | None = None
 
     def logLambda_ee(self) -> float:
         n0_cc = self.n0.to("1/cc").magnitude
@@ -94,29 +90,22 @@ def electron_debye_normalization(n0_str, T0_str):
     return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
 
 
-def vfp1d_normalization(cfg_units: dict):
+def skin_depth_normalization(n0_str, T0_str):
     """
-    Returns the VFP-1D normalization with fixed n0 = 9.0663e21 cm^-3.
+    Returns the VFP-1D normalization.
     Unit quantities are:
         - c/wp0 (collisionless skin depth)
         - Electron thermal velocity
         - 1/wp0
     """
-    from adept.vfp1d.helpers import calc_logLambda
-
-    T0 = UREG.Quantity(cfg_units["reference electron temperature"])
-    ne = UREG.Quantity(cfg_units["reference electron density"]).to("1/cc")
-    n0 = UREG.Quantity("9.0663e21/cm^3")
+    n0 = UREG.Quantity(n0_str)
+    T0 = UREG.Quantity(T0_str)
 
     wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
     tau = 1 / wp0
 
     v0 = ((2.0 * T0 / UREG.m_e) ** 0.5).to("m/s")
     x0 = (UREG.c / wp0).to("nm")
-
-    logLambda_ei, logLambda_ee = calc_logLambda(
-        {"units": cfg_units}, ne, T0.to("eV"), cfg_units["Z"], cfg_units["Ion"], force_ee_equal_ei=True
-    )
 
     return PlasmaNormalization(
         m0=UREG.m_e,
@@ -126,6 +115,4 @@ def vfp1d_normalization(cfg_units: dict):
         L0=x0,
         v0=v0,
         tau=tau,
-        logLambda_ei_val=logLambda_ei,
-        logLambda_ee_val=logLambda_ee,
     )
