@@ -107,12 +107,4 @@ def skin_depth_normalization(n0_str, T0_str):
     v0 = ((2.0 * T0 / UREG.m_e) ** 0.5).to("m/s")
     x0 = (UREG.c / wp0).to("nm")
 
-    return PlasmaNormalization(
-        m0=UREG.m_e,
-        q0=UREG.e,
-        n0=n0,
-        T0=T0,
-        L0=x0,
-        v0=v0,
-        tau=tau,
-    )
+    return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
