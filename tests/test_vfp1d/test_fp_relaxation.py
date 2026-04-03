@@ -20,6 +20,7 @@ from fp_relaxation.runner import problem_name, run_relaxation_sweep
 from jax import Array
 
 from adept.vfp1d.fokker_planck import F0Collisions
+from adept.vfp1d.grid import Grid
 
 # =============================================================================
 # Test configuration
@@ -158,11 +159,23 @@ class Vfp1dVectorFieldFactory(AbstractFPRelaxationVectorFieldFactory):
         sc_iterations: int,
     ) -> eqx.Module:
         """Create an F0Collisions vector field for the given model/scheme combo."""
-        # Build config
         cfg = self._make_config(grid, model_name, scheme_name, nu, sc_iterations)
 
-        # Create production class and adapter
-        collisions = F0Collisions(cfg)
+        # Build a vfp1d Grid with dummy spatial/temporal values (F0Collisions only uses velocity fields)
+        vfp_grid = Grid(
+            xmin=0.0,
+            xmax=1.0,
+            nx=1,
+            tmin=0.0,
+            tmax=1.0,
+            dt=1.0,
+            nv=grid.nv,
+            vmax=float(grid.vmax),
+            nl=1,
+            boundary="periodic",
+        )
+
+        collisions = F0Collisions(cfg, vfp_grid)
         return F0CollisionsVectorField(collisions=collisions, dt=dt)
 
     def _make_config(
@@ -179,11 +192,6 @@ class Vfp1dVectorFieldFactory(AbstractFPRelaxationVectorFieldFactory):
             "CentralDifferencing": "central",
         }
         return {
-            "grid": {
-                "v": np.asarray(grid.v),
-                "dv": float(grid.dv),
-                "nv": grid.nv,
-            },
             "terms": {
                 "fokker_planck": {
                     # Direct nuee_coeff override for dimensionless testing

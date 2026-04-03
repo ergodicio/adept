@@ -25,6 +25,7 @@ from adept.driftdiffusion import (
     CentralDifferencing,
     ChangCooper,
 )
+from adept.vfp1d.grid import Grid
 
 
 class FastVFP(AbstractMaxwellianPreservingModel):
@@ -201,10 +202,7 @@ class F0Collisions(eqx.Module):
     The model and scheme are configurable via config["terms"]["fokker_planck"]["f00"].
     """
 
-    v: Array
-    v_edge: Array
-    dv: float
-    nv: int
+    grid: Grid
     nuee_coeff: float
     model: AbstractKernelBasedModel
     scheme: AbstractDriftDiffusionDifferencingScheme
@@ -212,26 +210,16 @@ class F0Collisions(eqx.Module):
     _sc_rtol: float
     _sc_atol: float
 
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, grid):
         """
-        Initialize F0Collisions from config.
+        Initialize F0Collisions from config and grid.
 
-        Config should have:
-        - grid.v, grid.dv, grid.nv
-        - terms.fokker_planck.f00.model (e.g., "CoulombianKernel")
-        - terms.fokker_planck.f00.scheme (e.g., "central" or "chang_cooper")
-        - terms.fokker_planck.self_consistent_beta (optional): dict with enabled, max_steps, rtol, atol
-
-        For collision frequency, provide ONE of:
-        - terms.fokker_planck.nuee_coeff: Direct override (for testing with dimensionless units)
-        - units.derived.n0, units.derived.logLambda_ee: Physical units (production)
-
-        The nuee_coeff override allows tests to use nu=1.0 without dealing with physical units.
+        Args:
+            cfg: Full config dict. Reads terms.fokker_planck for collision settings
+                 and units.derived for physical constants.
+            grid: Grid object providing velocity grid quantities (v, dv, nv, v_edge).
         """
-        self.v = cfg["grid"]["v"]
-        self.dv = cfg["grid"]["dv"]
-        self.nv = cfg["grid"]["nv"]
-        self.v_edge = 0.5 * (self.v[1:] + self.v[:-1])
+        self.grid = grid
 
         # Collision coefficient: allow direct override for testing
         fp_cfg = cfg["terms"]["fokker_planck"]
@@ -245,7 +233,7 @@ class F0Collisions(eqx.Module):
             #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
             # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
             r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022 value)
-            kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+            kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cc").magnitude * r_e)
             self.nuee_coeff = kp0re * cfg["units"]["derived"]["logLambda_ee"]
 
         # Create model and scheme from config
@@ -254,8 +242,8 @@ class F0Collisions(eqx.Module):
         model_name = f00_cfg.get("model", "CoulombianKernel")
         scheme_name = f00_cfg.get("scheme", "central")
 
-        self.model = _get_model(model_name, self.v, self.dv)
-        self.scheme = _get_scheme(scheme_name, self.dv)
+        self.model = _get_model(model_name, grid.v, grid.dv)
+        self.scheme = _get_scheme(scheme_name, grid.dv)
 
         # Self-consistent beta config (defaults to disabled)
         fp_cfg = cfg["terms"]["fokker_planck"]
@@ -279,8 +267,8 @@ class F0Collisions(eqx.Module):
 
         beta = _find_self_consistent_beta_single(
             f0,
-            self.v,
-            self.dv,
+            self.grid.v,
+            self.grid.dv,
             spherical=True,  # spherical=True for positive-only grid
             rtol=self._sc_rtol,
             atol=self._sc_atol,
@@ -294,10 +282,10 @@ class F0Collisions(eqx.Module):
 
         # Compute C_edge using the general formula: C = 2*beta*D*v
         # This ensures Chang-Cooper achieves Maxwellian equilibrium
-        C_edge = 2.0 * beta * D * self.v_edge
+        C_edge = 2.0 * beta * D * self.grid.v_edge
 
         # For spherical geometry, nu ~ 1/v² to account for the Jacobian
-        nu_arr = self.nuee_coeff / self.v**2
+        nu_arr = self.nuee_coeff / self.grid.v**2
         op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_arr, dt=dt)
 
         return lx.linear_solve(op, f0, solver=lx.AutoLinearSolver(well_posed=True)).value
@@ -324,34 +312,33 @@ class FLMCollisions:
     operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z.
     """
 
-    def __init__(self, cfg: dict):
-        self.v = cfg["grid"]["v"]
-        self.dv = cfg["grid"]["dv"]
+    def __init__(self, cfg: dict, grid):
+        self.grid = grid
+
         self.Z = cfg["units"]["Z"]
 
         r_e = 2.8179402894e-13
-        kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cm^3").value * r_e)
+        kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cc").magnitude * r_e)
         kpre = r_e * kp
         self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
         self.nuei_coeff = (
             kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
         )  # will be multiplied by ni = ne / Z
-
-        self.nl = cfg["grid"]["nl"]
         self.ee = cfg["terms"]["fokker_planck"]["flm"]["ee"]
 
         self.Z_nuei_scaling = (cfg["units"]["Z"] + 4.2) / (cfg["units"]["Z"] + 0.24)
 
+        nl = grid.nl
         self.a1, self.a2, self.b1, self.b2, self.b3, self.b4 = (
-            np.zeros(self.nl + 1),
-            np.zeros(self.nl + 1),
-            np.zeros(self.nl + 1),
-            np.zeros(self.nl + 1),
-            np.zeros(self.nl + 1),
-            np.zeros(self.nl + 1),
+            np.zeros(nl + 1),
+            np.zeros(nl + 1),
+            np.zeros(nl + 1),
+            np.zeros(nl + 1),
+            np.zeros(nl + 1),
+            np.zeros(nl + 1),
         )
 
-        for il in range(1, self.nl + 1):
+        for il in range(1, nl + 1):
             self.a1[il] = (il + 1) * (il + 2) / (2 * il + 1) / (2 * il + 3)
             self.a2[il] = -(il - 1) * il / (2 * il + 1) / (2 * il - 1)
             self.b1[il] = (-il * (il + 1) / 2 - (il + 1)) / (2 * il + 1) / (2 * il + 3)
@@ -370,7 +357,13 @@ class FLMCollisions:
 
         :return: the Rosenbluth integral
         """
-        return 4 * jnp.pi * self.v**-power * jnp.cumsum(self.v[None, :] ** (2.0 + power) * flm, axis=1) * self.dv
+        return (
+            4
+            * jnp.pi
+            * self.grid.v**-power
+            * jnp.cumsum(self.grid.v[None, :] ** (2.0 + power) * flm, axis=1)
+            * self.grid.dv
+        )
 
     def calc_ros_j(self, flm: Array, power: int) -> Array:
         r"""
@@ -382,9 +375,9 @@ class FLMCollisions:
         return (
             4
             * jnp.pi
-            * self.v[None, :] ** -power
-            * jnp.cumsum((self.v[None, :] ** (2.0 + power) * flm)[:, ::-1], axis=1)[:, ::-1]
-            * self.dv
+            * self.grid.v[None, :] ** -power
+            * jnp.cumsum((self.grid.v[None, :] ** (2.0 + power) * flm)[:, ::-1], axis=1)[:, ::-1]
+            * self.grid.dv
         )
 
     def get_ee_offdiagonal_contrib(self, t, y: Array, args: dict) -> Array:
@@ -424,14 +417,17 @@ class FLMCollisions:
 
         diag_term1 = 8 * jnp.pi * f0
 
-        lower_d2dv2 = (i2 + jm1) / (3.0 * self.v[None, :]) / self.dv**2.0
-        diag_d2dv2 = (i2 + jm1) / (3.0 * self.v[None, :]) / self.dv**2.0
-        upper_d2dv2 = (i2 + jm1) / (3.0 * self.v[None, :]) / self.dv**2.0
+        v = self.grid.v[None, :]
+        dv = self.grid.dv
 
-        diag_angular = -(-i2 + 2 * jm1 + 3 * i0) / (3.0 * self.v[None, :] ** 3.0)
+        lower_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
+        diag_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
+        upper_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
 
-        lower_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * self.v[None, :] ** 2.0) / 2 / self.dv
-        upper_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * self.v[None, :] ** 2.0) / 2 / self.dv
+        diag_angular = -(-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**3.0)
+
+        lower_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**2.0) / 2 / dv
+        upper_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**2.0) / 2 / dv
 
         # adding spatial differencing coefficients here
         # 1  -2  1  for d2dv2
@@ -463,18 +459,18 @@ class FLMCollisions:
         2. The ee collision operator is ignored and the Z* scaling is used instead
 
         """
-        for il in range(1, self.nl + 1):
-            ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / self.v[None, :] ** 3.0
+        v = self.grid.v[None, :]
+        dv = self.grid.dv
+        for il in range(1, self.grid.nl + 1):
+            ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
 
             if self.ee:
                 ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
                 #
-                d2dv2 = (
-                    0.5 / self.v[None, :] * jnp.gradient(jnp.gradient(pad_f0, self.dv, axis=1), self.dv, axis=1)[:, 2:]
-                )
+                d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
 
-                ddv = self.v[None, :] ** -2.0 * jnp.gradient(pad_f0, self.dv, axis=1)[:, 2:]
+                ddv = v**-2.0 * jnp.gradient(pad_f0, dv, axis=1)[:, 2:]
 
                 diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)
                 lower = -dt * self.nuee_coeff * ee_lower

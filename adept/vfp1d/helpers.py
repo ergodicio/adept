@@ -3,12 +3,12 @@
 
 
 import numpy as np
-from astropy.units import Quantity as _Q
 from jax import Array
 from jax import numpy as jnp
 from scipy.special import gamma
 
 from adept._base_ import get_envelope
+from adept.normalization import PlasmaNormalization, normalize
 
 # ideally this should be passed as as an argument and not re-initialised
 from adept.vfp1d.vector_field import OSHUN1D
@@ -57,15 +57,15 @@ def calc_logLambda(
     """
     if isinstance(cfg["units"]["logLambda"], str):
         if cfg["units"]["logLambda"].casefold() == "nrl":
-            log_ne = np.log(ne.to("1/cm^3").value)
-            log_Te = np.log(Te.to("eV").value)
+            log_ne = np.log(ne.to("1/cc").magnitude)
+            log_Te = np.log(Te.to("eV").magnitude)
             log_Z = np.log(Z)
 
             logLambda_ee = max(
                 2.0, 23.5 - 0.5 * log_ne + 1.25 * log_Te - np.sqrt(1e-5 + 0.0625 * (log_Te - 2.0) ** 2.0)
             )
 
-            if Te.to("eV").value > 10 * Z**2.0:
+            if Te.to("eV").magnitude > 10 * Z**2.0:
                 logLambda_ei = max(2.0, 24.0 - 0.5 * log_ne + log_Te)
             else:
                 logLambda_ei = max(2.0, 23.0 - 0.5 * log_ne + 1.5 * log_Te - log_Z)
@@ -117,20 +117,24 @@ def _initialize_distribution_(
     return f, vax
 
 
-def _initialize_total_distribution_(cfg: dict, cfg_grid: dict) -> tuple[Array, Array, Array]:
+def _initialize_total_distribution_(
+    cfg: dict, grid, beta: float, norm: PlasmaNormalization
+) -> tuple[Array, Array, Array]:
     """
     This function initializes the distribution function as a sum of the individual species
 
     :param cfg: Dict
-    :param cfg_grid: Dict
+    :param grid: Grid object
+    :param beta: vth/c (dimensionless thermal velocity)
+    :param norm: Plasma normalization (used for unit conversion of spatial profiles)
     :return: distribution function, density profile (nx, nv), (nx,)
 
     """
     params = cfg["density"]
-    prof_total = {"n": np.zeros([cfg_grid["nx"]]), "T": np.zeros([cfg_grid["nx"]])}
+    prof_total = {"n": np.zeros([grid.nx]), "T": np.zeros([grid.nx])}
 
-    f0 = np.zeros([cfg_grid["nx"], cfg_grid["nv"]])
-    f10 = np.zeros([cfg_grid["nx"] + 1, cfg_grid["nv"]])
+    f0 = np.zeros([grid.nx, grid.nv])
+    f10 = np.zeros([grid.nx + 1, grid.nv])
     species_found = False
     for name, species_params in cfg["density"].items():
         if name.startswith("species-"):
@@ -145,14 +149,13 @@ def _initialize_total_distribution_(cfg: dict, cfg_grid: dict) -> tuple[Array, A
                     profs[k] = species_params[k]["baseline"] * np.ones_like(prof_total[k])
 
                 elif species_params[k]["basis"] == "tanh":
-                    center = (_Q(species_params[k]["center"]) / cfg["units"]["derived"]["x0"]).to("").value
-                    width = (_Q(species_params[k]["width"]) / cfg["units"]["derived"]["x0"]).to("").value
-                    rise = (_Q(species_params[k]["rise"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    center = normalize(species_params[k]["center"], norm, dim="x")
+                    width = normalize(species_params[k]["width"], norm, dim="x")
+                    rise = normalize(species_params[k]["rise"], norm, dim="x")
 
                     left = center - width * 0.5
                     right = center + width * 0.5
-                    # rise = species_params[k]["rise"]
-                    prof = get_envelope(rise, rise, left, right, cfg_grid["x"])
+                    prof = get_envelope(rise, rise, left, right, grid.x)
 
                     if species_params[k]["bump_or_trough"] == "trough":
                         prof = 1 - prof
@@ -161,51 +164,45 @@ def _initialize_total_distribution_(cfg: dict, cfg_grid: dict) -> tuple[Array, A
                 elif species_params[k]["basis"] == "sine":
                     baseline = species_params[k]["baseline"]
                     amp = species_params[k]["amplitude"]
-                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    ll = normalize(species_params[k]["wavelength"], norm, dim="x")
 
-                    profs[k] = baseline * (1.0 + amp * jnp.sin(2 * jnp.pi / ll * cfg_grid["x"]))
+                    profs[k] = baseline * (1.0 + amp * jnp.sin(2 * jnp.pi / ll * grid.x))
 
                 elif species_params[k]["basis"] == "cosine":
                     baseline = species_params[k]["baseline"]
                     amp = species_params[k]["amplitude"]
-                    ll = (_Q(species_params[k]["wavelength"]) / cfg["units"]["derived"]["x0"]).to("").value
+                    ll = normalize(species_params[k]["wavelength"], norm, dim="x")
 
-                    profs[k] = baseline * (1.0 + amp * jnp.cos(2 * jnp.pi / ll * cfg_grid["x"]))
+                    profs[k] = baseline * (1.0 + amp * jnp.cos(2 * jnp.pi / ll * grid.x))
 
                 else:
                     raise NotImplementedError
-
-            profs["n"] *= (cfg["units"]["derived"]["ne"] / cfg["units"]["derived"]["n0"]).value
 
             prof_total["n"] += profs["n"]
 
             # Distribution function
             temp_f0, _ = _initialize_distribution_(
-                nv=int(cfg_grid["nv"]),
+                nv=grid.nv,
                 m=m,
-                vth=cfg_grid["beta"],
-                vmax=cfg_grid["vmax"],
+                vth=beta,
+                vmax=grid.vmax,
                 n_prof=profs["n"],
                 T_prof=profs["T"],
             )
             f0 += temp_f0
 
             # initialize f1 by taking a big time step while keeping f0 fixed (essentially sets electron inertia to 0)
-            # I don't like having to reinitialise oshun to get helper functions,
-            # either we pass as an argument or refactor
             # TODO: add switch to opt in/out
-            oshun = OSHUN1D(cfg)
+            oshun = OSHUN1D(cfg, grid=grid)
 
             big_dt = 1e12
             ni = prof_total["n"] / cfg["units"]["Z"]
 
-            # f10 lives at cell edges (nx+1, nv), use ddx_c2e to get derivative at edges
-            nx = cfg["grid"]["nx"]
-            Z_edge = oshun.interp_c2e(jnp.ones(nx))
+            Z_edge = oshun.interp_c2e(jnp.ones(grid.nx))
             ni_edge = oshun.interp_c2e(jnp.array(ni))
             f0_at_edges = oshun.interp_c2e(jnp.array(f0))
 
-            f10_star = -big_dt * oshun.v[None, :] * oshun.ddx_c2e(jnp.array(f0))
+            f10_star = -big_dt * grid.v[None, :] * oshun.ddx_c2e(jnp.array(f0))
             f10_from_adv = oshun.ei(
                 Z=Z_edge,
                 ni=ni_edge,
