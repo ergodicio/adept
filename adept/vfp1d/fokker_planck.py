@@ -143,7 +143,7 @@ class CoulombianKernel(AbstractKernelBasedModel):
         return 4.0 * jnp.pi * (lower + eps_edge_3_2 * upper) / 3.0
 
 
-def _get_model(
+def get_model(
     model_name: str,
     v: Array,
     dv: float,
@@ -169,7 +169,7 @@ def _get_model(
         raise ValueError(f"Unknown model: {model_name}")
 
 
-def _get_scheme(
+def get_scheme(
     scheme_name: str,
     dv: float,
 ) -> AbstractDriftDiffusionDifferencingScheme:
@@ -191,6 +191,14 @@ def _get_scheme(
         raise ValueError(f"Unknown scheme: {scheme_name}")
 
 
+class SelfConsistentBetaConfig(eqx.Module):
+    """Configuration for self-consistent beta iteration in F0Collisions."""
+
+    max_steps: int = 0
+    rtol: float = 1e-8
+    atol: float = 1e-12
+
+
 class F0Collisions(eqx.Module):
     """
     Collision operator for the isotropic (f₀₀) component.
@@ -198,60 +206,13 @@ class F0Collisions(eqx.Module):
     Uses a positive-only velocity grid (0 to vmax) with zero-flux boundary conditions.
     At v=0, where the drift coefficient C=v=0, zero-flux is equivalent to a reflective
     boundary condition, correctly representing the physics of the isotropic distribution.
-
-    The model and scheme are configurable via config["terms"]["fokker_planck"]["f00"].
     """
 
-    grid: Grid
     nuee_coeff: float
+    grid: Grid
     model: AbstractKernelBasedModel
     scheme: AbstractDriftDiffusionDifferencingScheme
-    _sc_max_steps: int
-    _sc_rtol: float
-    _sc_atol: float
-
-    def __init__(self, cfg: dict, grid):
-        """
-        Initialize F0Collisions from config and grid.
-
-        Args:
-            cfg: Full config dict. Reads terms.fokker_planck for collision settings
-                 and units.derived for physical constants.
-            grid: Grid object providing velocity grid quantities (v, dv, nv, v_edge).
-        """
-        self.grid = grid
-
-        # Collision coefficient: allow direct override for testing
-        fp_cfg = cfg["terms"]["fokker_planck"]
-        if "nuee_coeff" in fp_cfg:
-            # Direct override for testing with dimensionless units (nu=1.0)
-            self.nuee_coeff = fp_cfg["nuee_coeff"]
-        else:
-            # Production: compute from physical units
-            # collision frequency nu_ee0 of electron moving at speed of light
-            # normalised to background plasma frequency ω_p0
-            #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
-            # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
-            r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022 value)
-            kp0re = r_e * np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cc").magnitude * r_e)
-            self.nuee_coeff = kp0re * cfg["units"]["derived"]["logLambda_ee"]
-
-        # Create model and scheme from config
-        # Use original v grid with zero_flux BC (= reflective at v=0 where C=0)
-        f00_cfg = cfg["terms"]["fokker_planck"]["f00"]
-        model_name = f00_cfg.get("model", "CoulombianKernel")
-        scheme_name = f00_cfg.get("scheme", "central")
-
-        self.model = _get_model(model_name, grid.v, grid.dv)
-        self.scheme = _get_scheme(scheme_name, grid.dv)
-
-        # Self-consistent beta config (defaults to disabled)
-        fp_cfg = cfg["terms"]["fokker_planck"]
-        sc_cfg = fp_cfg.get("self_consistent_beta", {})
-        sc_enabled = sc_cfg.get("enabled", False)
-        self._sc_max_steps = sc_cfg.get("max_steps", 3) if sc_enabled else 0
-        self._sc_rtol = sc_cfg.get("rtol", 1e-8)
-        self._sc_atol = sc_cfg.get("atol", 1e-12)
+    sc_beta: SelfConsistentBetaConfig = SelfConsistentBetaConfig()
 
     def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
         """
@@ -270,9 +231,9 @@ class F0Collisions(eqx.Module):
             self.grid.v,
             self.grid.dv,
             spherical=True,  # spherical=True for positive-only grid
-            rtol=self._sc_rtol,
-            atol=self._sc_atol,
-            max_steps=self._sc_max_steps,
+            rtol=self.sc_beta.rtol,
+            atol=self.sc_beta.atol,
+            max_steps=self.sc_beta.max_steps,
         )
 
         # Get D from model (D = 1/(2β) = T in Buet notation)
@@ -312,39 +273,35 @@ class FLMCollisions:
     operator are ignored and a contribution along the diagonal is scaled by a factor depending on Z.
     """
 
-    def __init__(self, cfg: dict, grid):
+    def __init__(self, Z: float, nuee_coeff: float, grid, logLam_ratio: float = 1.0, full_aniso_ee: bool = True):
         self.grid = grid
 
-        self.Z = cfg["units"]["Z"]
+        self.Z = Z
 
-        r_e = 2.8179402894e-13
-        kp = np.sqrt(4 * np.pi * cfg["units"]["derived"]["n0"].to("1/cc").magnitude * r_e)
-        kpre = r_e * kp
-        self.nuee_coeff = kpre * cfg["units"]["derived"]["logLambda_ee"]
-        self.nuei_coeff = (
-            kpre * self.Z**2.0 * cfg["units"]["derived"]["logLambda_ei"]
-        )  # will be multiplied by ni = ne / Z
-        self.ee = cfg["terms"]["fokker_planck"]["flm"]["ee"]
+        self.nuee_coeff = nuee_coeff
+        self.nuei_coeff = self.nuee_coeff * self.Z**2.0 * logLam_ratio  # will be multiplied by ni = ne / Z
+        self.full_aniso_ee = full_aniso_ee
 
-        self.Z_nuei_scaling = (cfg["units"]["Z"] + 4.2) / (cfg["units"]["Z"] + 0.24)
+        self.Z_nuei_scaling = (Z + 4.2) / (Z + 0.24)
 
         nl = grid.nl
-        self.a1, self.a2, self.b1, self.b2, self.b3, self.b4 = (
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-            np.zeros(nl + 1),
-        )
+        il = np.arange(1, nl + 1)
+        denom_plus = (2 * il + 1) * (2 * il + 3)
+        denom_minus = (2 * il + 1) * (2 * il - 1)
+        ll = il * (il + 1) / 2
 
-        for il in range(1, nl + 1):
-            self.a1[il] = (il + 1) * (il + 2) / (2 * il + 1) / (2 * il + 3)
-            self.a2[il] = -(il - 1) * il / (2 * il + 1) / (2 * il - 1)
-            self.b1[il] = (-il * (il + 1) / 2 - (il + 1)) / (2 * il + 1) / (2 * il + 3)
-            self.b2[il] = (il * (il + 1) / 2 + (il + 2)) / (2 * il + 1) / (2 * il + 3)
-            self.b3[il] = (il * (il + 1) / 2 + (il - 1)) / (2 * il + 1) / (2 * il - 1)
-            self.b4[il] = (il * (il + 1) / 2 - il) / (2 * il + 1) / (2 * il - 1)
+        a_coeffs = np.stack([(il + 1) * (il + 2) / denom_plus, -(il - 1) * il / denom_minus])
+        self.a1, self.a2 = np.pad(a_coeffs, ((0, 0), (1, 0)))
+
+        b_coeffs = np.stack(
+            [
+                (-ll - (il + 1)) / denom_plus,
+                (ll + (il + 2)) / denom_plus,
+                (ll + (il - 1)) / denom_minus,
+                (ll - il) / denom_minus,
+            ]
+        )
+        self.b1, self.b2, self.b3, self.b4 = np.pad(b_coeffs, ((0, 0), (1, 0)))
 
     def calc_ros_i(self, flm: Array, power: int) -> Array:
         r"""
@@ -464,7 +421,7 @@ class FLMCollisions:
         for il in range(1, self.grid.nl + 1):
             ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
 
-            if self.ee:
+            if self.full_aniso_ee:
                 ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
                 #
