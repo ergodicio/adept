@@ -203,7 +203,7 @@ def _initialize_total_distribution_(
             f0_at_edges = oshun.interp_c2e(jnp.array(f0))
 
             f10_star = -big_dt * grid.v[None, :] * oshun.ddx_c2e(jnp.array(f0))
-            f10_from_adv = oshun.ei(
+            f10_from_adv = oshun.solve_aniso(
                 Z=Z_edge,
                 ni=ni_edge,
                 f0=f0_at_edges,
@@ -214,7 +214,7 @@ def _initialize_total_distribution_(
             jx_from_adv = oshun.calc_j(f10_from_adv)
 
             df0dv_at_edges = oshun.ddv(f0_at_edges)
-            f10_from_df0dv = oshun.ei(
+            f10_from_df0dv = oshun.solve_aniso(
                 Z=Z_edge,
                 ni=ni_edge,
                 f0=f0_at_edges,

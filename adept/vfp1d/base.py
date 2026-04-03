@@ -30,6 +30,14 @@ class BaseVFP1D(ADEPTModule):
             self.cfg, ne, Te_eV, Z, self.cfg["units"]["Ion"], force_ee_equal_ei=True
         )
 
+        # collision frequency nu_ee0 of electron moving at speed of light
+        # normalised to background plasma frequency ω_p0
+        #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
+        # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
+        r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022)
+        kpre = r_e * np.sqrt(4 * np.pi * norm.n0.to("1/cc").magnitude * r_e)
+        nuee_coeff = kpre * logLambda_ee
+
         # Local aliases for quantities used in multiple expressions below
         wp0 = (1 / norm.tau).to("rad/s")
         vth = norm.v0.to("m/s")
@@ -78,6 +86,8 @@ class BaseVFP1D(ADEPTModule):
             "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
             "nD_NRL": nD_NRL,
             "nD_Shkarofsky": np.exp(logLambda_ei) * Z / 9,
+            "nuee_coeff": nuee_coeff,
+            "logLam_ratio": logLambda_ei / logLambda_ee,
         }
 
         self.cfg["units"]["derived"] = all_quantities
