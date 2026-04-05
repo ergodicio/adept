@@ -406,8 +406,14 @@ class NonlinearVectorField(eqx.Module):
 
         dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
 
-        return {
+        out = {
             "Ck_electrons": dCk_electrons_dt.view(jnp.float64),
             "Ck_ions": dCk_ions_dt.view(jnp.float64),
             "Fk": dFk_dt.view(jnp.float64),
         }
+        # Zero derivatives for extra state keys (e.g. SSM hidden state,
+        # which is updated discretely by the closure solver, not the ODE RHS)
+        for k in y:
+            if k not in out:
+                out[k] = jnp.zeros_like(y[k])
+        return out
