@@ -19,16 +19,18 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from adept.driftdiffusion import (
+    AbstractBetaBasedModel,
     AbstractDriftDiffusionDifferencingScheme,
     AbstractKernelBasedModel,
     AbstractMaxwellianPreservingModel,
     CentralDifferencing,
     ChangCooper,
+    LogMeanFlux,
 )
 from adept.vfp1d.grid import Grid
 
 
-class FastVFP(AbstractMaxwellianPreservingModel):
+class FastVFP(AbstractBetaBasedModel):
     """
     FastVFP model: D = 1/(2β·v).
 
@@ -63,6 +65,24 @@ class FastVFP(AbstractMaxwellianPreservingModel):
         """
         del f  # Unused
         return 1.0 / (2.0 * beta[..., None] * self.v_edge)
+
+    def compute_C_and_D(self, f: Array, beta: Array) -> tuple[Array, Array]:
+        """
+        Compute C and D for FastVFP.
+
+        D = 1/(2β·v_edge), and C = 2β·D·v_edge = 1 (constant drift).
+
+        Args:
+            f: Distribution function, shape (..., nv) - unused
+            beta: Inverse temperature β = 1/(2T), shape (...)
+
+        Returns:
+            C_edge: Constant drift = 1, shape (nv-1,)
+            D: Diffusion coefficient at cell edges, shape (..., nv-1)
+        """
+        D = self.compute_D(f, beta)
+        C_edge = jnp.ones_like(self.v_edge)
+        return C_edge, D
 
 
 class AsymptoticLocal(AbstractKernelBasedModel):
@@ -187,6 +207,8 @@ def get_scheme(
         return CentralDifferencing(dv=dv)
     elif scheme_name in ("chang_cooper", "chang-cooper", "cc"):
         return ChangCooper(dv=dv)
+    elif scheme_name in ("log_mean", "log-mean", "log_mean_flux", "logmean", "buet"):
+        return LogMeanFlux(dv=dv)
     else:
         raise ValueError(f"Unknown scheme: {scheme_name}")
 
@@ -210,7 +232,7 @@ class F0Collisions(eqx.Module):
 
     nuee_coeff: float
     grid: Grid
-    model: AbstractKernelBasedModel
+    model: AbstractMaxwellianPreservingModel
     scheme: AbstractDriftDiffusionDifferencingScheme
     sc_beta: SelfConsistentBetaConfig = SelfConsistentBetaConfig()
 
@@ -236,20 +258,21 @@ class F0Collisions(eqx.Module):
             max_steps=self.sc_beta.max_steps,
         )
 
-        # Get D from model (D = 1/(2β) = T in Buet notation)
-        D = self.model.compute_D(f0[None, :], beta[None])
+        C_edge, D = self.model.compute_C_and_D(f0[None, :], beta[None])
         # Remove batch dimension for get_operator
-        D = D[0] if D.ndim > 0 else D
-
-        # Compute C_edge using the general formula: C = 2*beta*D*v
-        # This ensures Chang-Cooper achieves Maxwellian equilibrium
-        C_edge = 2.0 * beta * D * self.grid.v_edge
+        C_edge = C_edge[0] if C_edge.ndim > 1 else C_edge
+        D = D[0] if D.ndim > 1 else D
 
         # For spherical geometry, nu ~ 1/v² to account for the Jacobian
         nu_arr = self.nuee_coeff / self.grid.v**2
-        op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_arr, dt=dt)
+        # LogMeanFlux needs f to compute edge weights
+        extra = {"f": f0} if isinstance(self.scheme, LogMeanFlux) else {}
+        op = self.scheme.get_operator(C_edge=C_edge, D=D, nu=nu_arr, dt=dt, **extra)
 
-        return lx.linear_solve(op, f0, solver=lx.AutoLinearSolver(well_posed=True)).value
+        # Delta formulation: solve for increment δ = f^{n+1} - f^n to reduce
+        # floating-point error in density conservation (cf. diffrax)
+        delta = lx.linear_solve(op, f0 - op.mv(f0), solver=lx.AutoLinearSolver(well_posed=True)).value
+        return f0 + delta
 
     def __call__(self, nu: float, f0x: Array, dt: float) -> Array:
         """
