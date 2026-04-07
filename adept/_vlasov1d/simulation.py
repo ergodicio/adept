@@ -29,6 +29,7 @@ class EMDriver(eqx.Module):
     w0: float
     dw0: float
     envelope: SpaceTimeEnvelopeFunction
+    is_point_source: bool = False
 
     @staticmethod
     def from_model(model: EMDriverModel, norm: PlasmaNormalization | None = None) -> "EMDriver":
@@ -46,7 +47,8 @@ class EMDriver(eqx.Module):
                 else:
                     k0, w0 = params.k0, params.w0
 
-                return EMDriver(params.a0, k0, w0, params.dw0, envelope)
+                is_point = model.source_type == "point"
+                return EMDriver(params.a0, k0, w0, params.dw0, envelope, is_point_source=is_point)
 
             case EMDriverIntensityWavelengthParametrization(
                 intensity=intensity, wavelength=wavelength, leftgoing=leftgoing
@@ -75,7 +77,8 @@ class EMDriver(eqx.Module):
 
                 dw0 = 0.0  # ???
 
-                return EMDriver(a0, k0, w0, dw0, envelope)
+                is_point = model.source_type == "point"
+                return EMDriver(a0, k0, w0, dw0, envelope, is_point_source=is_point)
 
 
 class EMDriverSet(eqx.Module):

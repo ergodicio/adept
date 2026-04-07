@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 
@@ -111,6 +113,7 @@ class EMDriverAKWParametrization(BaseModel):
 class EMDriverModel(BaseModel):
     params: EMDriverIntensityWavelengthParametrization | EMDriverAKWParametrization
     envelope: SpaceTimeEnvelopeModel
+    source_type: Literal["extended", "point"] = "extended"
 
 
 class EMDriverSetModel(BaseModel):

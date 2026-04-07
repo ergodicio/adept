@@ -309,13 +309,16 @@ Each driver is identified by a string key (e.g., `"0"`, `"1"`) and has these par
 | `x_center` | float | Spatial envelope center |
 | `x_rise` | float | Spatial envelope rise distance |
 | `x_width` | float | Spatial envelope width |
+| `source_type` | string | `"extended"` (default) or `"point"`. Only affects `ey` drivers. See below. |
 
 ### Driver normalization and `a0`
 
 The parameter `a0` has the same meaning for both `ex` and `ey` drivers: **the normalized vector potential amplitude** of the wave. The difference is how `a0` determines the forcing magnitude in each context:
 
 - **`ex` drivers** (longitudinal electric field): The driver produces an electric field with amplitude `ω · a0`, derived from `E = -∂A/∂t`. This field enters the Vlasov equation directly.
-- **`ey` drivers** (transverse wave equation source): The driver produces a source term for the wave equation with amplitude `ω² · a0`, derived from `∂²A/∂t²`. This drives the vector potential evolution.
+- **`ey` drivers** (transverse wave equation source): The driver produces a source term for the wave equation. The source type controls the spatial profile:
+  - `"extended"` (default): Source is `S = -ω² · a0 · envelope(x,t) · sin(kx - ωt)`, spread over the spatial envelope width. The resulting wave amplitude depends on the source geometry.
+  - `"point"`: Source is concentrated at a single grid cell (nearest to `x_center`). The amplitude is calibrated using the vacuum Green's function so that the outgoing wave has amplitude `a0`. Point sources radiate equally in both directions; place the source near a boundary with absorbing BCs to get a unidirectional wave.
 
 ### Example: Single ex driver
 

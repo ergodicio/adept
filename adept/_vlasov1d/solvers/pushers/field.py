@@ -30,23 +30,58 @@ class LongitudinalElectricFieldDriver:
 
 
 class TransverseCurrentSourceDriver:
-    """Computes normalized source S_tilde = -ω² * a0 * sin(kx - ωt) for wave equation."""
+    """Computes source term for the transverse wave equation.
 
-    def __init__(self, xax, drivers: list[EMDriver]):
+    For extended sources (default): S = -ω² * a0 * envelope(x,t) * sin(kx - ωt)
+    For point sources: S = (F0/dx) * time_envelope(t) * δ_i0 * sin(ωt)
+
+    For point sources, the amplitude scaling uses vacuum dispersion. For a 1D wave
+    equation with point source S = F0 * delta(x - x0) * sin(wt), the Green's function
+    gives outgoing waves with amplitude F0 / (2*k*c^2). To get amplitude a0, we need
+    F0 = 2*k*c^2*a0. Using vacuum k = w/c, this gives F0 = 2*w*c*a0. In plasma
+    (k_plasma < k_vac), the actual amplitude will be slightly larger than a0 by a
+    factor k_vac / k_plasma.
+
+    Note: point sources radiate equally in both directions. Place the source near a
+    boundary with absorbing BCs to get a unidirectional wave.
+    """
+
+    def __init__(self, xax, drivers: list[EMDriver], c: float = 0.0):
         self.xax = xax
         self.drivers = drivers
+        dx = float(xax[1] - xax[0])
 
-    def _single_driver_source(self, driver: EMDriver, current_time):
-        kk = driver.k0
+        self.point_source_masks = []
+        self.point_source_scales = []
+        for driver in drivers:
+            if driver.is_point_source:
+                center = driver.envelope.space_envelope.center
+                i0 = jnp.argmin(jnp.abs(xax - center))
+                mask = jnp.zeros_like(xax).at[i0].set(1.0)
+                w_total = driver.w0 + driver.dw0
+                F0 = 2.0 * w_total * c * driver.a0
+                self.point_source_masks.append(mask)
+                self.point_source_scales.append(F0 / dx)
+            else:
+                self.point_source_masks.append(None)
+                self.point_source_scales.append(None)
+
+    def _single_driver_source(self, driver: EMDriver, mask, scale, current_time):
         ww = driver.w0
         dw = driver.dw0
-        factor = driver.envelope(self.xax, current_time)
-        return -factor * (ww + dw) ** 2 * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
+        w_total = ww + dw
+        if driver.is_point_source:
+            time_env = driver.envelope.time_envelope(current_time)
+            return scale * time_env * mask * jnp.sin(w_total * current_time)
+        else:
+            kk = driver.k0
+            factor = driver.envelope(self.xax, current_time)
+            return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
 
     def __call__(self, t, args):
         total = jnp.zeros_like(self.xax)
-        for pulse in self.drivers:
-            total += self._single_driver_source(pulse, t)
+        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales):
+            total += self._single_driver_source(driver, mask, scale, t)
         return total
 
 

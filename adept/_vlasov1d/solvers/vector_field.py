@@ -277,10 +277,11 @@ class VlasovMaxwell:
         self.vpfp = VlasovPoissonFokkerPlanck(cfg, grid)
         # beta = 1/c_norm is still read from cfg["grid"] for now
         beta = cfg["grid"]["beta"]
-        self.wave_solver = field.WaveSolver(c=1.0 / beta, dx=grid.dx, dt=grid.dt)
+        c = 1.0 / beta
+        self.wave_solver = field.WaveSolver(c=c, dx=grid.dx, dt=grid.dt)
 
         self.dt = grid.dt
-        self.ey_driver = field.TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey)
+        self.ey_driver = field.TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey, c=c)
         self.ex_driver = field.LongitudinalElectricFieldDriver(grid.x, drivers=drivers.ex)
 
     def compute_electron_charge_density(self, f_dict):
