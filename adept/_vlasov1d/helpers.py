@@ -210,14 +210,16 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                     field_name = nm.split("-", 1)[1] if "-" in nm else nm
 
                     # Spacetime plot
-                    fld.plot()
-                    plt.savefig(os.path.join(species_dir, f"spacetime_{field_name}.png"), bbox_inches="tight")
+                    fld.plot(figsize=(12, 8))
+                    plt.savefig(os.path.join(species_dir, f"spacetime_{field_name}.png"), bbox_inches="tight", dpi=150)
                     plt.close()
 
                     # Log plot
-                    np.log10(np.abs(fld)).plot()
+                    np.log10(np.abs(fld)).plot(figsize=(12, 8))
                     plt.savefig(
-                        os.path.join(species_dir, "logplots", f"spacetime_log_{field_name}.png"), bbox_inches="tight"
+                        os.path.join(species_dir, "logplots", f"spacetime_log_{field_name}.png"),
+                        bbox_inches="tight",
+                        dpi=150,
                     )
                     plt.close()
 
