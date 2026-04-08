@@ -35,19 +35,18 @@ class BaseVFP1D(ADEPTModule):
         # normalised to background plasma frequency ω_p0
         #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
         # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
-        r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022)
-        kpre = r_e * np.sqrt(4 * np.pi * norm.n0.to("1/cc").magnitude * r_e)
-        nuee_coeff = kpre * logLambda_ee
+        r_e = 2.8179403205e-13 * UREG.cm  # Classical electron radius (CODATA 2022)
+        kpre = (r_e * np.sqrt(4 * np.pi * norm.n0 * r_e)).to("").magnitude
+        nuee_coeff = float(kpre * logLambda_ee)
 
-        # Local aliases for quantities used in multiple expressions below
-        wp0 = (1 / norm.tau).to("rad/s")
+        # Physical plasma frequency at ne (not the normalization frequency 1/tau)
+        wp0 = ((ne * UREG.e**2 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
         vth = ((2.0 * norm.T0 / UREG.m_e) ** 0.5).to("m/s")
         vth_norm = norm.vth_norm()
         # Elementary charge in Gaussian CGS (pint cannot convert SI↔Gaussian charge dimensions)
         e_gauss = UREG.Quantity(4.803204712570263e-10, "Fr")
 
-        ne_cc = ne.to("1/cc").magnitude
-        nD_NRL = 1.72e9 * Te_eV.magnitude**1.5 / np.sqrt(ne_cc)
+        nD_NRL = 1.72e9 * (Te_eV / UREG.electronvolt) ** 1.5 / np.sqrt(ne * UREG.cc)
 
         nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
         # JPB - Maybe comment which page/eq this is from? There are lots of collision times in NRL
@@ -58,7 +57,7 @@ class BaseVFP1D(ADEPTModule):
             1
             / (
                 0.75
-                * UREG.Quantity(1, "electron_mass") ** 0.5
+                * UREG.m_e**0.5
                 * Te_eV**1.5
                 / (np.sqrt(2 * np.pi) * (ne / Z) * Z**2.0 * e_gauss**4.0 * logLambda_ei)
             )
@@ -70,8 +69,7 @@ class BaseVFP1D(ADEPTModule):
         #         = 0.093373  [at I in 1e15 W/cm^2, lam in um, T in keV]
         # Derived from fundamental constants (CODATA 2022, see Wikipedia
         # "Ponderomotive energy").  Ridgers (2011) uses 0.091 (older constants).
-        lam0_um = UREG.Quantity(self.cfg["units"]["laser_wavelength"]).to("um").magnitude
-        Te_keV = Te_eV.to("keV").magnitude
+        lam0 = UREG.Quantity(self.cfg["units"]["laser_wavelength"]).to("um")
         ib_cfg = self.cfg.get("drivers", {}).get("ib", {})
         polarisation = ib_cfg.get("polarisation", "linear")
         if polarisation == "linear":
@@ -80,13 +78,13 @@ class BaseVFP1D(ADEPTModule):
             alpha_pol = 0.5
         else:
             alpha_pol = float(polarisation)
-        vosc2_per_intensity = 0.093373 * lam0_um**2 / (alpha_pol * Te_keV)  # per 10¹⁵ W/cm²
+        vosc2_per_intensity = float(
+            (0.093373 * (lam0 / UREG.um) ** 2 / (alpha_pol * (Te_eV / UREG.keV))).to("").magnitude
+        )  # per 10¹⁵ W/cm²
 
         # Normalised laser frequency ω₀ = ω_L / ω_p (derived from laser_wavelength)
         # ω_L = 2πc/λ₀, ω_p = 1/τ
-        lam0 = UREG.Quantity(self.cfg["units"]["laser_wavelength"]).to("m")
-        omega_L = (2 * np.pi * UREG.Quantity(1, "speed_of_light").to("m/s") / lam0).to("rad/s")
-        w0_norm = float((omega_L / wp0).to("").magnitude)
+        w0_norm = float((2 * np.pi * UREG.c / lam0 * norm.tau).to(""))
 
         all_quantities = {
             "wp0": wp0,
@@ -103,9 +101,9 @@ class BaseVFP1D(ADEPTModule):
             "nuei_shk": nuei_shk,
             "nuei_nrl": nuei_nrl,
             "nuei_epphaines": nuei_epphaines,
-            "nuei_shk_norm": (nuei_shk / wp0).to(""),
-            "nuei_nrl_norm": (nuei_nrl / wp0).to(""),
-            "nuei_epphaines_norm": (nuei_epphaines / wp0).to(""),
+            "nuei_shk_norm": (nuei_shk * norm.tau).to(""),
+            "nuei_nrl_norm": (nuei_nrl * norm.tau).to(""),
+            "nuei_epphaines_norm": (nuei_epphaines * norm.tau).to(""),
             "lambda_mfp_shk": (vth / nuei_shk).to("micron"),
             "lambda_mfp_nrl": (vth / nuei_nrl).to("micron"),
             "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),

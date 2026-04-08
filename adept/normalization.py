@@ -50,7 +50,7 @@ class PlasmaNormalization:
         return ((2.0 * self.T0 / self.m0) ** 0.5 / self.v0).to("").magnitude
 
     def speed_of_light_norm(self) -> float:
-        return (UREG.c / self.v0).to("").magnitude
+        return (UREG.Quantity(1, "speed_of_light").to("m/s") / self.v0).to("").magnitude
 
 
 def normalize(s: float | int | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
@@ -99,7 +99,6 @@ def laser_normalization(laser_wavelength_str, T0_str):
     Returns a normalization based on the laser frequency.
 
     n0 is the critical density for the given laser wavelength.
-    wp0 = w_L (laser frequency = plasma frequency at critical density).
 
     Unit quantities are:
         - L0 = c/w_L = λ/(2π) (reduced laser wavelength)
@@ -107,15 +106,13 @@ def laser_normalization(laser_wavelength_str, T0_str):
         - tau = 1/w_L (inverse laser frequency)
         - T0 = reference electron temperature (not self-consistent with v0)
     """
-    lam = UREG.Quantity(laser_wavelength_str)
+
     T0 = UREG.Quantity(T0_str)
 
-    w_L = (2 * jnp.pi * UREG.c / lam).to("rad/s")
-    n0 = (UREG.epsilon_0 * UREG.m_e * w_L**2 / UREG.e**2).to("1/cc")
+    one_over_k = (UREG.Quantity(laser_wavelength_str) / 2 / jnp.pi).to("um")
+    omega_laser = (UREG.c / one_over_k).to("rad/s")
+    ne_crit = (UREG.epsilon_0 * UREG.m_e * omega_laser**2 / UREG.e**2).to("1/cc")
 
-    wp0 = w_L.to("rad/s")
-    tau = 1 / wp0
-    v0 = UREG.c.to("m/s")
-    x0 = (v0 / wp0).to("nm")
-
-    return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
+    return PlasmaNormalization(
+        m0=UREG.m_e, q0=UREG.e, n0=ne_crit, T0=T0, L0=one_over_k, v0=1 * UREG.c, tau=1 / omega_laser
+    )
