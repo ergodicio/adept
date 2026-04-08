@@ -3,7 +3,7 @@ from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule, Stepper
-from adept.normalization import UREG, skin_depth_normalization
+from adept.normalization import UREG, laser_normalization
 from adept.utils import filter_scalars
 from adept.vfp1d.grid import Grid
 from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
@@ -14,8 +14,9 @@ from adept.vfp1d.vector_field import OSHUN1D
 class BaseVFP1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        # n0 = critical density for 351nm (3ω Nd:glass)
-        self.plasma_norm = skin_depth_normalization("9.0663e21/cm^3", cfg["units"]["reference electron temperature"])
+        self.plasma_norm = laser_normalization(
+            cfg["units"]["laser_wavelength"], cfg["units"]["reference electron temperature"]
+        )
         self.grid = Grid.from_config(cfg["grid"], self.plasma_norm)
 
     def post_process(self, solver_result: dict, td: str) -> dict:
@@ -40,8 +41,8 @@ class BaseVFP1D(ADEPTModule):
 
         # Local aliases for quantities used in multiple expressions below
         wp0 = (1 / norm.tau).to("rad/s")
-        vth = norm.v0.to("m/s")
-        beta = 1.0 / norm.speed_of_light_norm()
+        vth = ((2.0 * norm.T0 / UREG.m_e) ** 0.5).to("m/s")
+        vth_norm = norm.vth_norm()
         # Elementary charge in Gaussian CGS (pint cannot convert SI↔Gaussian charge dimensions)
         e_gauss = UREG.Quantity(4.803204712570263e-10, "Fr")
 
@@ -63,6 +64,30 @@ class BaseVFP1D(ADEPTModule):
             )
         ).to("Hz")
 
+        # Normalised v_osc^2 per unit intensity:
+        #   v_osc^2_norm = K * I * lam^2 / (alpha * T)
+        # where K = e^2 / (m_e * 2 * 4*pi^2 * c^3 * eps_0)
+        #         = 0.093373  [at I in 1e15 W/cm^2, lam in um, T in keV]
+        # Derived from fundamental constants (CODATA 2022, see Wikipedia
+        # "Ponderomotive energy").  Ridgers (2011) uses 0.091 (older constants).
+        lam0_um = UREG.Quantity(self.cfg["units"]["laser_wavelength"]).to("um").magnitude
+        Te_keV = Te_eV.to("keV").magnitude
+        ib_cfg = self.cfg.get("drivers", {}).get("ib", {})
+        polarisation = ib_cfg.get("polarisation", "linear")
+        if polarisation == "linear":
+            alpha_pol = 1.0
+        elif polarisation == "circular":
+            alpha_pol = 0.5
+        else:
+            alpha_pol = float(polarisation)
+        vosc2_per_intensity = 0.093373 * lam0_um**2 / (alpha_pol * Te_keV)  # per 10¹⁵ W/cm²
+
+        # Normalised laser frequency ω₀ = ω_L / ω_p (derived from laser_wavelength)
+        # ω_L = 2πc/λ₀, ω_p = 1/τ
+        lam0 = UREG.Quantity(self.cfg["units"]["laser_wavelength"]).to("m")
+        omega_L = (2 * np.pi * UREG.Quantity(1, "speed_of_light").to("m/s") / lam0).to("rad/s")
+        w0_norm = float((omega_L / wp0).to("").magnitude)
+
         all_quantities = {
             "wp0": wp0,
             "n0": norm.n0.to("1/cc"),
@@ -73,7 +98,7 @@ class BaseVFP1D(ADEPTModule):
             "Ti": UREG.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV"),
             "logLambda_ei": logLambda_ei,
             "logLambda_ee": logLambda_ee,
-            "beta": beta,
+            "vth_norm": vth_norm,
             "x0": norm.L0.to("nm"),
             "nuei_shk": nuei_shk,
             "nuei_nrl": nuei_nrl,
@@ -88,10 +113,12 @@ class BaseVFP1D(ADEPTModule):
             "nD_Shkarofsky": np.exp(logLambda_ei) * Z / 9,
             "nuee_coeff": nuee_coeff,
             "logLam_ratio": logLambda_ei / logLambda_ee,
+            "vosc2_per_intensity": vosc2_per_intensity,
+            "w0_norm": w0_norm,
         }
 
         self.cfg["units"]["derived"] = all_quantities
-        self.cfg["grid"]["beta"] = beta
+        self.cfg["grid"]["vth_norm"] = vth_norm
 
         return {k: str(v) for k, v in all_quantities.items()}
 
@@ -124,8 +151,9 @@ class BaseVFP1D(ADEPTModule):
 
     def init_state_and_args(self) -> dict:
         grid = self.grid
-        beta = 1.0 / self.plasma_norm.speed_of_light_norm()
-        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm)
+        f0, f10, ne_prof = _initialize_total_distribution_(
+            self.cfg, grid, self.plasma_norm.vth_norm(), self.plasma_norm
+        )
 
         # Scale density to physical ne (f10 is invariant in the big-dt collision limit)
         ne = UREG.Quantity(self.cfg["units"]["reference electron density"])

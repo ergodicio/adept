@@ -163,6 +163,24 @@ class CoulombianKernel(AbstractKernelBasedModel):
         return 4.0 * jnp.pi * (lower + eps_edge_3_2 * upper) / 3.0
 
 
+class NullModel(AbstractBetaBasedModel):
+    """
+    Null collision model: D = 0, C = 0.
+
+    Used for collisionless tests where only external heating/cooling
+    (IB, Maxwellian) drives the evolution via the D augmentation in F0Collisions.
+    """
+
+    def compute_D(self, f: Array, beta: Array) -> Array:
+        del f, beta
+        return jnp.zeros(())
+
+    def compute_C_and_D(self, f: Array, beta: Array) -> tuple[Array, Array]:
+        del f, beta
+        nv = self.v.shape[0]
+        return jnp.zeros(nv - 1), jnp.zeros(nv - 1)
+
+
 def get_model(
     model_name: str,
     v: Array,
@@ -185,6 +203,8 @@ def get_model(
         return AsymptoticLocal(v=v, dv=dv)
     elif model_name in ("fastvfp", "fast_vfp", "fast-vfp"):
         return FastVFP(v=v, dv=dv)
+    elif model_name in ("null", "none", "collisionless"):
+        return NullModel(v=v, dv=dv)
     else:
         raise ValueError(f"Unknown model: {model_name}")
 
@@ -236,13 +256,24 @@ class F0Collisions(eqx.Module):
     scheme: AbstractDriftDiffusionDifferencingScheme
     sc_beta: SelfConsistentBetaConfig = SelfConsistentBetaConfig()
 
-    def _solve_one_vslice_(self, nu: float, f0: Array, dt: float) -> Array:
+    def _solve_one_vslice_(
+        self,
+        nu: float,
+        f0: Array,
+        dt: float,
+        D0_heating: float | None = None,
+        ib_vosc2: float | None = None,
+        ib_Z2ni_w0: float | None = None,
+    ) -> Array:
         """
         Solve the collision operator at a single location in space.
 
         :param nu: collision frequency (unused, we use nuee_coeff)
         :param f0: distribution function at a single location (nv,)
         :param dt: time step
+        :param D0_heating: Maxwellian heating rate D₀ (>0 heats, <0 cools). None to skip.
+        :param ib_vosc2: IB quiver velocity squared v_osc². None to skip.
+        :param ib_Z2ni_w0: IB parameter Z²nᵢ/ω₀. Required when ib_vosc2 is not None.
 
         :return: updated distribution function (nv,)
         """
@@ -263,6 +294,17 @@ class F0Collisions(eqx.Module):
         C_edge = C_edge[0] if C_edge.ndim > 1 else C_edge
         D = D[0] if D.ndim > 1 else D
 
+        # Augment D with heating terms (Ridgers formulation)
+        v_edge = self.grid.v_edge
+        if D0_heating is not None:
+            # Maxwellian heating/cooling (Ridgers eq E.2): D̄ = D + D₀·v²
+            D = D + D0_heating * v_edge**2
+        if ib_vosc2 is not None:
+            # IB heating (Ridgers eq 4.39): D̄ = D + (v_osc²/(6v))·g(v)
+            # g(v) = [1 + (Z²nᵢ/(ω₀v³))²]⁻¹
+            ib_arg = ib_Z2ni_w0 / v_edge**3
+            D = D + (ib_vosc2 / (6.0 * v_edge)) / (1.0 + ib_arg**2)
+
         # For spherical geometry, nu ~ 1/v² to account for the Jacobian
         nu_arr = self.nuee_coeff / self.grid.v**2
         # LogMeanFlux needs f to compute edge weights
@@ -274,17 +316,38 @@ class F0Collisions(eqx.Module):
         delta = lx.linear_solve(op, f0 - op.mv(f0), solver=lx.AutoLinearSolver(well_posed=True)).value
         return f0 + delta
 
-    def __call__(self, nu: float, f0x: Array, dt: float) -> Array:
+    def __call__(
+        self,
+        nu: float,
+        f0x: Array,
+        dt: float,
+        *,
+        D0_heating: float | Array = None,
+        ib_vosc2: float | Array = None,
+        ib_Z2ni_w0: float | Array = None,
+    ) -> Array:
         """
         Solve the collision operator at all locations in space.
 
         :param nu: collision frequency (unused, we use nuee_coeff)
         :param f0x: distribution function at all locations (nx, nv)
         :param dt: time step
+        :param D0_heating: Maxwellian heating rate D₀. Scalar or (nx,). None to skip.
+        :param ib_vosc2: IB quiver velocity squared. Scalar or (nx,). None to skip.
+        :param ib_Z2ni_w0: IB parameter Z²nᵢ/ω₀. Scalar or (nx,). Required with ib_vosc2.
 
         :return: updated distribution function (nx, nv)
         """
-        return vmap(self._solve_one_vslice_, in_axes=(None, 0, None))(nu, f0x, dt)
+        if D0_heating is None and ib_vosc2 is None:
+            # No heating — skip heating branches at trace time
+            return vmap(self._solve_one_vslice_, in_axes=(None, 0, None))(nu, f0x, dt)
+
+        # Broadcast heating params to (nx,) for vmap
+        nx = f0x.shape[0]
+        d0 = jnp.broadcast_to(jnp.asarray(D0_heating if D0_heating is not None else 0.0), (nx,))
+        v2 = jnp.broadcast_to(jnp.asarray(ib_vosc2 if ib_vosc2 is not None else 0.0), (nx,))
+        z2 = jnp.broadcast_to(jnp.asarray(ib_Z2ni_w0 if ib_Z2ni_w0 is not None else 0.0), (nx,))
+        return vmap(self._solve_one_vslice_, in_axes=(None, 0, None, 0, 0, 0))(nu, f0x, dt, d0, v2, z2)
 
 
 class FLMCollisions:

@@ -210,12 +210,48 @@ mlflow:
 
 ## drivers
 
-External electromagnetic drivers. Currently unused for typical VFP-1D transport simulations but required in the config.
+External drivers for heating, cooling, and electromagnetic fields.
 
 ```yaml
 drivers:
-  ex: {}
-  ey: {}
+  ib: {}                    # Inverse Bremsstrahlung heating (optional)
+  maxwellian_heating: {}    # Maxwellian heating/cooling (optional)
+```
+
+### drivers.ib
+
+Inverse Bremsstrahlung (IB) laser heating. Augments the Fokker-Planck diffusion coefficient $D$ by $v_\text{osc}^2 g(v) / (6v)$ where $g(v) = [1 + (Z^2 n_i / (\omega_0 v^3))^2]^{-1}$ (Ridgers eq 4.39). Drives the distribution toward a Langdon/super-Gaussian shape.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `intensity_1e15_Wcm2` | float | `0.0` | Laser intensity in units of $10^{15}$ W/cm². |
+| `polarisation` | string or float | `"linear"` | `"linear"` ($\alpha=1$), `"circular"` ($\alpha=1/2$), or a float in $(0,1]$. |
+
+The quiver velocity $v_\text{osc}^2$ and normalised laser frequency $\omega_0$ are derived automatically from `units.laser_wavelength` and `units.reference electron temperature`:
+
+$$v_\text{osc}^2 = \frac{0.093373}{\alpha} \cdot \frac{I \lambda_0^2}{T_{e0}} \quad \text{(normalised units, } I \text{ in } 10^{15}\text{ W/cm}^2\text{, } \lambda_0 \text{ in } \mu\text{m, } T_{e0} \text{ in keV)}$$
+
+$$\omega_0 = \omega_L / \omega_p = 2\pi c / (\lambda_0 \omega_p)$$
+
+### drivers.maxwellian_heating
+
+Maxwellian heating or cooling. Augments $D$ by $D_0 v^2$ (Ridgers eq E.2), which changes the temperature while preserving the Maxwellian shape of the distribution.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `D0` | float | `None` | Maxwellian heating/cooling rate (normalised). Positive heats, negative cools. |
+
+The heating rate is $\partial T / \partial t = D_0 / \hat{Z}$ (constant, independent of temperature), where both $T$ and $t$ are in normalised units ($T_0$ and $1/\omega_p$ respectively). In physical units this corresponds to a volumetric power density $P/V = n T_0 \omega_p D_0 / \hat{Z}$.
+
+Example:
+```yaml
+drivers:
+  ib:
+    intensity_1e15_Wcm2: 1.0
+    polarisation: linear
+  # OR for Maxwellian heating:
+  # maxwellian_heating:
+  #   D0: 0.1
 ```
 
 ## terms
