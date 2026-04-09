@@ -31,18 +31,17 @@ class BaseVFP1D(ADEPTModule):
             self.cfg, ne, Te_eV, Z, self.cfg["units"]["Ion"], force_ee_equal_ei=True
         )
 
-        # collision frequency nu_ee0 of electron moving at speed of light
-        # normalised to background plasma frequency ω_p0
-        #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
-        # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
+        # collision frequency nu_ee0 of electron moving at norm.v0
+        # normalised to 1 / norm.tau
+        #    nuee0 / norm.tau = 4π n0 r_e^2 c^4 logΛ_ee * norm.tau/ v0^3
         r_e = 2.8179403205e-13 * UREG.cm  # Classical electron radius (CODATA 2022)
-        kpre = (r_e * np.sqrt(4 * np.pi * norm.n0 * r_e)).to("").magnitude
-        nuee_coeff = float(kpre * logLambda_ee)
+        nuee_coeff = float(
+            (4 * jnp.pi * norm.n0 * r_e**2 * UREG.c**4 * logLambda_ee * norm.tau / norm.v0**3).to("").magnitude
+        )
 
-        # Physical plasma frequency at ne (not the normalization frequency 1/tau)
-        wp0 = ((ne * UREG.e**2 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
+        # Physical plasma frequency at n0
+        wp0 = ((norm.n0 * UREG.e**2 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
         vth = ((2.0 * norm.T0 / UREG.m_e) ** 0.5).to("m/s")
-        vth_norm = norm.vth_norm()
         # Elementary charge in Gaussian CGS (pint cannot convert SI↔Gaussian charge dimensions)
         e_gauss = UREG.Quantity(4.803204712570263e-10, "Fr")
 
@@ -91,12 +90,12 @@ class BaseVFP1D(ADEPTModule):
             "n0": norm.n0.to("1/cc"),
             "tp0": norm.tau.to("fs"),
             "ne": ne,
-            "vth": vth,
+            "vth": (norm.vth_norm() * norm.v0),
             "Te": Te_eV,
             "Ti": UREG.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV"),
             "logLambda_ei": logLambda_ei,
             "logLambda_ee": logLambda_ee,
-            "vth_norm": vth_norm,
+            "vth_norm": norm.vth_norm(),
             "x0": norm.L0.to("nm"),
             "nuei_shk": nuei_shk,
             "nuei_nrl": nuei_nrl,
@@ -116,7 +115,7 @@ class BaseVFP1D(ADEPTModule):
         }
 
         self.cfg["units"]["derived"] = all_quantities
-        self.cfg["grid"]["vth_norm"] = vth_norm
+        self.cfg["grid"]["vth_norm"] = norm.vth_norm
 
         return {k: str(v) for k, v in all_quantities.items()}
 
