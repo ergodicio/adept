@@ -3,7 +3,7 @@ import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
 
-from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions
+from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions, SelfConsistentBetaConfig, get_model, get_scheme
 
 
 class OSHUN1D:
@@ -13,20 +13,40 @@ class OSHUN1D:
 
     """
 
-    def __init__(self, cfg: dict):
-        self.cfg = cfg
-        self.v = cfg["grid"]["v"]
-        self.dv = cfg["grid"]["dv"]
+    def __init__(self, cfg: dict, grid):
+        self.grid = grid
 
-        self.dx = cfg["grid"]["dx"]
-        self.dt = cfg["grid"]["dt"]
-        self.nx = cfg["grid"]["nx"]
-        self.boundary = cfg["grid"].get("boundary", "periodic")
         self.e_solver = cfg["terms"]["e_solver"]
 
         self.ampere_coeff = 1e-6
-        self.lb = F0Collisions(cfg)
-        self.ei = FLMCollisions(cfg)
+        fp_cfg = cfg["terms"]["fokker_planck"]
+        f00_cfg = fp_cfg.get("f00", {})
+        nuee_coeff = fp_cfg.get("nuee_coeff", cfg["units"]["derived"]["nuee_coeff"])
+        model = get_model(f00_cfg.get("model", "CoulombianKernel"), grid.v, grid.dv)
+        scheme = get_scheme(f00_cfg.get("scheme", "central"), grid.dv)
+
+        sc_cfg = fp_cfg.get("self_consistent_beta", {})
+        sc_enabled = sc_cfg.get("enabled", False)
+        sc_beta = SelfConsistentBetaConfig(
+            max_steps=sc_cfg.get("max_steps", 3) if sc_enabled else 0,
+            rtol=sc_cfg.get("rtol", 1e-8),
+            atol=sc_cfg.get("atol", 1e-12),
+        )
+
+        self.solve_Cee0 = F0Collisions(
+            nuee_coeff=nuee_coeff,
+            grid=grid,
+            model=model,
+            scheme=scheme,
+            sc_beta=sc_beta,
+        )
+        self.solve_aniso = FLMCollisions(
+            Z=cfg["units"]["Z"],
+            grid=grid,
+            nuee_coeff=cfg["units"]["derived"]["nuee_coeff"],
+            logLam_ratio=cfg["units"]["derived"]["logLam_ratio"],
+            full_aniso_ee=cfg["terms"]["fokker_planck"]["flm"]["ee"],
+        )
 
         self.large_eps = 1e-6
         self.eps = 1e-12
@@ -42,7 +62,7 @@ class OSHUN1D:
             Array: df/dv
         """
         temp = jnp.concatenate([f[:, :1], f], axis=1)
-        return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
+        return jnp.gradient(temp, self.grid.dv, axis=1)[:, 1:]
 
     def ddv_f1(self, f: Array) -> Array:
         """
@@ -55,21 +75,21 @@ class OSHUN1D:
             Array: df1/dv
         """
         temp = jnp.concatenate([-f[:, :1], f], axis=1)
-        return jnp.gradient(temp, self.dv, axis=1)[:, 1:]
+        return jnp.gradient(temp, self.grid.dv, axis=1)[:, 1:]
 
     def ddx_c2e(self, f: Array) -> Array:
         """d/dx of center field, evaluated at edges. (nx, ...) -> (nx+1, ...)"""
-        if self.boundary == "periodic":
+        if self.grid.boundary == "periodic":
             left_ghost = f[-1:]
             right_ghost = f[:1]
         else:  # reflective
             left_ghost = f[:1]
             right_ghost = f[-1:]
-        return jnp.diff(f, axis=0, prepend=left_ghost, append=right_ghost) / self.dx
+        return jnp.diff(f, axis=0, prepend=left_ghost, append=right_ghost) / self.grid.dx
 
     def ddx_e2c(self, f: Array) -> Array:
         """d/dx of edge field, evaluated at centers. (nx+1, ...) -> (nx, ...)"""
-        return jnp.diff(f, axis=0) / self.dx
+        return jnp.diff(f, axis=0) / self.grid.dx
 
     def interp_e2c(self, f: Array) -> Array:
         """Average edge values to centers. (nx+1, ...) -> (nx, ...)"""
@@ -77,7 +97,7 @@ class OSHUN1D:
 
     def interp_c2e(self, f: Array) -> Array:
         """Average center values to edges. (nx, ...) -> (nx+1, ...)"""
-        if self.boundary == "periodic":
+        if self.grid.boundary == "periodic":
             left_ghost = f[-1:]
             right_ghost = f[:1]
         else:  # reflective
@@ -97,7 +117,7 @@ class OSHUN1D:
             Array: j(x)
 
         """
-        return -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
+        return -4 * jnp.pi / 3.0 * jnp.sum(f1 * self.grid.v[None, :] ** 3.0, axis=1) * self.grid.dv
 
     def implicit_e_solve(self, Z: Array, ni: Array, f0: Array, f10: Array, e: Array) -> Array:
         """
@@ -124,7 +144,7 @@ class OSHUN1D:
         f0_at_edges = self.interp_c2e(f0)
 
         # calculate j without any e field
-        f10_after_coll = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10, dt=self.dt)
+        f10_after_coll = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10, dt=self.grid.dt)
         j0 = self.calc_j(f10_after_coll)
 
         # get perturbation
@@ -132,14 +152,14 @@ class OSHUN1D:
 
         # calculate effect of dex
         _, f10_after_dex = self.push_edfdv(f0, f10, de)
-        f10_after_dex = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10_after_dex, dt=self.dt)
+        f10_after_dex = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=f10_after_dex, dt=self.grid.dt)
         jx_dx = self.calc_j(f10_after_dex)
 
         # directly solve for ex
         new_e = -j0 * de / (jx_dx - j0)
 
         # For reflective BCs, E=0 at boundary edges (j0=jx_dx=0 there causes 0/0)
-        if self.boundary == "reflective":
+        if self.grid.boundary == "reflective":
             new_e = new_e.at[0].set(0.0).at[-1].set(0.0)
 
         return new_e
@@ -153,14 +173,15 @@ class OSHUN1D:
         new_f0, new_f1, new_e = y["f0"], y["f1"], y["e"]
         old_f0, old_f1, old_e = args["f0"], args["f1"], args["e"]
 
-        res_f0 = (new_f0 - old_f0) / self.dt - new_e[:, None] / 3 * (self.ddv_f1(new_f1) + 2 / self.v * new_f1)
+        v = self.grid.v
+        res_f0 = (new_f0 - old_f0) / self.grid.dt - new_e[:, None] / 3 * (self.ddv_f1(new_f1) + 2 / v * new_f1)
         # C_f1 = self.step_f10_coll(f1)
         res_f1 = (
-            (new_f1 - old_f1) / self.dt - new_e[:, None] * self.ddv(new_f0) + 1e-4 * new_f1 / self.v[None, :] ** 3.0
+            (new_f1 - old_f1) / self.grid.dt - new_e[:, None] * self.ddv(new_f0) + 1e-4 * new_f1 / v[None, :] ** 3.0
         )
 
-        new_j = -4 * jnp.pi / 3.0 * jnp.sum(new_f1 * self.v[None, :] ** 3.0, axis=1) * self.dv
-        res_e = (new_e - old_e) / self.dt + new_j
+        new_j = -4 * jnp.pi / 3.0 * jnp.sum(new_f1 * v[None, :] ** 3.0, axis=1) * self.grid.dv
+        res_e = (new_e - old_e) / self.grid.dt + new_j
 
         # return {"f0": res_f0, "f1": res_f1, "e": res_e}
 
@@ -231,12 +252,12 @@ class OSHUN1D:
         e_at_centers = self.interp_e2c(e_field)  # (nx+1,) -> (nx,)
 
         g00 = self.ddv(f0_at_edges)
-        h10_c = 2.0 / self.v * f10_at_centers + self.ddv_f1(f10_at_centers)
+        h10_c = 2.0 / self.grid.v * f10_at_centers + self.ddv_f1(f10_at_centers)
 
         df0dt_e = e_at_centers[:, None] / 3.0 * h10_c
         df10dt_e = e_field[:, None] * g00
 
-        if self.boundary == "reflective":
+        if self.grid.boundary == "reflective":
             df10dt_e = df10dt_e.at[0].set(0.0).at[-1].set(0.0)
 
         return {"f0": df0dt_e, "f10": df10dt_e}
@@ -257,8 +278,8 @@ class OSHUN1D:
             diffrax.ODETerm(self._edfdv_),
             solver=diffrax.Tsit5(),
             t0=0.0,
-            t1=self.dt,
-            dt0=self.dt,
+            t1=self.grid.dt,
+            dt0=self.grid.dt,
             y0={"f0": f0, "f10": f10},
             args={"e": e},
         )
@@ -283,10 +304,10 @@ class OSHUN1D:
         f0 = y["f0"]
         f10 = y["f10"]
 
-        df0dt_sa = -self.v[None, :] / 3.0 * self.ddx_e2c(f10)  # (nx+1,nv) -> (nx,nv)
-        df10dt_sa = -self.v[None, :] * self.ddx_c2e(f0)  # (nx,nv) -> (nx+1,nv)
+        df0dt_sa = -self.grid.v[None, :] / 3.0 * self.ddx_e2c(f10)  # (nx+1,nv) -> (nx,nv)
+        df10dt_sa = -self.grid.v[None, :] * self.ddx_c2e(f0)  # (nx,nv) -> (nx+1,nv)
 
-        if self.boundary == "reflective":
+        if self.grid.boundary == "reflective":
             df10dt_sa = df10dt_sa.at[0].set(0.0).at[-1].set(0.0)
 
         return {"f0": df0dt_sa, "f10": df10dt_sa}
@@ -307,8 +328,8 @@ class OSHUN1D:
             diffrax.ODETerm(self._vdfdx_),
             solver=diffrax.Tsit5(),
             t0=0.0,
-            t1=self.dt,
-            dt0=self.dt,
+            t1=self.grid.dt,
+            dt0=self.grid.dt,
             y0={"f0": f0, "f10": f10},
         )
         return result.ys["f0"][-1], result.ys["f10"][-1]
@@ -336,7 +357,7 @@ class OSHUN1D:
         # explicit push for v df/dx
         f0_star, f10_star = self.push_vdfdx(f0, f10)
         # implicit solve f00 coll
-        f0_star = self.lb(None, f0_star, self.dt)
+        f0_star = self.solve_Cee0(None, f0_star, self.grid.dt)
 
         # Interpolate center quantities to edges for FLM collision operator
         Z_edge = self.interp_c2e(Z)
@@ -350,24 +371,24 @@ class OSHUN1D:
             new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
             f0_at_edges = self.interp_c2e(f0_star)
-            new_f10 = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.dt)
+            new_f10 = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.grid.dt)
 
         elif self.e_solver == "edfdv-ampere-implicit":  # implicit E, f0, f1 using a nonlinear iterative inversion
             new_f0, new_f10, new_e = self.implicit_e_f0_f1_solve(f0=f0_star, f1=f10_star, e=y["e"])
 
         elif self.e_solver == "ampere":
-            new_e = y["e"] + self.dt * self.ampere_coeff * self.calc_j(f10_star)
+            new_e = y["e"] + self.grid.dt * self.ampere_coeff * self.calc_j(f10_star)
             # push e
             new_f0, new_f10 = self.push_edfdv(f0_star, f10_star, new_e)
             # solve f10 coll
             f0_at_edges = self.interp_c2e(new_f0)
-            new_f10 = self.ei(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.dt)
+            new_f10 = self.solve_aniso(Z=Z_edge, ni=ni_edge, f0=f0_at_edges, f10=new_f10, dt=self.grid.dt)
 
         else:
             raise NotImplementedError
 
         # Enforce reflective BCs on f10
-        if self.boundary == "reflective":
+        if self.grid.boundary == "reflective":
             new_f10 = new_f10.at[0].set(0.0).at[-1].set(0.0)
 
         return {"f0": new_f0, "f10": new_f10, "f11": y["f11"], "e": new_e, "b": y["b"], "Z": y["Z"], "ni": y["ni"]}

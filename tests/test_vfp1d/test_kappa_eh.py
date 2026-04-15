@@ -25,7 +25,7 @@ def _run_(Z, ee, config_name="epp-short"):
 
     sol, datasets, run_id = exo(None)
     dataT = datasets["fields"]["fields-T keV"].data
-    np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=4)
+    np.testing.assert_almost_equal(np.mean(dataT[-4, :]), np.mean(dataT[4, :]), decimal=5)
 
     datan = datasets["fields"]["fields-n n_c"].data
     np.testing.assert_almost_equal(np.mean(datan[-4, :]), np.mean(datan[4, :]), decimal=5)

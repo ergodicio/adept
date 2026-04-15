@@ -71,5 +71,5 @@ terms:
       ee: false
     f00:
       model: CoulombianKernel
-      scheme: central
+      scheme: chang_cooper
   e_solver: oshun

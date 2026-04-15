@@ -88,3 +88,23 @@ def electron_debye_normalization(n0_str, T0_str):
     x0 = (v0 / wp0).to("nm")
 
     return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
+
+
+def skin_depth_normalization(n0_str, T0_str):
+    """
+    Returns the VFP-1D normalization.
+    Unit quantities are:
+        - c/wp0 (collisionless skin depth)
+        - Electron thermal velocity
+        - 1/wp0
+    """
+    n0 = UREG.Quantity(n0_str)
+    T0 = UREG.Quantity(T0_str)
+
+    wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
+    tau = 1 / wp0
+
+    v0 = ((2.0 * T0 / UREG.m_e) ** 0.5).to("m/s")
+    x0 = (UREG.c / wp0).to("nm")
+
+    return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)

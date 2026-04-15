@@ -12,8 +12,35 @@ import pytest
 from fp_relaxation import problems
 from fp_relaxation.registry import VelocityGrid
 
-from adept.driftdiffusion import _find_self_consistent_beta_single
-from adept.vfp1d.fokker_planck import CoulombianKernel, FastVFP
+from adept.driftdiffusion import AbstractKernelBasedModel, LogMeanFlux, _find_self_consistent_beta_single
+from adept.vfp1d.fokker_planck import AsymptoticLocal, CoulombianKernel, FastVFP
+
+# ============================================================================
+# Fixtures
+# ============================================================================
+
+KERNEL_MODELS: list[type[AbstractKernelBasedModel]] = [CoulombianKernel, AsymptoticLocal]
+
+
+@pytest.fixture
+def grid():
+    return VelocityGrid(nv=256, vmax=8.0, spherical=True)
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(partial(problems.shifted_maxwellian, v_shift=1.8, T=0.162), id="shifted_maxwellian"),
+        pytest.param(partial(problems.supergaussian, m=5, T=1.0), id="supergaussian"),
+        pytest.param(partial(problems.two_temperature, T_cold=0.5, T_hot=2.0, frac_cold=0.7), id="two_temperature"),
+    ]
+)
+def f(request, grid):
+    return request.param(grid)
+
+
+# ============================================================================
+# Tests: CoulombianKernel high-v limit matches FastVFP
+# ============================================================================
 
 CASES = [
     pytest.param(
@@ -95,4 +122,55 @@ def test_coulombian_high_v_limit_matches_fast_vfp(case):
         rtol=5e-4,
         atol=0.0,
         err_msg=f"CoulombianKernel D does not match FastVFP D = 1/(2βv) for v >= {v_min} (beta={beta:.4f})",
+    )
+
+
+# ============================================================================
+# Tests: LogMeanFlux + kernel-derived C conserves energy (bilinear symmetry)
+# ============================================================================
+
+
+@pytest.mark.parametrize("model_cls", KERNEL_MODELS, ids=lambda c: c.__name__)
+def test_logmean_flux_conserves_energy(model_cls, f, grid):
+    """LogMeanFlux operator with kernel-derived C and D conserves energy.
+
+    The LogMeanFlux scheme uses log-mean interpolation for f at edges,
+    which is the same interpolation used in compute_D. This ensures the
+    kernel's bilinear symmetry (Σ K[A]·B·dε = Σ K[B]·A·dε) carries
+    through to the full tridiagonal operator.
+
+    We verify that the spherical energy moment of the operator increment
+    vanishes: Σ v⁴ · (f - op.mv(f)) ≈ 0, i.e. the implicit step
+    conserves energy in the dt → 0 limit.
+    """
+    model = model_cls(v=grid.v, dv=grid.dv)
+    scheme = LogMeanFlux(dv=grid.dv)
+
+    beta = _find_self_consistent_beta_single(
+        f,
+        grid.v,
+        grid.dv,
+        spherical=True,
+        max_steps=0,
+    )
+    C_edge, D = model.compute_C_and_D(f[None, :], beta[None])
+    C_edge, D = C_edge[0], D[0]
+
+    nu = 1.0 / grid.v**2
+    dt = 1.0
+    op = scheme.get_operator(C_edge=C_edge, D=D, nu=nu, dt=dt, f=f)
+
+    # df/dt = (f - op.mv(f)) / dt; energy = Σ v⁴·f·dv (spherical)
+    increment = jnp.array(f) - jnp.array(op.mv(f))
+    energy_change = jnp.sum(increment * grid.v**4 * grid.dv)
+    total_energy = jnp.sum(jnp.array(f) * grid.v**4 * grid.dv)
+
+    # With v_edge (arithmetic mean) for the D conversion, the velocity-space
+    # operator is mathematically equivalent to energy-space Buet, so energy
+    # conservation holds to machine precision.
+    np.testing.assert_allclose(
+        float(energy_change / total_energy),
+        0.0,
+        atol=1e-12,
+        err_msg=f"{model_cls.__name__}: LogMeanFlux operator does not conserve energy",
     )
