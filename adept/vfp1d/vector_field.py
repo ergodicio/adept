@@ -40,6 +40,19 @@ class OSHUN1D:
             scheme=scheme,
             sc_beta=sc_beta,
         )
+
+        # Drivers: heating/cooling
+        drivers = cfg.get("drivers", {})
+        mh_cfg = drivers.get("maxwellian_heating", {})
+        self.D0_heating = mh_cfg.get("D0", None)
+
+        ib_cfg = drivers.get("ib", {})
+        ib_intensity = ib_cfg.get("intensity_1e15_Wcm2", 0.0)
+        vosc2_per_intensity = cfg["units"]["derived"].get("vosc2_per_intensity", 0.0)
+        self.ib_vosc2 = vosc2_per_intensity * ib_intensity
+        self.ib_w0 = cfg["units"]["derived"].get("w0_norm", 1.0)
+        self._ib_enabled = self.ib_vosc2 > 0.0
+
         self.solve_aniso = FLMCollisions(
             Z=cfg["units"]["Z"],
             grid=grid,
@@ -357,7 +370,13 @@ class OSHUN1D:
         # explicit push for v df/dx
         f0_star, f10_star = self.push_vdfdx(f0, f10)
         # implicit solve f00 coll
-        f0_star = self.solve_Cee0(None, f0_star, self.grid.dt)
+        heating_kwargs = {}
+        if self.D0_heating is not None:
+            heating_kwargs["D0_heating"] = self.D0_heating
+        if self._ib_enabled:
+            heating_kwargs["ib_vosc2"] = self.ib_vosc2
+            heating_kwargs["ib_Z2ni_w0"] = Z**2 * ni / self.ib_w0
+        f0_star = self.solve_Cee0(None, f0_star, self.grid.dt, **heating_kwargs)
 
         # Interpolate center quantities to edges for FLM collision operator
         Z_edge = self.interp_c2e(Z)

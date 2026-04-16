@@ -3,7 +3,7 @@ from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
 from jax import numpy as jnp
 
 from adept._base_ import ADEPTModule, Stepper
-from adept.normalization import UREG, skin_depth_normalization
+from adept.normalization import UREG, laser_normalization
 from adept.utils import filter_scalars
 from adept.vfp1d.grid import Grid
 from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
@@ -14,8 +14,9 @@ from adept.vfp1d.vector_field import OSHUN1D
 class BaseVFP1D(ADEPTModule):
     def __init__(self, cfg) -> None:
         super().__init__(cfg)
-        # n0 = critical density for 351nm (3ω Nd:glass)
-        self.plasma_norm = skin_depth_normalization("9.0663e21/cm^3", cfg["units"]["reference electron temperature"])
+        self.plasma_norm = laser_normalization(
+            cfg["units"]["laser_wavelength"], cfg["units"]["reference electron temperature"]
+        )
         self.grid = Grid.from_config(cfg["grid"], self.plasma_norm)
 
     def post_process(self, solver_result: dict, td: str) -> dict:
@@ -30,23 +31,21 @@ class BaseVFP1D(ADEPTModule):
             self.cfg, ne, Te_eV, Z, self.cfg["units"]["Ion"], force_ee_equal_ei=True
         )
 
-        # collision frequency nu_ee0 of electron moving at speed of light
-        # normalised to background plasma frequency ω_p0
-        #    nuee0 = 4π n0 r_e^2 c logΛ_ee normalised to plasma frequency ω_p0 = √(4πn0 r_e))
-        # => nuee0/ω_p0 = r_e ω_p0 logΛ_ee / c = k_p0 r_e logΛ_ee, where k_p0 = ω_p/c
-        r_e = 2.8179403205e-13  # Classical electron radius in cm (CODATA 2022)
-        kpre = r_e * np.sqrt(4 * np.pi * norm.n0.to("1/cc").magnitude * r_e)
-        nuee_coeff = kpre * logLambda_ee
+        # collision frequency nu_ee0 of electron moving at norm.v0
+        # normalised to 1 / norm.tau
+        #    nuee0 / norm.tau = 4π n0 r_e^2 c^4 logΛ_ee * norm.tau/ v0^3
+        r_e = 2.8179403205e-13 * UREG.cm  # Classical electron radius (CODATA 2022)
+        nuee_coeff = float(
+            (4 * jnp.pi * norm.n0 * r_e**2 * UREG.c**4 * logLambda_ee * norm.tau / norm.v0**3).to("").magnitude
+        )
 
-        # Local aliases for quantities used in multiple expressions below
-        wp0 = (1 / norm.tau).to("rad/s")
-        vth = norm.v0.to("m/s")
-        beta = 1.0 / norm.speed_of_light_norm()
+        # Physical plasma frequency at n0
+        wp0 = ((norm.n0 * UREG.e**2 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
+        vth = ((2.0 * norm.T0 / UREG.m_e) ** 0.5).to("m/s")
         # Elementary charge in Gaussian CGS (pint cannot convert SI↔Gaussian charge dimensions)
         e_gauss = UREG.Quantity(4.803204712570263e-10, "Fr")
 
-        ne_cc = ne.to("1/cc").magnitude
-        nD_NRL = 1.72e9 * Te_eV.magnitude**1.5 / np.sqrt(ne_cc)
+        nD_NRL = 1.72e9 * (Te_eV / UREG.electronvolt) ** 1.5 / np.sqrt(ne * UREG.cc)
 
         nuei_shk = np.sqrt(2.0 / np.pi) * wp0 * logLambda_ei / np.exp(logLambda_ei)
         # JPB - Maybe comment which page/eq this is from? There are lots of collision times in NRL
@@ -57,30 +56,53 @@ class BaseVFP1D(ADEPTModule):
             1
             / (
                 0.75
-                * UREG.Quantity(1, "electron_mass") ** 0.5
+                * UREG.m_e**0.5
                 * Te_eV**1.5
                 / (np.sqrt(2 * np.pi) * (ne / Z) * Z**2.0 * e_gauss**4.0 * logLambda_ei)
             )
         ).to("Hz")
+
+        # Normalised v_osc^2 per unit intensity:
+        #   v_osc^2_norm = K * I * lam^2 / (alpha * T)
+        # where K = e^2 / (m_e * 2 * 4*pi^2 * c^3 * eps_0)
+        #         = 0.093373  [at I in 1e15 W/cm^2, lam in um, T in keV]
+        # Derived from fundamental constants (CODATA 2022, see Wikipedia
+        # "Ponderomotive energy").  Ridgers (2011) uses 0.091 (older constants).
+        lam0 = UREG.Quantity(self.cfg["units"]["laser_wavelength"]).to("um")
+        ib_cfg = self.cfg.get("drivers", {}).get("ib", {})
+        polarisation = ib_cfg.get("polarisation", "linear")
+        if polarisation == "linear":
+            alpha_pol = 1.0
+        elif polarisation == "circular":
+            alpha_pol = 0.5
+        else:
+            alpha_pol = float(polarisation)
+        vosc2_per_intensity = float(
+            (0.093373 * (lam0 / UREG.um) ** 2 / (alpha_pol * (Te_eV / UREG.keV))).to("").magnitude
+        )  # per 10¹⁵ W/cm²
+
+        # Normalised laser frequency ω₀ = ω_L / ω_p (derived from laser_wavelength)
+        # ω_L = 2πc/λ₀, ω_p = 1/τ
+        w0_norm = float((2 * np.pi * UREG.c / lam0 * norm.tau).to(""))
 
         all_quantities = {
             "wp0": wp0,
             "n0": norm.n0.to("1/cc"),
             "tp0": norm.tau.to("fs"),
             "ne": ne,
-            "vth": vth,
+            "vth": (norm.vth_norm() * norm.v0),
             "Te": Te_eV,
             "Ti": UREG.Quantity(self.cfg["units"]["reference ion temperature"]).to("eV"),
             "logLambda_ei": logLambda_ei,
             "logLambda_ee": logLambda_ee,
-            "beta": beta,
+            "vth_norm": norm.vth_norm(),
             "x0": norm.L0.to("nm"),
             "nuei_shk": nuei_shk,
             "nuei_nrl": nuei_nrl,
             "nuei_epphaines": nuei_epphaines,
-            "nuei_shk_norm": (nuei_shk / wp0).to(""),
-            "nuei_nrl_norm": (nuei_nrl / wp0).to(""),
-            "nuei_epphaines_norm": (nuei_epphaines / wp0).to(""),
+            "nuei_shk_norm": (nuei_shk * norm.tau).to(""),
+            "nuei_nrl_norm": (nuei_nrl * norm.tau).to(""),
+            "nuei_epphaines_norm": (nuei_epphaines * norm.tau).to(""),
             "lambda_mfp_shk": (vth / nuei_shk).to("micron"),
             "lambda_mfp_nrl": (vth / nuei_nrl).to("micron"),
             "lambda_mfp_epphaines": (vth / nuei_epphaines).to("micron"),
@@ -88,10 +110,12 @@ class BaseVFP1D(ADEPTModule):
             "nD_Shkarofsky": np.exp(logLambda_ei) * Z / 9,
             "nuee_coeff": nuee_coeff,
             "logLam_ratio": logLambda_ei / logLambda_ee,
+            "vosc2_per_intensity": vosc2_per_intensity,
+            "w0_norm": w0_norm,
         }
 
         self.cfg["units"]["derived"] = all_quantities
-        self.cfg["grid"]["beta"] = beta
+        self.cfg["grid"]["vth_norm"] = norm.vth_norm
 
         return {k: str(v) for k, v in all_quantities.items()}
 
@@ -124,8 +148,9 @@ class BaseVFP1D(ADEPTModule):
 
     def init_state_and_args(self) -> dict:
         grid = self.grid
-        beta = 1.0 / self.plasma_norm.speed_of_light_norm()
-        f0, f10, ne_prof = _initialize_total_distribution_(self.cfg, grid, beta, self.plasma_norm)
+        f0, f10, ne_prof = _initialize_total_distribution_(
+            self.cfg, grid, self.plasma_norm.vth_norm(), self.plasma_norm
+        )
 
         # Scale density to physical ne (f10 is invariant in the big-dt collision limit)
         ne = UREG.Quantity(self.cfg["units"]["reference electron density"])

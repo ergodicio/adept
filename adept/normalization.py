@@ -45,8 +45,12 @@ class PlasmaNormalization:
         nu_ee = UREG.Quantity(2.91e-6 * n0_cc * logLambda_ee / T0_eV**1.5, "Hz")
         return nu_ee
 
+    def vth_norm(self) -> float:
+        """Thermal velocity in normalized units: vth / v0."""
+        return ((2.0 * self.T0 / self.m0) ** 0.5 / self.v0).to("").magnitude
+
     def speed_of_light_norm(self) -> float:
-        return (UREG.c / self.v0).to("").magnitude
+        return (UREG.Quantity(1, "speed_of_light").to("m/s") / self.v0).to("").magnitude
 
 
 def normalize(s: float | int | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
@@ -90,21 +94,25 @@ def electron_debye_normalization(n0_str, T0_str):
     return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
 
 
-def skin_depth_normalization(n0_str, T0_str):
+def laser_normalization(laser_wavelength_str, T0_str):
     """
-    Returns the VFP-1D normalization.
+    Returns a normalization based on the laser frequency.
+
+    n0 is the critical density for the given laser wavelength.
+
     Unit quantities are:
-        - c/wp0 (collisionless skin depth)
-        - Electron thermal velocity
-        - 1/wp0
+        - L0 = c/w_L = λ/(2π) (reduced laser wavelength)
+        - v0 = c (speed of light)
+        - tau = 1/w_L (inverse laser frequency)
+        - T0 = reference electron temperature (not self-consistent with v0)
     """
-    n0 = UREG.Quantity(n0_str)
+
     T0 = UREG.Quantity(T0_str)
 
-    wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
-    tau = 1 / wp0
+    one_over_k = (UREG.Quantity(laser_wavelength_str) / 2 / jnp.pi).to("um")
+    omega_laser = (UREG.c / one_over_k).to("rad/s")
+    ne_crit = (UREG.epsilon_0 * UREG.m_e * omega_laser**2 / UREG.e**2).to("1/cc")
 
-    v0 = ((2.0 * T0 / UREG.m_e) ** 0.5).to("m/s")
-    x0 = (UREG.c / wp0).to("nm")
-
-    return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
+    return PlasmaNormalization(
+        m0=UREG.m_e, q0=UREG.e, n0=ne_crit, T0=T0, L0=one_over_k, v0=1 * UREG.c, tau=1 / omega_laser
+    )
