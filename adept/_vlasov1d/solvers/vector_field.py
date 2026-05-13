@@ -45,9 +45,7 @@ class TimeIntegrator:
                 self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
             )
         elif cfg["terms"]["edfdv"] == "muscl":
-            return vlasov.VelocityMUSCL(
-                self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
-            )
+            return vlasov.VelocityMUSCL(self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x"))
         else:
             raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
 

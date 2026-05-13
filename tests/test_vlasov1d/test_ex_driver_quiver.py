@@ -14,11 +14,13 @@ import numpy as np
 from adept import ergoExo
 
 
-# FIXME: move the config to a .yaml file in configs/ -- then manually set some of the values in python code. So build_config() should load the yaml and then modify the dict.
+# FIXME: move the config to a .yaml file in configs/ -- then manually set some of the values
+# in python code. So build_config() should load the yaml and then modify the dict.
 def build_config():
     """Build config for quiver velocity test."""
 
-    # FIXME: the test config should use the intensity and wavelength specification, and calculate expected quiver velocity from intensity using the pint units library.
+    # FIXME: the test config should use the intensity and wavelength specification, and
+    # calculate expected quiver velocity from intensity using the pint units library.
     a0 = 1e-3
     k0 = 0.3
     w0 = 10.0  # Well above ωpe = 1 to minimize self-consistent plasma response

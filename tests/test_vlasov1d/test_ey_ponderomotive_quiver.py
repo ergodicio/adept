@@ -112,7 +112,11 @@ def build_config():
                     },
                     "envelope": {
                         "time": {"center": float(10 * tmax), "rise": float(beat_period), "width": float(20 * tmax)},
-                        "space": {"center": float(xmax * 0.1), "rise": float(em_wavelength), "width": float(3 * em_wavelength)},
+                        "space": {
+                            "center": float(xmax * 0.1),
+                            "rise": float(em_wavelength),
+                            "width": float(3 * em_wavelength),
+                        },
                     },
                 },
                 "1": {
@@ -124,7 +128,11 @@ def build_config():
                     },
                     "envelope": {
                         "time": {"center": float(10 * tmax), "rise": float(beat_period), "width": float(20 * tmax)},
-                        "space": {"center": float(xmax * 0.1), "rise": float(em_wavelength), "width": float(3 * em_wavelength)},
+                        "space": {
+                            "center": float(xmax * 0.1),
+                            "rise": float(em_wavelength),
+                            "width": float(3 * em_wavelength),
+                        },
                     },
                 },
             },

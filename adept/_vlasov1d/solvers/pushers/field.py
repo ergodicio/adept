@@ -80,7 +80,7 @@ class TransverseCurrentSourceDriver:
 
     def __call__(self, t, args):
         total = jnp.zeros_like(self.xax)
-        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales):
+        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True):
             total += self._single_driver_source(driver, mask, scale, t)
         return total
 

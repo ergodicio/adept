@@ -166,7 +166,7 @@ class VelocityMUSCL:
             # f_L[i+1/2] = f[i] + 0.5 * slope[i]    (left state)
             # f_R[i+1/2] = f[i+1] - 0.5 * slope[i+1] (right state)
             f_L = f[:, :-1] + 0.5 * slopes[:, :-1]  # shape (nx, nv-1)
-            f_R = f[:, 1:] - 0.5 * slopes[:, 1:]    # shape (nx, nv-1)
+            f_R = f[:, 1:] - 0.5 * slopes[:, 1:]  # shape (nx, nv-1)
 
             # Upwind flux at each interface: flux[i+1/2]
             # For linear advection with velocity-independent acceleration,
