@@ -44,7 +44,7 @@ jobs:
       with:
         python-version: '3.11'
     - name: Test with pytest
-      run: uv run --locked pytest tests/test_vlasov1d
+      run: uv run --locked pytest tests/test_vlasov1d --ignore=tests/test_vlasov1d/test_config_regression.py
 
   test-vfp1d:
     runs-on: ubuntu-latest

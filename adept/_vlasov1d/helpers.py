@@ -73,7 +73,7 @@ def _initialize_supergaussian_distribution_(
 
     f = np.repeat(single_dist, nx, axis=0)
     # normalize
-    f = f / np.trapz(f, dx=dv, axis=1)[:, None]
+    f = f / np.sum(f, axis=1)[:, None] / dv
 
     if n_prof.size > 1:
         # scale by density profile

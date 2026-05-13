@@ -1,0 +1,69 @@
+solver: hermite-epw-1d
+
+mlflow:
+  experiment: spectrax-1d-EPW-scan
+  run: kld026-nn1024-a1e4-lawson-nu1-houli-static-dt2e1
+
+physics:
+  Lx: 1.0
+  Ly: 1.0
+  Lz: 1.0
+  mi_me: 1836.0
+  qs: [-1.0, 1.0]
+  alpha_s: [0.0585205605502119, 0.0585205605502119, 0.0585205605502119,
+            0.002, 0.002, 0.002]
+  u_s: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  Omega_ce_tau: 1.0
+  nu: 1.0
+  nx: 1
+  ny: 0
+  nz: 0
+  dn1: 0.0
+  static_ions: true
+
+drivers:
+  ex:
+    '0':
+      k0: 6.283185307179586
+      w0: 1.1
+      a0: 1.0e-4
+      t_center: 35.0
+      t_width: 30.0
+      t_rise: 14.0
+      x_center: 0.5
+      x_width: 1000.0
+      x_rise: 0.1
+      dw0: 0.0
+  ey: {}
+  ez: {}
+  hermite_filter:
+    enabled: true
+    strength: 36.0
+    order: 36
+
+grid:
+  Nx: 17
+  Ny: 1
+  Nz: 1
+  hermite_modes:
+    electrons:
+      Nn: 1024
+      Nm: 1
+      Np: 1
+    ions:
+      Nn: 4
+      Nm: 1
+      Np: 1
+  Ns: 2
+  tmax: 200.0
+  dt: 0.2
+  integrator: "exponential"
+  adaptive_time_step: false
+
+save:
+  fields:
+    t:
+      nt: 401
+  hermite:
+    t:
+      nt: 51

@@ -109,8 +109,6 @@ terms:
       width: 100000.0
   time: leapfrog
 units:
-  Z: 10
-  Zp: 10
   derived:
     T0: 2000 electron_volt
     beta: 0.088474881879774
@@ -125,6 +123,5 @@ units:
     v0: 26524102.30999721 meter / second
     wp0: 2184928150138955.5 radian / second
     x0: 12.139576447083783 nanometer
-  laser_wavelength: 351nm
   normalizing_density: 1.5e21/cc
   normalizing_temperature: 2000eV

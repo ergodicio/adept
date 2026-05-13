@@ -2,7 +2,7 @@
 
 import jax.numpy as jnp
 
-from adept.functions import EnvelopeFunction, SpaceTimeEnvelopeFunction
+from adept.functions import EnvelopeConfig, EnvelopeFunction, SpaceTimeEnvelopeConfig, SpaceTimeEnvelopeFunction
 
 
 class TestEnvelopeFunction:
@@ -47,17 +47,17 @@ class TestEnvelopeFunction:
         assert abs(float(result[100]) - 1.0) < 0.01
 
     def test_from_config(self):
-        """Test constructing EnvelopeFunction from config dict."""
-        cfg = {
-            "center": 50.0,
-            "width": 20.0,
-            "rise": 5.0,
-            "baseline": 0.1,
-            "bump_height": 0.9,
-            "bump_or_trough": "bump",
-        }
+        """Test constructing EnvelopeFunction from EnvelopeConfig."""
+        cfg = EnvelopeConfig(
+            center=50.0,
+            width=20.0,
+            rise=5.0,
+            baseline=0.1,
+            bump_height=0.9,
+            bump_or_trough="bump",
+        )
         env_bump = EnvelopeFunction.from_config(cfg)
-        env_trough = EnvelopeFunction.from_config(cfg | {"bump_or_trough": "trough"})
+        env_trough = EnvelopeFunction.from_config(cfg.model_copy(update={"bump_or_trough": "trough"}))
 
         assert env_bump.center == 50.0
         assert env_bump.width == 20.0
@@ -86,27 +86,26 @@ class TestSpaceTimeEnvelopeFunction:
 
     def test_from_config_and_factorization(self):
         """Test from_config and that result = time_envelope(t) * space_envelope(x)."""
-        config = {
-            "time": {
-                "center": 10.0,
-                "width": 5.0,
-                "rise": 1.0,
-                "baseline": 0.5,
-                "bump_height": 0.5,
-                "bump_or_trough": "bump",
-            },
-            "space": {
-                "center": 50.0,
-                "width": 20.0,
-                "rise": 5.0,
-                "baseline": 0.1,
-                "bump_height": 0.9,
-                "bump_or_trough": "bump",
-            },
-        }
+        time_cfg = EnvelopeConfig(
+            center=10.0,
+            width=5.0,
+            rise=1.0,
+            baseline=0.5,
+            bump_height=0.5,
+            bump_or_trough="bump",
+        )
+        space_cfg = EnvelopeConfig(
+            center=50.0,
+            width=20.0,
+            rise=5.0,
+            baseline=0.1,
+            bump_height=0.9,
+            bump_or_trough="bump",
+        )
+        config = SpaceTimeEnvelopeConfig(time=time_cfg, space=space_cfg)
         st_env = SpaceTimeEnvelopeFunction.from_config(config)
-        time_env = EnvelopeFunction.from_config(config["time"])
-        space_env = EnvelopeFunction.from_config(config["space"])
+        time_env = EnvelopeFunction.from_config(time_cfg)
+        space_env = EnvelopeFunction.from_config(space_cfg)
 
         x = jnp.linspace(0, 100, 101)
         t = 10.0

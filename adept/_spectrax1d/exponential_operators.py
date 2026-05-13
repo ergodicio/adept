@@ -51,6 +51,8 @@ class FreeStreamingExponential:
         kx_1d: Array,
         ky_1d: Array,
         kz_1d: Array,
+        filter_strength: float = 0.0,
+        filter_order: int = 0,
     ):
         """
         Args:
@@ -65,6 +67,8 @@ class FreeStreamingExponential:
             u: (3,) = (u_x, u_y, u_z) drift velocities
             Lx, Ly, Lz: Domain lengths
             kx_1d, ky_1d, kz_1d: 1D wavenumber arrays (2π·fftfreq·N)
+            filter_strength: Hou-Li filter strength (0 = disabled)
+            filter_order: Hou-Li filter order
         """
         # Build and diagonalize tridiagonal matrices for each direction
         self.V_x, self.eigenvalues_x = self._build_and_diagonalize(sqrt_n_plus, Nn, float(u[0] / alpha[0]))
@@ -80,6 +84,15 @@ class FreeStreamingExponential:
         self.kx_1d = kx_1d
         self.ky_1d = ky_1d
         self.kz_1d = kz_1d
+
+        # Hou-Li dissipation rates in Hermite space: gamma(n) = strength * (n/Nn)^order
+        # Applied as exp(-gamma(n) * |s|) inside each free-streaming push.
+        # None when filter is disabled (filter_strength == 0).
+        if filter_strength > 0 and filter_order > 0:
+            n_idx = jnp.arange(Nn, dtype=jnp.float64)
+            self.gamma_n = filter_strength * (n_idx / Nn) ** filter_order  # (Nn,)
+        else:
+            self.gamma_n = None
 
     @staticmethod
     def _build_and_diagonalize(sqrt_plus: Array, N: int, drift_over_alpha: float):
@@ -139,7 +152,14 @@ class FreeStreamingExponential:
         C_scaled = C_eig * exp_factors[None, None, :, None, :, None]
 
         # Project back: V @ C_scaled
-        return jnp.einsum("ni,pmiyxz->pmnyxz", self.V_x, C_scaled)
+        Ck_out = jnp.einsum("ni,pmiyxz->pmnyxz", self.V_x, C_scaled)
+
+        # Hou-Li damping: exp(-gamma(n) * |s|) in Hermite n-space
+        if self.gamma_n is not None:
+            damping = jnp.exp(-self.gamma_n * jnp.abs(s))  # (Nn,)
+            Ck_out = Ck_out * damping[None, None, :, None, None, None]
+
+        return Ck_out
 
     def _apply_direction_y(self, Ck: Array, s: float) -> Array:
         """Apply y-direction free-streaming exponential (acts on m-axis, varies with ky)."""
@@ -343,6 +363,8 @@ def build_combined_exponential(
     Ny: int,
     Nz: int,
     static_ions: bool = False,
+    filter_strength: float = 0.0,
+    filter_order: int = 0,
 ) -> CombinedLinearExponential:
     """
     Factory function to build the CombinedLinearExponential from grid quantities.
@@ -390,6 +412,8 @@ def build_combined_exponential(
         kx_1d=kx_1d,
         ky_1d=ky_1d,
         kz_1d=kz_1d,
+        filter_strength=filter_strength,
+        filter_order=filter_order,
     )
 
     free_stream_i = FreeStreamingExponential(
@@ -410,6 +434,7 @@ def build_combined_exponential(
         kx_1d=kx_1d,
         ky_1d=ky_1d,
         kz_1d=kz_1d,
+        # No filter on ions — Nn_i is small (4) and static_ions skips their push anyway
     )
 
     # Build Maxwell exponential

@@ -93,8 +93,5 @@ drivers:
       "a0": 0.e-2
 
 units:
-  laser_wavelength: 351nm
   normalizing_temperature: 2000eV
   normalizing_density: 1.5e21/cc
-  Z: 10
-  Zp: 10
