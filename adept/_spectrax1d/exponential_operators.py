@@ -339,11 +339,16 @@ class CombinedLinearExponential:
         Fk = self.maxwell.apply(Fk, s)
 
         # Pack back to float64 views
-        return {
+        out = {
             "Ck_electrons": Ck_e.view(jnp.float64),
             "Ck_ions": Ck_i.view(jnp.float64),
             "Fk": Fk.view(jnp.float64),
         }
+        # Forward any extra state keys (e.g. SSM hidden state) unchanged
+        for k in y:
+            if k not in out:
+                out[k] = y[k]
+        return out
 
 
 def build_combined_exponential(
