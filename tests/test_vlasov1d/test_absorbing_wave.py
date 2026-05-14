@@ -5,13 +5,13 @@ from jax import jit
 
 from adept._base_ import Stepper
 from adept._vlasov1d.simulation import EMDriver
-from adept._vlasov1d.solvers.pushers.field import Driver, WaveSolver
+from adept._vlasov1d.solvers.pushers.field import TransverseCurrentSourceDriver, WaveSolver
 from adept.functions import EnvelopeFunction, SpaceTimeEnvelopeFunction
 
 
 class VectorField(eqx.Module):
     wave_solver: WaveSolver
-    driver: Driver
+    driver: TransverseCurrentSourceDriver
     """
     This class contains the function that updates the state
 
@@ -23,7 +23,7 @@ class VectorField(eqx.Module):
 
     def __init__(self, c_light, dx, dt, xax, drivers):
         self.wave_solver = WaveSolver(c=c_light, dx=dx, dt=dt)
-        self.driver = Driver(xax=xax, drivers=drivers)
+        self.driver = TransverseCurrentSourceDriver(xax=xax, drivers=drivers)
 
     def __call__(self, t, y, args):
         djy = self.driver(t, args)

@@ -1,0 +1,703 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{physics}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{enumitem}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{gray!10}
+}
+
+\newcommand{\tl}[1]{\tilde{#1}}
+\newcommand{\cnorm}{c_{\text{norm}}}
+\newcommand{\wpz}{\omega_{p0}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\tq}{\tl{q}}
+\newcommand{\tm}{\tl{m}}
+
+\title{Vlasov-1D Normalization Derivation:\\Wave Equation, Vlasov Forces, Ponderomotive Force, and Field Solvers}
+\author{ADEPT Documentation}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+%=============================================================================
+\section{Normalization Convention}
+%=============================================================================
+
+\subsection{Reference Quantities}
+
+The Vlasov-1D module uses electron-Debye normalization. All quantities are measured relative to:
+\begin{align}
+    \tau &= \frac{1}{\wpz}, &
+    \wpz &= \sqrt{\frac{n_0 e^2}{m_e \varepsilon_0}}
+    && \text{(reference time = inverse plasma frequency)} \\[6pt]
+    v_0 &= \sqrt{\frac{2T_0}{m_e}}
+    && && \text{(electron thermal velocity)} \\[6pt]
+    L_0 &= \frac{v_0}{\wpz}
+    && && \text{(Debye length)} \\[6pt]
+    \cnorm &= \frac{c}{v_0}
+    && && \text{(normalized speed of light)}
+\end{align}
+
+In the code, $\beta = v_0/c = 1/\cnorm$.
+
+\subsection{Dimensionless Variables}
+
+\begin{align}
+    \tl{x} &= \frac{x}{L_0}, &
+    \tl{t} &= \frac{t}{\tau} = \wpz t, &
+    \tl{v} &= \frac{v}{v_0} \\[6pt]
+    \tl{k} &= k L_0, &
+    \tl{\omega} &= \frac{\omega}{\wpz}
+\end{align}
+
+\subsection{Normalized Charges and Masses}
+
+For species $s$ with SI charge $q_s$ and SI mass $m_s$, define:
+\begin{equation}
+    \tq_s \equiv \frac{q_s}{e}, \qquad \tm_s \equiv \frac{m_s}{m_e}
+    \label{eq:qm-def}
+\end{equation}
+For electrons: $\tq_e = -1$, $\tm_e = 1$. For ions: $\tq_i = +Z$, $\tm_i = M/m_e$.
+
+In the code, these are \code{charge} and \code{mass} respectively, with \code{charge\_to\_mass}~$= \tq_s/\tm_s$.
+
+\subsection{Normalized Fields}
+
+The \textbf{normalized electric field}:
+\begin{equation}
+    \boxed{\tl{E} = \frac{eE}{m_e v_0 \wpz}}
+    \label{eq:E-norm}
+\end{equation}
+The electron equation of motion $m_e \frac{dv}{dt} = -eE$ becomes $\frac{d\tl{v}}{d\tl{t}} = -\tl{E}$, or more generally for species $s$: $\frac{d\tl{v}}{d\tl{t}} = \frac{\tq_s}{\tm_s} \tl{E}$.
+
+The \textbf{normalized vector potential}:
+\begin{equation}
+    \boxed{\tl{a} = \frac{eA}{m_e v_0}}
+    \label{eq:a-norm}
+\end{equation}
+
+Note the relationship to the standard relativistic $a_0^{\text{std}} = eA_0/(m_e c)$:
+\begin{equation}
+    \tl{a}_0 = a_0^{\text{std}} \cdot \cnorm
+\end{equation}
+
+The \textbf{normalized density}: $\tl{n}_s = n_s / n_0$.
+
+The \textbf{normalized distribution function} satisfies $\int f_s \, d\tl{v} = \tl{n}_s$.
+
+\newpage
+%=============================================================================
+\section{The Vlasov Equation and \code{edfdv} Push}
+\label{sec:vlasov}
+%=============================================================================
+
+\subsection{SI Vlasov Equation}
+
+For species $s$ with charge $q_s$ and mass $m_s$:
+\begin{equation}
+    \frac{\partial f_s}{\partial t} + v \frac{\partial f_s}{\partial x} + \frac{q_s E}{m_s} \frac{\partial f_s}{\partial v} = 0
+\end{equation}
+
+\subsection{Normalized Form}
+
+Substituting $t = \tl{t}/\wpz$, $x = \tl{x} L_0$, $v = \tl{v} v_0$, $E = (m_e v_0 \wpz / e) \tl{E}$:
+\begin{equation}
+    \frac{\partial f_s}{\partial \tl{t}} + \tl{v} \frac{\partial f_s}{\partial \tl{x}}
+    + \underbrace{\frac{q_s}{m_s} \cdot \frac{m_e}{e}}_{\tq_s/\tm_s} \cdot \tl{E} \frac{\partial f_s}{\partial \tl{v}} = 0
+\end{equation}
+
+The normalized Vlasov equation is:
+\begin{equation}
+    \boxed{
+    \frac{\partial f_s}{\partial \tl{t}} + \tl{v} \frac{\partial f_s}{\partial \tl{x}}
+    + \frac{\tq_s}{\tm_s}\, \tl{E}_{\text{total}} \frac{\partial f_s}{\partial \tl{v}} = 0
+    }
+    \label{eq:vlasov-norm}
+\end{equation}
+
+The acceleration of species $s$ is:
+\begin{equation}
+    \tl{a}_s = \frac{\tq_s}{\tm_s}\, \tl{E}_{\text{total}}
+    \label{eq:accel}
+\end{equation}
+
+This is the key relationship: $\tl{E}$ is \emph{not} the acceleration---it must be multiplied by $\tq_s/\tm_s$ to give the acceleration. Every quantity added to \code{e} in the code must therefore be in units of $\tl{E}$, not acceleration.
+
+\subsection{Verification Against Code (\code{VelocityExponential})}
+
+The exponential pusher in \code{vlasov.py:63--71} computes:
+\begin{lstlisting}[language=Python]
+qm = species_params[species_name]["charge_to_mass"]   # = tilde_q / tilde_m
+result = irfft(exp(-i * kv * dt * qm * e) * rfft(f))
+\end{lstlisting}
+
+This shifts the distribution in velocity space by $\Delta \tl{v} = (\tq_s/\tm_s) \cdot \tl{E} \cdot \Delta\tl{t}$, consistent with eq.~\eqref{eq:accel}. Note the per-species $\tq_s/\tm_s$ factor is applied correctly.
+
+\textbf{Conclusion:} The \code{edfdv} pusher is correctly normalized \emph{provided} everything passed as \code{e} is in units of $\tl{E}$ as defined by eq.~\eqref{eq:E-norm}. The three additive contributions to \code{e} are:
+\begin{enumerate}
+    \item \code{pond} --- ponderomotive force (Section~\ref{sec:pond})
+    \item \code{e} --- self-consistent electrostatic field from Poisson/Ampere (Section~\ref{sec:poisson})
+    \item \code{dex\_array[0]} --- external driver field (Section~\ref{sec:ex-driver})
+\end{enumerate}
+
+All three must carry units of $\tl{E}$ (electric field), \textbf{not} acceleration. The $\tq_s/\tm_s$ conversion to acceleration is handled inside the \code{edfdv} push.
+
+\newpage
+%=============================================================================
+\section{Poisson Solver}
+\label{sec:poisson}
+%=============================================================================
+
+\subsection{SI Poisson Equation}
+
+\begin{equation}
+    \nabla^2 \phi = -\frac{\rho}{\varepsilon_0}, \qquad E = -\nabla \phi
+\end{equation}
+where $\rho = \sum_s q_s n_s$ is the total charge density.
+
+\subsection{Normalization}
+
+Define $\tl{\phi} = e\phi / (m_e v_0^2)$ so that $\tl{E} = -\partial\tl{\phi}/\partial\tl{x}$.
+
+\textbf{Verification:} In SI, $E = -\partial_x \phi$. So:
+\begin{equation}
+    \tl{E} = \frac{eE}{m_e v_0 \wpz} = -\frac{e}{m_e v_0 \wpz} \cdot \frac{1}{L_0} \frac{\partial \phi}{\partial \tl{x}}
+    = -\frac{e}{m_e v_0^2} \frac{\partial \phi}{\partial \tl{x}}
+    = -\frac{\partial \tl{\phi}}{\partial \tl{x}} \quad \checkmark
+\end{equation}
+using $L_0 = v_0/\wpz$.
+
+Now normalize the Poisson equation. Define $\tl{\rho} = \rho / (e n_0) = \sum_s \tq_s \tl{n}_s$. The SI equation $\partial_{\tl{x}}^2 \phi = -\rho/\varepsilon_0$ becomes:
+\begin{equation}
+    \frac{1}{L_0^2} \frac{\partial^2}{\partial \tl{x}^2}\left(\frac{m_e v_0^2}{e}\tl{\phi}\right)
+    = -\frac{e n_0}{\varepsilon_0} \tl{\rho}
+\end{equation}
+The LHS prefactor is $m_e v_0^2 / (e L_0^2) = m_e \wpz^2 / e = n_0 e / \varepsilon_0$, which equals the RHS prefactor. Therefore:
+\begin{equation}
+    \boxed{\frac{\partial^2 \tl{\phi}}{\partial \tl{x}^2} = -\tl{\rho}}
+    \label{eq:poisson-norm}
+\end{equation}
+
+In Fourier space: $\hat{\tl{E}}_k = -i\tl{k} \hat{\tl{\phi}}_k = \frac{-i}{\tl{k}} \hat{\tl{\rho}}_k$.
+
+\subsection{Verification Against Code (\code{SpectralPoissonSolver})}
+
+The code (\code{field.py:135--160}):
+\begin{lstlisting}[language=Python]
+rho = sum_s q_s * sum(f_s, axis=1) * dv_s  # + static_charge
+E = real(ifft(-1j * one_over_kx * fft(rho)))
+\end{lstlisting}
+
+Here \code{q\_s}~$= \tq_s$ is the normalized charge, \code{sum(f\_s)*dv\_s}~$= \tl{n}_s$, so \code{rho}~$= \sum_s \tq_s \tl{n}_s = \tl{\rho}$. The spectral operation gives $\hat{\tl{E}}_k = -i (1/\tl{k}) \hat{\tl{\rho}}_k$.
+
+\begin{center}
+\colorbox{green!15}{\parbox{0.85\textwidth}{
+\textbf{Result:} The Poisson solver is correctly normalized. Its output is $\tl{E}$ in the correct units for the Vlasov push.
+}}
+\end{center}
+
+\newpage
+%=============================================================================
+\section{Ampere Solver}
+\label{sec:ampere}
+%=============================================================================
+
+\subsection{SI Ampere's Law (1D Electrostatic)}
+
+In 1D electrostatics:
+\begin{equation}
+    \varepsilon_0 \frac{\partial E}{\partial t} = -j, \qquad j = \sum_s q_s \int v f_s \, dv
+\end{equation}
+
+\subsection{Normalization}
+
+Substitute $E = (m_e v_0 \wpz / e) \tl{E}$, $t = \tl{t}/\wpz$, and define $\tl{j} = \sum_s \tq_s \int \tl{v} f_s \, d\tl{v}$:
+\begin{equation}
+    \varepsilon_0 \cdot \frac{m_e v_0 \wpz}{e} \cdot \wpz \frac{\partial \tl{E}}{\partial \tl{t}}
+    = -e n_0 v_0 \tl{j}
+\end{equation}
+
+The LHS prefactor is $\varepsilon_0 m_e v_0 \wpz^2 / e$. Using $\wpz^2 = n_0 e^2 / (m_e \varepsilon_0)$:
+\begin{equation}
+    \frac{\varepsilon_0 m_e v_0}{e} \cdot \frac{n_0 e^2}{m_e \varepsilon_0} = e n_0 v_0
+\end{equation}
+
+So the normalized Ampere equation is:
+\begin{equation}
+    \boxed{\frac{\partial \tl{E}}{\partial \tl{t}} = -\tl{j}, \qquad
+    \tl{j} = \sum_s \tq_s \int \tl{v} f_s \, d\tl{v}}
+    \label{eq:ampere-norm}
+\end{equation}
+
+\subsection{Verification Against Code (\code{AmpereSolver})}
+
+The code (\code{field.py:192--216}):
+\begin{lstlisting}[language=Python]
+j_s = sum(v * f_s, axis=1) * dv_s   # integral of v*f dv for species s
+j += q_s * j_s                       # q_s = tilde_q
+return prev_ex - dt * j
+\end{lstlisting}
+
+Here \code{q\_s}~$= \tq_s$, so \code{j}~$= \sum_s \tq_s \int \tl{v} f_s \, d\tl{v} = \tl{j}$. The update implements $\tl{E}^{n+1} = \tl{E}^n - \Delta\tl{t} \cdot \tl{j}$.
+
+\begin{center}
+\colorbox{green!15}{\parbox{0.85\textwidth}{
+\textbf{Result:} The Ampere solver is correctly normalized. Its output is $\tl{E}$.
+}}
+\end{center}
+
+\subsection{Hamiltonian Ampere Solver (\code{HampereSolver})}
+
+The Hamiltonian Ampere solver integrates Ampere's law exactly along ballistic characteristics in Fourier space (\code{field.py:273--278}):
+\begin{lstlisting}[language=Python]
+new_ek = prev_ek + charge * one_over_ikx
+         * sum(fk * (exp(-i*kx*dt*vx) - 1), axis=1) * dv
+\end{lstlisting}
+
+This implements:
+\begin{equation}
+    \hat{\tl{E}}_k(\tl{t}+\Delta\tl{t}) = \hat{\tl{E}}_k(\tl{t})
+    + \frac{\tq_s}{i\tl{k}} \int \hat{f}_{s,k}(\tl{t}) \left(e^{-i\tl{k}\tl{v}\Delta\tl{t}} - 1\right) d\tl{v}
+\end{equation}
+which is the exact solution of $\partial_{\tl{t}} \hat{\tl{E}}_k = -\hat{\tl{j}}_k$ with free-streaming $f$.
+
+\begin{center}
+\colorbox{green!15}{\parbox{0.85\textwidth}{
+\textbf{Result:} The Hamiltonian Ampere solver is correctly normalized.
+}}
+\end{center}
+
+\newpage
+%=============================================================================
+\section{Wave Equation for the Transverse Vector Potential}
+\label{sec:wave}
+%=============================================================================
+
+\subsection{SI Wave Equation}
+
+The 1D wave equation for the transverse vector potential $A_y$ in a plasma, driven by an external transverse current $j_{\text{ext},y}$:
+\begin{equation}
+    \frac{\partial^2 A_y}{\partial t^2} = c^2 \frac{\partial^2 A_y}{\partial x^2}
+    - \frac{n_e e^2}{m_e \varepsilon_0} A_y + \frac{j_{\text{ext},y}}{\varepsilon_0}
+    \label{eq:wave-SI}
+\end{equation}
+
+The $-\frac{n_e e^2}{m_e \varepsilon_0} A$ term is the linearized transverse quiver current. Note $\frac{e^2 n_0}{m_e \varepsilon_0} = \wpz^2$.
+
+\subsection{Normalization}
+
+Substitute $A_y = (m_e v_0 / e) \tl{a}$, $t = \tl{t}/\wpz$, $x = \tl{x} L_0$. Every term acquires the common prefactor $\frac{m_e v_0}{e} \wpz^2$:
+
+\textbf{LHS:} $\frac{m_e v_0}{e} \wpz^2 \frac{\partial^2 \tl{a}}{\partial \tl{t}^2}$
+
+\textbf{$c^2 \partial^2_x A$ term:} Uses $c^2/L_0^2 = \cnorm^2 \wpz^2$ to give $\frac{m_e v_0}{e} \wpz^2 \cnorm^2 \frac{\partial^2 \tl{a}}{\partial \tl{x}^2}$.
+
+\textbf{Density term:} $-\frac{n_e}{n_0} \wpz^2 \cdot \frac{m_e v_0}{e} \tl{a} = \frac{m_e v_0}{e} \wpz^2 \left(-\frac{n_e}{n_0}\right) \tl{a}$.
+
+\textbf{External current term:} We need to express $j_{\text{ext},y}/\varepsilon_0$ in the same units. The common prefactor is $\frac{m_e v_0}{e} \wpz^2$, so define:
+\begin{equation}
+    \tl{S} = \frac{j_{\text{ext},y}}{\varepsilon_0} \cdot \frac{e}{m_e v_0 \wpz^2}
+\end{equation}
+Using $\wpz^2 = n_0 e^2/(m_e \varepsilon_0)$:
+\begin{equation}
+    \tl{S} = \frac{j_{\text{ext},y}}{\varepsilon_0} \cdot \frac{e}{m_e v_0} \cdot \frac{m_e \varepsilon_0}{n_0 e^2}
+    = \frac{j_{\text{ext},y}}{n_0 e v_0}
+    \label{eq:S-derivation}
+\end{equation}
+
+\subsection{Normalized Wave Equation}
+
+Dividing through by the common factor $\frac{m_e v_0}{e} \wpz^2$:
+\begin{equation}
+    \boxed{
+    \frac{\partial^2 \tl{a}}{\partial \tl{t}^2}
+    = \cnorm^2 \frac{\partial^2 \tl{a}}{\partial \tl{x}^2}
+    - \frac{n_e}{n_0} \tl{a}
+    + \tl{S}
+    }
+    \label{eq:wave-norm}
+\end{equation}
+where
+\begin{equation}
+    \tl{S} = \frac{j_{\text{ext},y}}{n_0 e v_0}
+    \label{eq:source-norm}
+\end{equation}
+
+\subsection{Verification Against Code (\code{WaveSolver})}
+\label{sec:wave-code}
+
+The wave solver (\code{field.py:85--88}):
+\begin{lstlisting}[language=Python]
+anew = 2*a[1:-1] - aold[1:-1]
+     + dt**2 * (c_sq*d2dx2 - electron_density*a[1:-1] + djy_array[1:-1])
+\end{lstlisting}
+
+This is a leapfrog discretization of:
+\begin{equation}
+    \frac{\partial^2 \tl{a}}{\partial \tl{t}^2}
+    = \cnorm^2 \frac{\partial^2 \tl{a}}{\partial \tl{x}^2}
+    - n_e^{\text{code}} \cdot \tl{a}
+    + \text{djy}
+    \label{eq:wave-code}
+\end{equation}
+where \code{c\_sq} $= \cnorm^2$ (since \code{c = 1/beta} $= \cnorm$).
+
+\subsubsection{The electron density term}
+
+The code passes (\code{vector\_field.py:337}):
+\begin{lstlisting}[language=Python]
+electron_density = -0.5*(electron_charge_density_n + electron_charge_density_np1)
+\end{lstlisting}
+where \code{electron\_charge\_density} is computed as (\code{vector\_field.py:296}):
+\begin{lstlisting}[language=Python]
+charge_density = charge * sum(f, axis=1) * dv   # charge = tilde_q = -1 for e-
+\end{lstlisting}
+
+So \code{electron\_charge\_density} $= \tq_e \cdot \tl{n}_e = (-1) \cdot \tl{n}_e$, and:
+\begin{equation}
+    n_e^{\text{code}} = -\tfrac{1}{2}\bigl((-\tl{n}_e^n) + (-\tl{n}_e^{n+1})\bigr) = +\tfrac{1}{2}(\tl{n}_e^n + \tl{n}_e^{n+1})
+\end{equation}
+
+The wave equation term is $-n_e^{\text{code}} \cdot \tl{a} = -\frac{1}{2}(\tl{n}_e^n + \tl{n}_e^{n+1}) \tl{a}$. This matches eq.~\eqref{eq:wave-norm} with Crank-Nicolson time-averaging.
+
+\begin{center}
+\colorbox{green!15}{\parbox{0.85\textwidth}{
+\textbf{Result:} The electron density term in the wave equation is correctly normalized.
+}}
+\end{center}
+
+\subsubsection{The source term \code{djy\_array}}
+
+Comparing eq.~\eqref{eq:wave-code} with eq.~\eqref{eq:wave-norm}, the code's \code{djy\_array} must equal $\tl{S} = j_{\text{ext},y}/(n_0 e v_0)$. See Section~\ref{sec:ey-driver} for the derivation of what the \code{ey\_driver} should produce.
+
+\newpage
+%=============================================================================
+\section{Ponderomotive Force}
+\label{sec:pond}
+%=============================================================================
+
+\subsection{SI Derivation for General Species}
+
+For species $s$ with charge $q_s$ and mass $m_s$, the quiver kinetic energy in a transverse field $A_y$ is (from the canonical Hamiltonian with $p_y = 0$):
+\begin{equation}
+    K_{\perp,s} = \frac{q_s^2 A_y^2}{2 m_s}
+\end{equation}
+
+This acts as a ponderomotive potential. The ponderomotive force is:
+\begin{equation}
+    F_{\text{pond},s} = -\frac{\partial K_{\perp,s}}{\partial x} = -\frac{q_s^2}{2m_s} \frac{\partial (A_y^2)}{\partial x}
+    \label{eq:pond-SI}
+\end{equation}
+
+The ponderomotive \emph{acceleration} is:
+\begin{equation}
+    a_{\text{pond},s} = \frac{F_{\text{pond},s}}{m_s} = -\frac{q_s^2}{2m_s^2} \frac{\partial(A_y^2)}{\partial x}
+    \label{eq:pond-accel-SI}
+\end{equation}
+
+\textbf{Important:} The coefficient $q_s^2/m_s^2$ is species-dependent. The ponderomotive acceleration is \emph{not} proportional to $q_s/m_s$ (the charge-to-mass ratio that appears in $\vec{F} = q\vec{E}$). It is proportional to $q_s^2/m_s^2$.
+
+\textbf{Note on cycle averaging:} Since the wave solver evolves the full instantaneous $A_y(x,t)$ (not an envelope), the factor of $1/2$ here is correct. The often-seen $1/4$ arises from cycle-averaging $\langle\sin^2\rangle = 1/2$ of the envelope amplitude.
+
+\subsection{Normalization}
+
+Normalize the acceleration using $\tl{a}_s = a_s / (v_0 \wpz)$, $x = L_0 \tl{x}$, $A_y = (m_e v_0/e)\tl{a}$:
+\begin{align}
+    \tl{a}_{\text{pond},s}
+    &= \frac{1}{v_0 \wpz} \left(-\frac{q_s^2}{2m_s^2}\right) \frac{1}{L_0} \frac{\partial}{\partial \tl{x}}\left(\frac{m_e v_0}{e}\right)^2 \tl{a}^2 \\[6pt]
+    &= -\frac{q_s^2}{2m_s^2} \cdot \frac{m_e^2 v_0}{e^2 \wpz L_0} \frac{\partial(\tl{a}^2)}{\partial \tl{x}} \\[6pt]
+    &= -\frac{q_s^2 m_e^2}{2m_s^2 e^2} \frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+    \qquad \text{(using $L_0 = v_0/\wpz$)} \\[6pt]
+    &= -\frac{\tq_s^2}{2\tm_s^2} \frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+    \label{eq:pond-accel-norm}
+\end{align}
+
+\subsection{Expressing as an Effective Electric Field}
+
+The \code{edfdv} push computes the acceleration as $\tl{a}_s = (\tq_s/\tm_s) \cdot \tl{E}$ (eq.~\ref{eq:accel}). To use this machinery, we need an effective electric field $\tl{E}_{\text{pond},s}$ such that:
+\begin{equation}
+    \frac{\tq_s}{\tm_s} \cdot \tl{E}_{\text{pond},s} = -\frac{\tq_s^2}{2\tm_s^2} \frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+\end{equation}
+
+Solving:
+\begin{equation}
+    \boxed{
+    \tl{E}_{\text{pond},s} = -\frac{\tq_s}{2\tm_s} \frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+    }
+    \label{eq:pond-Efield}
+\end{equation}
+
+\textbf{This is species-dependent.} The effective ponderomotive ``electric field'' depends on the charge and mass of the species being pushed.
+
+For electrons ($\tq_e = -1$, $\tm_e = 1$):
+\begin{equation}
+    \tl{E}_{\text{pond},e} = +\frac{1}{2} \frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+\end{equation}
+
+\subsection{Verification Against Code}
+\label{sec:pond-code}
+
+The code (\code{field.py:346}):
+\begin{lstlisting}[language=Python]
+ponderomotive_force = -0.5 * jnp.gradient(a**2.0, self.dx)[1:-1]
+\end{lstlisting}
+
+This computes $-\frac{1}{2}\partial_{\tl{x}}(\tl{a}^2)$.
+
+This value is then added directly to \code{e} in the Vlasov push (\code{vector\_field.py:88}):
+\begin{lstlisting}[language=Python]
+f_dict = self.edfdv(f_after_v, e=pond + e + dex_array[0], dt=self.dt)
+\end{lstlisting}
+
+The \code{edfdv} push multiplies by $\tq_s/\tm_s$, giving acceleration:
+\begin{equation}
+    \tl{a}_s^{\text{code}} = \frac{\tq_s}{\tm_s} \cdot \underbrace{\left(-\frac{1}{2}\frac{\partial(\tl{a}^2)}{\partial \tl{x}}\right)}_{\text{pond (code)}}
+\end{equation}
+
+For electrons ($\tq_e/\tm_e = -1$):
+\begin{equation}
+    \tl{a}_e^{\text{code}} = (-1) \cdot \left(-\frac{1}{2}\frac{\partial(\tl{a}^2)}{\partial \tl{x}}\right)
+    = +\frac{1}{2}\frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+\end{equation}
+
+But the correct electron ponderomotive acceleration from eq.~\eqref{eq:pond-accel-norm} is:
+\begin{equation}
+    \tl{a}_e^{\text{correct}} = -\frac{(-1)^2}{2(1)^2}\frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+    = -\frac{1}{2}\frac{\partial(\tl{a}^2)}{\partial \tl{x}}
+\end{equation}
+
+\begin{center}
+\colorbox{red!15}{\parbox{0.85\textwidth}{
+\textbf{Bug: Sign error in ponderomotive force.}
+
+The code computes the ponderomotive \emph{acceleration} $-\frac{1}{2}\partial_{\tl{x}}(\tl{a}^2)$ but passes it as an \emph{electric field} to the \code{edfdv} push, which multiplies by $\tq_s/\tm_s$ again. For electrons, this flips the sign: particles are pushed \emph{toward} high intensity instead of away from it.
+
+The correct effective electric field for the ponderomotive force is species-dependent: $\tl{E}_{\text{pond},s} = -\frac{\tq_s}{2\tm_s}\partial_{\tl{x}}(\tl{a}^2)$.
+
+For a single-species electron simulation, the fix is to flip the sign: \code{pond = +0.5 * gradient(a**2, dx)}.
+
+For multi-species, the ponderomotive contribution must be applied per-species inside the \code{edfdv} loop, not as a universal additive field.
+}}
+\end{center}
+
+\textbf{Sanity check:} Consider $\tl{a}^2$ increasing in $+\tl{x}$ (intensity gradient pointing right). The ponderomotive force should push electrons to the left (away from high intensity).
+\begin{itemize}
+    \item \textbf{Code:} $\tl{a}_e = +\frac{1}{2} \cdot (\text{positive}) > 0$ --- pushes electrons \emph{right}, toward high intensity. \textcolor{red}{Wrong.}
+    \item \textbf{Correct:} $\tl{a}_e = -\frac{1}{2} \cdot (\text{positive}) < 0$ --- pushes electrons \emph{left}, away from high intensity. \textcolor{green!50!black}{Correct.}
+\end{itemize}
+
+\newpage
+%=============================================================================
+\section{The \code{ex\_driver} --- Longitudinal Electric Field Source}
+\label{sec:ex-driver}
+%=============================================================================
+
+\subsection{Physical Setup}
+
+The \code{ex\_driver} injects an external longitudinal electric field $E_x$ that is added directly to the total field in the Vlasov push. The driver specifies a wave via amplitude $\tl{a}_0$, wavenumber $\tl{k}$, and frequency $\tl{\omega}$.
+
+\subsection{Derivation}
+
+If the driver represents an EM wave with vector potential $A = A_0 \sin(kx - \omega t)$, the associated electric field is $E = -\partial_t A = \omega A_0 \cos(kx - \omega t)$.
+
+Normalizing (using $\tl{E} = eE/(m_e v_0 \wpz)$ and $\tl{a}_0 = eA_0/(m_e v_0)$):
+\begin{equation}
+    \tl{E} = \frac{\omega}{\wpz} \cdot \frac{e A_0}{m_e v_0} \cos(\tl{k}\tl{x} - \tl{\omega}\tl{t})
+    = \tl{\omega} \cdot \tl{a}_0 \cos(\tl{k}\tl{x} - \tl{\omega}\tl{t})
+\end{equation}
+
+The $\sin$ vs $\cos$ difference is a $\pi/2$ phase shift in the definition of the carrier. Writing $\sin$ to match the code convention:
+\begin{equation}
+    \boxed{\tl{E}_{\text{ex,driver}} = \tl{\omega} \cdot \tl{a}_0 \cdot \sin(\tl{k}\tl{x} - \tl{\omega}\tl{t})}
+    \label{eq:ex-driver}
+\end{equation}
+
+\subsection{Comparison with Current Code}
+
+The current \code{Driver.get\_this\_pulse} (\code{field.py:23}):
+\begin{lstlisting}[language=Python]
+return factor * jnp.abs(kk) * this_pulse.a0 * jnp.sin(kk*x - ww*t)
+\end{lstlisting}
+
+This uses $|\tl{k}|$ where it should use $\tl{\omega}$.
+
+\begin{center}
+\colorbox{red!15}{\parbox{0.85\textwidth}{
+\textbf{Discrepancy:} The \code{ex\_driver} is missing a factor of $\tl{\omega}/|\tl{k}|$. For vacuum dispersion ($\omega = ck$), this ratio is $\cnorm = c/v_0 \gg 1$.
+
+The driver should use $\tl{\omega}$ directly, which is correct for any dispersion relation.
+}}
+\end{center}
+
+\newpage
+%=============================================================================
+\section{The \code{ey\_driver} --- Transverse Current Source for the Wave Equation}
+\label{sec:ey-driver}
+%=============================================================================
+
+\subsection{Physical Setup}
+
+The \code{ey\_driver} injects a transverse EM wave by acting as an external current source in the wave equation. As established in Section~\ref{sec:wave-code}, the source term \code{djy\_array} enters the normalized wave equation~\eqref{eq:wave-norm} as $\tl{S} = j_{\text{ext},y}/(n_0 e v_0)$.
+
+The driver is parametrized by a vector potential amplitude $\tl{a}_0$, wavenumber $\tl{k}$, and frequency $\tl{\omega}$, describing the desired EM wave. We need to determine what external current $\tl{S}$ to apply.
+
+\subsection{Derivation: Required External Current}
+
+Suppose the driver acts in a localized region (controlled by the envelope function) and we want to sustain a wave of the form $\tl{a}_{\text{drv}} = \tl{a}_0 \sin(\tl{k}\tl{x} - \tl{\omega}\tl{t})$ within that region. Substituting into the wave equation~\eqref{eq:wave-norm}, this component satisfies:
+\begin{equation}
+    \underbrace{-\tl{\omega}^2 \tl{a}_{\text{drv}}}_{\partial^2_{\tl{t}}\tl{a}_{\text{drv}}}
+    = \underbrace{-\cnorm^2 \tl{k}^2 \tl{a}_{\text{drv}}}_{c^2\partial^2_{\tl{x}}\tl{a}_{\text{drv}}}
+    - \frac{n_e}{n_0}\tl{a}_{\text{drv}}
+    + \tl{S}
+\end{equation}
+
+Solving for $\tl{S}$:
+\begin{equation}
+    \tl{S} = \left(-\tl{\omega}^2 + \cnorm^2 \tl{k}^2 + \frac{n_e}{n_0}\right) \tl{a}_0 \sin(\tl{k}\tl{x} - \tl{\omega}\tl{t})
+    \label{eq:ey-full}
+\end{equation}
+
+If $(\tl{\omega}, \tl{k})$ satisfy the plasma dispersion relation $\tl{\omega}^2 = \cnorm^2 \tl{k}^2 + n_e/n_0$, then $\tl{S} = 0$: the wave propagates freely with no source needed.
+
+\subsection{Interpretation}
+
+Equation~\eqref{eq:ey-full} has a clear physical meaning: $\tl{S}$ is the external transverse current density (normalized to $n_0 e v_0$) required to sustain the desired wave against the plasma's dielectric response.
+
+However, in practice the wave solver \emph{already computes} the $\cnorm^2\partial^2_{\tl{x}}\tl{a}$ and $-(n_e/n_0)\tl{a}$ terms self-consistently from the total field $\tl{a}$. If we include those terms in $\tl{S}$ as well, the driven component would be double-counted: the solver would apply the spatial derivative and density coupling to the total $\tl{a}$ (which includes the driven part), and we would also be supplying them via $\tl{S}$.
+
+Therefore, the correct source to supply is only the ``inertial'' part---the piece that the wave solver does \emph{not} compute from the field:
+\begin{equation}
+    \boxed{
+    \tl{S}_{\text{ey,driver}} = -\tl{\omega}^2 \cdot \tl{a}_0 \cdot \sin(\tl{k}\tl{x} - \tl{\omega}\tl{t})
+    }
+    \label{eq:ey-driver}
+\end{equation}
+
+This is equivalent to saying: the source injects $\partial^2_{\tl{t}} \tl{a}_{\text{drv}}$ directly, and the wave solver handles the rest ($c^2\partial^2_x$ and density coupling) self-consistently from whatever $\tl{a}$ field results.
+
+\textbf{Physical reading:} This source represents an antenna current that ``pushes'' the vector potential at the specified frequency. The resulting wave amplitude in the plasma depends on how $(\tl\omega, \tl{k})$ relates to the local dispersion relation:
+\begin{itemize}
+    \item If $\tl{\omega}^2 \approx \cnorm^2\tl{k}^2 + n_e/n_0$ (on the dispersion surface), the self-consistent terms nearly cancel $\tl{S}$ and the wave is strongly resonantly driven---small forcing produces large amplitude. In practice, the envelope localization and absorbing boundaries prevent true divergence.
+    \item If $\tl{\omega}^2$ is far from the dispersion surface, the forcing competes with a large restoring term and the effective amplitude is reduced.
+\end{itemize}
+
+In either case, $\tl{a}_0$ as specified in the config is the \emph{source strength}, not directly the resulting wave amplitude (the relationship between the two depends on the plasma conditions and envelope shape).
+
+\subsection{Comparison with Current Code}
+
+The current \code{Driver.get\_this\_pulse} returns $+|\tl{k}| \cdot \tl{a}_0 \cdot \sin(\ldots)$ for both driver types.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{lcc}
+\toprule
+& \textbf{Current Code} & \textbf{Correct} \\
+\midrule
+Prefactor & $|\tl{k}| \cdot \tl{a}_0$ & $\tl{\omega}^2 \cdot \tl{a}_0$ \\
+Sign & $+$ & $-$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{center}
+\colorbox{red!15}{\parbox{0.85\textwidth}{
+\textbf{Discrepancy:} The \code{ey\_driver} has wrong prefactor ($|\tl{k}|$ vs $\tl{\omega}^2$) and wrong sign.
+}}
+\end{center}
+
+\newpage
+%=============================================================================
+\section{Summary}
+%=============================================================================
+
+\subsection{Components Verified Correct}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{lp{8cm}c}
+\toprule
+\textbf{Component} & \textbf{Description} & \textbf{Status} \\
+\midrule
+Poisson solver & Spectral solve of $\partial^2\tl\phi/\partial\tl{x}^2 = -\tl\rho$ & \colorbox{green!20}{Correct} \\
+Ampere solver & Euler step $\tl{E}^{n+1} = \tl{E}^n - \Delta\tl{t}\,\tl{j}$ & \colorbox{green!20}{Correct} \\
+Hampere solver & Exact Hamiltonian integration in Fourier space & \colorbox{green!20}{Correct} \\
+Wave equation structure & $\partial^2_{\tl{t}} \tl{a} = \cnorm^2 \partial^2_{\tl{x}} \tl{a} - (n_e/n_0)\tl{a} + \tl{S}$ & \colorbox{green!20}{Correct} \\
+$n_e$ term in wave eq. & Time-averaged $\frac{1}{2}(n_e^n + n_e^{n+1})$ & \colorbox{green!20}{Correct} \\
+\code{edfdv} push & Shift by $(\tq_s/\tm_s) \tl{E} \Delta\tl{t}$ per species & \colorbox{green!20}{Correct} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Bugs Found}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.5}
+\begin{tabular}{lp{4.5cm}p{4.5cm}l}
+\toprule
+\textbf{Component} & \textbf{Current Code} & \textbf{Correct} & \textbf{Severity} \\
+\midrule
+Pond.\ force
+& $-\frac{1}{2}\partial_{\tl{x}}(\tl{a}^2)$ added as $\tl{E}$; wrong-sign accel.
+& $-\frac{\tq_s}{2\tm_s}\partial_{\tl{x}}(\tl{a}^2)$ (species-dep.\ $\tl{E}$)
+& \colorbox{red!20}{Sign flip} \\[8pt]
+\code{ex\_driver}
+& $|\tl{k}| \cdot \tl{a}_0$
+& $\tl{\omega} \cdot \tl{a}_0$
+& \colorbox{red!20}{$\times\, \cnorm$} \\[4pt]
+\code{ey\_driver}
+& $+|\tl{k}| \cdot \tl{a}_0$
+& $-\tl{\omega}^2 \cdot \tl{a}_0$
+& \colorbox{red!20}{wrong} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Recommended Fixes}
+
+\subsubsection{Ponderomotive force (multi-species correct)}
+
+Move the ponderomotive contribution inside the per-species loop in \code{edfdv}, or compute a per-species effective field:
+\begin{lstlisting}[language=Python]
+# In ElectricFieldSolver or the calling code:
+grad_a2 = jnp.gradient(a**2.0, self.dx)[1:-1]
+
+# Per species: E_pond_s = -(tq_s / (2 * tm_s)) * grad(a^2)
+# For electron-only shortcut: E_pond_e = +0.5 * grad(a^2)
+\end{lstlisting}
+
+\subsubsection{Driver classes}
+
+Split into two classes with correct normalization:
+\begin{lstlisting}[language=Python]
+class ExDriver:
+    """Electric field driver for the Vlasov equation."""
+    def get_this_pulse(self, this_pulse, current_time):
+        kk = this_pulse.k0
+        ww = this_pulse.w0 + this_pulse.dw0
+        factor = this_pulse.envelope(self.xax, current_time)
+        return factor * ww * this_pulse.a0 \
+               * jnp.sin(kk * self.xax - ww * current_time)
+
+class EyDriver:
+    """Transverse current source for the wave equation."""
+    def get_this_pulse(self, this_pulse, current_time):
+        kk = this_pulse.k0
+        ww = this_pulse.w0 + this_pulse.dw0
+        factor = this_pulse.envelope(self.xax, current_time)
+        return -factor * ww**2 * this_pulse.a0 \
+               * jnp.sin(kk * self.xax - ww * current_time)
+\end{lstlisting}
+
+\end{document}

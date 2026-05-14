@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from adept.functions import EnvelopeConfig, SpaceTimeEnvelopeConfig
@@ -107,6 +109,7 @@ class AKWDriverConfig(BaseModel):
 class EMDriverConfig(BaseModel):
     params: IntensityWavelengthDriverConfig | AKWDriverConfig
     envelope: SpaceTimeEnvelopeConfig
+    source_type: Literal["extended", "point"] = "extended"
 
 
 class EMDriverSetConfig(BaseModel):
