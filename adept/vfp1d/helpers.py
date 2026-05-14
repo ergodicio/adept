@@ -118,14 +118,14 @@ def _initialize_distribution_(
 
 
 def _initialize_total_distribution_(
-    cfg: dict, grid, beta: float, norm: PlasmaNormalization
+    cfg: dict, grid, vth_norm: float, norm: PlasmaNormalization
 ) -> tuple[Array, Array, Array]:
     """
     This function initializes the distribution function as a sum of the individual species
 
     :param cfg: Dict
     :param grid: Grid object
-    :param beta: vth/c (dimensionless thermal velocity)
+    :param vth_norm: Thermal velocity in normalized units (vth/v0)
     :param norm: Plasma normalization (used for unit conversion of spatial profiles)
     :return: distribution function, density profile (nx, nv), (nx,)
 
@@ -184,7 +184,7 @@ def _initialize_total_distribution_(
             temp_f0, _ = _initialize_distribution_(
                 nv=grid.nv,
                 m=m,
-                vth=beta,
+                vth=vth_norm,
                 vmax=grid.vmax,
                 n_prof=profs["n"],
                 T_prof=profs["T"],

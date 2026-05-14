@@ -147,7 +147,7 @@ def calc_kappa(cfg: dict, T: xr.DataArray, q: xr.DataArray, n: xr.DataArray) -> 
         / n.data
         / T.data
         / np.gradient(T.data, cfg["grid"]["dx"], axis=1)
-        * (cfg["units"]["derived"]["nuei_epphaines"] / cfg["units"]["derived"]["wp0"]).to("").magnitude
+        * cfg["units"]["derived"]["nuei_epphaines_norm"].magnitude
     )
 
     return xr.DataArray(kappa, coords=(("t (ps)", T.coords["t (ps)"].data), ("x (um)", T.coords["x (um)"].data)))
