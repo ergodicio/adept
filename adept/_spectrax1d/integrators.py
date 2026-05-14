@@ -268,6 +268,11 @@ class SplitStepDampingSolver(AbstractSolver):
             Ck_i = y_damped["Ck_ions"].view(jnp.complex128)
             y_damped["Ck_ions"] = (Ck_i * self.hermite_filter_i[:, :, :, None, None, None]).view(jnp.float64)
 
+        # Forward any extra state keys (e.g. SSM hidden state) unchanged
+        for k in y:
+            if k not in y_damped:
+                y_damped[k] = y[k]
+
         return y_damped
 
     def func(self, terms, t0, y0, args):
