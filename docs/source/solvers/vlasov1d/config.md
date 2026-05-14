@@ -386,7 +386,7 @@ Solver algorithm configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `field` | string | Electric field solver: `"poisson"`, `"ampere"`, or `"hampere"` |
-| `edfdv` | string | Velocity advection scheme: `"exponential"`, `"cubic-spline"`, or `"muscl"` (TVD finite-volume with minmod limiter) |
+| `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
