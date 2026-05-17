@@ -155,12 +155,21 @@ class SpectraxVectorField:
 
     @staticmethod
     def _houli_filter(Nn: int, Nm: int, Np: int, strength: float, order: int) -> Array:
-        n = jnp.arange(Nn, dtype=jnp.float64)[None, None, :]
-        m = jnp.arange(Nm, dtype=jnp.float64)[None, :, None]
-        p = jnp.arange(Np, dtype=jnp.float64)[:, None, None]
-        h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-        h = jnp.sqrt(n**2 + m**2 + p**2)
-        return jnp.exp(-strength * (h / h_max) ** order)
+        # Separable per-axis Hou-Li taper. Each axis gets its own 1D filter
+        # exp(-strength * (i/(N_axis-1))^order) so that anisotropic mode counts
+        # (e.g. Nn=64, Nm=4) still damp the top mode along every axis. The previous
+        # 3D-radial formula collapsed to ~1.0 along the short axis when h_max was
+        # dominated by the long axis, leaving no dealiasing there.
+        def axis_filter(N: int) -> Array:
+            if N <= 1:
+                return jnp.ones(N, dtype=jnp.float64)
+            i = jnp.arange(N, dtype=jnp.float64)
+            return jnp.exp(-strength * (i / (N - 1)) ** order)
+
+        fn = axis_filter(Nn)
+        fm = axis_filter(Nm)
+        fp = axis_filter(Np)
+        return fp[:, None, None] * fm[None, :, None] * fn[None, None, :]
 
     def _current(self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int) -> Array:
         C0 = Ck[0, 0, 0]
