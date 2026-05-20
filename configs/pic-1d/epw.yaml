@@ -1,0 +1,80 @@
+units:
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+
+grid:
+  dt: 0.1
+  nx: 32
+  tmin: 0.
+  tmax: 100.0
+  xmax: 20.94
+  xmin: 0.0
+  ppc: 32768
+  particle_shape: cubic   # one of: linear | tsc | cubic
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 100.0
+      nt: 601
+  electron:
+    main:
+      t:
+        tmin: 0.0
+        tmax: 100.0
+        nt: 11
+
+solver: pic-1d
+
+mlflow:
+  experiment: basic-epw-pic
+  run: leapfrog-cubic
+
+drivers:
+  ex:
+    '0':
+      params:
+        a0: 1.e-3
+        k0: 0.3
+        w0: 1.1598
+        dw0: 0.
+      envelope:
+        time:
+          center: 40.0
+          rise: 5.0
+          width: 30.0
+        space:
+          center: 0.0
+          rise: 10.0
+          width: 4000000.0
+  ey: {}
+
+diagnostics: {}
+
+terms:
+  field: poisson
+  time: leapfrog   # leapfrog | yoshida4
+  species:
+    - name: electron
+      charge: -1.0
+      mass: 1.0
+      loading: quiet   # quiet | random
+      vmax_load: 8.0

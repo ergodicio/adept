@@ -45,6 +45,9 @@ ignore = [
 ]
 allowed-confusables = [
     "–", # EN DASH
+    "−", # MINUS SIGN (vs HYPHEN-MINUS)
+    "×", # MULTIPLICATION SIGN (vs LATIN SMALL LETTER X)
+    "γ", # GREEK SMALL LETTER GAMMA (vs LATIN SMALL LETTER Y) — physics notation
 ]
 
 [lint.extend-per-file-ignores]
