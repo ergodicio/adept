@@ -120,8 +120,7 @@ class BasePIC1D(ADEPTModule):
 
         # Stash initial particle arrays for init_state_and_args.
         cfg_grid["_initial_particles"] = {
-            name: {"x": jnp.array(x), "v": jnp.array(v), "w": jnp.array(w)}
-            for name, (x, v, w, _, _) in loaded.items()
+            name: {"x": jnp.array(x), "v": jnp.array(v), "w": jnp.array(w)} for name, (x, v, w, _, _) in loaded.items()
         }
         # Synthetic velocity axis per species — for downstream plot helpers
         # only; not used by the solver itself.

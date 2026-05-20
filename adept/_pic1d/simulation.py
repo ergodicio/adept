@@ -83,9 +83,7 @@ def sim_from_config(cfg: PIC1DConfig) -> PIC1DSimulation:
     # ``a(x)`` via a wave equation; in that case dt must satisfy the EM CFL.
     has_ey_driver = len(cfg.drivers.ey) > 0
     beta = 1.0 / plasma_norm.speed_of_light_norm() if has_ey_driver else 1.0
-    grid = Grid.from_config(
-        cfg.grid, beta=beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm
-    )
+    grid = Grid.from_config(cfg.grid, beta=beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
 
     default_components = _density_component_names(cfg)
     if not default_components:

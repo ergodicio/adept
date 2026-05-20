@@ -81,10 +81,7 @@ class PIC1DVectorField:
         self.ey_driver = TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey, c=c)
 
     def _pack(self, y: dict) -> dict:
-        return {
-            name: {"x": y[f"x_{name}"], "v": y[f"v_{name}"], "w": y[f"w_{name}"]}
-            for name in self.species_names
-        }
+        return {name: {"x": y[f"x_{name}"], "v": y[f"v_{name}"], "w": y[f"w_{name}"]} for name in self.species_names}
 
     def _unpack(self, particles: dict, e_sc: jnp.ndarray, de: jnp.ndarray, a, prev_a, da) -> dict:
         out = {"e": e_sc, "de": de, "a": a, "prev_a": prev_a, "da": da}

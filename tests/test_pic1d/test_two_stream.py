@@ -38,19 +38,34 @@ def _two_stream_cfg(ppc: int, nx: int, tmax: float, dt: float, shape: str) -> di
         "density": {
             "quasineutrality": True,
             "species-beam-pos": {
-                "noise_seed": 1, "noise_type": "gaussian", "noise_val": 0.0,
-                "v0": V_BEAM, "T0": 1e-4, "m": 2.0,
-                "basis": "uniform", "baseline": 0.5,
+                "noise_seed": 1,
+                "noise_type": "gaussian",
+                "noise_val": 0.0,
+                "v0": V_BEAM,
+                "T0": 1e-4,
+                "m": 2.0,
+                "basis": "uniform",
+                "baseline": 0.5,
             },
             "species-beam-neg": {
-                "noise_seed": 2, "noise_type": "gaussian", "noise_val": 0.0,
-                "v0": -V_BEAM, "T0": 1e-4, "m": 2.0,
-                "basis": "uniform", "baseline": 0.5,
+                "noise_seed": 2,
+                "noise_type": "gaussian",
+                "noise_val": 0.0,
+                "v0": -V_BEAM,
+                "T0": 1e-4,
+                "m": 2.0,
+                "basis": "uniform",
+                "baseline": 0.5,
             },
         },
         "grid": {
-            "dt": dt, "nx": nx, "tmin": 0.0, "tmax": tmax,
-            "xmin": 0.0, "xmax": L, "ppc": ppc,
+            "dt": dt,
+            "nx": nx,
+            "tmin": 0.0,
+            "tmax": tmax,
+            "xmin": 0.0,
+            "xmax": L,
+            "ppc": ppc,
             "particle_shape": shape,
         },
         "save": {"fields": {"t": {"tmin": 0.0, "tmax": tmax, "nt": int(tmax / dt) + 1}}},
@@ -62,12 +77,22 @@ def _two_stream_cfg(ppc: int, nx: int, tmax: float, dt: float, shape: str) -> di
             "field": "poisson",
             "time": "leapfrog",
             "species": [
-                {"name": "beam_pos", "charge": -1.0, "mass": 1.0,
-                 "density_components": ["species-beam-pos"],
-                 "loading": "quiet", "vmax_load": 4.0},
-                {"name": "beam_neg", "charge": -1.0, "mass": 1.0,
-                 "density_components": ["species-beam-neg"],
-                 "loading": "quiet", "vmax_load": 4.0},
+                {
+                    "name": "beam_pos",
+                    "charge": -1.0,
+                    "mass": 1.0,
+                    "density_components": ["species-beam-pos"],
+                    "loading": "quiet",
+                    "vmax_load": 4.0,
+                },
+                {
+                    "name": "beam_neg",
+                    "charge": -1.0,
+                    "mass": 1.0,
+                    "density_components": ["species-beam-neg"],
+                    "loading": "quiet",
+                    "vmax_load": 4.0,
+                },
             ],
         },
     }
@@ -123,7 +148,4 @@ def test_two_stream_growth_rate(shape):
 
     gamma = float(np.polyfit(ts[in_window], np.log(A1[in_window]), 1)[0])
     rel_err = abs(gamma - GAMMA_THEORY) / GAMMA_THEORY
-    assert rel_err < 0.10, (
-        f"shape={shape}: measured γ={gamma:.4f}, theory γ={GAMMA_THEORY:.4f}, "
-        f"rel_err={rel_err:.2%}"
-    )
+    assert rel_err < 0.10, f"shape={shape}: measured γ={gamma:.4f}, theory γ={GAMMA_THEORY:.4f}, rel_err={rel_err:.2%}"

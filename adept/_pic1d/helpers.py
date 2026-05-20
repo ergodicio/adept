@@ -272,13 +272,9 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict) -> dict:
                     continue
                 das = {}
                 for moment_name, arr in ys_for_key[sp].items():
-                    das[f"{key}-{moment_name}"] = xr.DataArray(
-                        np.asarray(arr), coords=(("t", ts), ("x", x_axis))
-                    )
+                    das[f"{key}-{moment_name}"] = xr.DataArray(np.asarray(arr), coords=(("t", ts), ("x", x_axis)))
                 ds = xr.Dataset(das)
-                ds.to_netcdf(
-                    os.path.join(binary_dir, f"{key}-{sp}-t={round(ts[-1], 4)}.nc")
-                )
+                ds.to_netcdf(os.path.join(binary_dir, f"{key}-{sp}-t={round(ts[-1], 4)}.nc"))
                 species_datasets[sp] = ds
                 _spacetime_plots(ds, os.path.join(fields_root, sp))
 
@@ -308,17 +304,11 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict) -> dict:
                 bz_prev = np.gradient(prev_a_full, dx, axis=1)[:, 1:-1]
                 bz = 0.5 * (bz_t + bz_prev)
                 c_light = float(cfg["units"]["derived"]["c_light"])
-                shared_das[f"{key}-ep"] = xr.DataArray(
-                    ey + c_light * bz, coords=(("t", ts), ("x", x_axis))
-                )
-                shared_das[f"{key}-em"] = xr.DataArray(
-                    ey - c_light * bz, coords=(("t", ts), ("x", x_axis))
-                )
+                shared_das[f"{key}-ep"] = xr.DataArray(ey + c_light * bz, coords=(("t", ts), ("x", x_axis)))
+                shared_das[f"{key}-em"] = xr.DataArray(ey - c_light * bz, coords=(("t", ts), ("x", x_axis)))
 
             shared_xr = xr.Dataset(shared_das)
-            shared_xr.to_netcdf(
-                os.path.join(binary_dir, f"{key}-shared-t={round(ts[-1], 4)}.nc")
-            )
+            shared_xr.to_netcdf(os.path.join(binary_dir, f"{key}-shared-t={round(ts[-1], 4)}.nc"))
             _spacetime_plots(shared_xr, fields_root)
 
             fields_out = {**species_datasets, "fields": shared_xr}
@@ -342,11 +332,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict) -> dict:
                     if nm.endswith(f"_{sp}"):
                         scalar_species = sp
                         break
-                target_dir = (
-                    os.path.join(scalars_root, scalar_species)
-                    if scalar_species
-                    else scalars_root
-                )
+                target_dir = os.path.join(scalars_root, scalar_species) if scalar_species else scalars_root
                 fig.savefig(os.path.join(target_dir, f"{nm}.png"), bbox_inches="tight")
                 plt.close(fig)
 

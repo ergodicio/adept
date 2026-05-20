@@ -46,14 +46,24 @@ def _cfg(ppc: int, nx: int, tmax: float, dt: float) -> dict:
         "density": {
             "quasineutrality": True,
             "species-background": {
-                "noise_seed": 42, "noise_type": "gaussian", "noise_val": 0.0,
-                "v0": 0.0, "T0": 1.0, "m": 2.0,
-                "basis": "uniform", "baseline": 1.0,
+                "noise_seed": 42,
+                "noise_type": "gaussian",
+                "noise_val": 0.0,
+                "v0": 0.0,
+                "T0": 1.0,
+                "m": 2.0,
+                "basis": "uniform",
+                "baseline": 1.0,
             },
         },
         "grid": {
-            "dt": dt, "nx": nx, "tmin": 0.0, "tmax": tmax,
-            "xmin": 0.0, "xmax": L_BOX, "ppc": ppc,
+            "dt": dt,
+            "nx": nx,
+            "tmin": 0.0,
+            "tmax": tmax,
+            "xmin": 0.0,
+            "xmax": L_BOX,
+            "ppc": ppc,
             "particle_shape": "tsc",
         },
         "save": {"fields": {"t": {"tmin": 0.0, "tmax": tmax, "nt": int(tmax / dt) + 1}}},
@@ -65,9 +75,14 @@ def _cfg(ppc: int, nx: int, tmax: float, dt: float) -> dict:
             "field": "poisson",
             "time": "leapfrog",
             "species": [
-                {"name": "electron", "charge": -1.0, "mass": 1.0,
-                 "density_components": ["species-background"],
-                 "loading": "quiet", "vmax_load": 8.0},
+                {
+                    "name": "electron",
+                    "charge": -1.0,
+                    "mass": 1.0,
+                    "density_components": ["species-background"],
+                    "loading": "quiet",
+                    "vmax_load": 8.0,
+                },
             ],
         },
     }
@@ -113,6 +128,5 @@ def test_epw_dispersion_frequency(integrator):
 
     rel_err = abs(omega_meas - OMEGA_KINETIC) / OMEGA_KINETIC
     assert rel_err < 0.03, (
-        f"integrator={integrator}: ω_meas={omega_meas:.4f}, "
-        f"ω_kinetic={OMEGA_KINETIC:.4f}, rel_err={rel_err:.2%}"
+        f"integrator={integrator}: ω_meas={omega_meas:.4f}, ω_kinetic={OMEGA_KINETIC:.4f}, rel_err={rel_err:.2%}"
     )

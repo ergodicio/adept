@@ -37,10 +37,7 @@ K_MODE = 0.5
 L_BOX = 2 * np.pi / K_MODE
 OMEGA_BG = float(np.sqrt(1.0 + 3.0 * K_MODE**2))  # ≈ 1.3229
 GAMMA_LANDAU = float(
-    -np.sqrt(np.pi / 8.0)
-    * (1.0 / K_MODE**3)
-    * OMEGA_BG
-    * np.exp(-OMEGA_BG**2 / (2 * K_MODE**2) - 1.5)
+    -np.sqrt(np.pi / 8.0) * (1.0 / K_MODE**3) * OMEGA_BG * np.exp(-(OMEGA_BG**2) / (2 * K_MODE**2) - 1.5)
 )  # ≈ -0.0447
 
 
@@ -50,14 +47,24 @@ def _base_cfg(ppc: int, nx: int, tmax: float, dt: float) -> dict:
         "density": {
             "quasineutrality": True,
             "species-background": {
-                "noise_seed": 12345, "noise_type": "gaussian", "noise_val": 0.0,
-                "v0": 0.0, "T0": 1.0, "m": 2.0,
-                "basis": "uniform", "baseline": 1.0,
+                "noise_seed": 12345,
+                "noise_type": "gaussian",
+                "noise_val": 0.0,
+                "v0": 0.0,
+                "T0": 1.0,
+                "m": 2.0,
+                "basis": "uniform",
+                "baseline": 1.0,
             },
         },
         "grid": {
-            "dt": dt, "nx": nx, "tmin": 0.0, "tmax": tmax,
-            "xmin": 0.0, "xmax": L_BOX, "ppc": ppc,
+            "dt": dt,
+            "nx": nx,
+            "tmin": 0.0,
+            "tmax": tmax,
+            "xmin": 0.0,
+            "xmax": L_BOX,
+            "ppc": ppc,
             "particle_shape": "tsc",
         },
         "save": {"fields": {"t": {"tmin": 0.0, "tmax": tmax, "nt": int(tmax / dt) + 1}}},
@@ -69,9 +76,14 @@ def _base_cfg(ppc: int, nx: int, tmax: float, dt: float) -> dict:
             "field": "poisson",
             "time": "leapfrog",
             "species": [
-                {"name": "electron", "charge": -1.0, "mass": 1.0,
-                 "density_components": ["species-background"],
-                 "loading": "random", "vmax_load": 6.0},
+                {
+                    "name": "electron",
+                    "charge": -1.0,
+                    "mass": 1.0,
+                    "density_components": ["species-background"],
+                    "loading": "random",
+                    "vmax_load": 6.0,
+                },
             ],
         },
     }
@@ -84,12 +96,24 @@ def _with_driver(cfg: dict) -> dict:
         "0": {
             "params": {"a0": 1.0e-3, "k0": K_MODE, "w0": OMEGA_BG, "dw0": 0.0},
             "envelope": {
-                "time": {"center": 12.5, "rise": 1.5, "width": 10.0,
-                          "baseline": 0.0, "bump_height": 1.0, "bump_or_trough": "bump",
-                          "slope": 0.0},
-                "space": {"center": L_BOX / 2, "rise": 1.0, "width": 1.0e6,
-                          "baseline": 0.0, "bump_height": 1.0, "bump_or_trough": "bump",
-                          "slope": 0.0},
+                "time": {
+                    "center": 12.5,
+                    "rise": 1.5,
+                    "width": 10.0,
+                    "baseline": 0.0,
+                    "bump_height": 1.0,
+                    "bump_or_trough": "bump",
+                    "slope": 0.0,
+                },
+                "space": {
+                    "center": L_BOX / 2,
+                    "rise": 1.0,
+                    "width": 1.0e6,
+                    "baseline": 0.0,
+                    "bump_height": 1.0,
+                    "bump_or_trough": "bump",
+                    "slope": 0.0,
+                },
             },
         }
     }
@@ -138,9 +162,7 @@ def test_landau_damping_with_subtraction():
     # builds up ~ a0² · t²) dominates the residual and contaminates the rate.
     fit_mask = (ts >= 22.0) & (ts <= 32.0)
     assert fit_mask.sum() >= 8, "Not enough samples in fit window"
-    gamma_measured = float(
-        np.polyfit(ts[fit_mask], np.log(A1_driven[fit_mask]), 1)[0]
-    )
+    gamma_measured = float(np.polyfit(ts[fit_mask], np.log(A1_driven[fit_mask]), 1)[0])
 
     print(f"  measured γ = {gamma_measured:+.4f}")
     print(f"  theory   γ = {GAMMA_LANDAU:+.4f}")
