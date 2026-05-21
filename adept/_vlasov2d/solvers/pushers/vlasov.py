@@ -97,6 +97,7 @@ class VelocitySL2DE:
     def _interp_at(self, name, f, vx_q, vy_q):
         vx = self.species_grids[name]["vx"]
         vy = self.species_grids[name]["vy"]
+
         # vmap over (x, y)
         def _one(f_xy, qx, qy):
             return interp2d(qx.ravel(), qy.ravel(), vx, vy, f_xy, method="cubic", extrap=0.0).reshape(qx.shape)
@@ -165,10 +166,8 @@ class VelocityRotateB:
             vx_q = jnp.broadcast_to(vx_q, f.shape)
             vy_q = jnp.broadcast_to(vy_q, f.shape)
 
-            def _one(f_xy, qx, qy):
-                return interp2d(
-                    qx.ravel(), qy.ravel(), vx, vy, f_xy, method="cubic", extrap=0.0
-                ).reshape(qx.shape)
+            def _one(f_xy, qx, qy, _vx=vx, _vy=vy):
+                return interp2d(qx.ravel(), qy.ravel(), _vx, _vy, f_xy, method="cubic", extrap=0.0).reshape(qx.shape)
 
             out[name] = vmap(vmap(_one))(f, vx_q, vy_q)
         return out

@@ -28,9 +28,7 @@ class Space2DTimeEnvelope(eqx.Module):
         return self.time_env(t) * self.x_env(x)[:, None] * self.y_env(y)[None, :]
 
     @staticmethod
-    def from_config(
-        cfg: Space2DTimeEnvelopeConfig, norm: PlasmaNormalization | None = None
-    ) -> "Space2DTimeEnvelope":
+    def from_config(cfg: Space2DTimeEnvelopeConfig, norm: PlasmaNormalization | None = None) -> "Space2DTimeEnvelope":
         return Space2DTimeEnvelope(
             time_env=EnvelopeFunction.from_config(cfg.time, norm, dim="t"),
             x_env=EnvelopeFunction.from_config(cfg.space_x, norm, dim="x"),

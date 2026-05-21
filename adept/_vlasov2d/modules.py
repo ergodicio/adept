@@ -35,9 +35,7 @@ def species_set_from_config(cfg: Vlasov2DConfig) -> list[Species]:
     nvx = cfg.grid.nvx
     nvy = cfg.grid.nvy
     if nvx is None or nvy is None or cfg.grid.vmax is None:
-        raise ValueError(
-            "For single-species configs, grid.nvx, grid.nvy, and grid.vmax must be set."
-        )
+        raise ValueError("For single-species configs, grid.nvx, grid.nvy, and grid.vmax must be set.")
     return [
         Species.from_config(
             SpeciesConfig(
@@ -89,9 +87,7 @@ def sim_from_config(cfg: Vlasov2DConfig) -> Vlasov2DSimulation:
         for s in species
     }
     drivers = EMDriverSet.from_config(cfg.drivers, plasma_norm)
-    return Vlasov2DSimulation(
-        plasma_norm, grid, species, species_distribution_specs, drivers, nu_fp_prof, nu_K_prof
-    )
+    return Vlasov2DSimulation(plasma_norm, grid, species, species_distribution_specs, drivers, nu_fp_prof, nu_K_prof)
 
 
 class BaseVlasov2D(ADEPTModule):

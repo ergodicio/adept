@@ -63,8 +63,7 @@ def test_landau_damping_driven(kx0):
     gamma_measured = float(slope)
 
     print(
-        f"\n[kx={kx0}] driven Landau: measured γ={gamma_measured:.5f}, "
-        f"analytic γ={gamma_analytic:.5f}, ω={omega:.5f}"
+        f"\n[kx={kx0}] driven Landau: measured γ={gamma_measured:.5f}, analytic γ={gamma_analytic:.5f}, ω={omega:.5f}"
     )
     np.testing.assert_allclose(gamma_measured, gamma_analytic, rtol=0.10, atol=2e-3)
 

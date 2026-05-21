@@ -76,8 +76,8 @@ class DoughertyFP:
 
             # vmap _dougherty_step_1d over (x, y) and the orthogonal velocity axis.
             # vx step: f has shape (nx, ny, nvx, nvy); collapse to nvx vector per (x, y, vy).
-            def _step_vx(f_one, nu_one):
-                return _dougherty_step_1d(f_one, vx, dvx, nu_one, dt)
+            def _step_vx(f_one, nu_one, _vx=vx, _dvx=dvx):
+                return _dougherty_step_1d(f_one, _vx, _dvx, nu_one, dt)
 
             # vmap order: x, y, vy → axes (0, 1, 3); nu over (x, y)
             f = vmap(  # over x
@@ -88,8 +88,8 @@ class DoughertyFP:
                 in_axes=(0, 0),
             )(f, nu_xy)
 
-            def _step_vy(f_one, nu_one):
-                return _dougherty_step_1d(f_one, vy, dvy, nu_one, dt)
+            def _step_vy(f_one, nu_one, _vy=vy, _dvy=dvy):
+                return _dougherty_step_1d(f_one, _vy, _dvy, nu_one, dt)
 
             f = vmap(
                 vmap(

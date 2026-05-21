@@ -22,9 +22,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
         moments = fields[s]
         das = {}
         for k, v in moments.items():
-            das[f"{prefix}-{k}"] = xr.DataArray(
-                v, coords=(("t", this_t), ("x", x_coord), ("y", y_coord))
-            )
+            das[f"{prefix}-{k}"] = xr.DataArray(v, coords=(("t", this_t), ("x", x_coord), ("y", y_coord)))
         ds = xr.Dataset(das)
         ds.to_netcdf(os.path.join(binary_dir, f"{prefix}-{s}-t={round(this_t[-1], 4)}.nc"))
         result[s] = ds
@@ -32,9 +30,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     das = {}
     for k in shared_keys:
         if k in fields:
-            das[f"{prefix}-{k}"] = xr.DataArray(
-                fields[k], coords=(("t", this_t), ("x", x_coord), ("y", y_coord))
-            )
+            das[f"{prefix}-{k}"] = xr.DataArray(fields[k], coords=(("t", this_t), ("x", x_coord), ("y", y_coord)))
     ds = xr.Dataset(das)
     ds.to_netcdf(os.path.join(binary_dir, f"{prefix}-shared-t={round(this_t[-1], 4)}.nc"))
     result["fields"] = ds
@@ -130,8 +126,10 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
     """
     keys = set(dist_save_config.keys())
     if keys == {"t"} or keys == {"t", "func"} or keys == {"t", "func", "_species_name"}:
+
         def dist_save_func(t, y, args):
             return y[dist_key]
+
         return dist_save_func
 
     needed = {"t", "x", "y", "vx", "vy"}
@@ -163,9 +161,9 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         vyq_flat = vyq_flat.ravel()
 
         def _vv(f_xy):
-            return interp2d(
-                vxq_flat, vyq_flat, full_vx, full_vy, f_xy, method="linear", extrap=0.0
-            ).reshape(vxq.size, vyq.size)
+            return interp2d(vxq_flat, vyq_flat, full_vx, full_vy, f_xy, method="linear", extrap=0.0).reshape(
+                vxq.size, vyq.size
+            )
 
         f_vv = vmap(vmap(_vv))(f)  # (nx, ny, nvxq, nvyq)
 
@@ -175,9 +173,9 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         yq_flat = yq_flat.ravel()
 
         def _xy(f_vv_for_v):
-            return interp2d(
-                xq_flat, yq_flat, full_x, full_y, f_vv_for_v, method="linear", extrap=0.0
-            ).reshape(xq.size, yq.size)
+            return interp2d(xq_flat, yq_flat, full_x, full_y, f_vv_for_v, method="linear", extrap=0.0).reshape(
+                xq.size, yq.size
+            )
 
         # bring (vxq, vyq) to leading axes
         f_vv_t = jnp.transpose(f_vv, (2, 3, 0, 1))
