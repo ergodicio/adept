@@ -1,0 +1,55 @@
+solver: vlasov-2d
+
+# Pure gyrorotation test: f drifted in vx, uniform Bz overridden after setup,
+# Maxwell frozen so the rotation is unperturbed by self-currents.
+
+units:
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 1
+    noise_type: none
+    noise_val: 0.0
+    v0x: 0.5            # drift in vx
+    v0y: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+
+grid:
+  dt: 0.02            # plenty of resolution for ωc ~ 1
+  nx: 8
+  ny: 8
+  nvx: 64
+  nvy: 64
+  tmin: 0.0
+  tmax: 12.0          # ~2 gyroperiods for ωc=1
+  vmax: 6.0
+  xmin: 0.0
+  xmax: 10.0
+  ymin: -5.0
+  ymax: 5.0
+
+terms:
+  edfdv: exponential
+  vdfdx: exponential
+  skip_maxwell: true
+  fokker_planck: {is_on: false}
+  krook: {is_on: false}
+  hou_li_filter: {is_on: false}
+
+drivers:
+  ex: {}
+  ey: {}
+
+save:
+  fields:
+    t: {nt: 240}
+
+mlflow:
+  experiment: test-adept-vlasov2d-gyrorotation
+  run: bz-1.0

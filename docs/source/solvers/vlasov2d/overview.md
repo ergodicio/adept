@@ -1,26 +1,46 @@
-# Vlasov 2D2V Solver
+# Vlasov-2D Overview
 
-## Overview
+The `vlasov-2d` solver evolves the 2D2V Vlasov–Maxwell system on a periodic 2D
+spatial box. The distribution function `f(x, y, vx, vy, t)` is advanced via
+operator splitting:
 
-The Vlasov 2D2V solver evolves the electron distribution function $f(t, x, y, v_x, v_y)$ in a 2D spatial domain with 2D velocity space. This solver supports electromagnetic simulations with self-consistent field evolution.
+```
+∂f/∂t + v · ∇_x f + (q/m)(E + v × B) · ∇_v f = C[f]
+```
 
-## Equations
+The electromagnetic fields `(Ex, Ey, Bz)` evolve under TE-mode Maxwell:
 
-We solve the Vlasov-Maxwell system:
+```
+∂Ex/∂t =  c² ∂Bz/∂y − Jx
+∂Ey/∂t = −c² ∂Bz/∂x − Jy
+∂Bz/∂t = ∂Ex/∂y − ∂Ey/∂x
+```
 
-$$
-\frac{\partial f}{\partial t} + \mathbf{v} \cdot \nabla_x f + \frac{q}{m} (\mathbf{E} + \mathbf{v} \times \mathbf{B}) \cdot \nabla_v f = 0
-$$
+## Numerics
 
-coupled with Maxwell's equations for the electromagnetic fields.
+- **Streaming**: spectral exponential shift in (x, y) — exact for periodic
+  velocity-independent advection along each axis.
+- **Electric velocity push**: spectral exponential shift in (vx, vy); the two
+  axes commute and are applied independently.
+- **Magnetic velocity push**: exact 2D rotation of `f(vx, vy)` by angle
+  `θ = −(q/m) Bz dt` at each `(x, y)`, applied with `interpax.interp2d` (cubic).
+- **Maxwell**: Strang-split spectral solver (B-half, E-full with current J,
+  B-half).
+- **Collisions**: Dougherty Fokker–Planck (separable in vx, vy) and/or Krook
+  relaxation to a local bi-Maxwellian.
+- **Filtering**: optional Hou–Li exponential filter on any subset of
+  `{x, y, vx, vy}`.
 
-## Key Features
+## Time-step ordering (one full dt)
 
-- 2D2V phase space (2 spatial dimensions, 2 velocity dimensions)
-- Hamiltonian charge-conserving Maxwell solver
-- Exponential integrators for spatial and velocity advection
-- Support for external electromagnetic drivers
+1. `½ dt` x-streaming → `½ dt` y-streaming
+2. Velocity push: `¼ dt` Ex push → `¼ dt` Ey push → `full dt` Bz rotation →
+   `¼ dt` Ey push → `¼ dt` Ex push *(the four E-half steps add to `dt`)*
+3. `½ dt` y-streaming → `½ dt` x-streaming
+4. Maxwell update with `J = J_self + J_driver` evaluated at `t + dt/2`
+5. Collisions + optional filter
 
-## Configuration Reference
+## See also
 
-See the [Configuration Reference](config.md) for complete YAML schema documentation.
+- [Configuration reference](config.md)
+- Template config: `configs/vlasov-2d/base.yaml`

@@ -301,6 +301,9 @@ class ergoExo:
 
             # config = ConfigModel(**cfg)
 
+        elif cfg["solver"] == "vlasov-2d":
+            from adept.vlasov2d import BaseVlasov2D as this_module
+
         elif cfg["solver"] == "envelope-2d":
             from adept.lpse2d import BaseLPSE2D as this_module
 
