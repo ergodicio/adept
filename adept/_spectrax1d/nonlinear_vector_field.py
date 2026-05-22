@@ -237,22 +237,31 @@ class NonlinearVectorField(eqx.Module):
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
-    def _compute_houli_hermite_filter(self, Nn: int, Nm: int, Np: int, strength: float, order: int) -> Array:
-        """Compute Hou-Li exponential filter in Hermite space.
+    @staticmethod
+    def _compute_houli_hermite_filter(Nn: int, Nm: int, Np: int, strength: float, order: int) -> Array:
+        """Compute the separable per-axis Hou-Li exponential filter in Hermite space.
 
-        sigma(h) = exp(-strength * (h/h_max)^order)
+        Each axis gets its own 1D filter exp(-strength * (i/(N_axis-1))^order); the
+        full 3D filter is the outer product. The previous 3D-radial formula
+        (h = sqrt(n^2+m^2+p^2), h_max = sqrt((Nn-1)^2+(Nm-1)^2+(Np-1)^2)) collapsed
+        to ~1.0 along the short axis when h_max was dominated by the long axis —
+        e.g. with Nn=128, Nm=4, Np=1 the top m-mode (m=3) had h/h_max ≈ 3/127, so
+        exp(-strength * (3/127)^36) ≈ 1 and the m-axis was effectively unfiltered.
 
-        where h = sqrt(n^2 + m^2 + p^2) and h_max = sqrt((Nn-1)^2 + (Nm-1)^2 + (Np-1)^2).
-        The highest-index corner mode gets exactly exp(-strength); lower modes are less damped.
+        Matches the implementation already on the Dopri8 path
+        (vector_field.SpectraxVectorField._houli_filter, fixed in #274).
         """
-        n = jnp.arange(Nn)[None, None, :]
-        m = jnp.arange(Nm)[None, :, None]
-        p = jnp.arange(Np)[:, None, None]
 
-        h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-        h = jnp.sqrt(n**2 + m**2 + p**2)
+        def axis_filter(N: int) -> Array:
+            if N <= 1:
+                return jnp.ones(N, dtype=jnp.float64)
+            i = jnp.arange(N, dtype=jnp.float64)
+            return jnp.exp(-strength * (i / (N - 1)) ** order)
 
-        return jnp.exp(-strength * (h / h_max) ** order)
+        fn = axis_filter(Nn)
+        fm = axis_filter(Nm)
+        fp = axis_filter(Np)
+        return fp[:, None, None] * fm[None, :, None] * fn[None, None, :]
 
     def _compute_plasma_current_single_species(
         self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int
