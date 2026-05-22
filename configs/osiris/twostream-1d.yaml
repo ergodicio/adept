@@ -1,0 +1,21 @@
+solver: osiris
+
+mlflow:
+  experiment: osiris-pic1d-twostream
+  run: cold-equal-beams
+
+osiris:
+  deck: /home/phil/Desktop/pic/projects/twostream-pic/two-stream-1d
+  binary: /home/phil/Desktop/pic/osiris/bin/osiris-1D.e
+  mpi_ranks: 1
+  run_root: ./osiris_runs
+  # overrides: dict-of-dicts merged into the parsed deck before render.
+  # Repeated sections (species, zpulse, ...) use integer indices.
+  # overrides:
+  #   time: {tmax: 5.0}
+  #   species:
+  #     0: {num_par_x: [1024]}
+
+output:
+  upload_all: false
+  # diagnostics_to_log: [e1]   # null/omitted = log final-step for all diagnostics

@@ -1,0 +1,18 @@
+solver: osiris
+
+mlflow:
+  experiment: osiris-pic1d-twostream
+  run: smoke-uploadall
+
+osiris:
+  deck: /home/phil/Desktop/pic/projects/twostream-pic/two-stream-1d
+  binary: /home/phil/Desktop/pic/osiris/bin/osiris-1D.e
+  mpi_ranks: 1
+  run_root: ./osiris_runs
+  overrides:
+    time: {tmax: 0.5}
+    species:
+      0: {num_par_x: [128]}
+
+output:
+  upload_all: true

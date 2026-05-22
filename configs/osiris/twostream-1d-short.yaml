@@ -1,0 +1,16 @@
+solver: osiris
+
+mlflow:
+  experiment: osiris-pic1d-twostream
+  run: smoke-tmax-1
+
+osiris:
+  deck: /home/phil/Desktop/pic/projects/twostream-pic/two-stream-1d
+  binary: /home/phil/Desktop/pic/osiris/bin/osiris-1D.e
+  mpi_ranks: 1
+  run_root: ./osiris_runs
+  overrides:
+    time: {tmax: 1.0}
+
+output:
+  upload_all: false
