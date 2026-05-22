@@ -361,6 +361,15 @@ class NonlinearVectorField(eqx.Module):
                 m=mi_me,
             )
 
+        # Apply Hou-Li filter to the Hermite derivative at each RK sub-stage to
+        # attenuate the rate at which high-n modes are excited by the E·∂f/∂v
+        # nonlinearity inside the step. The split-step state filter in
+        # integrators.py still runs once per dt on top of this.
+        if self.use_hermite_filter:
+            dCk_electrons_dt = dCk_electrons_dt * self.hermite_filter_electrons[:, :, :, None, None, None]
+            if not self.static_ions:
+                dCk_ions_dt = dCk_ions_dt * self.hermite_filter_ions[:, :, :, None, None, None]
+
         # Apply density noise
         if self.noise_enabled:
             if self.noise_electrons_enabled:
