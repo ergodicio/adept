@@ -326,6 +326,9 @@ class ergoExo:
         elif cfg["solver"] == "pic-1d":
             from adept.pic1d import BasePIC1D as this_module
 
+        elif cfg["solver"] == "osiris":
+            from adept.osiris import BaseOsiris as this_module
+
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
