@@ -29,7 +29,6 @@ dependencies = [
     "pydantic",
     "scienceplots",
     "jax",
-    "jpu>=0.0.5",
 ]
 
 [project.urls]
