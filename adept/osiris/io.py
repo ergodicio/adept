@@ -258,3 +258,106 @@ def save_run_datasets(
         ds.to_netcdf(dest, engine="h5netcdf")
         written.append(dest)
     return written
+
+
+def _parse_hist_table(path: Path) -> tuple[np.ndarray, np.ndarray] | None:
+    """Read a whitespace-delimited OSIRIS ``HIST`` table.
+
+    Skips blank and ``!``/``#`` comment lines and any non-numeric header row.
+    Assumes the OSIRIS column convention ``iteration  time  <values...>`` and
+    returns ``(t, values)`` where ``t`` is shape ``(n,)`` and ``values`` is
+    ``(n, ncols - 2)``. Returns ``None`` if nothing numeric is found.
+    """
+    rows: list[list[float]] = []
+    with open(path) as fh:
+        for line in fh:
+            s = line.strip()
+            if not s or s[0] in "!#":
+                continue
+            try:
+                rows.append([float(tok) for tok in s.split()])
+            except ValueError:
+                continue  # header row of column names
+    if not rows:
+        return None
+    width = min(len(r) for r in rows)
+    if width < 2:
+        return None
+    arr = np.array([r[:width] for r in rows], dtype="float64")
+    return arr[:, 1], arr[:, 2:]
+
+
+def _interp_onto(src_t: np.ndarray, src_v: np.ndarray, ref_t: np.ndarray) -> np.ndarray:
+    """Linear-interpolate ``src_v(src_t)`` onto ``ref_t`` (identity if aligned)."""
+    if src_t.shape == ref_t.shape and np.allclose(src_t, ref_t):
+        return src_v
+    return np.interp(ref_t, src_t, src_v)
+
+
+def load_hist_energy(run_dir: str | Path) -> xr.Dataset | None:
+    """Parse OSIRIS ``HIST/`` scalar energy time-history files, if present.
+
+    OSIRIS writes whitespace-delimited ASCII time-history tables under
+    ``HIST/`` when energy diagnostics are enabled in the deck. Recognized:
+
+    - ``*fld_ene*`` — per-component field energy; value columns are summed into
+      a single ``field_energy`` series.
+    - ``*par*_ene*`` — per-species particle (kinetic) energy; each file's value
+      columns are summed into ``kinetic_<stem>``.
+
+    Returns an ``xr.Dataset`` on a shared ``t`` axis containing whatever was
+    found — ``field_energy``, ``kinetic_<stem>``, ``kinetic_total``, and
+    ``total`` (= field + kinetic, with ``attrs['total_drift_frac']`` the
+    fractional spread of the total) when both halves are present — or ``None``
+    if there is no ``HIST/`` directory or nothing parseable in it. Per-file time
+    axes that disagree are interpolated onto the field-energy time axis.
+
+    Note: the column convention assumed is the documented OSIRIS
+    ``iteration time <values...>`` layout; validate against a real run with
+    energy diagnostics enabled before relying on absolute magnitudes.
+    """
+    hist = Path(run_dir) / "HIST"
+    if not hist.is_dir():
+        return None
+
+    field: tuple[np.ndarray, np.ndarray] | None = None
+    kinetic: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for f in sorted(hist.iterdir()):
+        if not f.is_file() or "ene" not in f.name.lower():
+            continue
+        parsed = _parse_hist_table(f)
+        if parsed is None or parsed[1].size == 0:
+            continue
+        t, values = parsed
+        total_per_row = values.sum(axis=1)
+        if "fld" in f.name.lower():
+            field = (t, total_per_row)
+        elif "par" in f.name.lower():
+            kinetic[f.stem] = (t, total_per_row)
+
+    if field is None and not kinetic:
+        return None
+
+    ref_t = field[0] if field is not None else next(iter(kinetic.values()))[0]
+    data_vars: dict[str, tuple] = {}
+    if field is not None:
+        data_vars["field_energy"] = ("t", _interp_onto(field[0], field[1], ref_t))
+
+    kin_total: np.ndarray | None = None
+    for stem, (t, e) in kinetic.items():
+        ei = _interp_onto(t, e, ref_t)
+        data_vars[f"kinetic_{stem}"] = ("t", ei)
+        kin_total = ei if kin_total is None else kin_total + ei
+    if kin_total is not None:
+        data_vars["kinetic_total"] = ("t", kin_total)
+
+    attrs: dict[str, float] = {}
+    if field is not None and kin_total is not None:
+        total = data_vars["field_energy"][1] + kin_total
+        data_vars["total"] = ("t", total)
+        denom = float(np.max(np.abs(total))) or 1.0
+        attrs["total_drift_frac"] = float((total.max() - total.min()) / denom)
+
+    ds = xr.Dataset(data_vars, coords={"t": ref_t}, attrs=attrs)
+    ds["t"].attrs.update(long_name="time", units=r"1/\omega_p")
+    return ds

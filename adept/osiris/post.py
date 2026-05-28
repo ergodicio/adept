@@ -128,6 +128,31 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     if ms.is_dir():
         _io.save_run_datasets(run_dir, td / "binary", diagnostics=whitelist)
 
+    # plots imports matplotlib; do it lazily to keep `import adept.osiris` light.
+    from adept.osiris import plots as _plots
+
+    # E/B-field split + energy-conservation metrics (best effort).
+    try:
+        comps = _plots.field_energy_components(run_dir)
+        metrics["efield_energy_final"] = float(comps["E_energy"].values[-1])
+        metrics["bfield_energy_final"] = float(comps["B_energy"].values[-1])
+    except (FileNotFoundError, RuntimeError) as e:
+        print(f"[post] field-energy components unavailable: {e}")
+    try:
+        energy = _io.load_hist_energy(run_dir)
+        if energy is not None and "total_drift_frac" in energy.attrs:
+            metrics["energy_drift_frac"] = float(energy.attrs["total_drift_frac"])
+    except Exception as e:
+        print(f"[post] HIST energy unavailable: {e}")
+
+    # Render the standard plot set into td/plots so MLflow logs them as
+    # artifacts. Never let a plotting failure abort metric/artifact logging.
+    try:
+        v_th = (cfg.get("output") or {}).get("v_th")
+        _plots.save_canned_plots(run_dir, td / "plots", v_th=v_th)
+    except Exception as e:
+        print(f"[post] plotting failed: {e}")
+
     # Always include the rendered deck + stdout/stderr.
     for fname in ("os-stdin", "stdout.log", "stderr.log"):
         src = run_dir / fname
