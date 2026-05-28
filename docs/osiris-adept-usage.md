@@ -91,7 +91,6 @@ osiris:
       1: {ufl: [-2.0, 0.0, 0.0]}                  #     species 2: change drift
 
 output:
-  upload_all: false                               # true → also write ms.tar.gz
   diagnostics_to_log: null                        # null = all; or [e1, charge, …]
 ```
 
@@ -102,12 +101,11 @@ Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1
 | Kind        | Content                                                                          |
 | ----------- | -------------------------------------------------------------------------------- |
 | Params      | every deck key, flattened — `deck.grid.nx_p_1:1`, `deck.species_0.ufl_1:3.0`, …  |
-| Params      | the manifest itself — `solver`, `osiris.binary`, `output.upload_all`, …          |
+| Params      | the manifest itself — `solver`, `osiris.binary`, `output.diagnostics_to_log`, …  |
 | Metrics     | `wall_time_s`, `exit_code`, `field_energy_final`, `final_iter`, `run_time`, `postprocess_time` |
 | Artifacts   | `config.yaml`, `derived_config.yaml`, `units.yaml` (adept stock)                 |
 | Artifacts   | `os-stdin` (rendered OSIRIS deck), `stdout.log`, `stderr.log`                    |
-| Artifacts   | `final_step/<FLD\|PHA\|…>/<diag>/<diag>-NNNNNN.h5` (one h5 per diagnostic)       |
-| Artifacts   | `ms.tar.gz` (only when `output.upload_all: true`)                                |
+| Artifacts   | `binary/<FLD\|PHA\|…>/<diag>.nc` — one xarray netCDF per diagnostic, holding the full `(t, …)` time history (replaces the raw h5 dumps) |
 
 ## Programmatic use
 

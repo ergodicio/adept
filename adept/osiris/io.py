@@ -19,13 +19,13 @@ OSIRIS axis label.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 import h5py
 import numpy as np
 import xarray as xr
-
 
 _ITER_RE = re.compile(r"-(\d+)\.h5$")
 
@@ -190,3 +190,71 @@ def list_diagnostics(run_dir: str | Path) -> dict[str, Path]:
         if any(c.suffix == ".h5" for c in d.iterdir()):
             out[str(d.relative_to(ms))] = d
     return out
+
+
+def _coerce_attr(v):
+    """Make an attr value writable by the netCDF backends.
+
+    ``load_series`` stores some attrs as dicts (per-axis units/long-names),
+    which netCDF cannot serialize; those are handled separately by
+    :func:`series_to_dataset`. Here we JSON-encode any stray dict and turn
+    lists/tuples into arrays.
+    """
+    if isinstance(v, dict):
+        return json.dumps(v)
+    if isinstance(v, (list, tuple)):
+        return np.asarray(v)
+    return v
+
+
+def series_to_dataset(da: xr.DataArray) -> xr.Dataset:
+    """Wrap a :func:`load_series` DataArray into a netCDF-serializable Dataset.
+
+    The dict-valued ``axis_units`` / ``axis_long_names`` attrs are lifted onto
+    the matching coordinate variables (the CF-idiomatic place for them), and
+    any remaining non-scalar attrs are coerced so ``to_netcdf`` succeeds.
+    """
+    da = da.copy()
+    axis_units = da.attrs.pop("axis_units", {}) or {}
+    axis_long = da.attrs.pop("axis_long_names", {}) or {}
+    da.attrs = {k: _coerce_attr(v) for k, v in da.attrs.items() if v is not None}
+    ds = da.to_dataset(name=da.name)
+    for dim, units in axis_units.items():
+        if dim in ds.coords:
+            ds[dim].attrs["units"] = units
+    for dim, long_name in axis_long.items():
+        if dim in ds.coords:
+            ds[dim].attrs["long_name"] = long_name
+    return ds
+
+
+def save_run_datasets(
+    run_dir: str | Path,
+    out_dir: str | Path,
+    diagnostics: list[str] | set[str] | None = None,
+) -> list[Path]:
+    """Convert each diagnostic's full time history to a netCDF file.
+
+    One file per diagnostic is written under ``out_dir``, mirroring the OSIRIS
+    ``MS/`` layout (e.g. ``out_dir/FLD/e1.nc``,
+    ``out_dir/PHA/x1p1/beam_pos.nc``). Each file holds the stacked ``(t, ...)``
+    series — every time slice OSIRIS dumped for that diagnostic.
+
+    ``diagnostics``, when given, whitelists which diagnostics to convert,
+    matched against either the relative path (``"FLD/e1"``) or the leaf name
+    (``"e1"``). Returns the list of written paths.
+    """
+    out_dir = Path(out_dir)
+    diags = list_diagnostics(run_dir)
+    written: list[Path] = []
+    for relpath in sorted(diags):
+        if diagnostics is not None and (
+            relpath not in diagnostics and Path(relpath).name not in diagnostics
+        ):
+            continue
+        ds = series_to_dataset(load_series(diags[relpath]))
+        dest = out_dir / f"{relpath}.nc"
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        ds.to_netcdf(dest, engine="h5netcdf")
+        written.append(dest)
+    return written

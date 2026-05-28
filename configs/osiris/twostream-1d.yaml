@@ -17,5 +17,4 @@ osiris:
   #     0: {num_par_x: [1024]}
 
 output:
-  upload_all: false
-  # diagnostics_to_log: [e1]   # null/omitted = log final-step for all diagnostics
+  # diagnostics_to_log: [e1]   # null/omitted = convert every diagnostic's full time history to netCDF

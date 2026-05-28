@@ -11,6 +11,3 @@ osiris:
   run_root: ./osiris_runs
   overrides:
     time: {tmax: 1.0}
-
-output:
-  upload_all: false
