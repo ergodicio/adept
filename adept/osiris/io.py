@@ -124,6 +124,137 @@ def load_phasespace_h5(path: str | Path) -> xr.DataArray:
     return load_grid_h5(path)
 
 
+def _is_raw_h5(f: h5py.File) -> bool:
+    """Heuristic: is this an OSIRIS RAW (particle) dump rather than a grid dump?
+
+    RAW dumps hold several 1-D per-particle datasets and have no ``AXIS``
+    group, whereas grid / phase-space dumps hold a single gridded dataset plus
+    an ``AXIS`` group. Treat anything with more than one data dataset, or no
+    ``AXIS`` group, as non-grid.
+    """
+    data_keys = [k for k in f.keys() if k not in ("AXIS", "SIMULATION")]
+    return len(data_keys) != 1 or "AXIS" not in f
+
+
+def load_raw_h5(path: str | Path) -> xr.Dataset:
+    """Load one OSIRIS RAW (particle) dump into an ``xarray.Dataset``.
+
+    Unlike field / charge / phase-space *grid* dumps (one gridded dataset plus
+    an ``AXIS`` group), a RAW dump holds several 1-D per-particle datasets
+    (``x1``, ``p1``, ``p2``, ``p3``, ``ene``, ``q``, ...), a ``SIMULATION``
+    attrs group, and root attrs ``TIME`` / ``ITER`` — but typically no
+    ``AXIS`` group, because the data is not gridded.
+
+    Dataset names are discovered dynamically (different decks dump different
+    quantities); each becomes a data variable indexed by a single particle
+    dimension ``"pidx"``. Per-quantity ``UNITS`` / ``LONG_NAME`` attrs, when
+    present, ride on the matching variable; ``TIME`` / ``ITER`` ride on the
+    Dataset.
+    """
+    path = Path(path)
+    with h5py.File(path, "r") as f:
+        data_keys = sorted(
+            k
+            for k in f.keys()
+            if k not in ("AXIS", "SIMULATION") and isinstance(f[k], h5py.Dataset)
+        )
+        data_vars: dict[str, tuple] = {}
+        for name in data_keys:
+            dset = f[name]
+            arr = dset[...].astype("float64").reshape(-1)
+            var_attrs = {}
+            if "UNITS" in dset.attrs:
+                var_attrs["units"] = _decode(dset.attrs["UNITS"])
+            if "LONG_NAME" in dset.attrs:
+                var_attrs["long_name"] = _decode(dset.attrs["LONG_NAME"])
+            data_vars[name] = ("pidx", arr, var_attrs)
+
+        npart = max((v[1].shape[0] for v in data_vars.values()), default=0)
+
+        attrs = {
+            "time": float(f.attrs["TIME"][0]) if "TIME" in f.attrs else float("nan"),
+            "iter": int(f.attrs["ITER"][0])
+            if "ITER" in f.attrs
+            else _iter_from_name(path),
+            "long_name": _decode(f.attrs.get("LABEL", path.stem)),
+            "time_units": _decode(f.attrs.get("TIME UNITS", "")),
+            "source": str(path),
+            "n_particles": int(npart),
+        }
+        if "SIMULATION" in f:
+            sim = f["SIMULATION"].attrs
+            for key in ("DT", "NDIMS", "XMIN", "XMAX", "NX", "PERIODIC"):
+                if key in sim:
+                    val = sim[key]
+                    if hasattr(val, "tolist"):
+                        val = val.tolist()
+                    attrs[f"sim.{key}"] = val
+
+    return xr.Dataset(data_vars, attrs=attrs)
+
+
+def load_raw_series(directory: str | Path) -> xr.Dataset:
+    """Concatenate every RAW (particle) dump in ``directory`` long-form.
+
+    RAW dumps have a *variable* particle count per timestep (OSIRIS samples a
+    ``raw_fraction`` of particles each dump), so they cannot be stacked into a
+    rectangular ``(t, particle)`` array the way grid dumps are. Instead every
+    dump is concatenated along the particle dimension ``"pidx"`` with a per-row
+    ``t`` / ``iter`` coordinate identifying which dump each particle came from.
+    The union of quantities across dumps is preserved (missing quantities fill
+    with NaN for that dump's rows).
+    """
+    directory = Path(directory)
+    dumps = _sort_dumps(directory)
+    if not dumps:
+        raise FileNotFoundError(f"No .h5 dumps in {directory}")
+
+    per_dump: list[xr.Dataset] = []
+    times: list[np.ndarray] = []
+    iters: list[np.ndarray] = []
+    for p in dumps:
+        ds = load_raw_h5(p)
+        n = ds.sizes.get("pidx", 0)
+        per_dump.append(ds)
+        times.append(np.full(n, ds.attrs["time"], dtype="float64"))
+        iters.append(np.full(n, ds.attrs["iter"], dtype="int64"))
+
+    combined = xr.concat(per_dump, dim="pidx", data_vars="all", coords="minimal")
+    combined = combined.assign_coords(
+        t=("pidx", np.concatenate(times) if times else np.empty(0)),
+        iter=(
+            "pidx",
+            np.concatenate(iters) if iters else np.empty(0, dtype="int64"),
+        ),
+    )
+    attrs = dict(per_dump[0].attrs)
+    for k in ("time", "iter", "source", "n_particles"):
+        attrs.pop(k, None)
+    attrs["source_dir"] = str(directory)
+    attrs["n_dumps"] = len(dumps)
+    combined.attrs = attrs
+    return combined
+
+
+def _diag_is_raw(relpath: str, directory: str | Path) -> bool:
+    """Detect a RAW (particle) diagnostic.
+
+    Primary signal: the diagnostic relpath starts with ``"RAW/"``. As a
+    defensive fallback, peek at the first dump and treat it as RAW when it
+    fails the grid heuristic (more than one data dataset, or no ``AXIS``).
+    """
+    if relpath.startswith("RAW/") or Path(relpath).parts[0] == "RAW":
+        return True
+    dumps = _sort_dumps(Path(directory))
+    if not dumps:
+        return False
+    try:
+        with h5py.File(dumps[0], "r") as f:
+            return _is_raw_h5(f)
+    except Exception:
+        return False
+
+
 def _sort_dumps(directory: Path) -> list[Path]:
     files = [p for p in directory.iterdir() if p.is_file() and p.suffix == ".h5"]
     return sorted(files, key=_iter_from_name)
@@ -252,11 +383,19 @@ def save_run_datasets(
             relpath not in diagnostics and Path(relpath).name not in diagnostics
         ):
             continue
-        ds = series_to_dataset(load_series(diags[relpath]))
-        dest = out_dir / f"{relpath}.nc"
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        ds.to_netcdf(dest, engine="h5netcdf")
-        written.append(dest)
+        try:
+            if _diag_is_raw(relpath, diags[relpath]):
+                # RAW (particle) dumps: per-particle datasets, no grid/AXIS.
+                ds: xr.Dataset = load_raw_series(diags[relpath])
+            else:
+                ds = series_to_dataset(load_series(diags[relpath]))
+            dest = out_dir / f"{relpath}.nc"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            ds.to_netcdf(dest, engine="h5netcdf")
+            written.append(dest)
+        except Exception as e:  # one bad diagnostic must not abort the rest
+            print(f"[post] skipping diagnostic {relpath}: {e}")
+            continue
     return written
 
 
