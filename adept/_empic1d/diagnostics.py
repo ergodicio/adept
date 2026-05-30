@@ -8,6 +8,7 @@ Written with ``jax.numpy`` so the transformer ratio is differentiable end-to-end
 (the Inc 4 optimization objective).
 """
 
+import jax
 from jax import numpy as jnp
 
 
@@ -52,3 +53,32 @@ def transformer_ratio(
     decel = jnp.max(jnp.where(inside, jnp.abs(e_z), 0.0))
     accel = jnp.max(jnp.where(behind, jnp.abs(e_z), 0.0))
     return accel / decel
+
+
+def _soft_max(vals: jnp.ndarray, mask: jnp.ndarray, beta: float) -> jnp.ndarray:
+    """Smooth approximation to ``max(vals[mask])`` via log-sum-exp.
+
+    Differentiable everywhere with dense gradients (unlike ``jnp.max``); recovers
+    the hard max as ``beta → ∞``.
+    """
+    masked = jnp.where(mask, vals, -jnp.inf)
+    return jax.scipy.special.logsumexp(beta * masked) / beta
+
+
+def soft_transformer_ratio(
+    xi: jnp.ndarray,
+    e_z: jnp.ndarray,
+    beam_center: float,
+    beam_halfwidth: float,
+    beta: float = 30.0,
+) -> jnp.ndarray:
+    """Smooth transformer ratio for use as a gradient-based optimization objective.
+
+    Same definition as :func:`transformer_ratio` but with log-sum-exp soft maxima
+    so the gradient is dense. ``beta`` sets the sharpness (larger ⇒ closer to the
+    hard ratio).
+    """
+    abs_e = jnp.abs(e_z)
+    inside = jnp.abs(xi - beam_center) < beam_halfwidth
+    behind = xi < (beam_center - beam_halfwidth)
+    return _soft_max(abs_e, behind, beta) / _soft_max(abs_e, inside, beta)

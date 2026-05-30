@@ -43,6 +43,9 @@ for how solvers plug into `ergoExo`.
 - `test_pwfa_wake.py` — a rigid relativistic drive beam's wake matches 1D linear
   cold-plasma theory `E_z(ξ)=∫_ξ^∞ n_b cos(k_p(ξ'-ξ))dξ'` (shape corr ~0.93,
   amplitude within ~7%, wavelength ≈ λ_p); symmetric-beam transformer ratio ≤ 2.
+- `test_pwfa_optimize.py` — gradient flows through the PIC to the transformer
+  ratio (fast); the full optimization (`slow`) shapes the beam weights to drive
+  R from ~1.1 (symmetric) to ~5, beating the R ≤ 2 bound with a ramped profile.
 
 ## Multi-species + beam
 
@@ -60,8 +63,8 @@ differentiable transformer ratio live in `diagnostics.py`.
 - [x] **Inc 2** Esirkepov current + Ampère `E_x`; Gauss + plasma-frequency tests.
 - [x] **Inc 3** PWFA drive beam (profile via per-particle weights), co-moving
   wake diagnostic + transformer ratio; wake validated vs 1D linear theory.
-- [ ] **Inc 4** Differentiable PWFA optimization (optax over weights) — recover
-  the known optimal ramped profile (Bane–Chen–Wilson).
+- [x] **Inc 4** Differentiable PWFA optimization (optax over weights at fixed
+  charge) — backprop through the PIC drives R ~1.1 → ~5 with a ramped profile.
 - [ ] **Inc 5+** LWFA: Yee `(E_y,B_z)` + `j_y` + laser injection + Mur ABC.
 
 ## Deferred scope (intentionally not here yet)
