@@ -9,6 +9,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
+from adept._empic1d.laser import soft_source_jy
 from adept._empic1d.solvers.pushers.field import advance_bz_faces, advance_ey_nodes
 from adept._empic1d.solvers.vector_field import em_step
 
@@ -97,3 +98,40 @@ def test_em_wave_in_plasma_dispersion():
     _, mode_hist = jax.lax.scan(step, state, None, length=4000)
     omega = _dominant_frequency(np.real(np.asarray(mode_hist)), dt)
     assert abs(omega - omega_expected) / omega_expected < 0.02, f"omega={omega:.4f} vs {omega_expected:.4f}"
+
+
+def test_laser_soft_source_propagates_at_c():
+    """A soft-source laser pulse launched in vacuum travels at c."""
+    c = 1.0
+    L = 120.0
+    nx = 600
+    dx = L / nx
+    dt = 0.5 * dx / c
+    x_node = jnp.arange(nx) * dx
+    x0 = 20.0
+    omega0 = 3.0
+    src = dict(x0=x0, sigma_x=1.0, omega0=omega0, amplitude=1.0, t0=2.5, tau=2.0)
+
+    state = {"species": {}, "E": jnp.zeros(nx), "Ey": jnp.zeros(nx), "Bz": jnp.zeros(nx)}
+    params = dict(species_params={}, dt=dt, c=c, nx=nx, dx=dx, xmin=0.0, length=L, shape="tsc")
+
+    times = jnp.arange(400) * dt
+
+    def step(s, t):
+        s = em_step(s, **params, j_y_source=soft_source_jy(x_node, t, **src))
+        return s, s["Ey"]
+
+    _, ey_hist = jax.lax.scan(step, state, times)
+    ey_hist = np.asarray(ey_hist)
+    xn = np.asarray(x_node)
+
+    # Centroid of the right-going pulse energy in a window ahead of the antenna.
+    window = (xn > x0 + 3.0) & (xn < x0 + 70.0)
+
+    def centroid(step_idx):
+        w = (ey_hist[step_idx] ** 2) * window
+        return float(np.sum(xn * w) / np.sum(w))
+
+    i1, i2 = 120, 320
+    speed = (centroid(i2) - centroid(i1)) / ((i2 - i1) * dt)
+    assert abs(speed - c) / c < 0.03, f"pulse speed {speed:.4f} vs c={c}"

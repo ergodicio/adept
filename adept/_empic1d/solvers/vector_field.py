@@ -94,6 +94,7 @@ def em_step(
     xmin: float,
     length: float,
     shape: str,
+    j_y_source: jnp.ndarray | None = None,
 ) -> dict:
     """Full relativistic EM step: longitudinal (Ampère/Esirkepov ``E_x``) + transverse
     Yee ``(E_y, B_z)``, coupled through the Higuera–Cary push.
@@ -138,6 +139,10 @@ def em_step(
         j_y += deposit_jy_nodes(x_new, p["w"], u_new[..., 1] / gamma, charge, nx, dx, xmin, shape)
 
         new_species[name] = {"x": x_new, "u": u_new, "w": p["w"]}
+
+    # Optional external transverse-current antenna (laser soft source).
+    if j_y_source is not None:
+        j_y = j_y + j_y_source
 
     # Longitudinal Ampère (charge-conserving) and transverse Yee advance.
     j_x = charge_conserving_current(rho_old_total, rho_new_total, mean_jx, dx, dt)

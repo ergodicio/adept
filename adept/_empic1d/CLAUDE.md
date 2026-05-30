@@ -1,9 +1,18 @@
 # `_empic1d` — relativistic 1D2V electromagnetic PIC
 
-Being built for **differentiable optimization of accelerator profiles**:
-PWFA drive-beam current profile (fixed charge → transformer ratio) first, then
-LWFA laser temporal profile (fixed energy). See the root `docs/ARCHITECTURE.md`
-for how solvers plug into `ergoExo`.
+A complete relativistic 1D2V EM-PIC, built to enable **differentiable
+optimization of accelerator profiles** (PWFA drive-beam current profile → its
+transformer ratio; LWFA laser profile). ADEPT is a *frozen solver library*: this
+module exposes differentiable kernels (driven by `jax.lax.scan`), and the actual
+inverse-problem studies live in the downstream `wakefield-design` repo. There is
+deliberately **no ergoExo/MLflow run path** here — that is not the surface
+inverse problems use.
+
+Two entry points in `solvers/vector_field.py`:
+- `longitudinal_step` — electrostatic-via-Ampère path (no transverse fields).
+  Cheaper; used by PWFA (no laser).
+- `em_step` — full EM path (longitudinal + transverse Yee), coupled through the
+  Higuera–Cary push. Used by LWFA; takes an optional `j_y_source` laser antenna.
 
 ## Physics model
 
@@ -14,7 +23,11 @@ for how solvers plug into `ergoExo`.
   Volume-preserving; correct E×B drift. `solvers/pushers/push.py`.
 - **Longitudinal `E_x`**: Ampère (`∂_t E_x = -j_x`) with charge-conserving
   (Esirkepov-equivalent in 1D) current → Gauss's law exact, no global solve.
-- **Transverse `(E_y, B_z)`**: Yee FDTD — NOT YET IMPLEMENTED (later increment).
+- **Transverse `(E_y, B_z)`**: Yee FDTD (`E_y` on nodes, `B_z` on faces),
+  Faraday + Ampère in `field.py`; self-consistent `j_y` from particle `v_y`.
+  Laser injection via a soft-source antenna in `laser.py` (`em_step`'s
+  `j_y_source`). Periodic boundaries (no Mur ABC — use a large box + limited
+  run time, as for the wake studies).
 
 ## Conventions (read before touching the field code)
 
@@ -46,6 +59,9 @@ for how solvers plug into `ergoExo`.
 - `test_pwfa_optimize.py` — gradient flows through the PIC to the transformer
   ratio (fast); the full optimization (`slow`) shapes the beam weights to drive
   R from ~1.1 (symmetric) to ~5, beating the R ≤ 2 bound with a ramped profile.
+- `test_em_fields.py` — vacuum EM wave `ω = c·k`; transverse EM wave in cold
+  plasma `ω² = ω_pe² + c²k²` (validates the `j_y` coupling); laser soft-source
+  pulse propagates at `c`.
 
 ## Multi-species + beam
 
@@ -65,15 +81,20 @@ differentiable transformer ratio live in `diagnostics.py`.
   wake diagnostic + transformer ratio; wake validated vs 1D linear theory.
 - [x] **Inc 4** Differentiable PWFA optimization (optax over weights at fixed
   charge) — backprop through the PIC drives R ~1.1 → ~5 with a ramped profile.
-- [ ] **Inc 5+** LWFA: Yee `(E_y,B_z)` + `j_y` + laser injection + Mur ABC.
+- [x] **Inc 5** EM half: transverse Yee `(E_y,B_z)` + `j_y` (`em_step`) + laser
+  soft source (`laser.py`). Validated via vacuum/plasma dispersion + propagation.
 
-## Deferred scope (intentionally not here yet)
+ADEPT is now **frozen** — `_empic1d` is the last solver. Further work (LWFA
+studies, multi-objective optimization, moving-window production) happens in the
+downstream `wakefield-design` repo.
 
-- No `datamodel.py` / `modules.py` / `_base_.py` dispatch yet — the `ergoExo`
-  run path lands once there's a sim worth logging (Inc 3). Until then the solver
-  is driven by `jax.lax.scan` directly in tests, kept physics-correct in
-  isolation. `solvers/vector_field.py:longitudinal_step` is the reusable
-  single-step kernel the eventual diffrax `ODETerm` will wrap.
+## Out of scope (by design)
+
+- **No `ergoExo`/MLflow run path** (`datamodel.py` / `modules.py` / `_base_.py`
+  dispatch). Inverse problems consume the kernels via `jax.lax.scan`
+  (`longitudinal_step` / `em_step`), never the logging path.
+- **No Mur ABC** — boundaries are periodic. Run LWFA in a large box and stop
+  before the laser/wake wraps (a moving window is a downstream addition).
 
 ## Gotchas
 
