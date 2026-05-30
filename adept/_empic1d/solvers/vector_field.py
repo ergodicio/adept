@@ -25,9 +25,13 @@ drive beam) share the field; each carries its own particle arrays::
 from jax import numpy as jnp
 
 from adept._empic1d.solvers.pushers.field import (
+    advance_bz_faces,
+    advance_ey_nodes,
     charge_conserving_current,
     charge_density_nodes,
+    deposit_jy_nodes,
     gather_ex_faces,
+    gather_nodes,
 )
 from adept._empic1d.solvers.pushers.push import (
     advance_position_x,
@@ -77,3 +81,68 @@ def longitudinal_step(
     j_face = charge_conserving_current(rho_old_total, rho_new_total, mean_current, dx, dt)
     e_new = e_face - dt * j_face
     return {"species": new_species, "E": e_new}
+
+
+def em_step(
+    state: dict,
+    *,
+    species_params: dict,
+    dt: float,
+    c: float,
+    nx: int,
+    dx: float,
+    xmin: float,
+    length: float,
+    shape: str,
+) -> dict:
+    """Full relativistic EM step: longitudinal (Ampère/Esirkepov ``E_x``) + transverse
+    Yee ``(E_y, B_z)``, coupled through the Higuera–Cary push.
+
+    State adds the transverse fields to the longitudinal one::
+
+        {"species": {name: {x, u, w}}, "E": E_x(faces), "Ey": E_y(nodes), "Bz": B_z(faces)}
+
+    Fields ``E_x, E_y`` are at integer time ``n``; ``B_z`` at ``n-½``. ``B_z`` is
+    half-advanced to integer time for the particle gather, the particles are
+    pushed under the full ``(E_x, E_y, B_z)``, currents are deposited, and the
+    fields are advanced to ``n+1`` (``E``) / ``n+½`` (``B_z``).
+    """
+    e_x, e_y, b_z = state["E"], state["Ey"], state["Bz"]
+
+    # B_z to integer time for the gather (Faraday half-step with E_y^n).
+    b_z_n = advance_bz_faces(b_z, e_y, dx, 0.5 * dt)
+
+    new_species = {}
+    rho_old_total = jnp.zeros(nx)
+    rho_new_total = jnp.zeros(nx)
+    mean_jx = 0.0
+    j_y = jnp.zeros(nx)
+
+    for name, p in state["species"].items():
+        charge = species_params[name]["charge"]
+        qm = species_params[name]["qm"]
+
+        ex_p = gather_ex_faces(e_x, p["x"], dx, xmin, shape)
+        ey_p = gather_nodes(e_y, p["x"], dx, xmin, shape)
+        bz_p = gather_ex_faces(b_z_n, p["x"], dx, xmin, shape)  # B_z is face-centered like E_x
+        e_vec = jnp.stack([ex_p, ey_p, jnp.zeros_like(ex_p)], axis=-1)
+        b_vec = jnp.stack([jnp.zeros_like(bz_p), jnp.zeros_like(bz_p), bz_p], axis=-1)
+        u_new = higuera_cary_momentum(p["u"], e_vec, b_vec, qm, dt, c)
+
+        rho_old_total += charge_density_nodes(p["x"], p["w"], charge, nx, dx, xmin, shape)
+        x_new = advance_position_x(p["x"], u_new, dt, c, xmin, length)
+        rho_new_total += charge_density_nodes(x_new, p["w"], charge, nx, dx, xmin, shape)
+
+        gamma = lorentz_gamma(u_new, c)
+        mean_jx += charge * jnp.sum(p["w"] * u_new[..., 0] / gamma) / (nx * dx)
+        j_y += deposit_jy_nodes(x_new, p["w"], u_new[..., 1] / gamma, charge, nx, dx, xmin, shape)
+
+        new_species[name] = {"x": x_new, "u": u_new, "w": p["w"]}
+
+    # Longitudinal Ampère (charge-conserving) and transverse Yee advance.
+    j_x = charge_conserving_current(rho_old_total, rho_new_total, mean_jx, dx, dt)
+    e_x_new = e_x - dt * j_x
+    b_z_np12 = advance_bz_faces(b_z_n, e_y, dx, 0.5 * dt)  # complete Faraday → n+½
+    e_y_new = advance_ey_nodes(e_y, b_z_np12, j_y, c, dx, dt)
+
+    return {"species": new_species, "E": e_x_new, "Ey": e_y_new, "Bz": b_z_np12}

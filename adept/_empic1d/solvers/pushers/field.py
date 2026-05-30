@@ -85,3 +85,50 @@ def charge_conserving_current(
 def divergence_ex(e_face: jnp.ndarray, dx: float) -> jnp.ndarray:
     """Discrete Gauss divergence at nodes: ``(E_face[i] - E_face[i-1]) / dx``."""
     return (e_face - jnp.roll(e_face, 1)) / dx
+
+
+# --- Transverse electromagnetic fields (Yee FDTD) -------------------------------
+#
+# The transverse mode (E_y, B_z) for linear polarization. Yee staggering reuses
+# the longitudinal node/face grid:
+#   - E_y at nodes  i      (with j_y), co-located with ρ
+#   - B_z at faces  i+½, co-located with E_x
+# staggered in time (E at integer steps, B at half-integer). Maxwell in 1D:
+#   ∂_t B_z = -∂_x E_y                         (Faraday)
+#   ∂_t E_y = -c² ∂_x B_z - j_y                (Ampère, transverse)
+# The longitudinal E_x stays electrostatic-via-Ampère (∂_t E_x = -j_x); in 1D the
+# longitudinal and transverse modes decouple in the fields and recombine only
+# through the particles.
+
+
+def gather_nodes(field_nodes: jnp.ndarray, x: jnp.ndarray, dx: float, xmin: float, shape: str) -> jnp.ndarray:
+    """Interpolate a node-centered field (e.g. ``E_y``) onto particles."""
+    return gather(field_nodes, x, dx, xmin - 0.5 * dx, shape)
+
+
+def deposit_jy_nodes(
+    x: jnp.ndarray,
+    w: jnp.ndarray,
+    v_y: jnp.ndarray,
+    charge: float,
+    nx: int,
+    dx: float,
+    xmin: float,
+    shape: str,
+) -> jnp.ndarray:
+    """Transverse current density at nodes: ``charge · Σ_p w_p v_{y,p} S(x_node - x_p) / dx``."""
+    return charge_density_nodes(x, w * v_y, charge, nx, dx, xmin, shape)
+
+
+def advance_bz_faces(b_z: jnp.ndarray, e_y: jnp.ndarray, dx: float, dt: float) -> jnp.ndarray:
+    """Faraday update of the face-centered ``B_z`` by ``dt``: ``B_z -= dt ∂_x E_y``."""
+    d_ey = (jnp.roll(e_y, -1) - e_y) / dx  # ∂_x E_y at faces i+½
+    return b_z - dt * d_ey
+
+
+def advance_ey_nodes(
+    e_y: jnp.ndarray, b_z: jnp.ndarray, j_y: jnp.ndarray, c: float, dx: float, dt: float
+) -> jnp.ndarray:
+    """Ampère update of the node-centered ``E_y`` by ``dt``: ``E_y -= dt(c² ∂_x B_z + j_y)``."""
+    d_bz = (b_z - jnp.roll(b_z, 1)) / dx  # ∂_x B_z at nodes i
+    return e_y - dt * (c**2 * d_bz + j_y)
