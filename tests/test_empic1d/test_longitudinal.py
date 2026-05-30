@@ -47,17 +47,28 @@ def _cold_plasma(L, nx, ppc, delta):
     background = float(-jnp.mean(rho_e))  # uniform ions ⇒ zero-mean total charge
     e_face = solve_ex_from_gauss(rho_e + background, dx)
 
-    state = {"x": x, "u": u, "w": w, "E": e_face}
-    params = dict(charge=charge, qm=qm, dt=0.05, c=C, nx=nx, dx=dx, xmin=0.0, length=L, shape=SHAPE)
+    state = {"species": {"electron": {"x": x, "u": u, "w": w}}, "E": e_face}
+    params = dict(
+        species_params={"electron": {"charge": charge, "qm": qm}},
+        dt=0.05,
+        c=C,
+        nx=nx,
+        dx=dx,
+        xmin=0.0,
+        length=L,
+        shape=SHAPE,
+    )
     return state, params, background
 
 
 def _run(state, params, background, n_steps):
     """Scan the step, recording the mode-1 E coefficient and Gauss residual."""
+    charge = params["species_params"]["electron"]["charge"]
 
     def scan_fn(s, _):
         s = longitudinal_step(s, **params)
-        rho = charge_density_nodes(s["x"], s["w"], params["charge"], params["nx"], params["dx"], 0.0, SHAPE)
+        e = s["species"]["electron"]
+        rho = charge_density_nodes(e["x"], e["w"], charge, params["nx"], params["dx"], 0.0, SHAPE)
         resid = jnp.max(jnp.abs(divergence_ex(s["E"], params["dx"]) - (rho + background)))
         mode1 = jnp.fft.rfft(s["E"])[1]
         return s, (mode1, resid)

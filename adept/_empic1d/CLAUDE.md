@@ -40,15 +40,28 @@ for how solvers plug into `ergoExo`.
   gyrofrequency `-(q/m)B/γ` (~1e-7), E×B drift, free streaming.
 - `test_longitudinal.py` — Gauss's law preserved to ~1e-12 (x64); cold plasma
   oscillation rings at `ω_pe` (units chosen so `ω_pe = 1`).
+- `test_pwfa_wake.py` — a rigid relativistic drive beam's wake matches 1D linear
+  cold-plasma theory `E_z(ξ)=∫_ξ^∞ n_b cos(k_p(ξ'-ξ))dξ'` (shape corr ~0.93,
+  amplitude within ~7%, wavelength ≈ λ_p); symmetric-beam transformer ratio ≤ 2.
+
+## Multi-species + beam
+
+`longitudinal_step` takes `state = {"species": {name: {x,u,w}}, "E": ...}` and
+`species_params = {name: {"charge", "qm"}}`; charge/current sum over species, the
+field is shared. A PWFA drive beam is just another (relativistic, heavy ⇒ rigid)
+species. **Beam profile is set by per-particle weights on a fixed particle grid**
+— deposition is linear in `w`, so the profile is a differentiable knob and fixed
+charge is `Σw = const` (the Inc 4 optimization variables). Co-moving wake + the
+differentiable transformer ratio live in `diagnostics.py`.
 
 ## Build roadmap
 
 - [x] **Inc 1** Higuera–Cary pusher + single-particle tests.
 - [x] **Inc 2** Esirkepov current + Ampère `E_x`; Gauss + plasma-frequency tests.
-- [ ] **Inc 3** PWFA: relativistic drive beam, profile via per-particle weights
-  (linear in deposit ⇒ differentiable; fixed charge = `Σw` const), co-moving
-  wake diagnostic, transformer ratio vs Bane–Chen–Wilson.
-- [ ] **Inc 4** Differentiable PWFA optimization (optax over weights).
+- [x] **Inc 3** PWFA drive beam (profile via per-particle weights), co-moving
+  wake diagnostic + transformer ratio; wake validated vs 1D linear theory.
+- [ ] **Inc 4** Differentiable PWFA optimization (optax over weights) — recover
+  the known optimal ramped profile (Bane–Chen–Wilson).
 - [ ] **Inc 5+** LWFA: Yee `(E_y,B_z)` + `j_y` + laser injection + Mur ABC.
 
 ## Deferred scope (intentionally not here yet)

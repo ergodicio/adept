@@ -7,16 +7,19 @@ canonical explicit EM-PIC cycle
 
     gather E^n → Higuera–Cary momentum push (n-½ → n+½)
                 → position drift (n → n+1)
-                → charge-conserving current j^{n+½}
+                → charge-conserving current j^{n+½} (summed over species)
                 → Ampère E^{n+1} = E^n - dt·j^{n+½},
 
 which preserves Gauss's law to machine precision (see
 :mod:`adept._empic1d.solvers.pushers.field`).
 
 State is a flat pytree dict so it composes with ``jax.lax.scan`` (and, later, a
-diffrax ``ODETerm``):
+diffrax ``ODETerm``). Multiple species (e.g. a background plasma plus a PWFA
+drive beam) share the field; each carries its own particle arrays::
 
-    {"x": (N,), "u": (N, 3), "w": (N,), "E": (nx,)}   # E on faces
+    {"species": {name: {"x": (N,), "u": (N, 3), "w": (N,)}}, "E": (nx,)}  # E on faces
+
+``species_params[name]`` provides each species' ``charge`` and ``qm = q/m``.
 """
 
 from jax import numpy as jnp
@@ -36,8 +39,7 @@ from adept._empic1d.solvers.pushers.push import (
 def longitudinal_step(
     state: dict,
     *,
-    charge: float,
-    qm: float,
+    species_params: dict,
     dt: float,
     c: float,
     nx: int,
@@ -46,22 +48,32 @@ def longitudinal_step(
     length: float,
     shape: str,
 ) -> dict:
-    """Advance ``{x, u, w, E}`` one step. ``E`` is the face-centered ``E_x``."""
-    x, u, w, e_face = state["x"], state["u"], state["w"], state["E"]
+    """Advance ``{species, E}`` one step. ``E`` is the face-centered ``E_x``."""
+    e_face = state["E"]
 
-    # Gather E^n and push momentum n-½ → n+½ (B = 0 in the longitudinal path).
-    ex_p = gather_ex_faces(e_face, x, dx, xmin, shape)
-    e_vec = jnp.stack([ex_p, jnp.zeros_like(ex_p), jnp.zeros_like(ex_p)], axis=-1)
-    u_new = higuera_cary_momentum(u, e_vec, jnp.zeros_like(e_vec), qm, dt, c)
+    new_species = {}
+    rho_old_total = jnp.zeros(nx)
+    rho_new_total = jnp.zeros(nx)
+    mean_current = 0.0
 
-    # Charge before and after the position drift, for the charge-conserving current.
-    rho_old = charge_density_nodes(x, w, charge, nx, dx, xmin, shape)
-    x_new = advance_position_x(x, u_new, dt, c, xmin, length)
-    rho_new = charge_density_nodes(x_new, w, charge, nx, dx, xmin, shape)
+    for name, p in state["species"].items():
+        charge = species_params[name]["charge"]
+        qm = species_params[name]["qm"]
 
-    v_x = u_new[..., 0] / lorentz_gamma(u_new, c)
-    mean_current = charge * jnp.sum(w * v_x) / (nx * dx)
-    j_face = charge_conserving_current(rho_old, rho_new, mean_current, dx, dt)
+        # Gather E^n and push momentum n-½ → n+½ (B = 0 in the longitudinal path).
+        ex_p = gather_ex_faces(e_face, p["x"], dx, xmin, shape)
+        e_vec = jnp.stack([ex_p, jnp.zeros_like(ex_p), jnp.zeros_like(ex_p)], axis=-1)
+        u_new = higuera_cary_momentum(p["u"], e_vec, jnp.zeros_like(e_vec), qm, dt, c)
 
+        rho_old_total += charge_density_nodes(p["x"], p["w"], charge, nx, dx, xmin, shape)
+        x_new = advance_position_x(p["x"], u_new, dt, c, xmin, length)
+        rho_new_total += charge_density_nodes(x_new, p["w"], charge, nx, dx, xmin, shape)
+
+        v_x = u_new[..., 0] / lorentz_gamma(u_new, c)
+        mean_current += charge * jnp.sum(p["w"] * v_x) / (nx * dx)
+
+        new_species[name] = {"x": x_new, "u": u_new, "w": p["w"]}
+
+    j_face = charge_conserving_current(rho_old_total, rho_new_total, mean_current, dx, dt)
     e_new = e_face - dt * j_face
-    return {"x": x_new, "u": u_new, "w": w, "E": e_new}
+    return {"species": new_species, "E": e_new}
