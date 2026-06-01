@@ -148,8 +148,13 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     # Render the standard plot set into td/plots so MLflow logs them as
     # artifacts. Never let a plotting failure abort metric/artifact logging.
     try:
-        v_th = (cfg.get("output") or {}).get("v_th")
-        _plots.save_canned_plots(run_dir, td / "plots", v_th=v_th)
+        output = cfg.get("output") or {}
+        kwargs: dict[str, Any] = {"v_th": output.get("v_th")}
+        if output.get("dist_cells") is not None:
+            kwargs["dist_cells"] = int(output["dist_cells"])
+        if "omega_k_zoom" in output:  # may be explicitly null to disable zoom
+            kwargs["omega_k_zoom"] = output["omega_k_zoom"]
+        _plots.save_canned_plots(run_dir, td / "plots", **kwargs)
     except Exception as e:
         print(f"[post] plotting failed: {e}")
 

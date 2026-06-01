@@ -92,6 +92,12 @@ osiris:
 
 output:
   diagnostics_to_log: null                        # null = all; or [e1, charge, …]
+  v_th: 0.1                                         # optional: overlays the Bohm–Gross
+                                                    #   Langmuir branch on ω–k plots
+  dist_cells: 10                                    # right-boundary cells averaged for
+                                                    #   the phase-space f(p) lineouts
+  omega_k_zoom: 4.0                                 # (k, ω) half-width [ω_p] for the
+                                                    #   zoomed dispersion view; null = full
 ```
 
 Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1)`). Indexed `{0: …, 1: …}` form addresses occurrences of repeated sections (`species`, `udist`, `profile`, `spe_bound`, `diag_species`, `zpulse`, …) in source order.
@@ -106,6 +112,28 @@ Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1
 | Artifacts   | `config.yaml`, `derived_config.yaml`, `units.yaml` (adept stock)                 |
 | Artifacts   | `os-stdin` (rendered OSIRIS deck), `stdout.log`, `stderr.log`                    |
 | Artifacts   | `binary/<FLD\|PHA\|…>/<diag>.nc` — one xarray netCDF per diagnostic, holding the full `(t, …)` time history (replaces the raw h5 dumps) |
+| Artifacts   | `plots/…` — canned PNGs (see below)                                              |
+
+## Canned plots (`plots/` artifacts)
+
+`post.collect` renders a standard plot set via `adept/osiris/plots.py::save_canned_plots`. All labels are emitted as proper LaTeX (`$\omega$`, `$c/\omega_p$`, …).
+
+| Path                                          | What it shows |
+| --------------------------------------------- | ------------- |
+| `spacetime/<diag>.png`, `spacetime_log/<diag>.png` | `(t, x)` heatmap of each FLD diagnostic (lin + log) |
+| `lineouts/<diag>.png`                         | value-vs-`x` snapshots at sampled times |
+| `omega_k/<diag>.png`                          | full 2-D FFT `(k, ω)` dispersion |
+| `omega_k_zoom/<diag>.png`                     | zoomed `(k, ω)` showing the whole `ω = k` light line — where the plasma (Langmuir) waves live |
+| `currents/spacetime.png`, `currents/lineouts.png` | combined `J_x/J_y/J_z` (`j1/j2/j3`) views |
+| `moments/<species>/…`                         | per-species density-moment spacetime + lineouts |
+| `profiles/<species>/density.png`              | density profile vs `x` (final snapshot + late-time mean) |
+| `profiles/<species>/temperature.png`          | temperature profile vs `x`, from `uth1/2/3` or `T11/22/33` moments (omitted if neither is dumped) |
+| `phasespace/<species>/<ps>.png`, `phasespace_evolution/…` | `(x, p)` phase-space heatmaps |
+| `distribution_lineouts/<species>/<ps>.png`    | `f(p)` averaged over the rightmost `dist_cells` cells, overlaid at sampled times |
+| `field_decomp/<comp>.png`                     | left/right-going transverse `E` (vacuum Riemann split `(e2±b3)/2`, `(e3∓b2)/2`), spacetime + `ω–k` |
+| `energy_vs_time.png`, `energy_components_vs_time.png`, `total_energy_vs_time.png` | field / kinetic energy traces |
+
+> **Note on `field_decomp/`.** The left/right split is exact only in vacuum or a uniform non-dispersive medium (`|E| = |B|` for a pure travelling wave). In a plasma the EM wave is dispersive, so the split is approximate — useful for direction, but cross-check the dispersion before reading the residual as physical counter-propagating power. The longitudinal `e1` is electrostatic and is intentionally excluded.
 
 ## Programmatic use
 

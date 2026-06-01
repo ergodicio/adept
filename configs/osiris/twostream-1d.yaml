@@ -18,3 +18,6 @@ osiris:
 
 output:
   # diagnostics_to_log: [e1]   # null/omitted = convert every diagnostic's full time history to netCDF
+  # v_th: 0.1                  # overlay the Langmuir (Bohm-Gross) branch on omega-k plots
+  # dist_cells: 10             # right-boundary cells averaged for the phase-space f(p) lineouts
+  # omega_k_zoom: 4.0          # (k, omega) half-width [omega_p] for the zoomed dispersion view; null = full
