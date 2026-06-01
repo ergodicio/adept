@@ -202,43 +202,15 @@ def plot_phasespace_evolution(
 def field_energy_series(run_dir: str | Path) -> xr.DataArray:
     """Sum ``(|E|^2 + |B|^2) / 2`` over space at every saved step.
 
-    Walks every component dir under ``MS/FLD/`` (``e1``, ``e2``, ..., ``b1``,
-    ``b2``, ``b3``), aligns by iteration count, and returns a 1D
-    ``DataArray`` of total field energy in code units vs time. Components
-    that aren't dumped (or that have a different save cadence) are
-    skipped.
+    Returns a 1D ``DataArray`` of total field energy in code units vs time.
+    ``run_dir`` may be a raw OSIRIS run directory **or** the ``binary/``
+    directory of saved NetCDFs (it is resolved through :func:`io.load_series`),
+    so the trace is reproducible from the saved artifacts alone.
     """
-    run_dir = Path(run_dir)
-    fld = run_dir / "MS" / "FLD"
-    if not fld.is_dir():
-        raise FileNotFoundError(f"No MS/FLD under {run_dir}")
-    components = ("e1", "e2", "e3", "b1", "b2", "b3")
-    by_iter: dict[int, dict[str, float]] = {}
-    times: dict[int, float] = {}
-    for comp in components:
-        d = fld / comp
-        if not d.is_dir():
-            continue
-        for h5 in sorted(d.iterdir()):
-            if h5.suffix != ".h5":
-                continue
-            da = _io.load_grid_h5(h5)
-            e = 0.5 * float((da.values ** 2).sum()) * _cell_volume(da)
-            it = int(da.attrs["iter"])
-            by_iter.setdefault(it, {})[comp] = e
-            times.setdefault(it, float(da.attrs["time"]))
-    if not by_iter:
-        raise RuntimeError(f"No field dumps under {fld}")
-    iters = sorted(by_iter)
-    totals = np.array([sum(by_iter[i].values()) for i in iters])
-    t = np.array([times[i] for i in iters])
-    return xr.DataArray(
-        totals,
-        coords={"t": t, "iter": ("t", np.asarray(iters))},
-        dims=("t",),
-        name="field_energy",
-        attrs={"long_name": "total field energy", "units": "code"},
-    )
+    ds = field_energy_components(run_dir)
+    da = ds["total_field_energy"].rename("field_energy")
+    da.attrs.update(long_name="total field energy", units="code")
+    return da
 
 
 def plot_energy_vs_time(
@@ -270,36 +242,50 @@ def plot_energy_vs_time(
 
 
 def field_energy_components(run_dir: str | Path) -> xr.Dataset:
-    """E-field, B-field, and total field energy vs time from ``MS/FLD`` dumps.
+    """E-field, B-field, and total field energy vs time from the FLD diagnostics.
 
     Like :func:`field_energy_series` but keeps the electric (``e1/e2/e3``) and
     magnetic (``b1/b2/b3``) contributions separate. Returns a ``Dataset`` with
     data variables ``E_energy``, ``B_energy`` and ``total_field_energy`` on a
     shared ``t`` axis. Components not dumped are simply omitted from their sum.
+
+    Sources are resolved via :func:`io.list_diagnostics` / :func:`io.load_series`,
+    so ``run_dir`` may be a raw OSIRIS run directory or the ``binary/`` directory
+    of saved NetCDFs — the energy is recomputed from the stored ``(t, x)`` field
+    series either way.
     """
-    run_dir = Path(run_dir)
-    fld = run_dir / "MS" / "FLD"
-    if not fld.is_dir():
-        raise FileNotFoundError(f"No MS/FLD under {run_dir}")
+    diags = _io.list_diagnostics(run_dir)
     groups = {"E_energy": ("e1", "e2", "e3"), "B_energy": ("b1", "b2", "b3")}
     by_iter: dict[int, dict[str, float]] = {}
     times: dict[int, float] = {}
+    found = False
     for group, comps in groups.items():
         for comp in comps:
-            d = fld / comp
-            if not d.is_dir():
+            rel = f"FLD/{comp}"
+            if rel not in diags:
                 continue
-            for h5 in sorted(d.iterdir()):
-                if h5.suffix != ".h5":
-                    continue
-                da = _io.load_grid_h5(h5)
-                e = 0.5 * float((da.values ** 2).sum()) * _cell_volume(da)
-                it = int(da.attrs["iter"])
+            try:
+                ser = _io.load_series(diags[rel])
+            except Exception as e:  # a bad component must not sink the rest
+                print(f"[plots] skipping field-energy component {comp}: {e}")
+                continue
+            if ser.ndim != 2:
+                continue
+            found = True
+            e_t = _field_energy_from_series(ser)
+            its = (
+                np.asarray(ser.coords["iter"].values)
+                if "iter" in ser.coords
+                else np.arange(ser.sizes["t"])
+            )
+            ts = np.asarray(ser.coords["t"].values, dtype="float64")
+            for k in range(ts.size):
+                it = int(its[k])
                 rec = by_iter.setdefault(it, {"E_energy": 0.0, "B_energy": 0.0})
-                rec[group] += e
-                times.setdefault(it, float(da.attrs["time"]))
-    if not by_iter:
-        raise RuntimeError(f"No field dumps under {fld}")
+                rec[group] += float(e_t[k])
+                times.setdefault(it, float(ts[k]))
+    if not found or not by_iter:
+        raise RuntimeError(f"No field dumps available under {run_dir}")
     iters = sorted(by_iter)
     t = np.array([times[i] for i in iters])
     e_arr = np.array([by_iter[i]["E_energy"] for i in iters])
@@ -866,6 +852,15 @@ def save_canned_plots(
     best-effort: a failure on one diagnostic logs and is skipped rather than
     aborting the rest.
 
+    ``run_dir`` may be a raw OSIRIS run directory (with an ``MS/`` HDF5 tree and
+    optional ``HIST/``) **or** the ``binary/`` directory of saved NetCDFs
+    written by :func:`io.save_run_datasets`. The data source is detected
+    automatically (every diagnostic is fetched through :func:`io.list_diagnostics`
+    / :func:`io.load_series`, which handle both layouts), so the full plot set —
+    including the field-energy and energy-conservation traces — can be
+    regenerated from the saved NetCDF artifacts alone, with no rerun and no raw
+    HDF5 dumps.
+
     ``dist_cells`` sets how many right-boundary cells the phase-space
     distribution lineouts average over; ``omega_k_zoom`` is the ``(k, ω)``
     half-width (in ``ω_p`` units) for the zoomed dispersion plots that show the
@@ -1001,15 +996,23 @@ def save_canned_plots(
         if len(parts) < 3:
             continue
         ps_name, species = parts[1], parts[2]
-        last = _latest_h5(diag_path)
-        if last is not None:
-            fig, ax = plt.subplots(figsize=(5, 4))
-            plot_phasespace(_io.load_phasespace_h5(last), ax=ax)
-            written[f"phasespace/{species}/{ps_name}"] = _write(
-                fig, f"phasespace/{species}/{ps_name}.png"
-            )
         try:
             ser = _io.load_series(diag_path)
+        except Exception as e:
+            print(f"[plots] skipping phasespace {diag_rel}: {e}")
+            continue
+        # Final-step heatmap: the last time slice of the series (so it works
+        # identically off raw dumps and off the saved NetCDF series).
+        if "t" in ser.dims and ser.sizes["t"] > 0:
+            final = ser.isel(t=-1)
+            final.attrs["time"] = float(np.asarray(final.coords["t"].values))
+            if final.ndim == 2:
+                fig, ax = plt.subplots(figsize=(5, 4))
+                plot_phasespace(final, ax=ax)
+                written[f"phasespace/{species}/{ps_name}"] = _write(
+                    fig, f"phasespace/{species}/{ps_name}.png"
+                )
+        try:
             if ser.ndim == 3:
                 written[f"phasespace_evolution/{species}/{ps_name}"] = _write(
                     plot_phasespace_evolution(ser, n_panels=n_panels),
@@ -1158,15 +1161,14 @@ def _cell_volume(da: xr.DataArray) -> float:
     return dvol
 
 
-def _latest_h5(diag_dir: Path) -> Path | None:
-    best: tuple[int, Path] | None = None
-    for p in diag_dir.iterdir():
-        if p.suffix != ".h5":
-            continue
-        m = _io._ITER_RE.search(p.name)
-        if not m:
-            continue
-        it = int(m.group(1))
-        if best is None or it > best[0]:
-            best = (it, p)
-    return best[1] if best else None
+def _field_energy_from_series(ser: xr.DataArray) -> np.ndarray:
+    """Per-timestep field energy ``0.5 * ∫ f^2 dx`` for a ``(t, x)`` series.
+
+    Returns a 1-D array aligned with the series' ``t`` axis. Equivalent to
+    summing ``0.5 * f^2 * cell_volume`` over space at each dump, but vectorized
+    over the whole stacked series so it works identically off the raw HDF5
+    dumps and off the saved NetCDFs.
+    """
+    spatial = [d for d in ser.dims if d != "t"]
+    sq = (ser.astype("float64") ** 2).sum(dim=spatial)
+    return 0.5 * np.asarray(sq.values, dtype="float64") * _cell_volume(ser)

@@ -266,8 +266,14 @@ def load_series(directory: str | Path) -> xr.DataArray:
     All files must share the same diagnostic name, the same spatial /
     phase-space shape, and the same axis bounds — this is the standard
     OSIRIS convention for a single diagnostic's time history.
+
+    For regenerating plots from saved artifacts, ``directory`` may instead be a
+    single ``.nc`` file written by :func:`save_run_datasets`; it is then loaded
+    via :func:`load_series_nc`, returning the same stacked ``(t, ...)`` array.
     """
     directory = Path(directory)
+    if directory.is_file() and directory.suffix == ".nc":
+        return load_series_nc(directory)
     dumps = _sort_dumps(directory)
     if not dumps:
         raise FileNotFoundError(f"No .h5 dumps in {directory}")
@@ -304,23 +310,36 @@ def load_series(directory: str | Path) -> xr.DataArray:
 
 
 def list_diagnostics(run_dir: str | Path) -> dict[str, Path]:
-    """Map every diagnostic name to its directory under ``run_dir/MS/``.
+    """Map every diagnostic name to its data source.
 
-    Discovery rule: any directory that directly contains ``.h5`` dumps is
-    a diagnostic. The returned key is the directory's relative path under
-    ``MS/`` (e.g. ``"FLD/e1"``, ``"PHA/x1p1/beam_pos"``).
+    Two layouts are supported transparently:
+
+    - a raw OSIRIS run directory with an ``MS/`` tree: any directory that
+      directly contains ``.h5`` dumps is a diagnostic, keyed by its relative
+      path under ``MS/`` (e.g. ``"FLD/e1"``, ``"PHA/x1p1/beam_pos"``);
+    - the ``binary/`` directory of saved NetCDFs from :func:`save_run_datasets`
+      (no ``MS/``): each ``.nc`` is a diagnostic, keyed by its relative path
+      without the suffix (same keys as above).
+
+    The returned handles (dump dirs or ``.nc`` files) are both accepted by
+    :func:`load_series`, so callers regenerate plots from either source without
+    caring which. Raises ``FileNotFoundError`` if neither layout is found.
     """
     run_dir = Path(run_dir)
     ms = run_dir / "MS"
-    if not ms.is_dir():
-        raise FileNotFoundError(f"No MS/ directory under {run_dir}")
-    out: dict[str, Path] = {}
-    for d in ms.rglob("*"):
-        if not d.is_dir():
-            continue
-        if any(c.suffix == ".h5" for c in d.iterdir()):
-            out[str(d.relative_to(ms))] = d
-    return out
+    if ms.is_dir():
+        out: dict[str, Path] = {}
+        for d in ms.rglob("*"):
+            if not d.is_dir():
+                continue
+            if any(c.suffix == ".h5" for c in d.iterdir()):
+                out[str(d.relative_to(ms))] = d
+        return out
+    # No MS/ tree — fall back to the saved-NetCDF layout.
+    nc = list_diagnostics_nc(run_dir)
+    if nc:
+        return nc
+    raise FileNotFoundError(f"No MS/ directory or saved NetCDFs under {run_dir}")
 
 
 def _coerce_attr(v):
@@ -357,6 +376,61 @@ def series_to_dataset(da: xr.DataArray) -> xr.Dataset:
         if dim in ds.coords:
             ds[dim].attrs["long_name"] = long_name
     return ds
+
+
+def load_series_nc(path: str | Path) -> xr.DataArray:
+    """Load a grid/phase-space series NetCDF back into a plotter-ready DataArray.
+
+    This is the inverse of :func:`series_to_dataset` (the form
+    :func:`save_run_datasets` writes to disk): it reopens a single-diagnostic
+    ``.nc`` file and rebuilds the ``axis_units`` / ``axis_long_names`` dict
+    attrs from the per-coordinate metadata, so the returned ``DataArray`` is
+    indistinguishable (for plotting purposes) from one produced by
+    :func:`load_series` off the raw HDF5 tree. The whole point is that the
+    canned plots can be regenerated from the saved NetCDFs alone.
+
+    The file is read fully into memory and closed before returning.
+    """
+    ds = xr.load_dataset(path, engine="h5netcdf")
+    names = list(ds.data_vars)
+    if not names:
+        raise ValueError(f"No data variable in {path}")
+    # series_to_dataset writes exactly one data variable (the diagnostic);
+    # `iter` rides along as a coordinate, not a data var.
+    name = names[0]
+    da = ds[name]
+
+    axis_units: dict[str, str] = {}
+    axis_long: dict[str, str] = {}
+    for dim in da.dims:
+        if dim == "t" or dim not in ds.coords:
+            continue
+        cu = ds[dim].attrs.get("units")
+        cl = ds[dim].attrs.get("long_name")
+        if cu:
+            axis_units[str(dim)] = cu
+        if cl:
+            axis_long[str(dim)] = cl
+    da.attrs["axis_units"] = axis_units
+    da.attrs["axis_long_names"] = axis_long
+    da.attrs.setdefault("time_units", da.attrs.get("time_units", r"1/\omega_p"))
+    return da
+
+
+def list_diagnostics_nc(binary_dir: str | Path) -> dict[str, Path]:
+    """Map every saved-NetCDF diagnostic to its ``.nc`` file.
+
+    The inverse layout of :func:`save_run_datasets`: walks ``binary_dir`` for
+    ``*.nc`` files and keys each by its relative path with the suffix dropped
+    (e.g. ``"FLD/e1"``, ``"PHA/x1p1/beam_pos"``, ``"HIST/energy"``), mirroring
+    :func:`list_diagnostics` over the raw ``MS/`` tree.
+    """
+    binary_dir = Path(binary_dir)
+    out: dict[str, Path] = {}
+    for p in sorted(binary_dir.rglob("*.nc")):
+        rel = str(p.relative_to(binary_dir).with_suffix(""))
+        out[rel] = p
+    return out
 
 
 def save_run_datasets(
@@ -396,6 +470,20 @@ def save_run_datasets(
         except Exception as e:  # one bad diagnostic must not abort the rest
             print(f"[post] skipping diagnostic {relpath}: {e}")
             continue
+
+    # Persist the HIST scalar-energy history (field + per-species kinetic) so
+    # the energy-conservation plot can be regenerated from the saved NetCDFs
+    # alone — it is the one plot input that lives outside the MS/ dump tree.
+    try:
+        energy = load_hist_energy(run_dir)
+        if energy is not None:
+            dest = out_dir / "HIST" / "energy.nc"
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            energy.to_netcdf(dest, engine="h5netcdf")
+            written.append(dest)
+    except Exception as e:
+        print(f"[post] skipping HIST energy: {e}")
+
     return written
 
 
@@ -454,7 +542,15 @@ def load_hist_energy(run_dir: str | Path) -> xr.Dataset | None:
     Note: the column convention assumed is the documented OSIRIS
     ``iteration time <values...>`` layout; validate against a real run with
     energy diagnostics enabled before relying on absolute magnitudes.
+
+    When given the ``binary/`` directory of saved NetCDFs (no raw ``HIST/``
+    ASCII), this instead reloads the pre-parsed ``HIST/energy.nc`` written by
+    :func:`save_run_datasets`, so the energy-conservation plot is reproducible
+    from the saved artifacts alone.
     """
+    saved = Path(run_dir) / "HIST" / "energy.nc"
+    if saved.is_file():
+        return xr.load_dataset(saved, engine="h5netcdf")
     hist = Path(run_dir) / "HIST"
     if not hist.is_dir():
         return None

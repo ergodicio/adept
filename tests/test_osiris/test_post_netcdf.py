@@ -247,3 +247,149 @@ def test_save_run_datasets_skips_unloadable_diagnostic(tmp_path: Path) -> None:
     assert (out / "FLD" / "e1.nc").exists()  # good diagnostic still produced
     assert not (out / "FLD" / "bad.nc").exists()
     assert (out / "FLD" / "e1.nc") in written
+
+
+# --- regenerating plots from the saved NetCDFs (no rerun, no raw MS/ tree) ---
+
+
+def _write_field(run_dir: Path, comp: str, n_steps: int, nx: int, seed: int) -> None:
+    """Write an ``MS/FLD/<comp>`` 1-D field diagnostic over ``n_steps`` dumps."""
+    rng = np.random.default_rng(seed)
+    d = run_dir / "MS" / "FLD" / comp
+    for k in range(n_steps):
+        it = k * 10
+        _write_dump(
+            d / f"{comp}-{it:06d}.h5",
+            comp,
+            rng.standard_normal(nx),
+            t=k * 0.5,
+            it=it,
+            axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)],
+        )
+
+
+def _write_phasespace(run_dir: Path, n_steps: int, nx: int, npmom: int) -> None:
+    """Write an ``MS/PHA/p1x1/electrons`` 2-D phase-space series."""
+    rng = np.random.default_rng(7)
+    d = run_dir / "MS" / "PHA" / "p1x1" / "electrons"
+    for k in range(n_steps):
+        it = k * 10
+        # data shape (p1, x1): the AXIS list is OSIRIS order (AXIS1 = x1).
+        _write_dump(
+            d / f"p1x1-electrons-{it:06d}.h5",
+            "p1x1",
+            rng.standard_normal((npmom, nx)),
+            t=k * 0.5,
+            it=it,
+            axes=[
+                ("x1", "x_1", r"c / \omega_p", 0.0, 10.0),
+                ("p1", "p_1", r"m_e c", -1.0, 1.0),
+            ],
+        )
+
+
+def _write_hist_energy(run_dir: Path, n_steps: int) -> None:
+    """Write OSIRIS-style ``HIST/`` field + kinetic energy ASCII tables."""
+    hist = run_dir / "HIST"
+    hist.mkdir(parents=True, exist_ok=True)
+    fld = ["! iter time e1 e2 e3 b1 b2 b3"]
+    par = []
+    for k in range(n_steps):
+        t = k * 0.5
+        # field falls, kinetic rises by the same amount -> total conserved.
+        fld.append(f"{k * 10} {t} {1.0 - 0.1 * k} 0 0 0 0 0")
+        par.append(f"{k * 10} {t} {0.1 * k}")
+    (hist / "fld_ene").write_text("\n".join(fld) + "\n")
+    (hist / "par01_ene").write_text("\n".join(par) + "\n")
+
+
+def _make_full_run(tmp_path: Path, n_steps: int = 5, nx: int = 16) -> Path:
+    """A run with fields, a density moment, a phase space, and HIST energy."""
+    run_dir = _make_run(tmp_path, n_steps=n_steps, nx=nx)  # FLD/e1
+    _write_field(run_dir, "e2", n_steps, nx, seed=2)
+    _write_field(run_dir, "b3", n_steps, nx, seed=3)
+    rng = np.random.default_rng(11)
+    dens = run_dir / "MS" / "DENSITY" / "electrons" / "charge"
+    for k in range(n_steps):
+        it = k * 10
+        _write_dump(
+            dens / f"charge-{it:06d}.h5",
+            "charge",
+            rng.standard_normal(nx),
+            t=k * 0.5,
+            it=it,
+            axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)],
+        )
+    _write_phasespace(run_dir, n_steps, nx, npmom=6)
+    _write_hist_energy(run_dir, n_steps)
+    return run_dir
+
+
+def test_load_series_nc_roundtrips_grid_series(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, n_steps=4, nx=8)
+    out = tmp_path / "binary"
+    oio.save_run_datasets(run_dir, out)
+
+    from_nc = oio.load_series_nc(out / "FLD" / "e1.nc")
+    from_ms = oio.load_series(run_dir / "MS" / "FLD" / "e1")
+
+    assert from_nc.dims == from_ms.dims
+    assert from_nc.shape == from_ms.shape
+    np.testing.assert_allclose(from_nc.values, from_ms.values)
+    np.testing.assert_allclose(from_nc["t"].values, from_ms["t"].values)
+    assert list(from_nc["iter"].values) == list(from_ms["iter"].values)
+    # axis metadata is rebuilt into the dict attrs the plotters read.
+    assert from_nc.attrs["axis_units"]["x1"] == from_ms.attrs["axis_units"]["x1"]
+    # load_series dispatches to load_series_nc when handed a .nc file.
+    np.testing.assert_allclose(
+        oio.load_series(out / "FLD" / "e1.nc").values, from_ms.values
+    )
+
+
+def test_save_run_datasets_persists_hist_energy(tmp_path: Path) -> None:
+    run_dir = _make_full_run(tmp_path)
+    out = tmp_path / "binary"
+    written = oio.save_run_datasets(run_dir, out)
+
+    nc = out / "HIST" / "energy.nc"
+    assert nc.exists()
+    assert nc in written
+    # load_hist_energy reads the saved NetCDF when there's no raw HIST/ ASCII.
+    energy = oio.load_hist_energy(out)
+    assert energy is not None
+    assert "total" in energy
+    assert energy.attrs.get("total_drift_frac") == 0.0  # conserved by construction
+
+
+def test_save_canned_plots_regenerates_from_netcdf(tmp_path: Path) -> None:
+    from adept.osiris import plots as oplots
+
+    run_dir = _make_full_run(tmp_path)
+
+    # Plots from the raw OSIRIS run...
+    out_ms = tmp_path / "plots_ms"
+    written_ms = oplots.save_canned_plots(run_dir, out_ms)
+
+    # ...vs plots regenerated from the saved NetCDFs alone (no MS/ tree).
+    binary = tmp_path / "binary"
+    oio.save_run_datasets(run_dir, binary)
+    assert not (binary / "MS").exists()
+    out_nc = tmp_path / "plots_nc"
+    written_nc = oplots.save_canned_plots(binary, out_nc)
+
+    # The NetCDF-only regeneration reproduces the exact same plot set.
+    assert set(written_nc) == set(written_ms)
+    # ...spanning every family, incl. the energy traces that read outside MS/.
+    for key in (
+        "spacetime/e1",
+        "omega_k/e1",
+        "moments/electrons/charge",
+        "profiles/electrons/density",
+        "phasespace/electrons/p1x1",
+        "phasespace_evolution/electrons/p1x1",
+        "energy_vs_time",
+        "energy_components_vs_time",
+        "total_energy_vs_time",
+    ):
+        assert key in written_nc, f"missing {key}"
+        assert written_nc[key].exists()
