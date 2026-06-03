@@ -1,3 +1,5 @@
+"""Vlasov advection pushers for the one-dimensional phase-space solver."""
+
 from collections.abc import Callable
 from functools import partial
 
@@ -12,6 +14,8 @@ from jax.sharding import PartitionSpec as P
 
 
 class VlasovExternalE(eqx.Module):
+    """Split Vlasov pusher for externally supplied electric fields."""
+
     x: jnp.ndarray
     v: jnp.ndarray
     f_interp: Callable
@@ -21,6 +25,7 @@ class VlasovExternalE(eqx.Module):
     interp_e: Callable
 
     def __init__(self, cfg, interp_e):
+        """Create interpolation helpers for x-advection and v-advection steps."""
         self.x = cfg["grid"]["x"]
         self.v = cfg["grid"]["v"]
         self.f_interp = partial(interp2d, x=self.x, y=self.v, period=cfg["grid"]["xmax"])
@@ -30,12 +35,14 @@ class VlasovExternalE(eqx.Module):
         self.interp_e = interp_e
 
     def step_vdfdx(self, t, f, frac_dt):
+        """Advect the distribution along x characteristics for a fractional step."""
         old_x = self.x[:, None] - self.v[None, :] * frac_dt * self.dt
         old_v = self.dummy_x[:, None] * self.v[None, :]
         new_f = self.f_interp(xq=old_x.flatten(), yq=old_v.flatten(), f=f)
         return jnp.reshape(new_f, (self.x.size, self.v.size))
 
     def step_edfdv(self, t, f, frac_dt):
+        """Advect the distribution along v characteristics using the external field."""
         interp_e = self.interp_e(self.dummy_x * t, self.x)
         old_v = self.v[None, :] + interp_e[:, None] * frac_dt * self.dt
         old_x = self.dummy_v * self.x[:, None]
@@ -43,6 +50,7 @@ class VlasovExternalE(eqx.Module):
         return jnp.reshape(new_f, (self.x.size, self.v.size))
 
     def __call__(self, t, y, args):
+        """Apply Strang splitting for one externally driven Vlasov step."""
         f = y["electron"]
 
         new_f = self.step_vdfdx(t, f, 0.5)
@@ -53,7 +61,10 @@ class VlasovExternalE(eqx.Module):
 
 
 class VelocityExponential:
+    """Spectral velocity-space advection under electric and ponderomotive forces."""
+
     def __init__(self, species_grids, species_params, parallel=False):
+        """Store per-species velocity grids and optional sharding metadata."""
         self.species_grids = species_grids
         self.species_params = species_params
         self.parallel = parallel
@@ -61,6 +72,7 @@ class VelocityExponential:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
     def push(self, f_dict, e, pond, dt):
+        """Apply the unsharded spectral velocity push to each species."""
         result = {}
         for species_name, f in f_dict.items():
             kv_real = self.species_grids[species_name]["kvr"]
@@ -79,6 +91,7 @@ class VelocityExponential:
         return result
 
     def __call__(self, f_dict, e, pond, dt):
+        """Dispatch the velocity push, optionally through shard_map."""
         if self.parallel:
             return shard_map(
                 self.push,
@@ -91,7 +104,10 @@ class VelocityExponential:
 
 
 class VelocityCubicSpline:
+    """Cubic-spline velocity-space advection under electric and ponderomotive forces."""
+
     def __init__(self, species_grids, species_params, parallel=False):
+        """Store per-species velocity grids, interpolation kernel, and sharding metadata."""
         self.species_grids = species_grids
         self.species_params = species_params
         self.interp = vmap(partial(interp1d, extrap=1.0e-30), in_axes=0)
@@ -100,6 +116,7 @@ class VelocityCubicSpline:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
     def push(self, f_dict, e, pond, dt):
+        """Apply the unsharded cubic-spline velocity push to each species."""
         result = {}
         for species_name, f in f_dict.items():
             v = self.species_grids[species_name]["v"]
@@ -114,6 +131,7 @@ class VelocityCubicSpline:
         return result
 
     def __call__(self, f_dict, e, pond, dt):
+        """Dispatch the cubic-spline velocity push, optionally through shard_map."""
         if self.parallel:
             return shard_map(
                 self.push,
@@ -145,6 +163,7 @@ class HouLiFilter:
     """
 
     def __init__(self, species_grids: dict, nx: int, alpha: float, order: int, dimensions: list[str]):
+        """Precompute x and v Fourier-space filter kernels for requested dimensions."""
         if "x" in dimensions:
             j_x = jnp.arange(nx // 2 + 1)
             eta_x = j_x / (nx // 2)
@@ -161,6 +180,7 @@ class HouLiFilter:
                 self.filters_v[species_name] = jnp.exp(-alpha * eta ** (2 * order))
 
     def __call__(self, f_dict: dict) -> dict:
+        """Apply configured Hou-Li filters to each species distribution."""
         result = {}
         for species_name, f in f_dict.items():
             filtered = f
@@ -177,7 +197,10 @@ class HouLiFilter:
 
 
 class SpaceExponential:
+    """Spectral configuration-space advection for each species."""
+
     def __init__(self, x, species_grids, parallel=False):
+        """Precompute x-space wavenumbers and optional velocity-axis sharding metadata."""
         self.kx_real = jnp.fft.rfftfreq(len(x), d=x[1] - x[0]) * 2 * jnp.pi
         self.species_grids = species_grids
         self.parallel = parallel
@@ -185,11 +208,13 @@ class SpaceExponential:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
     def push(self, f, v):
+        """Apply the spectral x-advection update for one species distribution."""
         return jnp.real(
             jnp.fft.irfft(jnp.exp(-1j * self.kx_real[:, None] * v[None, :]) * jnp.fft.rfft(f, axis=0), axis=0)
         )
 
     def __call__(self, f_dict, dt):
+        """Advect every species in configuration space for one timestep."""
         result = {}
         for species_name, f in f_dict.items():
             v = self.species_grids[species_name]["v"] * dt

@@ -1,3 +1,5 @@
+"""ADEPT module classes and config-to-simulation builders for Vlasov-1D."""
+
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
@@ -22,6 +24,7 @@ from adept.utils import filter_scalars
 
 
 def species_set_from_config(cfg: Vlasov1DConfig) -> list[Species]:
+    """Return explicit species or synthesize the legacy single-electron species."""
     if cfg.terms.species:
         return [Species.from_config(species_cfg) for species_cfg in cfg.terms.species]
     else:
@@ -89,15 +92,20 @@ def sim_from_config(
 
 
 class BaseVlasov1D(ADEPTModule):
+    """ADEPT module wrapper for configuring, running, and post-processing Vlasov-1D."""
+
     def __init__(self, cfg) -> None:
+        """Validate configuration and construct the Vlasov-1D simulation domain."""
         super().__init__(cfg)
         self.config_model = Vlasov1DConfig.model_validate(cfg)
         self.simulation = sim_from_config(self.config_model)
 
     def post_process(self, run_output: dict, td: str):
+        """Post-process a solver result into plots, netCDF files, and MLflow metrics."""
         return post_process(run_output["solver result"], self.cfg, td, self.args)
 
     def write_units(self) -> dict:
+        """Compute and attach physical normalization quantities to the run config."""
         norm = self.simulation.plasma_norm
         grid = self.simulation.grid
 
@@ -293,6 +301,7 @@ class BaseVlasov1D(ADEPTModule):
         self.args = {"drivers": self.simulation.drivers, "terms": self.cfg["terms"]}
 
     def init_diffeqsolve(self):
+        """Assemble Diffrax terms, solver, save functions, and solve time bounds."""
         self.cfg = get_save_quantities(self.cfg)
         grid = self.simulation.grid
         self.time_quantities = {"t0": 0.0, "t1": grid.tmax, "max_steps": grid.max_steps}
@@ -311,6 +320,7 @@ class BaseVlasov1D(ADEPTModule):
         )
 
     def __call__(self, trainable_modules: dict, args: dict | None = None):
+        """Run the configured Vlasov-1D solve and return the raw Diffrax result."""
         if args is None:
             args = self.args
         grid = self.simulation.grid
