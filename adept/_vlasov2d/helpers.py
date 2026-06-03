@@ -157,15 +157,18 @@ def _initialize_total_distribution_(cfg: dict, simulation: Vlasov2DSimulation):
         vxax = np.zeros(nvx)
         vyax = np.zeros(nvy)
 
-        for spec in simulation.species_distributions[name]:
+        # Compute each component's density profile once and reuse below.
+        component_specs = simulation.species_distributions[name]
+        component_nprofs = []
+        for spec in component_specs:
             nprof = np.array(spec.density_profile(grid.x, grid.y))
+            component_nprofs.append(nprof)
             n_prof_species += nprof
             species_found = True
 
         if dist_sharding is None:
             f_species = np.zeros([grid.nx, grid.ny, nvx, nvy])
-            for spec in simulation.species_distributions[name]:
-                nprof = np.array(spec.density_profile(grid.x, grid.y))
+            for spec, nprof in zip(component_specs, component_nprofs, strict=True):
                 f_one, vxax, vyax = _initialize_bi_supergaussian(
                     nx=grid.nx,
                     ny=grid.ny,
@@ -183,7 +186,7 @@ def _initialize_total_distribution_(cfg: dict, simulation: Vlasov2DSimulation):
         else:
             f_species, vxax, vyax = _initialize_sharded_species_distribution(
                 species_cfg,
-                simulation.species_distributions[name],
+                component_specs,
                 grid,
                 dist_sharding.sharding,
                 dtype=n_prof_species.dtype,

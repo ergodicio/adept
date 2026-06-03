@@ -101,8 +101,29 @@ def make_sharded_array(
 def reshard_for_global_axis_fft(array, dist: DistributionSharding, axis: int | str):
     """Reshard an array so a future global FFT has the transform axis local.
 
-    This is intentionally a small building block: pusher code can call this
-    before an FFT along x, y, vx, or vy. JAX will insert the necessary collective
-    communication for the reshard on multi-device meshes.
+    Returns a NamedSharding view in which `axis` is replicated across the mesh
+    so that a subsequent FFT along that axis is a local per-device op.
+
+    NOTE: prefer declaring `in_shardings`/`out_shardings` on a `jax.jit`-wrapped
+    pusher and letting XLA's SPMD partitioner insert the reshards automatically.
+    This helper is for code paths where the pusher is not inside a single `jit`
+    boundary, or where an explicit data-movement annotation is wanted. Inside a
+    `jit`, calling this can force a sync point that XLA would otherwise schedule
+    better.
     """
     return jax.device_put(array, dist.with_unsharded_axis(axis))
+
+
+def reshard_to_partitioned(array, dist: DistributionSharding):
+    """Reshard an array back to the canonical partitioned layout.
+
+    Symmetric to `reshard_for_global_axis_fft`: returns the input as a
+    NamedSharding view with the full `dist.partition` (e.g. ('x', None, None, None))
+    restored on every distribution axis. Use after a global-axis op (typically
+    an inverse FFT) to re-partition the array for the next stage.
+
+    Same NOTE applies as for `reshard_for_global_axis_fft`: when the surrounding
+    pusher is wrapped in `jax.jit` with declared shardings, XLA handles this
+    automatically and the explicit call becomes redundant.
+    """
+    return jax.device_put(array, dist.sharding)

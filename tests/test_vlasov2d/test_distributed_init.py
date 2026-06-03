@@ -9,7 +9,11 @@ import pytest
 from jax.sharding import NamedSharding
 
 from adept._vlasov2d.datamodel import Vlasov2DConfig
-from adept._vlasov2d.distributed import create_distribution_sharding, reshard_for_global_axis_fft
+from adept._vlasov2d.distributed import (
+    create_distribution_sharding,
+    reshard_for_global_axis_fft,
+    reshard_to_partitioned,
+)
 from adept._vlasov2d.helpers import _initialize_total_distribution_
 from adept._vlasov2d.modules import sim_from_config
 
@@ -135,3 +139,23 @@ def test_reshard_for_global_axis_fft_preserves_values():
 
     np.testing.assert_allclose(np.asarray(local_for_x_fft), np.asarray(f_sharded))
     assert local_for_x_fft.sharding.spec[0] is None
+
+
+def test_reshard_to_partitioned_round_trips_axis_replication():
+    cfg = _base_cfg()
+    cfg["grid"]["distribution-sharding"] = {
+        "enabled": True,
+        "mesh_axes": ["x"],
+        "mesh_shape": [1],
+        "partition": ["x", None, None, None],
+    }
+    sim = sim_from_config(Vlasov2DConfig.model_validate(cfg))
+    dist_result = _initialize_total_distribution_(cfg, sim)
+    _, f_sharded, _, _ = dist_result["electron"]
+    dist = create_distribution_sharding(cfg["grid"]["distribution-sharding"])
+
+    replicated = reshard_for_global_axis_fft(f_sharded, dist, "x")
+    repartitioned = reshard_to_partitioned(replicated, dist)
+
+    np.testing.assert_allclose(np.asarray(repartitioned), np.asarray(f_sharded))
+    assert repartitioned.sharding.spec == dist.partition
