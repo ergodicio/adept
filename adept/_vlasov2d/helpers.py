@@ -10,6 +10,7 @@ from jax import numpy as jnp
 from matplotlib import pyplot as plt
 from scipy.special import gamma
 
+from adept._vlasov2d.distributed import create_distribution_sharding, make_sharded_array
 from adept._vlasov2d.simulation import Vlasov2DSimulation
 from adept._vlasov2d.storage import store_f, store_fields
 
@@ -38,7 +39,26 @@ def _initialize_bi_supergaussian(
     dvy = 2.0 * vmax / nvy
     vxax = np.linspace(-vmax + dvx / 2.0, vmax - dvx / 2.0, nvx)
     vyax = np.linspace(-vmax + dvy / 2.0, vmax - dvy / 2.0, nvy)
+    f = _evaluate_bi_supergaussian_on_axes(vxax, vyax, v0x, v0y, T0, mass, supergaussian_order, vmax, n_prof)
+    return f, vxax, vyax
 
+
+def _evaluate_bi_supergaussian_on_axes(
+    vxax: np.ndarray,
+    vyax: np.ndarray,
+    v0x: float,
+    v0y: float,
+    T0: float,
+    mass: float,
+    supergaussian_order: float,
+    vmax: float,
+    n_prof: np.ndarray,
+):
+    """Evaluate a normalized separable bi-supergaussian on preselected velocity axes."""
+    nvx = vxax.size
+    nvy = vyax.size
+    dvx = 2.0 * vmax / nvx
+    dvy = 2.0 * vmax / nvy
     v_th = np.sqrt(T0 / mass)
     alpha = _gamma_ratio_alpha(supergaussian_order)
     scale = alpha * v_th
@@ -50,8 +70,71 @@ def _initialize_bi_supergaussian(
     fvy /= np.sum(fvy) * dvy
 
     fv = fvx[:, None] * fvy[None, :]
-    f = n_prof[:, :, None, None] * fv[None, None, :, :]
-    return f, vxax, vyax
+    return n_prof[:, :, None, None] * fv[None, None, :, :]
+
+
+def _slice_axis(axis, indexer) -> np.ndarray:
+    """Return a NumPy view/copy of a JAX axis for a make_array_from_callback index."""
+    return np.atleast_1d(np.asarray(axis[indexer]))
+
+
+def _component_density_on_slice(spec, x_slice: np.ndarray, y_slice: np.ndarray) -> np.ndarray:
+    """Evaluate one density component on an x-y shard."""
+    return np.asarray(spec.density_profile(jnp.asarray(x_slice), jnp.asarray(y_slice)))
+
+
+def _initialize_sharded_species_distribution(
+    species_cfg,
+    distribution_specs,
+    grid,
+    sharding,
+    dtype,
+):
+    """Create a sharded f(x, y, vx, vy) array without allocating the global array."""
+    for spec in distribution_specs:
+        noise = spec.density_profile.noise_profile
+        if noise.noise_type.casefold() != "none" and noise.noise_val != 0.0:
+            raise NotImplementedError(
+                "Distributed Vlasov-2D initialization currently requires deterministic density profiles "
+                "(set noise_type: none or noise_val: 0.0)."
+            )
+
+    vx_full = np.linspace(
+        -species_cfg.vmax + species_cfg.vmax / species_cfg.nvx,
+        species_cfg.vmax - species_cfg.vmax / species_cfg.nvx,
+        species_cfg.nvx,
+    )
+    vy_full = np.linspace(
+        -species_cfg.vmax + species_cfg.vmax / species_cfg.nvy,
+        species_cfg.vmax - species_cfg.vmax / species_cfg.nvy,
+        species_cfg.nvy,
+    )
+    shape = (grid.nx, grid.ny, species_cfg.nvx, species_cfg.nvy)
+
+    def _callback(index):
+        x_index, y_index, vx_index, vy_index = index
+        x_slice = _slice_axis(grid.x, x_index)
+        y_slice = _slice_axis(grid.y, y_index)
+        vx_slice = vx_full[vx_index]
+        vy_slice = vy_full[vy_index]
+
+        f_shard = np.zeros((x_slice.size, y_slice.size, vx_slice.size, vy_slice.size), dtype=dtype)
+        for spec in distribution_specs:
+            nprof = _component_density_on_slice(spec, x_slice, y_slice)
+            f_shard += _evaluate_bi_supergaussian_on_axes(
+                vx_slice,
+                vy_slice,
+                v0x=spec.v0x,
+                v0y=spec.v0y,
+                T0=spec.T0,
+                mass=species_cfg.mass,
+                supergaussian_order=spec.supergaussian_order,
+                vmax=species_cfg.vmax,
+                n_prof=nprof,
+            ).astype(dtype, copy=False)
+        return f_shard
+
+    return make_sharded_array(shape, sharding, _callback, dtype=dtype), vx_full, vy_full
 
 
 def _initialize_total_distribution_(cfg: dict, simulation: Vlasov2DSimulation):
@@ -59,6 +142,8 @@ def _initialize_total_distribution_(cfg: dict, simulation: Vlasov2DSimulation):
     grid = simulation.grid
     species_distributions = {}
     species_found = False
+    sharding_cfg = cfg.get("grid", {}).get("distribution_sharding") or cfg.get("grid", {}).get("distribution-sharding")
+    dist_sharding = create_distribution_sharding(sharding_cfg)
 
     for species_cfg in simulation.species:
         name = species_cfg.name
@@ -68,28 +153,41 @@ def _initialize_total_distribution_(cfg: dict, simulation: Vlasov2DSimulation):
         mass = species_cfg.mass
 
         n_prof_species = np.zeros([grid.nx, grid.ny])
-        f_species = np.zeros([grid.nx, grid.ny, nvx, nvy])
+        f_species = None
         vxax = np.zeros(nvx)
         vyax = np.zeros(nvy)
 
         for spec in simulation.species_distributions[name]:
             nprof = np.array(spec.density_profile(grid.x, grid.y))
             n_prof_species += nprof
-            f_one, vxax, vyax = _initialize_bi_supergaussian(
-                nx=grid.nx,
-                ny=grid.ny,
-                nvx=nvx,
-                nvy=nvy,
-                v0x=spec.v0x,
-                v0y=spec.v0y,
-                T0=spec.T0,
-                mass=mass,
-                supergaussian_order=spec.supergaussian_order,
-                vmax=vmax,
-                n_prof=nprof,
-            )
-            f_species += f_one
             species_found = True
+
+        if dist_sharding is None:
+            f_species = np.zeros([grid.nx, grid.ny, nvx, nvy])
+            for spec in simulation.species_distributions[name]:
+                nprof = np.array(spec.density_profile(grid.x, grid.y))
+                f_one, vxax, vyax = _initialize_bi_supergaussian(
+                    nx=grid.nx,
+                    ny=grid.ny,
+                    nvx=nvx,
+                    nvy=nvy,
+                    v0x=spec.v0x,
+                    v0y=spec.v0y,
+                    T0=spec.T0,
+                    mass=mass,
+                    supergaussian_order=spec.supergaussian_order,
+                    vmax=vmax,
+                    n_prof=nprof,
+                )
+                f_species += f_one
+        else:
+            f_species, vxax, vyax = _initialize_sharded_species_distribution(
+                species_cfg,
+                simulation.species_distributions[name],
+                grid,
+                dist_sharding.sharding,
+                dtype=n_prof_species.dtype,
+            )
 
         species_distributions[name] = (n_prof_species, f_species, vxax, vyax)
 
