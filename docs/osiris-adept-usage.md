@@ -97,7 +97,8 @@ output:
   dist_cells: 10                                    # right-boundary cells averaged for
                                                     #   the phase-space f(p) lineouts
   omega_k_zoom: 4.0                                 # (k, ω) half-width [ω_p] for the
-                                                    #   zoomed dispersion view; null = full
+                                                    #   equal-aspect lower ω–k panel
+                                                    #   (clamped to Nyquist); null = full
 ```
 
 Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1)`). Indexed `{0: …, 1: …}` form addresses occurrences of repeated sections (`species`, `udist`, `profile`, `spe_bound`, `diag_species`, `zpulse`, …) in source order.
@@ -122,8 +123,7 @@ Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1
 | --------------------------------------------- | ------------- |
 | `spacetime/<diag>.png`, `spacetime_log/<diag>.png` | `(t, x)` heatmap of each FLD diagnostic (lin + log) |
 | `lineouts/<diag>.png`                         | value-vs-`x` snapshots at sampled times |
-| `omega_k/<diag>.png`                          | full 2-D FFT `(k, ω)` dispersion |
-| `omega_k_zoom/<diag>.png`                     | zoomed `(k, ω)` showing the whole `ω = k` light line — where the plasma (Langmuir) waves live |
+| `omega_k/<diag>.png`                          | 2-D FFT `(k, ω)` dispersion — full Nyquist range on top, plus an equal-aspect square window below where `ω = k` is drawn at a true 45° |
 | `currents/spacetime.png`, `currents/lineouts.png` | combined `J_x/J_y/J_z` (`j1/j2/j3`) views |
 | `moments/<species>/…`                         | per-species density-moment spacetime + lineouts |
 | `profiles/<species>/density.png`              | density profile vs `x` (final snapshot + late-time mean) |

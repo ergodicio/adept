@@ -11,18 +11,20 @@ PNGs for the standard set:
       spacetime/<diag>.png                 (t, x) heatmap of every FLD diagnostic
       spacetime_log/<diag>.png             log10|·| of the same
       lineouts/<diag>.png                  value-vs-x snapshots at sampled times
-      omega_k/<diag>.png                   2-D FFT (k, ω) dispersion plot
-      omega_k_zoom/<diag>.png              same, zoomed to the ω = k line (plasma waves)
+      omega_k/<diag>.png                   2-D FFT (k, ω) dispersion: full range +
+                                           equal-aspect square window (ω = k at 45°)
       currents/spacetime.png               j1/j2/j3 (J_x/J_y/J_z) side-by-side spacetime
       currents/lineouts.png                j1/j2/j3 profiles vs x (final + late mean)
       moments/<species>/<q>.png            (t, x) per-species density moments
       moments/<species>/<q>_log.png        log10 of the same
       moments/<species>/lineouts/<q>.png   moment snapshots at sampled times
-      profiles/<species>/density.png       density profile vs x (final + late mean)
-      profiles/<species>/temperature.png   temperature profile vs x (if thermal moments)
+      profiles/<species>/density.png       number-density profile vs x (initial + final + late mean)
+      profiles/<species>/temperature.png   T(x) from a Maxwellian fit to the phase space
+                                           (initial + final + late mean); else uth / T_ii moments
       phasespace/<species>/<ps>.png        final-step (x, p) heatmap per species
       phasespace_evolution/<species>/<ps>.png  (x, p) heatmaps at sampled times
       distribution_lineouts/<species>/<ps>.png  f(p) averaged over the right-boundary cells
+      deltaf_lineouts/<species>/<ps>.png   delta-f = f - (fitted Maxwellian), same averaging
       field_decomp/<comp>.png              left/right-going transverse E (Riemann split)
       energy_vs_time.png                   total field energy time-trace
       energy_components_vs_time.png        E-field / B-field / total energy
@@ -57,12 +59,17 @@ def plot_spacetime(
     *,
     log: bool = False,
     cmap: str = "RdBu_r",
+    space_on_x: bool = True,
     title: str | None = None,
 ) -> plt.Axes:
     """``(t, x)`` heatmap of a 1D-field time-series.
 
     Accepts a pre-loaded ``DataArray`` (dims must include ``t`` and one
     spatial axis) or a directory of dumps that ``load_series`` will eat.
+
+    By default space is on the horizontal axis and time on the vertical
+    (``t`` vs ``x``); set ``space_on_x=False`` to transpose so time is on the
+    horizontal axis and space on the vertical (``x`` vs ``t``).
     """
     da = _ensure_series(series)
     if da.ndim != 2:
@@ -71,20 +78,27 @@ def plot_spacetime(
         )
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 4))
-    data = np.log10(np.abs(da.values) + 1e-30) if log else da.values
+    data = np.log10(np.abs(da.values) + 1e-30) if log else da.values  # (t, x)
     t = da.coords["t"].values
     xname = next(d for d in da.dims if d != "t")
     x = da.coords[xname].values
-    mesh = ax.pcolormesh(t, x, data.T, shading="auto", cmap=cmap)
+    if space_on_x:
+        mesh = ax.pcolormesh(x, t, data, shading="auto", cmap=cmap)
+        ax.set_xlabel(_axis_label(da, xname))
+        ax.set_ylabel(_axis_label(da, "t"))
+        orient = r"$t$ vs $x$"
+    else:
+        mesh = ax.pcolormesh(t, x, data.T, shading="auto", cmap=cmap)
+        ax.set_xlabel(_axis_label(da, "t"))
+        ax.set_ylabel(_axis_label(da, xname))
+        orient = r"$x$ vs $t$"
     plt.colorbar(
         mesh,
         ax=ax,
         label=rf"$\log_{{10}}$ |{_value_label(da)}|" if log else _value_label(da),
     )
-    ax.set_xlabel(_axis_label(da, "t"))
-    ax.set_ylabel(_axis_label(da, xname))
     scale = r"$\log_{10}$ " if log else ""
-    ax.set_title(title or f"{_display_name(da)}  —  {scale}spacetime ($x$ vs $t$)")
+    ax.set_title(title or f"{_display_name(da)}  —  {scale}spacetime ({orient})")
     return ax
 
 
@@ -128,26 +142,41 @@ def plot_phasespace(
     cmap: str = "viridis",
     title: str | None = None,
 ) -> plt.Axes:
-    """Heatmap of a 2D phase-space density (e.g. ``x1p1``)."""
+    """Heatmap of a 2D phase-space density (e.g. ``x1p1``).
+
+    For an x-p phase space the spatial axis is cropped to the physical box
+    (``sim.XMAX``; phase-space dumps may pad it out past the box) and drawn on
+    the horizontal axis with momentum on the vertical, matching the orientation
+    of :func:`plot_phasespace_evolution`.
+    """
     if not isinstance(da, xr.DataArray):
         da = _io.load_phasespace_h5(da)
     if da.ndim != 2:
         raise ValueError(
             f"plot_phasespace expects 2D data; got {da.dims} {da.shape}"
         )
+    da = _crop_spatial_to_box(da)
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 4))
-    arr = da.values
+    # Space on the horizontal axis, momentum on the vertical; fall back to dim
+    # order for momentum-momentum spaces (e.g. p1p2) with no spatial axis.
+    spatial = [d for d in da.dims if str(d).startswith("x")]
+    moment = [d for d in da.dims if str(d).startswith("p")]
+    xdim, ydim = (spatial[0], moment[0]) if spatial and moment else da.dims
+    raw = da.transpose(ydim, xdim).values
+    vmin = vmax = None
     if log:
-        arr = np.log10(np.abs(arr) + 1e-30)
-    d0, d1 = da.dims
-    x0, x1 = da.coords[d0].values, da.coords[d1].values
-    mesh = ax.pcolormesh(x0, x1, arr.T, shading="auto", cmap=cmap)
+        vmin, vmax = _nonzero_log_clim(raw)
+        plot_arr = np.log10(np.abs(raw) + 1e-30)
+    else:
+        plot_arr = raw
+    xc, yc = da.coords[xdim].values, da.coords[ydim].values
+    mesh = ax.pcolormesh(xc, yc, plot_arr, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
     plt.colorbar(
         mesh, ax=ax, label=rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da)
     )
-    ax.set_xlabel(_axis_label(da, d0))
-    ax.set_ylabel(_axis_label(da, d1))
+    ax.set_xlabel(_axis_label(da, xdim))
+    ax.set_ylabel(_axis_label(da, ydim))
     t = da.attrs.get("time", float("nan"))
     scale = r"$\log_{10}$ " if log else ""
     ax.set_title(
@@ -178,6 +207,7 @@ def plot_phasespace_evolution(
         raise ValueError(
             f"plot_phasespace_evolution expects (t, p, x); got dims {da.dims}"
         )
+    da = _crop_spatial_to_box(da)
     nt = da.coords["t"].size
     t_skip = max(1, nt // n_panels)
     sl = da.isel(t=slice(0, None, t_skip))
@@ -188,6 +218,11 @@ def plot_phasespace_evolution(
     facet_kw: dict = {"cmap": cmap}
     if spatial and moment:
         facet_kw.update(x=spatial[0], y=moment[0])
+    if log:
+        # Floor the shared colour scale at the lowest non-zero value so empty
+        # cells (log -> -30) don't crush the contrast across the facets.
+        vmin, vmax = _nonzero_log_clim(sl.values)
+        facet_kw.update(vmin=vmin, vmax=vmax)
     g = plot_da.plot(col="t", col_wrap=min(col_wrap, sl.coords["t"].size), **facet_kw)
     if spatial and moment:
         g.set_xlabels(_axis_label(da, spatial[0]))
@@ -385,6 +420,7 @@ def plot_omega_k(
     omega_p: float = 1.0,
     k_max: float | None = None,
     omega_max: float | None = None,
+    equal_aspect: bool = False,
     title: str | None = None,
 ) -> plt.Axes:
     """2-D FFT of a ``(t, x)`` field series; show power in ``(k, ω)`` space.
@@ -457,10 +493,176 @@ def plot_omega_k(
 
     ax.axhline(0, color="w", lw=0.4, alpha=0.4)
     ax.axvline(0, color="w", lw=0.4, alpha=0.4)
+    if equal_aspect:
+        # One unit of k displays as one unit of ω, so the light line ω = k is a
+        # true 45° slope (lets you read off where power sits relative to it).
+        ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel(r"$k\ [\omega_p / c]$")
     ax.set_ylabel(r"$\omega\ [\omega_p]$")
     ax.set_title(title or rf"{_display_name(da)}  —  $(k, \omega)$ power spectrum")
     return ax
+
+
+def plot_omega_k_figure(
+    series: xr.DataArray | str | Path,
+    *,
+    v_th: float | None = None,
+    omega_k_zoom: float | None = 4.0,
+    cmap: str = "magma",
+    log: bool = True,
+) -> plt.Figure:
+    """Stacked ``(k, ω)`` spectra: full range on top, equal-aspect below.
+
+    The top panel is the full 2-D FFT over the data's Nyquist range. The bottom
+    panel shows the same power with k and ω on the same scale (equal aspect, so
+    the light line ``ω = k`` is a true 45° slope), limited to a square
+    ``±z`` window with ``z = min(omega_k_zoom, Nyquist)`` so the slope-1 line —
+    and any low-frequency power along it — is visible.
+
+    With a coarse dump cadence the ω-Nyquist is small, so that window is only a
+    few k-cells wide and the lower panel looks blocky; that is the expected
+    consequence of the time-sampling, not a plotting fault.
+    """
+    da = _ensure_series(series)
+    fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(6, 10))
+    plot_omega_k(
+        da, ax=ax_top, log=log, cmap=cmap,
+        show_langmuir=v_th is not None, v_th=v_th,
+    )
+    z = _omega_k_zoom_window(da, omega_k_zoom)
+    plot_omega_k(
+        da, ax=ax_bot, log=log, cmap=cmap,
+        show_light_line=True, show_langmuir=v_th is not None, v_th=v_th,
+        k_max=z, omega_max=z, equal_aspect=True,
+        title=rf"{_display_name(da)}  —  $(k, \omega)$ (equal aspect)",
+    )
+    fig.tight_layout()
+    return fig
+
+
+def _sim_box_bound(da: xr.DataArray, xdim: str, *, upper: bool) -> float:
+    """Edge of the *physical* simulation box along ``xdim`` (``sim.XMIN/XMAX``).
+
+    Phase-space diagnostics may be binned over a spatial range wider than the
+    field grid (deck ``ps_xmax`` > ``xmax``), so the coordinate axis runs past
+    the box. ``sim.XMIN`` / ``sim.XMAX`` (carried on every diagnostic) record
+    the true box edges — per spatial dimension, so ``x1`` -> entry 0,
+    ``x2`` -> entry 1, …. Falls back to the matching axis end when the attr is
+    absent, which makes callers degrade to the full axis exactly when it
+    already coincides with the box.
+    """
+    xv = da.coords[xdim].values
+    bound = da.attrs.get("sim.XMAX" if upper else "sim.XMIN")
+    if bound is None:
+        return float(xv[-1] if upper else xv[0])
+    if isinstance(bound, (list, tuple, np.ndarray)):
+        digits = "".join(ch for ch in str(xdim) if ch.isdigit())
+        i = int(digits) - 1 if digits else 0
+        bound = bound[i] if 0 <= i < len(bound) else bound[-1]
+    return float(bound)
+
+
+def _sim_box_xmax(da: xr.DataArray, xdim: str) -> float:
+    """Right edge of the physical box along ``xdim`` (see :func:`_sim_box_bound`)."""
+    return _sim_box_bound(da, xdim, upper=True)
+
+
+def _nonzero_log_clim(values) -> tuple[float | None, float | None]:
+    """``(vmin, vmax)`` for a ``log10`` heatmap, floored at the lowest non-zero.
+
+    Phase-space dumps are mostly empty (zero) cells; mapping those through
+    ``log10`` sends them to a huge negative floor that dominates the colour
+    range and washes out the real distribution. Restricting ``vmin`` to the
+    lowest *non-zero* magnitude (and ``vmax`` to the largest) keeps the dynamic
+    range on the populated cells. Returns ``(None, None)`` for all-zero input.
+    """
+    mag = np.abs(np.asarray(values))
+    nz = mag > 0
+    if not nz.any():
+        return None, None
+    return float(np.log10(mag[nz].min())), float(np.log10(mag.max()))
+
+
+def _crop_spatial_to_box(da: xr.DataArray) -> xr.DataArray:
+    """Trim spatial (``x*``) dims to the physical box ``[sim.XMIN, sim.XMAX]``.
+
+    Phase-space dumps can be binned over a spatial range wider than the box
+    (deck ``ps_xmax`` > ``xmax``), padding the high-``x`` end of the axis with
+    empty cells. This keeps only the cells within the simulation domain so a
+    phase-space plot's spatial axis spans just the box. Returns ``da`` unchanged
+    when no spatial dim extends past the box (e.g. ``p1p2`` momentum spaces).
+    """
+    for d in list(da.dims):
+        if not str(d).startswith("x"):
+            continue
+        xv = da.coords[d].values
+        if xv.size < 2:
+            continue
+        left = int(np.searchsorted(xv, _sim_box_bound(da, d, upper=False), side="left"))
+        right = int(np.searchsorted(xv, _sim_box_bound(da, d, upper=True), side="right"))
+        right = max(left + 1, min(right, xv.size))
+        if left > 0 or right < xv.size:
+            da = da.isel({d: slice(left, right)})
+    return da
+
+
+def _maxwellian_moments(p, f) -> tuple[float, float, float] | None:
+    r"""Density, mean momentum, and variance of a 1-D distribution ``f(p)``.
+
+    Returns ``(W, p0, var)`` with ``W = sum(f)`` (negative weights clipped to
+    zero), ``p0 = <p>`` and ``var = <(p - p0)^2>`` — the parameters of the
+    moment-matched Maxwellian, ``var`` being the kinetic temperature ``T`` for
+    ``m = 1`` (electrons, ``p`` in ``m_e c``). ``None`` if ``f`` has no positive
+    weight.
+    """
+    f = np.clip(np.asarray(f, dtype=float), 0.0, None)
+    W = float(f.sum())
+    if W <= 0:
+        return None
+    p = np.asarray(p, dtype=float)
+    p0 = float((f * p).sum() / W)
+    var = float((f * (p - p0) ** 2).sum() / W)
+    return W, p0, var
+
+
+def _maxwellian_from_moments(p, W: float, p0: float, var: float):
+    """Gaussian on grid ``p`` with the same sum ``W``, mean ``p0`` and ``var``."""
+    p = np.asarray(p, dtype=float)
+    if var <= 0:
+        return np.zeros_like(p)
+    g = np.exp(-((p - p0) ** 2) / (2.0 * var))
+    s = float(g.sum())
+    return g * (W / s) if s > 0 else g
+
+
+def _boundary_distribution(da: xr.DataArray, n_cells: int):
+    r"""``f(p)`` averaged over the ``n_cells`` cells inside the right box edge.
+
+    Shared by the ``f(p)`` and ``\delta f`` lineouts. Returns
+    ``(f_xp, da, pdim, x_lo, x_hi, k)``: the decorated input ``da``, the
+    sign-corrected (non-negative) distribution ``f_xp`` with dims ``(t?, p)``,
+    the momentum axis name ``pdim``, the averaged spatial window ``[x_lo,
+    x_hi]`` and the cell count ``k``. The window is anchored at the physical box
+    edge (``sim.XMAX``) so the empty ``ps_xmax`` padding beyond the box is
+    excluded.
+    """
+    da = _decorate(da)
+    spatial = [d for d in da.dims if d != "t" and str(d).startswith("x")]
+    moment = [d for d in da.dims if d != "t" and str(d).startswith("p")]
+    if not spatial or not moment:
+        raise ValueError(f"need an x* and a p* dim; got dims {da.dims}")
+    xdim, pdim = spatial[0], moment[0]
+    nx = da.sizes[xdim]
+    xv = da.coords[xdim].values
+    right = int(np.searchsorted(xv, _sim_box_xmax(da, xdim), side="right")) - 1
+    right = min(max(right, 0), nx - 1)
+    k = max(1, min(n_cells, right + 1))
+    lo = right - k + 1
+    f_xp = da.isel({xdim: slice(lo, right + 1)}).mean(dim=xdim)
+    # Charge density q*f is single-signed per species (negative for electrons);
+    # divide out the sign so f(p) is non-negative.
+    q_sign = np.sign(float(np.nansum(da.values))) or 1.0
+    return f_xp / q_sign, da, pdim, float(xv[lo]), float(xv[right]), k
 
 
 def plot_distribution_lineout(
@@ -473,32 +675,24 @@ def plot_distribution_lineout(
     cmap: str = "viridis",
     title: str | None = None,
 ) -> plt.Axes:
-    """Velocity distribution ``f(p)`` averaged over the rightmost ``n_cells``.
+    """Distribution function ``f(p)`` near the right boundary.
 
     Takes a phase-space series with a spatial (``x*``) and a momentum
     (``p*``) axis — either a stacked ``(t, p, x)`` series from
     :func:`io.load_series` or a single ``(p, x)`` snapshot — averages it over
-    the ``n_cells`` cells nearest the right-hand boundary to get ``f(p)``
-    there, and overlays that lineout at ~``n_times`` sampled times (colour =
-    time). This is the standard "what does the distribution look like as it
-    leaves the box" diagnostic for driven / open-boundary runs.
+    the ``n_cells`` cells just inside the right edge of the *physical box*
+    (``sim.XMAX``; the phase-space axis may extend past the box when the deck's
+    ``ps_xmax`` exceeds ``xmax``), and overlays that lineout at ~``n_times``
+    sampled times (colour = time). This is the standard "what does the
+    distribution look like as it leaves the box" diagnostic for driven /
+    open-boundary runs.
+
+    OSIRIS species phase spaces store the charge density ``q*f``; the charge
+    sign is divided out so the curve reads as a non-negative ``f(p)``.
     """
     da = series if isinstance(series, xr.DataArray) else _io.load_series(series)
-    da = _decorate(da)
-    spatial = [d for d in da.dims if d != "t" and str(d).startswith("x")]
-    moment = [d for d in da.dims if d != "t" and str(d).startswith("p")]
-    if not spatial or not moment:
-        raise ValueError(
-            f"plot_distribution_lineout needs an x* and a p* dim; got {da.dims}"
-        )
-    xdim, pdim = spatial[0], moment[0]
-    nx = da.sizes[xdim]
-    k = max(1, min(n_cells, nx))
-    # Average over the k rightmost spatial cells -> f over the momentum axis.
-    f_xp = da.isel({xdim: slice(nx - k, nx)}).mean(dim=xdim)
+    f_xp, da, pdim, x_lo, x_hi, k = _boundary_distribution(da, n_cells)
     p = f_xp.coords[pdim].values
-    xv = da.coords[xdim].values
-    x_lo, x_hi = float(xv[nx - k]), float(xv[-1])
 
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 4))
@@ -525,8 +719,63 @@ def plot_distribution_lineout(
     ax.set_ylabel(ylabel)
     ax.set_title(
         title
-        or rf"{_display_name(da)}  —  $f$ over rightmost {k} cells "
-        rf"($x \in [{x_lo:.3g}, {x_hi:.3g}]$)"
+        or rf"{_display_name(da)}  —  $f(p)$ over {k} cells inside the right boundary "
+        rf"($x \in [{x_lo:.4g}, {x_hi:.4g}]$)"
+    )
+    ax.grid(True, alpha=0.3)
+    return ax
+
+
+def plot_deltaf_lineout(
+    series: xr.DataArray | str | Path,
+    ax: plt.Axes | None = None,
+    *,
+    n_cells: int = 10,
+    n_times: int = 6,
+    cmap: str = "viridis",
+    title: str | None = None,
+) -> plt.Axes:
+    r"""``\delta f = f - f_M`` near the right boundary, overlaid at sampled times.
+
+    Averages the phase space over the ``n_cells`` cells inside the right box
+    edge to get ``f(p)`` (as :func:`plot_distribution_lineout`), then at each
+    sampled time subtracts the moment-matched Maxwellian ``f_M`` — the Gaussian
+    with the same density, mean momentum and temperature — and overlays the
+    residual. Since the species starts Maxwellian, the residual isolates the
+    non-thermal structure that grows away from it: beams and hot tails.
+    """
+    da = series if isinstance(series, xr.DataArray) else _io.load_series(series)
+    f_xp, da, pdim, x_lo, x_hi, k = _boundary_distribution(da, n_cells)
+    p = f_xp.coords[pdim].values
+
+    def _residual(fvals):
+        m = _maxwellian_moments(p, fvals)
+        return fvals if m is None else fvals - _maxwellian_from_moments(p, *m)
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 4))
+
+    if "t" in f_xp.dims:
+        nt = f_xp.sizes["t"]
+        idx = np.unique(np.linspace(0, nt - 1, min(n_times, nt)).astype(int))
+        colours = plt.get_cmap(cmap)(np.linspace(0.15, 0.95, len(idx)))
+        tvals = f_xp.coords["t"].values
+        for colour, i in zip(colours, idx, strict=False):
+            ax.plot(p, _residual(f_xp.isel(t=i).values), color=colour, lw=1.3,
+                    label=f"{float(tvals[i]):.2g}")
+        ax.legend(fontsize=7, title=_axis_label(da, "t"), ncol=2, framealpha=0.6)
+    else:
+        ax.plot(p, _residual(f_xp.values), lw=1.4)
+
+    ax.axhline(0.0, color="0.6", lw=0.6)
+    units = da.attrs.get("units", "")
+    ylabel = r"$\langle \delta f \rangle_x$" + (f"  [{_tex(units)}]" if units else "")
+    ax.set_xlabel(_axis_label(da, pdim))
+    ax.set_ylabel(ylabel)
+    ax.set_title(
+        title
+        or rf"{_display_name(da)}  —  $\delta f = f - f_M$ over {k} cells inside the "
+        rf"right boundary ($x \in [{x_lo:.4g}, {x_hi:.4g}]$)"
     )
     ax.grid(True, alpha=0.3)
     return ax
@@ -566,7 +815,7 @@ def plot_currents_spacetime(run_dir: str | Path) -> plt.Figure | None:
     fig, axes = plt.subplots(1, len(comps), figsize=(5 * len(comps), 4), squeeze=False)
     for ax, (comp, ser) in zip(axes[0], comps.items(), strict=False):
         plot_spacetime(ser, ax=ax)
-    fig.suptitle(r"Current density components  —  spacetime ($x$ vs $t$)", y=1.03)
+    fig.suptitle(r"Current density components  —  spacetime ($t$ vs $x$)", y=1.03)
     fig.tight_layout()
     return fig
 
@@ -623,14 +872,36 @@ def _species_diags(run_dir: str | Path) -> dict[str, list[tuple[str, str, Path]]
 
 
 def _density_series(entries: list[tuple[str, str, Path]]) -> xr.DataArray | None:
-    """Pick the best density-like moment for a species and load it as ``(t, x)``."""
+    """Best density-like ``(t, x)`` moment for a species, as a number density.
+
+    Prefers an explicit number-density report; otherwise falls back to the
+    charge density and divides out the species charge sign (OSIRIS reports
+    charge density ``q*n``, negative for electrons) so the result is a
+    non-negative number density ``n``. Returns ``None`` if no spatial density
+    moment is present.
+    """
     by_q = {q: p for kind, q, p in entries if kind == "DENSITY"}
-    for pref in ("charge", "n", "n01", "m", "ene"):
-        if pref in by_q:
-            ser = _io.load_series(by_q[pref])
-            return ser if ser.ndim == 2 else None
-    # Fall back to any DENSITY entry.
-    for kind, q, p in entries:
+    for pref in ("n", "n01", "n02", "charge", "m"):
+        if pref not in by_q:
+            continue
+        ser = _io.load_series(by_q[pref])
+        if ser.ndim != 2:
+            continue
+        if pref == "charge":
+            q_sign = np.sign(float(np.nansum(ser.values))) or 1.0
+            attrs, name = dict(ser.attrs), ser.name
+            ser = ser / q_sign
+            ser.attrs, ser.name = attrs, name
+            ser.attrs["long_name"] = "n"  # now a number density, not charge
+            # Charge-density units lead with the charge ``e``; drop it so the
+            # label reads as a number density (the magnitudes match in code
+            # units where e = 1).
+            units = str(ser.attrs.get("units", ""))
+            if units.startswith("e "):
+                ser.attrs["units"] = units[2:].lstrip()
+        return ser
+    # Fall back to any DENSITY entry as-is.
+    for kind, _q, p in entries:
         if kind == "DENSITY":
             ser = _io.load_series(p)
             if ser.ndim == 2:
@@ -679,25 +950,72 @@ def _temperature_series(entries: list[tuple[str, str, Path]]) -> xr.DataArray | 
     return out
 
 
+def _species_phasespace(diags: dict[str, Path], species: str) -> Path | None:
+    """Path to an x-p phase space for ``species`` (e.g. ``PHA/p1x1/<species>``)."""
+    for rel, path in sorted(diags.items()):
+        parts = rel.split("/")
+        if len(parts) >= 3 and parts[0] == "PHA" and parts[-1] == species:
+            ps = parts[1]  # e.g. "p1x1" — needs both a space and a momentum axis
+            if "x" in ps and "p" in ps:
+                return path
+    return None
+
+
+def _temperature_from_phasespace(series: xr.DataArray | str | Path | None) -> xr.DataArray | None:
+    r"""Temperature profile ``T(t, x)`` from an x-p phase space.
+
+    Fits a moment-matched Maxwellian in ``p`` at every ``(t, x)`` and returns
+    its temperature ``T = <(p - <p>)^2>`` (the variance of the momentum;
+    ``m_e c^2`` units with ``m = 1``) as a ``(t, x)`` DataArray, cropped to the
+    physical box. The charge sign is divided out so the weights are
+    non-negative. ``None`` if the input is missing or is not an x-p phase space.
+    """
+    if series is None:
+        return None
+    ser = _decorate(series if isinstance(series, xr.DataArray) else _io.load_series(series))
+    spatial = [d for d in ser.dims if d != "t" and str(d).startswith("x")]
+    moment = [d for d in ser.dims if d != "t" and str(d).startswith("p")]
+    if not spatial or not moment or "t" not in ser.dims:
+        return None
+    ser = _crop_spatial_to_box(ser)
+    pdim = moment[0]
+    pc = ser.coords[pdim]
+    q_sign = np.sign(float(np.nansum(ser.values))) or 1.0
+    w = (ser / q_sign).clip(min=0.0)  # non-negative weights f(t, p, x)
+    weight = w.sum(pdim)
+    p0 = (w * pc).sum(pdim) / weight
+    var = (w * (pc - p0) ** 2).sum(pdim) / weight  # (t, x) = T
+    out = var.where(weight > 0)
+    out.attrs = {k: v for k, v in ser.attrs.items() if k != "units"}
+    out.attrs["long_name"] = "T"
+    out.attrs["units"] = r"m_e c^2"
+    out.name = "temperature"
+    return out
+
+
 def plot_profile(
     series: xr.DataArray | str | Path,
     ax: plt.Axes | None = None,
     *,
     abs_value: bool = False,
     n_avg_frac: float = 0.2,
+    show_initial: bool = False,
     value_label: str | None = None,
     title: str | None = None,
 ) -> plt.Axes:
     """Plot a ``(t, x)`` moment vs ``x``: final snapshot plus late-time mean.
 
     The late-time mean (over the last ``n_avg_frac`` of the dumps) smooths
-    out the time-dependent fluctuations to show the established profile.
+    out the time-dependent fluctuations to show the established profile. With
+    ``show_initial`` the ``t = 0`` profile is overlaid too, so the change from
+    the initial state is visible.
     """
     da = _decorate(series if isinstance(series, xr.DataArray) else _io.load_series(series))
     if "t" not in da.dims:
         raise ValueError(f"plot_profile expects a (t, x) series; got dims {da.dims}")
     xdim = next(d for d in da.dims if d != "t")
     x = da.coords[xdim].values
+    tvals = da.coords["t"].values
     nt = da.sizes["t"]
     w = max(1, round(n_avg_frac * nt))
     if ax is None:
@@ -706,9 +1024,16 @@ def plot_profile(
     mean = da.isel(t=slice(nt - w, nt)).mean("t").values
     if abs_value:
         final, mean = np.abs(final), np.abs(mean)
-    tlast = float(da.coords["t"].values[-1])
-    ax.plot(x, final, lw=1.4, label=f"final ($t={tlast:.3g}$)")
-    ax.plot(x, mean, lw=1.1, ls="--", label=f"mean of last {w} dumps")
+    if show_initial:
+        initial = da.isel(t=0).values
+        if abs_value:
+            initial = np.abs(initial)
+        # Dotted and on top (high zorder) so the initial profile stays visible
+        # where the final / mean curves overlap it.
+        ax.plot(x, initial, lw=1.6, ls=":", color="k", zorder=3,
+                label=f"initial ($t={float(tvals[0]):.3g}$)")
+    ax.plot(x, final, lw=1.4, zorder=2, label=f"final ($t={float(tvals[-1]):.3g}$)")
+    ax.plot(x, mean, lw=1.1, ls="--", zorder=2.2, label=f"mean of last {w} dumps")
     ax.set_xlabel(_axis_label(da, xdim))
     ax.set_ylabel(value_label or _value_label(da))
     ax.set_title(title or rf"{_display_name(da)}  —  profile vs $x$")
@@ -775,38 +1100,24 @@ def efield_lr_components(run_dir: str | Path) -> dict[str, dict[str, xr.DataArra
     return out
 
 
-def plot_field_lr_decomposition(
-    run_dir: str | Path,
-    *,
-    v_th: float | None = None,
-    omega_k_zoom: float | None = 4.0,
-) -> dict[str, plt.Figure]:
-    """One 2x2 figure per transverse component: right/left spacetime + ω-k.
+def plot_field_lr_decomposition(run_dir: str | Path) -> dict[str, plt.Figure]:
+    """One figure per transverse component: right/left-going spacetime.
 
-    Top row is the right/left-going ``(t, x)`` spacetime; bottom row is each
-    part's ``(k, ω)`` power spectrum (zoomed, with the light line drawn) so
-    you can confirm the right-going part really does sit on the ``ω·k > 0``
-    branches and the left-going part on ``ω·k < 0``.
+    Two panels side by side — the right-going and left-going parts of the
+    transverse E field as spacetime heatmaps with space on the horizontal axis
+    and time on the vertical (``t`` vs ``x``).
     """
     figs: dict[str, plt.Figure] = {}
     for comp, parts in efield_lr_components(run_dir).items():
-        fig, axes = plt.subplots(2, 2, figsize=(11, 8))
-        for col, side in enumerate(("right", "left")):
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
+        for ax, side in zip(axes, ("right", "left"), strict=False):
             da = parts[side]
-            plot_spacetime(da, ax=axes[0, col], title=f"{_tex(_long_name(da))}  —  spacetime")
-            try:
-                zoom = _omega_k_zoom_window(da, omega_k_zoom)
-                plot_omega_k(
-                    da, ax=axes[1, col], show_light_line=True,
-                    show_langmuir=v_th is not None, v_th=v_th,
-                    k_max=zoom, omega_max=zoom,
-                    title=f"{_tex(_long_name(da))}  —  $(k, \\omega)$",
-                )
-            except Exception as e:  # ω-k overlay is best effort
-                axes[1, col].set_visible(False)
-                print(f"[plots] ω-k for {comp} {side} skipped: {e}")
+            plot_spacetime(
+                da, ax=ax, space_on_x=True,
+                title=f"{_display_name(da)}  —  spacetime",
+            )
         fig.suptitle(
-            rf"{comp}: left/right-going decomposition (vacuum Riemann split)", y=1.01
+            rf"{comp}: left/right-going decomposition (vacuum Riemann split)", y=1.02
         )
         fig.tight_layout()
         figs[comp] = fig
@@ -814,6 +1125,24 @@ def plot_field_lr_decomposition(
 
 
 # --- driver ---------------------------------------------------------------
+
+
+def canned_plot_kwargs(output_cfg: dict | None) -> dict:
+    """Translate a manifest ``output:`` block into :func:`save_canned_plots` kwargs.
+
+    Shared by the live post-processing path (``post.collect``) and the offline
+    regeneration harness (``regen``) so both honour the same knobs:
+    ``v_th``, ``dist_cells`` and ``omega_k_zoom`` (which may be explicitly
+    ``null`` to disable the zoom). Keys that are absent fall through to the
+    ``save_canned_plots`` defaults.
+    """
+    output_cfg = output_cfg or {}
+    kwargs: dict = {"v_th": output_cfg.get("v_th")}
+    if output_cfg.get("dist_cells") is not None:
+        kwargs["dist_cells"] = int(output_cfg["dist_cells"])
+    if "omega_k_zoom" in output_cfg:  # may be explicitly null to disable zoom
+        kwargs["omega_k_zoom"] = output_cfg["omega_k_zoom"]
+    return kwargs
 
 
 def _omega_k_zoom_window(series: xr.DataArray, requested: float | None) -> float | None:
@@ -863,8 +1192,9 @@ def save_canned_plots(
 
     ``dist_cells`` sets how many right-boundary cells the phase-space
     distribution lineouts average over; ``omega_k_zoom`` is the ``(k, ω)``
-    half-width (in ``ω_p`` units) for the zoomed dispersion plots that show the
-    whole ``ω = k`` line (``None`` → full spectrum).
+    half-width (in ``ω_p`` units) for the equal-aspect lower panel of the
+    dispersion plots, where ``ω = k`` is drawn at 45° (clamped to the data's
+    Nyquist; ``None`` → full Nyquist window).
     """
     run_dir = Path(run_dir)
     out_dir = Path(out_dir)
@@ -905,21 +1235,11 @@ def save_canned_plots(
             plot_lineouts(ser, n_panels=n_panels), f"lineouts/{comp}.png"
         )
 
-        fig, ax = plt.subplots(figsize=(6, 5))
-        plot_omega_k(ser, ax=ax, show_langmuir=v_th is not None, v_th=v_th)
-        written[f"omega_k/{comp}"] = _write(fig, f"omega_k/{comp}.png")
-
-        # Zoomed (k, ω) view sized so the whole ω = k line is visible — the
-        # window where the plasma (Langmuir) waves live.
-        zoom = _omega_k_zoom_window(ser, omega_k_zoom)
-        fig, ax = plt.subplots(figsize=(6, 5))
-        plot_omega_k(
-            ser, ax=ax, show_light_line=True,
-            show_langmuir=v_th is not None, v_th=v_th,
-            k_max=zoom, omega_max=zoom,
-            title=f"{_display_name(ser)}  —  $(k, \\omega)$ (zoom)",
+        # Full (k, ω) spectrum on top, equal-aspect square window below.
+        written[f"omega_k/{comp}"] = _write(
+            plot_omega_k_figure(ser, v_th=v_th, omega_k_zoom=omega_k_zoom),
+            f"omega_k/{comp}.png",
         )
-        written[f"omega_k_zoom/{comp}"] = _write(fig, f"omega_k_zoom/{comp}.png")
 
     # --- Currents (j1/j2/j3) combined views ---
     try:
@@ -967,21 +1287,33 @@ def save_canned_plots(
 
     # --- Per-species density + temperature profiles ---
     for species, entries in sorted(_species_diags(run_dir).items()):
+        label = species.replace("_", " ")  # "species_1" -> "species 1" for titles
         try:
             dens = _density_series(entries)
             if dens is not None:
                 fig, ax = plt.subplots(figsize=(6, 4))
-                plot_profile(dens, ax=ax, title=f"{species}  —  density profile")
+                plot_profile(
+                    dens, ax=ax, show_initial=True,
+                    title=f"{label}  —  density profile",
+                )
                 written[f"profiles/{species}/density"] = _write(
                     fig, f"profiles/{species}/density.png"
                 )
         except Exception as e:
             print(f"[plots] skipping density profile for {species}: {e}")
         try:
-            temp = _temperature_series(entries)
+            # Temperature from a Maxwellian fit to the species phase space
+            # (preferred); fall back to dumped thermal moments (uth / T_ii).
+            ps_path = _species_phasespace(diags, species)
+            temp = _temperature_from_phasespace(ps_path)
+            if temp is None:
+                temp = _temperature_series(entries)
             if temp is not None:
                 fig, ax = plt.subplots(figsize=(6, 4))
-                plot_profile(temp, ax=ax, title=f"{species}  —  temperature profile")
+                plot_profile(
+                    temp, ax=ax, show_initial=True,
+                    title=f"{label}  —  temperature profile",
+                )
                 written[f"profiles/{species}/temperature"] = _write(
                     fig, f"profiles/{species}/temperature.png"
                 )
@@ -1018,20 +1350,32 @@ def save_canned_plots(
                     plot_phasespace_evolution(ser, n_panels=n_panels),
                     f"phasespace_evolution/{species}/{ps_name}.png",
                 )
-                # f(p) averaged over the right-boundary cells, vs time.
+        except Exception as e:
+            print(f"[plots] skipping phasespace evolution {diag_rel}: {e}")
+
+        # f(p) and delta-f averaged over the right-boundary cells, vs time —
+        # only for x-p phase spaces (a p-p space like p1p2 has no spatial axis).
+        if ser.ndim == 3 and any(str(d).startswith("x") for d in ser.dims if d != "t"):
+            try:
                 fig, ax = plt.subplots(figsize=(6, 4))
                 plot_distribution_lineout(ser, ax=ax, n_cells=dist_cells)
                 written[f"distribution_lineouts/{species}/{ps_name}"] = _write(
                     fig, f"distribution_lineouts/{species}/{ps_name}.png"
                 )
-        except Exception as e:
-            print(f"[plots] skipping phasespace evolution {diag_rel}: {e}")
+            except Exception as e:
+                print(f"[plots] skipping distribution lineout {diag_rel}: {e}")
+            try:
+                fig, ax = plt.subplots(figsize=(6, 4))
+                plot_deltaf_lineout(ser, ax=ax, n_cells=dist_cells)
+                written[f"deltaf_lineouts/{species}/{ps_name}"] = _write(
+                    fig, f"deltaf_lineouts/{species}/{ps_name}.png"
+                )
+            except Exception as e:
+                print(f"[plots] skipping delta-f lineout {diag_rel}: {e}")
 
     # --- Left/right-going transverse E-field decomposition ---
     try:
-        for comp, fig in plot_field_lr_decomposition(
-            run_dir, v_th=v_th, omega_k_zoom=omega_k_zoom
-        ).items():
+        for comp, fig in plot_field_lr_decomposition(run_dir).items():
             written[f"field_decomp/{comp}"] = _write(fig, f"field_decomp/{comp}.png")
     except Exception as e:
         print(f"[plots] skipping field decomposition: {e}")
@@ -1098,6 +1442,26 @@ def _tex(s) -> str:
     return s
 
 
+def _label_tex(s) -> str:
+    r"""Render an OSIRIS *label* that mixes prose words and TeX fragments.
+
+    Diagnostic LABELs like ``species 1 p_1x_1`` interleave plain words with math
+    fragments. Wrapping the whole string in ``$...$`` (as :func:`_tex` does for
+    units, which are entirely mathematical) would typeset "species" in math
+    italics with no word spacing. Instead each whitespace-separated token is
+    wrapped on its own: tokens carrying TeX markup (``\``, ``_``, ``^``, ``{``,
+    ``}``) become math, while plain words and bare numbers stay as text. For a
+    single all-math token (``E_1``, ``\rho``) this matches :func:`_tex`.
+    """
+    s = str(s)
+    if not s or (s.startswith("$") and s.endswith("$")):
+        return s
+    return " ".join(
+        f"${tok}$" if tok and any(c in tok for c in "\\_^{}") else tok
+        for tok in s.split(" ")
+    )
+
+
 def _axis_label(da: xr.DataArray, dim: str) -> str:
     if dim == "t":
         u = da.attrs.get("time_units") or r"1/\omega_p"
@@ -1115,13 +1479,13 @@ def _long_name(da: xr.DataArray) -> str:
 
 
 def _display_name(da: xr.DataArray) -> str:
-    """``_long_name`` wrapped for math-mode rendering (used in titles)."""
-    return _tex(_long_name(da))
+    """``_long_name`` rendered for titles (prose stays text, TeX gets math)."""
+    return _label_tex(_long_name(da))
 
 
 def _value_label(da: xr.DataArray) -> str:
     """Quantity label with units (for colorbars / y-axes)."""
-    name = _tex(_long_name(da))
+    name = _label_tex(_long_name(da))
     units = da.attrs.get("units", "")
     return rf"{name}  [{_tex(units)}]" if units else name
 

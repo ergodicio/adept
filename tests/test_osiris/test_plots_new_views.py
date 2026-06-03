@@ -218,8 +218,11 @@ def test_efield_decomposition_isolates_right_going(tmp_path: Path) -> None:
 
 def test_field_decomposition_figures(tmp_path: Path) -> None:
     run_dir = _make_rich_run(tmp_path)
-    figs = oplt.plot_field_lr_decomposition(run_dir, omega_k_zoom=4.0)
+    figs = oplt.plot_field_lr_decomposition(run_dir)
     assert set(figs) == {"e2", "e3"}
+    # Each figure is now a single row of two spacetime panels (no omega-k row).
+    for fig in figs.values():
+        assert len(fig.axes) == 4  # 2 heatmaps + their 2 colorbars
 
 
 # --- end-to-end driver ----------------------------------------------------
@@ -229,7 +232,7 @@ def test_save_canned_plots_emits_new_views(tmp_path: Path) -> None:
     run_dir = _make_rich_run(tmp_path)
     written = oplt.save_canned_plots(run_dir, tmp_path / "plots", v_th=0.1)
     expected = {
-        "omega_k_zoom/e2",
+        "omega_k/e2",
         "currents/spacetime",
         "currents/lineouts",
         "profiles/electron/density",
