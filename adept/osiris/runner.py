@@ -2,9 +2,11 @@
 
 OSIRIS reads its deck from a file named ``os-stdin`` in the current
 working directory by default. This module sets up a per-run work
-directory, writes the rendered deck there, invokes ``mpirun`` (or runs
-the binary directly when ``mpi_ranks == 1``), and captures stdout/stderr
-to files for later artifact upload.
+directory, writes the rendered deck there, invokes the configured
+launcher (``srun`` by default — the team runs on Perlmutter/Slurm; override
+with ``mpi_launcher: mpirun`` for a local MPI) when ``mpi_ranks > 1`` — or
+runs the binary directly when ``mpi_ranks == 1`` — and captures
+stdout/stderr to files for later artifact upload.
 """
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ def run_osiris(
     mpi_ranks: int = 1,
     run_root: str | Path = "./osiris_runs",
     env: dict[str, str] | None = None,
-    mpirun: str = "mpirun",
+    launcher: str = "srun",
     extra_mpi_args: list[str] | None = None,
 ) -> dict[str, Any]:
     """Run OSIRIS and return run metadata.
@@ -87,7 +89,7 @@ def run_osiris(
     (run_dir / "os-stdin").write_text(deck_text)
 
     if mpi_ranks > 1:
-        cmd = [mpirun, "-n", str(mpi_ranks)]
+        cmd = [launcher, "-n", str(mpi_ranks)]
         if extra_mpi_args:
             cmd.extend(extra_mpi_args)
         cmd.append(str(binary))

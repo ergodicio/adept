@@ -97,6 +97,7 @@ class BaseOsiris(ADEPTModule):
             binary=binary,
             mpi_ranks=mpi_ranks,
             run_root=run_root,
+            launcher=osiris_cfg.get("mpi_launcher", "srun"),
             extra_mpi_args=osiris_cfg.get("extra_mpi_args"),
         )
         return {"solver result": result}
