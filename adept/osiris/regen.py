@@ -75,6 +75,31 @@ def load_output_cfg(src: str | Path) -> dict:
     return {}
 
 
+def load_antenna_params(src: str | Path) -> dict:
+    """Best-effort read of the drive amplitude / frequency (``a0``, ``omega0``).
+
+    Reads the flat ``deck`` block of ``derived_config.yaml`` (falling back to
+    ``config.yaml``) at ``src`` or its parent, returning ``{"a0":…, "omega0":…}``
+    for the single antenna when both are present, else ``{}``. The laser energy
+    budget needs these; absent them (e.g. a non-antenna deck) it is skipped.
+    """
+    src = Path(src)
+    for name in ("derived_config.yaml", "config.yaml"):
+        for candidate in (src / name, src.parent / name):
+            if candidate.is_file():
+                try:
+                    import yaml
+
+                    cfg = yaml.safe_load(candidate.read_text()) or {}
+                except Exception:  # a malformed config must not block regeneration
+                    continue
+                deck = cfg.get("deck") or {}
+                a0, omega0 = deck.get("antenna.a0"), deck.get("antenna.omega0")
+                if a0 is not None and omega0 is not None:
+                    return {"a0": float(a0), "omega0": float(omega0)}
+    return {}
+
+
 def regenerate(
     src: str | Path,
     out_dir: str | Path | None = None,
@@ -85,16 +110,20 @@ def regenerate(
     """Regenerate the canned plot set from a run's saved NetCDFs.
 
     ``src`` is a run directory (containing ``binary/`` and optionally
-    ``config.yaml``) or a ``binary/`` NetCDF directory. Plot knobs default to
-    the run's ``output:`` config (unless ``use_config=False``); any keyword in
+    ``config.yaml`` / ``derived_config.yaml``) or a ``binary/`` NetCDF
+    directory. Plot knobs default to the run's ``output:`` config (unless
+    ``use_config=False``) and the drive ``a0`` / ``omega0`` are read from
+    ``derived_config.yaml`` for the laser energy budget; any keyword in
     ``overrides`` (``v_th``, ``dist_cells``, ``omega_k_zoom``, ``dpi``,
-    ``n_panels``) is applied on top verbatim — pass only the knobs you mean to
-    set. Writes PNGs under ``out_dir`` (default ``<run-dir>/plots_regen``) and
-    returns the ``{plot-name: path}`` map from ``save_canned_plots``.
+    ``n_panels``, ``a0``, ``omega0``) is applied on top verbatim — pass only the
+    knobs you mean to set. Writes PNGs (and ``laser_energy_budget.txt`` when
+    ``a0``/``omega0`` are known) under ``out_dir`` (default
+    ``<run-dir>/plots_regen``) and returns the ``{plot-name: path}`` map.
     """
     binary = find_binary_dir(src)
     out_dir = Path(out_dir) if out_dir is not None else default_out_dir(src)
     kwargs = _plots.canned_plot_kwargs(load_output_cfg(src) if use_config else None)
+    kwargs.update(load_antenna_params(src))  # a0/omega0 for the laser energy budget
     kwargs.update(overrides)
     return _plots.save_canned_plots(binary, out_dir, **kwargs)
 
@@ -125,6 +154,10 @@ def _cli_overrides(args: argparse.Namespace) -> dict:
         overrides["omega_k_zoom"] = None  # explicit disable
     elif args.omega_k_zoom is not None:
         overrides["omega_k_zoom"] = args.omega_k_zoom
+    if args.a0 is not None:
+        overrides["a0"] = args.a0
+    if args.omega0 is not None:
+        overrides["omega0"] = args.omega0
     return overrides
 
 
@@ -147,6 +180,12 @@ def main(argv: list[str] | None = None) -> int:
                     help="use the full Nyquist window for the lower omega-k panel (omega_k_zoom=None)")
     ap.add_argument("--dpi", type=int, default=None, help="figure DPI")
     ap.add_argument("--n-panels", type=int, default=None, help="panels for faceted plots")
+    ap.add_argument("--a0", type=float, default=None,
+                    help="drive amplitude for the laser energy budget "
+                         "(overrides derived_config.yaml)")
+    ap.add_argument("--omega0", type=float, default=None,
+                    help="drive frequency for the laser energy budget "
+                         "(overrides derived_config.yaml)")
     args = ap.parse_args(argv)
 
     out_dir = Path(args.out) if args.out else default_out_dir(args.src)

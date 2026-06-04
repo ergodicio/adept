@@ -244,3 +244,46 @@ def test_save_canned_plots_emits_new_views(tmp_path: Path) -> None:
     assert expected <= set(written)
     for path in written.values():
         assert path.exists() and path.stat().st_size > 0
+
+
+# --- laser energy budget --------------------------------------------------
+
+
+def test_laser_energy_budget_pure_right_going_has_no_reflection(tmp_path: Path) -> None:
+    run_dir = _make_rich_run(tmp_path)
+    # Fixture fields are a pure right-going wave (e2=b3, e3=-b2), so the
+    # left-going Riemann parts vanish identically: nothing is "reflected".
+    # Averaging over the whole grid (one full wavelength) and all time gives
+    # <I_R> = <2 sin^2> ~ 1, matching I0 = (a0*omega0)^2/2 = 1 -> T ~ 1.
+    b = oplt.laser_energy_budget(
+        run_dir, a0=float(np.sqrt(2.0)), omega0=1.0,
+        last_frac=1.0, guard_cells=0, window_cells=16,
+    )
+    assert b["pairs"] == ["e2", "e3"]
+    assert b["R"] < 1e-9                       # no left-going flux at all
+    assert b["transmitted"] > 0.0
+    # window = whole grid -> left/right slabs coincide -> equal fluxes
+    assert abs(b["transmitted"] - b["incident_measured"]) < 1e-9
+    assert 0.7 < b["T"] < 1.3
+    assert abs(b["absorbed"] - (1.0 - b["R"] - b["T"])) < 1e-12
+
+
+def test_save_canned_plots_emits_energy_budget_with_drive(tmp_path: Path) -> None:
+    run_dir = _make_rich_run(tmp_path)
+    out = tmp_path / "plots"
+    written = oplt.save_canned_plots(run_dir, out, a0=0.004, omega0=1.0)
+    assert "energy_budget" in written
+    assert written["energy_budget"].exists() and written["energy_budget"].stat().st_size > 0
+    txt = out / "laser_energy_budget.txt"
+    assert txt.exists()
+    body = txt.read_text()
+    for key in ("reflected", "transmitted", "absorbed", "I0"):
+        assert key in body
+
+
+def test_save_canned_plots_skips_energy_budget_without_drive(tmp_path: Path) -> None:
+    run_dir = _make_rich_run(tmp_path)
+    out = tmp_path / "plots"
+    written = oplt.save_canned_plots(run_dir, out)  # no a0/omega0 -> skipped
+    assert "energy_budget" not in written
+    assert not (out / "laser_energy_budget.txt").exists()

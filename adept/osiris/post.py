@@ -145,13 +145,29 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     except Exception as e:
         print(f"[post] HIST energy unavailable: {e}")
 
+    # Drive amplitude/frequency from the deck → laser energy budget.
+    deck = cfg.get("deck") or {}
+    a0, omega0 = deck.get("antenna.a0"), deck.get("antenna.omega0")
+
     # Render the standard plot set into td/plots so MLflow logs them as
     # artifacts. Never let a plotting failure abort metric/artifact logging.
     try:
         kwargs = _plots.canned_plot_kwargs(cfg.get("output"))
+        if a0 is not None and omega0 is not None:
+            kwargs.update(a0=float(a0), omega0=float(omega0))
         _plots.save_canned_plots(run_dir, td / "plots", **kwargs)
     except Exception as e:
         print(f"[post] plotting failed: {e}")
+
+    # Reflected/transmitted/absorbed laser-energy fractions as scalar metrics.
+    if a0 is not None and omega0 is not None:
+        try:
+            budget = _plots.laser_energy_budget(run_dir, a0=float(a0), omega0=float(omega0))
+            metrics["laser_reflectivity"] = budget["R"]
+            metrics["laser_transmissivity"] = budget["T"]
+            metrics["laser_absorbed_frac"] = budget["absorbed"]
+        except Exception as e:
+            print(f"[post] laser energy budget unavailable: {e}")
 
     # Always include the rendered deck + stdout/stderr.
     for fname in ("os-stdin", "stdout.log", "stderr.log"):
