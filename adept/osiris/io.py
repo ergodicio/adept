@@ -29,6 +29,13 @@ import xarray as xr
 
 _ITER_RE = re.compile(r"-(\d+)\.h5$")
 
+# Precision for diagnostic *data* (field/phase-space grids and RAW particle
+# quantities) in the saved NetCDF artifacts. OSIRIS writes its dumps in single
+# precision, so float32 matches the native precision and halves artifact size
+# vs float64. Coordinates (time, spatial axes) stay float64 for axis precision
+# (e.g. the omega-k FFT relies on the float64 time axis).
+_DIAG_DTYPE = "float32"
+
 
 def _decode(v) -> str:
     """OSIRIS stores attrs as ``S256`` bytes inside length-1 arrays."""
@@ -84,7 +91,7 @@ def load_grid_h5(path: str | Path) -> xr.DataArray:
                 f"Expected exactly one data dataset in {path}; got {data_keys}"
             )
         name = data_keys[0]
-        arr = f[name][...].astype("float64")
+        arr = f[name][...].astype(_DIAG_DTYPE)
         axes_osiris = _axis_metadata(f)
         # Reverse to numpy order.
         axes_numpy = list(reversed(axes_osiris))
@@ -161,7 +168,7 @@ def load_raw_h5(path: str | Path) -> xr.Dataset:
         data_vars: dict[str, tuple] = {}
         for name in data_keys:
             dset = f[name]
-            arr = dset[...].astype("float64").reshape(-1)
+            arr = dset[...].astype(_DIAG_DTYPE).reshape(-1)
             var_attrs = {}
             if "UNITS" in dset.attrs:
                 var_attrs["units"] = _decode(dset.attrs["UNITS"])
@@ -433,6 +440,19 @@ def list_diagnostics_nc(binary_dir: str | Path) -> dict[str, Path]:
     return out
 
 
+def _compression_encoding(ds: xr.Dataset) -> dict:
+    """Per-variable zlib settings for ``to_netcdf``.
+
+    Field / phase-space grids are smooth and compress several-fold; ``shuffle``
+    helps the float32 byte pattern. RAW (per-particle) data is noise-like and
+    barely compresses, but the setting does no harm.
+    """
+    return {
+        name: {"zlib": True, "complevel": 4, "shuffle": True}
+        for name in ds.data_vars
+    }
+
+
 def save_run_datasets(
     run_dir: str | Path,
     out_dir: str | Path,
@@ -465,7 +485,7 @@ def save_run_datasets(
                 ds = series_to_dataset(load_series(diags[relpath]))
             dest = out_dir / f"{relpath}.nc"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            ds.to_netcdf(dest, engine="h5netcdf")
+            ds.to_netcdf(dest, engine="h5netcdf", encoding=_compression_encoding(ds))
             written.append(dest)
         except Exception as e:  # one bad diagnostic must not abort the rest
             print(f"[post] skipping diagnostic {relpath}: {e}")
@@ -479,7 +499,9 @@ def save_run_datasets(
         if energy is not None:
             dest = out_dir / "HIST" / "energy.nc"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            energy.to_netcdf(dest, engine="h5netcdf")
+            energy.to_netcdf(
+                dest, engine="h5netcdf", encoding=_compression_encoding(energy)
+            )
             written.append(dest)
     except Exception as e:
         print(f"[post] skipping HIST energy: {e}")
