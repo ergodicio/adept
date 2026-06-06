@@ -116,6 +116,7 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     ms = run_dir / "MS"
     td = Path(td)
     whitelist = (cfg.get("output") or {}).get("diagnostics_to_log") or None
+    raw_drop_initial = bool((cfg.get("output") or {}).get("raw_drop_initial", False))
 
     metrics: dict[str, float] = {
         "wall_time_s": float(solver["wall_time"]),
@@ -126,7 +127,10 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
 
     # Convert each diagnostic's time history to an xarray netCDF.
     if ms.is_dir():
-        _io.save_run_datasets(run_dir, td / "binary", diagnostics=whitelist)
+        _io.save_run_datasets(
+            run_dir, td / "binary", diagnostics=whitelist,
+            raw_drop_initial=raw_drop_initial,
+        )
 
     # plots imports matplotlib; do it lazily to keep `import adept.osiris` light.
     from adept.osiris import plots as _plots

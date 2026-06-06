@@ -200,7 +200,7 @@ def load_raw_h5(path: str | Path) -> xr.Dataset:
     return xr.Dataset(data_vars, attrs=attrs)
 
 
-def load_raw_series(directory: str | Path) -> xr.Dataset:
+def load_raw_series(directory: str | Path, *, drop_initial: bool = False) -> xr.Dataset:
     """Concatenate every RAW (particle) dump in ``directory`` long-form.
 
     RAW dumps have a *variable* particle count per timestep (OSIRIS samples a
@@ -215,6 +215,13 @@ def load_raw_series(directory: str | Path) -> xr.Dataset:
     dumps = _sort_dumps(directory)
     if not dumps:
         raise FileNotFoundError(f"No .h5 dumps in {directory}")
+
+    # Optionally drop the t=0 (initial-condition) RAW dump: OSIRIS dumps RAW
+    # periodically from n=0, but at full raw_fraction that IC snapshot is the
+    # thermal start state and just bloats the artifact. Filter by filename so the
+    # (large) n=0 dump is never loaded. Kept if it is the sole dump.
+    if drop_initial and len(dumps) > 1:
+        dumps = [p for p in dumps if _iter_from_name(p) != 0] or dumps
 
     per_dump: list[xr.Dataset] = []
     times: list[np.ndarray] = []
@@ -457,6 +464,8 @@ def save_run_datasets(
     run_dir: str | Path,
     out_dir: str | Path,
     diagnostics: list[str] | set[str] | None = None,
+    *,
+    raw_drop_initial: bool = False,
 ) -> list[Path]:
     """Convert each diagnostic's full time history to a netCDF file.
 
@@ -480,7 +489,9 @@ def save_run_datasets(
         try:
             if _diag_is_raw(relpath, diags[relpath]):
                 # RAW (particle) dumps: per-particle datasets, no grid/AXIS.
-                ds: xr.Dataset = load_raw_series(diags[relpath])
+                ds: xr.Dataset = load_raw_series(
+                    diags[relpath], drop_initial=raw_drop_initial
+                )
             else:
                 ds = series_to_dataset(load_series(diags[relpath]))
             dest = out_dir / f"{relpath}.nc"
