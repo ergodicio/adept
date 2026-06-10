@@ -32,30 +32,32 @@ class TransverseWaveDriver:
             ey_driver_cfg: dict mapping pulse_name → pulse_dict from cfg["drivers"]["ey"].
         """
         self.x_a = x_a
-        self.pulses = list(ey_driver_cfg.items()) if isinstance(ey_driver_cfg, dict) else []
-
-    def __call__(self, t: float, args) -> Array:
-        total = jnp.zeros_like(self.x_a)
-        for _, pulse in self.pulses:
+        # Pre-parse all scalars at init so __call__ contains no float() on JAX arrays.
+        x_a_last = float(x_a[-1])
+        parsed = []
+        for _, pulse in (ey_driver_cfg.items() if isinstance(ey_driver_cfg, dict) else []):
             if not isinstance(pulse, dict):
                 continue
-            k0 = float(pulse["k0"])
-            w0 = float(pulse["w0"])
-            a0 = float(pulse["a0"])
-            dw = float(pulse.get("dw0", 0.0))
-            w_total = w0 + dw
-
+            w_total = float(pulse["w0"]) + float(pulse.get("dw0", 0.0))
             t_center = float(pulse.get("t_center", 0.0))
             t_half = 0.5 * float(pulse.get("t_width", 1e10))
             t_rise = float(pulse.get("t_rise", 0.0))
-            env_t = get_envelope(t_rise, t_rise, t_center - t_half, t_center + t_half, t)
-
-            x_center = float(pulse.get("x_center", 0.5 * float(self.x_a[-1])))
+            x_center = float(pulse.get("x_center", 0.5 * x_a_last))
             x_half = 0.5 * float(pulse.get("x_width", 1e10))
             x_rise = float(pulse.get("x_rise", 0.0))
-            env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, self.x_a)
+            parsed.append((
+                float(pulse["k0"]), w_total, float(pulse["a0"]),
+                t_center, t_half, t_rise,
+                x_center, x_half, x_rise,
+            ))
+        self.parsed_pulses = parsed
 
-            total = total + env_t * env_x * (-(w_total**2)) * a0 * jnp.sin(k0 * self.x_a - w_total * t)
+    def __call__(self, t: float, args) -> Array:
+        total = jnp.zeros_like(self.x_a)
+        for k0, w_total, a0, t_center, t_half, t_rise, x_center, x_half, x_rise in self.parsed_pulses:
+            env_t = get_envelope(t_rise, t_rise, t_center - t_half, t_center + t_half, t)
+            env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, self.x_a)
+            total = total + env_t * env_x * (-(w_total ** 2)) * a0 * jnp.sin(k0 * self.x_a - w_total * t)
         return total
 
 
