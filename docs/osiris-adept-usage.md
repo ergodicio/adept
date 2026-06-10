@@ -80,7 +80,14 @@ osiris:
   deck: /path/to/native/deck                      # required: source of truth
   binary: /path/to/osiris-1D.e                    # or OSIRIS_BIN / OSIRIS_BIN_<dim>D
   mpi_ranks: 1                                    # 1 → direct, >1 → mpirun -n N
-  run_root: ./osiris_runs                         # parent of per-run dirs
+  run_root: ./checkpoints                         # parent of per-run dirs (default)
+  # NOTE: the default sits inside checkpoints/ deliberately — sync-up.sh
+  # rsyncs with --delete but excludes checkpoints/, so in-flight and finished
+  # OSIRIS outputs survive a sync. If you point run_root anywhere outside an
+  # excluded directory, a sync-up invocation will delete those outputs.
+  # Nothing deletes run dirs automatically (post-processing only copies out
+  # of them), so clean them up manually on occasion — though $PSCRATCH's
+  # purge policy will take care of stale ones eventually.
   extra_mpi_args: ["--oversubscribe"]             # optional, passed to mpirun
 
   overrides:                                      # optional: applied before render

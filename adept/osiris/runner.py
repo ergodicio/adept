@@ -68,7 +68,7 @@ def run_osiris(
     *,
     binary: str | Path,
     mpi_ranks: int = 1,
-    run_root: str | Path = "./osiris_runs",
+    run_root: str | Path = "./checkpoints",
     env: dict[str, str] | None = None,
     launcher: str = "srun",
     extra_mpi_args: list[str] | None = None,

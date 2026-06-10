@@ -90,7 +90,7 @@ class BaseOsiris(ADEPTModule):
             dim=self._infer_dim(),
         )
         mpi_ranks = int(osiris_cfg.get("mpi_ranks", 1))
-        run_root = osiris_cfg.get("run_root", "./osiris_runs")
+        run_root = osiris_cfg.get("run_root", "./checkpoints")
         deck_text = _deck.render_deck(self._sections)
         result = _runner.run_osiris(
             deck_text,
