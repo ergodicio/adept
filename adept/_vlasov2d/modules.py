@@ -95,6 +95,7 @@ class BaseVlasov2D(ADEPTModule):
         super().__init__(cfg)
         self.config_model = Vlasov2DConfig.model_validate(cfg)
         self.simulation = sim_from_config(self.config_model)
+        self._initial_distribution = None
 
     def post_process(self, run_output: dict, td: str):
         return post_process(run_output["solver result"], self.cfg, td, self.args)
@@ -153,6 +154,7 @@ class BaseVlasov2D(ADEPTModule):
         cfg_grid.update(asdict(grid))
 
         dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
+        self._initial_distribution = dist_result
         cfg_grid["species_distributions"] = dist_result
 
         cfg_grid["species_grids"] = {}
@@ -199,11 +201,13 @@ class BaseVlasov2D(ADEPTModule):
 
     def init_state_and_args(self) -> dict:
         grid = self.simulation.grid
-        dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
+        dist_result = self._initial_distribution
+        if dist_result is None:
+            dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
 
         state: dict = {}
         for s_name, (_n, f_s, _vx, _vy) in dist_result.items():
-            state[s_name] = jnp.array(f_s)
+            state[s_name] = jnp.asarray(f_s)
 
         # initial fields from Poisson on initial charge density
         poisson = InitialPoissonSolver(self.simulation.grid.kx, self.simulation.grid.ky)
