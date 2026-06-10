@@ -1,3 +1,5 @@
+"""Domain objects that represent a configured Vlasov-1D simulation."""
+
 import math
 import warnings
 
@@ -30,6 +32,8 @@ from adept.normalization import UREG, PlasmaNormalization, normalize
 
 
 class EMDriver(eqx.Module):
+    """Normalized electromagnetic driver used by longitudinal or transverse sources."""
+
     a0: float
     k0: float
     w0: float
@@ -39,6 +43,7 @@ class EMDriver(eqx.Module):
 
     @staticmethod
     def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> "EMDriver":
+        """Convert user driver configuration into normalized solver parameters."""
         envelope = SpaceTimeEnvelopeFunction.from_config(cfg.envelope, norm)
 
         params = cfg.params
@@ -86,11 +91,14 @@ class EMDriver(eqx.Module):
 
 
 class EMDriverSet(eqx.Module):
+    """Container for longitudinal (Ex) and transverse (Ey) driver lists."""
+
     ex: list[EMDriver]
     ey: list[EMDriver]
 
     @staticmethod
     def from_config(cfg: EMDriverSetConfig, norm: PlasmaNormalization | None = None) -> "EMDriverSet":
+        """Build normalized Ex and Ey driver lists from configuration."""
         ex = [EMDriver.from_config(ex_cfg, norm) for ex_cfg in cfg.ex.values()]
         ey = [EMDriver.from_config(ey_cfg, norm) for ey_cfg in cfg.ey.values()]
         return EMDriverSet(ex, ey)
@@ -108,6 +116,7 @@ class Species(eqx.Module):
 
     @staticmethod
     def from_config(cfg: SpeciesConfig) -> "Species":
+        """Convert a species config into the immutable simulation species model."""
         return Species(
             name=cfg.name,
             mass=float(cfg.mass),
@@ -130,6 +139,7 @@ class SubspeciesDensityProfile(eqx.Module):
     noise_profile: NoiseProfile
 
     def __call__(self, x: jax.Array) -> jax.Array:
+        """Evaluate the noisy, optionally enveloped density profile at positions x."""
         profile = self.density(x)
         if self.envelope is not None:
             profile = self.envelope(x) * profile
@@ -222,6 +232,7 @@ class Vlasov1DSimulation:
         nu_fp_prof: SpaceTimeEnvelopeFunction | None = None,
         nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
     ):
+        """Store normalized simulation inputs needed by the solver and module wrapper."""
         self.plasma_norm = plasma_norm
         self.grid = grid
         self.species = species
@@ -232,4 +243,5 @@ class Vlasov1DSimulation:
 
     @property
     def species_dict(self) -> dict[str, Species]:
+        """Map species names to their simulation species definitions."""
         return {s.name: s for s in self.species}
