@@ -110,26 +110,42 @@ class FreeStreamingExp1D:
 
 
 class DiagonalExp1D:
-    """Exact exponential for hypercollision + hyper-diffusion (diagonal in mode/k space)."""
+    """Exact exponential for hypercollision + hyper-diffusion + Hou-Li filter (diagonal in mode/k space)."""
 
-    def __init__(self, nu: float, col_1d: Array, D: float, kx_sq_1d: Array):
+    def __init__(
+        self,
+        nu: float,
+        col_1d: Array,
+        D: float,
+        kx_sq_1d: Array,
+        hou_li_strength: float = 0.0,
+        hou_li_col_1d: Array | None = None,
+    ):
         """
         Args:
             nu: Collision frequency.
             col_1d: Hypercollisional damping coefficients, shape (Nn,).
             D: Hyper-diffusion coefficient.
             kx_sq_1d: kx^2 array, shape (Nx,).
+            hou_li_strength: Hou-Li filter strength (0 to disable).
+            hou_li_col_1d: Hou-Li profile (n/Nn)^order, shape (Nn,). Required if strength > 0.
         """
         self.nu = nu
         self.col_1d = col_1d
         self.D = D
         self.kx_sq_1d = kx_sq_1d
+        self.hou_li_strength = hou_li_strength
+        self.hou_li_col_1d = hou_li_col_1d
 
     def apply(self, Ck: Array, s: float) -> Array:
-        """Apply exp((-nu*col - D*kx^2) * s) to Ck, shape (Nn, Nx)."""
+        """Apply exp((-nu*col - D*kx^2 - hou_li_strength*hou_li_col) * s) to Ck, shape (Nn, Nx)."""
         col_fac = -self.nu * self.col_1d[:, None] * s       # (Nn, Nx)
         diff_fac = -self.D * self.kx_sq_1d[None, :] * s    # (1, Nx)
-        return Ck * jnp.exp(col_fac + diff_fac)
+        if self.hou_li_strength > 0.0 and self.hou_li_col_1d is not None:
+            hl_fac = -self.hou_li_strength * self.hou_li_col_1d[:, None] * s
+        else:
+            hl_fac = 0.0
+        return Ck * jnp.exp(col_fac + diff_fac + hl_fac)
 
 
 class LinearExp1D:

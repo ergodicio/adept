@@ -250,10 +250,27 @@ class BaseHermitePoisson1D(ADEPTModule):
         u_i = 0.0
         D = float(physics.get("D", 0.0))
 
+        # Hou-Li filter: exp(-strength * (n/Nn)^order * s) per Lawson substep.
+        # Read from drivers.hermite_filter (same key used by kinetic_srs subclass).
+        hl_cfg = self.cfg.get("drivers", {}).get("hermite_filter", {})
+        if hl_cfg and hl_cfg.get("enabled", True):
+            hl_strength = float(hl_cfg.get("strength", 0.0))
+            hl_order = float(hl_cfg.get("order", 8))
+            n_e_norm = jnp.arange(Nn_e, dtype=jnp.float64) / max(Nn_e - 1, 1)
+            n_i_norm = jnp.arange(Nn_i, dtype=jnp.float64) / max(Nn_i - 1, 1)
+            hou_li_col_e = n_e_norm ** hl_order
+            hou_li_col_i = n_i_norm ** hl_order
+        else:
+            hl_strength = 0.0
+            hou_li_col_e = None
+            hou_li_col_i = None
+
         free_stream_e = FreeStreamingExp1D(Nn_e, alpha_e, u_e, Lx, kx_1d)
         free_stream_i = FreeStreamingExp1D(Nn_i, alpha_i, u_i, Lx, kx_1d)
-        diag_e = DiagonalExp1D(nu=nu, col_1d=col_e, D=D, kx_sq_1d=kx_sq)
-        diag_i = DiagonalExp1D(nu=nu, col_1d=col_i, D=D, kx_sq_1d=kx_sq)
+        diag_e = DiagonalExp1D(nu=nu, col_1d=col_e, D=D, kx_sq_1d=kx_sq,
+                               hou_li_strength=hl_strength, hou_li_col_1d=hou_li_col_e)
+        diag_i = DiagonalExp1D(nu=nu, col_1d=col_i, D=D, kx_sq_1d=kx_sq,
+                               hou_li_strength=hl_strength, hou_li_col_1d=hou_li_col_i)
         linear_e = LinearExp1D(free_stream_e, diag_e)
         linear_i = LinearExp1D(free_stream_i, diag_i)
         combined_exp = CombinedLinearExp1D(linear_e, linear_i, static_ions=static_ions)
