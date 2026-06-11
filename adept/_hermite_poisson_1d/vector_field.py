@@ -72,7 +72,13 @@ class FreeStreamingExp1D:
     Prediagonalizes the symmetric tridiagonal streaming matrix T where
         T[n, n+1] = T[n+1, n] = sqrt((n+1)/2)   (+ diagonal drift/alpha term)
     and stores V (eigenvectors) and eigenvalues so that
-        exp(-i*kx*alpha/Lx * T * s) = V * diag(exp(prefactor * kx * eigenvalues * s)) * V^T.
+        exp(-i*kx*alpha * T * s) = V * diag(exp(prefactor * kx * eigenvalues * s)) * V^T.
+
+    kx_1d must already be in physical units (2*pi*fftfreq(Nx)*Nx/Lx) — the same
+    array modules.py builds and also feeds to the Poisson solver and the
+    hyper-diffusion term. (An earlier version divided by Lx again here, making
+    free-streaming Lx-times too slow; caught by
+    tests/test_hermite_poisson_1d/test_landau_damping.py.)
     """
 
     def __init__(self, Nn: int, alpha: float, u: float, Lx: float, kx_1d: Array):
@@ -81,10 +87,11 @@ class FreeStreamingExp1D:
             Nn: Number of Hermite modes.
             alpha: Thermal velocity (vth/c in skin-depth units).
             u: Drift velocity (usually 0).
-            Lx: Domain length in normalized units.
-            kx_1d: 1D wavenumber array, shape (Nx,), values 2*pi*fftfreq(Nx)*Nx.
+            Lx: Domain length in normalized units (unused; kept for API stability).
+            kx_1d: 1D wavenumber array, shape (Nx,), physical units
+                   (2*pi*fftfreq(Nx)*Nx/Lx).
         """
-        self.prefactor = -1j * float(alpha) / float(Lx)
+        self.prefactor = -1j * float(alpha)
         self.kx_1d = kx_1d
 
         if Nn == 1:
@@ -265,9 +272,15 @@ def _hermite_e_coupling(
 ) -> Array:
     """Compute E-field (+ ponderomotive) coupling term for one species.
 
-    dCk_n/dt|E = (q/m) * Omega_ce_tau * FFT[sqrt(n)*sqrt(2)/alpha * F(x) * C[n+1](x)]
+    dCk_n/dt|E = (q/m) * Omega_ce_tau * FFT[sqrt(2n)/alpha * F(x) * C[n-1](x)]
 
-    where C[n+1] means the real-space coefficient at mode n+1 (zero-padded at Nn).
+    where C[n-1] means the real-space coefficient at mode n-1 (zero row at n=0).
+    This is the AW-Hermite force term of Parker & Dellar (2015) eq. 3.11:
+    differentiation raises the Hermite-function index, so E·∂_v f projects onto
+    mode n from mode n-1. Matches the validated spectrax1d term
+    (sqrt_n_minus · √2/α · F · shift_multi(C, dn=-1), where dn=-1 yields C[n-1]).
+    A uniform E applied to a Maxwellian (only C_0 ≠ 0) must drive current:
+    dC_1/dt = (q/m)·√2/α·E·C_0.
 
     Args:
         Ck: (Nn, Nx) complex, in k-space.
@@ -281,14 +294,14 @@ def _hermite_e_coupling(
     # IFFT to real space: C(n, x)
     C = jnp.fft.ifft(Ck, axis=-1, norm="forward")  # (Nn, Nx) complex → real part matters
 
-    # Shift down by 1: result[n] = C[n+1], zero at n=Nn-1
-    C_down = jnp.concatenate([C[1:, :], jnp.zeros((1, Nx), dtype=C.dtype)], axis=0)
+    # Source at n-1: result[n] = C[n-1], zero row at n=0
+    C_up = jnp.concatenate([jnp.zeros((1, Nx), dtype=C.dtype), C[:-1, :]], axis=0)
 
-    # Coupling: sqrt(n)*sqrt(2)/alpha * F(x) * C[n+1](x)
+    # Coupling: sqrt(2n)/alpha * F(x) * C[n-1](x)
     integrand = (
         sqrt_n_minus[:, None] * jnp.sqrt(2.0) / alpha
         * F_total[None, :]
-        * C_down
+        * C_up
     )  # (Nn, Nx)
 
     # FFT back and apply q/m * Omega_ce_tau

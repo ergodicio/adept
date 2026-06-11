@@ -188,6 +188,17 @@ class BaseHermitePoisson1D(ADEPTModule):
         Ck_e = Ck_e.at[0, 0].set(n0_e / (alpha_e ** 3))
         Ck_i = Ck_i.at[0, 0].set(n0_i / (alpha_i ** 3))
 
+        # Optional single-mode electron density perturbation (for dispersion tests):
+        # density.perturbation: {mode: int m, amplitude: float eps}
+        #   → n_e(x) = n0 * (1 + eps * cos(2*pi*m*x/Lx))
+        pert = self.cfg.get("density", {}).get("perturbation", None)
+        if pert:
+            mode = int(pert["mode"])
+            eps = float(pert["amplitude"])
+            half = 0.5 * eps * n0_e / (alpha_e ** 3)
+            Ck_e = Ck_e.at[0, mode].set(half)
+            Ck_e = Ck_e.at[0, -mode].set(half)
+
         self.state = {
             "Ck_electrons": Ck_e.view(jnp.float64),
             "Ck_ions": Ck_i.view(jnp.float64),
