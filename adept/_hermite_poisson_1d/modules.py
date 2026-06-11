@@ -398,17 +398,25 @@ class BaseHermitePoisson1D(ADEPTModule):
                 ds = store_fields_timeseries(self.cfg, fields_dict, t_arr, binary_dir, x)
                 datasets["fields"] = ds
 
-                # Spacetime plots
+                # Spacetime plots. Sanitize inf -> nan (matplotlib masks nan but
+                # its log tickers crash on inf) and never let a plotting failure
+                # take down the netCDF/metric upload for a blown-up run — those
+                # are exactly the runs whose diagnostics we need most.
                 for field_name, arr in fields_dict.items():
                     if arr.ndim == 2:
-                        fig, ax = plt.subplots(figsize=(9, 5), tight_layout=True)
-                        im = ax.pcolormesh(x, t_arr, arr, shading="auto", cmap="RdBu_r")
-                        plt.colorbar(im, ax=ax)
-                        ax.set_xlabel("x [norm]")
-                        ax.set_ylabel("t [norm]")
-                        ax.set_title(field_name)
-                        fig.savefig(os.path.join(plots_dir, f"spacetime-{field_name}.png"), bbox_inches="tight")
-                        plt.close(fig)
+                        try:
+                            arr_plot = np.where(np.isfinite(arr), arr, np.nan)
+                            fig, ax = plt.subplots(figsize=(9, 5), tight_layout=True)
+                            im = ax.pcolormesh(x, t_arr, arr_plot, shading="auto", cmap="RdBu_r")
+                            plt.colorbar(im, ax=ax)
+                            ax.set_xlabel("x [norm]")
+                            ax.set_ylabel("t [norm]")
+                            ax.set_title(field_name)
+                            fig.savefig(os.path.join(plots_dir, f"spacetime-{field_name}.png"), bbox_inches="tight")
+                        except Exception as e:
+                            print(f"post_process: spacetime plot for {field_name} failed: {e}")
+                        finally:
+                            plt.close("all")
 
             elif k in ("hermite", "distribution"):
                 for species, ck_arr in data.items():
@@ -422,14 +430,20 @@ class BaseHermitePoisson1D(ADEPTModule):
 
                 for name, arr in scalars.items():
                     if arr.ndim == 1:
-                        metrics[f"final_{name}"] = float(arr[-1])
-                        fig, axes = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
-                        axes[0].plot(t_arr_def, arr)
-                        axes[0].set_xlabel("t"); axes[0].set_ylabel(name); axes[0].grid(alpha=0.3)
-                        axes[1].semilogy(t_arr_def, np.abs(arr) + 1e-30)
-                        axes[1].set_xlabel("t"); axes[1].set_ylabel(f"|{name}|"); axes[1].grid(alpha=0.3)
-                        fig.savefig(os.path.join(plots_dir, f"scalar-{name}.png"), bbox_inches="tight")
-                        plt.close(fig)
+                        final_val = float(arr[-1])
+                        metrics[f"final_{name}"] = final_val if np.isfinite(final_val) else float("nan")
+                        try:
+                            arr_plot = np.where(np.isfinite(arr), arr, np.nan)
+                            fig, axes = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
+                            axes[0].plot(t_arr_def, arr_plot)
+                            axes[0].set_xlabel("t"); axes[0].set_ylabel(name); axes[0].grid(alpha=0.3)
+                            axes[1].semilogy(t_arr_def, np.abs(arr_plot) + 1e-30)
+                            axes[1].set_xlabel("t"); axes[1].set_ylabel(f"|{name}|"); axes[1].grid(alpha=0.3)
+                            fig.savefig(os.path.join(plots_dir, f"scalar-{name}.png"), bbox_inches="tight")
+                        except Exception as e:
+                            print(f"post_process: scalar plot for {name} failed: {e}")
+                        finally:
+                            plt.close("all")
 
         if "default" in sol.ts:
             metrics["n_timesteps"] = len(sol.ts["default"])
