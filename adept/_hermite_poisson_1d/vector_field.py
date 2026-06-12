@@ -269,6 +269,7 @@ def _hermite_e_coupling(
     q_over_m: float,
     alpha: float,
     Omega_ce_tau: float,
+    mask23: Array | None = None,
 ) -> Array:
     """Compute E-field (+ ponderomotive) coupling term for one species.
 
@@ -289,8 +290,18 @@ def _hermite_e_coupling(
         q_over_m: Charge-to-mass ratio (e.g. -1 for electrons).
         alpha: Thermal velocity.
         Omega_ce_tau: Normalization constant (1.0 in current configs).
+        mask23: Optional (Nx,) bool 2/3-rule dealiasing mask in FFT ordering.
+            The F*C product is quadratic: without truncating both factors to
+            |k| <= Nx//3 and masking the result, beyond-Nyquist products alias
+            back into the resolved band (the spectrax1d base applies the same
+            mask23 to every Lorentz product; the vlasov1d reference runs a
+            Hou-Li grid-scale filter in x for the same reason).
     """
     Nn, Nx = Ck.shape
+    if mask23 is not None:
+        Ck = Ck * mask23[None, :]
+        F_total = jnp.fft.ifft(jnp.fft.fft(F_total, norm="forward") * mask23, norm="forward").real
+
     # IFFT to real space: C(n, x)
     C = jnp.fft.ifft(Ck, axis=-1, norm="forward")  # (Nn, Nx) complex → real part matters
 
@@ -305,7 +316,10 @@ def _hermite_e_coupling(
     )  # (Nn, Nx)
 
     # FFT back and apply q/m * Omega_ce_tau
-    return q_over_m * Omega_ce_tau * jnp.fft.fft(integrand, axis=-1, norm="forward")
+    out = q_over_m * Omega_ce_tau * jnp.fft.fft(integrand, axis=-1, norm="forward")
+    if mask23 is not None:
+        out = out * mask23[None, :]
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -352,6 +366,7 @@ class HermitePoisson1DVectorField:
         static_ions: bool = False,
         sponge_plasma: Array | None = None,
         sponge_fields: Array | None = None,
+        mask23: Array | None = None,
     ):
         self.combined_exp = combined_exp
         self.poisson = poisson
@@ -371,6 +386,7 @@ class HermitePoisson1DVectorField:
         self.static_ions = static_ions
         self.sponge_plasma = sponge_plasma
         self.sponge_fields = sponge_fields
+        self.mask23 = mask23
 
     # ------------------------------------------------------------------
     # Nonlinear RHS (E-field + ponderomotive coupling only)
@@ -396,6 +412,7 @@ class HermitePoisson1DVectorField:
         dCk_e = _hermite_e_coupling(
             Ck_e, Ex + Fp,
             self.sqrt_n_minus_e, self.qm_e, self.alpha_e, self.Omega_ce_tau,
+            mask23=self.mask23,
         )
 
         if self.static_ions:
@@ -404,6 +421,7 @@ class HermitePoisson1DVectorField:
             dCk_i = _hermite_e_coupling(
                 Ck_i, Ex,  # ponderomotive negligible for ions
                 self.sqrt_n_minus_i, self.qm_i, self.alpha_i, self.Omega_ce_tau,
+                mask23=self.mask23,
             ).view(jnp.float64)
 
         # Real-valued fields have zero nonlinear derivative in the Lawson frame

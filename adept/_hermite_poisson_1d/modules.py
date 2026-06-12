@@ -286,6 +286,10 @@ class BaseHermitePoisson1D(ADEPTModule):
         linear_i = LinearExp1D(free_stream_i, diag_i)
         combined_exp = CombinedLinearExp1D(linear_e, linear_i, static_ions=static_ions)
 
+        # 2/3-rule dealiasing mask for the quadratic F*C product
+        modes = jnp.fft.fftfreq(Nx) * Nx
+        mask23 = jnp.abs(modes) <= (Nx // 3)
+
         # Poisson solver
         poisson = PoissonSolver1D(
             one_over_kx=one_over_kx,
@@ -320,6 +324,7 @@ class BaseHermitePoisson1D(ADEPTModule):
             static_ions=static_ions,
             sponge_plasma=sponge_plasma,
             sponge_fields=sponge_fields,
+            mask23=mask23,
         )
 
         # Configure save quantities
