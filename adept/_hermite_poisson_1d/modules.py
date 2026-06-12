@@ -51,6 +51,27 @@ def _safe_col_1d(Nn: int) -> jnp.ndarray:
     return jnp.where(Nn > 3, term / denom, jnp.zeros(Nn, dtype=jnp.float64))
 
 
+def _collision_profile(Nn: int, model: str) -> jnp.ndarray:
+    """Per-mode collision profile col[n]; damping applied as exp(-nu*col[n]*dt).
+
+    "hypercollision" (default): cubic n(n-1)(n-2), normalized to 1 at n=Nn-1 —
+        negligible below n ~ 0.7*Nn; a truncation-edge absorber only.
+    "lenard-bernstein": col[n] = n for n >= 3, zero for n = 0, 1, 2 —
+        the LB spectrum (Hermite functions are LB eigenfunctions with
+        eigenvalue -nu*n) with the standard conserving truncation: damping
+        is gated off the first three moments so the operator conserves
+        density, momentum, and energy exactly (cf. Parker & Dellar 2015).
+        Acts smoothly at all kinetic scales including the Landau-resonance
+        band without imposing drag on the EPW's fluid content.
+    """
+    if model == "lenard-bernstein":
+        n = jnp.arange(Nn, dtype=jnp.float64)
+        return jnp.where(n >= 3, n, 0.0)
+    if model == "hypercollision":
+        return _safe_col_1d(Nn)
+    raise ValueError(f"Unknown physics.collision_model {model!r}; use 'hypercollision' or 'lenard-bernstein'")
+
+
 class BaseHermitePoisson1D(ADEPTModule):
     """1D Hermite-Poisson base solver in skin-depth units."""
 
@@ -141,9 +162,10 @@ class BaseHermitePoisson1D(ADEPTModule):
         sqrt_n_minus_e = jnp.sqrt(jnp.arange(Nn_e, dtype=jnp.float64))
         sqrt_n_minus_i = jnp.sqrt(jnp.arange(Nn_i, dtype=jnp.float64))
 
-        # Collision vectors (hypercollisional)
-        col_e = _safe_col_1d(Nn_e)
-        col_i = _safe_col_1d(Nn_i)
+        # Collision vectors (model selected by physics.collision_model)
+        collision_model = str(physics.get("collision_model", "hypercollision"))
+        col_e = _collision_profile(Nn_e, collision_model)
+        col_i = _collision_profile(Nn_i, collision_model)
 
         # Real-space x-axis (no ghost cells)
         x = jnp.linspace(0.0, Lx, Nx, endpoint=False)
