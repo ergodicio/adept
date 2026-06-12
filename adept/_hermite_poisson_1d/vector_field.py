@@ -10,6 +10,7 @@ Integration: Lawson-RK4 for Ck (free-streaming exact, E-field/ponderomotive expl
              Uses the Stepper (discrete-map) convention from adept._base_.
 """
 
+import jax
 import jax.numpy as jnp
 from jax import Array
 
@@ -367,6 +368,9 @@ class HermitePoisson1DVectorField:
         sponge_plasma: Array | None = None,
         sponge_fields: Array | None = None,
         mask23: Array | None = None,
+        noise_amplitude: float = 0.0,
+        noise_seed: int = 0,
+        noise_spatial_profile: Array | None = None,
     ):
         self.combined_exp = combined_exp
         self.poisson = poisson
@@ -387,12 +391,28 @@ class HermitePoisson1DVectorField:
         self.sponge_plasma = sponge_plasma
         self.sponge_fields = sponge_fields
         self.mask23 = mask23
+        # Per-step stochastic Ex force noise (vlasov1d stochastic_noise parity):
+        # white in time, Gaussian in space, density-weighted; drawn ONCE per step
+        # (frozen across the Lawson-RK4 stages, like a_frozen) and added to the
+        # v-advection force only — never to Poisson or the wave solver.
+        self.noise_amplitude = float(noise_amplitude)
+        self.noise_base_key = jax.random.PRNGKey(int(noise_seed))
+        self.noise_spatial_profile = noise_spatial_profile
 
     # ------------------------------------------------------------------
     # Nonlinear RHS (E-field + ponderomotive coupling only)
     # ------------------------------------------------------------------
 
-    def _nonlinear_rhs(self, t: float, state: dict, a_frozen: Array, args: dict) -> dict:
+    def _draw_noise(self, t: float) -> Array:
+        """Deterministic per-step noise: key = fold_in(seed, round(t/dt)).
+        Same t -> same realization, so RK4 stages within a step see frozen noise
+        when the draw happens once at the step head."""
+        step = jnp.uint32(jnp.round(t / self.dt))
+        key = jax.random.fold_in(self.noise_base_key, step)
+        white = jax.random.normal(key, self.noise_spatial_profile.shape)
+        return self.noise_amplitude * white * self.noise_spatial_profile
+
+    def _nonlinear_rhs(self, t: float, state: dict, a_frozen: Array, args: dict, noise_frozen: Array | float = 0.0) -> dict:
         """Compute the nonlinear part of dCk/dt for both species.
 
         a_frozen: interior vector potential (Nx,) frozen from start of step.
@@ -408,9 +428,9 @@ class HermitePoisson1DVectorField:
         a_sq = a_frozen ** 2
         Fp = -0.5 * jnp.gradient(a_sq, self.dx)  # (Nx,)
 
-        # Electron E-field + ponderomotive coupling
+        # Electron E-field + ponderomotive coupling (+ stochastic force noise)
         dCk_e = _hermite_e_coupling(
-            Ck_e, Ex + Fp,
+            Ck_e, Ex + Fp + noise_frozen,
             self.sqrt_n_minus_e, self.qm_e, self.alpha_e, self.Omega_ce_tau,
             mask23=self.mask23,
         )
@@ -419,7 +439,7 @@ class HermitePoisson1DVectorField:
             dCk_i = jnp.zeros_like(state["Ck_ions"])
         else:
             dCk_i = _hermite_e_coupling(
-                Ck_i, Ex,  # ponderomotive negligible for ions
+                Ck_i, Ex + noise_frozen,  # ponderomotive negligible for ions
                 self.sqrt_n_minus_i, self.qm_i, self.alpha_i, self.Omega_ce_tau,
                 mask23=self.mask23,
             ).view(jnp.float64)
@@ -444,21 +464,26 @@ class HermitePoisson1DVectorField:
         dt = self.dt
         exp_L = self.combined_exp.apply
 
+        if self.noise_amplitude > 0.0 and self.noise_spatial_profile is not None:
+            noise_frozen = self._draw_noise(t)
+        else:
+            noise_frozen = 0.0
+
         Eh_y = exp_L(state, dt / 2)
         Ef_y = exp_L(state, dt)
 
-        N1 = self._nonlinear_rhs(t, state, a_frozen, args)
+        N1 = self._nonlinear_rhs(t, state, a_frozen, args, noise_frozen)
 
         Eh_N1 = exp_L(N1, dt / 2)
         y_star = _tree_add(Eh_y, _tree_scale(Eh_N1, dt / 2))
-        N2 = self._nonlinear_rhs(t + dt / 2, y_star, a_frozen, args)
+        N2 = self._nonlinear_rhs(t + dt / 2, y_star, a_frozen, args, noise_frozen)
 
         y_dstar = _tree_add(Eh_y, _tree_scale(N2, dt / 2))
-        N3 = self._nonlinear_rhs(t + dt / 2, y_dstar, a_frozen, args)
+        N3 = self._nonlinear_rhs(t + dt / 2, y_dstar, a_frozen, args, noise_frozen)
 
         Eh_N3 = exp_L(N3, dt / 2)
         y_tstar = _tree_add(Ef_y, _tree_scale(Eh_N3, dt))
-        N4 = self._nonlinear_rhs(t + dt, y_tstar, a_frozen, args)
+        N4 = self._nonlinear_rhs(t + dt, y_tstar, a_frozen, args, noise_frozen)
 
         Ef_N1 = exp_L(N1, dt)
         Eh_N2 = exp_L(N2, dt / 2)

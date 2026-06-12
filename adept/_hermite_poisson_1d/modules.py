@@ -312,6 +312,21 @@ class BaseHermitePoisson1D(ADEPTModule):
         modes = jnp.fft.fftfreq(Nx) * Nx
         mask23 = jnp.abs(modes) <= (Nx // 3)
 
+        # Per-step stochastic Ex force noise (vlasov1d stochastic_noise parity).
+        # Schema: stochastic_noise: {enabled, amplitude, seed}. Spatial weighting
+        # = n_e(x)/max(n_e) from the initial electron state, so moats see ~nothing.
+        sn_cfg = self.cfg.get("stochastic_noise", {})
+        if sn_cfg.get("enabled", False):
+            noise_amplitude = float(sn_cfg["amplitude"])
+            noise_seed = int(sn_cfg.get("seed", 0))
+            Ck_e0 = self.state["Ck_electrons"].view(jnp.complex128)
+            n_e_prof = (alpha_e ** 3) * jnp.fft.ifft(Ck_e0[0], norm="forward").real
+            noise_spatial_profile = n_e_prof / jnp.max(n_e_prof)
+        else:
+            noise_amplitude = 0.0
+            noise_seed = 0
+            noise_spatial_profile = None
+
         # Poisson solver
         poisson = PoissonSolver1D(
             one_over_kx=one_over_kx,
@@ -347,6 +362,9 @@ class BaseHermitePoisson1D(ADEPTModule):
             sponge_plasma=sponge_plasma,
             sponge_fields=sponge_fields,
             mask23=mask23,
+            noise_amplitude=noise_amplitude,
+            noise_seed=noise_seed,
+            noise_spatial_profile=noise_spatial_profile,
         )
 
         # Configure save quantities
