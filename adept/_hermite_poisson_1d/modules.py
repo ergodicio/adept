@@ -283,16 +283,31 @@ class BaseHermitePoisson1D(ADEPTModule):
         u_i = 0.0
         D = float(physics.get("D", 0.0))
 
-        # Hou-Li filter: exp(-strength * (n/Nn)^order * s) per Lawson substep.
-        # Read from drivers.hermite_filter (same key used by kinetic_srs subclass).
+        # Hermite-mode absorber applied as exp(-strength * col(n) * s) per Lawson
+        # substep. Read from drivers.hermite_filter (same key used by the
+        # kinetic_srs subclass). Two profiles:
+        #   profile="houli" (default): col = (n/Nn)^order — truncation-edge filter.
+        #   profile="knee":            col = 0.5*(1+tanh((n - n_knee)/width)) —
+        #     a scale-selective absolute-n step: ~0 below n_knee, ~1 above. Unlike
+        #     (n/Nn)^order it can separate the resonant EPW mode (n~vphi^2/2) from
+        #     the filamentation cascade just above it, which sit at nearby n/Nn
+        #     when Nn is large. Pair with a low Lenard-Bernstein nu so the
+        #     resonance is preserved while the n>n_knee cascade is damped.
         hl_cfg = self.cfg.get("drivers", {}).get("hermite_filter", {})
         if hl_cfg and hl_cfg.get("enabled", True):
             hl_strength = float(hl_cfg.get("strength", 0.0))
-            hl_order = float(hl_cfg.get("order", 8))
-            n_e_norm = jnp.arange(Nn_e, dtype=jnp.float64) / max(Nn_e - 1, 1)
-            n_i_norm = jnp.arange(Nn_i, dtype=jnp.float64) / max(Nn_i - 1, 1)
-            hou_li_col_e = n_e_norm ** hl_order
-            hou_li_col_i = n_i_norm ** hl_order
+            profile = str(hl_cfg.get("profile", "houli"))
+            n_e = jnp.arange(Nn_e, dtype=jnp.float64)
+            n_i = jnp.arange(Nn_i, dtype=jnp.float64)
+            if profile == "knee":
+                n_knee = float(hl_cfg.get("n_knee", 45.0))
+                width = float(hl_cfg.get("width", 8.0))
+                hou_li_col_e = 0.5 * (1.0 + jnp.tanh((n_e - n_knee) / width))
+                hou_li_col_i = 0.5 * (1.0 + jnp.tanh((n_i - n_knee) / width))
+            else:
+                hl_order = float(hl_cfg.get("order", 8))
+                hou_li_col_e = (n_e / max(Nn_e - 1, 1)) ** hl_order
+                hou_li_col_i = (n_i / max(Nn_i - 1, 1)) ** hl_order
         else:
             hl_strength = 0.0
             hou_li_col_e = None
