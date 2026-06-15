@@ -32,7 +32,10 @@ grid:
   Nh: 85
   Nl: 171
   tmax: 35.0
-  dt: 0.01
+  # Explicit Lawson-RK4 has a stability (CFL) limit once the field saturates; for
+  # these parameters dt <= ~0.0025 is required (the paper's dt=0.01 relies on its
+  # unconditionally stable implicit-midpoint integrator). dt=0.002 is converged.
+  dt: 0.002
 
 initialization:
   type: two-stream

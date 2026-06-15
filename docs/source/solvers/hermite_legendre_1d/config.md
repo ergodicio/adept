@@ -74,6 +74,31 @@ The artificial collision operator (paper sec 2.5) uses the cubic spectrum
 | `Nl` | int | — | Number of Legendre modes for `df` (closure by truncation: `B_{Nl}=0`) |
 | `tmax` | float | — | Final simulation time (normalized). Snapped to an exact multiple of `dt`. |
 | `dt` | float | `0.01` | Timestep |
+| `integrator` | str | `"lawson"` | Time integrator: `"lawson"` (fully explicit Lawson-RK4) or `"imex"` (Lawson-RK4 + implicit Lorentz substep — see below). |
+
+### `integrator: imex`
+
+The stiffness that limits the explicit step is the `E·∂_v f` Lorentz force: in the
+spectral velocity bases it is strictly lower-triangular (nilpotent for Hermite,
+lower-triangular + a rank-2 penalty for Legendre) with operator norm `~Nl²/width·|E|`
+— so explicit RK4's `|dt·‖L‖|≲2.8` limit tightens as modes/field grow. Setting
+`integrator: imex` keeps free-streaming, collisions, and the Hermite→Legendre closure
+flux in the explicit Lawson step, and advances the Lorentz force with an
+**unconditionally stable frozen-E Backward-Euler substep** (a per-`x` triangular/dense
+linear solve; first-order Lie split). This removes the CFL limit, letting two-stream
+run at `dt ≈ 0.02` instead of `0.002`. Trade-offs: Backward Euler is mildly dissipative
+and the split is first-order in `dt`, so for high-accuracy/conservation studies prefer
+small-`dt` `lawson`; for robustness at large mode counts or large `Nx`, prefer `imex`.
+
+**Choosing `dt`.** Free-streaming and collisions are integrated exactly, but the
+explicit Lawson-RK4 treatment of the E-field force has a stability (CFL) limit that
+tightens as the self-consistent field grows. For small-amplitude/linear runs (e.g.
+driven Landau damping) `dt = 0.05` is fine; for nonlinear instabilities that saturate
+to a large field (two-stream) a smaller step is needed — `dt ≈ 0.002` is stable and
+converged for the two-stream benchmark. (The paper's `dt = 0.01` relies on its
+unconditionally stable implicit-midpoint integrator; this explicit module trades that
+for a smaller step and a much smaller memory footprint.) A run that goes `NaN` partway
+through is the signature of `dt` above the CFL limit — halve it.
 
 ---
 
@@ -92,13 +117,41 @@ Here `k = 2π·mode/Lx`. The Legendre projection uses Gauss-Legendre quadrature.
 
 ---
 
+## drivers (optional)
+
+An external longitudinal field `ex` can be applied to the velocity-space force (it
+never enters the Poisson solve), e.g. to drive a resonant EPW for a Landau-damping
+measurement — the analogue of the Vlasov-1D `ex` driver. Omit the `drivers` block for
+self-consistent runs.
+
+```yaml
+drivers:
+  ex:
+    '0':                 # one entry per pulse
+      k0: 0.4            # wavenumber
+      w0: 1.285          # angular frequency (e.g. Re(omega) from the dispersion relation)
+      dw0: 0.0           # frequency offset (added to w0)
+      a0: 1.0e-3         # amplitude
+      t_center: 20.0     # pulse: center / full width / rise(+fall) time
+      t_width: 20.0
+      t_rise: 5.0
+      x_center: 7.85     # spatial envelope: center / width / rise (defaults span the box)
+      x_width: 1.0e6
+      x_rise: 1.0
+```
+
+The driver field is `E_drive(x,t) = Σ env(x,t)·(w0+dw0)·a0·sin(k0 x − (w0+dw0) t)` and
+is saved as `de` in the `fields` group.
+
+---
+
 ## save
 
 Standard ADEPT `save` block with `t: {nt: ...}` (or `tmin`/`tmax`/`nt`) sub-axes.
 
 | Key | Contents |
 |-----|----------|
-| `fields` | Electric field `e(x,t)` and potential `phi(x,t)` |
+| `fields` | Electric field `e(x,t)`, potential `phi(x,t)`, and external driver field `de(x,t)` |
 | `hermite` | AW-Hermite-Fourier coefficient timeseries `Ck` (shape `nt × Nh × Nx`) |
 | `legendre` | Legendre-Fourier coefficient timeseries `Bk` (shape `nt × Nl × Nx`) |
 | `default` | Scalar invariants `mass`, `momentum`, `energy` (paper eqns 26, 28, 30-31) plus field energy and density extrema. Always added; the primary correctness gate. |

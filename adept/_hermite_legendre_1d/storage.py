@@ -27,10 +27,13 @@ from jax import numpy as jnp
 
 
 def get_fields_save_func():
-    """Save electric field e and potential phi."""
+    """Save electric field e, potential phi, and external Ex driver field de."""
 
     def fields_save_func(t, y, args):
-        return {"e": y["e"], "phi": y["phi"]}
+        out = {"e": y["e"], "phi": y["phi"]}
+        if "de" in y:
+            out["de"] = y["de"]
+        return out
 
     return fields_save_func
 

@@ -36,12 +36,15 @@ from adept._hermite_legendre_1d.storage import (
 from adept._hermite_legendre_1d.vector_field import (
     CombinedLinearExp1D,
     DiagonalCollisionExp1D,
+    ExternalExDriver,
     HermiteLegendre1DVectorField,
     PoissonSolver1D,
     StreamingExp1D,
+    hermite_force_operator,
     hermite_legendre_coupling_vector,
     hermite_streaming_matrix,
     legendre_constants,
+    legendre_force_operator,
     safe_col,
 )
 
@@ -230,6 +233,7 @@ class BaseHermiteLegendre1D(ADEPTModule):
             "Bk": Bk.view(jnp.float64),
             "e": e0,
             "phi": phi0,
+            "de": jnp.zeros(Nx),  # external Ex driver field (diagnostic)
         }
         self.args = {}
 
@@ -250,6 +254,8 @@ class BaseHermiteLegendre1D(ADEPTModule):
         nu_L = float(physics.get("nu_L", 0.0))
         enforce = bool(physics.get("enforce_conservation", True))
         field_on = bool(physics.get("field", True))
+        integrator = str(grid.get("integrator", "lawson")).lower()
+        imex = integrator == "imex"
         dt = float(grid["dt"])
 
         kx_1d = grid["kx_1d"]
@@ -269,6 +275,10 @@ class BaseHermiteLegendre1D(ADEPTModule):
 
         poisson = PoissonSolver1D(one_over_kx=one_over_kx, kx_sq=kx_sq, alpha=alpha, width=width)
 
+        # External longitudinal (Ex) driver, e.g. a resonant EPW kick for Landau damping
+        ex_cfg = self.cfg.get("drivers", {}).get("ex", {})
+        ex_driver = ExternalExDriver(grid["x"], ex_cfg) if ex_cfg else None
+
         # Explicit-term constants
         n = jnp.arange(Nh, dtype=jnp.float64)
         sqrt_2n_over_alpha = jnp.sqrt(2.0 * n) / alpha
@@ -276,6 +286,14 @@ class BaseHermiteLegendre1D(ADEPTModule):
 
         J = hermite_legendre_coupling_vector(Nh, Nl, alpha, u, v_a, v_b, enforce_conservation=enforce)
         coupling_vec = -(alpha / width) * jnp.sqrt(Nh / 2.0) * J  # folds prefactor into J_{Nh,m}
+
+        # IMEX force operators (only built when integrator == "imex")
+        G_C = jnp.asarray(hermite_force_operator(Nh, alpha)) if imex else None
+        G_B = (
+            jnp.asarray(legendre_force_operator(leg["deriv"], gamma_vec, leg["xi_a"], leg["xi_b"], width))
+            if imex
+            else None
+        )
 
         vector_field = HermiteLegendre1DVectorField(
             combined_exp=combined_exp,
@@ -292,6 +310,10 @@ class BaseHermiteLegendre1D(ADEPTModule):
             dt=dt,
             mask23=mask23,
             field_on=field_on,
+            ex_driver=ex_driver,
+            imex=imex,
+            G_C=G_C,
+            G_B=G_B,
         )
 
         self.cfg = get_save_quantities(self.cfg)

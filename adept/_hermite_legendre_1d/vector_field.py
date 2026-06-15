@@ -25,6 +25,57 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from adept._base_ import get_envelope
+
+# ---------------------------------------------------------------------------
+# External longitudinal field driver
+# ---------------------------------------------------------------------------
+
+
+class ExternalExDriver:
+    """Prescribed longitudinal field E_drive(x, t) added to the velocity-space force.
+
+    E_drive(x, t) = sum_pulses env(x, t) (w0+dw0) a0 sin(k0 x - (w0+dw0) t)
+
+    The driver enters only the E.d_v f force term (it drives EPWs directly, e.g. a
+    resonant kick for a Landau-damping measurement) and never the Poisson solve, so
+    the self-consistent field energy diagnostic excludes it. Mirrors the convention
+    of adept._hermite_poisson_1d.vector_field.LongitudinalElectricFieldDriver and of
+    the vlasov1d ``ex`` driver. Reads cfg["drivers"]["ex"] (pulse_name -> pulse_dict).
+    Output shape (Nx,), on the interior x grid.
+    """
+
+    def __init__(self, x: Array, ex_driver_cfg: dict):
+        self.x = x
+        x_last = float(x[-1])
+        parsed = []
+        for _, pulse in ex_driver_cfg.items() if isinstance(ex_driver_cfg, dict) else []:
+            if not isinstance(pulse, dict):
+                continue
+            parsed.append(
+                (
+                    float(pulse["k0"]),
+                    float(pulse["w0"]) + float(pulse.get("dw0", 0.0)),
+                    float(pulse["a0"]),
+                    float(pulse.get("t_center", 0.0)),
+                    0.5 * float(pulse.get("t_width", 1e10)),
+                    float(pulse.get("t_rise", 0.0)),
+                    float(pulse.get("x_center", 0.5 * x_last)),
+                    0.5 * float(pulse.get("x_width", 1e10)),
+                    float(pulse.get("x_rise", 0.0)),
+                )
+            )
+        self.parsed_pulses = parsed
+
+    def __call__(self, t: float, args) -> Array:
+        total = jnp.zeros_like(self.x)
+        for k0, w_total, a0, t_center, t_half, t_rise, x_center, x_half, x_rise in self.parsed_pulses:
+            env_t = get_envelope(t_rise, t_rise, t_center - t_half, t_center + t_half, t)
+            env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, self.x)
+            total = total + env_t * env_x * w_total * a0 * jnp.sin(k0 * self.x - w_total * t)
+        return total
+
+
 # ---------------------------------------------------------------------------
 # Basis constants
 # ---------------------------------------------------------------------------
@@ -111,18 +162,24 @@ def legendre_constants(Nl: int, v_a: float, v_b: float) -> dict:
 def _hermite_function_values(Nh_plus_1: int, v: np.ndarray, u: float, alpha: float) -> np.ndarray:
     """psi_n(v; u, alpha) for n = 0..Nh, shape (Nh+1, len(v)). Used for J integrals.
 
-    psi_n = (pi 2^n n!)^{-1/2} H_n(z) exp(-z^2),  z = (v - u)/alpha,
-    built from the physicists' Hermite recurrence H_{n+1} = 2 z H_n - 2 n H_{n-1}.
+    psi_n = (pi 2^n n!)^{-1/2} H_n(z) exp(-z^2),  z = (v - u)/alpha. Built from the
+    *normalized* three-term recurrence
+
+        psi_0 = pi^{-1/2} exp(-z^2),   psi_1 = sqrt(2) z psi_0,
+        psi_{n+1} = z sqrt(2/(n+1)) psi_n - sqrt(n/(n+1)) psi_{n-1},
+
+    which keeps every psi_n O(1). Forming H_n and 2^n n! separately (as a naive
+    implementation would) overflows float64 for n >= 171, silently zeroing the
+    high-order coupling integrals.
     """
     z = (v - u) / alpha
-    H = np.zeros((Nh_plus_1, v.size), dtype=np.float64)
-    H[0] = 1.0
+    psi = np.zeros((Nh_plus_1, v.size), dtype=np.float64)
+    psi[0] = np.pi**-0.5 * np.exp(-(z**2))
     if Nh_plus_1 > 1:
-        H[1] = 2.0 * z
-    for k in range(1, Nh_plus_1 - 1):
-        H[k + 1] = 2.0 * z * H[k] - 2.0 * k * H[k - 1]
-    norm = 1.0 / np.sqrt(np.pi * (2.0 ** np.arange(Nh_plus_1)) * _factorials(Nh_plus_1))
-    return norm[:, None] * H * np.exp(-(z**2))[None, :]
+        psi[1] = np.sqrt(2.0) * z * psi[0]
+    for n in range(1, Nh_plus_1 - 1):
+        psi[n + 1] = z * np.sqrt(2.0 / (n + 1)) * psi[n] - np.sqrt(n / (n + 1)) * psi[n - 1]
+    return psi
 
 
 def _legendre_basis_values(Nl: int, v: np.ndarray, v_a: float, v_b: float) -> np.ndarray:
@@ -137,13 +194,6 @@ def _legendre_basis_values(Nl: int, v: np.ndarray, v_a: float, v_b: float) -> np
         L[k + 1] = ((2.0 * k + 1.0) * s * L[k] - k * L[k - 1]) / (k + 1.0)
     scale = np.sqrt(2.0 * np.arange(Nl) + 1.0)
     return scale[:, None] * L
-
-
-def _factorials(n: int) -> np.ndarray:
-    out = np.ones(n, dtype=np.float64)
-    for k in range(1, n):
-        out[k] = out[k - 1] * k
-    return out
 
 
 def hermite_legendre_coupling_vector(
@@ -369,6 +419,39 @@ def _cross_coupling(
 
 
 # ---------------------------------------------------------------------------
+# Implicit (IMEX) force operators
+# ---------------------------------------------------------------------------
+
+
+def hermite_force_operator(Nh: int, alpha: float) -> np.ndarray:
+    """G_C with (G_C C)_n = -sqrt(2n)/alpha C_{n-1} (strictly lower-bidiagonal).
+
+    The Hermite Lorentz force is dC/dt|force = E(x) G_C C. G_C is nilpotent, with
+    operator norm ~ sqrt(2 Nh)/alpha * |E|, so explicit RK4 has a CFL-like limit
+    that tightens with Nh. Backward Euler on it is unconditionally stable.
+    """
+    G = np.zeros((Nh, Nh), dtype=np.float64)
+    n = np.arange(1, Nh)
+    G[n, n - 1] = -np.sqrt(2.0 * n) / alpha
+    return G
+
+
+def legendre_force_operator(deriv: Array, gamma_vec: Array, xi_a: Array, xi_b: Array, width: float) -> np.ndarray:
+    """G_B = P - D for the Legendre Lorentz force dB/dt|force = E(x) G_B B.
+
+    D = deriv (strictly lower-triangular d_v matrix, paper eqn 10) and P is the
+    rank-2 Dirichlet penalty P[m, j] = (gamma_m/width)(xi_b[m] xi_b[j] - xi_a[m] xi_a[j]).
+    The d_v operator norm scales as ~ Nl^2/width, making this the *dominant*
+    stiffness in the mixed method -- hence it is treated implicitly in IMEX.
+    """
+    D = np.asarray(deriv)
+    g = np.asarray(gamma_vec) / width
+    xa, xb = np.asarray(xi_a), np.asarray(xi_b)
+    P = g[:, None] * (np.outer(xb, xb) - np.outer(xa, xa))
+    return P - D
+
+
+# ---------------------------------------------------------------------------
 # Lawson-RK4 vector field (Stepper / discrete-map convention)
 # ---------------------------------------------------------------------------
 
@@ -409,6 +492,10 @@ class HermiteLegendre1DVectorField:
         dt: float,
         mask23: Array | None = None,
         field_on: bool = True,
+        ex_driver: "ExternalExDriver | None" = None,
+        imex: bool = False,
+        G_C: Array | None = None,
+        G_B: Array | None = None,
     ):
         self.combined_exp = combined_exp
         self.poisson = poisson
@@ -424,6 +511,12 @@ class HermiteLegendre1DVectorField:
         self.dt = float(dt)
         self.mask23 = mask23
         self.field_on = bool(field_on)
+        self.ex_driver = ex_driver
+        # IMEX: treat the (stiff) E.d_v f Lorentz force implicitly via a frozen-E
+        # backward-Euler substep, keeping the rest of the RHS in the explicit Lawson step.
+        self.imex = bool(imex)
+        self.G_C = None if G_C is None else jnp.asarray(G_C, dtype=jnp.complex128)
+        self.G_B = None if G_B is None else jnp.asarray(G_B, dtype=jnp.complex128)
 
     def _nonlinear_rhs(self, t: float, state: dict, args: dict) -> dict:
         Ck = state["Ck"].view(jnp.complex128)
@@ -432,16 +525,27 @@ class HermiteLegendre1DVectorField:
         # field_on=False -> pure advection (phi=0); the linear Hermite->Legendre
         # closure flux (d_x C_{Nh-1}) still acts, only E-dependent terms vanish.
         E = self.poisson.electric_field(Ck, Bk) if self.field_on else jnp.zeros(Ck.shape[1])  # (Nx,)
+        # external longitudinal driver (evaluated at the substep time; never enters Poisson)
+        if self.ex_driver is not None:
+            E = E + self.ex_driver(t, args)
 
-        dCk = _hermite_force(Ck, E, self.sqrt_2n_over_alpha, self.mask23)
-        dBk = _legendre_force(
-            Bk, E, self.deriv, self.gamma_vec, self.xi_a, self.xi_b, self.width, self.mask23
-        ) + _cross_coupling(Ck, E, self.kx_1d, self.coupling_vec, self.alpha, self.width, self.mask23)
+        cross = _cross_coupling(Ck, E, self.kx_1d, self.coupling_vec, self.alpha, self.width, self.mask23)
+        if self.imex:
+            # E.d_v f (Hermite + Legendre force) is handled by the implicit substep;
+            # only the non-stiff Hermite->Legendre closure flux stays explicit.
+            dCk = jnp.zeros_like(Ck)
+            dBk = cross
+        else:
+            dCk = _hermite_force(Ck, E, self.sqrt_2n_over_alpha, self.mask23)
+            dBk = (
+                _legendre_force(Bk, E, self.deriv, self.gamma_vec, self.xi_a, self.xi_b, self.width, self.mask23)
+                + cross
+            )
 
         out = dict(state)
         out["Ck"] = dCk.view(jnp.float64)
         out["Bk"] = dBk.view(jnp.float64)
-        for k in ("e", "phi"):
+        for k in ("e", "phi", "de"):
             if k in out:
                 out[k] = jnp.zeros_like(state[k])
         return out
@@ -477,8 +581,56 @@ class HermiteLegendre1DVectorField:
         )
         return _tree_add(Ef_y, weighted)
 
+    def _implicit_E_substep(self, state: dict, E_real: Array, dt: float) -> dict:
+        """Backward-Euler substep for the E.d_v f Lorentz force with frozen E.
+
+        Per spatial point x the force is dC/dt = E(x) G_C C and dB/dt = E(x) G_B B
+        (block-diagonal: Hermite force touches only C, Legendre only B). Backward
+        Euler gives (I - dt E(x) G) X_new = X, an unconditionally stable per-x linear
+        solve (G_C is nilpotent; G_B is lower-triangular + a rank-2 penalty). E(x) is
+        diagonal in real space, so we transform k->x, solve per x, and transform back.
+
+        NOTE: this uses a dense per-x solve, O(Nx * N^3). Fine for moderate Nx, but for
+        large Nx the structured solve is far cheaper: a bidiagonal forward-substitution
+        for the nilpotent Hermite block (cf. _spectrax1d.imex_E) and a Woodbury solve
+        (lower-triangular + rank-2) for the Legendre block, both O(Nx * N^2).
+        """
+        mask = self.mask23
+        maskc = mask[None, :] if mask is not None else 1.0
+        Ck = state["Ck"].view(jnp.complex128)
+        Bk = state["Bk"].view(jnp.complex128)
+        Nh, Nl = Ck.shape[0], Bk.shape[0]
+
+        C = jnp.fft.ifft(Ck * maskc, axis=-1, norm="forward")  # (Nh, Nx)
+        B = jnp.fft.ifft(Bk * maskc, axis=-1, norm="forward")  # (Nl, Nx)
+
+        scale = (dt * E_real).astype(jnp.complex128)  # (Nx,)
+        M_C = jnp.eye(Nh, dtype=jnp.complex128)[None] - scale[:, None, None] * self.G_C[None]  # (Nx, Nh, Nh)
+        M_B = jnp.eye(Nl, dtype=jnp.complex128)[None] - scale[:, None, None] * self.G_B[None]  # (Nx, Nl, Nl)
+
+        C_new = jnp.linalg.solve(M_C, C.T[..., None])[..., 0].T  # (Nh, Nx)
+        B_new = jnp.linalg.solve(M_B, B.T[..., None])[..., 0].T  # (Nl, Nx)
+
+        Ck_new = jnp.fft.fft(C_new, axis=-1, norm="forward") * maskc
+        Bk_new = jnp.fft.fft(B_new, axis=-1, norm="forward") * maskc
+        out = dict(state)
+        out["Ck"] = Ck_new.view(jnp.float64)
+        out["Bk"] = Bk_new.view(jnp.float64)
+        return out
+
     def __call__(self, t: float, y: dict, args: dict) -> dict:
         y_new = self._lawson_rk4(t, y, args)
+
+        if self.imex:
+            # Frozen E from the post-explicit state (self-consistent + external driver
+            # at the end of the step), then one implicit Lorentz substep.
+            Ckp = y_new["Ck"].view(jnp.complex128)
+            Bkp = y_new["Bk"].view(jnp.complex128)
+            E_frozen = self.poisson.electric_field(Ckp, Bkp) if self.field_on else jnp.zeros(Ckp.shape[1])
+            if self.ex_driver is not None:
+                E_frozen = E_frozen + self.ex_driver(t + self.dt, args)
+            y_new = self._implicit_E_substep(y_new, E_frozen, self.dt)
+
         Ck = y_new["Ck"].view(jnp.complex128)
         Bk = y_new["Bk"].view(jnp.complex128)
         if self.field_on:
@@ -487,4 +639,5 @@ class HermiteLegendre1DVectorField:
         else:
             e = jnp.zeros(Ck.shape[1])  # phi = 0 : pure advection
             phi = jnp.zeros(Ck.shape[1])
-        return {"Ck": y_new["Ck"], "Bk": y_new["Bk"], "e": e, "phi": phi}
+        de = self.ex_driver(t, args) if self.ex_driver is not None else jnp.zeros(Ck.shape[1])
+        return {"Ck": y_new["Ck"], "Bk": y_new["Bk"], "e": e, "phi": phi, "de": de}
