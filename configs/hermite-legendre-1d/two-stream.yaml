@@ -1,0 +1,51 @@
+# Mixed Hermite-Legendre 1D --- Two-stream instability (paper sec 4.3)
+#
+# f(x,v,0) = (1+0.01 cos(0.5 x))/sqrt(2*pi) v^2 exp(-v^2/2)
+#   -> C_0(x,0)=(1+0.01 cos(0.5 x))/sqrt(2), C_2 = sqrt(2) C_0, df=0.
+# The phase-space vortex (strongly non-Maxwellian) is captured by the Legendre
+# component; with J_{Nh,0..2}=0 enforced, mass/momentum/energy are conserved (Fig 7c/d).
+
+solver: hermite-legendre-1d
+
+mlflow:
+  experiment: hermite-legendre-1d
+  run: two-stream
+
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+physics:
+  Lx: 12.566370614359172    # 4*pi
+  alpha: 1.4142135623730951 # sqrt(2)
+  u: 0.0
+  v_a: -2.5
+  v_b: 2.5
+  gamma: 0.5
+  nu_H: 0.0                 # keep nu_H -> 0 so f0 feeds df via the last Hermite moment
+  nu_L: 1.0
+  enforce_conservation: true
+  field: true
+
+grid:
+  Nx: 64
+  Nh: 85
+  Nl: 171
+  tmax: 35.0
+  dt: 0.01
+
+initialization:
+  type: two-stream
+  eps: 0.01
+  mode: 1
+
+save:
+  fields:
+    t:
+      nt: 351
+  hermite:
+    t:
+      nt: 71
+  legendre:
+    t:
+      nt: 71
