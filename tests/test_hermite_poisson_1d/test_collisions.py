@@ -73,9 +73,7 @@ def test_lenard_bernstein_decay_rates():
     amp = np.abs(Ck_t[:, :, 0])  # k=0 component of each mode vs time
     for n in range(3, Nn):
         expected = np.exp(-nu * n * t)
-        np.testing.assert_allclose(amp[:, n], expected, rtol=1e-8,
-                                   err_msg=f"mode n={n} LB decay mismatch")
+        np.testing.assert_allclose(amp[:, n], expected, rtol=1e-8, err_msg=f"mode n={n} LB decay mismatch")
     # n=0,1,2 (density, momentum, energy) must be exactly conserved
     for n in range(3):
-        np.testing.assert_allclose(amp[:, n], 1.0, rtol=1e-10,
-                                   err_msg=f"conserved moment n={n} was damped")
+        np.testing.assert_allclose(amp[:, n], 1.0, rtol=1e-10, err_msg=f"conserved moment n={n} was damped")

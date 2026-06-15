@@ -49,8 +49,8 @@ def test_noise_draw_is_deterministic_and_scaled():
     n1_again = np.asarray(vf._draw_noise(1.0))
     n2 = np.asarray(vf._draw_noise(1.1))
 
-    np.testing.assert_allclose(n1, n1_again)          # same t -> same draw
-    assert np.max(np.abs(n1 - n2)) > 0.0              # different step -> different draw
+    np.testing.assert_allclose(n1, n1_again)  # same t -> same draw
+    assert np.max(np.abs(n1 - n2)) > 0.0  # different step -> different draw
     # uniform density -> profile == 1 -> std ~ amplitude (loose bound, Nx=32)
     assert 0.3 * 2.0e-5 < np.std(n1) < 3.0 * 2.0e-5
 

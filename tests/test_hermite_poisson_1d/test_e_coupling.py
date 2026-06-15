@@ -97,24 +97,37 @@ def test_matches_spectrax1d_lorentz_term():
     kx_1d = jnp.fft.fftfreq(Nx) * Nx * 2 * jnp.pi / Lx
     n = jnp.arange(Nn, dtype=jnp.float64)
     ode = HermiteFourierODE(
-        Nn=Nn, Nm=1, Np=1, Nx=Nx,
+        Nn=Nn,
+        Nm=1,
+        Np=1,
+        Nx=Nx,
         kx_grid=kx_1d[None, :, None],
         ky_grid=jnp.zeros((1, Nx, 1)),
         kz_grid=jnp.zeros((1, Nx, 1)),
         k2_grid=(kx_1d**2)[None, :, None],
-        Lx=Lx, Ly=1.0, Lz=1.0,
+        Lx=Lx,
+        Ly=1.0,
+        Lz=1.0,
         col=jnp.zeros((1, 1, Nn)),
-        sqrt_n_plus=jnp.sqrt(n + 1.0), sqrt_n_minus=jnp.sqrt(n),
-        sqrt_m_plus=jnp.array([1.0]), sqrt_m_minus=jnp.array([0.0]),
-        sqrt_p_plus=jnp.array([1.0]), sqrt_p_minus=jnp.array([0.0]),
+        sqrt_n_plus=jnp.sqrt(n + 1.0),
+        sqrt_n_minus=jnp.sqrt(n),
+        sqrt_m_plus=jnp.array([1.0]),
+        sqrt_m_minus=jnp.array([0.0]),
+        sqrt_p_plus=jnp.array([1.0]),
+        sqrt_p_minus=jnp.array([0.0]),
         mask23=jnp.ones((1, Nx, 1)),
     )
     C_real = jnp.fft.ifft(Ck, axis=-1, norm="forward")
     C6 = C_real[None, None, :, None, :, None]
     F6 = jnp.zeros((6, 1, Nx, 1), dtype=jnp.complex128).at[0, 0, :, 0].set(F)
     out_ref = ode._compute_lorentz_rhs(
-        C=C6, F=F6, alpha=jnp.array([alpha, 1.0, 1.0]), u=jnp.zeros(3),
-        q=q_over_m, Omega_ce_tau=1.0, m=1.0,
+        C=C6,
+        F=F6,
+        alpha=jnp.array([alpha, 1.0, 1.0]),
+        u=jnp.zeros(3),
+        q=q_over_m,
+        Omega_ce_tau=1.0,
+        m=1.0,
     )
     out_ref = np.asarray(out_ref[0, 0, :, 0, :, 0])
 

@@ -121,9 +121,7 @@ def test_force_ladder_is_one_sided_upward():
     C = jnp.zeros((1, 1, Nn, 1, Nx, 1), dtype=jnp.complex128).at[0, 0, 2].set(c2)
     F = jnp.zeros((6, 1, Nx, 1), dtype=jnp.complex128).at[0].set(E0)
 
-    dCk = np.asarray(
-        ode._compute_lorentz_rhs(C=C, F=F, alpha=alpha, u=jnp.zeros(3), q=q, Omega_ce_tau=Omega, m=m_s)
-    )
+    dCk = np.asarray(ode._compute_lorentz_rhs(C=C, F=F, alpha=alpha, u=jnp.zeros(3), q=q, Omega_ce_tau=Omega, m=m_s))
 
     expected_c3 = (q / m_s) * Omega * np.sqrt(2.0 * 3.0) / float(alpha[0]) * E0 * c2
     np.testing.assert_allclose(dCk[0, 0, 3, 0, 0, 0].real, expected_c3, rtol=1e-12)

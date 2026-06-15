@@ -38,11 +38,7 @@ def _measure_ringing(e_xt: np.ndarray, t: np.ndarray, mode: int) -> tuple[float,
 
     # local maxima, skipping the initial transient (first 10% of the run)
     i0 = len(t) // 10
-    peaks = [
-        i
-        for i in range(i0 + 1, len(t) - 1)
-        if absA[i] >= absA[i - 1] and absA[i] > absA[i + 1]
-    ]
+    peaks = [i for i in range(i0 + 1, len(t) - 1) if absA[i] >= absA[i - 1] and absA[i] > absA[i + 1]]
     assert len(peaks) >= 4, f"too few |A| maxima to fit ({len(peaks)})"
 
     t_pk = t[peaks]

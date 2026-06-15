@@ -20,8 +20,7 @@ from adept._hermite_poisson_1d.modules import BaseHermitePoisson1D
 
 def _diag_e(filter_cfg):
     cfg = {
-        "physics": {"Lx": 10.0, "alpha_e": 1.0, "alpha_i": 1.0, "nu": 0.0,
-                    "static_ions": True, "c_light": 1.0},
+        "physics": {"Lx": 10.0, "alpha_e": 1.0, "alpha_i": 1.0, "nu": 0.0, "static_ions": True, "c_light": 1.0},
         "grid": {"Nn": 1024, "Ni": 2, "Nx": 32, "tmax": 1.0, "dt": 0.1},
         "drivers": {"hermite_filter": filter_cfg},
         "save": {},
@@ -36,14 +35,13 @@ def _diag_e(filter_cfg):
 
 
 def test_knee_profile_separates_resonance_from_cascade():
-    diag = _diag_e({"enabled": True, "profile": "knee",
-                    "strength": 0.1, "n_knee": 45.0, "width": 8.0})
+    diag = _diag_e({"enabled": True, "profile": "knee", "strength": 0.1, "n_knee": 45.0, "width": 8.0})
     col = np.asarray(diag.hou_li_col_1d)
     assert diag.hou_li_strength == 0.1
     # ~0 at the resonance (n=24), ~1 in the cascade (n>=70)
     assert col[24] < 0.02
     assert col[70] > 0.95
-    assert abs(col[45] - 0.5) < 1e-9   # tanh midpoint at the knee
+    assert abs(col[45] - 0.5) < 1e-9  # tanh midpoint at the knee
     # monotonic
     assert np.all(np.diff(col) >= -1e-12)
 
@@ -63,11 +61,11 @@ def test_knee_preserves_low_modes_dynamically():
     import copy
 
     base = {
-        "physics": {"Lx": 10.0, "alpha_e": 1.0, "alpha_i": 1.0, "nu": 0.0,
-                    "static_ions": True, "c_light": 1.0},
+        "physics": {"Lx": 10.0, "alpha_e": 1.0, "alpha_i": 1.0, "nu": 0.0, "static_ions": True, "c_light": 1.0},
         "grid": {"Nn": 1024, "Ni": 2, "Nx": 16, "tmax": 20.0, "dt": 0.1},
-        "drivers": {"hermite_filter": {"enabled": True, "profile": "knee",
-                                       "strength": 0.1, "n_knee": 45.0, "width": 8.0}},
+        "drivers": {
+            "hermite_filter": {"enabled": True, "profile": "knee", "strength": 0.1, "n_knee": 45.0, "width": 8.0}
+        },
         "save": {"hermite": {"t": {"tmin": 0.0, "tmax": 20.0, "nt": 3}}},
     }
 
@@ -86,5 +84,5 @@ def test_knee_preserves_low_modes_dynamically():
         Ck_t = np.asarray(sol.ys["hermite"]["electrons"]).view(np.complex128)
         decays[nmode] = abs(Ck_t[-1, nmode, 0]) / abs(Ck_t[0, nmode, 0])
 
-    assert decays[24] > 0.95      # resonance preserved
-    assert decays[80] < 0.2       # cascade strongly damped
+    assert decays[24] > 0.95  # resonance preserved
+    assert decays[80] < 0.2  # cascade strongly damped
