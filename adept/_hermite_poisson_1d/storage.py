@@ -3,10 +3,10 @@ Storage / save functions for the 1D Hermite-Poisson module.
 
 State keys: Ck_electrons (Nn_e, Nx) complex viewed as float64,
             Ck_ions (Nn_i, Nx) complex viewed as float64,
-            a (Nx+2,), prev_a (Nx+2,), e (Nx,), da (Nx+2,).
+            a (Nx+2,), prev_a (Nx+2,), e (Nx,), da (Nx+2,), de (Nx,).
 
 Supported cfg["save"] keys:
-  "fields"  → {e, a, da} spacetime arrays
+  "fields"  → {e, a, da, de} spacetime arrays
   "hermite" → {electrons, ions} Hermite-Fourier coefficient timeseries
   "default" → scalar energy diagnostics (always added automatically)
 """
@@ -17,21 +17,23 @@ import numpy as np
 import xarray as xr
 from jax import numpy as jnp
 
-
 # ---------------------------------------------------------------------------
 # Save functions (called by diffrax SubSaveAt at specified timesteps)
 # ---------------------------------------------------------------------------
 
 
 def get_fields_save_func():
-    """Save electrostatic field e and vector potential a interior."""
+    """Save electrostatic field e, vector potential a interior, and drivers da/de."""
 
     def fields_save_func(t, y, args):
-        return {
+        out = {
             "e": y["e"],
             "a": y["a"][1:-1],
             "da": y["da"][1:-1],
         }
+        if "de" in y:
+            out["de"] = y["de"]  # external longitudinal (ex) driver field, (Nx,)
+        return out
 
     return fields_save_func
 
@@ -56,13 +58,13 @@ def get_default_save_func(alpha_e: float, alpha_i: float):
     def default_save_func(t, y, args):
         Ck_e = y["Ck_electrons"].view(jnp.complex128)
         Ck_i = y["Ck_ions"].view(jnp.complex128)
-        n_e = (alpha_e ** 3) * jnp.fft.ifft(Ck_e[0], norm="forward").real
-        n_i = (alpha_i ** 3) * jnp.fft.ifft(Ck_i[0], norm="forward").real
+        n_e = (alpha_e**3) * jnp.fft.ifft(Ck_e[0], norm="forward").real
+        n_i = (alpha_i**3) * jnp.fft.ifft(Ck_i[0], norm="forward").real
         e = y["e"]
         a = y["a"][1:-1]
         return {
-            "e_energy": jnp.sum(e ** 2),
-            "a_energy": jnp.sum(a ** 2),
+            "e_energy": jnp.sum(e**2),
+            "a_energy": jnp.sum(a**2),
             "n_e_max": jnp.max(n_e),
             "n_e_min": jnp.min(n_e),
             "n_i_max": jnp.max(n_i),
@@ -92,8 +94,12 @@ def get_save_quantities(cfg: dict) -> dict:
     tmax = float(grid["tmax"])
     nt = int(grid["nt"])
     alpha_e = float(physics.get("alpha_e", physics.get("alpha_s", [0.05])[0]))
-    alpha_i = float(physics.get("alpha_i", physics.get("alpha_s", [0.05, 0.05, 0.05, 0.001])[3]
-                                if len(physics.get("alpha_s", [])) > 3 else 0.001))
+    alpha_i = float(
+        physics.get(
+            "alpha_i",
+            physics.get("alpha_s", [0.05, 0.05, 0.05, 0.001])[3] if len(physics.get("alpha_s", [])) > 3 else 0.001,
+        )
+    )
 
     for save_key, save_cfg in cfg.get("save", {}).items():
         if not isinstance(save_cfg, dict):

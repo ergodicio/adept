@@ -10,7 +10,8 @@ State dict:
   a:            (Nx+2,)  vector potential with ghost cells
   prev_a:       (Nx+2,)  previous-step a
   e:            (Nx,)    electrostatic field (diagnostics)
-  da:           (Nx+2,)  last wave-equation source term
+  da:           (Nx+2,)  last wave-equation (ey) source term
+  de:           (Nx,)    last external longitudinal (ex) driver field (diagnostics)
 
 Config keys expected in cfg["physics"]:
   alpha_e (float), alpha_i (float), mi_me (float), Lx (float),
@@ -37,6 +38,7 @@ from adept._hermite_poisson_1d.vector_field import (
     FreeStreamingExp1D,
     HermitePoisson1DVectorField,
     LinearExp1D,
+    LongitudinalElectricFieldDriver,
     PoissonSolver1D,
     TransverseWaveDriver,
 )
@@ -156,7 +158,7 @@ class BaseHermitePoisson1D(ADEPTModule):
         one_over_kx = np.zeros(Nx, dtype=np.float64)
         one_over_kx[1:] = 1.0 / np.asarray(kx_1d[1:])
         one_over_kx = jnp.array(one_over_kx)
-        kx_sq = kx_1d ** 2
+        kx_sq = kx_1d**2
 
         # Ladder operators
         sqrt_n_minus_e = jnp.sqrt(jnp.arange(Nn_e, dtype=jnp.float64))
@@ -207,8 +209,8 @@ class BaseHermitePoisson1D(ADEPTModule):
         # C_0(kx) = FFT(n(x) / alpha^3); equilibrium: n(x) = n0 → C_0(kx=0) = n0/alpha^3
         Ck_e = jnp.zeros((Nn_e, Nx), dtype=jnp.complex128)
         Ck_i = jnp.zeros((Nn_i, Nx), dtype=jnp.complex128)
-        Ck_e = Ck_e.at[0, 0].set(n0_e / (alpha_e ** 3))
-        Ck_i = Ck_i.at[0, 0].set(n0_i / (alpha_i ** 3))
+        Ck_e = Ck_e.at[0, 0].set(n0_e / (alpha_e**3))
+        Ck_i = Ck_i.at[0, 0].set(n0_i / (alpha_i**3))
 
         # Optional single-mode electron density perturbation (for dispersion tests):
         # density.perturbation: {mode: int m, amplitude: float eps}
@@ -217,7 +219,7 @@ class BaseHermitePoisson1D(ADEPTModule):
         if pert:
             mode = int(pert["mode"])
             eps = float(pert["amplitude"])
-            half = 0.5 * eps * n0_e / (alpha_e ** 3)
+            half = 0.5 * eps * n0_e / (alpha_e**3)
             Ck_e = Ck_e.at[0, mode].set(half)
             Ck_e = Ck_e.at[0, -mode].set(half)
 
@@ -228,6 +230,7 @@ class BaseHermitePoisson1D(ADEPTModule):
             "prev_a": jnp.zeros(Nx + 2),
             "e": jnp.zeros(Nx),
             "da": jnp.zeros(Nx + 2),
+            "de": jnp.zeros(Nx),
         }
         self.args = {}
 
@@ -273,7 +276,7 @@ class BaseHermitePoisson1D(ADEPTModule):
             Ck_i = self.state["Ck_ions"].view(jnp.complex128)
             n0_i = float(physics.get("n0_i", 1.0))
             # Build ion density profile from initial Ck_i
-            n_i_prof = (alpha_i ** 3) * jnp.fft.ifft(Ck_i[0], norm="forward").real
+            n_i_prof = (alpha_i**3) * jnp.fft.ifft(Ck_i[0], norm="forward").real
             static_ion_density = n_i_prof
         else:
             static_ion_density = None
@@ -315,10 +318,12 @@ class BaseHermitePoisson1D(ADEPTModule):
 
         free_stream_e = FreeStreamingExp1D(Nn_e, alpha_e, u_e, Lx, kx_1d)
         free_stream_i = FreeStreamingExp1D(Nn_i, alpha_i, u_i, Lx, kx_1d)
-        diag_e = DiagonalExp1D(nu=nu, col_1d=col_e, D=D, kx_sq_1d=kx_sq,
-                               hou_li_strength=hl_strength, hou_li_col_1d=hou_li_col_e)
-        diag_i = DiagonalExp1D(nu=nu, col_1d=col_i, D=D, kx_sq_1d=kx_sq,
-                               hou_li_strength=hl_strength, hou_li_col_1d=hou_li_col_i)
+        diag_e = DiagonalExp1D(
+            nu=nu, col_1d=col_e, D=D, kx_sq_1d=kx_sq, hou_li_strength=hl_strength, hou_li_col_1d=hou_li_col_e
+        )
+        diag_i = DiagonalExp1D(
+            nu=nu, col_1d=col_i, D=D, kx_sq_1d=kx_sq, hou_li_strength=hl_strength, hou_li_col_1d=hou_li_col_i
+        )
         linear_e = LinearExp1D(free_stream_e, diag_e)
         linear_i = LinearExp1D(free_stream_i, diag_i)
         combined_exp = CombinedLinearExp1D(linear_e, linear_i, static_ions=static_ions)
@@ -335,7 +340,7 @@ class BaseHermitePoisson1D(ADEPTModule):
             noise_amplitude = float(sn_cfg["amplitude"])
             noise_seed = int(sn_cfg.get("seed", 0))
             Ck_e0 = self.state["Ck_electrons"].view(jnp.complex128)
-            n_e_prof = (alpha_e ** 3) * jnp.fft.ifft(Ck_e0[0], norm="forward").real
+            n_e_prof = (alpha_e**3) * jnp.fft.ifft(Ck_e0[0], norm="forward").real
             noise_spatial_profile = n_e_prof / jnp.max(n_e_prof)
         else:
             noise_amplitude = 0.0
@@ -357,12 +362,18 @@ class BaseHermitePoisson1D(ADEPTModule):
         ey_cfg = self.cfg.get("drivers", {}).get("ey", {})
         ey_driver = TransverseWaveDriver(x_a, ey_cfg)
 
+        # Longitudinal (Ex) field driver — prescribed Ex added to the velocity-space
+        # force, on the interior x grid (no ghost cells).
+        ex_cfg = self.cfg.get("drivers", {}).get("ex", {})
+        ex_driver = LongitudinalElectricFieldDriver(grid["x"], ex_cfg)
+
         # Assemble top-level vector field (discrete-map via Stepper)
         vector_field = HermitePoisson1DVectorField(
             combined_exp=combined_exp,
             poisson=poisson,
             wave_solver=wave_solver,
             ey_driver=ey_driver,
+            ex_driver=ex_driver,
             sqrt_n_minus_e=sqrt_n_minus_e,
             sqrt_n_minus_i=sqrt_n_minus_i,
             alpha_e=alpha_e,
@@ -496,9 +507,13 @@ class BaseHermitePoisson1D(ADEPTModule):
                             arr_plot = np.where(np.isfinite(arr), arr, np.nan)
                             fig, axes = plt.subplots(1, 2, figsize=(10, 4), tight_layout=True)
                             axes[0].plot(t_arr_def, arr_plot)
-                            axes[0].set_xlabel("t"); axes[0].set_ylabel(name); axes[0].grid(alpha=0.3)
+                            axes[0].set_xlabel("t")
+                            axes[0].set_ylabel(name)
+                            axes[0].grid(alpha=0.3)
                             axes[1].semilogy(t_arr_def, np.abs(arr_plot) + 1e-30)
-                            axes[1].set_xlabel("t"); axes[1].set_ylabel(f"|{name}|"); axes[1].grid(alpha=0.3)
+                            axes[1].set_xlabel("t")
+                            axes[1].set_ylabel(f"|{name}|")
+                            axes[1].grid(alpha=0.3)
                             fig.savefig(os.path.join(plots_dir, f"scalar-{name}.png"), bbox_inches="tight")
                         except Exception as e:
                             print(f"post_process: scalar plot for {name} failed: {e}")

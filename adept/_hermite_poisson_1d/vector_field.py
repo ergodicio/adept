@@ -36,7 +36,7 @@ class TransverseWaveDriver:
         # Pre-parse all scalars at init so __call__ contains no float() on JAX arrays.
         x_a_last = float(x_a[-1])
         parsed = []
-        for _, pulse in (ey_driver_cfg.items() if isinstance(ey_driver_cfg, dict) else []):
+        for _, pulse in ey_driver_cfg.items() if isinstance(ey_driver_cfg, dict) else []:
             if not isinstance(pulse, dict):
                 continue
             w_total = float(pulse["w0"]) + float(pulse.get("dw0", 0.0))
@@ -46,11 +46,19 @@ class TransverseWaveDriver:
             x_center = float(pulse.get("x_center", 0.5 * x_a_last))
             x_half = 0.5 * float(pulse.get("x_width", 1e10))
             x_rise = float(pulse.get("x_rise", 0.0))
-            parsed.append((
-                float(pulse["k0"]), w_total, float(pulse["a0"]),
-                t_center, t_half, t_rise,
-                x_center, x_half, x_rise,
-            ))
+            parsed.append(
+                (
+                    float(pulse["k0"]),
+                    w_total,
+                    float(pulse["a0"]),
+                    t_center,
+                    t_half,
+                    t_rise,
+                    x_center,
+                    x_half,
+                    x_rise,
+                )
+            )
         self.parsed_pulses = parsed
 
     def __call__(self, t: float, args) -> Array:
@@ -58,7 +66,65 @@ class TransverseWaveDriver:
         for k0, w_total, a0, t_center, t_half, t_rise, x_center, x_half, x_rise in self.parsed_pulses:
             env_t = get_envelope(t_rise, t_rise, t_center - t_half, t_center + t_half, t)
             env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, self.x_a)
-            total = total + env_t * env_x * (-(w_total ** 2)) * a0 * jnp.sin(k0 * self.x_a - w_total * t)
+            total = total + env_t * env_x * (-(w_total**2)) * a0 * jnp.sin(k0 * self.x_a - w_total * t)
+        return total
+
+
+class LongitudinalElectricFieldDriver:
+    """External longitudinal field E_drive(x, t) = Σ_pulses env(x,t) (w0+dw0) a0 sin(k0 x − (w0+dw0) t).
+
+    The Hermite-Poisson counterpart of adept._vlasov1d...field.LongitudinalElectricFieldDriver:
+    a prescribed Ex that is added to the self-consistent Poisson field inside the
+    velocity-space force term (so it drives the plasma directly, e.g. a resonant EPW
+    kick), without ever entering the Poisson or wave-equation solves. Reads the same
+    flat normalized driver dict as TransverseWaveDriver (cfg["drivers"]["ex"]).
+
+    Amplitude convention matches vlasov1d: the prefactor is the total angular frequency
+    w0+dw0 (not |k0|, which is the spectrax1d Ex convention). Output shape (Nx,), matching
+    the interior force-coupling grid (no ghost cells).
+    """
+
+    def __init__(self, x: Array, ex_driver_cfg: dict):
+        """
+        Args:
+            x: Interior x grid (no ghost cells), shape (Nx,).
+            ex_driver_cfg: dict mapping pulse_name → pulse_dict from cfg["drivers"]["ex"].
+        """
+        self.x = x
+        # Pre-parse all scalars at init so __call__ contains no float() on JAX arrays.
+        x_last = float(x[-1])
+        parsed = []
+        for _, pulse in ex_driver_cfg.items() if isinstance(ex_driver_cfg, dict) else []:
+            if not isinstance(pulse, dict):
+                continue
+            w_total = float(pulse["w0"]) + float(pulse.get("dw0", 0.0))
+            t_center = float(pulse.get("t_center", 0.0))
+            t_half = 0.5 * float(pulse.get("t_width", 1e10))
+            t_rise = float(pulse.get("t_rise", 0.0))
+            x_center = float(pulse.get("x_center", 0.5 * x_last))
+            x_half = 0.5 * float(pulse.get("x_width", 1e10))
+            x_rise = float(pulse.get("x_rise", 0.0))
+            parsed.append(
+                (
+                    float(pulse["k0"]),
+                    w_total,
+                    float(pulse["a0"]),
+                    t_center,
+                    t_half,
+                    t_rise,
+                    x_center,
+                    x_half,
+                    x_rise,
+                )
+            )
+        self.parsed_pulses = parsed
+
+    def __call__(self, t: float, args) -> Array:
+        total = jnp.zeros_like(self.x)
+        for k0, w_total, a0, t_center, t_half, t_rise, x_center, x_half, x_rise in self.parsed_pulses:
+            env_t = get_envelope(t_rise, t_rise, t_center - t_half, t_center + t_half, t)
+            env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, self.x)
+            total = total + env_t * env_x * w_total * a0 * jnp.sin(k0 * self.x - w_total * t)
         return total
 
 
@@ -147,8 +213,8 @@ class DiagonalExp1D:
 
     def apply(self, Ck: Array, s: float) -> Array:
         """Apply exp((-nu*col - D*kx^2 - hou_li_strength*hou_li_col) * s) to Ck, shape (Nn, Nx)."""
-        col_fac = -self.nu * self.col_1d[:, None] * s       # (Nn, Nx)
-        diff_fac = -self.D * self.kx_sq_1d[None, :] * s    # (1, Nx)
+        col_fac = -self.nu * self.col_1d[:, None] * s  # (Nn, Nx)
+        diff_fac = -self.D * self.kx_sq_1d[None, :] * s  # (1, Nx)
         if self.hou_li_strength > 0.0 and self.hou_li_col_1d is not None:
             hl_fac = -self.hou_li_strength * self.hou_li_col_1d[:, None] * s
         else:
@@ -237,14 +303,14 @@ class PoissonSolver1D:
     def electron_density(self, Ck_e: Array) -> Array:
         """n_e(x) from Hermite coefficient C_0 in k-space."""
         C0_e = jnp.fft.ifft(Ck_e[0, :], norm="forward").real
-        return (self.alpha_e ** 3) * C0_e
+        return (self.alpha_e**3) * C0_e
 
     def ion_density(self, Ck_i: Array) -> Array:
         """n_i(x) from Hermite coefficient C_0 in k-space (or static background)."""
         if self.static_ion_density is not None:
             return self.static_ion_density
         C0_i = jnp.fft.ifft(Ck_i[0, :], norm="forward").real
-        return (self.alpha_i ** 3) * C0_i
+        return (self.alpha_i**3) * C0_i
 
     def __call__(self, Ck_e: Array, Ck_i: Array) -> Array:
         """Return Ex(x), shape (Nx,)."""
@@ -310,11 +376,7 @@ def _hermite_e_coupling(
     C_up = jnp.concatenate([jnp.zeros((1, Nx), dtype=C.dtype), C[:-1, :]], axis=0)
 
     # Coupling: sqrt(2n)/alpha * F(x) * C[n-1](x)
-    integrand = (
-        sqrt_n_minus[:, None] * jnp.sqrt(2.0) / alpha
-        * F_total[None, :]
-        * C_up
-    )  # (Nn, Nx)
+    integrand = sqrt_n_minus[:, None] * jnp.sqrt(2.0) / alpha * F_total[None, :] * C_up  # (Nn, Nx)
 
     # FFT back and apply q/m * Omega_ce_tau
     out = q_over_m * Omega_ce_tau * jnp.fft.fft(integrand, axis=-1, norm="forward")
@@ -330,11 +392,13 @@ def _hermite_e_coupling(
 
 def _tree_add(a: dict, b: dict) -> dict:
     import jax
+
     return jax.tree.map(lambda x, y: x + y, a, b)
 
 
 def _tree_scale(a: dict, c: float) -> dict:
     import jax
+
     return jax.tree.map(lambda x: c * x, a)
 
 
@@ -354,6 +418,7 @@ class HermitePoisson1DVectorField:
         poisson: PoissonSolver1D,
         wave_solver: WaveSolver,
         ey_driver: TransverseWaveDriver,
+        ex_driver: LongitudinalElectricFieldDriver,
         sqrt_n_minus_e: Array,
         sqrt_n_minus_i: Array,
         alpha_e: float,
@@ -376,6 +441,7 @@ class HermitePoisson1DVectorField:
         self.poisson = poisson
         self.wave_solver = wave_solver
         self.ey_driver = ey_driver
+        self.ex_driver = ex_driver
 
         self.sqrt_n_minus_e = sqrt_n_minus_e
         self.sqrt_n_minus_i = sqrt_n_minus_i
@@ -412,7 +478,9 @@ class HermitePoisson1DVectorField:
         white = jax.random.normal(key, self.noise_spatial_profile.shape)
         return self.noise_amplitude * white * self.noise_spatial_profile
 
-    def _nonlinear_rhs(self, t: float, state: dict, a_frozen: Array, args: dict, noise_frozen: Array | float = 0.0) -> dict:
+    def _nonlinear_rhs(
+        self, t: float, state: dict, a_frozen: Array, args: dict, noise_frozen: Array | float = 0.0
+    ) -> dict:
         """Compute the nonlinear part of dCk/dt for both species.
 
         a_frozen: interior vector potential (Nx,) frozen from start of step.
@@ -424,14 +492,23 @@ class HermitePoisson1DVectorField:
         # Electrostatic field from Poisson
         Ex = self.poisson(Ck_e, Ck_i)  # (Nx,)
 
+        # External longitudinal E-field driver, evaluated at this substep time.
+        # Lawson-RK4 calls _nonlinear_rhs at t, t+dt/2, t+dt, so this captures the
+        # driver's time variation within the step (same as vlasov1d's dex_array).
+        Edrive = self.ex_driver(t, args)  # (Nx,)
+
         # Ponderomotive force: -0.5 * d(a^2)/dx  (on electrons)
-        a_sq = a_frozen ** 2
+        a_sq = a_frozen**2
         Fp = -0.5 * jnp.gradient(a_sq, self.dx)  # (Nx,)
 
-        # Electron E-field + ponderomotive coupling (+ stochastic force noise)
+        # Electron E-field + ponderomotive + external Ex driver (+ stochastic force noise)
         dCk_e = _hermite_e_coupling(
-            Ck_e, Ex + Fp + noise_frozen,
-            self.sqrt_n_minus_e, self.qm_e, self.alpha_e, self.Omega_ce_tau,
+            Ck_e,
+            Ex + Fp + Edrive + noise_frozen,
+            self.sqrt_n_minus_e,
+            self.qm_e,
+            self.alpha_e,
+            self.Omega_ce_tau,
             mask23=self.mask23,
         )
 
@@ -439,8 +516,12 @@ class HermitePoisson1DVectorField:
             dCk_i = jnp.zeros_like(state["Ck_ions"])
         else:
             dCk_i = _hermite_e_coupling(
-                Ck_i, Ex + noise_frozen,  # ponderomotive negligible for ions
-                self.sqrt_n_minus_i, self.qm_i, self.alpha_i, self.Omega_ce_tau,
+                Ck_i,
+                Ex + Edrive + noise_frozen,  # ponderomotive negligible for ions
+                self.sqrt_n_minus_i,
+                self.qm_i,
+                self.alpha_i,
+                self.Omega_ce_tau,
                 mask23=self.mask23,
             ).view(jnp.float64)
 
@@ -448,9 +529,9 @@ class HermitePoisson1DVectorField:
         # (wave solver is handled outside the Lawson loop)
         out = dict(state)
         out["Ck_electrons"] = dCk_e.view(jnp.float64)
-        out["Ck_ions"] = dCk_i if self.static_ions else dCk_i
+        out["Ck_ions"] = dCk_i
         # Zero out non-Ck entries so tree arithmetic works cleanly
-        for k in ["a", "prev_a", "e", "da"]:
+        for k in ["a", "prev_a", "e", "da", "de"]:
             if k in out:
                 out[k] = jnp.zeros_like(state[k])
         return out
@@ -568,6 +649,10 @@ class HermitePoisson1DVectorField:
         # 3. Electrostatic field for diagnostics/output
         Ex = self.poisson(Ck_e_np1, Ck_i_np1)
 
+        # External longitudinal driver field at the start of the step (diagnostic only;
+        # it is applied to the force inside the Lawson loop, not here).
+        de = self.ex_driver(t, args)
+
         # 4. Assemble new state
         new_state = {
             "Ck_electrons": y_after_lawson["Ck_electrons"],
@@ -576,6 +661,7 @@ class HermitePoisson1DVectorField:
             "prev_a": a_result["prev_a"],
             "e": Ex,
             "da": djy,
+            "de": de,
         }
 
         # 5. Apply sponge damping
