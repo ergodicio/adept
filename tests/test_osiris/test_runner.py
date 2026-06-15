@@ -10,6 +10,11 @@ import pytest
 from adept.osiris import runner
 
 
+# Resolved from the same env vars the runner itself honors, so the live-binary
+# smoke test below runs wherever OSIRIS is built and skips cleanly otherwise.
+OSIRIS_BIN_1D = os.environ.get("OSIRIS_BIN_1D") or os.environ.get("OSIRIS_BIN")
+
+
 def test_discover_binary_explicit_wins(tmp_path: Path) -> None:
     fake = tmp_path / "fake-osiris"
     fake.write_text("")
@@ -41,8 +46,8 @@ def test_run_osiris_missing_binary_raises(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(
-    not Path("/home/phil/Desktop/pic/osiris/bin/osiris-1D.e").exists(),
-    reason="osiris-1D.e not built",
+    not (OSIRIS_BIN_1D and Path(OSIRIS_BIN_1D).exists()),
+    reason="set OSIRIS_BIN_1D (or OSIRIS_BIN) to a built osiris-1D.e to run",
 )
 def test_run_osiris_invalid_deck_raises(tmp_path: Path) -> None:
     # A deck with a recognized section but garbage inside: OSIRIS exits 0
@@ -51,7 +56,7 @@ def test_run_osiris_invalid_deck_raises(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError) as excinfo:
         runner.run_osiris(
             "node_conf { node_number(1:1) = junk_value, }",
-            binary="/home/phil/Desktop/pic/osiris/bin/osiris-1D.e",
+            binary=OSIRIS_BIN_1D,
             mpi_ranks=1,
             run_root=tmp_path,
         )

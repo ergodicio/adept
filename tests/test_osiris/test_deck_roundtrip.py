@@ -9,16 +9,20 @@ import pytest
 from adept.osiris import deck as osd
 
 
+DECKS_DIR = Path(__file__).parent / "decks"
+
+# Real OSIRIS decks vendored into the repo so the round-trip is exercised in
+# CI without depending on any developer's local checkout.
 REAL_DECKS = [
-    "/home/phil/Desktop/pic/projects/twostream-pic/two-stream-1d",
-    "/home/phil/Desktop/pic/projects/twostream-pic/example_deck",
-    "/home/phil/Desktop/pic/osiris/decks/cuda/os-stdin-1d-therm",
-    "/home/phil/Desktop/pic/osiris/decks/cuda/os-stdin-2d-therm",
+    DECKS_DIR / "two-stream-1d",
+    DECKS_DIR / "srs-1d_lpi",
+    DECKS_DIR / "srs-lpi_2node",
+    DECKS_DIR / "F-Tsung_2d_lpi_deck",
 ]
 
 
-@pytest.mark.parametrize("path", REAL_DECKS)
-def test_roundtrip_identity(path: str) -> None:
+@pytest.mark.parametrize("path", REAL_DECKS, ids=lambda p: p.name)
+def test_roundtrip_identity(path: Path) -> None:
     text = Path(path).read_text()
     parsed = osd.parse_deck(text)
     rendered = osd.render_deck(parsed)
@@ -127,9 +131,7 @@ def test_deck_to_flat_dict_keys_are_mlflow_safe() -> None:
     import re
 
     s = osd.parse_deck(
-        Path(
-            "/home/phil/Desktop/pic/projects/twostream-pic/two-stream-1d"
-        ).read_text()
+        (DECKS_DIR / "two-stream-1d").read_text()
     )
     flat = osd.deck_to_flat_dict(s)
     allowed = re.compile(r"^[A-Za-z0-9_./:\- ]+$")

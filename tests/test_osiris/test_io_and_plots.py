@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import matplotlib
@@ -16,16 +17,17 @@ from adept.osiris import io as oio
 from adept.osiris import plots as oplt
 
 
-EXISTING_RUN = Path(
-    "/home/phil/Desktop/pic/projects/twostream-pic/run0001"
-)
+# Point this at a completed two-stream OSIRIS run to exercise the io/plots
+# loaders against real data; the tests skip cleanly when it is unset.
+EXISTING_RUN_ENV = "OSIRIS_TWOSTREAM_RUN"
 
 
 @pytest.fixture(scope="module")
 def run_dir() -> Path:
-    if not EXISTING_RUN.is_dir():
-        pytest.skip("Existing twostream run not present")
-    return EXISTING_RUN
+    raw = os.environ.get(EXISTING_RUN_ENV)
+    if not raw or not Path(raw).is_dir():
+        pytest.skip(f"set {EXISTING_RUN_ENV} to an existing two-stream run dir")
+    return Path(raw)
 
 
 def test_load_grid_h5_shape_and_coords(run_dir: Path) -> None:
