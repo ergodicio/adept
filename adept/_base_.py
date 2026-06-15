@@ -326,6 +326,9 @@ class ergoExo:
         elif cfg["solver"] == "pic-1d":
             from adept.pic1d import BasePIC1D as this_module
 
+        elif cfg["solver"] == "hermite-legendre-1d":
+            from adept.hermite_legendre_1d import BaseHermiteLegendre1D as this_module
+
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
