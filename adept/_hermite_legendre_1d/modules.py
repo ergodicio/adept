@@ -256,6 +256,7 @@ class BaseHermiteLegendre1D(ADEPTModule):
         field_on = bool(physics.get("field", True))
         integrator = str(grid.get("integrator", "lawson")).lower()
         imex = integrator == "imex"
+        implicit_mp = integrator == "implicit"
         dt = float(grid["dt"])
 
         kx_1d = grid["kx_1d"]
@@ -269,8 +270,9 @@ class BaseHermiteLegendre1D(ADEPTModule):
         hermite_stream = StreamingExp1D(T_H, prefactor=-1j * alpha, kx_1d=kx_1d)
         legendre_stream = StreamingExp1D(np.asarray(leg["T_L"]), prefactor=-1j, kx_1d=kx_1d)
 
-        hermite_coll = DiagonalCollisionExp1D(nu_H, safe_col(Nh))
-        legendre_coll = DiagonalCollisionExp1D(nu_L, safe_col(Nl))
+        col_e, col_l = safe_col(Nh), safe_col(Nl)
+        hermite_coll = DiagonalCollisionExp1D(nu_H, col_e)
+        legendre_coll = DiagonalCollisionExp1D(nu_L, col_l)
         combined_exp = CombinedLinearExp1D(hermite_stream, legendre_stream, hermite_coll, legendre_coll)
 
         poisson = PoissonSolver1D(one_over_kx=one_over_kx, kx_sq=kx_sq, alpha=alpha, width=width)
@@ -314,6 +316,18 @@ class BaseHermiteLegendre1D(ADEPTModule):
             imex=imex,
             G_C=G_C,
             G_B=G_B,
+            implicit=implicit_mp,
+            T_H=jnp.asarray(T_H) if implicit_mp else None,
+            T_L=jnp.asarray(np.asarray(leg["T_L"])) if implicit_mp else None,
+            col_e=col_e if implicit_mp else None,
+            col_l=col_l if implicit_mp else None,
+            nu_H=nu_H,
+            nu_L=nu_L,
+            newton_iters=int(grid.get("newton_iters", 3)),
+            gmres_restart=int(grid.get("gmres_restart", 20)),
+            gmres_maxiter=int(grid.get("gmres_maxiter", 4)),
+            gmres_tol=float(grid.get("gmres_tol", 1e-8)),
+            precondition=bool(grid.get("precondition", True)),
         )
 
         self.cfg = get_save_quantities(self.cfg)

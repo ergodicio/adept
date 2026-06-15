@@ -4,6 +4,14 @@
 # df(x,v,0) = n_b/sqrt(2*pi) exp(-(v-10)^2/2)   (beam projected onto Legendre)
 # The beam is well separated from the bulk, so f0<->df coupling is weak and a large
 # Hermite collision rate nu_H = 10 is acceptable. Parameters match Chapurin et al.
+#
+# This is the most demanding benchmark (asymmetric velocity window, long time). The
+# explicit and IMEX integrators both blow up near saturation; it requires the A-stable,
+# energy-conserving implicit-midpoint integrator (integrator: implicit) with the combined
+# streaming+force preconditioner. At saturation the implicit nonlinear solve is hard, so a
+# small step is needed for Newton/GMRES to converge (dt <= ~0.02; the paper uses dt=0.01).
+# A larger dt (e.g. 0.1) converges in the linear phase but fails at saturation -- the
+# learned/ML preconditioner is the planned route to large-dt robustness here.
 
 solver: hermite-legendre-1d
 
@@ -32,7 +40,12 @@ grid:
   Nh: 128
   Nl: 128
   tmax: 120.0
-  dt: 0.01
+  dt: 0.02                   # small step so the saturation-phase JFNK solve converges
+  integrator: implicit       # A-stable implicit midpoint; conserves mass exactly, energy to solve tol
+  precondition: true         # combined streaming+force preconditioner
+  newton_iters: 4
+  gmres_restart: 30
+  gmres_maxiter: 3
 
 initialization:
   type: bump-on-tail

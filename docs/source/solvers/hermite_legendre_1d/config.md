@@ -74,7 +74,31 @@ The artificial collision operator (paper sec 2.5) uses the cubic spectrum
 | `Nl` | int | — | Number of Legendre modes for `df` (closure by truncation: `B_{Nl}=0`) |
 | `tmax` | float | — | Final simulation time (normalized). Snapped to an exact multiple of `dt`. |
 | `dt` | float | `0.01` | Timestep |
-| `integrator` | str | `"lawson"` | Time integrator: `"lawson"` (fully explicit Lawson-RK4) or `"imex"` (Lawson-RK4 + implicit Lorentz substep — see below). |
+| `integrator` | str | `"lawson"` | Time integrator: `"lawson"` (explicit Lawson-RK4), `"imex"` (Lawson-RK4 + implicit Lorentz substep), or `"implicit"` (implicit midpoint, AD-JFNK) — see below. |
+| `newton_iters` | int | `3` | (`implicit`) Newton iterations per step. |
+| `gmres_restart`, `gmres_maxiter`, `gmres_tol` | int/int/float | `20`/`4`/`1e-8` | (`implicit`) matrix-free GMRES controls for the Newton linear solves. |
+| `precondition` | bool | `true` | (`implicit`) use the streaming+collision operator as a physics-based GMRES preconditioner (see below). |
+
+### `integrator: implicit` (implicit midpoint via AD-JFNK)
+
+Advances the full RHS with the implicit-midpoint rule `y1 = y0 + dt·F((y0+y1)/2)`,
+solved by **Jacobian-free Newton-Krylov**: each Newton linear system uses a matrix-free
+GMRES whose Jacobian-vector products are *exact autodiff JVPs* (`jax.linearize`) — the
+Jacobian is never assembled (memory is the state plus a few Krylov vectors). Implicit
+midpoint is A-stable (no CFL at all) and conserves quadratic invariants, so it conserves
+mass exactly and energy to the solve tolerance, and stays stable into the saturated /
+long-time regime where both `lawson` and `imex` blow up (e.g. bump-on-tail). Cost: each
+step does `newton_iters × (GMRES iterations) × (RHS evals)`, so it is the most expensive
+per step — use it for the hard cases, not the cheap ones.
+
+**Preconditioning** (`precondition: true`, default). The implicit operator's stiffness is
+dominated by the skew streaming term, whose eigenvalues smear along the imaginary axis
+(`~dt/2·α·k_max·√(2Nh)`) — the worst case for unpreconditioned GMRES, which then needs
+many iterations and can fail to converge at large `dt`/`Nx` (Newton then injects energy).
+The preconditioner `M = I − dt/2·(L_streaming + L_collision)` is block-diagonal in `k` and
+tridiagonal in mode index, so `M⁻¹` is a cheap per-`k` tridiagonal solve that captures
+exactly that stiff spectrum; GMRES on `M⁻¹A` then converges in a handful of iterations.
+This is what makes large-`dt` implicit-midpoint runs practical.
 
 ### `integrator: imex`
 
