@@ -101,8 +101,6 @@ output:
   diagnostics_to_log: null                        # null = all; or [e1, charge, …]
   v_th: 0.1                                         # optional: overlays the Bohm–Gross
                                                     #   Langmuir branch on ω–k plots
-  dist_cells: 150                                   # right-boundary cells averaged for
-                                                    #   the phase-space f(p) lineouts
   omega_k_zoom: 4.0                                 # (k, ω) half-width [ω_p] for the
                                                     #   equal-aspect lower ω–k panel
                                                     #   (clamped to Nyquist); null = full
@@ -136,14 +134,12 @@ Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1
 | `profiles/<species>/density.png`              | density profile vs `x` (final snapshot + late-time mean) |
 | `profiles/<species>/temperature.png`          | temperature profile vs `x`, from `uth1/2/3` or `T11/22/33` moments (omitted if neither is dumped) |
 | `phasespace/<species>/<ps>.png`, `phasespace_evolution/…` | `(x, p)` phase-space heatmaps |
-| `distribution_lineouts/<species>/<ps>.png`    | `f(p)` averaged over the rightmost `dist_cells` cells, overlaid at sampled times — stacked linear `f`, `\|f\|` log, and `δf = f - f_M` panels |
 | `field_decomp/<comp>.png`                     | left/right-going transverse `E` (vacuum Riemann split `(e2±b3)/2`, `(e3∓b2)/2`), spacetime + `ω–k` |
 | `energy_vs_time.png`, `energy_components_vs_time.png`, `total_energy_vs_time.png` | field / kinetic energy traces |
-| `energy_budget.png` + `laser_energy_budget.txt` | reflected / transmitted / absorbed laser power vs time (stacked-area), with scalar `R`/`T`/absorbed in the `.txt` — emitted only when the drive `a0`/`omega0` are known |
 
 > **Note on `field_decomp/`.** The left/right split is exact only in vacuum or a uniform non-dispersive medium (`|E| = |B|` for a pure travelling wave). In a plasma the EM wave is dispersive, so the split is approximate — useful for direction, but cross-check the dispersion before reading the residual as physical counter-propagating power. The longitudinal `e1` is electrostatic and is intentionally excluded.
 
-> **Laser energy budget.** Reflected = left-going Poynting flux at the left boundary, transmitted = right-going flux at the right boundary (from the same Riemann split), compared to the incident intensity `I₀ = (a0·ω0)²/2` from the drive. Scalars are the boundary flux averaged over the last 25 % of the run (the saturated phase) ÷ `I₀`; `absorbed = 1 − R − T`. The antenna sits at the lower-`x` boundary, so its source cell is skipped. The same dispersive-medium caveat as `field_decomp/` applies — the split is approximate where the boundaries sit in plasma. `R`/`T`/absorbed are also logged to MLflow as `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac`.
+> **SRS-specific plots & metrics live in osiris-lpi.** The laser-energy budget (reflected / transmitted / absorbed over time: the `energy_budget.png` + `laser_energy_budget.txt` artifacts and the `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics) and the spatio-temporal distribution-function lineouts (`distribution_lineouts/` + `deltaf_lineouts/`, `f(p)` and `δf` averaged over the rightmost `dist_cells` cells) are **not** produced by adept's general OSIRIS wrapper. They live in the [osiris-lpi](https://github.com/ergodicio/osiris-lpi) repo — `osiris_lpi.OsirisLPI` subclasses `BaseOsiris` and adds them in `post_process`, reading `output.dist_cells` and the drive `antenna.a0`/`antenna.omega0` from the deck. Regenerate them offline from saved NetCDFs with `python -m osiris_lpi.regen`.
 
 ## Programmatic use
 

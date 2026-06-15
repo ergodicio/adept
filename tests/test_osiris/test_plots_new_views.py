@@ -3,7 +3,6 @@
 Synthesizes tiny OSIRIS-shaped runs (no real solver needed) to exercise:
 
   - proper-LaTeX axis/value labels (``_tex`` wrapping)
-  - phase-space distribution lineouts averaged over the right-boundary cells
   - the zoomed (k, ω) dispersion view with the light line
   - combined J_x/J_y/J_z (j1/j2/j3) current figures
   - per-species density + temperature profiles
@@ -21,7 +20,6 @@ matplotlib.use("Agg")
 
 import h5py
 import numpy as np
-import xarray as xr
 
 from adept.osiris import io as oio
 from adept.osiris import plots as oplt
@@ -109,31 +107,6 @@ def test_axis_label_is_math_mode(tmp_path: Path) -> None:
     assert oplt._axis_label(da, "t") == r"$t$  [$1 / \omega_p$]"
     # Spatial axis: both long-name and units in math mode.
     assert oplt._axis_label(da, "x1") == r"$x_1$  [$c / \omega_p$]"
-
-
-# --- distribution lineouts ------------------------------------------------
-
-
-def test_distribution_lineout_averages_right_cells() -> None:
-    p = np.linspace(-2, 2, 11)
-    x = np.linspace(0, 10, 16)
-    fp = np.exp(-(p**2))
-    data = np.tile(fp[:, None], (1, x.size))  # f independent of x
-    da = xr.DataArray(
-        data, coords={"p1": p, "x1": x}, dims=("p1", "x1"), name="x1p1",
-        attrs={"axis_units": {"p1": r"m_e c", "x1": r"c / \omega_p"},
-               "axis_long_names": {"p1": "p_1", "x1": "x_1"}, "units": "a.u."},
-    )
-    ax = oplt.plot_distribution_lineout(da, n_cells=10)
-    y = ax.lines[0].get_ydata()
-    np.testing.assert_allclose(y, fp, atol=1e-12)
-
-
-def test_distribution_lineout_time_series(tmp_path: Path) -> None:
-    run_dir = _make_rich_run(tmp_path)
-    ser = oio.load_series(run_dir / "MS/PHA/x1p1/electron")
-    ax = oplt.plot_distribution_lineout(ser, n_cells=5, n_times=4)
-    assert len(ax.lines) == 4  # one curve per sampled time
 
 
 # --- zoomed omega-k -------------------------------------------------------
@@ -237,7 +210,6 @@ def test_save_canned_plots_emits_new_views(tmp_path: Path) -> None:
         "currents/lineouts",
         "profiles/electron/density",
         "profiles/electron/temperature",
-        "distribution_lineouts/electron/x1p1",
         "field_decomp/e2",
         "field_decomp/e3",
     }
@@ -245,45 +217,3 @@ def test_save_canned_plots_emits_new_views(tmp_path: Path) -> None:
     for path in written.values():
         assert path.exists() and path.stat().st_size > 0
 
-
-# --- laser energy budget --------------------------------------------------
-
-
-def test_laser_energy_budget_pure_right_going_has_no_reflection(tmp_path: Path) -> None:
-    run_dir = _make_rich_run(tmp_path)
-    # Fixture fields are a pure right-going wave (e2=b3, e3=-b2), so the
-    # left-going Riemann parts vanish identically: nothing is "reflected".
-    # Averaging over the whole grid (one full wavelength) and all time gives
-    # <I_R> = <2 sin^2> ~ 1, matching I0 = (a0*omega0)^2/2 = 1 -> T ~ 1.
-    b = oplt.laser_energy_budget(
-        run_dir, a0=float(np.sqrt(2.0)), omega0=1.0,
-        last_frac=1.0, guard_cells=0, window_cells=16,
-    )
-    assert b["pairs"] == ["e2", "e3"]
-    assert b["R"] < 1e-9                       # no left-going flux at all
-    assert b["transmitted"] > 0.0
-    # window = whole grid -> left/right slabs coincide -> equal fluxes
-    assert abs(b["transmitted"] - b["incident_measured"]) < 1e-9
-    assert 0.7 < b["T"] < 1.3
-    assert abs(b["absorbed"] - (1.0 - b["R"] - b["T"])) < 1e-12
-
-
-def test_save_canned_plots_emits_energy_budget_with_drive(tmp_path: Path) -> None:
-    run_dir = _make_rich_run(tmp_path)
-    out = tmp_path / "plots"
-    written = oplt.save_canned_plots(run_dir, out, a0=0.004, omega0=1.0)
-    assert "energy_budget" in written
-    assert written["energy_budget"].exists() and written["energy_budget"].stat().st_size > 0
-    txt = out / "laser_energy_budget.txt"
-    assert txt.exists()
-    body = txt.read_text()
-    for key in ("reflected", "transmitted", "absorbed", "I0"):
-        assert key in body
-
-
-def test_save_canned_plots_skips_energy_budget_without_drive(tmp_path: Path) -> None:
-    run_dir = _make_rich_run(tmp_path)
-    out = tmp_path / "plots"
-    written = oplt.save_canned_plots(run_dir, out)  # no a0/omega0 -> skipped
-    assert "energy_budget" not in written
-    assert not (out / "laser_energy_budget.txt").exists()

@@ -23,8 +23,6 @@ PNGs for the standard set:
                                            (initial + final + late mean); else uth / T_ii moments
       phasespace/<species>/<ps>.png        final-step (x, p) heatmap per species
       phasespace_evolution/<species>/<ps>.png  (x, p) heatmaps at sampled times
-      distribution_lineouts/<species>/<ps>.png  f(p) averaged over the right-boundary cells
-      deltaf_lineouts/<species>/<ps>.png   delta-f = f - (fitted Maxwellian), same averaging
       field_decomp/<comp>.png              left/right-going transverse E (Riemann split)
       energy_vs_time.png                   total field energy time-trace
       energy_components_vs_time.png        E-field / B-field / total energy
@@ -606,220 +604,6 @@ def _crop_spatial_to_box(da: xr.DataArray) -> xr.DataArray:
     return da
 
 
-def _maxwellian_moments(p, f) -> tuple[float, float, float] | None:
-    r"""Density, mean momentum, and variance of a 1-D distribution ``f(p)``.
-
-    Returns ``(W, p0, var)`` with ``W = sum(f)`` (negative weights clipped to
-    zero), ``p0 = <p>`` and ``var = <(p - p0)^2>`` — the parameters of the
-    moment-matched Maxwellian, ``var`` being the kinetic temperature ``T`` for
-    ``m = 1`` (electrons, ``p`` in ``m_e c``). ``None`` if ``f`` has no positive
-    weight.
-    """
-    f = np.clip(np.asarray(f, dtype=float), 0.0, None)
-    W = float(f.sum())
-    if W <= 0:
-        return None
-    p = np.asarray(p, dtype=float)
-    p0 = float((f * p).sum() / W)
-    var = float((f * (p - p0) ** 2).sum() / W)
-    return W, p0, var
-
-
-def _maxwellian_from_moments(p, W: float, p0: float, var: float):
-    """Gaussian on grid ``p`` with the same sum ``W``, mean ``p0`` and ``var``."""
-    p = np.asarray(p, dtype=float)
-    if var <= 0:
-        return np.zeros_like(p)
-    g = np.exp(-((p - p0) ** 2) / (2.0 * var))
-    s = float(g.sum())
-    return g * (W / s) if s > 0 else g
-
-
-def _boundary_distribution(da: xr.DataArray, n_cells: int):
-    r"""``f(p)`` averaged over the ``n_cells`` cells inside the right box edge.
-
-    Shared by the ``f(p)`` and ``\delta f`` lineouts. Returns
-    ``(f_xp, da, pdim, x_lo, x_hi, k)``: the decorated input ``da``, the
-    sign-corrected (non-negative) distribution ``f_xp`` with dims ``(t?, p)``,
-    the momentum axis name ``pdim``, the averaged spatial window ``[x_lo,
-    x_hi]`` and the cell count ``k``. The window is anchored at the physical box
-    edge (``sim.XMAX``) so the empty ``ps_xmax`` padding beyond the box is
-    excluded.
-    """
-    da = _decorate(da)
-    spatial = [d for d in da.dims if d != "t" and str(d).startswith("x")]
-    moment = [d for d in da.dims if d != "t" and str(d).startswith("p")]
-    if not spatial or not moment:
-        raise ValueError(f"need an x* and a p* dim; got dims {da.dims}")
-    xdim, pdim = spatial[0], moment[0]
-    nx = da.sizes[xdim]
-    xv = da.coords[xdim].values
-    right = int(np.searchsorted(xv, _sim_box_xmax(da, xdim), side="right")) - 1
-    right = min(max(right, 0), nx - 1)
-    k = max(1, min(n_cells, right + 1))
-    lo = right - k + 1
-    f_xp = da.isel({xdim: slice(lo, right + 1)}).mean(dim=xdim)
-    # Charge density q*f is single-signed per species (negative for electrons);
-    # divide out the sign so f(p) is non-negative.
-    q_sign = np.sign(float(np.nansum(da.values))) or 1.0
-    return f_xp / q_sign, da, pdim, float(xv[lo]), float(xv[right]), k
-
-
-def plot_distribution_lineout(
-    series: xr.DataArray | str | Path,
-    ax: plt.Axes | None = None,
-    *,
-    n_cells: int = 150,
-    n_times: int = 6,
-    log: bool = False,
-    cmap: str = "viridis",
-    title: str | None = None,
-    legend: bool = True,
-) -> plt.Axes:
-    """Distribution function ``f(p)`` near the right boundary.
-
-    Takes a phase-space series with a spatial (``x*``) and a momentum
-    (``p*``) axis — either a stacked ``(t, p, x)`` series from
-    :func:`io.load_series` or a single ``(p, x)`` snapshot — averages it over
-    the ``n_cells`` cells just inside the right edge of the *physical box*
-    (``sim.XMAX``; the phase-space axis may extend past the box when the deck's
-    ``ps_xmax`` exceeds ``xmax``), and overlays that lineout at ~``n_times``
-    sampled times (colour = time). This is the standard "what does the
-    distribution look like as it leaves the box" diagnostic for driven /
-    open-boundary runs.
-
-    OSIRIS species phase spaces store the charge density ``q*f``; the charge
-    sign is divided out so the curve reads as a non-negative ``f(p)``.
-    """
-    da = series if isinstance(series, xr.DataArray) else _io.load_series(series)
-    f_xp, da, pdim, x_lo, x_hi, k = _boundary_distribution(da, n_cells)
-    p = f_xp.coords[pdim].values
-
-    if ax is None:
-        _, ax = plt.subplots(figsize=(6, 4))
-
-    if "t" in f_xp.dims:
-        nt = f_xp.sizes["t"]
-        idx = np.unique(np.linspace(0, nt - 1, min(n_times, nt)).astype(int))
-        colours = plt.get_cmap(cmap)(np.linspace(0.15, 0.95, len(idx)))
-        tvals = f_xp.coords["t"].values
-        for colour, i in zip(colours, idx, strict=False):
-            y = f_xp.isel(t=i).values
-            y = np.abs(y) if log else y
-            ax.plot(p, y, color=colour, lw=1.3, label=f"{float(tvals[i]):.2g}")
-        if legend:
-            ax.legend(fontsize=7, title=_axis_label(da, "t"), ncol=2, framealpha=0.6)
-    else:
-        y = np.abs(f_xp.values) if log else f_xp.values
-        ax.plot(p, y, lw=1.4)
-
-    if log:
-        ax.set_yscale("log")
-    units = da.attrs.get("units", "")
-    ylabel = rf"$\langle f \rangle_x$  [{_tex(units)}]" if units else r"$\langle f \rangle_x$"
-    ax.set_xlabel(_axis_label(da, pdim))
-    ax.set_ylabel(ylabel)
-    ax.set_title(
-        title
-        or rf"{_display_name(da)}  —  $f(p)$ over {k} cells inside the right boundary "
-        rf"($x \in [{x_lo:.4g}, {x_hi:.4g}]$)"
-    )
-    ax.grid(True, alpha=0.3)
-    return ax
-
-
-def plot_deltaf_lineout(
-    series: xr.DataArray | str | Path,
-    ax: plt.Axes | None = None,
-    *,
-    n_cells: int = 150,
-    n_times: int = 6,
-    cmap: str = "viridis",
-    title: str | None = None,
-    legend: bool = True,
-) -> plt.Axes:
-    r"""``\delta f = f - f_M`` near the right boundary, overlaid at sampled times.
-
-    Averages the phase space over the ``n_cells`` cells inside the right box
-    edge to get ``f(p)`` (as :func:`plot_distribution_lineout`), then at each
-    sampled time subtracts the moment-matched Maxwellian ``f_M`` — the Gaussian
-    with the same density, mean momentum and temperature — and overlays the
-    residual. Since the species starts Maxwellian, the residual isolates the
-    non-thermal structure that grows away from it: beams and hot tails.
-    """
-    da = series if isinstance(series, xr.DataArray) else _io.load_series(series)
-    f_xp, da, pdim, x_lo, x_hi, k = _boundary_distribution(da, n_cells)
-    p = f_xp.coords[pdim].values
-
-    def _residual(fvals):
-        m = _maxwellian_moments(p, fvals)
-        return fvals if m is None else fvals - _maxwellian_from_moments(p, *m)
-
-    if ax is None:
-        _, ax = plt.subplots(figsize=(6, 4))
-
-    if "t" in f_xp.dims:
-        nt = f_xp.sizes["t"]
-        idx = np.unique(np.linspace(0, nt - 1, min(n_times, nt)).astype(int))
-        colours = plt.get_cmap(cmap)(np.linspace(0.15, 0.95, len(idx)))
-        tvals = f_xp.coords["t"].values
-        for colour, i in zip(colours, idx, strict=False):
-            ax.plot(p, _residual(f_xp.isel(t=i).values), color=colour, lw=1.3,
-                    label=f"{float(tvals[i]):.2g}")
-        if legend:
-            ax.legend(fontsize=7, title=_axis_label(da, "t"), ncol=2, framealpha=0.6)
-    else:
-        ax.plot(p, _residual(f_xp.values), lw=1.4)
-
-    ax.axhline(0.0, color="0.6", lw=0.6)
-    units = da.attrs.get("units", "")
-    ylabel = r"$\langle \delta f \rangle_x$" + (f"  [{_tex(units)}]" if units else "")
-    ax.set_xlabel(_axis_label(da, pdim))
-    ax.set_ylabel(ylabel)
-    ax.set_title(
-        title
-        or rf"{_display_name(da)}  —  $\delta f = f - f_M$ over {k} cells inside the "
-        rf"right boundary ($x \in [{x_lo:.4g}, {x_hi:.4g}]$)"
-    )
-    ax.grid(True, alpha=0.3)
-    return ax
-
-
-def plot_distribution_lineout_figure(
-    series: xr.DataArray | str | Path,
-    *,
-    n_cells: int = 150,
-    n_times: int = 6,
-    cmap: str = "viridis",
-) -> plt.Figure:
-    r"""Right-boundary distribution stacked three ways: ``f``, ``|f|`` log, ``\delta f``.
-
-    Three views of the same boundary-averaged distribution (see
-    :func:`plot_distribution_lineout` / :func:`plot_deltaf_lineout`): the linear
-    ``f(p)`` panel shows the bulk, the ``|f|`` log panel the low-amplitude tail
-    / non-thermal structure, and the ``\delta f = f - f_M`` panel the residual
-    against the moment-matched Maxwellian (beams and hot tails). All three share
-    the momentum axis and the time sampling; the time legend is drawn once, on
-    the linear panel.
-    """
-    da = _ensure_series(series)
-    fig, (ax_f, ax_logf, ax_df) = plt.subplots(3, 1, figsize=(6, 12), sharex=True)
-    plot_distribution_lineout(da, ax=ax_f, n_cells=n_cells, n_times=n_times, cmap=cmap)
-    plot_distribution_lineout(
-        da, ax=ax_logf, n_cells=n_cells, n_times=n_times, cmap=cmap,
-        log=True, legend=False,
-        title=rf"{_display_name(da)}  —  $|f(p)|$ (log scale)",
-    )
-    plot_deltaf_lineout(
-        da, ax=ax_df, n_cells=n_cells, n_times=n_times, cmap=cmap, legend=False,
-        title=rf"{_display_name(da)}  —  $\delta f = f - f_M$",
-    )
-    for ax in (ax_f, ax_logf):
-        ax.set_xlabel("")  # shared axis: momentum label stays on the bottom panel only
-    fig.tight_layout()
-    return fig
-
-
 # --- currents (j1/j2/j3) --------------------------------------------------
 
 
@@ -1163,157 +947,6 @@ def plot_field_lr_decomposition(run_dir: str | Path) -> dict[str, plt.Figure]:
     return figs
 
 
-# --- laser energy budget (reflected / transmitted / absorbed) -------------
-
-
-def laser_energy_budget(
-    run_dir: str | Path,
-    *,
-    a0: float,
-    omega0: float,
-    last_frac: float = 0.25,
-    guard_cells: int = 1,
-    window_cells: int = 3,
-) -> dict:
-    r"""Reflected / transmitted / absorbed laser-energy budget at the box edges.
-
-    Uses the vacuum Riemann split (:func:`efield_lr_components`) to form the
-    one-way Poynting flux of the transverse light (code units, ``c = 1``, so the
-    flux of each travelling component is just its ``E^2`` summed over the
-    available polarization pairs):
-
-    - **reflected**  = left-going flux ``I_L`` at the **left** boundary,
-    - **transmitted** = right-going flux ``I_R`` at the **right** boundary.
-
-    The incident intensity is taken from the drive amplitude,
-    ``I0 = (a0 * omega0)**2 / 2`` (the cycle-averaged flux of the launched wave,
-    in the same field units), so ``R`` and ``T`` are normalization-independent
-    ratios. The OSIRIS antenna sits at the lower-``x`` boundary, so its current
-    source contaminates the edge cell; ``guard_cells`` cells are skipped at each
-    boundary and the flux is averaged over a thin ``window_cells`` slab just
-    inside. Scalars are the flux averaged over the **last ``last_frac``** of the
-    run (the saturated phase) divided by ``I0``: ``R``, ``T`` and
-    ``absorbed = 1 - R - T`` (a steady-state energy balance; valid once the box
-    is filled and the in-flight transient has passed).
-
-    Returns a dict with the per-dump time series (``t`` and the ``incident`` /
-    ``reflected`` / ``transmitted`` flux), the scalars (``I0``, ``R``, ``T``,
-    ``absorbed``, the ``incident_measured`` cross-check) and the settings used.
-    """
-    comps = efield_lr_components(run_dir)
-    if not comps:
-        raise RuntimeError("no transverse field pairs (need e2/b3 or e3/b2) for the budget")
-    sample = next(iter(comps.values()))["right"]
-    xdim = next(d for d in sample.dims if d != "t")
-    t = np.asarray(sample.coords["t"].values, dtype=float)
-    # One-way Poynting flux summed over whichever polarization pairs were dumped.
-    I_R = sum(d["right"] ** 2 for d in comps.values())
-    I_L = sum(d["left"] ** 2 for d in comps.values())
-    n = I_R.sizes[xdim]
-    g, w = guard_cells, window_cells
-    if g + w > n:
-        g, w = 0, min(w, n)
-    left, right = slice(g, g + w), slice(n - g - w, n - g)
-    inc_t = I_R.isel({xdim: left}).mean(dim=xdim).values   # right-going @ left (incident)
-    refl_t = I_L.isel({xdim: left}).mean(dim=xdim).values   # left-going  @ left (reflected)
-    trans_t = I_R.isel({xdim: right}).mean(dim=xdim).values  # right-going @ right (transmitted)
-
-    i0 = (a0 * omega0) ** 2 / 2.0
-    t_lo = t[0] + (1.0 - last_frac) * (t[-1] - t[0])
-    win = t >= t_lo
-    refl = float(np.mean(refl_t[win]))
-    trans = float(np.mean(trans_t[win]))
-    inc_m = float(np.mean(inc_t[win]))
-    r, tr = refl / i0, trans / i0
-    return {
-        "a0": float(a0), "omega0": float(omega0), "I0": i0,
-        "t": t, "incident_t": inc_t, "reflected_t": refl_t, "transmitted_t": trans_t,
-        "t_window": (float(t_lo), float(t[-1])), "last_frac": float(last_frac),
-        "reflected": refl, "transmitted": trans, "incident_measured": inc_m,
-        "R": r, "T": tr, "absorbed": 1.0 - r - tr,
-        "guard_cells": g, "window_cells": w, "pairs": list(comps),
-    }
-
-
-def _moving_average(y: np.ndarray, k: int) -> np.ndarray:
-    """Centered moving average over ``k`` samples, edge-normalized (no droop)."""
-    if k <= 1 or y.size < 3:
-        return y
-    ker = np.ones(min(k, y.size))
-    num = np.convolve(y, ker, mode="same")
-    den = np.convolve(np.ones_like(y), ker, mode="same")
-    return num / den
-
-
-def plot_energy_budget_figure(budget: dict, *, smooth_dumps: int = 21) -> plt.Figure:
-    r"""Transmitted / reflected / absorbed laser power vs time (fractions of ``I0``).
-
-    Stacked-area energy partition over the run, each curve smoothed over
-    ``smooth_dumps`` dumps to suppress the ``2 omega`` intensity ripple (the
-    field dump cadence undersamples the laser period). The shaded band marks the
-    averaging window used for the scalar ``R`` / ``T``. Early on the partition is
-    dominated by "absorbed", which there is really energy still **filling the
-    box** (a transit-time transient), not true absorption — read the absorbed
-    curve only once it has settled.
-    """
-    t, i0 = budget["t"], budget["I0"]
-    R = _moving_average(budget["reflected_t"], smooth_dumps) / i0
-    T = _moving_average(budget["transmitted_t"], smooth_dumps) / i0
-    A = np.clip(1.0 - R - T, 0.0, None)
-
-    fig, ax = plt.subplots(figsize=(7, 4))
-    ax.stackplot(
-        t, T, R, A,
-        labels=["transmitted", "reflected", "absorbed / in-flight"],
-        colors=["#4c9be8", "#e8744c", "#c2c2c2"], alpha=0.9,
-    )
-    ax.axvspan(*budget["t_window"], color="k", alpha=0.08, lw=0,
-               label=f"scalar window (last {100*budget['last_frac']:g}%)")
-    ax.axhline(1.0, color="0.4", lw=0.6, ls="--")
-    ax.set_xlim(float(t[0]), float(t[-1]))
-    ax.set_ylim(0.0, 1.15)
-    ax.set_xlabel(r"$t$  [$1/\omega_p$]")
-    ax.set_ylabel(r"fraction of incident $I_0$")
-    ax.set_title(
-        rf"laser energy budget  (incident $I_0=(a_0\omega_0)^2/2$, "
-        rf"$a_0={budget['a0']:g}$, $\omega_0={budget['omega0']:g}$)"
-    )
-    ax.legend(loc="upper left", fontsize=8, ncol=2, framealpha=0.75)
-    fig.tight_layout()
-    return fig
-
-
-def format_laser_energy_budget(budget: dict) -> str:
-    """Render :func:`laser_energy_budget` output as a human-readable ``.txt``."""
-    b = budget
-    lo, hi = b["t_window"]
-    def pct(x: float) -> str:
-        return f"{100.0 * x:7.2f}%"
-    return "\n".join([
-        "OSIRIS laser energy budget",
-        "==========================",
-        "incident intensity  I0 = (a0 * omega0)^2 / 2   [code units, cycle-averaged]",
-        f"  a0     = {b['a0']:g}",
-        f"  omega0 = {b['omega0']:g}",
-        f"  I0     = {b['I0']:.6e}",
-        "",
-        f"scalars: boundary flux averaged over the last {100*b['last_frac']:g}% of the run "
-        f"(t in [{lo:.1f}, {hi:.1f}]), divided by I0",
-        f"  reflected    (left-going  @ left  boundary)  R = {pct(b['R'])}   "
-        f"(flux {b['reflected']:.4e})",
-        f"  transmitted  (right-going @ right boundary)  T = {pct(b['T'])}   "
-        f"(flux {b['transmitted']:.4e})",
-        f"  absorbed = 1 - R - T                           = {pct(b['absorbed'])}",
-        "",
-        f"cross-check: measured incident (right-going @ left boundary) = "
-        f"{b['incident_measured']:.4e}  ({b['incident_measured']/b['I0']:.3f} x I0)",
-        f"polarization pairs used: {', '.join(b['pairs'])}",
-        f"boundary sampling: {b['guard_cells']} guard cell(s) skipped (antenna at lower-x), "
-        f"flux averaged over a {b['window_cells']}-cell slab",
-        "",
-    ])
-
-
 # --- driver ---------------------------------------------------------------
 
 
@@ -1322,14 +955,12 @@ def canned_plot_kwargs(output_cfg: dict | None) -> dict:
 
     Shared by the live post-processing path (``post.collect``) and the offline
     regeneration harness (``regen``) so both honour the same knobs:
-    ``v_th``, ``dist_cells`` and ``omega_k_zoom`` (which may be explicitly
-    ``null`` to disable the zoom). Keys that are absent fall through to the
-    ``save_canned_plots`` defaults.
+    ``v_th`` and ``omega_k_zoom`` (which may be explicitly ``null`` to disable
+    the zoom). Keys that are absent fall through to the ``save_canned_plots``
+    defaults.
     """
     output_cfg = output_cfg or {}
     kwargs: dict = {"v_th": output_cfg.get("v_th")}
-    if output_cfg.get("dist_cells") is not None:
-        kwargs["dist_cells"] = int(output_cfg["dist_cells"])
     if "omega_k_zoom" in output_cfg:  # may be explicitly null to disable zoom
         kwargs["omega_k_zoom"] = output_cfg["omega_k_zoom"]
     return kwargs
@@ -1362,21 +993,13 @@ def save_canned_plots(
     v_th: float | None = None,
     dpi: int = 120,
     n_panels: int = 8,
-    dist_cells: int = 150,
     omega_k_zoom: float | None = 4.0,
-    a0: float | None = None,
-    omega0: float | None = None,
 ) -> dict[str, Path]:
     """Generate the standard set of PNGs for a finished OSIRIS run.
 
     Returns a mapping of plot-name → output PNG path. Each diagnostic family is
     best-effort: a failure on one diagnostic logs and is skipped rather than
     aborting the rest.
-
-    When ``a0`` and ``omega0`` (the drive amplitude / frequency) are given, the
-    laser energy budget is also produced: the ``energy_budget`` time-series plot
-    and a ``laser_energy_budget.txt`` summary alongside it (see
-    :func:`laser_energy_budget`).
 
     ``run_dir`` may be a raw OSIRIS run directory (with an ``MS/`` HDF5 tree and
     optional ``HIST/``) **or** the ``binary/`` directory of saved NetCDFs
@@ -1387,11 +1010,9 @@ def save_canned_plots(
     regenerated from the saved NetCDF artifacts alone, with no rerun and no raw
     HDF5 dumps.
 
-    ``dist_cells`` sets how many right-boundary cells the phase-space
-    distribution lineouts average over; ``omega_k_zoom`` is the ``(k, ω)``
-    half-width (in ``ω_p`` units) for the equal-aspect lower panel of the
-    dispersion plots, where ``ω = k`` is drawn at 45° (clamped to the data's
-    Nyquist; ``None`` → full Nyquist window).
+    ``omega_k_zoom`` is the ``(k, ω)`` half-width (in ``ω_p`` units) for the
+    equal-aspect lower panel of the dispersion plots, where ``ω = k`` is drawn
+    at 45° (clamped to the data's Nyquist; ``None`` → full Nyquist window).
     """
     run_dir = Path(run_dir)
     out_dir = Path(out_dir)
@@ -1550,25 +1171,6 @@ def save_canned_plots(
         except Exception as e:
             print(f"[plots] skipping phasespace evolution {diag_rel}: {e}")
 
-        # f(p) and delta-f averaged over the right-boundary cells, vs time —
-        # only for x-p phase spaces (a p-p space like p1p2 has no spatial axis).
-        if ser.ndim == 3 and any(str(d).startswith("x") for d in ser.dims if d != "t"):
-            try:
-                written[f"distribution_lineouts/{species}/{ps_name}"] = _write(
-                    plot_distribution_lineout_figure(ser, n_cells=dist_cells),
-                    f"distribution_lineouts/{species}/{ps_name}.png",
-                )
-            except Exception as e:
-                print(f"[plots] skipping distribution lineout {diag_rel}: {e}")
-            try:
-                fig, ax = plt.subplots(figsize=(6, 4))
-                plot_deltaf_lineout(ser, ax=ax, n_cells=dist_cells)
-                written[f"deltaf_lineouts/{species}/{ps_name}"] = _write(
-                    fig, f"deltaf_lineouts/{species}/{ps_name}.png"
-                )
-            except Exception as e:
-                print(f"[plots] skipping delta-f lineout {diag_rel}: {e}")
-
     # --- Left/right-going transverse E-field decomposition ---
     try:
         for comp, fig in plot_field_lr_decomposition(run_dir).items():
@@ -1601,19 +1203,6 @@ def save_canned_plots(
             written["total_energy_vs_time"] = _write(fig, "total_energy_vs_time.png")
     except Exception as e:
         print(f"[plots] skipping total_energy_vs_time: {e}")
-
-    # --- Laser energy budget (reflected/transmitted/absorbed); needs a0, ω0 ---
-    if a0 is not None and omega0 is not None:
-        try:
-            budget = laser_energy_budget(run_dir, a0=a0, omega0=omega0)
-            written["energy_budget"] = _write(
-                plot_energy_budget_figure(budget), "energy_budget.png"
-            )
-            (out_dir / "laser_energy_budget.txt").write_text(
-                format_laser_energy_budget(budget)
-            )
-        except Exception as e:
-            print(f"[plots] skipping laser energy budget: {e}")
 
     return written
 
@@ -1745,3 +1334,15 @@ def _field_energy_from_series(ser: xr.DataArray) -> np.ndarray:
     spatial = [d for d in ser.dims if d != "t"]
     sq = (ser.astype("float64") ** 2).sum(dim=spatial)
     return 0.5 * np.asarray(sq.values, dtype="float64") * _cell_volume(ser)
+
+
+# --- public helpers for downstream post-processing ------------------------
+# Project repos (e.g. osiris-lpi) build their own canned plots on these shared
+# label / decoration / box helpers (and on `efield_lr_components`); export
+# stable public names so they need not reach into the private (underscore) API.
+decorate = _decorate
+ensure_series = _ensure_series
+axis_label = _axis_label
+display_name = _display_name
+tex = _tex
+sim_box_xmax = _sim_box_xmax
