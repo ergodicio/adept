@@ -168,7 +168,11 @@ def plot_phasespace(
         plot_arr = np.log10(np.abs(raw) + 1e-30)
     else:
         plot_arr = raw
-    xc, yc = da.coords[xdim].values, da.coords[ydim].values
+    # Reconstruct each axis on its OSIRIS-autoscale bounds (the momentum / gamma
+    # axis is re-picked per dump; ``physical_axis`` falls back to the stored
+    # coordinate for fixed axes like the cropped spatial one).
+    xc = _io.physical_axis(da, xdim)
+    yc = _io.physical_axis(da, ydim)
     mesh = ax.pcolormesh(xc, yc, plot_arr, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
     plt.colorbar(
         mesh, ax=ax, label=rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da)
@@ -208,28 +212,54 @@ def plot_phasespace_evolution(
     da = _crop_spatial_to_box(da)
     nt = da.coords["t"].size
     t_skip = max(1, nt // n_panels)
-    sl = da.isel(t=slice(0, None, t_skip))
-    plot_da = np.log10(np.abs(sl) + 1e-30) if log else sl
-    # Convention: spatial axis horizontal, momentum axis vertical.
+    idx = list(range(0, nt, t_skip))
+    sl = da.isel(t=idx)
+    # Convention: spatial axis horizontal, momentum axis vertical (fall back to
+    # dim order for a momentum-momentum space with no spatial axis).
     spatial = [d for d in da.dims if d != "t" and str(d).startswith("x")]
     moment = [d for d in da.dims if d != "t" and str(d).startswith("p")]
-    facet_kw: dict = {"cmap": cmap}
-    if spatial and moment:
-        facet_kw.update(x=spatial[0], y=moment[0])
-    if log:
-        # Floor the shared colour scale at the lowest non-zero value so empty
-        # cells (log -> -30) don't crush the contrast across the facets.
-        vmin, vmax = _nonzero_log_clim(sl.values)
-        facet_kw.update(vmin=vmin, vmax=vmax)
-    g = plot_da.plot(col="t", col_wrap=min(col_wrap, sl.coords["t"].size), **facet_kw)
-    if spatial and moment:
-        g.set_xlabels(_axis_label(da, spatial[0]))
-        g.set_ylabels(_axis_label(da, moment[0]))
+    xdim, ydim = (spatial[0], moment[0]) if spatial and moment else (da.dims[2], da.dims[1])
+    raw = sl.transpose("t", ydim, xdim).values
+    plot_arr = np.log10(np.abs(raw) + 1e-30) if log else raw
+    # Floor the shared colour scale at the lowest non-zero value so empty cells
+    # (log -> -30) don't crush the contrast across the facets.
+    vmin, vmax = _nonzero_log_clim(sl.values) if log else (None, None)
+
+    npan = len(idx)
+    ncol = max(1, min(col_wrap, npan))
+    nrow = int(np.ceil(npan / ncol))
+    fig, axes = plt.subplots(
+        nrow, ncol, figsize=(3.2 * ncol, 3.0 * nrow), squeeze=False
+    )
+    tvals = sl.coords["t"].values
+    mesh = None
+    for k in range(npan):
+        ax = axes[k // ncol][k % ncol]
+        # Each facet is drawn on ITS OWN axis: OSIRIS autoscale re-picks the
+        # momentum / gamma bounds every dump, so a single shared coordinate
+        # (the old faceting) would mislabel every panel but the first.
+        xc = _io.physical_axis(sl, xdim, it=k)
+        yc = _io.physical_axis(sl, ydim, it=k)
+        mesh = ax.pcolormesh(
+            xc, yc, plot_arr[k], shading="auto", cmap=cmap, vmin=vmin, vmax=vmax
+        )
+        ax.set_title(rf"$t = {float(tvals[k]):.3g}$", fontsize=9)
+        if k % ncol == 0:
+            ax.set_ylabel(_axis_label(da, ydim))
+        if k // ncol == nrow - 1:
+            ax.set_xlabel(_axis_label(da, xdim))
+    for k in range(npan, nrow * ncol):  # blank any unused grid cells
+        axes[k // ncol][k % ncol].axis("off")
+    if mesh is not None:
+        cbar = fig.colorbar(mesh, ax=axes, fraction=0.046, pad=0.02)
+        cbar.set_label(
+            rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da)
+        )
     scale = r"$\log_{10}$ " if log else ""
-    g.fig.suptitle(
+    fig.suptitle(
         title or rf"{_display_name(da)}  —  {scale}phase space at sampled times", y=1.02
     )
-    return g.fig
+    return fig
 
 
 def field_energy_series(run_dir: str | Path) -> xr.DataArray:
@@ -1346,3 +1376,4 @@ axis_label = _axis_label
 display_name = _display_name
 tex = _tex
 sim_box_xmax = _sim_box_xmax
+sim_box_bound = _sim_box_bound

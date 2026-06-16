@@ -393,3 +393,87 @@ def test_save_canned_plots_regenerates_from_netcdf(tmp_path: Path) -> None:
     ):
         assert key in written_nc, f"missing {key}"
         assert written_nc[key].exists()
+
+
+# --- OSIRIS autoscale: per-dump momentum bounds (if_ps_p_auto) ------------
+
+
+def _write_phasespace_autoscaled(run_dir: Path, n_steps: int, nx: int, npmom: int) -> Path:
+    """Phase space whose momentum bounds GROW each dump (if_ps_p_auto=.true.).
+
+    The bin count (``npmom``) stays fixed while the AXIS min/max move — exactly
+    what OSIRIS autoscale produces and what a shape-only series check misses.
+    """
+    rng = np.random.default_rng(7)
+    d = run_dir / "MS" / "PHA" / "p1x1" / "electrons"
+    for k in range(n_steps):
+        it = k * 10
+        p_hi = 1.0 + 0.5 * k  # bounds move dump-to-dump
+        _write_dump(
+            d / f"p1x1-electrons-{it:06d}.h5",
+            "p1x1",
+            rng.standard_normal((npmom, nx)),
+            t=k * 0.5,
+            it=it,
+            axes=[
+                ("x1", "x_1", r"c / \omega_p", 0.0, 10.0),
+                ("p1", "p_1", r"m_e c", -p_hi, p_hi),
+            ],
+        )
+    return d
+
+
+def test_load_series_captures_autoscale_bounds(tmp_path: Path) -> None:
+    d = _write_phasespace_autoscaled(tmp_path / "run", n_steps=4, nx=8, npmom=6)
+    ser = oio.load_series(d)
+
+    # p1 is autoscaled (bounds move); x1 is fixed (no bound coords).
+    assert ser.attrs.get("autoscaled_dims") == ["p1"]
+    assert "p1_min" in ser.coords and "p1_max" in ser.coords
+    assert "x1_min" not in ser.coords and "x1_max" not in ser.coords
+    np.testing.assert_allclose(ser["p1_max"].values, [1.0, 1.5, 2.0, 2.5])
+    np.testing.assert_allclose(ser["p1_min"].values, [-1.0, -1.5, -2.0, -2.5])
+
+    # physical_axis rebuilds each dump's true axis; the nominal dim coordinate
+    # (first dump) is NOT reused for later steps.
+    assert oio.physical_axis(ser, "p1", it=0)[-1] == 1.0
+    assert oio.physical_axis(ser, "p1", it=-1)[-1] == 2.5
+    # a fixed axis falls back to the stored coordinate.
+    np.testing.assert_allclose(oio.physical_axis(ser, "x1"), ser["x1"].values)
+
+
+def test_autoscale_bounds_survive_netcdf_roundtrip(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_phasespace_autoscaled(run_dir, n_steps=4, nx=8, npmom=6)
+    out = tmp_path / "binary"
+    oio.save_run_datasets(run_dir, out)
+
+    from_nc = oio.load_series_nc(out / "PHA" / "p1x1" / "electrons.nc")
+    assert from_nc.attrs.get("autoscaled_dims") == ["p1"]
+    np.testing.assert_allclose(
+        oio.physical_axis(from_nc, "p1", it=-1),
+        np.linspace(-2.5, 2.5, from_nc.sizes["p1"]),
+    )
+
+
+def test_phasespace_plots_run_on_autoscaled_series(tmp_path: Path) -> None:
+    import matplotlib.pyplot as plt
+
+    from adept.osiris import plots as oplots
+
+    d = _write_phasespace_autoscaled(tmp_path / "run", n_steps=6, nx=8, npmom=6)
+    ser = oio.load_series(d)
+
+    # final-step heatmap is drawn on the LAST dump's autoscaled momentum range
+    # (p_hi = 1 + 0.5*5 = 3.5), not the first dump's (1.0).
+    final = ser.isel(t=-1)
+    final.attrs["time"] = float(final["t"].values)
+    ax = oplots.plot_phasespace(final)
+    ylo, yhi = ax.get_ylim()
+    assert yhi >= 3.0 and ylo <= -3.0
+    plt.close(ax.figure)
+
+    # faceted evolution renders one panel per sampled time without error.
+    fig = oplots.plot_phasespace_evolution(ser, n_panels=4)
+    assert len(fig.axes) >= 4  # panels (+ a shared colorbar)
+    plt.close(fig)

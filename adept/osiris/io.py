@@ -293,12 +293,25 @@ def load_series(directory: str | Path) -> xr.DataArray:
         raise FileNotFoundError(f"No .h5 dumps in {directory}")
     first = load_grid_h5(dumps[0])
 
-    times = np.empty(len(dumps), dtype="float64")
-    iters = np.empty(len(dumps), dtype="int64")
-    data = np.empty((len(dumps), *first.shape), dtype=first.dtype)
-    data[0] = first.values
-    times[0] = first.attrs["time"]
-    iters[0] = first.attrs["iter"]
+    n = len(dumps)
+    times = np.empty(n, dtype="float64")
+    iters = np.empty(n, dtype="int64")
+    data = np.empty((n, *first.shape), dtype=first.dtype)
+    # Per-dump axis bounds (min, max) for every non-time dim. OSIRIS autoscale
+    # (deck ``if_ps_p_auto`` / ``if_ps_gamma_auto``) re-picks a phase space's
+    # momentum / gamma bounds *every dump*, so an axis can move dump-to-dump
+    # while its bin count stays fixed — a shape-only check misses it.
+    bounds = {d: np.empty((n, 2), dtype="float64") for d in first.dims}
+
+    def _record(i: int, da: xr.DataArray) -> None:
+        data[i] = da.values
+        times[i] = da.attrs["time"]
+        iters[i] = da.attrs["iter"]
+        for d in first.dims:
+            cv = np.asarray(da.coords[d].values)
+            bounds[d][i] = (cv[0], cv[-1]) if cv.size else (np.nan, np.nan)
+
+    _record(0, first)
     for i, p in enumerate(dumps[1:], start=1):
         da = load_grid_h5(p)
         if da.shape != first.shape:
@@ -306,21 +319,56 @@ def load_series(directory: str | Path) -> xr.DataArray:
                 f"Shape mismatch in series: {p} has {da.shape}, "
                 f"expected {first.shape}"
             )
-        data[i] = da.values
-        times[i] = da.attrs["time"]
-        iters[i] = da.attrs["iter"]
+        _record(i, da)
 
     coords = {"t": times, "iter": ("t", iters)}
     coords.update({d: first.coords[d] for d in first.dims})
+    # An axis whose per-dump bounds move (beyond fp noise) is autoscaled: keep
+    # the first dump's axis as the nominal dimension coordinate, but carry the
+    # true per-dump bounds along ``t`` so consumers can reconstruct the physical
+    # axis for any timestep (see :func:`physical_axis`) and so the bounds
+    # survive the NetCDF round-trip.
+    autoscaled: list[str] = []
+    for d in first.dims:
+        b = bounds[d]
+        if not (np.allclose(b[:, 0], b[0, 0]) and np.allclose(b[:, 1], b[0, 1])):
+            autoscaled.append(str(d))
+            coords[f"{d}_min"] = ("t", b[:, 0])
+            coords[f"{d}_max"] = ("t", b[:, 1])
     dims = ("t", *first.dims)
     attrs = dict(first.attrs)
     attrs.pop("time", None)
     attrs.pop("iter", None)
     attrs.pop("source", None)
     attrs["source_dir"] = str(directory)
+    if autoscaled:
+        attrs["autoscaled_dims"] = autoscaled
     return xr.DataArray(
         data, coords=coords, dims=dims, name=first.name, attrs=attrs
     )
+
+
+def physical_axis(da: xr.DataArray, dim: str, it: int = -1) -> np.ndarray:
+    """Physical coordinate values for ``dim``, honoring OSIRIS autoscale.
+
+    When ``dim`` was autoscaled (its per-dump bounds move; see
+    :func:`load_series`), the series carries ``{dim}_min`` / ``{dim}_max`` along
+    ``t`` while the nominal dimension coordinate is only the first dump's axis.
+    This rebuilds ``linspace(min, max, n)`` for time index ``it`` (default the
+    last dump). Works on a still-stacked ``(t, …)`` series (the bounds are
+    vectors along ``t``) and on an already time-sliced array (the bounds are
+    scalar coordinates). Falls back to the dimension coordinate when no per-dump
+    bounds are present (non-autoscaled axes, or arrays not built by
+    :func:`load_series`).
+    """
+    n = int(da.sizes[dim])
+    lo_c, hi_c = f"{dim}_min", f"{dim}_max"
+    if lo_c in da.coords and hi_c in da.coords:
+        lo, hi = da.coords[lo_c], da.coords[hi_c]
+        if "t" in getattr(lo, "dims", ()):  # still a (t, …) series
+            lo, hi = lo.isel(t=it), hi.isel(t=it)
+        return np.linspace(float(lo), float(hi), n)
+    return np.asarray(da.coords[dim].values)
 
 
 def list_diagnostics(run_dir: str | Path) -> dict[str, Path]:
@@ -379,6 +427,10 @@ def series_to_dataset(da: xr.DataArray) -> xr.Dataset:
     any remaining non-scalar attrs are coerced so ``to_netcdf`` succeeds.
     """
     da = da.copy()
+    # The autoscaled-dim list is reconstructed on load from the {dim}_min/_max
+    # coordinates (which ride along as coords), so it need not survive as an
+    # attr — and dropping it avoids serializing a string array.
+    da.attrs.pop("autoscaled_dims", None)
     axis_units = da.attrs.pop("axis_units", {}) or {}
     axis_long = da.attrs.pop("axis_long_names", {}) or {}
     da.attrs = {k: _coerce_attr(v) for k, v in da.attrs.items() if v is not None}
@@ -428,6 +480,15 @@ def load_series_nc(path: str | Path) -> xr.DataArray:
     da.attrs["axis_units"] = axis_units
     da.attrs["axis_long_names"] = axis_long
     da.attrs.setdefault("time_units", da.attrs.get("time_units", r"1/\omega_p"))
+    # Rebuild the autoscaled-dim list from the per-dump bound coords that were
+    # written by :func:`series_to_dataset`, so a round-tripped series is
+    # indistinguishable (for plotting) from a fresh :func:`load_series`.
+    autoscaled = [
+        str(d) for d in da.dims
+        if f"{d}_min" in ds.coords and f"{d}_max" in ds.coords
+    ]
+    if autoscaled:
+        da.attrs["autoscaled_dims"] = autoscaled
     return da
 
 

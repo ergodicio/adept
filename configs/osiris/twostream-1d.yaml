@@ -19,5 +19,4 @@ osiris:
 output:
   # diagnostics_to_log: [e1]   # null/omitted = convert every diagnostic's full time history to netCDF
   # v_th: 0.1                  # overlay the Langmuir (Bohm-Gross) branch on omega-k plots
-  # dist_cells: 10             # (osiris-lpi OsirisLPI only) right-boundary cells averaged for the f(p) lineouts
   # omega_k_zoom: 4.0          # (k, omega) half-width [omega_p] for the equal-aspect lower omega-k panel; null = full
