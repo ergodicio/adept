@@ -126,9 +126,7 @@ def test_collect_respects_diagnostics_whitelist(tmp_path: Path) -> None:
     assert not (td / "binary" / "FLD" / "e2.nc").exists()
 
 
-def _write_raw_dump(
-    path: Path, quantities: dict[str, np.ndarray], t: float, it: int
-) -> None:
+def _write_raw_dump(path: Path, quantities: dict[str, np.ndarray], t: float, it: int) -> None:
     """Write one OSIRIS-style RAW (particle) HDF5 dump.
 
     ``quantities`` maps a per-particle quantity name (``"p1"``, ``"x1"``, ...)
@@ -156,9 +154,7 @@ def _write_raw_dump(
 def test_load_raw_h5_returns_particle_dataset(tmp_path: Path) -> None:
     p = tmp_path / "MS" / "RAW" / "species_1" / "RAW-species_1-000030.h5"
     npart = 7
-    quants = {
-        q: np.arange(npart, dtype="float64") for q in ("ene", "p1", "p2", "p3", "q", "x1")
-    }
+    quants = {q: np.arange(npart, dtype="float64") for q in ("ene", "p1", "p2", "p3", "q", "x1")}
     _write_raw_dump(p, quants, t=1.5, it=30)
 
     ds = oio.load_raw_h5(p)
@@ -341,9 +337,7 @@ def test_load_series_nc_roundtrips_grid_series(tmp_path: Path) -> None:
     # axis metadata is rebuilt into the dict attrs the plotters read.
     assert from_nc.attrs["axis_units"]["x1"] == from_ms.attrs["axis_units"]["x1"]
     # load_series dispatches to load_series_nc when handed a .nc file.
-    np.testing.assert_allclose(
-        oio.load_series(out / "FLD" / "e1.nc").values, from_ms.values
-    )
+    np.testing.assert_allclose(oio.load_series(out / "FLD" / "e1.nc").values, from_ms.values)
 
 
 def test_save_run_datasets_persists_hist_energy(tmp_path: Path) -> None:

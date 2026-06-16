@@ -126,17 +126,12 @@ def parse_deck(text: str) -> Sections:
             break
         m = _IDENT_RE.match(src, i)
         if not m:
-            raise ValueError(
-                f"Expected section name at offset {i}: {src[i:i+30]!r}"
-            )
+            raise ValueError(f"Expected section name at offset {i}: {src[i : i + 30]!r}")
         name = m.group(0)
         i = m.end()
         i = skip_ws(i)
         if i >= n or src[i] != "{":
-            raise ValueError(
-                f"Expected '{{' after section {name!r} at offset {i}: "
-                f"{src[i:i+30]!r}"
-            )
+            raise ValueError(f"Expected '{{' after section {name!r} at offset {i}: {src[i : i + 30]!r}")
         i += 1
         params: dict[str, Any] = {}
         while True:
@@ -148,17 +143,12 @@ def parse_deck(text: str) -> Sections:
                 break
             km = _KEY_RE.match(src, i)
             if not km:
-                raise ValueError(
-                    f"Expected key in section {name!r} at offset {i}: "
-                    f"{src[i:i+30]!r}"
-                )
+                raise ValueError(f"Expected key in section {name!r} at offset {i}: {src[i : i + 30]!r}")
             key = km.group(0)
             i = km.end()
             i = skip_ws(i)
             if i >= n or src[i] != "=":
-                raise ValueError(
-                    f"Expected '=' after key {key!r} at offset {i}"
-                )
+                raise ValueError(f"Expected '=' after key {key!r} at offset {i}")
             i += 1
             value_start = i
             in_string = False
@@ -249,9 +239,7 @@ def _find_param_key(params: dict[str, Any], requested: str) -> str:
         return candidates[0]
     if len(candidates) == 0:
         return requested
-    raise ValueError(
-        f"Ambiguous override key {requested!r}; candidates: {candidates}"
-    )
+    raise ValueError(f"Ambiguous override key {requested!r}; candidates: {candidates}")
 
 
 def _merge_params(params: dict[str, Any], over: dict[str, Any]) -> None:
@@ -266,8 +254,8 @@ def merge_overrides(sections: Sections, overrides: dict[str, Any]) -> None:
     ``overrides`` shape::
 
         {
-          "grid": {"nx_p": [256]},               # apply to all occurrences
-          "species": {0: {"num_par_x": [512]}},  # indexed for repeated sections
+            "grid": {"nx_p": [256]},  # apply to all occurrences
+            "species": {0: {"num_par_x": [512]}},  # indexed for repeated sections
         }
     """
     if not overrides:
@@ -278,18 +266,13 @@ def merge_overrides(sections: Sections, overrides: dict[str, Any]) -> None:
 
     for sec_name, sec_over in overrides.items():
         if sec_name not in by_name:
-            raise KeyError(
-                f"Override references unknown section: {sec_name!r}"
-            )
+            raise KeyError(f"Override references unknown section: {sec_name!r}")
         occurrences = by_name[sec_name]
-        if isinstance(sec_over, dict) and sec_over and all(
-            isinstance(k, int) for k in sec_over.keys()
-        ):
+        if isinstance(sec_over, dict) and sec_over and all(isinstance(k, int) for k in sec_over.keys()):
             for idx, params_over in sec_over.items():
                 if idx < 0 or idx >= len(occurrences):
                     raise IndexError(
-                        f"Override section {sec_name!r}[{idx}] out of range; "
-                        f"{len(occurrences)} occurrence(s) present"
+                        f"Override section {sec_name!r}[{idx}] out of range; {len(occurrences)} occurrence(s) present"
                     )
                 _merge_params(sections[occurrences[idx]][1], params_over)
         else:

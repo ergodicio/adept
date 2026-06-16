@@ -87,9 +87,7 @@ def load_grid_h5(path: str | Path) -> xr.DataArray:
         # Identify the data dataset (everything that's not AXIS / SIMULATION).
         data_keys = [k for k in f.keys() if k not in ("AXIS", "SIMULATION")]
         if len(data_keys) != 1:
-            raise ValueError(
-                f"Expected exactly one data dataset in {path}; got {data_keys}"
-            )
+            raise ValueError(f"Expected exactly one data dataset in {path}; got {data_keys}")
         name = data_keys[0]
         arr = f[name][...].astype(_DIAG_DTYPE)
         axes_osiris = _axis_metadata(f)
@@ -160,11 +158,7 @@ def load_raw_h5(path: str | Path) -> xr.Dataset:
     """
     path = Path(path)
     with h5py.File(path, "r") as f:
-        data_keys = sorted(
-            k
-            for k in f.keys()
-            if k not in ("AXIS", "SIMULATION") and isinstance(f[k], h5py.Dataset)
-        )
+        data_keys = sorted(k for k in f.keys() if k not in ("AXIS", "SIMULATION") and isinstance(f[k], h5py.Dataset))
         data_vars: dict[str, tuple] = {}
         for name in data_keys:
             dset = f[name]
@@ -180,9 +174,7 @@ def load_raw_h5(path: str | Path) -> xr.Dataset:
 
         attrs = {
             "time": float(f.attrs["TIME"][0]) if "TIME" in f.attrs else float("nan"),
-            "iter": int(f.attrs["ITER"][0])
-            if "ITER" in f.attrs
-            else _iter_from_name(path),
+            "iter": int(f.attrs["ITER"][0]) if "ITER" in f.attrs else _iter_from_name(path),
             "long_name": _decode(f.attrs.get("LABEL", path.stem)),
             "time_units": _decode(f.attrs.get("TIME UNITS", "")),
             "source": str(path),
@@ -315,10 +307,7 @@ def load_series(directory: str | Path) -> xr.DataArray:
     for i, p in enumerate(dumps[1:], start=1):
         da = load_grid_h5(p)
         if da.shape != first.shape:
-            raise ValueError(
-                f"Shape mismatch in series: {p} has {da.shape}, "
-                f"expected {first.shape}"
-            )
+            raise ValueError(f"Shape mismatch in series: {p} has {da.shape}, expected {first.shape}")
         _record(i, da)
 
     coords = {"t": times, "iter": ("t", iters)}
@@ -343,9 +332,7 @@ def load_series(directory: str | Path) -> xr.DataArray:
     attrs["source_dir"] = str(directory)
     if autoscaled:
         attrs["autoscaled_dims"] = autoscaled
-    return xr.DataArray(
-        data, coords=coords, dims=dims, name=first.name, attrs=attrs
-    )
+    return xr.DataArray(data, coords=coords, dims=dims, name=first.name, attrs=attrs)
 
 
 def physical_axis(da: xr.DataArray, dim: str, it: int = -1) -> np.ndarray:
@@ -483,10 +470,7 @@ def load_series_nc(path: str | Path) -> xr.DataArray:
     # Rebuild the autoscaled-dim list from the per-dump bound coords that were
     # written by :func:`series_to_dataset`, so a round-tripped series is
     # indistinguishable (for plotting) from a fresh :func:`load_series`.
-    autoscaled = [
-        str(d) for d in da.dims
-        if f"{d}_min" in ds.coords and f"{d}_max" in ds.coords
-    ]
+    autoscaled = [str(d) for d in da.dims if f"{d}_min" in ds.coords and f"{d}_max" in ds.coords]
     if autoscaled:
         da.attrs["autoscaled_dims"] = autoscaled
     return da
@@ -515,10 +499,7 @@ def _compression_encoding(ds: xr.Dataset) -> dict:
     helps the float32 byte pattern. RAW (per-particle) data is noise-like and
     barely compresses, but the setting does no harm.
     """
-    return {
-        name: {"zlib": True, "complevel": 4, "shuffle": True}
-        for name in ds.data_vars
-    }
+    return {name: {"zlib": True, "complevel": 4, "shuffle": True} for name in ds.data_vars}
 
 
 def save_run_datasets(
@@ -543,16 +524,12 @@ def save_run_datasets(
     diags = list_diagnostics(run_dir)
     written: list[Path] = []
     for relpath in sorted(diags):
-        if diagnostics is not None and (
-            relpath not in diagnostics and Path(relpath).name not in diagnostics
-        ):
+        if diagnostics is not None and (relpath not in diagnostics and Path(relpath).name not in diagnostics):
             continue
         try:
             if _diag_is_raw(relpath, diags[relpath]):
                 # RAW (particle) dumps: per-particle datasets, no grid/AXIS.
-                ds: xr.Dataset = load_raw_series(
-                    diags[relpath], drop_initial=raw_drop_initial
-                )
+                ds: xr.Dataset = load_raw_series(diags[relpath], drop_initial=raw_drop_initial)
             else:
                 ds = series_to_dataset(load_series(diags[relpath]))
             dest = out_dir / f"{relpath}.nc"
@@ -571,9 +548,7 @@ def save_run_datasets(
         if energy is not None:
             dest = out_dir / "HIST" / "energy.nc"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            energy.to_netcdf(
-                dest, engine="h5netcdf", encoding=_compression_encoding(energy)
-            )
+            energy.to_netcdf(dest, engine="h5netcdf", encoding=_compression_encoding(energy))
             written.append(dest)
     except Exception as e:
         print(f"[post] skipping HIST energy: {e}")

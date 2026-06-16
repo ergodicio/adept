@@ -136,22 +136,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("src", help="run dir (containing binary/) or a binary/ NetCDF dir")
     ap.add_argument("-o", "--out", default=None, help="output dir (default <run>/plots_regen)")
-    ap.add_argument("--no-config", action="store_true",
-                    help="ignore the run's config.yaml output block")
-    ap.add_argument("--v-th", type=float, default=None,
-                    help="electron thermal velocity for the Langmuir overlay on omega-k plots")
-    ap.add_argument("--omega-k-zoom", type=float, default=None,
-                    help="(k, omega) half-width [omega_p] for the equal-aspect lower omega-k panel")
-    ap.add_argument("--no-zoom", action="store_true",
-                    help="use the full Nyquist window for the lower omega-k panel (omega_k_zoom=None)")
+    ap.add_argument("--no-config", action="store_true", help="ignore the run's config.yaml output block")
+    ap.add_argument(
+        "--v-th", type=float, default=None, help="electron thermal velocity for the Langmuir overlay on omega-k plots"
+    )
+    ap.add_argument(
+        "--omega-k-zoom",
+        type=float,
+        default=None,
+        help="(k, omega) half-width [omega_p] for the equal-aspect lower omega-k panel",
+    )
+    ap.add_argument(
+        "--no-zoom",
+        action="store_true",
+        help="use the full Nyquist window for the lower omega-k panel (omega_k_zoom=None)",
+    )
     ap.add_argument("--dpi", type=int, default=None, help="figure DPI")
     ap.add_argument("--n-panels", type=int, default=None, help="panels for faceted plots")
     args = ap.parse_args(argv)
 
     out_dir = Path(args.out) if args.out else default_out_dir(args.src)
-    written = regenerate(
-        args.src, out_dir=out_dir, use_config=not args.no_config, **_cli_overrides(args)
-    )
+    written = regenerate(args.src, out_dir=out_dir, use_config=not args.no_config, **_cli_overrides(args))
     _summarize(written, out_dir)
     return 0
 

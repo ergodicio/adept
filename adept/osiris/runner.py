@@ -22,7 +22,6 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-
 _OSIRIS_ERR_TOKENS = ("error", "aborting", "(*error*)")
 # stderr noise emitted by X11 / mpirun that we should NOT treat as an error.
 _OSIRIS_STDERR_NOISE = (
@@ -40,9 +39,7 @@ def _looks_like_osiris_error(line: str) -> bool:
     return any(tok in low for tok in _OSIRIS_ERR_TOKENS)
 
 
-def _stream_to_file_and_buffer(
-    stream, file_path: Path, tail: list[str], tail_max: int = 200
-) -> None:
+def _stream_to_file_and_buffer(stream, file_path: Path, tail: list[str], tail_max: int = 200) -> None:
     """Tee a subprocess stream to disk and a bounded in-memory tail."""
     with file_path.open("w") as fh:
         for raw in iter(stream.readline, b""):
@@ -134,10 +131,7 @@ def run_osiris(
     if rc != 0:
         tail = "".join(stderr_tail[-50:]) or "(empty stderr)"
         raise RuntimeError(
-            f"OSIRIS exited with status {rc}.\n"
-            f"  cmd: {shlex.join(cmd)}\n"
-            f"  cwd: {run_dir}\n"
-            f"  stderr tail:\n{tail}"
+            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n  cwd: {run_dir}\n  stderr tail:\n{tail}"
         )
 
     # OSIRIS can exit 0 even on input-file errors: it prints something

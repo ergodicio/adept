@@ -71,9 +71,7 @@ def plot_spacetime(
     """
     da = _ensure_series(series)
     if da.ndim != 2:
-        raise ValueError(
-            f"plot_spacetime expects a 2D (t, x) array; got dims {da.dims}"
-        )
+        raise ValueError(f"plot_spacetime expects a 2D (t, x) array; got dims {da.dims}")
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 4))
     data = np.log10(np.abs(da.values) + 1e-30) if log else da.values  # (t, x)
@@ -116,9 +114,7 @@ def plot_lineouts(
     """
     da = _decorate(_ensure_series(series))
     if da.ndim != 2:
-        raise ValueError(
-            f"plot_lineouts expects a 2D (t, x) array; got dims {da.dims}"
-        )
+        raise ValueError(f"plot_lineouts expects a 2D (t, x) array; got dims {da.dims}")
     nt = da.coords["t"].size
     t_skip = max(1, nt // n_panels)
     sl = da.isel(t=slice(0, None, t_skip))
@@ -126,9 +122,7 @@ def plot_lineouts(
     g = sl.plot(x=xname, col="t", col_wrap=min(col_wrap, sl.coords["t"].size))
     g.set_xlabels(_axis_label(da, xname))
     g.set_ylabels(_value_label(da))
-    g.fig.suptitle(
-        title or rf"{_display_name(da)}  —  lineouts vs $x$ at sampled times", y=1.02
-    )
+    g.fig.suptitle(title or rf"{_display_name(da)}  —  lineouts vs $x$ at sampled times", y=1.02)
     return g.fig
 
 
@@ -150,9 +144,7 @@ def plot_phasespace(
     if not isinstance(da, xr.DataArray):
         da = _io.load_phasespace_h5(da)
     if da.ndim != 2:
-        raise ValueError(
-            f"plot_phasespace expects 2D data; got {da.dims} {da.shape}"
-        )
+        raise ValueError(f"plot_phasespace expects 2D data; got {da.dims} {da.shape}")
     da = _crop_spatial_to_box(da)
     if ax is None:
         _, ax = plt.subplots(figsize=(5, 4))
@@ -174,17 +166,12 @@ def plot_phasespace(
     xc = _io.physical_axis(da, xdim)
     yc = _io.physical_axis(da, ydim)
     mesh = ax.pcolormesh(xc, yc, plot_arr, shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
-    plt.colorbar(
-        mesh, ax=ax, label=rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da)
-    )
+    plt.colorbar(mesh, ax=ax, label=rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da))
     ax.set_xlabel(_axis_label(da, xdim))
     ax.set_ylabel(_axis_label(da, ydim))
     t = da.attrs.get("time", float("nan"))
     scale = r"$\log_{10}$ " if log else ""
-    ax.set_title(
-        title
-        or rf"{_display_name(da)}  —  {scale}phase space  ($t = {t:.3g}\ 1/\omega_p$)"
-    )
+    ax.set_title(title or rf"{_display_name(da)}  —  {scale}phase space  ($t = {t:.3g}\ 1/\omega_p$)")
     return ax
 
 
@@ -206,9 +193,7 @@ def plot_phasespace_evolution(
     da = series if isinstance(series, xr.DataArray) else _io.load_series(series)
     da = _decorate(da)
     if da.ndim != 3:
-        raise ValueError(
-            f"plot_phasespace_evolution expects (t, p, x); got dims {da.dims}"
-        )
+        raise ValueError(f"plot_phasespace_evolution expects (t, p, x); got dims {da.dims}")
     da = _crop_spatial_to_box(da)
     nt = da.coords["t"].size
     t_skip = max(1, nt // n_panels)
@@ -228,9 +213,7 @@ def plot_phasespace_evolution(
     npan = len(idx)
     ncol = max(1, min(col_wrap, npan))
     nrow = int(np.ceil(npan / ncol))
-    fig, axes = plt.subplots(
-        nrow, ncol, figsize=(3.2 * ncol, 3.0 * nrow), squeeze=False
-    )
+    fig, axes = plt.subplots(nrow, ncol, figsize=(3.2 * ncol, 3.0 * nrow), squeeze=False)
     tvals = sl.coords["t"].values
     mesh = None
     for k in range(npan):
@@ -240,9 +223,7 @@ def plot_phasespace_evolution(
         # (the old faceting) would mislabel every panel but the first.
         xc = _io.physical_axis(sl, xdim, it=k)
         yc = _io.physical_axis(sl, ydim, it=k)
-        mesh = ax.pcolormesh(
-            xc, yc, plot_arr[k], shading="auto", cmap=cmap, vmin=vmin, vmax=vmax
-        )
+        mesh = ax.pcolormesh(xc, yc, plot_arr[k], shading="auto", cmap=cmap, vmin=vmin, vmax=vmax)
         ax.set_title(rf"$t = {float(tvals[k]):.3g}$", fontsize=9)
         if k % ncol == 0:
             ax.set_ylabel(_axis_label(da, ydim))
@@ -252,13 +233,9 @@ def plot_phasespace_evolution(
         axes[k // ncol][k % ncol].axis("off")
     if mesh is not None:
         cbar = fig.colorbar(mesh, ax=axes, fraction=0.046, pad=0.02)
-        cbar.set_label(
-            rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da)
-        )
+        cbar.set_label(rf"$\log_{{10}}$ {_value_label(da)}" if log else _value_label(da))
     scale = r"$\log_{10}$ " if log else ""
-    fig.suptitle(
-        title or rf"{_display_name(da)}  —  {scale}phase space at sampled times", y=1.02
-    )
+    fig.suptitle(title or rf"{_display_name(da)}  —  {scale}phase space at sampled times", y=1.02)
     return fig
 
 
@@ -336,11 +313,7 @@ def field_energy_components(run_dir: str | Path) -> xr.Dataset:
                 continue
             found = True
             e_t = _field_energy_from_series(ser)
-            its = (
-                np.asarray(ser.coords["iter"].values)
-                if "iter" in ser.coords
-                else np.arange(ser.sizes["t"])
-            )
+            its = np.asarray(ser.coords["iter"].values) if "iter" in ser.coords else np.arange(ser.sizes["t"])
             ts = np.asarray(ser.coords["t"].values, dtype="float64")
             for k in range(ts.size):
                 it = int(its[k])
@@ -463,9 +436,7 @@ def plot_omega_k(
     """
     da = _ensure_series(series)
     if da.ndim != 2:
-        raise ValueError(
-            f"plot_omega_k expects (t, x); got dims {da.dims}"
-        )
+        raise ValueError(f"plot_omega_k expects (t, x); got dims {da.dims}")
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 5))
 
@@ -487,9 +458,7 @@ def plot_omega_k(
     k = np.fft.fftshift(np.fft.fftfreq(nx, d=dx)) * 2 * np.pi
 
     mesh = ax.pcolormesh(k, omega, P, shading="auto", cmap=cmap)
-    plt.colorbar(
-        mesh, ax=ax, label=(r"$\log_{10}\,|\tilde{F}|^2$" if log else r"$|\tilde{F}|^2$")
-    )
+    plt.colorbar(mesh, ax=ax, label=(r"$\log_{10}\,|\tilde{F}|^2$" if log else r"$|\tilde{F}|^2$"))
 
     if k_max is None:
         k_max = float(np.max(np.abs(k)))
@@ -501,20 +470,17 @@ def plot_omega_k(
     # Overlay analytical dispersion lines (sampled across the visible k range).
     k_line = np.linspace(-k_max, k_max, 401)
     if show_light_line:
-        ax.plot(k_line, +k_line, "w-", lw=0.8, alpha=0.6,
-                label=r"light line: $\omega = \pm k$")
+        ax.plot(k_line, +k_line, "w-", lw=0.8, alpha=0.6, label=r"light line: $\omega = \pm k$")
         ax.plot(k_line, -k_line, "w-", lw=0.8, alpha=0.6)
     if show_em:
-        w_em = np.sqrt(omega_p ** 2 + k_line ** 2)
-        ax.plot(k_line, +w_em, "w--", lw=1, alpha=0.7,
-                label=r"EM: $\omega^2 = \omega_p^2 + k^2$")
+        w_em = np.sqrt(omega_p**2 + k_line**2)
+        ax.plot(k_line, +w_em, "w--", lw=1, alpha=0.7, label=r"EM: $\omega^2 = \omega_p^2 + k^2$")
         ax.plot(k_line, -w_em, "w--", lw=1, alpha=0.7)
     if show_langmuir:
         if v_th is None:
             raise ValueError("show_langmuir=True requires v_th=...")
-        w_l = np.sqrt(omega_p ** 2 + 3 * (k_line * v_th) ** 2)
-        ax.plot(k_line, +w_l, "c:", lw=1, alpha=0.8,
-                label=r"Langmuir: $\omega^2 = \omega_p^2 + 3 k^2 v_{th}^2$")
+        w_l = np.sqrt(omega_p**2 + 3 * (k_line * v_th) ** 2)
+        ax.plot(k_line, +w_l, "c:", lw=1, alpha=0.8, label=r"Langmuir: $\omega^2 = \omega_p^2 + 3 k^2 v_{th}^2$")
         ax.plot(k_line, -w_l, "c:", lw=1, alpha=0.8)
     if show_em or show_langmuir or show_light_line:
         ax.legend(loc="upper right", fontsize=8, framealpha=0.6)
@@ -554,14 +520,25 @@ def plot_omega_k_figure(
     da = _ensure_series(series)
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(6, 10))
     plot_omega_k(
-        da, ax=ax_top, log=log, cmap=cmap,
-        show_langmuir=v_th is not None, v_th=v_th,
+        da,
+        ax=ax_top,
+        log=log,
+        cmap=cmap,
+        show_langmuir=v_th is not None,
+        v_th=v_th,
     )
     z = _omega_k_zoom_window(da, omega_k_zoom)
     plot_omega_k(
-        da, ax=ax_bot, log=log, cmap=cmap,
-        show_light_line=True, show_langmuir=v_th is not None, v_th=v_th,
-        k_max=z, omega_max=z, equal_aspect=True,
+        da,
+        ax=ax_bot,
+        log=log,
+        cmap=cmap,
+        show_light_line=True,
+        show_langmuir=v_th is not None,
+        v_th=v_th,
+        k_max=z,
+        omega_max=z,
+        equal_aspect=True,
         title=rf"{_display_name(da)}  —  $(k, \omega)$ (equal aspect)",
     )
     fig.tight_layout()
@@ -692,8 +669,12 @@ def plot_currents_lineouts(run_dir: str | Path, *, n_avg_frac: float = 0.2) -> p
         w = max(1, round(n_avg_frac * nt))
         (line,) = ax.plot(x, da.isel(t=-1).values, lw=1.4, label=_tex(_long_name(da)))
         ax.plot(
-            x, da.isel(t=slice(nt - w, nt)).mean("t").values,
-            lw=1.0, ls="--", alpha=0.7, color=line.get_color(),
+            x,
+            da.isel(t=slice(nt - w, nt)).mean("t").values,
+            lw=1.0,
+            ls="--",
+            alpha=0.7,
+            color=line.get_color(),
         )
     any_ser = _decorate(next(iter(comps.values())))
     xdim = next(d for d in any_ser.dims if d != "t")
@@ -782,7 +763,7 @@ def _temperature_series(entries: list[tuple[str, str, Path]]) -> xr.DataArray | 
         comps = [c for c in comps if c.ndim == 2]
         if not comps:
             return None
-        total = sum((c ** 2 for c in comps[1:]), comps[0] ** 2)
+        total = sum((c**2 for c in comps[1:]), comps[0] ** 2)
         long_name = r"T = \sum_i u_{th,i}^2"
         units = r"m_e c^2"
     elif tens:
@@ -883,8 +864,7 @@ def plot_profile(
             initial = np.abs(initial)
         # Dotted and on top (high zorder) so the initial profile stays visible
         # where the final / mean curves overlap it.
-        ax.plot(x, initial, lw=1.6, ls=":", color="k", zorder=3,
-                label=f"initial ($t={float(tvals[0]):.3g}$)")
+        ax.plot(x, initial, lw=1.6, ls=":", color="k", zorder=3, label=f"initial ($t={float(tvals[0]):.3g}$)")
     ax.plot(x, final, lw=1.4, zorder=2, label=f"final ($t={float(tvals[-1]):.3g}$)")
     ax.plot(x, mean, lw=1.1, ls="--", zorder=2.2, label=f"mean of last {w} dumps")
     ax.set_xlabel(_axis_label(da, xdim))
@@ -966,12 +946,12 @@ def plot_field_lr_decomposition(run_dir: str | Path) -> dict[str, plt.Figure]:
         for ax, side in zip(axes, ("right", "left"), strict=False):
             da = parts[side]
             plot_spacetime(
-                da, ax=ax, space_on_x=True,
+                da,
+                ax=ax,
+                space_on_x=True,
                 title=f"{_display_name(da)}  —  spacetime",
             )
-        fig.suptitle(
-            rf"{comp}: left/right-going decomposition (vacuum Riemann split)", y=1.02
-        )
+        fig.suptitle(rf"{comp}: left/right-going decomposition (vacuum Riemann split)", y=1.02)
         fig.tight_layout()
         figs[comp] = fig
     return figs
@@ -1079,9 +1059,7 @@ def save_canned_plots(
         plot_spacetime(ser, ax=ax, log=True)
         written[f"spacetime_log/{comp}"] = _write(fig, f"spacetime_log/{comp}.png")
 
-        written[f"lineouts/{comp}"] = _write(
-            plot_lineouts(ser, n_panels=n_panels), f"lineouts/{comp}.png"
-        )
+        written[f"lineouts/{comp}"] = _write(plot_lineouts(ser, n_panels=n_panels), f"lineouts/{comp}.png")
 
         # Full (k, ω) spectrum on top, equal-aspect square window below.
         written[f"omega_k/{comp}"] = _write(
@@ -1118,15 +1096,11 @@ def save_canned_plots(
 
         fig, ax = plt.subplots(figsize=(6, 4))
         plot_spacetime(ser, ax=ax)
-        written[f"moments/{species}/{quantity}"] = _write(
-            fig, f"moments/{species}/{quantity}.png"
-        )
+        written[f"moments/{species}/{quantity}"] = _write(fig, f"moments/{species}/{quantity}.png")
 
         fig, ax = plt.subplots(figsize=(6, 4))
         plot_spacetime(ser, ax=ax, log=True)
-        written[f"moments/{species}/{quantity}_log"] = _write(
-            fig, f"moments/{species}/{quantity}_log.png"
-        )
+        written[f"moments/{species}/{quantity}_log"] = _write(fig, f"moments/{species}/{quantity}_log.png")
 
         written[f"moments/{species}/lineouts/{quantity}"] = _write(
             plot_lineouts(ser, n_panels=n_panels),
@@ -1141,12 +1115,12 @@ def save_canned_plots(
             if dens is not None:
                 fig, ax = plt.subplots(figsize=(6, 4))
                 plot_profile(
-                    dens, ax=ax, show_initial=True,
+                    dens,
+                    ax=ax,
+                    show_initial=True,
                     title=f"{label}  —  density profile",
                 )
-                written[f"profiles/{species}/density"] = _write(
-                    fig, f"profiles/{species}/density.png"
-                )
+                written[f"profiles/{species}/density"] = _write(fig, f"profiles/{species}/density.png")
         except Exception as e:
             print(f"[plots] skipping density profile for {species}: {e}")
         try:
@@ -1159,12 +1133,12 @@ def save_canned_plots(
             if temp is not None:
                 fig, ax = plt.subplots(figsize=(6, 4))
                 plot_profile(
-                    temp, ax=ax, show_initial=True,
+                    temp,
+                    ax=ax,
+                    show_initial=True,
                     title=f"{label}  —  temperature profile",
                 )
-                written[f"profiles/{species}/temperature"] = _write(
-                    fig, f"profiles/{species}/temperature.png"
-                )
+                written[f"profiles/{species}/temperature"] = _write(fig, f"profiles/{species}/temperature.png")
         except Exception as e:
             print(f"[plots] skipping temperature profile for {species}: {e}")
 
@@ -1189,9 +1163,7 @@ def save_canned_plots(
             if final.ndim == 2:
                 fig, ax = plt.subplots(figsize=(5, 4))
                 plot_phasespace(final, ax=ax)
-                written[f"phasespace/{species}/{ps_name}"] = _write(
-                    fig, f"phasespace/{species}/{ps_name}.png"
-                )
+                written[f"phasespace/{species}/{ps_name}"] = _write(fig, f"phasespace/{species}/{ps_name}.png")
         try:
             if ser.ndim == 3:
                 written[f"phasespace_evolution/{species}/{ps_name}"] = _write(
@@ -1219,9 +1191,7 @@ def save_canned_plots(
     try:
         fig, ax = plt.subplots(figsize=(6, 4))
         plot_energy_components(run_dir, ax=ax)
-        written["energy_components_vs_time"] = _write(
-            fig, "energy_components_vs_time.png"
-        )
+        written["energy_components_vs_time"] = _write(fig, "energy_components_vs_time.png")
     except (FileNotFoundError, RuntimeError) as e:
         print(f"[plots] skipping energy_components_vs_time: {e}")
 
@@ -1246,9 +1216,7 @@ def _ensure_series(src) -> xr.DataArray:
     p = Path(src)
     if p.is_dir():
         return _io.load_series(p)
-    raise TypeError(
-        f"Expected an xr.DataArray or a directory path; got {type(src).__name__}"
-    )
+    raise TypeError(f"Expected an xr.DataArray or a directory path; got {type(src).__name__}")
 
 
 def _tex(s) -> str:
@@ -1284,10 +1252,7 @@ def _label_tex(s) -> str:
     s = str(s)
     if not s or (s.startswith("$") and s.endswith("$")):
         return s
-    return " ".join(
-        f"${tok}$" if tok and any(c in tok for c in "\\_^{}") else tok
-        for tok in s.split(" ")
-    )
+    return " ".join(f"${tok}$" if tok and any(c in tok for c in "\\_^{}") else tok for tok in s.split(" "))
 
 
 def _axis_label(da: xr.DataArray, dim: str) -> str:

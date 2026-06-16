@@ -23,9 +23,7 @@ class BaseOsiris(ADEPTModule):
         osiris_cfg = cfg.get("osiris", {})
         deck_path = osiris_cfg.get("deck")
         if not deck_path:
-            raise ValueError(
-                "BaseOsiris: cfg['osiris']['deck'] is required"
-            )
+            raise ValueError("BaseOsiris: cfg['osiris']['deck'] is required")
 
         self._sections = _deck.parse_deck_file(deck_path)
         overrides = osiris_cfg.pop("overrides", None) or {}
@@ -57,9 +55,7 @@ class BaseOsiris(ADEPTModule):
         tmax = time.get("tmax")
 
         if nx and xmin is not None and xmax is not None:
-            derived["dx"] = [
-                (xmax[d] - xmin[d]) / nx[d] for d in range(len(nx))
-            ]
+            derived["dx"] = [(xmax[d] - xmin[d]) / nx[d] for d in range(len(nx))]
             if dt is not None and nx:
                 derived["cfl_ratio"] = float(dt) / min(derived["dx"])
         if dt is not None and tmax is not None:
@@ -106,9 +102,7 @@ class BaseOsiris(ADEPTModule):
         return _post.collect(run_output, self.cfg, td)
 
     def vg(self, trainable_modules: dict, args: dict):
-        raise NotImplementedError(
-            "OSIRIS is not differentiable inside adept"
-        )
+        raise NotImplementedError("OSIRIS is not differentiable inside adept")
 
     # --- helpers ----------------------------------------------------------
 

@@ -16,7 +16,6 @@ import xarray as xr
 from adept.osiris import io as oio
 from adept.osiris import plots as oplt
 
-
 # Point this at a completed two-stream OSIRIS run to exercise the io/plots
 # loaders against real data; the tests skip cleanly when it is unset.
 EXISTING_RUN_ENV = "OSIRIS_TWOSTREAM_RUN"

@@ -128,7 +128,9 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     # Convert each diagnostic's time history to an xarray netCDF.
     if ms.is_dir():
         _io.save_run_datasets(
-            run_dir, td / "binary", diagnostics=whitelist,
+            run_dir,
+            td / "binary",
+            diagnostics=whitelist,
             raw_drop_initial=raw_drop_initial,
         )
 

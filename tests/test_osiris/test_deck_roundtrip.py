@@ -8,7 +8,6 @@ import pytest
 
 from adept.osiris import deck as osd
 
-
 DECKS_DIR = Path(__file__).parent / "decks"
 
 # Real OSIRIS decks vendored into the repo so the round-trip is exercised in
@@ -130,9 +129,7 @@ def test_deck_to_flat_dict_expands_lists() -> None:
 def test_deck_to_flat_dict_keys_are_mlflow_safe() -> None:
     import re
 
-    s = osd.parse_deck(
-        (DECKS_DIR / "two-stream-1d").read_text()
-    )
+    s = osd.parse_deck((DECKS_DIR / "two-stream-1d").read_text())
     flat = osd.deck_to_flat_dict(s)
     allowed = re.compile(r"^[A-Za-z0-9_./:\- ]+$")
     for k in flat:

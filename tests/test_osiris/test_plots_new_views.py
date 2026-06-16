@@ -74,17 +74,34 @@ def _make_rich_run(root: Path, n_steps: int = 6, nx: int = 16, npx: int = 12) ->
         _write_dump(run_dir / "MS/FLD/b2" / f"b2-{it:06d}.h5", "b2", -wave, t, it, [X_AX])
         # Currents j1/j2/j3.
         for j in ("j1", "j2", "j3"):
-            _write_dump(run_dir / f"MS/FLD/{j}" / f"{j}-{it:06d}.h5", j,
-                        rng.standard_normal(nx), t, it, [X_AX])
+            _write_dump(run_dir / f"MS/FLD/{j}" / f"{j}-{it:06d}.h5", j, rng.standard_normal(nx), t, it, [X_AX])
         # Density + thermal-velocity moments for a species.
-        _write_dump(run_dir / "MS/DENSITY/electron/charge" / f"charge-electron-{it:06d}.h5",
-                    "charge", -np.abs(rng.standard_normal(nx)) - 1.0, t, it, [X_AX])
+        _write_dump(
+            run_dir / "MS/DENSITY/electron/charge" / f"charge-electron-{it:06d}.h5",
+            "charge",
+            -np.abs(rng.standard_normal(nx)) - 1.0,
+            t,
+            it,
+            [X_AX],
+        )
         for u in ("uth1", "uth2", "uth3"):
-            _write_dump(run_dir / f"MS/UDIST/electron/{u}" / f"{u}-electron-{it:06d}.h5",
-                        u, 0.1 + 0.01 * rng.standard_normal(nx), t, it, [X_AX])
+            _write_dump(
+                run_dir / f"MS/UDIST/electron/{u}" / f"{u}-electron-{it:06d}.h5",
+                u,
+                0.1 + 0.01 * rng.standard_normal(nx),
+                t,
+                it,
+                [X_AX],
+            )
         # Phase space (p, x).
-        _write_dump(run_dir / "MS/PHA/x1p1/electron" / f"x1p1-electron-{it:06d}.h5",
-                    "x1p1", rng.random((npx, nx)), t, it, [X_AX, P_AX])
+        _write_dump(
+            run_dir / "MS/PHA/x1p1/electron" / f"x1p1-electron-{it:06d}.h5",
+            "x1p1",
+            rng.random((npx, nx)),
+            t,
+            it,
+            [X_AX, P_AX],
+        )
     return run_dir
 
 
@@ -166,8 +183,7 @@ def test_temperature_series_from_uth(tmp_path: Path) -> None:
 
 def test_temperature_series_absent_returns_none(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
-    _write_dump(run_dir / "MS/DENSITY/ion/charge" / "charge-ion-000000.h5",
-                "charge", np.ones(8), 0.0, 0, [X_AX])
+    _write_dump(run_dir / "MS/DENSITY/ion/charge" / "charge-ion-000000.h5", "charge", np.ones(8), 0.0, 0, [X_AX])
     entries = oplt._species_diags(run_dir)["ion"]
     assert oplt._temperature_series(entries) is None
 
@@ -216,4 +232,3 @@ def test_save_canned_plots_emits_new_views(tmp_path: Path) -> None:
     assert expected <= set(written)
     for path in written.values():
         assert path.exists() and path.stat().st_size > 0
-

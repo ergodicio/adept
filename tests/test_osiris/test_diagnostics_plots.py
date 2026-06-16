@@ -66,12 +66,23 @@ def _make_full_run(root: Path, n_steps: int = 6, nx: int = 16, npx: int = 12) ->
     for k in range(n_steps):
         it = k * 10
         t = k * 0.5
-        _write_dump(run_dir / "MS/FLD/e1" / f"e1-{it:06d}.h5",
-                    "e1", rng.standard_normal(nx), t=t, it=it, axes=[x_ax])
-        _write_dump(run_dir / "MS/DENSITY/electron/charge" / f"charge-electron-{it:06d}.h5",
-                    "charge", rng.standard_normal(nx), t=t, it=it, axes=[x_ax])
-        _write_dump(run_dir / "MS/PHA/x1p1/electron" / f"x1p1-electron-{it:06d}.h5",
-                    "x1p1", rng.random((npx, nx)), t=t, it=it, axes=[x_ax, p_ax])
+        _write_dump(run_dir / "MS/FLD/e1" / f"e1-{it:06d}.h5", "e1", rng.standard_normal(nx), t=t, it=it, axes=[x_ax])
+        _write_dump(
+            run_dir / "MS/DENSITY/electron/charge" / f"charge-electron-{it:06d}.h5",
+            "charge",
+            rng.standard_normal(nx),
+            t=t,
+            it=it,
+            axes=[x_ax],
+        )
+        _write_dump(
+            run_dir / "MS/PHA/x1p1/electron" / f"x1p1-electron-{it:06d}.h5",
+            "x1p1",
+            rng.random((npx, nx)),
+            t=t,
+            it=it,
+            axes=[x_ax, p_ax],
+        )
 
     # HIST energy histories: iter, time, then value columns.
     hist = run_dir / "HIST"
@@ -80,8 +91,8 @@ def _make_full_run(root: Path, n_steps: int = 6, nx: int = 16, npx: int = 12) ->
     fld = ["! iter time e1 e2 e3 b1 b2 b3"]
     par = ["! iter time ene"]
     for k, t in enumerate(times):
-        fld.append(f"{k*10} {t} {1.0 + 0.1*k} 0.0 0.0 0.0 0.0 0.0")
-        par.append(f"{k*10} {t} {100.0 - 0.1*k}")
+        fld.append(f"{k * 10} {t} {1.0 + 0.1 * k} 0.0 0.0 0.0 0.0 0.0")
+        par.append(f"{k * 10} {t} {100.0 - 0.1 * k}")
     (hist / "fld_ene").write_text("\n".join(fld) + "\n")
     (hist / "par01_ene").write_text("\n".join(par) + "\n")
 
@@ -98,9 +109,7 @@ def test_field_energy_components_splits_e_and_b(tmp_path: Path) -> None:
     # Only e1 was dumped, so all energy is electric and B is identically zero.
     assert np.all(ds["E_energy"].values > 0)
     assert np.all(ds["B_energy"].values == 0)
-    np.testing.assert_allclose(
-        ds["total_field_energy"].values, ds["E_energy"].values
-    )
+    np.testing.assert_allclose(ds["total_field_energy"].values, ds["E_energy"].values)
 
 
 def test_load_hist_energy_builds_conservation_total(tmp_path: Path) -> None:

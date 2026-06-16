@@ -9,7 +9,6 @@ import pytest
 
 from adept.osiris import runner
 
-
 # Resolved from the same env vars the runner itself honors, so the live-binary
 # smoke test below runs wherever OSIRIS is built and skips cleanly otherwise.
 OSIRIS_BIN_1D = os.environ.get("OSIRIS_BIN_1D") or os.environ.get("OSIRIS_BIN")
