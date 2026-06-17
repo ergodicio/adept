@@ -116,3 +116,55 @@ def laser_normalization(laser_wavelength_str, T0_str):
     return PlasmaNormalization(
         m0=UREG.m_e, q0=UREG.e, n0=ne_crit, T0=T0, L0=one_over_k, v0=1 * UREG.c, tau=1 / omega_laser
     )
+
+
+def _osiris_normalization(wp0, n0):
+    """
+    Core OSIRIS normalization built from an angular plasma frequency ``wp0`` and
+    its corresponding reference density ``n0``.
+
+    OSIRIS normalizes time to 1/wp0, length to the collisionless skin depth
+    c/wp0, and velocity to the speed of light.
+
+    Unit quantities are:
+        - L0 = c / wp0 (skin depth)
+        - v0 = c (speed of light)
+        - tau = 1 / wp0 (inverse plasma frequency)
+
+    There is no reference temperature: OSIRIS has no single global temperature
+    (species carry their own per-species thermal momenta), so ``T0`` is left
+    unset and temperature-dependent quantities are not defined under this
+    normalization.
+    """
+    wp0 = wp0.to("rad/s")
+    tau = 1 / wp0
+
+    v0 = 1 * UREG.c
+    x0 = (v0 / wp0).to("nm")
+
+    return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0.to("1/cc"), T0=None, L0=x0, v0=v0, tau=tau)
+
+
+def skin_depth_normalization(n0_str):
+    """
+    OSIRIS normalization referenced to a plasma density (``simulation.n0``).
+
+    The reference plasma frequency is computed from the density,
+    wp0 = sqrt(n0 e^2 / (eps0 m_e)). See :func:`_osiris_normalization`.
+    """
+    n0 = UREG.Quantity(n0_str)
+    wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
+    return _osiris_normalization(wp0, n0)
+
+
+def skin_depth_normalization_from_frequency(wp0_str):
+    """
+    OSIRIS normalization referenced to a plasma frequency (``simulation.omega_p0``).
+
+    The reference density is recovered from the frequency,
+    n0 = wp0^2 eps0 m_e / e^2, so the reported ``n0`` stays consistent with the
+    density-referenced form. See :func:`_osiris_normalization`.
+    """
+    wp0 = UREG.Quantity(wp0_str)
+    n0 = (wp0**2 * UREG.epsilon_0 * UREG.m_e / UREG.e**2.0).to("1/cc")
+    return _osiris_normalization(wp0, n0)

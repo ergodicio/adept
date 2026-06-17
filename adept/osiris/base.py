@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from adept._base_ import ADEPTModule
+from adept.normalization import skin_depth_normalization, skin_depth_normalization_from_frequency
 from adept.osiris import deck as _deck
 from adept.osiris import post as _post
 from adept.osiris import runner as _runner
@@ -38,7 +39,53 @@ class BaseOsiris(ADEPTModule):
         cfg["deck"] = _deck.deck_to_flat_dict(self._sections)
 
     def write_units(self) -> dict:
-        return {}
+        """Derive physical reference scales from the deck's ``simulation`` section.
+
+        OSIRIS normalizes time to ``1/wp0``, length to the skin depth ``c/wp0``,
+        and velocity to ``c``, where ``wp0`` is the reference plasma frequency.
+        That reference is set in the deck's ``simulation`` section by either the
+        density ``n0`` (cm^-3) or the frequency ``omega_p0`` (rad/s); when both
+        are present OSIRIS uses ``n0``, so we do too. The returned dict mirrors
+        the density-derived keys the other adept solvers log to ``units.yaml`` so
+        OSIRIS runs are comparable in MLflow. OSIRIS has no single global
+        reference temperature (species carry their own per-species thermal
+        momenta), so the temperature-dependent keys (``T0``/``nuee``/
+        ``logLambda_ee``) are intentionally omitted.
+        """
+        sim = self._iter_first_section("simulation")
+        n0 = sim.get("n0")
+        omega_p0 = sim.get("omega_p0")
+        if n0 is not None:
+            norm = skin_depth_normalization(f"{n0} / cc")
+        elif omega_p0 is not None:
+            norm = skin_depth_normalization_from_frequency(f"{omega_p0} rad/s")
+        else:
+            return {}
+
+        quants: dict[str, Any] = {
+            "wp0": (1 / norm.tau).to("rad/s"),
+            "tp0": norm.tau.to("fs"),
+            "n0": norm.n0.to("1/cc"),
+            "v0": norm.v0.to("m/s"),
+            "x0": norm.L0.to("nm"),
+            "c_light": norm.speed_of_light_norm(),  # == 1.0; OSIRIS normalizes v to c
+            "beta": 1.0 / norm.speed_of_light_norm(),
+        }
+
+        space = self._iter_first_section("space")
+        xmin = self._first_array_value(space, "xmin")
+        xmax = self._first_array_value(space, "xmax")
+        if xmin is not None and xmax is not None:
+            quants["box_length"] = ((xmax[0] - xmin[0]) * norm.L0).to("micron")
+
+        time = self._iter_first_section("time")
+        tmax = time.get("tmax")
+        if tmax is not None:
+            tmin = time.get("tmin", 0.0)
+            quants["sim_duration"] = ((float(tmax) - float(tmin)) * norm.tau).to("ps")
+
+        self.cfg.setdefault("units", {})["derived"] = quants
+        return quants
 
     def get_derived_quantities(self) -> dict:
         """Lift a few useful scalars out of the deck for MLflow visibility."""
