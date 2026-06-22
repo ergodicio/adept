@@ -3,11 +3,11 @@
 ## File structure
 
 ```
-adept/                                          (repo root, ~/Desktop/adept/adept/)
-├── run.py                                      ← existing CLI entry (unchanged)
+adept/                                          (repo root)
+├── run.py                                      ← CLI entry (--cfg path, no .yaml suffix)
 ├── adept/
-│   ├── _base_.py                               ← MODIFIED: dispatcher gained `osiris` branch
-│   └── osiris/                                 ← NEW package
+│   ├── _base_.py                               ← dispatcher: `osiris` solver branch
+│   └── osiris/                                 OSIRIS wrapper package
 │       ├── __init__.py                         lazy export of BaseOsiris
 │       ├── base.py        ◀── BaseOsiris(ADEPTModule): __init__ parses deck,
 │       │                      __call__ runs OSIRIS, post_process delegates
@@ -18,53 +18,75 @@ adept/                                          (repo root, ~/Desktop/adept/adep
 │       ├── runner.py      ◀── subprocess driver
 │       │                      run_osiris(deck_text, binary=…, mpi_ranks=…),
 │       │                      discover_binary(...), OSIRIS-error detection
-│       └── post.py        ◀── post-run collection
-│                              final-step HDF5 copy, optional MS/ tarball,
-│                              scalar metrics
+│       ├── post.py        ◀── post-run collection: final-step HDF5 copy,
+│       │                      NetCDF export, scalar metrics
+│       ├── io.py          ◀── HDF5/NetCDF readers + dataset save/load
+│       ├── plots.py       ◀── canned plot set (save_canned_plots)
+│       └── regen.py       ◀── regenerate plots offline from saved NetCDFs
 ├── configs/
-│   └── osiris/                                 ← NEW: example manifests
-│       ├── twostream-1d.yaml                   full 30-ω_p run
-│       ├── twostream-1d-short.yaml             tmax=1.0 smoke
-│       └── twostream-1d-uploadall.yaml         tmax=0.5 + ms.tar.gz
+│   └── osiris/                                 example manifests
+│       ├── twostream-1d.yaml                   full run (deck tmax=100)
+│       └── twostream-1d-short.yaml             tmax=1.0 smoke
 └── tests/
-    └── test_osiris/                            ← NEW
-        ├── test_deck_roundtrip.py              15 parser tests
-        └── test_runner.py                       5 runner tests
+    └── test_osiris/
+        ├── decks/two-stream-1d                 in-repo example deck (manifests point here)
+        ├── test_deck_roundtrip.py              namelist parser round-trip
+        ├── test_runner.py                      subprocess runner + discover_binary
+        ├── test_units.py                       units.yaml derivation
+        ├── test_post_netcdf.py                 post → NetCDF export
+        ├── test_io_and_plots.py                io readers + plotting
+        ├── test_diagnostics_plots.py           per-diagnostic plots
+        └── test_plots_new_views.py             field-decomp / phase-space views
 ```
 
 ## End-to-end data flow
 
 ```
- YAML manifest                  OSIRIS native deck
- (configs/osiris/*.yaml)        (any path you point at)
-        │                                │
-        ▼                                ▼
-   run.py --cfg …            parse_deck_file()  ──┐
-        │                                          │
-        ▼                                          ▼
-   ergoExo.setup ──► BaseOsiris.__init__ ──► merge_overrides ──► render_deck
-                                  │                                   │
-                                  ▼                                   ▼
-                       cfg["deck"] = flat_dict          run_dir/os-stdin
-                                  │                                   │
-                                  ▼                                   ▼
-                        log_params → MLflow         runner.run_osiris(mpirun…)
-                                                                      │
-                                                                      ▼
-                                                          run_dir/MS/{FLD,PHA,…}
-                                                                      │
-                                                                      ▼
-                                                       post.collect → td/ → MLflow
+ YAML manifest                      OSIRIS native deck
+ (configs/osiris/*.yaml)            (tests/test_osiris/decks/… or any path)
+        │                                    │
+        └──────────► run.py --cfg ◄──────────┘
+                          │
+   ── setup phase ────────┼──────────────────────────────────────────────
+   ergoExo.setup ──► BaseOsiris.__init__:
+                       parse_deck_file()
+                       merge_overrides()                  (mutates sections in place)
+                       cfg["deck"] = deck_to_flat_dict(merged sections)
+                          │
+                          ▼
+                     log_params ──► MLflow                ← logs the POST-override deck
+                          │
+   ── run phase ──────────┼──────────────────────────────────────────────
+   ergoExo(modules) ─► BaseOsiris.__call__:
+                       render_deck(merged sections) ──► run_dir/os-stdin
+                       runner.run_osiris(mpirun…)   ──► run_dir/MS/{FLD,PHA,…}
+                          │
+                          ▼
+                     post.collect ──► td/ ──► MLflow
 ```
+
+The deck logged to MLflow is the one **after** `merge_overrides` is applied — the
+same merged sections that `render_deck` later writes to `os-stdin` — so the logged
+params always match what OSIRIS actually ran.
 
 ## How to run
 
+First, point the runner at your built OSIRIS binary. The runner resolves it in
+this order: `osiris.binary` in the manifest → `OSIRIS_BIN_<dim>D` env var (e.g.
+`OSIRIS_BIN_1D`) → `OSIRIS_BIN` env var. The example manifests omit `osiris.binary`,
+so set the env var once per shell:
+
 ```bash
-conda activate adept
-cd ~/Desktop/adept/adept
-python run.py --cfg configs/osiris/twostream-1d-short    # smoke
-python run.py --cfg configs/osiris/twostream-1d          # full
-mlflow ui --backend-store-uri file://$(pwd)/mlruns       # browse
+export OSIRIS_BIN_1D=/path/to/osiris-1D.e        # per-dim, preferred
+# export OSIRIS_BIN=/path/to/osiris.e            # or a single default for all dims
+```
+
+Then run from the repo root (`run.py` appends `.yaml` to `--cfg`, so omit the suffix):
+
+```bash
+uv run run.py --cfg configs/osiris/twostream-1d-short      # smoke
+uv run run.py --cfg configs/osiris/twostream-1d            # full
+uv run mlflow ui --backend-store-uri file://$(pwd)/mlruns  # browse
 ```
 
 ## Manifest schema
@@ -77,8 +99,9 @@ mlflow:
   run: cold-equal-beams                           # required
 
 osiris:
-  deck: /path/to/native/deck                      # required: source of truth
-  binary: /path/to/osiris-1D.e                    # or OSIRIS_BIN / OSIRIS_BIN_<dim>D
+  deck: tests/test_osiris/decks/two-stream-1d     # required: source of truth (repo-relative)
+  # binary: /path/to/osiris-1D.e                  # optional: overrides the env-var default
+  #                                               #   (OSIRIS_BIN_<dim>D → OSIRIS_BIN)
   mpi_ranks: 1                                    # 1 → direct, >1 → mpirun -n N
   run_root: ./checkpoints                         # parent of per-run dirs (default)
   # NOTE: the default sits inside checkpoints/ deliberately — sync-up.sh
@@ -113,7 +136,7 @@ Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1
 | Kind        | Content                                                                          |
 | ----------- | -------------------------------------------------------------------------------- |
 | Params      | every deck key, flattened — `deck.grid.nx_p_1:1`, `deck.species_0.ufl_1:3.0`, …  |
-| Params      | the manifest itself — `solver`, `osiris.binary`, `output.diagnostics_to_log`, …  |
+| Params      | the manifest itself — `solver`, `osiris.deck`, `output.diagnostics_to_log`, …    |
 | Metrics     | `wall_time_s`, `exit_code`, `field_energy_final`, `final_iter`, `run_time`, `postprocess_time` |
 | Artifacts   | `config.yaml`, `derived_config.yaml`, `units.yaml` (adept stock)                 |
 | Artifacts   | `os-stdin` (rendered OSIRIS deck), `stdout.log`, `stderr.log`                    |
@@ -121,6 +144,7 @@ Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1
 | Artifacts   | `plots/…` — canned PNGs (see below)                                              |
 
 ## Canned plots (`plots/` artifacts)
+These canned plots focus on 1D simulations.
 
 `post.collect` renders a standard plot set via `adept/osiris/plots.py::save_canned_plots`. All labels are emitted as proper LaTeX (`$\omega$`, `$c/\omega_p$`, …).
 
@@ -165,8 +189,8 @@ Edit `adept/osiris/post.py:collect`. The h5 dump for each diagnostic is at `run_
 Native-deck-as-truth: just write the deck, point a manifest at it, run. No code changes.
 
 ```bash
-cp my-new.deck ~/Desktop/pic/projects/whatever/
+cp my-new.deck tests/test_osiris/decks/
 cp configs/osiris/twostream-1d.yaml configs/osiris/my-new.yaml
 $EDITOR configs/osiris/my-new.yaml          # change deck path + mlflow.run
-python run.py --cfg configs/osiris/my-new
+uv run run.py --cfg configs/osiris/my-new
 ```
