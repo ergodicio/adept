@@ -5,8 +5,9 @@ mlflow:
   run: smoke-tmax-1
 
 osiris:
-  deck: /home/phil/Desktop/pic/projects/twostream-pic/two-stream-1d
-  binary: /home/phil/Desktop/pic/osiris/bin/osiris-1D.e
+  deck: tests/test_osiris/decks/two-stream-1d
+  # binary omitted: the runner resolves it from OSIRIS_BIN_1D, then OSIRIS_BIN.
+  # Set it here only to override that (e.g. binary: /path/to/osiris-1D.e).
   mpi_ranks: 1
   run_root: ./checkpoints
   overrides:
