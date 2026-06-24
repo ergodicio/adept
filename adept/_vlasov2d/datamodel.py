@@ -53,6 +53,15 @@ class DensityConfig(BaseModel):
         return SpeciesComponentConfig.model_validate(self.model_extra[name])
 
 
+class DistributionShardingConfig(BaseModel):
+    """JAX sharding controls for distributed f(x, y, vx, vy) initialization."""
+
+    enabled: bool = False
+    mesh_axes: tuple[str, ...] = ("x",)
+    mesh_shape: tuple[int, ...] | None = None
+    partition: tuple[str | None, str | None, str | None, str | None] = ("x", None, None, None)
+
+
 class UnitsConfig(BaseModel):
     normalizing_temperature: str
     normalizing_density: str
@@ -74,6 +83,11 @@ class GridConfig(BaseModel):
     nvy: int | None = None
     vmax: float | None = None
     parallel: tuple[str, ...] | bool = False
+    distribution_sharding: DistributionShardingConfig = Field(
+        default_factory=DistributionShardingConfig, alias="distribution-sharding"
+    )
+
+    model_config = ConfigDict(populate_by_name=True)
 
     @field_validator("parallel", mode="before")
     @classmethod

@@ -60,10 +60,40 @@ grid:
   ymin: -10.0
   ymax: 10.0
   parallel: false
+  distribution-sharding:
+    enabled: false
+    mesh_axes: ["x"]
+    mesh_shape: [1]
+    partition: ["x", null, null, null]
 ```
 
 `dt` will be capped to `0.5 * min(dx, dy) / c_norm` whenever any EM driver is
 enabled (Maxwell CFL).
+
+`distribution-sharding` enables distributed initialization of the global
+`f(x, y, vx, vy)` arrays. When enabled, the solver uses JAX
+`make_array_from_callback` to materialize each device's shard directly instead
+of allocating the full distribution on the host first. The `partition` tuple is
+ordered as `[x, y, vx, vy]` and each entry must either be `null` or a name from
+`mesh_axes`.
+
+For example, a two-dimensional spatial mesh over all visible devices can be
+configured as:
+
+```yaml
+grid:
+  distribution-sharding:
+    enabled: true
+    mesh_axes: ["x", "y"]
+    mesh_shape: [4, 2]
+    partition: ["x", "y", null, null]
+```
+
+If `mesh_shape` is omitted, all visible JAX devices are placed on the first mesh
+axis. Sharded initialization currently requires deterministic density profiles:
+set `noise_type: none` or `noise_val: 0.0`. The sharding helper also exposes a
+reshard primitive for future distributed FFT pushers to make a transform axis
+local before an exponential step.
 
 ## `density`
 

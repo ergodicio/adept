@@ -48,6 +48,7 @@ allowed-confusables = [
     "−", # MINUS SIGN (vs HYPHEN-MINUS)
     "×", # MULTIPLICATION SIGN (vs LATIN SMALL LETTER X)
     "γ", # GREEK SMALL LETTER GAMMA (vs LATIN SMALL LETTER Y) — physics notation
+    "α", # GREEK SMALL LETTER ALPHA (vs LATIN SMALL LETTER A) — physics notation (thermal velocity)
 ]
 
 [lint.extend-per-file-ignores]

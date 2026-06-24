@@ -45,6 +45,7 @@ class Grid(eqx.Module):
         should_override_dt_for_em_waves: bool,
         beta: float,
     ):
+        """Build all spatial, temporal, and Fourier grid arrays from scalar inputs."""
         self.xmin = xmin
         self.xmax = xmax
         self.nx = nx

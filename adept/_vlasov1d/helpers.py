@@ -1,3 +1,5 @@
+"""Initialization and post-processing helpers for Vlasov-1D simulations."""
+
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import os
@@ -23,10 +25,12 @@ from .. import patched_mlflow as mlflow
 
 
 def gamma_3_over_m(m):
+    """Evaluate Gamma(3 / m) for super-Gaussian normalization."""
     return gamma(3.0 / m)  # np.interp(m, m_ax, g_3_m)
 
 
 def gamma_5_over_m(m):
+    """Evaluate Gamma(5 / m) for super-Gaussian normalization."""
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
@@ -149,6 +153,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
+    """Write binary output and diagnostic plots from a completed Vlasov-1D solve."""
     t0 = time()
 
     # Get species names for directory creation

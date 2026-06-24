@@ -1,3 +1,5 @@
+"""Save-function construction and netCDF writers for Vlasov-1D output."""
+
 import os
 import warnings
 
@@ -115,11 +117,13 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
 
 
 def get_field_save_func(cfg):
+    """Build the Diffrax save callback for field and species moment snapshots."""
     if {"t"} == set(cfg["save"]["fields"].keys()):
         species_grids = cfg["grid"]["species_grids"]
         species_names = list(species_grids.keys())
 
         def fields_save_func(t, y, args):
+            """Compute field, moment, and ponderomotive quantities for one save time."""
             result = {}
 
             # Compute moments for each species
@@ -158,9 +162,11 @@ def get_field_save_func(cfg):
 
 
 def get_dist_save_func(axes, dist_save_config, dist_key):
+    """Build a save callback for full or interpolated distribution-function output."""
     if {"t"} == set(dist_save_config.keys()):
 
         def dist_save_func(t, y, args):
+            """Return the full distribution for this save point."""
             return y[dist_key]
 
     elif {"t", "x", "v"} == set(dist_save_config.keys()):
@@ -169,6 +175,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         out_shape = xq.shape
 
         def dist_save_func(t, y, args):
+            """Return the distribution interpolated on configured x-v sample points."""
             return interp2d(xq_flat, vq_flat, axes["x"], axes["v"], y[dist_key], method="linear").reshape(out_shape)
 
     elif {"t", "kx", "v"} == set(dist_save_config.keys()):
@@ -177,6 +184,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         out_shape = kxq.shape
 
         def dist_save_func(t, y, args):
+            """Return the distribution spectrum interpolated on configured kx-v points."""
             fkx = jnp.abs(jnp.fft.rfft(y[dist_key], axes=0))
             return interp2d(kxq_flat, vq_flat, axes["kx"], axes["v"], fkx, method="linear").reshape(out_shape)
 
@@ -275,10 +283,12 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
+    """Build the default scalar save callback for species moments and field energies."""
     species_grids = cfg["grid"]["species_grids"]
     species_names = list(species_grids.keys())
 
     def save(t, y, args):
+        """Compute scalar diagnostics at one solver save point."""
         scalars = {}
 
         # Compute scalars for each species

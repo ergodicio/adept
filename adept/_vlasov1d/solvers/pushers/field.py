@@ -1,3 +1,5 @@
+"""Field drivers and field solvers for the Vlasov-1D system."""
+
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
@@ -12,6 +14,7 @@ class LongitudinalElectricFieldDriver:
     """Computes normalized E_tilde = ω * a0 * sin(kx - ωt) from EM drivers."""
 
     def __init__(self, xax, drivers: list[EMDriver]):
+        """Store the spatial axis and longitudinal driver list."""
         self.xax = xax
         self.drivers = drivers
 
@@ -23,6 +26,7 @@ class LongitudinalElectricFieldDriver:
         return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
     def __call__(self, t, args):
+        """Evaluate the total longitudinal driver field at time t."""
         total_de = jnp.zeros_like(self.xax)
         for pulse in self.drivers:
             total_de += self._single_driver_field(pulse, t)
@@ -47,6 +51,7 @@ class TransverseCurrentSourceDriver:
     """
 
     def __init__(self, xax, drivers: list[EMDriver], c: float = 0.0):
+        """Precompute point-source masks and scales for transverse drivers."""
         self.xax = xax
         self.drivers = drivers
         dx = float(xax[1] - xax[0])
@@ -79,6 +84,7 @@ class TransverseCurrentSourceDriver:
             return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
 
     def __call__(self, t, args):
+        """Evaluate the summed transverse current source at time t."""
         total = jnp.zeros_like(self.xax)
         for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True):
             total += self._single_driver_source(driver, mask, scale, t)
@@ -86,7 +92,10 @@ class TransverseCurrentSourceDriver:
 
 
 class WaveSolver:
+    """Finite-difference transverse wave-equation solver with absorbing boundaries."""
+
     def __init__(self, c: jnp.float64, dx: jnp.float64, dt: jnp.float64):
+        """Precompute constants for the second-order wave update."""
         super().__init__()
         self.dx = dx
         self.c = c
@@ -132,6 +141,7 @@ class WaveSolver:
         return jnp.concatenate([a_left, anew, a_right])
 
     def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_density: jnp.ndarray):
+        """Advance the vector potential one timestep or preserve it when waves are disabled."""
         if self.c > 0:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
@@ -343,6 +353,7 @@ class ElectricFieldSolver:
     """
 
     def __init__(self, cfg: dict, grid: Grid):
+        """Select and configure the electrostatic field solver requested by cfg."""
         super().__init__()
 
         species_grids = cfg["grid"]["species_grids"]

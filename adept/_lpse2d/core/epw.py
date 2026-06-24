@@ -348,7 +348,7 @@ class SpectralEPWSolver:
 
         # Noise parameters
         self.noise_enabled = cfg["terms"]["epw"]["source"]["noise"]
-        self.noise_amplitude = 1e-12
+        self.noise_amplitude = 1e-10  # matches MATLAB noiseAmp (m201805_matlabLpse_v11.m:49)
         self.noise_seed = np.random.randint(2**20)
 
         # Density gradient
@@ -523,6 +523,9 @@ class SpectralEPWSolver:
 
         # Uniform amplitude with random phase
         noise = self.noise_amplitude * jnp.exp(1j * phases)
+
+        # Suppress high-wavenumber modes (MATLAB epwNoise: phi_noise(isHighWavenumberMode) = 0)
+        noise = noise * self.low_pass_filter
 
         # Zero out k=0
         noise = noise * self.zero_mask

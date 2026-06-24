@@ -1,3 +1,5 @@
+"""Vector-field composition for Vlasov-1D Diffrax solves."""
+
 from jax import Array
 from jax import numpy as jnp
 
@@ -28,6 +30,7 @@ class TimeIntegrator:
     """
 
     def __init__(self, cfg: dict, grid: Grid):
+        """Construct shared field solver and Vlasov pushers from configuration."""
         self.field_solve = field.ElectricFieldSolver(cfg, grid)
         self.species_grids = cfg["grid"]["species_grids"]
         self.species_params = cfg["grid"]["species_params"]
@@ -36,6 +39,7 @@ class TimeIntegrator:
         self.vdfdx = vlasov.SpaceExponential(grid.x, self.species_grids, parallel=_is_parallel(parallel, "v"))
 
     def get_edfdv(self, cfg: dict, parallel):
+        """Return the configured velocity-space advection operator."""
         if cfg["terms"]["edfdv"] == "exponential":
             return vlasov.VelocityExponential(
                 self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
@@ -63,6 +67,7 @@ class LeapfrogIntegrator(TimeIntegrator):
     """
 
     def __init__(self, cfg: dict, grid: Grid):
+        """Initialize leapfrog coefficients and shared pusher state."""
         super().__init__(cfg, grid)
         self.dt = grid.dt
         self.dt_array = self.dt * jnp.array([0.0, 1.0])
@@ -106,6 +111,7 @@ class SixthOrderHamIntegrator(TimeIntegrator):
     """
 
     def __init__(self, cfg: dict, grid: Grid):
+        """Initialize sixth-order Hamiltonian splitting coefficients."""
         super().__init__(cfg, grid)
         self.dt = grid.dt
 
@@ -197,6 +203,7 @@ class VlasovPoissonFokkerPlanck:
     """
 
     def __init__(self, cfg: dict, grid: Grid):
+        """Build the Vlasov-Poisson integrator, collisions, filters, and diagnostics."""
         self.dt = grid.dt
         if cfg["terms"]["time"] == "sixth":
             self.vlasov_poisson = SixthOrderHamIntegrator(cfg, grid)
@@ -227,6 +234,7 @@ class VlasovPoissonFokkerPlanck:
     def __call__(
         self, f_dict: dict, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
     ) -> tuple[Array, dict, dict]:
+        """Advance Vlasov, collision, filter, and diagnostic terms for one timestep."""
         e, f_vlasov = self.vlasov_poisson(f_dict, a, dex_array, prev_ex)
 
         f_fp = self.fp(nu_fp, nu_K, f_vlasov, dt=self.dt)
@@ -266,6 +274,7 @@ class VlasovMaxwell:
         nu_fp_prof: SpaceTimeEnvelopeFunction | None = None,
         nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
     ):
+        """Assemble the coupled electrostatic, transverse-wave, and driver operators."""
         self.cfg = cfg
         self.grid = grid
         self.nu_fp_prof = nu_fp_prof
