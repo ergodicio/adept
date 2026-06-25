@@ -34,6 +34,11 @@ def _looks_like_osiris_error(line: str) -> bool:
     low = line.strip().lower()
     if not low:
         return False
+    # OSIRIS prefixes diagnostics with (*warning*) / (*error*); a warning is
+    # never a failure even when its text contains the word "error" (e.g. the
+    # Sentoku-collisions "factor of 2 error" warning).
+    if "(*warning*)" in low:
+        return False
     if any(noise.lower() in low for noise in _OSIRIS_STDERR_NOISE):
         return False
     return any(tok in low for tok in _OSIRIS_ERR_TOKENS)
