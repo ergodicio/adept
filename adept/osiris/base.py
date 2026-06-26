@@ -7,6 +7,7 @@ from typing import Any
 from adept._base_ import ADEPTModule
 from adept.normalization import skin_depth_normalization, skin_depth_normalization_from_frequency
 from adept.osiris import deck as _deck
+from adept.osiris import density as _density
 from adept.osiris import post as _post
 from adept.osiris import runner as _runner
 
@@ -30,6 +31,16 @@ class BaseOsiris(ADEPTModule):
         overrides = osiris_cfg.pop("overrides", None) or {}
         if overrides:
             _deck.merge_overrides(self._sections, overrides)
+
+        # Optional: scale the box from a target density gradient scale length
+        # (mirrors adept's _lpse2d / kinetic_srs grid sizing). Runs *after*
+        # overrides, so an explicit space.xmax override is superseded by the
+        # gradient-derived box. The computed quantities are stashed back under
+        # osiris.density.derived for MLflow provenance.
+        density_cfg = osiris_cfg.get("density")
+        computed = _density.apply_gradient_scale_length(self._sections, density_cfg)
+        if computed is not None:
+            density_cfg.setdefault("derived", {}).update(computed)
 
         # Surface the parsed (post-override) deck inside cfg so adept's
         # log_params picks every parameter up as a flat MLflow param.

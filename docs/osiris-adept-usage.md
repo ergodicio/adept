@@ -113,6 +113,13 @@ osiris:
   # purge policy will take care of stale ones eventually.
   extra_mpi_args: ["--oversubscribe"]             # optional, passed to mpirun
 
+  density:                                        # optional: adaptive box sizing (1D)
+    gradient_scale_length: 300um                  #   target L_n; scales the box so the
+                                                  #   deck's density ramp realizes this L
+    # min: 0.225                                  #   nmin (n_c units); default: deck profile.fx
+    # max: 0.275                                  #   nmax (n_c units); default: deck profile.fx
+    # reference_density: 0.25                     #   density (n_c units) where L is defined
+
   overrides:                                      # optional: applied before render
     time: {tmax: 50.0}                            #   merge into the (one) time block
     grid: {nx_p: [256]}                           #   refresh an array key
@@ -130,6 +137,39 @@ output:
 ```
 
 Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1)`). Indexed `{0: …, 1: …}` form addresses occurrences of repeated sections (`species`, `udist`, `profile`, `spe_bound`, `diag_species`, `zpulse`, …) in source order.
+
+## Adaptive box sizing from a density gradient scale length
+
+`osiris.density` (1D decks) scales the simulation box so the deck's linear density
+ramp realizes a target gradient scale length `L`, mirroring how adept's `_lpse2d`
+and `kinetic_srs` solvers size their grids. This is the **inverse** of holding the
+box fixed and steepening the ramp: here the density range (`nmin`/`nmax`) is held
+and the box length follows `L`.
+
+For a linear ramp `n(x): nmin → nmax`, the local scale length is
+`L(x) = n(x)/(dn/dx) = n(x)·ramp_span/(nmax−nmin)`, so requiring `L(n_ref) = L` at the
+reference density `n_ref` (default the quarter-critical surface, `n_c/4 = 0.25`)
+fixes the ramp span — the same relation adept uses, `ramp_span = L/0.25·(nmax−nmin)`.
+
+The result is a single spatial scale factor `s` applied to **every** length in the
+deck: `space.xmin`/`space.xmax`, all `profile.x` arrays, and all `diag_species`
+phase-space windows (`ps_xmin`/`ps_xmax`). `grid.nx_p` is scaled by `s` too — holding
+the cell size `dx` fixed (rounded up to a multiple of `node_conf.node_number(1)` for
+even domain decomposition). Time (`dt`, `tmax`) is untouched, so the CFL ratio is
+preserved.
+
+- Activates only when `osiris.density.gradient_scale_length` is present (decks
+  otherwise run with their hand-set box, unchanged). Runs **after** `overrides`, so
+  it supersedes any `space.xmax` override.
+- `gradient_scale_length` takes a unit string (`300um`, converted via the deck's
+  `simulation.n0`/`omega_p0`) or a bare number already in `c/wp0` units.
+- `min`/`max` default to the ramp's interior `profile.fx` endpoints; if given, they
+  are written into the primary `profile.fx`.
+- The computed quantities (`box_norm`, `nx`, `scale_factor`, …) are logged under
+  `osiris.density.derived.*`.
+- Multi-dimensional decks raise `NotImplementedError`. Drive positions (e.g. a
+  `zpulse` spatial center) are **not** rescaled — boundary antennas like the SRS
+  deck's `antenna_array` have no position to scale.
 
 ## What lands in MLflow
 
