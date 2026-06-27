@@ -26,8 +26,16 @@ def _run_two_stream(integrator: str, dt: float, tmax: float = 35.0, Nh: int = 85
     cfg = {
         "solver": "hermite-legendre-1d",
         "physics": {
-            "Lx": 4.0 * np.pi, "alpha": np.sqrt(2.0), "u": 0.0, "v_a": -2.5, "v_b": 2.5,
-            "gamma": 0.5, "nu_H": 0.0, "nu_L": 1.0, "enforce_conservation": True, "field": True,
+            "Lx": 4.0 * np.pi,
+            "alpha": np.sqrt(2.0),
+            "u": 0.0,
+            "v_a": -2.5,
+            "v_b": 2.5,
+            "gamma": 0.5,
+            "nu_H": 0.0,
+            "nu_L": 1.0,
+            "enforce_conservation": True,
+            "field": True,
         },
         "grid": {"Nx": 64, "Nh": Nh, "Nl": Nl, "tmax": tmax, "dt": dt, "integrator": integrator},
         "initialization": {"type": "two-stream", "eps": 0.01, "mode": 1},
