@@ -1,0 +1,67 @@
+# Mixed Hermite-Legendre 1D --- Bump-on-tail instability (paper sec 4.4)
+#
+# f0(x,v,0) = (1-n_b)/sqrt(2*pi) [1 + eps cos(x/10)] exp(-v^2/2)
+# df(x,v,0) = n_b/sqrt(2*pi) exp(-(v-10)^2/2)   (beam projected onto Legendre)
+# The beam is well separated from the bulk, so f0<->df coupling is weak and a large
+# Hermite collision rate nu_H = 10 is acceptable. Parameters match Chapurin et al.
+#
+# This is the most demanding benchmark (asymmetric velocity window, long time). The
+# explicit and IMEX integrators both blow up near saturation; it requires the A-stable,
+# energy-conserving implicit-midpoint integrator (integrator: implicit) with the combined
+# streaming+force preconditioner. At saturation the implicit nonlinear solve is hard, so a
+# small step is needed for Newton/GMRES to converge (dt <= ~0.02; the paper uses dt=0.01).
+# A larger dt (e.g. 0.1) converges in the linear phase but fails at saturation -- the
+# learned/ML preconditioner is the planned route to large-dt robustness here.
+
+solver: hermite-legendre-1d
+
+mlflow:
+  experiment: hermite-legendre-1d
+  run: bump-on-tail
+
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+physics:
+  Lx: 62.83185307179586     # 20*pi
+  alpha: 1.4142135623730951 # sqrt(2)
+  u: 0.0
+  v_a: 4.0
+  v_b: 15.0
+  gamma: 0.5
+  nu_H: 10.0
+  nu_L: 1.0
+  enforce_conservation: true
+  field: true
+
+grid:
+  Nx: 128
+  Nh: 128
+  Nl: 128
+  tmax: 120.0
+  dt: 0.02                   # small step so the saturation-phase JFNK solve converges
+  integrator: implicit       # A-stable implicit midpoint; conserves mass exactly, energy to solve tol
+  precondition: true         # combined streaming+force preconditioner
+  newton_iters: 4
+  gmres_restart: 30
+  gmres_maxiter: 3
+
+initialization:
+  type: bump-on-tail
+  eps: 1.0e-4
+  mode: 1
+  n_beam: 0.01
+  v_drift: 10.0
+  v_th: 1.0
+
+save:
+  fields:
+    t:
+      nt: 481
+  hermite:
+    t:
+      nt: 61
+  legendre:
+    t:
+      nt: 61
