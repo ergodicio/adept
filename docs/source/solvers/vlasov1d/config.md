@@ -162,12 +162,15 @@ Simulation grid parameters.
 | `nx` | int | Number of spatial grid points |
 | `tmin` | float | Start time |
 | `tmax` | float | End time |
-| `vmax` | float | Maximum velocity extent (not needed for multispecies) |
+| `vmax` | float | Upper bound of the velocity grid (not needed for multispecies) |
+| `vmin` | float | Lower bound of the velocity grid. Optional; defaults to `-vmax` (symmetric grid). Use to specify an asymmetric velocity extent (not needed for multispecies). |
 | `xmin` | float | Domain minimum x |
 | `xmax` | float | Domain maximum x |
 | `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. |
 
-**Note:** For multispecies simulations, `nv` and `vmax` are defined per-species in `terms.species` and the global values are not used.
+The velocity grid is uniform and cell-centered: `dv = (vmax - vmin) / nv` with cell centers spanning `vmin + dv/2` to `vmax - dv/2`. An asymmetric grid (`vmin != -vmax`) is useful, for example, for a bump-on-tail distribution where less resolution is needed on one side. As with `vmax`, choose bounds wide enough that `f ~ 0` at *both* edges so that the spectral velocity push and the zero-flux collision boundary conditions remain accurate.
+
+**Note:** For multispecies simulations, `nv`, `vmax`, and `vmin` are defined per-species in `terms.species` and the global values are not used.
 
 Example:
 ```yaml
@@ -402,13 +405,14 @@ For multispecies simulations, you can define multiple particle species (e.g., el
 | `name` | string | Species identifier (e.g., `"electron"`, `"ion"`) |
 | `charge` | float | Charge in units of fundamental charge (e.g., `-1.0` for electrons, `10.0` for Z=10 ions) |
 | `mass` | float | Mass in units of electron mass (e.g., `1.0` for electrons, `1836.0` for protons) |
-| `vmax` | float | Maximum velocity extent for this species |
+| `vmax` | float | Upper bound of the velocity grid for this species |
+| `vmin` | float | Lower bound of the velocity grid for this species. Optional; defaults to `-vmax` (symmetric grid) |
 | `nv` | int | Number of velocity grid points for this species |
 | `density_components` | list | List of density component names (from `density` section) that belong to this species |
 
 **Important notes:**
 
-- Each species can have its own velocity grid parameters (`vmax`, `nv`), allowing heavier species to use smaller velocity extents
+- Each species can have its own velocity grid parameters (`vmax`, `vmin`, `nv`), allowing heavier species to use smaller velocity extents or asymmetric velocity bounds
 - The `density_components` field maps species to their density profiles defined in the `density` section
 - For single-species simulations, `terms.species` can be omitted; a default electron species will be auto-generated from the `grid.vmax`, `grid.nv`, and all `species-*` density components
 - When using multispecies, `grid.vmax` and `grid.nv` are not used (each species defines its own)

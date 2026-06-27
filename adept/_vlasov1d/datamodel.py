@@ -69,6 +69,7 @@ class GridConfig(BaseModel):
     xmin: float | str
     nv: int | None = None
     vmax: float | None = None
+    vmin: float | None = None
     parallel: tuple[str, ...] | bool = False
     c_light: float | None = None
 
@@ -175,6 +176,7 @@ class SpeciesConfig(BaseModel):
     charge: float
     mass: float
     vmax: float
+    vmin: float | None = None
     nv: int
     density_components: list[str]
 
