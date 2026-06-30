@@ -93,8 +93,12 @@ def chang_cooper_delta(w: Array) -> Array:
         Delta weighting factors, same shape as w
     """
     small = jnp.abs(w) < 1.0e-8
+    # Grad-safety (double-where): feed the full branch a nonzero w wherever `small`, so its
+    # 1/w and 1/expm1(w) singularities at w=0 don't poison the gradient through jnp.where.
+    # Value is unchanged (full branch is masked out where small); only the NaN grad is fixed.
+    w_safe = jnp.where(small, 1.0, w)
     delta_small = 0.5 - w / 12.0 + w**3 / 720.0
-    delta_full = 1.0 / w - 1.0 / jnp.expm1(w)
+    delta_full = 1.0 / w_safe - 1.0 / jnp.expm1(w_safe)
     return jnp.where(small, delta_small, delta_full)
 
 
