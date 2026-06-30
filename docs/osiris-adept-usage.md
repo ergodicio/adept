@@ -113,6 +113,12 @@ osiris:
   # purge policy will take care of stale ones eventually.
   extra_mpi_args: ["--oversubscribe"]             # optional, passed to mpirun
 
+  stream_convert: true                            # optional (default true): convert MS/
+                                                  #   HDF5 dumps to binary/*.nc concurrently
+                                                  #   with the run; set false for the old
+                                                  #   batch conversion at job end
+  stream_poll_s: 10.0                             # optional: watcher poll interval (s)
+
   density:                                        # optional: adaptive box sizing (1D)
     gradient_scale_length: 300um                  #   target L_n; scales the box so the
                                                   #   deck's density ramp realizes this L
@@ -182,6 +188,52 @@ preserved.
 | Artifacts   | `os-stdin` (rendered OSIRIS deck), `stdout.log`, `stderr.log`                    |
 | Artifacts   | `binary/<FLD\|PHA\|…>/<diag>.nc` — one xarray netCDF per diagnostic, holding the full `(t, …)` time history (replaces the raw h5 dumps) |
 | Artifacts   | `plots/…` — canned PNGs (see below)                                              |
+
+## Concurrent H5 → NetCDF conversion (`osiris.stream_convert`)
+
+The `binary/*.nc` series are converted **during** the run by default
+(`osiris.stream_convert: true`). The alternative — set it `false` — is the old
+behavior: build them **after** the run, where `post.collect` reads each
+diagnostic's whole `(t, …)` history into memory and writes it in one shot. For
+runs that dump a field every few steps (hundreds of thousands of tiny HDF5
+files) that end-of-run pass is slow (a cold Lustre re-read of every file) and
+memory-hungry (the whole stacked series at once), which is why streaming is the
+default.
+
+With streaming on, a best-effort background thread
+(`adept/osiris/stream.py::StreamConverter`), spawned by `run_osiris` alongside
+the OSIRIS subprocess, polls `MS/` every `stream_poll_s` seconds and appends
+each completed dump into `<run_dir>/binary/<diag>.nc` as it lands. Effects:
+
+- **I/O overlaps compute** — the conversion latency is hidden behind the
+  (hours-long) PIC run, and each dump is read while still warm in the page
+  cache instead of re-opened cold at the end.
+- **Bounded memory** — both the watcher and the at-job-end fallback build the
+  NetCDF a dump at a time (`load_grid_h5` → one `(t, …)` slot), so peak
+  conversion RAM is a single dump rather than the full series.
+
+Mechanics and guarantees:
+
+- Each NetCDF uses an **unlimited `t` dimension grown one slot per dump**, so it
+  ends up sized to exactly the dumps produced — no pre-sized guess, no trailing
+  fill to trim on early termination. Compression (zlib + shuffle) and chunking
+  are preserved, so the files match the batch path's `binary/*.nc` contract and
+  every downstream reader (`load_series_nc`, the plotting code, `regen`) is
+  unchanged.
+- A dump is only read once the **next** dump exists (OSIRIS has moved on),
+  avoiding partial-file reads; the final sweep at job end picks up the last one.
+- **Failure-isolated:** any error in the converter is logged and never touches
+  the OSIRIS run. The standard batch conversion is the safety net — `post.collect`
+  reuses whatever the watcher finished and stream-builds (still memory-bounded)
+  any grid diagnostic it did not reach. RAW (particle) diagnostics, whose
+  per-dump particle count varies, always use the batch concat path.
+- **Restart-safe:** a `binary/<diag>.nc` reopened after a checkpoint restart
+  resumes after the slots already on disk.
+
+This addresses the I/O wall-time and conversion-memory problems only; the
+heavy `pcolormesh`/`fft2` plotting cost at *plot* time is independent and
+handled by the plotting changes, not here. See
+`osiris-lpi/postproc-performance.md` for the full analysis.
 
 ## Canned plots (`plots/` artifacts)
 These canned plots focus on 1D simulations.

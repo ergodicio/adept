@@ -117,6 +117,11 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     td = Path(td)
     whitelist = (cfg.get("output") or {}).get("diagnostics_to_log") or None
     raw_drop_initial = bool((cfg.get("output") or {}).get("raw_drop_initial", False))
+    # When the concurrent converter ran, reuse the NetCDFs it already produced
+    # (and stream-build any grid diagnostic it did not reach) instead of the
+    # in-memory batch conversion.
+    stream_on = bool((cfg.get("osiris") or {}).get("stream_convert", True))
+    streamed_dir = solver.get("binary_dir") if stream_on else None
 
     metrics: dict[str, float] = {
         "wall_time_s": float(solver["wall_time"]),
@@ -132,6 +137,8 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
             td / "binary",
             diagnostics=whitelist,
             raw_drop_initial=raw_drop_initial,
+            stream=stream_on,
+            streamed_dir=streamed_dir,
         )
 
     # plots imports matplotlib; do it lazily to keep `import adept.osiris` light.

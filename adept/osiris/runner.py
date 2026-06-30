@@ -74,11 +74,23 @@ def run_osiris(
     env: dict[str, str] | None = None,
     launcher: str = "srun",
     extra_mpi_args: list[str] | None = None,
+    stream_convert: bool = True,
+    stream_poll_s: float = 10.0,
 ) -> dict[str, Any]:
     """Run OSIRIS and return run metadata.
 
     Returns a dict with keys ``run_dir`` (Path), ``exit_code`` (int),
-    ``wall_time`` (float, seconds), and ``cmd`` (list[str]).
+    ``wall_time`` (float, seconds), and ``cmd`` (list[str]). When
+    ``stream_convert`` is set it also returns ``binary_dir`` (str, the directory
+    the concurrent converter wrote into) and ``streamed_diagnostics``
+    (sorted list[str] of relpaths fully converted while OSIRIS ran).
+
+    With ``stream_convert=True`` a best-effort background thread
+    (:class:`adept.osiris.stream.StreamConverter`) converts grid diagnostics to
+    NetCDF *concurrently* with the run, polling every ``stream_poll_s`` seconds,
+    so the conversion overlaps compute and dumps are read while still warm in
+    cache. It is fully isolated: any failure there is logged and leaves the run
+    (and the batch post-processing fallback) untouched.
 
     Raises ``RuntimeError`` on non-zero exit code, with the last lines of
     stderr included in the message.
@@ -107,6 +119,18 @@ def run_osiris(
     stdout_tail: list[str] = []
     stderr_tail: list[str] = []
 
+    # Best-effort concurrent H5 -> NetCDF converter, spawned alongside OSIRIS.
+    converter = None
+    binary_dir = run_dir / "binary"
+    if stream_convert:
+        try:
+            from adept.osiris import stream as _stream
+
+            converter = _stream.StreamConverter(run_dir, binary_dir, poll_s=stream_poll_s)
+        except Exception as e:  # never let the converter block the run
+            print(f"[stream] disabled (init failed): {e}")
+            converter = None
+
     t0 = time.time()
     proc = subprocess.Popen(
         cmd,
@@ -128,10 +152,21 @@ def run_osiris(
     )
     t_out.start()
     t_err.start()
+    if converter is not None:
+        converter.start()
     rc = proc.wait()
     t_out.join()
     t_err.join()
     wall_time = time.time() - t0
+
+    # Finalize the converter before any error handling below: the run is over,
+    # so flush whatever the watcher had not yet reached and close the files.
+    streamed: list[str] = []
+    if converter is not None:
+        try:
+            streamed = sorted(converter.finalize())
+        except Exception as e:
+            print(f"[stream] finalize failed (batch fallback will cover it): {e}")
 
     if rc != 0:
         tail = "".join(stderr_tail[-50:]) or "(empty stderr)"
@@ -155,12 +190,16 @@ def run_osiris(
             f"  stdout tail:\n{out_tail}"
         )
 
-    return {
+    result: dict[str, Any] = {
         "run_dir": run_dir,
         "exit_code": rc,
         "wall_time": wall_time,
         "cmd": cmd,
     }
+    if stream_convert:
+        result["binary_dir"] = str(binary_dir)
+        result["streamed_diagnostics"] = streamed
+    return result
 
 
 def discover_binary(cfg_binary: str | None, *, dim: int | None = None) -> Path:

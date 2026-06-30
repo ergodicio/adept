@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import h5py
@@ -467,10 +468,21 @@ def load_series_nc(path: str | Path) -> xr.DataArray:
     da.attrs["axis_units"] = axis_units
     da.attrs["axis_long_names"] = axis_long
     da.attrs.setdefault("time_units", da.attrs.get("time_units", r"1/\omega_p"))
-    # Rebuild the autoscaled-dim list from the per-dump bound coords that were
-    # written by :func:`series_to_dataset`, so a round-tripped series is
-    # indistinguishable (for plotting) from a fresh :func:`load_series`.
-    autoscaled = [str(d) for d in da.dims if f"{d}_min" in ds.coords and f"{d}_max" in ds.coords]
+    # Rebuild the autoscaled-dim list from the per-dump bound coords, so a
+    # round-tripped series is indistinguishable (for plotting) from a fresh
+    # :func:`load_series`. A dim is autoscaled only when its bounds actually
+    # *move*: the batch path writes {dim}_min/_max solely for moving dims, but
+    # the streaming writer (:mod:`adept.osiris.stream`) records them for every
+    # dim, so mere presence is not enough — check that they vary.
+    autoscaled: list[str] = []
+    for d in da.dims:
+        lo_c, hi_c = f"{d}_min", f"{d}_max"
+        if lo_c not in ds.coords or hi_c not in ds.coords:
+            continue
+        lo = np.asarray(ds[lo_c].values)
+        hi = np.asarray(ds[hi_c].values)
+        if lo.size and not (np.allclose(lo, lo[0]) and np.allclose(hi, hi[0])):
+            autoscaled.append(str(d))
     if autoscaled:
         da.attrs["autoscaled_dims"] = autoscaled
     return da
@@ -508,6 +520,8 @@ def save_run_datasets(
     diagnostics: list[str] | set[str] | None = None,
     *,
     raw_drop_initial: bool = False,
+    stream: bool = False,
+    streamed_dir: str | Path | None = None,
 ) -> list[Path]:
     """Convert each diagnostic's full time history to a netCDF file.
 
@@ -519,22 +533,46 @@ def save_run_datasets(
     ``diagnostics``, when given, whitelists which diagnostics to convert,
     matched against either the relative path (``"FLD/e1"``) or the leaf name
     (``"e1"``). Returns the list of written paths.
+
+    Two opt-in paths bound conversion memory to a single dump (see
+    :mod:`adept.osiris.stream`):
+
+    - ``streamed_dir`` — a directory where the concurrent converter already
+      wrote ``<relpath>.nc`` *during the run*. Such a grid diagnostic is copied
+      into ``out_dir`` rather than rebuilt, so it is never re-read off disk.
+    - ``stream`` — for any grid diagnostic not already in ``streamed_dir``,
+      build the NetCDF a dump at a time instead of stacking the whole series in
+      memory. RAW diagnostics always use the (in-memory) concat path.
     """
     out_dir = Path(out_dir)
+    streamed_dir = Path(streamed_dir) if streamed_dir is not None else None
     diags = list_diagnostics(run_dir)
     written: list[Path] = []
     for relpath in sorted(diags):
         if diagnostics is not None and (relpath not in diagnostics and Path(relpath).name not in diagnostics):
             continue
+        dest = out_dir / f"{relpath}.nc"
         try:
-            if _diag_is_raw(relpath, diags[relpath]):
+            is_raw = _diag_is_raw(relpath, diags[relpath])
+            pre = (streamed_dir / f"{relpath}.nc") if streamed_dir is not None else None
+            if pre is not None and not is_raw and pre.is_file():
+                # The concurrent converter already produced this during the run.
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if pre.resolve() != dest.resolve():
+                    shutil.copy(pre, dest)
+            elif is_raw:
                 # RAW (particle) dumps: per-particle datasets, no grid/AXIS.
                 ds: xr.Dataset = load_raw_series(diags[relpath], drop_initial=raw_drop_initial)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                ds.to_netcdf(dest, engine="h5netcdf", encoding=_compression_encoding(ds))
+            elif stream:
+                from adept.osiris import stream as _stream  # lazy: pulls in the writer only when needed
+
+                _stream.convert_diagnostic_streaming(diags[relpath], dest, source_dir=diags[relpath])
             else:
                 ds = series_to_dataset(load_series(diags[relpath]))
-            dest = out_dir / f"{relpath}.nc"
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            ds.to_netcdf(dest, engine="h5netcdf", encoding=_compression_encoding(ds))
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                ds.to_netcdf(dest, engine="h5netcdf", encoding=_compression_encoding(ds))
             written.append(dest)
         except Exception as e:  # one bad diagnostic must not abort the rest
             print(f"[post] skipping diagnostic {relpath}: {e}")
