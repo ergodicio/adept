@@ -48,6 +48,85 @@ import xarray as xr
 
 from adept.osiris import io as _io
 
+# --- render-resolution downsampling ---------------------------------------
+
+# A heatmap is rasterized to a PNG of a fixed pixel size, so feeding pcolormesh
+# a (t, x) array with vastly more cells than on-screen pixels is pure waste: the
+# QuadMesh materializes an (rows+1, cols+1) float64 coordinate mesh, a float64
+# value copy, and an RGBA buffer, then Agg rasterizes ~one quad per *cell* — all
+# for detail that averages away below a single pixel. Boxcar-averaging the data
+# down to roughly the rendered resolution first removes that blow-up (the
+# dominant term in the post-processing OOM); the small render arrays are also
+# what keep peak memory in the low tens of GB.
+
+_RENDER_OVERSAMPLE = 3.0  # cells kept per on-screen pixel (margin for zoom / save dpi)
+
+
+def _render_cells(
+    ax: plt.Axes,
+    *,
+    oversample: float = _RENDER_OVERSAMPLE,
+    visible_frac: tuple[float, float] = (1.0, 1.0),
+    cap: int = 4000,
+) -> tuple[int, int]:
+    """Target ``(rows, cols)`` to render ``ax`` at, from its on-screen size.
+
+    The axes' size in pixels (inches from the figure size × its subplot fraction,
+    times the figure dpi) sets the floor; ``oversample`` keeps a few cells per
+    pixel so the PNG (often saved at a higher dpi) and any later zoom stay sharp,
+    rather than downsampling to the exact pixel grid with no margin. The data is
+    only ever decimated to this, never below the eventual pixel count.
+
+    ``visible_frac`` is the fraction of each axis ``(rows, cols)`` that a later
+    ``set_ylim`` / ``set_xlim`` will actually display (e.g. the equal-aspect
+    omega-k panel shows only a small Nyquist window): the full array is then kept
+    at enough cells for that *visible* window to still reach screen resolution.
+    ``cap`` bounds the request so a degenerate figure can't ask for a huge grid.
+    """
+    fig = ax.figure
+    dpi = float(fig.dpi)
+    w_in, h_in = fig.get_size_inches()
+    try:  # shrink to this axes' share of the figure when the layout is known
+        pos = ax.get_position()
+        w_in *= float(pos.width)
+        h_in *= float(pos.height)
+    except Exception:
+        pass
+    fr_rows = max(float(visible_frac[0]), 1e-3)
+    fr_cols = max(float(visible_frac[1]), 1e-3)
+    rows = int(np.ceil(h_in * dpi * oversample / fr_rows))
+    cols = int(np.ceil(w_in * dpi * oversample / fr_cols))
+    return min(max(rows, 1), cap), min(max(cols, 1), cap)
+
+
+def _boxcar_downsample(
+    data: np.ndarray,
+    row_coord: np.ndarray,
+    col_coord: np.ndarray,
+    target_rows: int,
+    target_cols: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Boxcar-average a 2D array (and its 1D coords) toward a target shape.
+
+    Reduces by an integer block factor per axis (``size // target``); an array
+    already at or below the target along an axis is left untouched on that axis,
+    so low-resolution data is never up-sampled or interpolated. The matching
+    coordinate centers are averaged over the same blocks, and any trailing cells
+    that don't fill a whole block are dropped.
+    """
+    rows, cols = data.shape
+    fr = max(1, rows // max(target_rows, 1))
+    fc = max(1, cols // max(target_cols, 1))
+    if fr == 1 and fc == 1:
+        return data, row_coord, col_coord
+    nr = (rows // fr) * fr
+    nc = (cols // fc) * fc
+    reduced = data[:nr, :nc].reshape(nr // fr, fr, nc // fc, fc).mean(axis=(1, 3))
+    r = row_coord[:nr].reshape(nr // fr, fr).mean(axis=1)
+    c = col_coord[:nc].reshape(nc // fc, fc).mean(axis=1)
+    return reduced, r, c
+
+
 # --- low-level plotters ----------------------------------------------------
 
 
@@ -74,10 +153,18 @@ def plot_spacetime(
         raise ValueError(f"plot_spacetime expects a 2D (t, x) array; got dims {da.dims}")
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 4))
-    data = np.log10(np.abs(da.values) + 1e-30) if log else da.values  # (t, x)
     t = da.coords["t"].values
     xname = next(d for d in da.dims if d != "t")
     x = da.coords[xname].values
+    # Boxcar-average the (t, x) array down to ~the rendered pixel grid before
+    # rasterizing, so a 100M+-cell series doesn't build a billion-quad QuadMesh
+    # for sub-pixel detail. The log view averages |field| (averaging the *signed*
+    # field first would cancel the oscillations the log plot is meant to show).
+    target_rows, target_cols = _render_cells(ax)
+    data = np.abs(da.values) if log else da.values  # (t, x)
+    data, t, x = _boxcar_downsample(data, t, x, target_rows, target_cols)
+    if log:
+        data = np.log10(data + 1e-30)
     if space_on_x:
         mesh = ax.pcolormesh(x, t, data, shading="auto", cmap=cmap)
         ax.set_xlabel(_axis_label(da, xname))
@@ -448,22 +535,48 @@ def plot_omega_k(
     nt = t.size
     nx = x.size
 
-    # 2-D FFT then shift so DC sits in the middle.
-    F = np.fft.fftshift(np.fft.fft2(da.values))
-    P = np.abs(F) ** 2
+    # Real-input 2-D FFT: rfft over the (long) time axis keeps only omega >= 0
+    # and stays in the input's complex width (complex64 for float32) instead of
+    # upcasting the whole grid to complex128 the way fft2 would. We only want the
+    # power |F|^2, so the dropped, redundant negative-omega half is rebuilt by
+    # Hermitian symmetry *after* downsampling. Free the complex array as soon as
+    # the power is formed, and do the log in place, to bound peak memory.
+    F = np.fft.rfft2(da.values, axes=(1, 0))  # (nt//2+1, nx): rfft over t, fft over x
+    P = np.abs(F).astype(np.float32, copy=False)
+    del F
+    P **= 2  # |F|^2, in place
+    P = np.fft.fftshift(P, axes=1)  # put k = 0 in the middle of the k (x) axis
     if log:
-        P = np.log10(P + 1e-30)
+        P += 1e-30
+        np.log10(P, out=P)
 
-    omega = np.fft.fftshift(np.fft.fftfreq(nt, d=dt)) * 2 * np.pi
-    k = np.fft.fftshift(np.fft.fftfreq(nx, d=dx)) * 2 * np.pi
+    omega = np.fft.rfftfreq(nt, d=dt) * 2 * np.pi  # [0, omega_Nyquist]
+    k = np.fft.fftshift(np.fft.fftfreq(nx, d=dx)) * 2 * np.pi  # [-k_Ny, k_Ny)
+
+    # Resolve the view window now (full Nyquist if unset, from the full-res axes)
+    # so the data can be decimated to the *visible* resolution: a zoomed panel
+    # keeps more of the full array than a full-range one (see _render_cells).
+    k_ny = float(np.max(np.abs(k)))
+    omega_ny = float(np.max(omega))
+    if k_max is None:
+        k_max = k_ny
+    if omega_max is None:
+        omega_max = omega_ny
+    frac_rows = min(1.0, omega_max / omega_ny) if omega_ny > 0 else 1.0
+    frac_cols = min(1.0, k_max / k_ny) if k_ny > 0 else 1.0
+    target_rows, target_cols = _render_cells(ax, visible_frac=(frac_rows, frac_cols))
+    P, omega, k = _boxcar_downsample(P, omega, k, target_rows, target_cols)
+
+    # Rebuild the omega < 0 half from |F(k, -w)| = |F(-k, w)|: the negative rows
+    # are the omega > 0 block (excluding DC) flipped along both omega and k.
+    if P.shape[0] > 1:
+        P = np.concatenate([P[1:][::-1, ::-1], P], axis=0)
+        omega = np.concatenate([-omega[1:][::-1], omega])
 
     mesh = ax.pcolormesh(k, omega, P, shading="auto", cmap=cmap)
     plt.colorbar(mesh, ax=ax, label=(r"$\log_{10}\,|\tilde{F}|^2$" if log else r"$|\tilde{F}|^2$"))
+    del P
 
-    if k_max is None:
-        k_max = float(np.max(np.abs(k)))
-    if omega_max is None:
-        omega_max = float(np.max(np.abs(omega)))
     ax.set_xlim(-k_max, k_max)
     ax.set_ylim(-omega_max, omega_max)
 
@@ -911,7 +1024,9 @@ def efield_lr_components(run_dir: str | Path) -> dict[str, dict[str, xr.DataArra
         return ser if ser.ndim == 2 else None
 
     def _pack(values: xr.DataArray, src: xr.DataArray, name: str, long: str) -> xr.DataArray:
-        out = values.copy()
+        # ``values`` is already a fresh array from the (e2 ± b3)/2 arithmetic, so
+        # relabel it in place rather than holding a second full (t, x) copy.
+        out = values
         out.attrs = dict(src.attrs)
         out.attrs["long_name"] = long
         out.name = name
