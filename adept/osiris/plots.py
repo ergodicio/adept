@@ -1048,6 +1048,99 @@ def efield_lr_components(run_dir: str | Path) -> dict[str, dict[str, xr.DataArra
     return out
 
 
+def transverse_field_boundary_slabs(
+    run_dir: str | Path, *, guard_cells: int = 1, window_cells: int = 3
+) -> dict | None:
+    r"""Left/right-going transverse E-field on just the two boundary slabs.
+
+    The slab-restricted companion to :func:`efield_lr_components`. Every
+    boundary-light diagnostic (laser-energy budget, direction-split spectra and
+    spectrogram) only samples a thin ``window_cells`` slab ``guard_cells`` in
+    from each edge, yet the full split holds several whole-grid ``(t, x)`` arrays
+    at once — prohibitive for the long, wide SRS runs (tens of GiB per field).
+    This loads each raw transverse field **one at a time** and immediately slices
+    it to the left slab ``[g, g+w)`` and the symmetric right slab
+    ``[n-g-w, n-g)``, freeing the whole-grid array before the next, so only the
+    slab columns are ever combined.
+
+    The vacuum Riemann split is local (per cell), so slicing first and combining
+    on the slab is identical to combining the whole grid and then slicing.
+    Returns ``None`` when no transverse pair (``e2/b3`` or ``e3/b2``) was dumped,
+    else::
+
+        {"t": (n_t,), "guard_cells": g, "window_cells": w, "pairs": [...],
+         "edges": {"left":  {pair: {"right": (t, w), "left": (t, w)}, ...},
+                   "right": {pair: {"right": (t, w), "left": (t, w)}, ...}}}
+
+    where each ``(t, w)`` array is the right/left-going part of that polarization
+    pair on that edge's slab (native field dtype). The consumer forms the
+    per-channel flux / spectrum from these (the raw, un-split field is
+    ``right + left``).
+    """
+    diags = _io.list_diagnostics(run_dir)
+
+    def _load(comp: str) -> xr.DataArray | None:
+        rel = f"FLD/{comp}"
+        if rel not in diags:
+            return None
+        ser = _io.load_series(diags[rel])
+        return ser if ser.ndim == 2 else None
+
+    # Resolve the slab columns from the first available transverse field, then
+    # drop it (each field is reloaded one at a time below so only one whole-grid
+    # array is ever resident).
+    probe = None
+    for comp in ("e2", "b3", "e3", "b2"):
+        probe = _load(comp)
+        if probe is not None:
+            break
+    if probe is None:
+        return None
+    xdim = next(d for d in probe.dims if d != "t")
+    t = np.asarray(probe.coords["t"].values, dtype=float)
+    n = int(probe.sizes[xdim])
+    g, w = guard_cells, window_cells
+    if g + w > n:
+        g, w = 0, min(w, n)
+    left, right = slice(g, g + w), slice(n - g - w, n - g)
+    del probe
+
+    def _slabs(comp: str) -> tuple[np.ndarray, np.ndarray] | None:
+        """Raw field ``comp`` sliced to the (left, right) edge slabs.
+
+        ``.copy()`` so the returned slabs do not keep the whole-grid array alive
+        as a view base — the (t, x) field is freed when this returns.
+        """
+        da = _load(comp)
+        if da is None:
+            return None
+        lo = da.isel({xdim: left}).values.copy()
+        hi = da.isel({xdim: right}).values.copy()
+        return lo, hi
+
+    edges: dict[str, dict[str, dict[str, np.ndarray]]] = {"left": {}, "right": {}}
+
+    def _add_pair(name: str, e: str, b: str, *, right_sign: float) -> None:
+        # right-going = (e + right_sign*b)/2, left-going = (e - right_sign*b)/2
+        # (e2/b3: right_sign=+1; e3/b2: right_sign=-1), matching efield_lr_components.
+        es, bs = _slabs(e), _slabs(b)
+        if es is None or bs is None:
+            return
+        for edge, ei, bi in (("left", es[0], bs[0]), ("right", es[1], bs[1])):
+            edges[edge][name] = {
+                "right": (ei + right_sign * bi) / 2.0,
+                "left": (ei - right_sign * bi) / 2.0,
+            }
+
+    _add_pair("e2", "e2", "b3", right_sign=+1.0)
+    _add_pair("e3", "e3", "b2", right_sign=-1.0)
+
+    pairs = list(edges["left"].keys())
+    if not pairs:
+        return None
+    return {"t": t, "guard_cells": g, "window_cells": w, "pairs": pairs, "edges": edges}
+
+
 def plot_field_lr_decomposition(run_dir: str | Path) -> dict[str, plt.Figure]:
     """One figure per transverse component: right/left-going spacetime.
 
@@ -1457,3 +1550,7 @@ display_name = _display_name
 tex = _tex
 sim_box_xmax = _sim_box_xmax
 sim_box_bound = _sim_box_bound
+# Shared memory-bounded rendering helpers (the (k, ω) map decimates with these
+# before pcolormesh; downstream spectrograms reuse them to do the same).
+render_cells = _render_cells
+boxcar_downsample = _boxcar_downsample

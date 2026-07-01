@@ -205,6 +205,37 @@ def test_efield_decomposition_isolates_right_going(tmp_path: Path) -> None:
     np.testing.assert_allclose(parts["e3"]["left"].values, 0.0, atol=1e-6)
 
 
+def test_boundary_slabs_match_full_split(tmp_path: Path) -> None:
+    # The slab-restricted split must equal the full split sliced to the same
+    # boundary columns (the Riemann split is local, so slice-then-combine ==
+    # combine-then-slice). This is what lets the boundary diagnostics avoid
+    # materializing the whole (t, x) left/right grid.
+    run_dir = _make_rich_run(tmp_path)
+    g, w = 1, 3
+    full = oplt.efield_lr_components(run_dir)
+    sl = oplt.transverse_field_boundary_slabs(run_dir, guard_cells=g, window_cells=w)
+    assert sl is not None and sl["pairs"] == list(full)
+    assert sl["guard_cells"] == g and sl["window_cells"] == w
+    sample = next(iter(full.values()))["right"]
+    xdim = next(d for d in sample.dims if d != "t")
+    n = sample.sizes[xdim]
+    left, right = slice(g, g + w), slice(n - g - w, n - g)
+    for pair, parts in full.items():
+        for edge, sel in (("left", left), ("right", right)):
+            for going in ("right", "left"):
+                np.testing.assert_allclose(
+                    sl["edges"][edge][pair][going],
+                    parts[going].isel({xdim: sel}).values,
+                    atol=1e-6,
+                )
+
+
+def test_boundary_slabs_absent_pair_returns_none(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"  # only a density diag, no transverse FLD pairs
+    _write_dump(run_dir / "MS/DENSITY/ion/charge" / "charge-ion-000000.h5", "charge", np.ones(8), 0.0, 0, [X_AX])
+    assert oplt.transverse_field_boundary_slabs(run_dir) is None
+
+
 def test_field_decomposition_figures(tmp_path: Path) -> None:
     run_dir = _make_rich_run(tmp_path)
     figs = oplt.plot_field_lr_decomposition(run_dir)
