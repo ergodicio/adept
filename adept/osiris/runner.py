@@ -27,6 +27,13 @@ _OSIRIS_ERR_TOKENS = ("error", "aborting", "(*error*)")
 _OSIRIS_STDERR_NOISE = (
     "No protocol specified",
     "MPI_INIT",  # benign MPI banner noise on some setups
+    # srun launcher warning, not an OSIRIS error: when a task's working directory
+    # (e.g. a per-node /dev/shm staging dir) is not resolvable at launch, srun
+    # prints "error: couldn't chdir to `...`: ... going to /tmp instead". On
+    # Perlmutter this fires spuriously even when the tasks do chdir correctly, so
+    # it must not abort an otherwise-clean run. A genuine staging failure surfaces
+    # downstream instead (no dumps to drain -> empty/short post-processing).
+    "couldn't chdir to",
 )
 
 
@@ -65,6 +72,26 @@ def _make_run_dir(run_root: Path) -> Path:
     return rd
 
 
+def _sync_tree(src: Path, dst: Path) -> None:
+    """Copy every file under ``src`` to the same relative path under ``dst``,
+    skipping any that already exist.
+
+    Used at the end of a staged run to fold whatever the background drainer did
+    not move (``HIST/``, ``RE/``, ``TIMINGS/``, any straggler ``MS/`` dump) from
+    the ephemeral scratch into the durable run directory before the scratch is
+    reclaimed. Existing targets (the streamed ``binary/`` NetCDFs, the dumps the
+    drainer already mirrored) are left untouched.
+    """
+    for p in src.rglob("*"):
+        if not p.is_file():
+            continue
+        target = dst / p.relative_to(src)
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(p, target)
+
+
 def run_osiris(
     deck_text: str,
     *,
@@ -76,6 +103,7 @@ def run_osiris(
     extra_mpi_args: list[str] | None = None,
     stream_convert: bool = True,
     stream_poll_s: float = 10.0,
+    stage_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run OSIRIS and return run metadata.
 
@@ -92,6 +120,17 @@ def run_osiris(
     cache. It is fully isolated: any failure there is logged and leaves the run
     (and the batch post-processing fallback) untouched.
 
+    **Ramdisk staging (``stage_root``).** When ``stage_root`` is set (and
+    ``stream_convert`` is on), OSIRIS runs with its working directory on that
+    fast ephemeral filesystem (e.g. ``/dev/shm``) so its *synchronous* dump
+    writes hit RAM instead of stalling on the parallel filesystem — effectively
+    the asynchronous diagnostic I/O OSIRIS itself lacks. The background drainer
+    mirrors each completed dump to the durable run directory under ``run_root``
+    and deletes the scratch copy, keeping the ramdisk footprint bounded by the
+    poll interval rather than the whole run. ``run_dir`` in the returned dict is
+    always the durable directory, so post-processing is unchanged; the scratch
+    is reclaimed before returning. Single-node only (``/dev/shm`` is per-node).
+
     Raises ``RuntimeError`` on non-zero exit code, with the last lines of
     stderr included in the message.
     """
@@ -99,8 +138,23 @@ def run_osiris(
     if not binary.exists():
         raise FileNotFoundError(f"OSIRIS binary not found: {binary}")
 
+    # The durable run directory always lives under run_root. With staging, OSIRIS
+    # works on a same-named scratch dir under stage_root and the drainer mirrors
+    # back here; without it, OSIRIS works in run_dir directly (the original path).
     run_dir = _make_run_dir(Path(run_root).expanduser().resolve())
-    (run_dir / "os-stdin").write_text(deck_text)
+    staging = bool(stage_root) and stream_convert
+    if stage_root and not stream_convert:
+        print("[stream] stage_root ignored: ramdisk staging requires stream_convert=True")
+    if staging:
+        stage_dir: Path | None = Path(stage_root).expanduser().resolve() / run_dir.name
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        work_dir = stage_dir
+        # Keep a durable copy of the deck alongside the mirrored outputs.
+        (run_dir / "os-stdin").write_text(deck_text)
+    else:
+        stage_dir = None
+        work_dir = run_dir
+    (work_dir / "os-stdin").write_text(deck_text)
 
     if mpi_ranks > 1:
         cmd = [launcher, "-n", str(mpi_ranks)]
@@ -120,13 +174,21 @@ def run_osiris(
     stderr_tail: list[str] = []
 
     # Best-effort concurrent H5 -> NetCDF converter, spawned alongside OSIRIS.
+    # It reads OSIRIS's dumps from the working dir and writes NetCDFs into the
+    # durable binary/ dir; in staging mode it also mirrors+reaps the scratch
+    # into run_dir (persist_dir).
     converter = None
     binary_dir = run_dir / "binary"
     if stream_convert:
         try:
             from adept.osiris import stream as _stream
 
-            converter = _stream.StreamConverter(run_dir, binary_dir, poll_s=stream_poll_s)
+            converter = _stream.StreamConverter(
+                work_dir,
+                binary_dir,
+                poll_s=stream_poll_s,
+                persist_dir=run_dir if staging else None,
+            )
         except Exception as e:  # never let the converter block the run
             print(f"[stream] disabled (init failed): {e}")
             converter = None
@@ -134,7 +196,7 @@ def run_osiris(
     t0 = time.time()
     proc = subprocess.Popen(
         cmd,
-        cwd=run_dir,
+        cwd=work_dir,
         env=merged_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -168,10 +230,20 @@ def run_osiris(
         except Exception as e:
             print(f"[stream] finalize failed (batch fallback will cover it): {e}")
 
+    # Staging: fold anything the drainer did not move (HIST/, RE/, straggler MS/
+    # dumps) from the scratch into the durable run dir, then reclaim the ramdisk.
+    # Done before error handling so a failed run's partial outputs still persist.
+    if staging and stage_dir is not None:
+        try:
+            _sync_tree(stage_dir, run_dir)
+        except Exception as e:
+            print(f"[stream] final stage->persist sync issue (partial outputs may be lost): {e}")
+        shutil.rmtree(stage_dir, ignore_errors=True)
+
     if rc != 0:
         tail = "".join(stderr_tail[-50:]) or "(empty stderr)"
         raise RuntimeError(
-            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n  cwd: {run_dir}\n  stderr tail:\n{tail}"
+            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n  cwd: {work_dir}\n  stderr tail:\n{tail}"
         )
 
     # OSIRIS can exit 0 even on input-file errors: it prints something
@@ -185,7 +257,7 @@ def run_osiris(
         raise RuntimeError(
             "OSIRIS reported an error despite exit-code 0:\n"
             f"  cmd: {shlex.join(cmd)}\n"
-            f"  cwd: {run_dir}\n"
+            f"  cwd: {work_dir}\n"
             f"  stderr tail:\n{err_tail}\n"
             f"  stdout tail:\n{out_tail}"
         )
@@ -199,6 +271,8 @@ def run_osiris(
     if stream_convert:
         result["binary_dir"] = str(binary_dir)
         result["streamed_diagnostics"] = streamed
+    if staging:
+        result["staged"] = True
     return result
 
 

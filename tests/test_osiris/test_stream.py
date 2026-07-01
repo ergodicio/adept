@@ -343,6 +343,108 @@ def test_run_osiris_streams_concurrently(tmp_path: Path) -> None:
     _assert_series_equiv(streamed, oio.load_series(Path(result["run_dir"]) / "MS" / "FLD" / "e1"))
 
 
+def _write_raw_dump(path: Path, t: float, it: int, npart: int = 4) -> None:
+    """Write one OSIRIS-style RAW (particle) dump: per-particle datasets, no AXIS."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with h5py.File(path, "w") as f:
+        f.attrs["TIME"] = np.array([t])
+        f.attrs["ITER"] = np.array([it], dtype="int32")
+        for q in ("p1", "x1"):
+            f.create_dataset(q, data=np.arange(npart, dtype="float32"))
+        f.create_group("SIMULATION").attrs["NDIMS"] = np.array([1], dtype="int32")
+
+
+# --- Staging mode: ramdisk scratch + drain to durable persist -------------
+
+
+def test_staged_converter_mirrors_and_reaps(tmp_path: Path) -> None:
+    """With ``persist_dir`` set, every completed dump is mirrored to the durable
+    tree and deleted from the scratch; grid is streamed, raw is mirrored as H5."""
+    stage = tmp_path / "stage"
+    persist = tmp_path / "persist"
+    _write_field(stage, "e1", n_steps=4, nx=8)
+    for k in range(3):
+        _write_raw_dump(stage / "MS" / "RAW" / "species_1" / f"RAW-species_1-{k * 10:06d}.h5", t=k * 0.5, it=k * 10)
+
+    conv = ostream.StreamConverter(stage, persist / "binary", poll_s=0.01, persist_dir=persist)
+    completed = conv.finalize()
+
+    # Grid streamed to the durable binary/ tree; raw is mirrored but NOT returned
+    # as "streamed" (the batch pass still builds its NetCDF from the H5).
+    assert completed == {"FLD/e1"}
+    assert (persist / "binary" / "FLD" / "e1.nc").exists()
+
+    # Every dump (grid + raw) mirrored to the durable MS/ tree...
+    assert len(list((persist / "MS" / "FLD" / "e1").glob("*.h5"))) == 4
+    assert len(list((persist / "MS" / "RAW" / "species_1").glob("*.h5"))) == 3
+    # ...and reaped from the scratch (RAM freed).
+    assert not list((stage / "MS").rglob("*.h5"))
+
+    # The streamed grid series is faithful to the mirrored dumps.
+    _assert_series_equiv(
+        oio.load_series_nc(persist / "binary" / "FLD" / "e1.nc"),
+        oio.load_series(persist / "MS" / "FLD" / "e1"),
+    )
+
+
+def test_non_staged_converter_never_deletes(tmp_path: Path) -> None:
+    """Without ``persist_dir`` the converter must leave the source dumps in place
+    (the durable run dir *is* run_dir) — no reaping of the in-place tree."""
+    run_dir = tmp_path / "run"
+    _write_field(run_dir, "e1", n_steps=4, nx=8)
+    conv = ostream.StreamConverter(run_dir, tmp_path / "binary", poll_s=0.01)
+    conv.finalize()
+    assert len(list((run_dir / "MS" / "FLD" / "e1").glob("*.h5"))) == 4
+    assert not (tmp_path / "MS").exists()  # nothing mirrored anywhere
+
+
+def test_run_osiris_staging_mirrors_and_frees_scratch(tmp_path: Path) -> None:
+    """End-to-end: OSIRIS works on the ramdisk, the drainer mirrors to the
+    durable run dir, and the scratch is reclaimed before returning."""
+    n_steps = 5
+    src = tmp_path / "src"
+    src.mkdir()
+    rng = np.random.default_rng(2)
+    for k in range(n_steps):
+        _write_dump(src / f"e1-{k * 10:06d}.h5", "e1", rng.standard_normal(8), t=k * 0.5, it=k * 10,
+                    axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)])
+
+    lines = ["#!/bin/sh", "set -e", "mkdir -p MS/FLD/e1"]
+    for k in range(n_steps):
+        fn = f"e1-{k * 10:06d}.h5"
+        lines.append(f"cp '{src / fn}' MS/FLD/e1/{fn}")
+        lines.append("sleep 0.1")
+    fake = tmp_path / "fake-osiris.sh"
+    fake.write_text("\n".join(lines) + "\n")
+    fake.chmod(fake.stat().st_mode | stat.S_IEXEC | stat.S_IRUSR)
+
+    ramdisk = tmp_path / "ramdisk"
+    result = orunner.run_osiris(
+        "node_conf\n{\n}\n",
+        binary=fake,
+        mpi_ranks=1,
+        run_root=tmp_path / "checkpoints",
+        stream_convert=True,
+        stream_poll_s=0.05,
+        stage_root=ramdisk,
+    )
+
+    assert result["exit_code"] == 0
+    assert result.get("staged") is True
+    run_dir = Path(result["run_dir"])
+    # Durable run dir lives under run_root, and the scratch was reclaimed.
+    assert run_dir.parent == (tmp_path / "checkpoints").resolve()
+    assert not (ramdisk.resolve() / run_dir.name).exists()
+    # Outputs landed durably: streamed .nc, mirrored MS dumps, deck + logs.
+    assert (run_dir / "binary" / "FLD" / "e1.nc").exists()
+    assert len(list((run_dir / "MS" / "FLD" / "e1").glob("*.h5"))) == n_steps
+    assert (run_dir / "os-stdin").exists()
+    assert (run_dir / "stdout.log").exists()
+    streamed = oio.load_series_nc(run_dir / "binary" / "FLD" / "e1.nc")
+    assert streamed.sizes["t"] == n_steps
+    _assert_series_equiv(streamed, oio.load_series(run_dir / "MS" / "FLD" / "e1"))
+
+
 def test_collect_uses_streamed_binary(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     diag = _write_field(run_dir, "e1", n_steps=3, nx=8)

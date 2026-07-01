@@ -34,6 +34,16 @@ def test_discover_binary_missing_raises() -> None:
         runner.discover_binary("/no/such/path/exists", dim=1)
 
 
+def test_srun_chdir_warning_is_not_an_error() -> None:
+    # srun's spurious launcher warning under /dev/shm staging must not be flagged
+    # as an OSIRIS error (it aborts an otherwise-clean run); a real OSIRIS error
+    # and a real abort still are.
+    chdir = "[2026-06-30T23:35:54] error: couldn't chdir to `/dev/shm/x`: No such file or directory: going to /tmp instead"
+    assert runner._looks_like_osiris_error(chdir) is False
+    assert runner._looks_like_osiris_error("(*error*) Lindman not yet allowed with tiling") is True
+    assert runner._looks_like_osiris_error("Error reading global simulation parameters, aborting...") is True
+
+
 def test_run_osiris_missing_binary_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         runner.run_osiris(

@@ -47,6 +47,8 @@ Design notes
 
 from __future__ import annotations
 
+import os
+import shutil
 import threading
 from pathlib import Path
 
@@ -209,7 +211,7 @@ def convert_diagnostic_streaming(diag_dir, dest, *, source_dir=None) -> Path:
 
 
 class StreamConverter:
-    """Stage B: a background thread that converts grid diagnostics during the run.
+    """Stage B: a background thread that drains diagnostics during the run.
 
     Spawned by :func:`adept.osiris.runner.run_osiris` alongside the OSIRIS
     subprocess, it polls ``run_dir/MS`` and drains each grid diagnostic's
@@ -217,15 +219,33 @@ class StreamConverter:
     not fit the fixed-slot model (variable particle count per dump) and are left
     to the batch path. Every operation is best-effort: any error is logged and
     the run is never affected.
+
+    **Staging mode (``persist_dir`` set).** When OSIRIS writes its ``MS/`` dumps
+    to a fast ephemeral scratch (e.g. a ``/dev/shm`` ramdisk passed as
+    ``run_dir``), the converter also *drains* the scratch: after each completed
+    dump is handled it is mirrored to ``persist_dir/MS/<relpath>/`` and
+    **deleted from the scratch**, so the ramdisk high-water mark is bounded by
+    the poll interval rather than the whole run. Grid diagnostics are mirrored
+    *and* streamed to ``out_dir`` (which the caller points at durable storage);
+    RAW diagnostics, which cannot be slot-streamed, are mirrored as HDF5 so the
+    batch post-processing path finds them on ``persist_dir``. The net durable
+    layout under ``persist_dir`` is identical to a non-staged run, so
+    post-processing reads it unchanged. With ``persist_dir=None`` nothing is
+    mirrored or deleted — the converter only streams grid diagnostics in place,
+    exactly as before.
     """
 
-    def __init__(self, run_dir, out_dir, *, poll_s: float = 10.0, logger=print):
+    def __init__(self, run_dir, out_dir, *, poll_s: float = 10.0, logger=print, persist_dir=None):
         self.ms = Path(run_dir) / "MS"
         self.out_dir = Path(out_dir)
+        self.persist_dir = Path(persist_dir) if persist_dir is not None else None
+        self.persist_ms = (self.persist_dir / "MS") if self.persist_dir is not None else None
         self.poll_s = float(poll_s)
         self._log = logger
         self._writers: dict[str, StreamWriter] = {}
-        self._completed: set[str] = set()
+        self._completed: set[str] = set()  # grid relpaths fully converted to .nc
+        self._raw_completed: set[str] = set()  # raw relpaths fully mirrored to persist
+        self._is_raw: dict[str, bool] = {}  # rel -> raw? (cached; avoids re-peeking h5)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -248,9 +268,11 @@ class StreamConverter:
 
         After OSIRIS has exited every dump is safe to read (no writer can still
         be racing), so the final sweep processes the last dump each diagnostic
-        had been holding back and closes the files. Returns the set of
-        diagnostic relpaths fully converted by the stream (so the caller can
-        skip rebuilding them in the batch pass).
+        had been holding back (and, in staging mode, drains it off the scratch)
+        before closing the files. Returns the set of *grid* diagnostic relpaths
+        fully converted by the stream (so the caller can skip rebuilding them in
+        the batch pass); RAW relpaths are mirrored but not returned, since the
+        batch pass still builds their NetCDFs from the mirrored HDF5.
         """
         self._stop.set()
         if self._thread is not None:
@@ -269,8 +291,8 @@ class StreamConverter:
 
     # --- scanning ---------------------------------------------------------
 
-    def _grid_diags(self) -> dict[str, Path]:
-        """Grid (non-RAW) diagnostics under ``MS/``, keyed by relpath."""
+    def _diags(self) -> dict[str, Path]:
+        """Every diagnostic dir under ``MS/`` (grid and RAW), keyed by relpath."""
         out: dict[str, Path] = {}
         if not self.ms.is_dir():
             return out
@@ -281,20 +303,32 @@ class StreamConverter:
                 has_h5 = any(c.suffix == ".h5" for c in d.iterdir())
             except OSError:
                 continue
-            if not has_h5:
-                continue
-            rel = str(d.relative_to(self.ms))
-            if _io._diag_is_raw(rel, d):
-                continue
-            out[rel] = d
+            if has_h5:
+                out[str(d.relative_to(self.ms))] = d
         return out
 
+    def _diag_is_raw(self, rel: str, d: Path) -> bool:
+        cached = self._is_raw.get(rel)
+        if cached is None:
+            cached = _io._diag_is_raw(rel, d)
+            self._is_raw[rel] = cached
+        return cached
+
     def _scan_once(self, *, final: bool) -> None:
-        for rel, d in self._grid_diags().items():
-            if rel in self._completed:
+        for rel, d in self._diags().items():
+            if rel in self._completed or rel in self._raw_completed:
                 continue
             try:
-                self._drain(rel, d, final=final)
+                if self._diag_is_raw(rel, d):
+                    # RAW: nothing to do unless staging (then mirror + reap the
+                    # HDF5 so the scratch stays bounded and the batch path finds
+                    # the dumps on persist).
+                    if self.persist_dir is not None:
+                        self._drain_raw(rel, d, final=final)
+                elif self.persist_dir is None:
+                    self._drain_grid_inplace(rel, d, final=final)
+                else:
+                    self._drain_grid_staged(rel, d, final=final)
             except Exception as e:
                 self._log(f"[stream] {rel}: {e} (will fall back to batch)")
                 # Drop the writer so a half-written file is rebuilt by the batch
@@ -306,7 +340,15 @@ class StreamConverter:
                     except Exception:
                         pass
 
-    def _drain(self, rel: str, d: Path, *, final: bool) -> None:
+    # --- draining ---------------------------------------------------------
+
+    def _drain_grid_inplace(self, rel: str, d: Path, *, final: bool) -> None:
+        """Stream a grid diagnostic to NetCDF in place — no mirror, no reap.
+
+        The original non-staged behavior: dumps accumulate in ``run_dir`` and
+        slot ``i`` is the ``i``-th dump, indexed positionally against the full
+        (never-pruned) dump list.
+        """
         dumps = _io._sort_dumps(d)
         if not dumps:
             return
@@ -332,3 +374,60 @@ class StreamConverter:
         if final:
             w.close()
             self._completed.add(rel)
+
+    def _drain_grid_staged(self, rel: str, d: Path, *, final: bool) -> None:
+        """Stream a grid diagnostic *and* drain its dumps off the scratch.
+
+        Because every handled dump is deleted from the scratch (:meth:`_reap`),
+        the directory only ever holds dumps not yet processed (plus the
+        in-progress last one), so every ``safe`` dump is new — no positional
+        bookkeeping against on-disk slots is needed.
+        """
+        dumps = _io._sort_dumps(d)
+        if not dumps:
+            return
+        safe = dumps if final else dumps[:-1]
+        if not safe:
+            return
+
+        w = self._writers.get(rel)
+        if w is None:
+            w = StreamWriter(self.out_dir / f"{rel}.nc", _io.load_grid_h5(dumps[0]), source_dir=d)
+            self._writers[rel] = w
+        for p in safe:
+            w.append(_io.load_grid_h5(p))
+            self._reap(rel, p)
+        w.flush()
+
+        if final:
+            w.close()
+            self._completed.add(rel)
+
+    def _drain_raw(self, rel: str, d: Path, *, final: bool) -> None:
+        """Mirror a RAW diagnostic's completed dumps to persist + reap scratch."""
+        dumps = _io._sort_dumps(d)
+        if not dumps:
+            return
+        safe = dumps if final else dumps[:-1]
+        for p in safe:
+            self._reap(rel, p)
+        if final:
+            self._raw_completed.add(rel)
+
+    def _reap(self, rel: str, p: Path) -> None:
+        """Mirror one scratch dump to ``persist_dir/MS`` then delete the scratch
+        copy. Best-effort: on any failure the scratch file is left in place for
+        the runner's final sync to catch, so data is never lost and the watcher
+        never crashes."""
+        if self.persist_dir is None:
+            return
+        try:
+            dest = self.persist_ms / rel / p.name
+            if not dest.exists():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dest.with_name(dest.name + ".part")
+                shutil.copyfile(p, tmp)
+                os.replace(tmp, dest)  # atomic publish on the persist filesystem
+            p.unlink()
+        except Exception as e:
+            self._log(f"[stream] reap {rel}/{p.name} deferred: {e}")

@@ -118,6 +118,11 @@ osiris:
                                                   #   with the run; set false for the old
                                                   #   batch conversion at job end
   stream_poll_s: 10.0                             # optional: watcher poll interval (s)
+  # stage_root: /dev/shm/osiris                   # optional: run OSIRIS on this fast
+                                                  #   ephemeral filesystem (ramdisk) and
+                                                  #   drain dumps to run_root in the
+                                                  #   background — see "Ramdisk staging".
+                                                  #   Requires stream_convert: true.
 
   density:                                        # optional: adaptive box sizing (1D)
     gradient_scale_length: 300um                  #   target L_n; scales the box so the
@@ -234,6 +239,57 @@ This addresses the I/O wall-time and conversion-memory problems only; the
 heavy `pcolormesh`/`fft2` plotting cost at *plot* time is independent and
 handled by the plotting changes, not here. See
 `osiris-lpi/postproc-performance.md` for the full analysis.
+
+## Ramdisk staging (`osiris.stage_root`)
+
+OSIRIS has **no asynchronous diagnostic I/O**: every dump is a synchronous
+barrier in the time loop, so on a parallel filesystem (Lustre) the ranks stall
+on each collective write, and at full dump cadence that stall can halve compute
+utilization. `stage_root` works around it without trimming cadence: point it at
+a fast **node-local ephemeral filesystem** (a `/dev/shm` ramdisk on NERSC GPU
+nodes — those nodes have no local disk, so RAM-backed `tmpfs` is the only
+node-local option) and OSIRIS's synchronous writes hit RAM (microseconds)
+instead of Lustre. The slow durable write is moved off the critical path onto
+the background drainer — effectively the async I/O OSIRIS itself lacks.
+
+```yaml
+osiris:
+  run_root: /pscratch/.../checkpoints   # durable (Lustre)
+  stage_root: /dev/shm/osiris           # fast scratch (ramdisk); requires stream_convert
+  stream_convert: true
+```
+
+Mechanics:
+
+- OSIRIS runs with its working directory on `stage_root/<run-name>`; all `MS/`
+  dumps land in RAM. The durable run directory under `run_root` is created as
+  usual, and `run_dir` in the result (hence everything post-processing reads) is
+  always that **durable** directory — so `post.collect` is unchanged.
+- The `StreamConverter` runs in **drain mode**: each completed dump is mirrored
+  to `run_root/<run-name>/MS/<diag>/` and then **deleted from the ramdisk**, so
+  the RAM high-water mark is bounded by the poll interval × production rate, not
+  the whole run. Grid diagnostics are additionally streamed to the durable
+  `binary/*.nc` as before; RAW (particle) diagnostics, which can't be
+  slot-streamed, are mirrored as HDF5 so the batch path still finds them.
+- `binary/*.nc` and `stdout.log`/`stderr.log` are written straight to the
+  durable dir (by the driver, off OSIRIS's critical path), so they survive even
+  if the run is killed. At job end the drainer's final sweep flushes the
+  held-back last dump of each diagnostic; the runner then folds any stragglers
+  (`HIST/`, `RE/`, …) from the scratch into the durable dir and **reclaims the
+  ramdisk**.
+
+Caveats:
+
+- **RAM budget.** The `tmpfs` counts against node memory *alongside* the
+  simulation. Bounded by the drain keeping up with production (Lustre bandwidth
+  ≫ dump rate, so it normally does); for very long full-cadence runs, keep
+  `stream_poll_s` small and leave headroom.
+- **Crash window.** Whatever is still on the ramdisk when a node dies is lost
+  (`tmpfs` is volatile) — logs and already-mirrored dumps are safe on Lustre;
+  only the few in-flight dumps are at risk. If you enable OSIRIS
+  checkpoint/restart, keep those files off the ramdisk.
+- **Single-node only** — `/dev/shm` is per-node. Fine for the 1-GPU / single-node
+  SRS runs; multi-node would need per-node drains and non-shared-file dumps.
 
 ## Canned plots (`plots/` artifacts)
 These canned plots focus on 1D simulations.

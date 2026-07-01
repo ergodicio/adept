@@ -155,6 +155,7 @@ class BaseOsiris(ADEPTModule):
             extra_mpi_args=osiris_cfg.get("extra_mpi_args"),
             stream_convert=bool(osiris_cfg.get("stream_convert", True)),
             stream_poll_s=float(osiris_cfg.get("stream_poll_s", 10.0)),
+            stage_root=osiris_cfg.get("stage_root"),
         )
         return {"solver result": result}
 
