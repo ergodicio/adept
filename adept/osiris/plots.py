@@ -26,6 +26,7 @@ PNGs for the standard set:
       field_decomp/<comp>.png              left/right-going transverse E (Riemann split)
       energy_vs_time.png                   total field energy time-trace
       energy_components_vs_time.png        E-field / B-field / total energy
+      epw_energy_vs_time.png               longitudinal (e1) EPW field energy
       total_energy_vs_time.png             field + kinetic conservation (needs HIST/)
 
 All axis / colorbar / title labels are emitted as proper LaTeX (``$\omega$``,
@@ -368,65 +369,130 @@ def plot_energy_vs_time(
     return ax
 
 
+def _resolve_fld_diag(diags: dict[str, Path], comp: str) -> str | None:
+    """Diagnostic key for field component ``comp``: full-grid, else -savg/-tavg.
+
+    A 2D deck that dumps ``e1,savg`` (rather than the full grid) writes it to a
+    distinct ``FLD/`` diagnostic (e.g. ``FLD/e1-savg``), so ``FLD/e1`` is absent.
+    Fall back to a spatially/time-averaged variant of the same component — but
+    never a lineout / slice, which is not a whole ``(t, x…)`` field.
+    """
+    if f"FLD/{comp}" in diags:
+        return f"FLD/{comp}"
+    for rel in sorted(diags):
+        parts = rel.split("/")
+        if len(parts) == 2 and parts[0] == "FLD":
+            leaf = parts[1]
+            if leaf.split("-", 1)[0] == comp and "line" not in leaf and "slice" not in leaf:
+                return rel
+    return None
+
+
 def field_energy_components(run_dir: str | Path) -> xr.Dataset:
     """E-field, B-field, and total field energy vs time from the FLD diagnostics.
 
     Like :func:`field_energy_series` but keeps the electric (``e1/e2/e3``) and
     magnetic (``b1/b2/b3``) contributions separate. Returns a ``Dataset`` with
-    data variables ``E_energy``, ``B_energy`` and ``total_field_energy`` on a
-    shared ``t`` axis. Components not dumped are simply omitted from their sum.
+    ``E_energy``, ``B_energy`` and ``total_field_energy`` on a shared ``t`` axis,
+    plus the per-component electric energies ``e1_energy`` / ``e2_energy`` /
+    ``e3_energy`` — ``e1_energy`` is the longitudinal (electrostatic) field
+    energy, i.e. the electron-plasma-wave (EPW) energy for a run whose density
+    gradient lies along ``x1``. Components not dumped are omitted from their sum.
+
+    The spatial integral is over *all* spatial dims, so this works for a 1D
+    ``(t, x)`` field series and a 2D ``(t, x2, x1)`` one alike; 2D decks that dump
+    only spatially-averaged fields (``e1,savg``) are picked up via
+    :func:`_resolve_fld_diag`.
 
     Sources are resolved via :func:`io.list_diagnostics` / :func:`io.load_series`,
     so ``run_dir`` may be a raw OSIRIS run directory or the ``binary/`` directory
-    of saved NetCDFs — the energy is recomputed from the stored ``(t, x)`` field
-    series either way.
+    of saved NetCDFs — the energy is recomputed from the stored field series
+    either way.
     """
     diags = _io.list_diagnostics(run_dir)
-    groups = {"E_energy": ("e1", "e2", "e3"), "B_energy": ("b1", "b2", "b3")}
+    comps = ("e1", "e2", "e3", "b1", "b2", "b3")
     by_iter: dict[int, dict[str, float]] = {}
     times: dict[int, float] = {}
     found = False
-    for group, comps in groups.items():
-        for comp in comps:
-            rel = f"FLD/{comp}"
-            if rel not in diags:
-                continue
-            try:
-                ser = _io.load_series(diags[rel])
-            except Exception as e:  # a bad component must not sink the rest
-                print(f"[plots] skipping field-energy component {comp}: {e}")
-                continue
-            if ser.ndim != 2:
-                continue
-            found = True
-            e_t = _field_energy_from_series(ser)
-            its = np.asarray(ser.coords["iter"].values) if "iter" in ser.coords else np.arange(ser.sizes["t"])
-            ts = np.asarray(ser.coords["t"].values, dtype="float64")
-            for k in range(ts.size):
-                it = int(its[k])
-                rec = by_iter.setdefault(it, {"E_energy": 0.0, "B_energy": 0.0})
-                rec[group] += float(e_t[k])
-                times.setdefault(it, float(ts[k]))
+    for comp in comps:
+        rel = _resolve_fld_diag(diags, comp)
+        if rel is None:
+            continue
+        try:
+            ser = _io.load_series(diags[rel])
+        except Exception as e:  # a bad component must not sink the rest
+            print(f"[plots] skipping field-energy component {comp}: {e}")
+            continue
+        if ser.ndim < 2 or "t" not in ser.dims:
+            continue
+        found = True
+        e_t = _field_energy_from_series(ser)
+        its = np.asarray(ser.coords["iter"].values) if "iter" in ser.coords else np.arange(ser.sizes["t"])
+        ts = np.asarray(ser.coords["t"].values, dtype="float64")
+        for k in range(ts.size):
+            it = int(its[k])
+            rec = by_iter.setdefault(it, {})
+            rec[comp] = rec.get(comp, 0.0) + float(e_t[k])
+            times.setdefault(it, float(ts[k]))
     if not found or not by_iter:
         raise RuntimeError(f"No field dumps available under {run_dir}")
     iters = sorted(by_iter)
     t = np.array([times[i] for i in iters])
-    e_arr = np.array([by_iter[i]["E_energy"] for i in iters])
-    b_arr = np.array([by_iter[i]["B_energy"] for i in iters])
+
+    def col(c: str) -> np.ndarray:
+        return np.array([by_iter[i].get(c, 0.0) for i in iters])
+
+    e1a, e2a, e3a = col("e1"), col("e2"), col("e3")
+    e_arr = e1a + e2a + e3a
+    b_arr = col("b1") + col("b2") + col("b3")
     coords = {"t": t, "iter": ("t", np.asarray(iters))}
     ds = xr.Dataset(
         {
             "E_energy": ("t", e_arr),
             "B_energy": ("t", b_arr),
             "total_field_energy": ("t", e_arr + b_arr),
+            "e1_energy": ("t", e1a),
+            "e2_energy": ("t", e2a),
+            "e3_energy": ("t", e3a),
         },
         coords=coords,
     )
     ds["E_energy"].attrs.update(long_name="electric field energy", units="code")
     ds["B_energy"].attrs.update(long_name="magnetic field energy", units="code")
     ds["total_field_energy"].attrs.update(long_name="total field energy", units="code")
+    ds["e1_energy"].attrs.update(long_name="longitudinal (EPW) field energy", units="code")
+    ds["e2_energy"].attrs.update(long_name="transverse E2 field energy", units="code")
+    ds["e3_energy"].attrs.update(long_name="transverse E3 field energy", units="code")
     ds["t"].attrs.update(long_name="time", units=r"1/\omega_p")
     return ds
+
+
+def plot_epw_energy(
+    src: xr.Dataset | str | Path,
+    ax: plt.Axes | None = None,
+    *,
+    log: bool = True,
+    title: str | None = None,
+) -> plt.Axes:
+    r"""Plot the longitudinal (EPW) field energy ``½ ∫ e1² dV`` vs time.
+
+    The electron-plasma-wave energy trace: the ``e1_energy`` component of
+    :func:`field_energy_components` (the electrostatic field along ``x1``). ``src``
+    may be a precomputed ``Dataset`` or a ``run_dir`` path.
+    """
+    ds = src if isinstance(src, xr.Dataset) else field_energy_components(src)
+    if "e1_energy" not in ds:
+        raise RuntimeError("no e1 (longitudinal) field diagnostic for the EPW energy")
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(ds["t"].values, ds["e1_energy"].values)
+    if log:
+        ax.set_yscale("log")
+    ax.set_xlabel(r"t  [$1/\omega_p$]")
+    ax.set_ylabel(r"EPW energy  $\frac{1}{2}\int e_1^2\,d^Dx$  [code units]")
+    ax.set_title(title or "Total EPW (longitudinal field) energy vs time")
+    ax.grid(True, which="both", alpha=0.3)
+    return ax
 
 
 def plot_energy_components(
@@ -1441,6 +1507,13 @@ def save_canned_plots(
     except (FileNotFoundError, RuntimeError) as e:
         print(f"[plots] skipping energy_components_vs_time: {e}")
 
+    try:  # total EPW (longitudinal e1) field energy vs time
+        fig, ax = plt.subplots(figsize=(6, 4))
+        plot_epw_energy(run_dir, ax=ax)
+        written["epw_energy_vs_time"] = _write(fig, "epw_energy_vs_time.png")
+    except (FileNotFoundError, RuntimeError) as e:
+        print(f"[plots] skipping epw_energy_vs_time: {e}")
+
     try:
         energy = _io.load_hist_energy(run_dir)
         if energy is not None and "total" in energy:
@@ -1594,6 +1667,7 @@ decorate = _decorate
 ensure_series = _ensure_series
 axis_label = _axis_label
 display_name = _display_name
+value_label = _value_label
 tex = _tex
 sim_box_xmax = _sim_box_xmax
 sim_box_bound = _sim_box_bound

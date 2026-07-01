@@ -39,6 +39,21 @@ def _latest_h5(d: Path) -> Path | None:
     return max(files, key=keyfn)
 
 
+_FIELD_COMPONENTS = ("e1", "e2", "e3", "b1", "b2", "b3")
+
+
+def _is_field_component_dir(name: str) -> bool:
+    """True for a full-grid or spatially/time-averaged field-component dump dir.
+
+    Matches ``e1`` .. ``b3`` and their ``-savg`` / ``-tavg`` variants (2D decks
+    dump ``e1,savg`` rather than the full grid), but NOT Poynting-flux (``s1``)
+    or lineout / slice diagnostics, which also live under ``FLD/`` and would
+    otherwise be summed into — and inflate — the total field energy.
+    """
+    base = name.split("-", 1)[0]
+    return base in _FIELD_COMPONENTS and "line" not in name and "slice" not in name
+
+
 def _field_energy_from_dump(h5_path: Path) -> float:
     """Integrate ``field^2 * cell_volume`` for a single dump file.
 
@@ -48,10 +63,15 @@ def _field_energy_from_dump(h5_path: Path) -> float:
     import h5py  # local import keeps adept import light
 
     with h5py.File(h5_path, "r") as f:
-        # The dataset name matches the diagnostic name (e.g. "e1").
+        # The dataset name usually matches the diagnostic name (e.g. "e1"), but
+        # spatially/time-averaged reports may name it differently; fall back to
+        # the single non-AXIS/SIMULATION dataset the way load_grid_h5 does.
         name = h5_path.stem.rsplit("-", 1)[0]
         if name not in f:
-            return float("nan")
+            data_keys = [k for k in f.keys() if k not in ("AXIS", "SIMULATION")]
+            if len(data_keys) != 1:
+                return float("nan")
+            name = data_keys[0]
         arr = f[name][...]
         # Reconstruct cell volume from SIMULATION attrs.
         sim = f["SIMULATION"]
@@ -76,7 +96,7 @@ def _total_field_energy(ms: Path) -> float:
     total = 0.0
     found = False
     for comp_dir in fld.iterdir():
-        if not comp_dir.is_dir():
+        if not comp_dir.is_dir() or not _is_field_component_dir(comp_dir.name):
             continue
         last = _latest_h5(comp_dir)
         if last is None:

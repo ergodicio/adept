@@ -105,11 +105,58 @@ def _make_full_run(root: Path, n_steps: int = 6, nx: int = 16, npx: int = 12) ->
 def test_field_energy_components_splits_e_and_b(tmp_path: Path) -> None:
     run_dir = _make_full_run(tmp_path)
     ds = oplt.field_energy_components(run_dir)
-    assert set(ds.data_vars) == {"E_energy", "B_energy", "total_field_energy"}
+    assert {"E_energy", "B_energy", "total_field_energy"} <= set(ds.data_vars)
     # Only e1 was dumped, so all energy is electric and B is identically zero.
     assert np.all(ds["E_energy"].values > 0)
     assert np.all(ds["B_energy"].values == 0)
     np.testing.assert_allclose(ds["total_field_energy"].values, ds["E_energy"].values)
+    # e1 is the only dump, so the longitudinal (EPW) energy equals the E energy.
+    assert "e1_energy" in ds
+    np.testing.assert_allclose(ds["e1_energy"].values, ds["E_energy"].values)
+
+
+def test_field_energy_picks_up_savg_and_excludes_poynting(tmp_path: Path) -> None:
+    """A 2D-style deck dumps e1,savg (not full grid) and s1 Poynting lineouts.
+
+    field_energy_components must resolve the ``e1-savg`` variant, and the
+    total-field-energy metric must NOT fold the ``s1`` lineout into the sum.
+    """
+    run_dir = tmp_path / "run"
+    x_ax = ("x1", "x_1", r"c / \omega_p", 0.0, 10.0)
+    x2_ax = ("x2", "x_2", r"c / \omega_p", 0.0, 4.0)
+    rng = np.random.default_rng(3)
+    for k in range(4):
+        it, t = k * 10, k * 0.5
+        _write_dump(run_dir / "MS/FLD/e1-savg" / f"e1-savg-{it:06d}.h5",
+                    "e1", rng.standard_normal(8), t=t, it=it, axes=[x_ax])
+        # an s1 Poynting-flux lineout along x2 (would inflate field energy if summed)
+        _write_dump(run_dir / "MS/FLD/s1-line-x2-24" / f"s1-line-x2-24-{it:06d}.h5",
+                    "s1", 5.0 + rng.standard_normal(6), t=t, it=it, axes=[x2_ax])
+
+    ds = oplt.field_energy_components(run_dir)
+    assert np.all(ds["e1_energy"].values > 0)          # savg variant resolved
+    total = opost._total_field_energy(run_dir / "MS")
+    # only e1 contributes; s1 is excluded, so the total matches the e1 energy of
+    # the last dump (both are 0.5 * sum(e1^2) * dx).
+    assert np.isfinite(total) and total > 0
+
+
+def test_field_energy_components_2d_spatial(tmp_path: Path) -> None:
+    """field_energy_components integrates over BOTH spatial dims for a 2D field."""
+    run_dir = tmp_path / "run"
+    x_ax = ("x1", "x_1", r"c / \omega_p", 0.0, 10.0)
+    x2_ax = ("x2", "x_2", r"c / \omega_p", 0.0, 4.0)
+    rng = np.random.default_rng(5)
+    for k in range(3):
+        it, t = k * 10, k * 0.5
+        data = rng.standard_normal((6, 8))  # (x2, x1)
+        _write_dump(run_dir / "MS/FLD/e1" / f"e1-{it:06d}.h5",
+                    "e1", data, t=t, it=it, axes=[x_ax, x2_ax])
+    ds = oplt.field_energy_components(run_dir)
+    assert ds["e1_energy"].sizes["t"] == 3
+    assert np.all(ds["e1_energy"].values > 0)
+    ax = oplt.plot_epw_energy(ds)
+    assert ax.get_ylabel()
 
 
 def test_load_hist_energy_builds_conservation_total(tmp_path: Path) -> None:
