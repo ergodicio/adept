@@ -153,6 +153,7 @@ def test_save_canned_plots_emits_full_set(tmp_path: Path) -> None:
         "energy_vs_time",
         "energy_components_vs_time",
         "total_energy_vs_time",  # present because HIST/ supplies kinetic energy
+        "energy_partition_vs_time",  # same HIST source: total split into particle/EM
     }
     assert expected <= set(written)
     for path in written.values():

@@ -671,11 +671,15 @@ def load_hist_energy(run_dir: str | Path) -> xr.Dataset | None:
         if parsed is None or parsed[1].size == 0:
             continue
         t, values = parsed
-        total_per_row = values.sum(axis=1)
         if "fld" in f.name.lower():
-            field = (t, total_per_row)
+            # fld_ene columns are the per-component field energies
+            # (B1 B2 B3 E1 E2 E3); their sum is the total EM field energy.
+            field = (t, values.sum(axis=1))
         elif "par" in f.name.lower():
-            kinetic[f.stem] = (t, total_per_row)
+            # par<NN>_ene columns are "Total Par." (particle COUNT) then
+            # "Kin. Energy" — take the energy (last) column. Summing would fold
+            # the ~1e6 particle count into the energy and swamp it.
+            kinetic[f.stem] = (t, values[:, -1])
 
     if field is None and not kinetic:
         return None

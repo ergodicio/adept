@@ -448,7 +448,7 @@ def plot_energy_components(
     }
     for name, label in labels.items():
         if name in ds:
-            ax.plot(t, ds[name].values, label=label)
+            ax.plot(t, ds[name].values, label=label, alpha=0.5)
     if log:
         ax.set_yscale("log")
     ax.set_xlabel(r"t  [$1/\omega_p$]")
@@ -490,6 +490,44 @@ def plot_energy_conservation(
     drift = energy.attrs.get("total_drift_frac")
     base = title or "Energy conservation vs time"
     ax.set_title(base if drift is None else f"{base}  (total drift {drift:.2%})")
+    ax.legend()
+    ax.grid(True, which="both", alpha=0.3)
+    return ax
+
+
+def plot_energy_partition(
+    energy: xr.Dataset,
+    ax: plt.Axes | None = None,
+    *,
+    log: bool = True,
+    title: str | None = None,
+) -> plt.Axes:
+    """Total energy broken down into particle (kinetic) and EM (field) parts.
+
+    Same overlay style as :func:`plot_energy_components`, but the partition is
+    the physical total energy rather than the E/B field split. ``energy`` is the
+    ``Dataset`` from :func:`io.load_hist_energy`, which carries ``field_energy``
+    (EM), ``kinetic_total`` (all-species particle), and ``total`` (their sum).
+
+    ``total`` is drawn first (underneath) so the two components stay legible
+    where one of them coincides with the total envelope.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(6, 4))
+    t = energy["t"].values
+    labels = {
+        "total": "total (particle + EM)",
+        "kinetic_total": "particle (kinetic)",
+        "field_energy": "EM (field)",
+    }
+    for name, label in labels.items():
+        if name in energy:
+            ax.plot(t, energy[name].values, label=label, alpha=0.5)
+    if log:
+        ax.set_yscale("log")
+    ax.set_xlabel(r"t  [$1/\omega_p$]")
+    ax.set_ylabel("energy  [code units]")
+    ax.set_title(title or "Total energy partition vs time")
     ax.legend()
     ax.grid(True, which="both", alpha=0.3)
     return ax
@@ -1411,6 +1449,15 @@ def save_canned_plots(
             written["total_energy_vs_time"] = _write(fig, "total_energy_vs_time.png")
     except Exception as e:
         print(f"[plots] skipping total_energy_vs_time: {e}")
+
+    try:
+        energy = _io.load_hist_energy(run_dir)
+        if energy is not None and "total" in energy:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            plot_energy_partition(energy, ax=ax)
+            written["energy_partition_vs_time"] = _write(fig, "energy_partition_vs_time.png")
+    except Exception as e:
+        print(f"[plots] skipping energy_partition_vs_time: {e}")
 
     return written
 
