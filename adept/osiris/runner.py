@@ -92,6 +92,26 @@ def _sync_tree(src: Path, dst: Path) -> None:
         shutil.copyfile(p, target)
 
 
+def _run_produced_output(run_dir: Path, binary_dir: Path) -> bool:
+    """True if the run wrote any salvageable output (raw dumps, NetCDFs, HIST).
+
+    Used to decide whether a non-zero exit / OSIRIS error is a hard failure or
+    merely a crash *after* data was already written — e.g. OSIRIS segfaults on
+    MPI/CUDA teardown after printing "Simulation completed", or dies partway with
+    dumps on disk. In the latter case downstream consolidation + plotting should
+    still run on what exists rather than discarding the whole run.
+    """
+    ms = run_dir / "MS"
+    if ms.is_dir() and next(ms.rglob("*.h5"), None) is not None:
+        return True
+    if binary_dir.is_dir() and next(binary_dir.rglob("*.nc"), None) is not None:
+        return True
+    hist = run_dir / "HIST"
+    if hist.is_dir() and next(hist.rglob("*"), None) is not None:
+        return True
+    return False
+
+
 def run_osiris(
     deck_text: str,
     *,
@@ -240,31 +260,54 @@ def run_osiris(
             print(f"[stream] final stage->persist sync issue (partial outputs may be lost): {e}")
         shutil.rmtree(stage_dir, ignore_errors=True)
 
+    # Classify the outcome. A run that crashed (non-zero exit) or that OSIRIS
+    # flagged as an error can still have produced usable output — most commonly a
+    # segfault on MPI/CUDA teardown *after* "Simulation completed", but also a
+    # mid-run death with dumps already on disk. In that case we salvage: log the
+    # error and fall through so the caller still consolidates binaries and plots
+    # what was written. Only a run that produced NOTHING is a hard failure.
+    failure_msg: str | None = None
     if rc != 0:
         tail = "".join(stderr_tail[-50:]) or "(empty stderr)"
-        raise RuntimeError(
-            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n  cwd: {work_dir}\n  stderr tail:\n{tail}"
+        failure_msg = (
+            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n"
+            f"  cwd: {work_dir}\n  stderr tail:\n{tail}"
         )
+    else:
+        # OSIRIS can exit 0 even on input-file errors: it prints something
+        # like 'Error reading ... / aborting...' to stderr (and '(*error*)'
+        # to stdout) before terminating. Detect both.
+        err_lines = [ln for ln in stderr_tail if _looks_like_osiris_error(ln)]
+        err_lines += [ln for ln in stdout_tail if "(*error*)" in ln]
+        if err_lines:
+            out_tail = "".join(stdout_tail[-20:])
+            err_tail = "".join(stderr_tail[-20:])
+            failure_msg = (
+                "OSIRIS reported an error despite exit-code 0:\n"
+                f"  cmd: {shlex.join(cmd)}\n"
+                f"  cwd: {work_dir}\n"
+                f"  stderr tail:\n{err_tail}\n"
+                f"  stdout tail:\n{out_tail}"
+            )
 
-    # OSIRIS can exit 0 even on input-file errors: it prints something
-    # like 'Error reading ... / aborting...' to stderr (and '(*error*)'
-    # to stdout) before terminating. Detect both.
-    err_lines = [ln for ln in stderr_tail if _looks_like_osiris_error(ln)]
-    err_lines += [ln for ln in stdout_tail if "(*error*)" in ln]
-    if err_lines:
-        out_tail = "".join(stdout_tail[-20:])
-        err_tail = "".join(stderr_tail[-20:])
-        raise RuntimeError(
-            "OSIRIS reported an error despite exit-code 0:\n"
-            f"  cmd: {shlex.join(cmd)}\n"
-            f"  cwd: {work_dir}\n"
-            f"  stderr tail:\n{err_tail}\n"
-            f"  stdout tail:\n{out_tail}"
-        )
+    crashed = failure_msg is not None
+    if crashed:
+        if _run_produced_output(run_dir, binary_dir):
+            print(f"[osiris] WARNING: {failure_msg}")
+            print(
+                "[osiris] the run produced output files despite the error above — "
+                "consolidating binaries and generating plots from the (possibly "
+                "partial) data anyway. Verify results carefully."
+            )
+        else:
+            raise RuntimeError(
+                f"{failure_msg}\n  (no output files were written — nothing to salvage.)"
+            )
 
     result: dict[str, Any] = {
         "run_dir": run_dir,
         "exit_code": rc,
+        "crashed": crashed,
         "wall_time": wall_time,
         "cmd": cmd,
     }

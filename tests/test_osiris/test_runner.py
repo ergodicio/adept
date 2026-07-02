@@ -54,6 +54,48 @@ def test_run_osiris_missing_binary_raises(tmp_path: Path) -> None:
         )
 
 
+def _write_fake_binary(path: Path, body: str) -> Path:
+    path.write_text("#!/bin/bash\n" + body + "\n")
+    path.chmod(0o755)
+    return path
+
+
+def test_run_osiris_crash_with_output_is_salvaged(tmp_path: Path) -> None:
+    # A binary that writes a dump then exits non-zero (e.g. OSIRIS segfaulting on
+    # MPI/CUDA teardown *after* "Simulation completed") must NOT raise: the run
+    # produced data, so the runner salvages it and lets the caller consolidate +
+    # plot what was written.
+    fake = _write_fake_binary(
+        tmp_path / "fake-osiris",
+        'mkdir -p MS/FLD/e1 && : > MS/FLD/e1/e1-000000.h5 && exit 139',
+    )
+    result = runner.run_osiris(
+        "node_conf {}",
+        binary=str(fake),
+        mpi_ranks=1,
+        run_root=tmp_path,
+        stream_convert=False,
+    )
+    assert result["exit_code"] == 139
+    assert result["crashed"] is True
+    assert next((result["run_dir"] / "MS").rglob("*.h5"), None) is not None
+
+
+def test_run_osiris_crash_no_output_raises(tmp_path: Path) -> None:
+    # A binary that exits non-zero WITHOUT writing anything is a hard failure —
+    # there is nothing to salvage, so the runner still raises.
+    fake = _write_fake_binary(tmp_path / "fake-osiris", "exit 1")
+    with pytest.raises(RuntimeError) as excinfo:
+        runner.run_osiris(
+            "node_conf {}",
+            binary=str(fake),
+            mpi_ranks=1,
+            run_root=tmp_path,
+            stream_convert=False,
+        )
+    assert "nothing to salvage" in str(excinfo.value)
+
+
 @pytest.mark.skipif(
     not (OSIRIS_BIN_1D and Path(OSIRIS_BIN_1D).exists()),
     reason="set OSIRIS_BIN_1D (or OSIRIS_BIN) to a built osiris-1D.e to run",
