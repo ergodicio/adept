@@ -80,6 +80,32 @@ def test_comment_stripping_preserves_string_with_bang() -> None:
     assert sections[0][1]["x"] == 1
 
 
+def test_parse_single_quoted_strings() -> None:
+    # OSIRIS decks commonly use Fortran single quotes; the parser must strip
+    # them so the value round-trips to a bare Python string (not "'none'").
+    text = "emf_bound { ext_fld = 'none', type(1:2) = 'open', 'open', }"
+    sections = osd.parse_deck(text)
+    assert sections[0][1]["ext_fld"] == "none"
+    assert sections[0][1]["type(1:2)"] == ["open", "open"]
+
+
+def test_render_normalizes_single_quotes_to_double() -> None:
+    parsed = osd.parse_deck("emf_bound { ext_fld = 'none', }")
+    rendered = osd.render_deck(parsed)
+    assert '"none"' in rendered and "'none'" not in rendered
+    # And the value survives a full round-trip unchanged.
+    assert osd.parse_deck(rendered) == parsed
+
+
+def test_single_quoted_string_with_bang_and_comma() -> None:
+    # ``!`` and ``,`` inside a single-quoted string are literal, not a comment
+    # or a value separator (e.g. OSIRIS math_func expressions).
+    text = "diag { expr = 'if(x>0,1,0)!keep', x = 1, }"
+    sections = osd.parse_deck(text)
+    assert sections[0][1]["expr"] == "if(x>0,1,0)!keep"
+    assert sections[0][1]["x"] == 1
+
+
 def test_merge_overrides_simple() -> None:
     text = "time { tmin = 0.0, tmax = 30.0, }"
     s = osd.parse_deck(text)

@@ -39,6 +39,10 @@ Sections = list[Section]
 _TRUE_TOKENS = {".true.", ".t."}
 _FALSE_TOKENS = {".false.", ".f."}
 
+# OSIRIS decks quote strings with either single (Fortran convention) or double
+# quotes; both are treated as simple, non-nesting delimiters.
+_QUOTE_CHARS = "\"'"
+
 _IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*(?:\([^)]*\))?")
 _INT_RE = re.compile(r"^[+-]?\d+$")
@@ -47,13 +51,17 @@ _FLOAT_RE = re.compile(r"^[+-]?(?:\d+\.\d*|\.\d+|\d+)(?:[eEdD][+-]?\d+)?$")
 
 def _strip_comment(line: str) -> str:
     """Drop everything from the first unquoted ``!`` to the end of line."""
-    in_string = False
+    quote = ""
     out: list[str] = []
     for ch in line:
-        if ch == '"':
-            in_string = not in_string
+        if quote:
+            if ch == quote:
+                quote = ""
             out.append(ch)
-        elif ch == "!" and not in_string:
+        elif ch in _QUOTE_CHARS:
+            quote = ch
+            out.append(ch)
+        elif ch == "!":
             break
         else:
             out.append(ch)
@@ -61,15 +69,19 @@ def _strip_comment(line: str) -> str:
 
 
 def _split_top_commas(s: str) -> list[str]:
-    """Split on commas not inside double-quotes."""
+    """Split on commas not inside a quoted string."""
     pieces: list[str] = []
     buf: list[str] = []
-    in_string = False
+    quote = ""
     for ch in s:
-        if ch == '"':
-            in_string = not in_string
+        if quote:
+            if ch == quote:
+                quote = ""
             buf.append(ch)
-        elif ch == "," and not in_string:
+        elif ch in _QUOTE_CHARS:
+            quote = ch
+            buf.append(ch)
+        elif ch == ",":
             pieces.append("".join(buf).strip())
             buf = []
         else:
@@ -85,7 +97,7 @@ def _parse_atom(tok: str) -> Any:
     t = tok.strip()
     if not t:
         return None
-    if t.startswith('"') and t.endswith('"') and len(t) >= 2:
+    if len(t) >= 2 and t[0] in _QUOTE_CHARS and t[-1] == t[0]:
         return t[1:-1]
     low = t.lower()
     if low in _TRUE_TOKENS:
@@ -151,15 +163,19 @@ def parse_deck(text: str) -> Sections:
                 raise ValueError(f"Expected '=' after key {key!r} at offset {i}")
             i += 1
             value_start = i
-            in_string = False
+            quote = ""
             while i < n:
                 ch = src[i]
-                if ch == '"':
-                    in_string = not in_string
+                if quote:
+                    if ch == quote:
+                        quote = ""
                     i += 1
-                elif not in_string and ch == "}":
+                elif ch in _QUOTE_CHARS:
+                    quote = ch
+                    i += 1
+                elif ch == "}":
                     break
-                elif not in_string and ch == ",":
+                elif ch == ",":
                     # Peek past whitespace: if the next token is an identifier
                     # followed by '=', this comma terminates the current
                     # key=value pair; otherwise it's an intra-value separator
