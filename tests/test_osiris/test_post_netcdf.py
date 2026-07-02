@@ -68,6 +68,65 @@ def _make_run(root: Path, n_steps: int = 4, nx: int = 8) -> Path:
     return run_dir
 
 
+def _write_lineout(dir_: Path, base: str, n_steps: int, nx: int, fill: float) -> None:
+    """Write one line/report series ``<base>-<iter>.h5`` into ``dir_``."""
+    for k in range(n_steps):
+        it = k * 10
+        _write_dump(
+            dir_ / f"{base}-{it:06d}.h5",
+            "s1",
+            np.full(nx, fill + k, dtype="float64"),
+            t=k * 0.5,
+            it=it,
+            axes=[("x2", "x_2", r"c / \omega_p", 0.0, 5.0)],
+        )
+
+
+def test_multi_report_lineouts_are_separate_series(tmp_path: Path) -> None:
+    # Two s1 line lineouts share one MS/FLD dir, distinguished only by the report
+    # index in the base name (s1-tavg-line-x2-01 / -02). Both -x2-0N-000000.h5
+    # read as iteration 0, so keyed by directory they would merge; they must be
+    # exposed and loaded as SEPARATE series instead.
+    run_dir = tmp_path / "run"
+    d = run_dir / "MS" / "FLD" / "s1-tavg-line"
+    _write_lineout(d, "s1-tavg-line-x2-01", n_steps=4, nx=6, fill=100.0)
+    _write_lineout(d, "s1-tavg-line-x2-02", n_steps=4, nx=6, fill=200.0)
+
+    diags = oio.list_diagnostics(run_dir)
+    keys = {k for k in diags if k.startswith("FLD/s1-tavg-line")}
+    assert keys == {
+        "FLD/s1-tavg-line/s1-tavg-line-x2-01",
+        "FLD/s1-tavg-line/s1-tavg-line-x2-02",
+    }
+    ent = oio.load_series(diags["FLD/s1-tavg-line/s1-tavg-line-x2-01"])
+    ex = oio.load_series(diags["FLD/s1-tavg-line/s1-tavg-line-x2-02"])
+    assert ent.sizes["t"] == 4 and ex.sizes["t"] == 4  # not merged into 8
+    assert float(ent.isel(t=0).values.mean()) == 100.0
+    assert float(ex.isel(t=0).values.mean()) == 200.0
+
+
+def test_save_run_datasets_splits_multi_report_lineouts(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    d = run_dir / "MS" / "FLD" / "s1-tavg-line"
+    _write_lineout(d, "s1-tavg-line-x2-01", 3, 6, 100.0)
+    _write_lineout(d, "s1-tavg-line-x2-02", 3, 6, 200.0)
+    out = tmp_path / "binary"
+    written = oio.save_run_datasets(run_dir, out)
+    names = {p.relative_to(out).as_posix() for p in written}
+    assert "FLD/s1-tavg-line/s1-tavg-line-x2-01.nc" in names
+    assert "FLD/s1-tavg-line/s1-tavg-line-x2-02.nc" in names
+    # round-trips separately (not merged)
+    assert oio.load_series(out / "FLD/s1-tavg-line/s1-tavg-line-x2-01.nc").sizes["t"] == 3
+
+
+def test_single_report_dir_still_keys_by_dir(tmp_path: Path) -> None:
+    # Regression: a normal single-series dir keys by its dir relpath, unchanged.
+    run_dir = _make_run(tmp_path, n_steps=3, nx=8)
+    diags = oio.list_diagnostics(run_dir)
+    assert "FLD/e1" in diags
+    assert oio.load_series(diags["FLD/e1"]).sizes["t"] == 3
+
+
 def test_save_run_datasets_writes_full_timeseries(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path, n_steps=4, nx=8)
     out = tmp_path / "binary"

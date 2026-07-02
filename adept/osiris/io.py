@@ -262,9 +262,65 @@ def _diag_is_raw(relpath: str, directory: str | Path) -> bool:
         return False
 
 
-def _sort_dumps(directory: Path) -> list[Path]:
-    files = [p for p in directory.iterdir() if p.is_file() and p.suffix == ".h5"]
-    return sorted(files, key=_iter_from_name)
+_BASE_RE = re.compile(r"-\d+\.h5$")
+
+
+def _dump_base(path: Path) -> str:
+    """A dump's series base = its filename minus the trailing ``-<iter>.h5``.
+
+    ``e1-savg-000123.h5`` -> ``e1-savg``. A directory usually holds one base, but
+    multiple line/report diagnostics of the same field share a directory and
+    differ only by an index in the base — e.g. two ``s1,...,line`` reports produce
+    ``s1-tavg-line-x2-01`` and ``s1-tavg-line-x2-02``. Those are distinct time
+    series and must not be stacked into one.
+    """
+    return _BASE_RE.sub("", path.name)
+
+
+def _series_dumps(directory: Path) -> dict[str, list[Path]]:
+    """Group ``directory``'s ``.h5`` dumps into time series keyed by base name."""
+    groups: dict[str, list[Path]] = {}
+    for p in directory.iterdir():
+        if p.is_file() and p.suffix == ".h5":
+            groups.setdefault(_dump_base(p), []).append(p)
+    for dumps in groups.values():
+        dumps.sort(key=_iter_from_name)
+    return groups
+
+
+def _resolve_series(handle: Path) -> tuple[Path, str | None]:
+    """Resolve a diagnostic handle to ``(directory, base)``.
+
+    A handle from :func:`list_diagnostics` is either a real dump directory (one
+    series, ``base`` is ``None``) or a synthetic ``<dir>/<base>`` path naming one
+    report series inside a directory that holds several.
+    """
+    handle = Path(handle)
+    if handle.is_dir():
+        return handle, None
+    return handle.parent, handle.name
+
+
+def _sort_dumps(handle: Path, base: str | None = None) -> list[Path]:
+    """Sorted ``.h5`` dumps for one diagnostic series.
+
+    ``handle`` may be a dump directory or a synthetic per-report handle
+    (``<dir>/<base>``); ``base`` selects one series inside a multi-report
+    directory. A bare directory holding more than one series is ambiguous and
+    raises — load one via its per-report handle from :func:`list_diagnostics`.
+    """
+    directory, hbase = _resolve_series(handle)
+    if base is None:
+        base = hbase
+    groups = _series_dumps(directory)
+    if base is not None:
+        return groups.get(base, [])
+    if len(groups) > 1:
+        raise ValueError(
+            f"{directory} holds multiple report series {sorted(groups)}; "
+            "load one via its per-report handle from list_diagnostics()."
+        )
+    return next(iter(groups.values()), [])
 
 
 def load_series(directory: str | Path) -> xr.DataArray:
@@ -382,8 +438,19 @@ def list_diagnostics(run_dir: str | Path) -> dict[str, Path]:
         for d in ms.rglob("*"):
             if not d.is_dir():
                 continue
-            if any(c.suffix == ".h5" for c in d.iterdir()):
-                out[str(d.relative_to(ms))] = d
+            groups = _series_dumps(d)
+            if not groups:
+                continue
+            rel = str(d.relative_to(ms))
+            if len(groups) == 1:
+                out[rel] = d
+            else:
+                # A directory with several report series (e.g. two s1 line
+                # lineouts at different perpendicular cells) exposes each as its
+                # own diagnostic via a synthetic <dir>/<base> handle, so they are
+                # converted to separate NetCDFs instead of merged into one.
+                for base in sorted(groups):
+                    out[f"{rel}/{base}"] = d / base
         return out
     # No MS/ tree — fall back to the saved-NetCDF layout.
     nc = list_diagnostics_nc(run_dir)

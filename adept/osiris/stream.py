@@ -246,6 +246,7 @@ class StreamConverter:
         self._completed: set[str] = set()  # grid relpaths fully converted to .nc
         self._raw_completed: set[str] = set()  # raw relpaths fully mirrored to persist
         self._is_raw: dict[str, bool] = {}  # rel -> raw? (cached; avoids re-peeking h5)
+        self._multibase_skipped: set[str] = set()  # multi-report dirs left to the batch pass
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -300,11 +301,22 @@ class StreamConverter:
             if not d.is_dir():
                 continue
             try:
-                has_h5 = any(c.suffix == ".h5" for c in d.iterdir())
+                groups = _io._series_dumps(d)
             except OSError:
                 continue
-            if has_h5:
-                out[str(d.relative_to(self.ms))] = d
+            if not groups:
+                continue
+            rel = str(d.relative_to(self.ms))
+            if len(groups) > 1:
+                # A directory holding several report series (e.g. two s1 line
+                # lineouts) can't be streamed as one series; leave it to the
+                # batch pass (save_run_datasets), which writes one NetCDF per
+                # series via the per-report handles from list_diagnostics.
+                if rel not in self._multibase_skipped:
+                    self._multibase_skipped.add(rel)
+                    self._log(f"[stream] {rel}: {len(groups)} report series -> batch pass")
+                continue
+            out[rel] = d
         return out
 
     def _diag_is_raw(self, rel: str, d: Path) -> bool:
