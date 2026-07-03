@@ -352,9 +352,13 @@ def _hermite_e_coupling(
 
     Args:
         Ck: (Nn, Nx) complex, in k-space.
-        F_total: (Nx,) real, total force field (Ex + ponderomotive).
+        F_total: (Nx,) real, force field. CONTRACT: q_over_m * F_total must be
+            the species ACCELERATION. E-field terms may be passed bare with
+            q_over_m=q/m, but the ponderomotive term is ∝ q²/m² (charge-sign
+            independent) and must be pre-composed by the caller — pass
+            accel = (q/m)·E + (q/m)²·pond with q_over_m=1 (see _nonlinear_rhs).
         sqrt_n_minus: (Nn,) = sqrt([0,1,...,Nn-1]).
-        q_over_m: Charge-to-mass ratio (e.g. -1 for electrons).
+        q_over_m: Charge-to-mass ratio applied as an overall factor.
         alpha: Thermal velocity.
         Omega_ce_tau: Normalization constant (1.0 in current configs).
         mask23: Optional (Nx,) bool 2/3-rule dealiasing mask in FFT ordering.
@@ -497,16 +501,25 @@ class HermitePoisson1DVectorField:
         # driver's time variation within the step (same as vlasov1d's dex_array).
         Edrive = self.ex_driver(t, args)  # (Nx,)
 
-        # Ponderomotive force: -0.5 * d(a^2)/dx  (on electrons)
+        # Ponderomotive force per unit charge²/mass: -0.5 * d(a^2)/dx.
+        # This term is ∝ q²/m² — charge-sign INDEPENDENT. It must NOT be folded
+        # under the q/m factor that multiplies the E-field terms: doing so flips
+        # its sign for electrons, which flips the sign of one leg of the SRS
+        # three-wave coupling (γ² ∝ product of legs) — Stokes backscatter becomes
+        # structurally stable (no SRS, ever) while the normally-stable anti-Stokes
+        # pair goes unstable and detonates. Reference: vlasov1d does this
+        # correctly (solvers/pushers/vlasov.py: force = q*e + (q²/m)*pond).
         a_sq = a_frozen**2
         Fp = -0.5 * jnp.gradient(a_sq, self.dx)  # (Nx,)
 
-        # Electron E-field + ponderomotive + external Ex driver (+ stochastic force noise)
+        # Per-species acceleration: (q/m)·(Ex + Edrive + noise) + (q/m)²·Fp,
+        # passed with q_over_m=1 so the coupling applies no further charge factor.
+        accel_e = self.qm_e * (Ex + Edrive + noise_frozen) + self.qm_e**2 * Fp
         dCk_e = _hermite_e_coupling(
             Ck_e,
-            Ex + Fp + Edrive + noise_frozen,
+            accel_e,
             self.sqrt_n_minus_e,
-            self.qm_e,
+            1.0,
             self.alpha_e,
             self.Omega_ce_tau,
             mask23=self.mask23,
@@ -515,11 +528,13 @@ class HermitePoisson1DVectorField:
         if self.static_ions:
             dCk_i = jnp.zeros_like(state["Ck_ions"])
         else:
+            # Ion ponderomotive is (q/m)² = 1/mi_me² — kept for correctness, negligible.
+            accel_i = self.qm_i * (Ex + Edrive + noise_frozen) + self.qm_i**2 * Fp
             dCk_i = _hermite_e_coupling(
                 Ck_i,
-                Ex + Edrive + noise_frozen,  # ponderomotive negligible for ions
+                accel_i,
                 self.sqrt_n_minus_i,
-                self.qm_i,
+                1.0,
                 self.alpha_i,
                 self.Omega_ce_tau,
                 mask23=self.mask23,
