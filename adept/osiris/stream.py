@@ -235,11 +235,21 @@ class StreamConverter:
     exactly as before.
     """
 
-    def __init__(self, run_dir, out_dir, *, poll_s: float = 10.0, logger=print, persist_dir=None):
+    def __init__(
+        self, run_dir, out_dir, *, poll_s: float = 10.0, logger=print, persist_dir=None, discard_grid_h5: bool = False
+    ):
         self.ms = Path(run_dir) / "MS"
         self.out_dir = Path(out_dir)
         self.persist_dir = Path(persist_dir) if persist_dir is not None else None
         self.persist_ms = (self.persist_dir / "MS") if self.persist_dir is not None else None
+        # Staging only: when set, grid dumps are deleted from the scratch after
+        # being appended to the NetCDF *without* being mirrored to persist_dir/MS
+        # (the .nc is the durable artifact). Saves one inode+copy per dump on the
+        # persist filesystem. RAW dumps are always mirrored (the batch path needs
+        # the HDF5). Trade-off: a grid diagnostic whose stream fails mid-run can
+        # only be rebuilt from the dumps not yet reaped (they are left in place
+        # and folded to persist by the runner's final sync).
+        self.discard_grid_h5 = bool(discard_grid_h5)
         self.poll_s = float(poll_s)
         self._log = logger
         self._writers: dict[str, StreamWriter] = {}
@@ -408,7 +418,7 @@ class StreamConverter:
             self._writers[rel] = w
         for p in safe:
             w.append(_io.load_grid_h5(p))
-            self._reap(rel, p)
+            self._reap(rel, p, mirror=not self.discard_grid_h5)
         w.flush()
 
         if final:
@@ -426,20 +436,23 @@ class StreamConverter:
         if final:
             self._raw_completed.add(rel)
 
-    def _reap(self, rel: str, p: Path) -> None:
-        """Mirror one scratch dump to ``persist_dir/MS`` then delete the scratch
-        copy. Best-effort: on any failure the scratch file is left in place for
-        the runner's final sync to catch, so data is never lost and the watcher
-        never crashes."""
+    def _reap(self, rel: str, p: Path, *, mirror: bool = True) -> None:
+        """Delete one scratch dump, first mirroring it to ``persist_dir/MS``
+        unless ``mirror`` is False (``discard_grid_h5`` mode: the dump is
+        already in the streamed NetCDF and the raw HDF5 is not wanted on the
+        persist filesystem). Best-effort: on any failure the scratch file is
+        left in place for the runner's final sync to catch, so data is never
+        lost and the watcher never crashes."""
         if self.persist_dir is None:
             return
         try:
-            dest = self.persist_ms / rel / p.name
-            if not dest.exists():
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                tmp = dest.with_name(dest.name + ".part")
-                shutil.copyfile(p, tmp)
-                os.replace(tmp, dest)  # atomic publish on the persist filesystem
+            if mirror:
+                dest = self.persist_ms / rel / p.name
+                if not dest.exists():
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    tmp = dest.with_name(dest.name + ".part")
+                    shutil.copyfile(p, tmp)
+                    os.replace(tmp, dest)  # atomic publish on the persist filesystem
             p.unlink()
         except Exception as e:
             self._log(f"[stream] reap {rel}/{p.name} deferred: {e}")

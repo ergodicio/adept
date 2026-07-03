@@ -156,6 +156,7 @@ class BaseOsiris(ADEPTModule):
             stream_convert=bool(osiris_cfg.get("stream_convert", True)),
             stream_poll_s=float(osiris_cfg.get("stream_poll_s", 10.0)),
             stage_root=osiris_cfg.get("stage_root"),
+            stage_discard_h5=bool(osiris_cfg.get("stage_discard_h5", False)),
         )
         return {"solver result": result}
 

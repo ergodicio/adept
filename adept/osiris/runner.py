@@ -124,6 +124,7 @@ def run_osiris(
     stream_convert: bool = True,
     stream_poll_s: float = 10.0,
     stage_root: str | Path | None = None,
+    stage_discard_h5: bool = False,
 ) -> dict[str, Any]:
     """Run OSIRIS and return run metadata.
 
@@ -150,6 +151,15 @@ def run_osiris(
     poll interval rather than the whole run. ``run_dir`` in the returned dict is
     always the durable directory, so post-processing is unchanged; the scratch
     is reclaimed before returning. Single-node only (``/dev/shm`` is per-node).
+
+    **``stage_discard_h5``** (staging only): grid dumps are *not* mirrored to
+    the durable ``MS/`` tree -- once appended to the streamed NetCDF the scratch
+    HDF5 is simply deleted. Cuts the persist-filesystem inode count by ~the
+    grid-dump count. RAW dumps are still mirrored (the batch path needs them),
+    and any dump whose stream failed is left for the final sync, so partial
+    failures remain recoverable. The durable ``MS/`` tree is then *incomplete
+    by design*: offline re-conversion of grid diagnostics is impossible, the
+    streamed ``binary/*.nc`` are the only copy.
 
     Raises ``RuntimeError`` on non-zero exit code, with the last lines of
     stderr included in the message.
@@ -208,6 +218,7 @@ def run_osiris(
                 binary_dir,
                 poll_s=stream_poll_s,
                 persist_dir=run_dir if staging else None,
+                discard_grid_h5=staging and stage_discard_h5,
             )
         except Exception as e:  # never let the converter block the run
             print(f"[stream] disabled (init failed): {e}")
