@@ -109,17 +109,52 @@ def _total_field_energy(ms: Path) -> float:
 
 
 def _final_iter(ms: Path) -> int:
-    """Largest iteration number seen across all FLD dumps; -1 if none."""
-    fld = ms / "FLD"
-    if not fld.is_dir():
-        return -1
+    """Largest iteration number seen across all FLD dumps; -1 if none.
+
+    Under ``stage_discard_h5`` the FLD h5 never reach the durable ``MS/``;
+    fall back to scanning the whole tree (RAW dumps still carry iteration
+    numbers, at their coarser cadence)."""
     best = -1
-    for comp_dir in fld.iterdir():
-        for p in _iter_h5_files(comp_dir):
+    for scan_dir in (ms / "FLD", ms):
+        if not scan_dir.is_dir():
+            continue
+        for p in scan_dir.rglob("*.h5"):
             m = _ITER_RE.search(p.name)
             if m:
                 best = max(best, int(m.group(1)))
+        if best >= 0:
+            return best
     return best
+
+
+def _total_field_energy_nc(binary_dir: Path) -> float:
+    """|E|^2/2 + |B|^2/2 at the last streamed slice of ``binary_dir/FLD/*.nc``.
+
+    Fallback for the ``stage_discard_h5`` layout, where no FLD h5 exists on
+    the durable ``MS/``. Returns NaN when no usable component is found."""
+    import xarray as xr
+
+    fld = binary_dir / "FLD"
+    if not fld.is_dir():
+        return float("nan")
+    total, found = 0.0, False
+    for p in sorted(fld.glob("*.nc")):
+        if not _is_field_component_dir(p.stem):
+            continue
+        try:
+            with xr.open_dataset(p) as ds:
+                da = ds[p.stem] if p.stem in ds else ds[next(iter(ds.data_vars))]
+                last = da.isel(t=-1).astype("float64")
+                dvol = 1.0
+                for dim in last.dims:
+                    c = last[dim].values
+                    if len(c) > 1:
+                        dvol *= float(c[1] - c[0])
+                total += 0.5 * float((last.values**2).sum()) * dvol
+                found = True
+        except Exception:
+            continue
+    return total if found else float("nan")
 
 
 def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
@@ -149,9 +184,14 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
         "field_energy_final": _total_field_energy(ms),
         "final_iter": float(_final_iter(ms)),
     }
+    if metrics["field_energy_final"] != metrics["field_energy_final"] and streamed_dir is not None:
+        # stage_discard_h5: no FLD h5 on the durable MS/ — use the streamed nc.
+        metrics["field_energy_final"] = _total_field_energy_nc(Path(streamed_dir))
 
-    # Convert each diagnostic's time history to an xarray netCDF.
-    if ms.is_dir():
+    # Convert each diagnostic's time history to an xarray netCDF. Under
+    # stage_discard_h5 with no RAW diagnostics MS/ may not exist at all while
+    # the streamed NetCDFs do — proceed in that case too.
+    if ms.is_dir() or (streamed_dir is not None and Path(streamed_dir).is_dir()):
         _io.save_run_datasets(
             run_dir,
             td / "binary",

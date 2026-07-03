@@ -451,8 +451,23 @@ def list_diagnostics(run_dir: str | Path) -> dict[str, Path]:
                 # converted to separate NetCDFs instead of merged into one.
                 for base in sorted(groups):
                     out[f"{rel}/{base}"] = d / base
+        # stage_discard_h5 layout: grid dumps were streamed to run_dir/binary
+        # and never mirrored to MS/ (which then holds only RAW). Merge the
+        # streamed NetCDFs for any diagnostic with no raw dumps on disk so
+        # post-processing and plots see the full set; load_series accepts the
+        # .nc handles directly.
+        bdir = run_dir / "binary"
+        if bdir.is_dir():
+            for rel, p in list_diagnostics_nc(bdir).items():
+                out.setdefault(rel, p)
         return out
-    # No MS/ tree — fall back to the saved-NetCDF layout.
+    # No MS/ tree — fall back to the saved-NetCDF layout (a run dir's binary/
+    # subdir first, else run_dir itself *being* a binary dir).
+    bdir = run_dir / "binary"
+    if bdir.is_dir():
+        nc = list_diagnostics_nc(bdir)
+        if nc:
+            return nc
     nc = list_diagnostics_nc(run_dir)
     if nc:
         return nc

@@ -387,6 +387,60 @@ def test_staged_converter_mirrors_and_reaps(tmp_path: Path) -> None:
     )
 
 
+def test_staged_converter_discard_grid_h5(tmp_path: Path) -> None:
+    """With ``discard_grid_h5`` grid dumps are streamed + deleted WITHOUT a
+    persist mirror (inode saver); RAW dumps are still mirrored as H5."""
+    stage = tmp_path / "stage"
+    persist = tmp_path / "persist"
+    _write_field(stage, "e1", n_steps=4, nx=8)
+    for k in range(3):
+        _write_raw_dump(stage / "MS" / "RAW" / "species_1" / f"RAW-species_1-{k * 10:06d}.h5", t=k * 0.5, it=k * 10)
+
+    conv = ostream.StreamConverter(
+        stage, persist / "binary", poll_s=0.01, persist_dir=persist, discard_grid_h5=True
+    )
+    completed = conv.finalize()
+
+    assert completed == {"FLD/e1"}
+    # Grid: streamed NetCDF is the only durable artifact -- no H5 mirror.
+    assert (persist / "binary" / "FLD" / "e1.nc").exists()
+    assert not (persist / "MS" / "FLD").exists()
+    # RAW: still mirrored (batch path needs the H5).
+    assert len(list((persist / "MS" / "RAW" / "species_1").glob("*.h5"))) == 3
+    # Scratch fully reaped either way.
+    assert not list((stage / "MS").rglob("*.h5"))
+    # The streamed series carries all 4 dumps.
+    assert oio.load_series_nc(persist / "binary" / "FLD" / "e1.nc").sizes["t"] == 4
+
+
+def test_discard_layout_discovery_and_batch(tmp_path: Path) -> None:
+    """End-to-end stage_discard_h5 layout: MS/ holds only RAW, grid data lives
+    solely in the streamed NetCDFs — discovery and the batch pass must still
+    see and consolidate the grid diagnostics (regression: smoke-3 uploaded
+    2/14 binary files because list_diagnostics only walked MS/)."""
+    stage = tmp_path / "stage"
+    persist = tmp_path / "persist"
+    _write_field(stage, "e1", n_steps=4, nx=8)
+    for k in range(3):
+        _write_raw_dump(stage / "MS" / "RAW" / "species_1" / f"RAW-species_1-{k * 10:06d}.h5", t=k * 0.5, it=k * 10)
+    conv = ostream.StreamConverter(
+        stage, persist / "binary", poll_s=0.01, persist_dir=persist, discard_grid_h5=True
+    )
+    conv.finalize()
+
+    # Discovery must see the union: RAW from MS/, grid from the streamed nc.
+    diags = oio.list_diagnostics(persist)
+    assert "RAW/species_1" in diags
+    assert "FLD/e1" in diags and str(diags["FLD/e1"]).endswith(".nc")
+
+    # The batch pass must consolidate the streamed grid nc into td/binary.
+    out = tmp_path / "td_binary"
+    oio.save_run_datasets(persist, out, stream=True, streamed_dir=persist / "binary")
+    assert (out / "FLD" / "e1.nc").exists()
+    assert oio.load_series_nc(out / "FLD" / "e1.nc").sizes["t"] == 4
+    assert (out / "RAW" / "species_1.nc").exists()
+
+
 def test_non_staged_converter_never_deletes(tmp_path: Path) -> None:
     """Without ``persist_dir`` the converter must leave the source dumps in place
     (the durable run dir *is* run_dir) — no reaping of the in-place tree."""
