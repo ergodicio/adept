@@ -47,8 +47,9 @@ def _measure_ringing(e_xt: np.ndarray, t: np.ndarray, mode: int) -> tuple[float,
     return float(omega), float(gamma)
 
 
+@pytest.mark.parametrize("integrator", ["strang-exp", "lawson-rk4"])
 @pytest.mark.parametrize("klambda_D", [0.30, 0.35])
-def test_epw_dispersion(klambda_D: float):
+def test_epw_dispersion(klambda_D: float, integrator: str):
     mode = 1
     Lx = 4.0 * np.pi
     k = 2.0 * np.pi * mode / Lx
@@ -83,6 +84,7 @@ def test_epw_dispersion(klambda_D: float):
         },
         "density": {"perturbation": {"mode": mode, "amplitude": 1.0e-4}},
         "drivers": {},
+        "terms": {"integrator": integrator},
         "save": {"fields": {"t": {"tmin": 0.0, "tmax": tmax, "nt": nt_save}}},
     }
 

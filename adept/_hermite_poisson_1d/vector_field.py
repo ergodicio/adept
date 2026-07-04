@@ -389,6 +389,66 @@ def _hermite_e_coupling(
     return out
 
 
+def _exp_force_substep(
+    Ck: Array,
+    accel: Array,
+    sqrt_n_minus: Array,
+    alpha: float,
+    Omega_ce_tau: float,
+    dt: float,
+    mask23: Array | None = None,
+    n_terms: int = 24,
+) -> Array:
+    """Exact exponential step for the force coupling dC_n/dt = kappa_n·accel(x)·C_{n-1}.
+
+    kappa_n = Omega_ce_tau·√(2n)/alpha. `accel` is the species ACCELERATION —
+    (q/m)·E-terms + (q/m)²·ponderomotive, composed by the caller (same contract
+    as _hermite_e_coupling called with q_over_m=1).
+
+    With accel frozen over the substep, the force flow is exactly a velocity
+    shift f(v) → f(v − accel·dt) — the same sub-flow the Fourier-in-v vlasov1d
+    solver applies as a unitary phase, which is why that solver has NO E-field
+    stability bound. In the AW-Hermite basis the generator A is strictly lower
+    bidiagonal (nilpotent), so exp(dt·A) is the FINITE series Σ (dt·A)^k/k!,
+    applied here as n_terms cheap bidiagonal products (O(n_terms·Nn·Nx), far
+    below the streaming matmul). Truncating at n_terms is accurate when
+    x_max = dt·|accel|·√(2·Nn)·√2/α satisfies x_max^n_terms/n_terms! ≪ 1 —
+    n_terms=24 covers x_max ≲ 6, i.e. fields ~2× past the explicit-RK4
+    divergence bound (~2.8) that killed the Lawson path in production.
+
+    NOT Crank-Nicolson: the trapezoidal rational approximation is spectrally
+    stable but its non-normal transient response down the nilpotent ladder
+    behaves like (2x)^k where the true flow has x^k/k! — it detonates in
+    exactly the strong-force regime this substep exists to survive.
+    """
+    Nn, Nx = Ck.shape
+    if mask23 is not None:
+        Ck = Ck * mask23[None, :]
+        accel = jnp.fft.ifft(jnp.fft.fft(accel, norm="forward") * mask23, norm="forward").real
+
+    C = jnp.fft.ifft(Ck, axis=-1, norm="forward")  # (Nn, Nx) complex
+    kappa = Omega_ce_tau * jnp.sqrt(2.0) / alpha * sqrt_n_minus  # (Nn,)
+    kdt = (kappa * dt)[:, None] * accel[None, :]  # (Nn, Nx) real
+
+    zero_row = jnp.zeros((1, Nx), dtype=C.dtype)
+
+    def apply_A_dt(V: Array) -> Array:
+        # (dt·A·V)_n = dt·kappa_n·accel·V_{n-1}; row 0 = 0
+        return kdt * jnp.concatenate([zero_row, V[:-1, :]], axis=0)
+
+    out_C = C
+    term = C
+    k_max = min(int(n_terms), Nn - 1) if Nn > 1 else 0
+    for k in range(1, k_max + 1):
+        term = apply_A_dt(term) / k
+        out_C = out_C + term
+
+    out = jnp.fft.fft(out_C, axis=-1, norm="forward")
+    if mask23 is not None:
+        out = out * mask23[None, :]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Top-level vector field (Stepper/discrete-map convention)
 # ---------------------------------------------------------------------------
@@ -409,8 +469,28 @@ def _tree_scale(a: dict, c: float) -> dict:
 class HermitePoisson1DVectorField:
     """Advances the 1D Hermite-Poisson state by one timestep dt.
 
-    Uses Lawson-RK4 for Ck (free-streaming exact, E-field/ponderomotive explicit)
-    and explicit leapfrog WaveSolver for the transverse vector potential a.
+    Two integrators (select via `integrator`):
+
+    "strang-exp" (default): Strang split exp(L·dt/2) → exact force-exponential
+      substep (finite nilpotent series; the frozen-force flow is exactly a
+      velocity shift, so this is the Hermite analog of vlasov1d's unitary
+      e^{i·k_v·E·dt} push and carries no explicit-RK force stability bound)
+      → exp(L·dt/2), with every wave↔plasma coupling time-centered: the force
+      substep sees Poisson-Ex from the mid-step C_0, the vector potential
+      linearly extrapolated to t+dt/2, and the Ex driver at t+dt/2; the
+      leapfrog wave update sees n_e and the source at t_n (its own centering
+      point). Second order, ~3× cheaper per step than Lawson-RK4.
+
+    "lawson-rk4" (legacy): Lawson-RK4 for Ck with the force treated explicitly
+      (stability bound |F|·√(2Nn)·√2/α·dt ≲ 2.8) and two half-step-off-center
+      couplings kept bug-compatible for A/B: the ponderomotive uses a frozen at
+      step START (half-step early) and the wave equation uses ½(n_eⁿ+n_eⁿ⁺¹)
+      and the source at t+dt/2 (half-step late). These opposite first-order
+      offsets in the two legs of the parametric loop are the suspected source
+      of the anomalous γ ≈ a0·ωp0 pump-proportional gain observed at
+      quarter-critical in SRS runs (4–5× the physical γ0), and the explicit
+      force bound is the observed super-exponential runaway once fields reach
+      E_crit ≈ 0.034 (Nn=1024, dt=0.1).
 
     Called by adept._base_.Stepper which treats the return value as the new state
     (not dy/dt). dt is stored internally from grid.dt at construction time.
@@ -440,7 +520,13 @@ class HermitePoisson1DVectorField:
         noise_amplitude: float = 0.0,
         noise_seed: int = 0,
         noise_spatial_profile: Array | None = None,
+        integrator: str = "strang-exp",
+        force_exp_terms: int = 24,
     ):
+        if integrator not in ("strang-exp", "lawson-rk4"):
+            raise ValueError(f"Unknown integrator {integrator!r}; use 'strang-exp' or 'lawson-rk4'")
+        self.integrator = integrator
+        self.force_exp_terms = int(force_exp_terms)
         self.combined_exp = combined_exp
         self.poisson = poisson
         self.wave_solver = wave_solver
@@ -632,6 +718,106 @@ class HermitePoisson1DVectorField:
 
     def __call__(self, t: float, y: dict, args: dict) -> dict:
         """Advance state by one timestep dt. Returns new state dict."""
+        if self.integrator == "strang-exp":
+            return self._strang_exp_step(t, y, args)
+        return self._lawson_step(t, y, args)
+
+    def _strang_exp_step(self, t: float, y: dict, args: dict) -> dict:
+        """Strang split: exp(L·dt/2) → exact force exponential → exp(L·dt/2) + leapfrog wave.
+
+        All couplings time-centered; see class docstring.
+        """
+        dt = self.dt
+        exp_L = self.combined_exp.apply
+
+        if self.noise_amplitude > 0.0 and self.noise_spatial_profile is not None:
+            noise_frozen = self._draw_noise(t)
+        else:
+            noise_frozen = 0.0
+
+        # Wave-equation inputs at t_n — the leapfrog update
+        # a_{n+1} = 2a_n − a_{n−1} + dt²(∂xx a − n_e·a + S) is centered at t_n,
+        # so n_e and S belong at t_n (pre-step C_0), not averaged/half-shifted.
+        Ck_e_n = y["Ck_electrons"].view(jnp.complex128)
+        n_e_n = self.poisson.electron_density(Ck_e_n)
+        djy = self.ey_driver(t, args)
+
+        # 1. First linear half-step (streaming + collisions + filter, exact)
+        y_h = exp_L(y, dt / 2)
+        Ck_e_h = y_h["Ck_electrons"].view(jnp.complex128)
+        Ck_i_h = y_h["Ck_ions"].view(jnp.complex128)
+
+        # 2. Time-centered force substep over the full dt.
+        # Ex from the mid-step C_0 (streaming has advanced it to t+dt/2; the
+        # force operator itself never changes C_0, so Ex is constant across
+        # the substep and the substep is linear with frozen coefficients).
+        Ex = self.poisson(Ck_e_h, Ck_i_h)
+        Edrive = self.ex_driver(t + 0.5 * dt, args)
+        # Vector potential linearly extrapolated to t+dt/2 from (a_n, a_{n-1});
+        # error O((ω0·dt)²) vs the half-step-early freeze's O(ω0·dt).
+        a_mid = 1.5 * y["a"][1:-1] - 0.5 * y["prev_a"][1:-1]
+        Fp = -0.5 * jnp.gradient(a_mid**2, self.dx)
+
+        accel_e = self.qm_e * (Ex + Edrive + noise_frozen) + self.qm_e**2 * Fp
+        Ck_e_f = _exp_force_substep(
+            Ck_e_h,
+            accel_e,
+            self.sqrt_n_minus_e,
+            self.alpha_e,
+            self.Omega_ce_tau,
+            dt,
+            mask23=self.mask23,
+            n_terms=self.force_exp_terms,
+        )
+        if self.static_ions:
+            Ck_i_f_view = y_h["Ck_ions"]
+        else:
+            accel_i = self.qm_i * (Ex + Edrive + noise_frozen) + self.qm_i**2 * Fp
+            Ck_i_f_view = _exp_force_substep(
+                Ck_i_h,
+                accel_i,
+                self.sqrt_n_minus_i,
+                self.alpha_i,
+                self.Omega_ce_tau,
+                dt,
+                mask23=self.mask23,
+                n_terms=self.force_exp_terms,
+            ).view(jnp.float64)
+
+        y_f = dict(y_h)
+        y_f["Ck_electrons"] = Ck_e_f.view(jnp.float64)
+        y_f["Ck_ions"] = Ck_i_f_view
+
+        # 3. Second linear half-step
+        y1 = exp_L(y_f, dt / 2)
+
+        # 4. Wave solver (inputs at t_n, computed above)
+        a_result = self.wave_solver(
+            a=y["a"],
+            aold=y["prev_a"],
+            djy_array=djy,
+            electron_density=n_e_n,
+        )
+
+        # 5. Diagnostics + assemble
+        Ck_e_np1 = y1["Ck_electrons"].view(jnp.complex128)
+        Ck_i_np1 = y1["Ck_ions"].view(jnp.complex128)
+        Ex_out = self.poisson(Ck_e_np1, Ck_i_np1)
+        de = self.ex_driver(t, args)
+
+        new_state = {
+            "Ck_electrons": y1["Ck_electrons"],
+            "Ck_ions": y1["Ck_ions"],
+            "a": a_result["a"],
+            "prev_a": a_result["prev_a"],
+            "e": Ex_out,
+            "da": djy,
+            "de": de,
+        }
+        return self._apply_sponge(new_state)
+
+    def _lawson_step(self, t: float, y: dict, args: dict) -> dict:
+        """Legacy Lawson-RK4 step (explicit force; see class docstring for caveats)."""
 
         # Frozen interior vector potential for the whole Lawson step
         a_frozen = y["a"][1:-1]  # (Nx,)
