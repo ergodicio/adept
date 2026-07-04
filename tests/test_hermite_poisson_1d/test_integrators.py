@@ -145,7 +145,7 @@ def test_both_integrators_agree_in_smooth_regime():
     for integrator in ("lawson-rk4", "strang-exp"):
         module = _make_module(integrator, e_amplitude=3e-4)
         vf = module.diffeqsolve_quants["terms"].vector_field
-        step = jax.jit(lambda t, y: vf(t, y, {}))
+        step = jax.jit(lambda t, y, vf=vf: vf(t, y, {}))
         y = module.state
         for i in range(100):
             y = step(0.1 * i, y)
