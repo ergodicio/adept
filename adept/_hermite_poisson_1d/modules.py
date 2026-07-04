@@ -367,6 +367,15 @@ class BaseHermitePoisson1D(ADEPTModule):
         ex_cfg = self.cfg.get("drivers", {}).get("ex", {})
         ex_driver = LongitudinalElectricFieldDriver(grid["x"], ex_cfg)
 
+        # Integrator selection: terms.integrator ∈ {"strang-exp" (default), "lawson-rk4"}.
+        # strang-exp = Strang-split exp(L dt/2) → exact force-exponential substep
+        # (finite nilpotent series, terms.force_exp_terms) → exp(L dt/2) with
+        # time-centered wave↔plasma couplings (no explicit force stability bound).
+        # lawson-rk4 = the legacy explicit path, kept for A/B.
+        terms_cfg = self.cfg.get("terms", {})
+        integrator = str(terms_cfg.get("integrator", "strang-exp"))
+        force_exp_terms = int(terms_cfg.get("force_exp_terms", 24))
+
         # Assemble top-level vector field (discrete-map via Stepper)
         vector_field = HermitePoisson1DVectorField(
             combined_exp=combined_exp,
@@ -391,6 +400,8 @@ class BaseHermitePoisson1D(ADEPTModule):
             noise_amplitude=noise_amplitude,
             noise_seed=noise_seed,
             noise_spatial_profile=noise_spatial_profile,
+            integrator=integrator,
+            force_exp_terms=force_exp_terms,
         )
 
         # Configure save quantities
