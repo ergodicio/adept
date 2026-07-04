@@ -263,6 +263,17 @@ def plot_phasespace(
     return ax
 
 
+def _evolution_t_indices(n: int, n_panels: int) -> list[int]:
+    """Time indices ``plot_phasespace_evolution`` samples, plus the final slice.
+
+    Mirrors the panel subsampling (``range(0, n, n // n_panels)``) and always
+    includes ``n - 1``, so a series loaded with exactly these indices serves
+    both the evolution facets and the final-step heatmap.
+    """
+    t_skip = max(1, n // n_panels)
+    return sorted(set(range(0, n, t_skip)) | {n - 1})
+
+
 def plot_phasespace_evolution(
     series: xr.DataArray | str | Path,
     *,
@@ -277,15 +288,25 @@ def plot_phasespace_evolution(
     Subsamples a stacked ``(t, p, x)`` phase-space series (as returned by
     ``io.load_series``) to ~``n_panels`` snapshots so the time evolution is
     visible, rather than only the final step. Returns the ``Figure``.
+
+    Given a path, only the sampled snapshots are read from disk
+    (``io.load_series`` with ``t_indices``) — a production phase-space history
+    can run to tens of GB while the facets need under a dozen slices. The
+    colour scale is likewise computed from the sampled panels only, never the
+    full history.
     """
-    da = series if isinstance(series, xr.DataArray) else _io.load_series(series)
+    if isinstance(series, xr.DataArray):
+        da = series
+    else:
+        da = _io.load_series(series, t_indices=_evolution_t_indices(_io.series_len(series), n_panels))
     da = _decorate(da)
     if da.ndim != 3:
         raise ValueError(f"plot_phasespace_evolution expects (t, p, x); got dims {da.dims}")
     da = _crop_spatial_to_box(da)
     nt = da.coords["t"].size
-    t_skip = max(1, nt // n_panels)
-    idx = list(range(0, nt, t_skip))
+    # Same sampling rule whether da is a full in-memory series or was already
+    # slice-selected off disk: stride panels plus, always, the final slice.
+    idx = _evolution_t_indices(nt, n_panels)
     sl = da.isel(t=idx)
     # Convention: spatial axis horizontal, momentum axis vertical (fall back to
     # dim order for a momentum-momentum space with no spatial axis).
@@ -1050,6 +1071,7 @@ def plot_profile(
     *,
     abs_value: bool = False,
     n_avg_frac: float = 0.2,
+    avg_window: int | None = None,
     show_initial: bool = False,
     value_label: str | None = None,
     title: str | None = None,
@@ -1060,6 +1082,11 @@ def plot_profile(
     out the time-dependent fluctuations to show the established profile. With
     ``show_initial`` the ``t = 0`` profile is overlaid too, so the change from
     the initial state is visible.
+
+    ``avg_window`` overrides the fraction with an explicit number of trailing
+    dumps. Pass it when ``series`` was slice-selected out of a longer history
+    (initial + the mean window), where a fraction of the *received* length no
+    longer means what the caller intended.
     """
     da = _decorate(series if isinstance(series, xr.DataArray) else _io.load_series(series))
     if "t" not in da.dims:
@@ -1068,7 +1095,8 @@ def plot_profile(
     x = da.coords[xdim].values
     tvals = da.coords["t"].values
     nt = da.sizes["t"]
-    w = max(1, round(n_avg_frac * nt))
+    w = int(avg_window) if avg_window is not None else max(1, round(n_avg_frac * nt))
+    w = max(1, min(w, nt))
     if ax is None:
         _, ax = plt.subplots(figsize=(6, 4))
     final = da.isel(t=-1).values
@@ -1438,15 +1466,26 @@ def save_canned_plots(
         try:
             # Temperature from a Maxwellian fit to the species phase space
             # (preferred); fall back to dumped thermal moments (uth / T_ii).
+            # The fit builds several full-size temporaries of the (t, p, x)
+            # series, so read only the slices plot_profile uses — t=0 plus the
+            # trailing mean window — instead of the whole history.
             ps_path = _species_phasespace(diags, species)
-            temp = _temperature_from_phasespace(ps_path)
+            temp = avg_window = None
+            if ps_path is not None:
+                n_t = _io.series_len(ps_path)
+                if n_t > 0:
+                    avg_window = max(1, round(0.2 * n_t))  # plot_profile's default n_avg_frac
+                    idx = sorted({0, *range(n_t - avg_window, n_t)})
+                    temp = _temperature_from_phasespace(_io.load_series(ps_path, t_indices=idx))
             if temp is None:
                 temp = _temperature_series(entries)
+                avg_window = None  # full series: the default fraction applies
             if temp is not None:
                 fig, ax = plt.subplots(figsize=(6, 4))
                 plot_profile(
                     temp,
                     ax=ax,
+                    avg_window=avg_window,
                     show_initial=True,
                     title=f"{label}  —  temperature profile",
                 )
@@ -1463,7 +1502,15 @@ def save_canned_plots(
             continue
         ps_name, species = parts[1], parts[2]
         try:
-            ser = _io.load_series(diag_path)
+            # Slice-selected read: only the evolution panels + the final step
+            # come off disk. A production phase-space history (e.g. x1g_q1 at
+            # ~12k dumps) is tens of GB; the plots below use under a dozen
+            # slices of it, and eager-loading it here is what blew node memory
+            # when many runs post-processed at once.
+            n_t = _io.series_len(diag_path)
+            if n_t < 1:
+                continue
+            ser = _io.load_series(diag_path, t_indices=_evolution_t_indices(n_t, n_panels))
         except Exception as e:
             print(f"[plots] skipping phasespace {diag_rel}: {e}")
             continue
@@ -1617,8 +1664,14 @@ def _decorate(da: xr.DataArray) -> xr.DataArray:
     ``io.load_series`` stashes axis metadata in dict-valued DataArray attrs;
     copying it onto the coordinates lets xarray's faceted plotters auto-label
     each panel's axes. Returns a decorated copy (the input is left untouched).
+
+    The copy is **shallow** (``deep=False``): xarray still gives the copy its own
+    attrs dicts (so the labels below don't leak onto the caller's array), but the
+    data buffer is shared — a deep copy would pull a lazily-opened
+    (:func:`io.open_series`) multi-GB phase-space history fully into memory just
+    to relabel its axes, which is exactly the load the lazy path exists to avoid.
     """
-    da = da.copy()
+    da = da.copy(deep=False)
     axis_units = da.attrs.get("axis_units", {}) or {}
     axis_long = da.attrs.get("axis_long_names", {}) or {}
     for dim in da.dims:

@@ -21,6 +21,7 @@ adept/                                          (repo root)
 │       ├── post.py        ◀── post-run collection: final-step HDF5 copy,
 │       │                      NetCDF export, scalar metrics
 │       ├── io.py          ◀── HDF5/NetCDF readers + dataset save/load
+│       │                      (load_series ±t_indices, lazy open_series, series_len)
 │       ├── plots.py       ◀── canned plot set (save_canned_plots)
 │       └── regen.py       ◀── regenerate plots offline from saved NetCDFs
 ├── configs/
@@ -312,6 +313,8 @@ These canned plots focus on 1D simulations.
 > **Note on `field_decomp/`.** The left/right split is exact only in vacuum or a uniform non-dispersive medium (`|E| = |B|` for a pure travelling wave). In a plasma the EM wave is dispersive, so the split is approximate — useful for direction, but cross-check the dispersion before reading the residual as physical counter-propagating power. The longitudinal `e1` is electrostatic and is intentionally excluded.
 
 > **SRS-specific plots & metrics live in osiris-lpi.** The laser-energy budget (reflected / transmitted / absorbed over time: the `energy_budget.png` + `laser_energy_budget.txt` artifacts and the `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics) and the distribution-function lineouts (`distribution_lineouts/`: `f(p)` averaged over the four domain quarters and the whole box, for the last dump and the last-1/8 average, in linear / log / `δf` views) are **not** produced by adept's general OSIRIS wrapper. They live in the [osiris-lpi](https://github.com/ergodicio/osiris-lpi) repo — `osiris_lpi.OsirisLPI` subclasses `BaseOsiris` and adds them in `post_process`, reading the drive `antenna.a0`/`antenna.omega0` from the deck. Regenerate them offline from saved NetCDFs with `python -m osiris_lpi.regen`.
+
+> **Memory: phase-space plots read slices, not the whole history.** A saved `(t, …)` series can be tens of GB uncompressed — `x1gamma_q1` is ~48 GB in memory (11705 × 1000 × 1024), ~0.19 GB gzipped on disk (sparse, ~250×) — so `io.load_series(path)` decompresses all of it (at 16 sims/node this OOM'd production). `save_canned_plots` therefore loads only what each plot needs: `io.load_series(path, t_indices=…)` for the final dump + the evolution panels (`_evolution_t_indices`), and it decimates field heatmaps to render resolution before `pcolormesh`. A new plotter over a large series must do the same — `load_series(..., t_indices=…)` for a few slices, or `with io.open_series(path) as da:` (lazy; `da.isel(t=it)` reads one dump on demand) when it walks the whole time axis reducing one dump at a time. A stray `da.values` / `da.sum()` over `t`, or a **deep** `da.copy()`, pulls the full series into RAM (`_decorate` copies shallow for this reason).
 
 ## Programmatic use
 

@@ -22,6 +22,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from collections.abc import Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import h5py
@@ -323,7 +325,36 @@ def _sort_dumps(handle: Path, base: str | None = None) -> list[Path]:
     return next(iter(groups.values()), [])
 
 
-def load_series(directory: str | Path) -> xr.DataArray:
+def series_len(source: str | Path) -> int:
+    """Number of time slices in a diagnostic series, without loading its data.
+
+    ``source`` is any handle accepted by :func:`load_series` (a dump directory,
+    a per-report handle, or a saved-series ``.nc`` file). Pairs with
+    ``load_series(..., t_indices=...)`` so callers can pick a few slices of a
+    long series — e.g. a phase-space history — without ever materializing the
+    whole ``(t, ...)`` array.
+    """
+    source = Path(source)
+    if source.is_file() and source.suffix == ".nc":
+        with xr.open_dataset(source, engine="h5netcdf") as ds:
+            return int(ds.sizes.get("t", 0))
+    return len(_sort_dumps(source))
+
+
+def _normalize_t_indices(t_indices: Sequence[int], n: int, what: str) -> list[int]:
+    """Resolve possibly-negative time indices against a series of length ``n``."""
+    out = []
+    for i in t_indices:
+        j = int(i) + n if int(i) < 0 else int(i)
+        if not 0 <= j < n:
+            raise IndexError(f"t index {i} out of range for {what} with {n} time slices")
+        out.append(j)
+    if not out:
+        raise ValueError(f"t_indices is empty for {what}")
+    return out
+
+
+def load_series(directory: str | Path, t_indices: Sequence[int] | None = None) -> xr.DataArray:
     """Stack every dump in ``directory`` into a ``(t, ...)`` DataArray.
 
     All files must share the same diagnostic name, the same spatial /
@@ -333,13 +364,23 @@ def load_series(directory: str | Path) -> xr.DataArray:
     For regenerating plots from saved artifacts, ``directory`` may instead be a
     single ``.nc`` file written by :func:`save_run_datasets`; it is then loaded
     via :func:`load_series_nc`, returning the same stacked ``(t, ...)`` array.
+
+    ``t_indices`` selects a subset of time slices (negative indices allowed,
+    order preserved) and reads **only** those from disk — per-dump files for
+    the HDF5 layout, a partial read for the NetCDF layout. A full phase-space
+    history can run to tens of GB while its plots need under ten slices, so
+    slice-selecting callers (see the phase-space paths in ``plots``) is what
+    keeps concurrent post-processing inside a node's memory.
     """
     directory = Path(directory)
     if directory.is_file() and directory.suffix == ".nc":
-        return load_series_nc(directory)
+        return load_series_nc(directory, t_indices=t_indices)
     dumps = _sort_dumps(directory)
     if not dumps:
         raise FileNotFoundError(f"No .h5 dumps in {directory}")
+    if t_indices is not None:
+        idx = _normalize_t_indices(t_indices, len(dumps), str(directory))
+        dumps = [dumps[j] for j in idx]
     first = load_grid_h5(dumps[0])
 
     n = len(dumps)
@@ -514,7 +555,7 @@ def series_to_dataset(da: xr.DataArray) -> xr.Dataset:
     return ds
 
 
-def load_series_nc(path: str | Path) -> xr.DataArray:
+def load_series_nc(path: str | Path, t_indices: Sequence[int] | None = None) -> xr.DataArray:
     """Load a grid/phase-space series NetCDF back into a plotter-ready DataArray.
 
     This is the inverse of :func:`series_to_dataset` (the form
@@ -525,9 +566,33 @@ def load_series_nc(path: str | Path) -> xr.DataArray:
     :func:`load_series` off the raw HDF5 tree. The whole point is that the
     canned plots can be regenerated from the saved NetCDFs alone.
 
-    The file is read fully into memory and closed before returning.
+    The file is read into memory and closed before returning. With
+    ``t_indices`` (see :func:`load_series`) the read is *partial*: the file is
+    opened lazily and only the selected time slices are materialized — the
+    streamed series are written one dump at a time, so this reads a handful of
+    chunks instead of the (potentially tens-of-GB) full history. Reductions on
+    a lazily-opened xarray would silently pull in the whole variable, which is
+    why the selection happens here, before any consumer touches the data.
     """
-    ds = xr.load_dataset(path, engine="h5netcdf")
+    if t_indices is None:
+        ds = xr.load_dataset(path, engine="h5netcdf")
+    else:
+        with xr.open_dataset(path, engine="h5netcdf") as f:
+            idx = _normalize_t_indices(t_indices, int(f.sizes.get("t", 0)), str(path))
+            ds = f.isel(t=idx).load()
+    return _series_da_from_dataset(ds, path)
+
+
+def _series_da_from_dataset(ds: xr.Dataset, path: str | Path) -> xr.DataArray:
+    """Rebuild a plotter-ready DataArray from an opened saved-series Dataset.
+
+    Shared by the eager :func:`load_series_nc` and the lazy :func:`open_series`:
+    it only reads the (small) coordinate variables to restore the
+    ``axis_units`` / ``axis_long_names`` / ``autoscaled_dims`` metadata, and
+    never touches the (possibly huge) data variable — so on a lazily-opened
+    ``ds`` the returned array stays lazy and materializes only the slices a
+    caller actually indexes.
+    """
     names = list(ds.data_vars)
     if not names:
         raise ValueError(f"No data variable in {path}")
@@ -568,6 +633,35 @@ def load_series_nc(path: str | Path) -> xr.DataArray:
     if autoscaled:
         da.attrs["autoscaled_dims"] = autoscaled
     return da
+
+
+@contextmanager
+def open_series(source: str | Path):
+    """Yield a ``(t, …)`` series whose slices are read from disk on demand.
+
+    The memory-bounded companion to :func:`load_series` for consumers that walk
+    or window the time axis and reduce **one dump at a time** (e.g. the SRS
+    phase-space budgets in ``osiris_lpi.srs_post``, which iterate
+    ``da.isel(t=it)`` and sum each slice): the full ``(t, …)`` array is never
+    materialized, so a 48 GB phase-space history costs only one resident dump.
+    Unlike ``load_series(..., t_indices=)`` this does not need the caller to
+    know which slices up front, so it also serves the whole-history passes (the
+    flux-vs-time trace) that a slice list can't express.
+
+    For a saved-series ``.nc`` the file is opened lazily and closed on exit; the
+    yielded DataArray is valid **only inside the with-block**. For a raw
+    per-dump directory (no single lazy file) it falls back to an eager
+    :func:`load_series` and yields that array (nothing to close).
+    """
+    source = Path(source)
+    if source.is_file() and source.suffix == ".nc":
+        ds = xr.open_dataset(source, engine="h5netcdf")
+        try:
+            yield _series_da_from_dataset(ds, source)
+        finally:
+            ds.close()
+    else:
+        yield load_series(source)
 
 
 def list_diagnostics_nc(binary_dir: str | Path) -> dict[str, Path]:
