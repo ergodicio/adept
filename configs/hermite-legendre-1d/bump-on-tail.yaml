@@ -1,17 +1,26 @@
-# Mixed Hermite-Legendre 1D --- Bump-on-tail instability (paper sec 4.4)
+# Mixed Hermite-Legendre 1D --- Bump-on-tail instability
 #
 # f0(x,v,0) = (1-n_b)/sqrt(2*pi) [1 + eps cos(x/10)] exp(-v^2/2)
 # df(x,v,0) = n_b/sqrt(2*pi) exp(-(v-10)^2/2)   (beam projected onto Legendre)
-# The beam is well separated from the bulk, so f0<->df coupling is weak and a large
-# Hermite collision rate nu_H = 10 is acceptable. Parameters match Chapurin et al.
+# Physical parameters (n_b=0.01 warm beam) follow Chapurin et al.; this is a longer,
+# harder nonlinear run than the paper's own sec 4.4 benchmark (n_b larger, T=50).
+# Validated linear physics at k=0.1: omega = 0.9058 measured vs 0.9052 kinetic theory,
+# gamma = 0.0895 vs 0.0898; ee saturates at ~2.7 (t~94), relaxing to ~1.55 by t=120.
 #
-# This is the most demanding benchmark (asymmetric velocity window, long time). The
-# explicit and IMEX integrators both blow up near saturation; it requires the A-stable,
-# energy-conserving implicit-midpoint integrator (integrator: implicit) with the combined
-# streaming+force preconditioner. At saturation the implicit nonlinear solve is hard, so a
-# small step is needed for Newton/GMRES to converge (dt <= ~0.02; the paper uses dt=0.01).
-# A larger dt (e.g. 0.1) converges in the linear phase but fails at saturation -- the
-# learned/ML preconditioner is the planned route to large-dt robustness here.
+# Integrator: the explicit and IMEX paths blow up near saturation (the Legendre force
+# CFL ~ Nl^2/width*|E|); use the A-stable implicit midpoint (JFNK). Precondition with
+# the streaming+collision operator ONLY -- preconditioning the Lorentz-force block (in
+# any form) stalls GMRES at saturation-scale fields (strongly non-normal factors). At
+# dt >~ 0.05 with large |E| prefer precondition: false.
+#
+# Nh MUST stay small (bulk-only). With Nh >~ 64 the saturated field's force ladder
+# (pump ~ |E| sqrt(2n)/alpha) outruns the cubic hyper-collision damping in the mid-n
+# window and a spurious k=0 velocity-space cascade at n ~ 30-50 (structure at v ~ 9,
+# which belongs to the Legendre window) detonates the run shortly after saturation --
+# at ANY practical nu_H (0, 10, and 30 all fail; the paper's collisionless-Hermite
+# flow-through also fails here). Nh=32 gives identical field observables to Nh=128
+# (ee trace agrees to 3 digits) with a monotonically decaying Hermite spectrum and
+# machine-precision energy conservation, at 4x lower cost.
 
 solver: hermite-legendre-1d
 
@@ -37,12 +46,12 @@ physics:
 
 grid:
   Nx: 128
-  Nh: 128
+  Nh: 32                     # bulk-only Hermite basis; Nh >~ 64 triggers the mid-n cascade (see header)
   Nl: 128
   tmax: 120.0
   dt: 0.02                   # small step so the saturation-phase JFNK solve converges
   integrator: implicit       # A-stable implicit midpoint; conserves mass exactly, energy to solve tol
-  precondition: true         # combined streaming+force preconditioner
+  precondition: true         # streaming+collision preconditioner (stream-only; see header)
   newton_iters: 4
   gmres_restart: 30
   gmres_maxiter: 3

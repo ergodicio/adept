@@ -584,34 +584,6 @@ class HermiteLegendre1DVectorField:
         y = jax.lax.linalg.tridiagonal_solve(dl_l, d_l, du_l, Bk.T[..., None])[..., 0].T
         return {"Cr": x.real, "Ci": x.imag, "Br": y.real, "Bi": y.imag}
 
-    def _force_precond_apply(self, v: dict, sC: Array) -> dict:
-        """Apply (I - dt/2 E0 G_force)^{-1} (the Lorentz-force preconditioner), per x.
-
-        sC = (dt/2) E0(x) is the frozen-field scale. The Hermite force operator is
-        lower-bidiagonal -> a per-x tridiagonal (forward-substitution) solve; the
-        Legendre force is dominated by the derivative matrix D (norm ~Nl^2/width), a
-        per-x lower-triangular solve. The rank-2 Dirichlet penalty is left to GMRES (a
-        preconditioner need not be exact). This is the piece that becomes stiff at
-        saturation, where streaming-only preconditioning stalls.
-        """
-        Ck = v["Cr"] + 1j * v["Ci"]  # (Nh, Nx)
-        Bk = v["Br"] + 1j * v["Bi"]  # (Nl, Nx)
-        Nh, Nx = Ck.shape
-        Nl = Bk.shape[0]
-        sC_c = sC.astype(jnp.complex128)
-
-        # Hermite: (I - sC G_C) is lower-bidiagonal; (I-sC G_C)[n,n-1] = sC*sqrt(2n)/alpha
-        dl = sC_c[:, None] * self.sqrt_2n_over_alpha[None, :].astype(jnp.complex128)  # (Nx, Nh)
-        dl = dl.at[:, 0].set(0.0)
-        d = jnp.ones((Nx, Nh), dtype=jnp.complex128)
-        du = jnp.zeros((Nx, Nh), dtype=jnp.complex128)
-        Cn = jax.lax.linalg.tridiagonal_solve(dl, d, du, Ck.T[..., None])[..., 0].T
-
-        # Legendre: (I + sC D) lower-triangular (unit diagonal); D = deriv matrix
-        A0 = jnp.eye(Nl, dtype=jnp.complex128)[None] + sC_c[:, None, None] * self.deriv.astype(jnp.complex128)[None]
-        Bn = jax.lax.linalg.triangular_solve(A0, Bk.T[..., None], left_side=True, lower=True)[..., 0].T
-        return {"Cr": Cn.real, "Ci": Cn.imag, "Br": Bn.real, "Bi": Bn.imag}
-
     def _nonlinear_rhs(self, t: float, state: dict, args: dict) -> dict:
         Ck = state["Ck"].view(jnp.complex128)
         Bk = state["Bk"].view(jnp.complex128)
@@ -715,12 +687,6 @@ class HermiteLegendre1DVectorField:
         t_mid = t + 0.5 * dt
         y0 = {"Cr": Ck0.real, "Ci": Ck0.imag, "Br": Bk0.real, "Bi": Bk0.imag}
 
-        # Frozen-field scale for the force preconditioner (E at the step-start state).
-        E0 = self.poisson.electric_field(Ck0, Bk0) if self.field_on else jnp.zeros(Ck0.shape[1])
-        if self.ex_driver is not None:
-            E0 = E0 + self.ex_driver(t_mid, None)
-        sC = 0.5 * dt * E0
-
         def rhs(yr):
             Ck = yr["Cr"] + 1j * yr["Ci"]
             Bk = yr["Br"] + 1j * yr["Bi"]
@@ -732,14 +698,13 @@ class HermiteLegendre1DVectorField:
             f = rhs(y_mid)
             return jax.tree.map(lambda a, b, ff: a - b - dt * ff, y1, y0, f)
 
-        # Combined preconditioner M^{-1} = M_force^{-1} . M_stream^{-1}: streaming
-        # (per-k tridiagonal) handles the linear/growth phase, the force part handles
-        # saturation where the Lorentz term dominates the Jacobian.
-        if self.precondition:
-            def M(vv):
-                return self._force_precond_apply(self._stream_precond_apply(vv), sC)
-        else:
-            M = None
+        # Streaming-only preconditioner. Do NOT precondition the Lorentz-force block:
+        # its triangular factors are strongly non-normal (nilpotent ladders with norm
+        # ~Nl^2/width * |E|), and left-multiplying by their inverse scrambles an
+        # otherwise well-conditioned system -- measured GMRES stalls (rel res ~1) with
+        # a force factor at saturation fields, while stream-only (dt <~ 0.02) and even
+        # unpreconditioned GMRES converge to tolerance in a few tens of iterations.
+        M = self._stream_precond_apply if self.precondition else None
         y1 = y0
         for _ in range(self.newton_iters):
             r, jvp_fn = jax.linearize(residual, y1)  # jvp_fn(v) = J @ v, exact (AD)

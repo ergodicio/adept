@@ -63,6 +63,15 @@ The artificial collision operator (paper sec 2.5) uses the cubic spectrum
 `col[n] = n(n-1)(n-2) / ((N-1)(N-2)(N-3))`, which is identically zero for
 `n = 0, 1, 2` — so collisions never touch the mass/momentum/energy moments.
 
+**Choosing `Nh` (important).** Keep the Hermite basis *bulk-only* — structure inside
+the Legendre window belongs to `df`. At large `Nh` (≳64) and saturation-scale fields,
+the nonlinear force ladder (pump `~|E|·√(2n)/α`) outruns the cubic collision damping
+in the mid-`n` window and a spurious `k=0` velocity-space cascade grows there at
+~10× the physical rate, eventually destroying the run — at *any* practical `ν_H`
+(0, 10, and 30 were all measured to fail on the bump-on-tail benchmark). A small
+basis closes the window structurally: bump-on-tail with `Nh=32` reproduces the
+`Nh=128` field observables to 3 digits with machine-precision energy conservation.
+
 ---
 
 ## grid
@@ -98,7 +107,13 @@ many iterations and can fail to converge at large `dt`/`Nx` (Newton then injects
 The preconditioner `M = I − dt/2·(L_streaming + L_collision)` is block-diagonal in `k` and
 tridiagonal in mode index, so `M⁻¹` is a cheap per-`k` tridiagonal solve that captures
 exactly that stiff spectrum; GMRES on `M⁻¹A` then converges in a handful of iterations.
-This is what makes large-`dt` implicit-midpoint runs practical.
+
+Two measured caveats. (1) Do **not** precondition the Lorentz-force block: its triangular
+factors are strongly non-normal (nilpotent ladders, norm `~Nl²/width·|E|`), and applying
+their inverse stalls GMRES entirely at saturation-scale fields. (2) At large `dt` (≳0.05)
+combined with large `|E|`, the stream-preconditioned solve itself degrades while
+*unpreconditioned* GMRES still converges — set `precondition: false` for large-`dt`
+experiments in strongly nonlinear regimes.
 
 ### `integrator: imex`
 
