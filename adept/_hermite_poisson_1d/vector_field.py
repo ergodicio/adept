@@ -19,20 +19,42 @@ from adept._vlasov1d.solvers.pushers.field import WaveSolver
 
 
 class TransverseWaveDriver:
-    """Wave-equation source term S(x, t) = Σ_pulses -w² a0 envelope(x,t) sin(kx − wt).
+    """Wave-equation source term, CALIBRATED so the radiated wave has amplitude a0.
 
-    Reads directly from the raw normalized driver_config dict (same format as
-    adept._spectrax1d.driver.Driver) so no Pydantic/EMDriver chain is needed.
-    Output shape: (Nx+2,), matching WaveSolver's djy_array expectation.
+    Two source modes per pulse (pulse["source"], default "extended"):
+
+    "point" (recommended; identical to vlasov1d's TransverseCurrentSourceDriver):
+        S = (F0/dx) · time_envelope(t) · δ_{i0} · sin(w·t),  F0 = 2·w·c·a0.
+        The 1D Green's function for S = F0·δ(x−x0)·sin(wt) gives outgoing waves
+        of amplitude F0/(2·k·c²); with vacuum k = w/c that is exactly a0.
+        Radiates both directions — place near an absorbing boundary.
+
+    "extended": S = −w²·a0·(2c/(w·G))·envelope(x,t)·sin(kx − wt), where
+        G = ∫env_x dx. A phase-matched traveling source of integrated strength
+        S0·G radiates amplitude S0·G/(2·w·c), so the 2c/(w·G) factor calibrates
+        the outgoing amplitude to a0 (accurate for antenna width ≳ wavelength).
+
+    REGRESSION NOTE: the extended mode originally had NO calibration — the
+    radiated amplitude was a0·(w·G/2c), a factor ~9 (81× intensity) for the
+    production SRS geometry (1 µm antenna, 351 nm pump at n_c normalization).
+    Every HP campaign before 2026-07-04 was driven at ~81× nominal intensity;
+    measured pump/nominal = 9.00 at all four campaign intensities, matching
+    (w/2c)·G = 8.95 analytically. The vlasov1d reference campaigns used its
+    calibrated point source and were unaffected.
+
+    Reads the raw normalized driver_config dict. Output shape: (Nx+2,),
+    matching WaveSolver's djy_array expectation.
     """
 
-    def __init__(self, x_a: Array, ey_driver_cfg: dict):
+    def __init__(self, x_a: Array, ey_driver_cfg: dict, c: float = 1.0):
         """
         Args:
             x_a: Extended x grid with ghost cells, shape (Nx+2,).
             ey_driver_cfg: dict mapping pulse_name → pulse_dict from cfg["drivers"]["ey"].
+            c: normalized light speed (1.0 in skin-depth units).
         """
         self.x_a = x_a
+        dx = float(x_a[1] - x_a[0])
         # Pre-parse all scalars at init so __call__ contains no float() on JAX arrays.
         x_a_last = float(x_a[-1])
         parsed = []
@@ -46,27 +68,37 @@ class TransverseWaveDriver:
             x_center = float(pulse.get("x_center", 0.5 * x_a_last))
             x_half = 0.5 * float(pulse.get("x_width", 1e10))
             x_rise = float(pulse.get("x_rise", 0.0))
-            parsed.append(
-                (
-                    float(pulse["k0"]),
-                    w_total,
-                    float(pulse["a0"]),
-                    t_center,
-                    t_half,
-                    t_rise,
-                    x_center,
-                    x_half,
-                    x_rise,
-                )
-            )
+            source = str(pulse.get("source", "extended"))
+            if source not in ("extended", "point"):
+                raise ValueError(f"drivers.ey pulse source must be 'extended' or 'point', got {source!r}")
+
+            if source == "point":
+                i0 = int(jnp.argmin(jnp.abs(x_a - x_center)))
+                mask = jnp.zeros_like(x_a).at[i0].set(1.0)
+                # F0 = 2*w*c*a0 (vacuum-dispersion Green's factor), applied as F0/dx
+                scale = 2.0 * w_total * float(c) * float(pulse["a0"]) / dx
+                parsed.append(("point", scale, w_total, t_center, t_half, t_rise, mask))
+            else:
+                env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, x_a)
+                G = float(jnp.trapezoid(env_x, x_a))
+                if G <= 0.0:
+                    raise ValueError("drivers.ey: extended-source spatial envelope integrates to zero")
+                # Radiated amplitude of the uncalibrated antenna is a0*(w*G/2c);
+                # divide it out so the launched wave has amplitude a0.
+                cal = 2.0 * float(c) / (w_total * G)
+                amp = -(w_total**2) * float(pulse["a0"]) * cal
+                parsed.append(("extended", amp, w_total, t_center, t_half, t_rise, (float(pulse["k0"]), env_x)))
         self.parsed_pulses = parsed
 
     def __call__(self, t: float, args) -> Array:
         total = jnp.zeros_like(self.x_a)
-        for k0, w_total, a0, t_center, t_half, t_rise, x_center, x_half, x_rise in self.parsed_pulses:
+        for source, amp, w_total, t_center, t_half, t_rise, extra in self.parsed_pulses:
             env_t = get_envelope(t_rise, t_rise, t_center - t_half, t_center + t_half, t)
-            env_x = get_envelope(x_rise, x_rise, x_center - x_half, x_center + x_half, self.x_a)
-            total = total + env_t * env_x * (-(w_total**2)) * a0 * jnp.sin(k0 * self.x_a - w_total * t)
+            if source == "point":
+                total = total + amp * env_t * extra * jnp.sin(w_total * t)
+            else:
+                k0, env_x = extra
+                total = total + env_t * env_x * amp * jnp.sin(k0 * self.x_a - w_total * t)
         return total
 
 

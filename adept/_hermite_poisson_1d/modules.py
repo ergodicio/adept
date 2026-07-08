@@ -358,9 +358,9 @@ class BaseHermitePoisson1D(ADEPTModule):
         # Wave solver (c_light > 0 → EM waves; = 0 → frozen a)
         wave_solver = WaveSolver(c=c_light, dx=dx, dt=dt)
 
-        # Transverse wave source driver
+        # Transverse wave source driver (calibrated; pulse["source"]: point|extended)
         ey_cfg = self.cfg.get("drivers", {}).get("ey", {})
-        ey_driver = TransverseWaveDriver(x_a, ey_cfg)
+        ey_driver = TransverseWaveDriver(x_a, ey_cfg, c=c_light)
 
         # Longitudinal (Ex) field driver — prescribed Ex added to the velocity-space
         # force, on the interior x grid (no ghost cells).
