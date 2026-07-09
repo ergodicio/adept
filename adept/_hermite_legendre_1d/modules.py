@@ -89,7 +89,7 @@ def _distribution_diagnostics(cfg: dict, coeff_data: dict, plots_dir: str, binar
 
     C_sel = [np.fft.ifft(Ck[i], axis=-1, norm="forward").real for i in idx]  # (Nh, Nx) each
     B_sel = [np.fft.ifft(Bk[i], axis=-1, norm="forward").real for i in idx]
-    f_sel = np.stack([C.T @ psi + B.T @ xi for C, B in zip(C_sel, B_sel)])  # (nsel, Nx, Nv)
+    f_sel = np.stack([C.T @ psi + B.T @ xi for C, B in zip(C_sel, B_sel, strict=True)])  # (nsel, Nx, Nv)
 
     # facet 1: phase space f(x, v), shared log color scale
     fmax = float(np.nanmax(f_sel))
@@ -101,7 +101,7 @@ def _distribution_diagnostics(cfg: dict, coeff_data: dict, plots_dir: str, binar
     )
     axes = np.atleast_1d(np.asarray(axes)).ravel()
     norm = LogNorm(vmin=floor, vmax=fmax)
-    for ax, i, f in zip(axes, idx, f_sel):
+    for ax, i, f in zip(axes, idx, f_sel, strict=False):
         im = ax.pcolormesh(x, v, np.maximum(f, floor).T, norm=norm, cmap="magma", shading="auto", rasterized=True)
         ax.set_title(f"t = {t_arr[i]:.0f}", fontsize=10)
     for ax in axes[len(idx) :]:
@@ -119,7 +119,7 @@ def _distribution_diagnostics(cfg: dict, coeff_data: dict, plots_dir: str, binar
     bmax = max(float(np.max(np.abs(Bk[idx]))), 1e-30)
     fig, axes = plt.subplots(len(idx), 2, figsize=(9.0, 2.2 * len(idx)), sharex=True, layout="constrained")
     axes = np.atleast_2d(np.asarray(axes))
-    for row, (i, C, B) in enumerate(zip(idx, C_sel, B_sel)):
+    for row, (i, C, B) in enumerate(zip(idx, C_sel, B_sel, strict=True)):
         for col, (arr, N, vmax, name) in enumerate(((C, Nh, cmax, r"$|C_n(x)|$"), (B, Nl, bmax, r"$|B_m(x)|$"))):
             ax = axes[row, col]
             im = ax.pcolormesh(
