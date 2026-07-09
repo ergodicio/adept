@@ -8,7 +8,7 @@ equilibrium: dC_n/dt|F = kappa_n*accel*C_eq_{n-1} — the textbook
 truncated-AW blow-up under strong forcing, is removed structurally: linear
 kinetics are exact, and above-threshold instabilities grow exponentially
 without saturation (enveloped-LPSE semantics). Scan-5 context: capping the
-force on the FULL coupling (terms.stabilize) only converts the detonation
+force on the FULL coupling (a since-removed tanh-cap mode) only converts the detonation
 into a bounded-coefficient exponential at gamma ~ kappa_max*cap ~ 0.5 wp
 that overflows float64 within ~1000/wp; linearization is the correct
 stable-at-any-intensity mode.
