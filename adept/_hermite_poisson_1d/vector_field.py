@@ -554,11 +554,25 @@ class HermitePoisson1DVectorField:
         noise_spatial_profile: Array | None = None,
         integrator: str = "strang-exp",
         force_exp_terms: int = 24,
+        force_cap: float | None = None,
+        wave_density_max: float | None = None,
     ):
         if integrator not in ("strang-exp", "lawson-rk4"):
             raise ValueError(f"Unknown integrator {integrator!r}; use 'strang-exp' or 'lawson-rk4'")
         self.integrator = integrator
         self.force_exp_terms = int(force_exp_terms)
+        # LPSE-style stabilization clamps (None = off). See _strang_exp_step.
+        # force_cap: smooth tanh saturation of the species acceleration —
+        # accel -> cap*tanh(accel/cap). Transparent while |accel| << cap
+        # (relative distortion (accel/cap)^2/3), artificially saturates the
+        # parametric loop gain above it, and bounds the hierarchy-forcing
+        # parameter x = dt*|accel|*sqrt(4*Nn)/alpha below the truncated-AW
+        # detonation threshold. Above-threshold runs become stable but NOT
+        # quantitatively accurate at saturation amplitude (by design).
+        # wave_density_max: clip on the electron density the wave equation
+        # sees (safety net against runaway omega_pe^2*dt^2 at huge delta-n).
+        self.force_cap = None if force_cap is None else float(force_cap)
+        self.wave_density_max = None if wave_density_max is None else float(wave_density_max)
         self.combined_exp = combined_exp
         self.poisson = poisson
         self.wave_solver = wave_solver
@@ -772,6 +786,8 @@ class HermitePoisson1DVectorField:
         # so n_e and S belong at t_n (pre-step C_0), not averaged/half-shifted.
         Ck_e_n = y["Ck_electrons"].view(jnp.complex128)
         n_e_n = self.poisson.electron_density(Ck_e_n)
+        if self.wave_density_max is not None:
+            n_e_n = jnp.clip(n_e_n, 0.0, self.wave_density_max)
         djy = self.ey_driver(t, args)
 
         # 1. First linear half-step (streaming + collisions + filter, exact)
@@ -791,6 +807,8 @@ class HermitePoisson1DVectorField:
         Fp = -0.5 * jnp.gradient(a_mid**2, self.dx)
 
         accel_e = self.qm_e * (Ex + Edrive + noise_frozen) + self.qm_e**2 * Fp
+        if self.force_cap is not None:
+            accel_e = self.force_cap * jnp.tanh(accel_e / self.force_cap)
         Ck_e_f = _exp_force_substep(
             Ck_e_h,
             accel_e,
@@ -805,6 +823,8 @@ class HermitePoisson1DVectorField:
             Ck_i_f_view = y_h["Ck_ions"]
         else:
             accel_i = self.qm_i * (Ex + Edrive + noise_frozen) + self.qm_i**2 * Fp
+            if self.force_cap is not None:
+                accel_i = self.force_cap * jnp.tanh(accel_i / self.force_cap)
             Ck_i_f_view = _exp_force_substep(
                 Ck_i_h,
                 accel_i,
