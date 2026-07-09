@@ -111,17 +111,25 @@ class Species(eqx.Module):
     mass: float
     charge: float
     vmax: float
+    vmin: float
     nv: int
     density_components: list[str]
 
     @staticmethod
     def from_config(cfg: SpeciesConfig) -> "Species":
-        """Convert a species config into the immutable simulation species model."""
+        """Convert a species config into the immutable simulation species model.
+
+        ``vmin`` defaults to ``-vmax`` (the historical symmetric velocity grid)
+        when it is not specified in the config.
+        """
+        vmax = float(cfg.vmax)
+        vmin = float(cfg.vmin) if cfg.vmin is not None else -vmax
         return Species(
             name=cfg.name,
             mass=float(cfg.mass),
             charge=float(cfg.charge),
-            vmax=float(cfg.vmax),
+            vmax=vmax,
+            vmin=vmin,
             nv=int(cfg.nv),
             density_components=cfg.density_components,
         )

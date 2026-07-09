@@ -40,6 +40,7 @@ def species_set_from_config(cfg: Vlasov1DConfig) -> list[Species]:
                     charge=-1.0,
                     mass=1.0,
                     vmax=cfg.grid.vmax,
+                    vmin=cfg.grid.vmin,
                     nv=cfg.grid.nv,
                     density_components=density_components,
                 )
@@ -211,8 +212,9 @@ class BaseVlasov1D(ADEPTModule):
 
             nv = species_cfg.nv
             vmax = species_cfg.vmax
+            vmin = species_cfg.vmin
 
-            dv = 2.0 * vmax / nv
+            dv = (vmax - vmin) / nv
 
             # Build velocity grid parameters for this species
             cfg_grid["species_grids"][species_name] = {
@@ -220,6 +222,7 @@ class BaseVlasov1D(ADEPTModule):
                 "dv": dv,
                 "nv": nv,
                 "vmax": vmax,
+                "vmin": vmin,
                 "kv": jnp.fft.fftfreq(nv, d=dv) * 2.0 * np.pi,
                 "kvr": jnp.fft.rfftfreq(nv, d=dv) * 2.0 * np.pi,
             }
