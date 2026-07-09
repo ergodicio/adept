@@ -554,7 +554,6 @@ class HermitePoisson1DVectorField:
         noise_spatial_profile: Array | None = None,
         integrator: str = "strang-exp",
         force_exp_terms: int = 24,
-        force_cap: float | None = None,
         wave_density_max: float | None = None,
         linear_response: bool = False,
         Ck_eq_e: Array | None = None,
@@ -575,24 +574,16 @@ class HermitePoisson1DVectorField:
         # thresholds and growth rates) are exact, and above threshold the
         # instability grows exponentially without saturation, like an
         # enveloped LPSE run. Pair with wave_density_max so the EM leg
-        # saturates gracefully once delta-n reaches order unity. (The Scan-5
-        # alternative — capping the force on the FULL coupling — merely turns
-        # the detonation into a bounded-coefficient exponential at gamma ~
+        # saturates gracefully once delta-n reaches order unity. (A tanh cap
+        # on the FULL coupling was tried and removed: it merely turns the
+        # detonation into a bounded-coefficient exponential at gamma ~
         # kappa_max*cap ~ 0.5 wp that overflows float64 within ~1000/wp.)
         self.linear_response = bool(linear_response)
         self.Ck_eq_e = Ck_eq_e
         self.Ck_eq_i = Ck_eq_i
-        # LPSE-style stabilization clamps (None = off). See _strang_exp_step.
-        # force_cap: smooth tanh saturation of the species acceleration —
-        # accel -> cap*tanh(accel/cap). Transparent while |accel| << cap
-        # (relative distortion (accel/cap)^2/3), artificially saturates the
-        # parametric loop gain above it, and bounds the hierarchy-forcing
-        # parameter x = dt*|accel|*sqrt(4*Nn)/alpha below the truncated-AW
-        # detonation threshold. Above-threshold runs become stable but NOT
-        # quantitatively accurate at saturation amplitude (by design).
-        # wave_density_max: clip on the electron density the wave equation
-        # sees (safety net against runaway omega_pe^2*dt^2 at huge delta-n).
-        self.force_cap = None if force_cap is None else float(force_cap)
+        # wave_density_max (None = off): clip on the electron density the wave
+        # equation sees — the graceful-saturation half of LPSE mode (and a
+        # general safety net against runaway omega_pe^2*dt^2 at huge delta-n).
         self.wave_density_max = None if wave_density_max is None else float(wave_density_max)
         self.combined_exp = combined_exp
         self.poisson = poisson
@@ -828,8 +819,6 @@ class HermitePoisson1DVectorField:
         Fp = -0.5 * jnp.gradient(a_mid**2, self.dx)
 
         accel_e = self.qm_e * (Ex + Edrive + noise_frozen) + self.qm_e**2 * Fp
-        if self.force_cap is not None:
-            accel_e = self.force_cap * jnp.tanh(accel_e / self.force_cap)
         if self.linear_response:
             # Linearized force: exact one-substep update dt·A(accel)·C_eq
             # (the generator acts on the STATIC equilibrium, so the series
@@ -853,8 +842,6 @@ class HermitePoisson1DVectorField:
             Ck_i_f_view = y_h["Ck_ions"]
         else:
             accel_i = self.qm_i * (Ex + Edrive + noise_frozen) + self.qm_i**2 * Fp
-            if self.force_cap is not None:
-                accel_i = self.force_cap * jnp.tanh(accel_i / self.force_cap)
             if self.linear_response:
                 dCk_i = _hermite_e_coupling(
                     self.Ck_eq_i, accel_i, self.sqrt_n_minus_i, 1.0, self.alpha_i, self.Omega_ce_tau, mask23=self.mask23
