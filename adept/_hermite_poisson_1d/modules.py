@@ -376,25 +376,21 @@ class BaseHermitePoisson1D(ADEPTModule):
         integrator = str(terms_cfg.get("integrator", "strang-exp"))
         force_exp_terms = int(terms_cfg.get("force_exp_terms", 24))
 
-        # LPSE-style stabilization (terms.stabilize: true): the sim stays
-        # numerically stable below AND above threshold; above-threshold
-        # amplitudes are artificially saturated (not accurate, by design).
-        #   force_cap: tanh cap on the species acceleration. Auto default
-        #     caps the hierarchy-forcing parameter x = dt*|a|*sqrt(4Nn)/alpha
-        #     at 0.3 — inside the truncated-AW safe zone, ~2-3x above
-        #     vlasov-reference saturated SRS fields (transparent during the
-        #     linear/threshold phase: relative distortion (a/cap)^2/3).
-        #   wave_density_max: clip on n_e in the wave equation (safety net).
-        # Explicit terms.force_cap / terms.wave_density_max override the
-        # auto values; either can be set without stabilize for fine control.
-        stabilize = bool(terms_cfg.get("stabilize", False))
-        force_cap = terms_cfg.get("force_cap", None)
         wave_density_max = terms_cfg.get("wave_density_max", None)
-        if stabilize and force_cap is None:
-            force_cap = 0.3 * alpha_e / (2.0 * np.sqrt(Nn_e) * dt)
-        if stabilize and wave_density_max is None:
+
+        # LPSE mode (terms.linear_response: true): linearize the velocity-
+        # space force about the initialized equilibrium (Maxwellian × density
+        # profile). Removes the force-driven ladder cascade structurally —
+        # exact linear kinetics (Landau damping, SRS thresholds/growth), pure
+        # exponential growth above threshold, runs complete at any intensity.
+        # Auto-enables the wave-equation density clip so the EM leg saturates
+        # gracefully once delta-n reaches order unity.
+        linear_response = bool(terms_cfg.get("linear_response", False))
+        if linear_response and wave_density_max is None:
             wave_density_max = 2.0
-        force_cap = None if force_cap is None else float(force_cap)
+        Ck_eq_e = self.state["Ck_electrons"].view(jnp.complex128) if linear_response else None
+        Ck_eq_i = self.state["Ck_ions"].view(jnp.complex128) if linear_response else None
+
         wave_density_max = None if wave_density_max is None else float(wave_density_max)
 
         # Assemble top-level vector field (discrete-map via Stepper)
@@ -423,8 +419,10 @@ class BaseHermitePoisson1D(ADEPTModule):
             noise_spatial_profile=noise_spatial_profile,
             integrator=integrator,
             force_exp_terms=force_exp_terms,
-            force_cap=force_cap,
             wave_density_max=wave_density_max,
+            linear_response=linear_response,
+            Ck_eq_e=Ck_eq_e,
+            Ck_eq_i=Ck_eq_i,
         )
 
         # Configure save quantities

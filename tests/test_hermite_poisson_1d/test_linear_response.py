@@ -1,18 +1,17 @@
 #  Copyright (c) Ergodic LLC 2026
 #  research@ergodic.io
-"""Tests for the LPSE-style stabilization clamps (terms.stabilize).
+"""Tests for LPSE mode (terms.linear_response).
 
-Purpose: SRS-threshold campaigns need runs that complete both below AND above
-threshold. Above threshold the truncated AW-Hermite hierarchy detonates once
-local fields reach the strong-forcing zone (hierarchy-forcing parameter
-x = dt·|accel|·√(4Nn)/α ≳ O(1)) — an instability of the truncated system
-itself, insensitive to filter strength/shape, LB nu, and Nn (absorber-bracket
-campaign, kinetic-srs 2026-07-04). The clamp caps the acceleration with a
-smooth tanh at x ≈ 0.3 (auto default), which is transparent through the
-linear/threshold phase (fields 10–100× below the cap; relative distortion
-(a/cap)²/3) and artificially saturates the parametric loop above it —
-stable-but-inaccurate at saturation, like an enveloped LPSE run that just
-keeps growing. A clip on the wave-equation density is the second safety net.
+The velocity-space force term is linearized about the initialized
+equilibrium: dC_n/dt|F = kappa_n*accel*C_eq_{n-1} — the textbook
+-(qE/m)*df0/dv source. The force-driven ladder cascade, and with it the
+truncated-AW blow-up under strong forcing, is removed structurally: linear
+kinetics are exact, and above-threshold instabilities grow exponentially
+without saturation (enveloped-LPSE semantics). Scan-5 context: capping the
+force on the FULL coupling (a since-removed tanh-cap mode) only converts the detonation
+into a bounded-coefficient exponential at gamma ~ kappa_max*cap ~ 0.5 wp
+that overflows float64 within ~1000/wp; linearization is the correct
+stable-at-any-intensity mode.
 """
 
 from jax import config as jax_config
@@ -26,9 +25,9 @@ import numpy as np
 from adept._hermite_poisson_1d.modules import BaseHermitePoisson1D
 
 
-def _make_module(e_amplitude: float, stabilize: bool, w0: float = 3.0):
+def _make_module(e_amplitude: float, linear_response: bool, w0: float = 3.0):
     """Uniform plasma + uniform-envelope Ex driver with |E| = e_amplitude
-    (same rig as test_integrators; drive above ωpe so shielding is weak)."""
+    (same rig as test_stabilization)."""
     Lx = 20.0
     cfg = {
         "physics": {
@@ -44,7 +43,7 @@ def _make_module(e_amplitude: float, stabilize: bool, w0: float = 3.0):
         },
         "grid": {"Nn": 512, "Ni": 2, "Nx": 32, "tmax": 40.0, "dt": 0.1},
         "density": {},
-        "terms": {"integrator": "strang-exp", "stabilize": stabilize},
+        "terms": {"integrator": "strang-exp", "linear_response": linear_response},
         "drivers": {
             "ex": {
                 "0": {
@@ -81,42 +80,37 @@ def _run(module, n_steps: int):
     return y, peak
 
 
-def test_stabilize_transparent_at_small_amplitude():
-    """Weak drive (|accel|/cap ≈ 0.05): clamped and unclamped runs agree to
-    well under a percent of the driven response — the clamp must not touch
-    below-threshold / linear-growth physics."""
+def test_linear_response_matches_full_at_small_amplitude():
+    """Weak drive: the linearized and full couplings agree to O(perturbation²)
+    — well under a percent of the driven response."""
     states = {}
-    for stab in (False, True):
-        module = _make_module(e_amplitude=3e-4, stabilize=stab)
+    for lin in (False, True):
+        module = _make_module(e_amplitude=3e-4, linear_response=lin)
         y, peak = _run(module, 100)
         assert np.isfinite(peak)
-        states[stab] = np.asarray(y["Ck_electrons"].view(jnp.complex128))
+        states[lin] = np.asarray(y["Ck_electrons"].view(np.complex128))
     a, b = states[False], states[True]
-    scale = np.max(np.abs(a[1:]))  # response lives in n >= 1
+    scale = np.max(np.abs(a[1:]))
     assert scale > 0
     diff = np.max(np.abs(a - b))
-    assert diff < 1e-2 * scale, f"clamp not transparent: diff={diff:.3e} vs response={scale:.3e}"
+    assert diff < 1e-2 * scale, f"linearization not transparent: diff={diff:.3e} vs response={scale:.3e}"
 
 
-def test_stabilize_survives_strong_forcing():
-    """The regression: |E|/α = 1.5 at Nn=512, dt=0.1 detonates the truncated
-    hierarchy for EVERY uncapped integrator at any dt (development
-    dt-convergence study: γ ≈ 1 ωp persisting as dt→0, filter on). With
-    terms.stabilize the same drive must run 400 steps finite and bounded."""
-    module = _make_module(e_amplitude=0.15, stabilize=True)
-    # auto cap at Nn=512, dt=0.1, alpha=0.1: 0.3*0.1/(2*sqrt(512)*0.1) ≈ 6.6e-3
-    vf = module.diffeqsolve_quants["terms"].vector_field
-    assert vf.force_cap is not None and 5e-3 < vf.force_cap < 8e-3
+def test_linear_response_survives_strong_forcing():
+    """|E|/α = 1.5 at Nn=512: detonates the full coupling at any dt and
+    overflows the tanh-capped variant; the linearized coupling is a driven
+    LINEAR system — it must run 400 steps finite."""
+    module = _make_module(e_amplitude=0.15, linear_response=True)
     _, peak = _run(module, 400)
-    assert np.isfinite(peak), "stabilized run went non-finite"
-    assert peak < 1e6, f"stabilized run unbounded: peak/C0 ~ {peak / 1e3:.2e}"
+    assert np.isfinite(peak), "linear-response run went non-finite"
 
 
-def test_epw_dispersion_unchanged_with_stabilize():
-    """Landau gate with the clamp on: perturbation fields (~1e-4) sit far
-    below the cap, so frequency and damping must match kinetic theory at the
-    same tolerances as the unclamped suite."""
+def test_linear_response_epw_dispersion():
+    """Landau gate through the linearized path: this IS textbook linearized
+    Vlasov, so frequency and damping must match kinetic theory at the
+    standard tolerances."""
     from adept import electrostatic
+    from adept._hermite_poisson_1d.modules import BaseHermitePoisson1D
 
     klambda_D = 0.30
     mode = 1
@@ -143,7 +137,7 @@ def test_epw_dispersion_unchanged_with_stabilize():
         "grid": {"Nn": 256, "Ni": 2, "Nx": 64, "tmax": tmax, "dt": 0.05},
         "density": {"perturbation": {"mode": mode, "amplitude": 1.0e-4}},
         "drivers": {},
-        "terms": {"integrator": "strang-exp", "stabilize": True},
+        "terms": {"integrator": "strang-exp", "linear_response": True},
         "save": {"fields": {"t": {"tmin": 0.0, "tmax": tmax, "nt": 1601}}},
     }
     module = BaseHermitePoisson1D(cfg)
