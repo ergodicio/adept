@@ -54,6 +54,97 @@ def _density_profile(x: np.ndarray, Lx: float, base: float, eps: float, mode: in
     return base * (1.0 + eps * np.cos(2.0 * np.pi * mode * x / Lx))
 
 
+def _distribution_diagnostics(cfg: dict, coeff_data: dict, plots_dir: str, binary_dir: str):
+    """Facet plots + netCDF of the distribution reconstructed from saved coefficients.
+
+    Reconstructs f(x, v, t) = sum_n C_n(x) psi_n(v) + sum_m B_m(x) xi_m(v) at up to
+    six snapshot times and writes (1) a phase-space facet figure f(x, v), (2) a
+    times x {Hermite, Legendre} facet figure of the coefficient magnitudes
+    |C_n(x)|, |B_m(x)|, and (3) the reconstruction as a netCDF Dataset.
+    """
+    import matplotlib.pyplot as plt
+    import xarray as xr
+    from matplotlib.colors import LogNorm
+
+    from adept._hermite_legendre_1d.vector_field import _hermite_function_values, _legendre_basis_values
+
+    physics = cfg["physics"]
+    alpha = float(physics["alpha"])
+    u = float(physics.get("u", 0.0))
+    v_a = float(physics["v_a"])
+    v_b = float(physics["v_b"])
+    x = np.asarray(cfg["grid"]["x"])
+
+    t_arr, Ck = coeff_data["hermite"]  # (nt, Nh, Nx) complex, k-space
+    _, Bk = coeff_data["legendre"]  # (nt, Nl, Nx)
+    nt = min(Ck.shape[0], Bk.shape[0])
+    idx = np.unique(np.linspace(0, nt - 1, min(6, nt)).astype(int))
+    Nh, Nl = Ck.shape[1], Bk.shape[1]
+
+    # v grid covering the Hermite bulk and the Legendre window
+    v = np.linspace(min(u - 5.0 * alpha, v_a - 1.0), max(u + 5.0 * alpha, v_b + 1.0), 384)
+    psi = _hermite_function_values(Nh, v, u, alpha)  # (Nh, Nv)
+    xi = _legendre_basis_values(Nl, v, v_a, v_b)
+    xi[:, (v < v_a) | (v > v_b)] = 0.0  # window basis has no support outside [v_a, v_b]
+
+    C_sel = [np.fft.ifft(Ck[i], axis=-1, norm="forward").real for i in idx]  # (Nh, Nx) each
+    B_sel = [np.fft.ifft(Bk[i], axis=-1, norm="forward").real for i in idx]
+    f_sel = np.stack([C.T @ psi + B.T @ xi for C, B in zip(C_sel, B_sel)])  # (nsel, Nx, Nv)
+
+    # facet 1: phase space f(x, v), shared log color scale
+    fmax = float(np.nanmax(f_sel))
+    floor = max(fmax, 1e-30) * 1e-7
+    ncol = min(3, len(idx))
+    nrow = int(np.ceil(len(idx) / ncol))
+    fig, axes = plt.subplots(
+        nrow, ncol, figsize=(4.2 * ncol, 3.2 * nrow), sharex=True, sharey=True, layout="constrained"
+    )
+    axes = np.atleast_1d(np.asarray(axes)).ravel()
+    norm = LogNorm(vmin=floor, vmax=fmax)
+    for ax, i, f in zip(axes, idx, f_sel):
+        im = ax.pcolormesh(x, v, np.maximum(f, floor).T, norm=norm, cmap="magma", shading="auto", rasterized=True)
+        ax.set_title(f"t = {t_arr[i]:.0f}", fontsize=10)
+    for ax in axes[len(idx) :]:
+        ax.set_visible(False)
+    for ax in axes.reshape(nrow, ncol)[:, 0]:
+        ax.set_ylabel("v / vth")
+    for ax in axes.reshape(nrow, ncol)[-1, :]:
+        ax.set_xlabel("x [norm]")
+    fig.colorbar(im, ax=axes.tolist(), label=r"$f(x, v)$ (clipped at $10^{-7} f_{max}$)", shrink=0.85)
+    fig.savefig(os.path.join(plots_dir, "phase-space-f_xv.png"), bbox_inches="tight", dpi=150)
+    plt.close(fig)
+
+    # facet 2: coefficient magnitudes, rows = times, cols = {Hermite, Legendre}
+    cmax = max(float(np.max(np.abs(Ck[idx]))), 1e-30)
+    bmax = max(float(np.max(np.abs(Bk[idx]))), 1e-30)
+    fig, axes = plt.subplots(len(idx), 2, figsize=(9.0, 2.2 * len(idx)), sharex=True, layout="constrained")
+    axes = np.atleast_2d(np.asarray(axes))
+    for row, (i, C, B) in enumerate(zip(idx, C_sel, B_sel)):
+        for col, (arr, N, vmax, name) in enumerate(((C, Nh, cmax, r"$|C_n(x)|$"), (B, Nl, bmax, r"$|B_m(x)|$"))):
+            ax = axes[row, col]
+            im = ax.pcolormesh(
+                x,
+                np.arange(N),
+                np.maximum(np.abs(arr), vmax * 1e-12),
+                norm=LogNorm(vmin=vmax * 1e-12, vmax=vmax),
+                cmap="viridis",
+                shading="auto",
+                rasterized=True,
+            )
+            ax.set_ylabel(f"t={t_arr[i]:.0f}\n" + ("n" if col == 0 else "m"), fontsize=9)
+            if row == 0:
+                ax.set_title(name)
+            if row == len(idx) - 1:
+                ax.set_xlabel("x [norm]")
+            fig.colorbar(im, ax=ax, shrink=0.9)
+    fig.savefig(os.path.join(plots_dir, "coefficients-facets.png"), bbox_inches="tight", dpi=150)
+    plt.close(fig)
+
+    ds = xr.Dataset({"f": (["t", "x", "v"], f_sel)}, coords={"t": t_arr[idx], "x": x, "v": v})
+    ds.to_netcdf(os.path.join(binary_dir, "distribution-f_xv.nc"))
+    return ds
+
+
 def _project_legendre(g_v, Nl: int, v_a: float, v_b: float) -> np.ndarray:
     """Project a velocity profile g(v) onto the Legendre basis: B_m = (1/width) int g xi_m dv."""
     from adept._hermite_legendre_1d.vector_field import _legendre_basis_values
@@ -379,6 +470,7 @@ class BaseHermiteLegendre1D(ADEPTModule):
         x = np.asarray(self.cfg["grid"]["x"])
         datasets = {}
         metrics = {"simulation_completed": True}
+        coeff_data = {}
 
         for k in sol.ys.keys():
             t_arr = np.asarray(sol.ts[k])
@@ -407,6 +499,7 @@ class BaseHermiteLegendre1D(ADEPTModule):
                 name = "Ck" if k == "hermite" else "Bk"
                 arr = np.asarray(data[name])
                 datasets[k] = store_coeff_timeseries(name, arr, t_arr, binary_dir)
+                coeff_data[k] = (t_arr, arr)
 
             elif k == "default":
                 scalars = {name: np.asarray(arr) for name, arr in data.items()}
@@ -433,6 +526,12 @@ class BaseHermiteLegendre1D(ADEPTModule):
                             print(f"post_process: scalar plot for {name} failed: {e}")
                         finally:
                             plt.close("all")
+
+        if "hermite" in coeff_data and "legendre" in coeff_data:
+            try:
+                datasets["distribution"] = _distribution_diagnostics(self.cfg, coeff_data, plots_dir, binary_dir)
+            except Exception as e:
+                print(f"post_process: distribution diagnostics failed: {e}")
 
         if "default" in sol.ts:
             metrics["n_timesteps"] = len(sol.ts["default"])
