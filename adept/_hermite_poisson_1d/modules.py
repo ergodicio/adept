@@ -394,6 +394,20 @@ class BaseHermitePoisson1D(ADEPTModule):
             force_cap = 0.3 * alpha_e / (2.0 * np.sqrt(Nn_e) * dt)
         if stabilize and wave_density_max is None:
             wave_density_max = 2.0
+
+        # LPSE mode (terms.linear_response: true): linearize the velocity-
+        # space force about the initialized equilibrium (Maxwellian × density
+        # profile). Removes the force-driven ladder cascade structurally —
+        # exact linear kinetics (Landau damping, SRS thresholds/growth), pure
+        # exponential growth above threshold, runs complete at any intensity.
+        # Auto-enables the wave-equation density clip so the EM leg saturates
+        # gracefully once delta-n reaches order unity.
+        linear_response = bool(terms_cfg.get("linear_response", False))
+        if linear_response and wave_density_max is None:
+            wave_density_max = 2.0
+        Ck_eq_e = self.state["Ck_electrons"].view(jnp.complex128) if linear_response else None
+        Ck_eq_i = self.state["Ck_ions"].view(jnp.complex128) if linear_response else None
+
         force_cap = None if force_cap is None else float(force_cap)
         wave_density_max = None if wave_density_max is None else float(wave_density_max)
 
@@ -425,6 +439,9 @@ class BaseHermitePoisson1D(ADEPTModule):
             force_exp_terms=force_exp_terms,
             force_cap=force_cap,
             wave_density_max=wave_density_max,
+            linear_response=linear_response,
+            Ck_eq_e=Ck_eq_e,
+            Ck_eq_i=Ck_eq_i,
         )
 
         # Configure save quantities

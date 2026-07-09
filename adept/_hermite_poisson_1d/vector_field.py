@@ -556,11 +556,32 @@ class HermitePoisson1DVectorField:
         force_exp_terms: int = 24,
         force_cap: float | None = None,
         wave_density_max: float | None = None,
+        linear_response: bool = False,
+        Ck_eq_e: Array | None = None,
+        Ck_eq_i: Array | None = None,
     ):
         if integrator not in ("strang-exp", "lawson-rk4"):
             raise ValueError(f"Unknown integrator {integrator!r}; use 'strang-exp' or 'lawson-rk4'")
+        if linear_response and Ck_eq_e is None:
+            raise ValueError("linear_response=True requires the equilibrium state Ck_eq_e")
         self.integrator = integrator
         self.force_exp_terms = int(force_exp_terms)
+        # LPSE mode (terms.linear_response): the velocity-space force term is
+        # LINEARIZED about the (static) equilibrium — dC_n/dt|F = kappa_n *
+        # accel * C_eq_{n-1}, i.e. the textbook -(qE/m)*df0/dv source, feeding
+        # only the momentum row. The force-driven ladder cascade — and with it
+        # the truncated-AW blow-up under strong forcing — is removed
+        # STRUCTURALLY: linear kinetics (Landau damping, chi(k,w), SRS
+        # thresholds and growth rates) are exact, and above threshold the
+        # instability grows exponentially without saturation, like an
+        # enveloped LPSE run. Pair with wave_density_max so the EM leg
+        # saturates gracefully once delta-n reaches order unity. (The Scan-5
+        # alternative — capping the force on the FULL coupling — merely turns
+        # the detonation into a bounded-coefficient exponential at gamma ~
+        # kappa_max*cap ~ 0.5 wp that overflows float64 within ~1000/wp.)
+        self.linear_response = bool(linear_response)
+        self.Ck_eq_e = Ck_eq_e
+        self.Ck_eq_i = Ck_eq_i
         # LPSE-style stabilization clamps (None = off). See _strang_exp_step.
         # force_cap: smooth tanh saturation of the species acceleration —
         # accel -> cap*tanh(accel/cap). Transparent while |accel| << cap
@@ -809,32 +830,47 @@ class HermitePoisson1DVectorField:
         accel_e = self.qm_e * (Ex + Edrive + noise_frozen) + self.qm_e**2 * Fp
         if self.force_cap is not None:
             accel_e = self.force_cap * jnp.tanh(accel_e / self.force_cap)
-        Ck_e_f = _exp_force_substep(
-            Ck_e_h,
-            accel_e,
-            self.sqrt_n_minus_e,
-            self.alpha_e,
-            self.Omega_ce_tau,
-            dt,
-            mask23=self.mask23,
-            n_terms=self.force_exp_terms,
-        )
+        if self.linear_response:
+            # Linearized force: exact one-substep update dt·A(accel)·C_eq
+            # (the generator acts on the STATIC equilibrium, so the series
+            # terminates at first order — no exp needed).
+            dCk_e = _hermite_e_coupling(
+                self.Ck_eq_e, accel_e, self.sqrt_n_minus_e, 1.0, self.alpha_e, self.Omega_ce_tau, mask23=self.mask23
+            )
+            Ck_e_f = Ck_e_h + dt * dCk_e
+        else:
+            Ck_e_f = _exp_force_substep(
+                Ck_e_h,
+                accel_e,
+                self.sqrt_n_minus_e,
+                self.alpha_e,
+                self.Omega_ce_tau,
+                dt,
+                mask23=self.mask23,
+                n_terms=self.force_exp_terms,
+            )
         if self.static_ions:
             Ck_i_f_view = y_h["Ck_ions"]
         else:
             accel_i = self.qm_i * (Ex + Edrive + noise_frozen) + self.qm_i**2 * Fp
             if self.force_cap is not None:
                 accel_i = self.force_cap * jnp.tanh(accel_i / self.force_cap)
-            Ck_i_f_view = _exp_force_substep(
-                Ck_i_h,
-                accel_i,
-                self.sqrt_n_minus_i,
-                self.alpha_i,
-                self.Omega_ce_tau,
-                dt,
-                mask23=self.mask23,
-                n_terms=self.force_exp_terms,
-            ).view(jnp.float64)
+            if self.linear_response:
+                dCk_i = _hermite_e_coupling(
+                    self.Ck_eq_i, accel_i, self.sqrt_n_minus_i, 1.0, self.alpha_i, self.Omega_ce_tau, mask23=self.mask23
+                )
+                Ck_i_f_view = (Ck_i_h + dt * dCk_i).view(jnp.float64)
+            else:
+                Ck_i_f_view = _exp_force_substep(
+                    Ck_i_h,
+                    accel_i,
+                    self.sqrt_n_minus_i,
+                    self.alpha_i,
+                    self.Omega_ce_tau,
+                    dt,
+                    mask23=self.mask23,
+                    n_terms=self.force_exp_terms,
+                ).view(jnp.float64)
 
         y_f = dict(y_h)
         y_f["Ck_electrons"] = Ck_e_f.view(jnp.float64)
