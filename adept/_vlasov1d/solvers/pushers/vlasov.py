@@ -147,8 +147,11 @@ class HouLiFilter:
     """Hou-Li spectral filter.
 
     Applies the exponential filter from Hou & Li (2007) to damp high-frequency
-    numerical oscillations without affecting well-resolved modes. Can filter
-    in x (position), v (velocity), or both dimensions.
+    numerical oscillations without affecting well-resolved modes.
+
+    Configuration-space (x) ONLY. Velocity-space filtering was removed: the FFT-based
+    filter is periodic in v, so it wraps the forward tail onto the -v edge and corrupts
+    f(v). It must never be applied in velocity space.
 
     The filter kernel in Fourier space is:
 
@@ -162,37 +165,19 @@ class HouLiFilter:
         pseudo-spectral methods. J. Comput. Phys., 226(1), 379-397.
     """
 
-    def __init__(self, species_grids: dict, nx: int, alpha: float, order: int, dimensions: list[str]):
-        """Precompute x and v Fourier-space filter kernels for requested dimensions."""
-        if "x" in dimensions:
-            j_x = jnp.arange(nx // 2 + 1)
-            eta_x = j_x / (nx // 2)
-            self.filter_x = jnp.exp(-alpha * eta_x ** (2 * order))
-        else:
-            self.filter_x = None
-
-        self.filters_v = {}
-        if "v" in dimensions:
-            for species_name, sg in species_grids.items():
-                nv = sg["nv"]
-                j = jnp.arange(nv // 2 + 1)
-                eta = j / (nv // 2)
-                self.filters_v[species_name] = jnp.exp(-alpha * eta ** (2 * order))
+    def __init__(self, nx: int, alpha: float, order: int):
+        """Precompute the x (configuration-space) Fourier filter kernel."""
+        j_x = jnp.arange(nx // 2 + 1)
+        eta_x = j_x / (nx // 2)
+        self.filter_x = jnp.exp(-alpha * eta_x ** (2 * order))
 
     def __call__(self, f_dict: dict) -> dict:
-        """Apply configured Hou-Li filters to each species distribution."""
+        """Apply the x-space Hou-Li filter to each species distribution."""
         result = {}
         for species_name, f in f_dict.items():
-            filtered = f
-
-            if self.filter_x is not None:
-                filtered = jnp.real(jnp.fft.irfft(self.filter_x[:, None] * jnp.fft.rfft(filtered, axis=0), axis=0))
-
-            if species_name in self.filters_v:
-                sigma_v = self.filters_v[species_name]
-                filtered = jnp.real(jnp.fft.irfft(sigma_v[None, :] * jnp.fft.rfft(filtered, axis=1), axis=1))
-
-            result[species_name] = filtered
+            result[species_name] = jnp.real(
+                jnp.fft.irfft(self.filter_x[:, None] * jnp.fft.rfft(f, axis=0), axis=0)
+            )
         return result
 
 

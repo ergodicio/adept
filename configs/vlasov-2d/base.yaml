@@ -48,7 +48,7 @@ terms:
     is_on: false
     alpha: 36.0
     order: 36
-    dimensions: ["x", "y", "vx", "vy"]
+    dimensions: ["x", "y"]
 
 drivers:
   ex: {}
