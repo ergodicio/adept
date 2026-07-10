@@ -175,9 +175,7 @@ class HouLiFilter:
         """Apply the x-space Hou-Li filter to each species distribution."""
         result = {}
         for species_name, f in f_dict.items():
-            result[species_name] = jnp.real(
-                jnp.fft.irfft(self.filter_x[:, None] * jnp.fft.rfft(f, axis=0), axis=0)
-            )
+            result[species_name] = jnp.real(jnp.fft.irfft(self.filter_x[:, None] * jnp.fft.rfft(f, axis=0), axis=0))
         return result
 
 
