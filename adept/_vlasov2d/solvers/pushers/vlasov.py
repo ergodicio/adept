@@ -174,9 +174,14 @@ class VelocityRotateB:
 
 
 class HouLiFilter:
-    """Separable Hou-Li spectral filter in any subset of {x, y, vx, vy}."""
+    """Separable Hou-Li spectral filter in configuration space {x, y}.
 
-    def __init__(self, species_grids: dict, nx: int, ny: int, alpha: float, order: int, dimensions: list[str]):
+    Velocity-space (vx, vy) filtering was removed: the FFT-based filter is periodic in
+    velocity, so it wraps the forward tail onto the -v edge and corrupts f(v). It must
+    never be applied in velocity space.
+    """
+
+    def __init__(self, nx: int, ny: int, alpha: float, order: int, dimensions: list[str]):
         self.dimensions = dimensions
 
         def _f1d(n):
@@ -186,14 +191,6 @@ class HouLiFilter:
 
         self.filter_x = _f1d(nx) if "x" in dimensions else None
         self.filter_y = _f1d(ny) if "y" in dimensions else None
-
-        self.filters_vx = {}
-        self.filters_vy = {}
-        for name, sg in species_grids.items():
-            if "vx" in dimensions:
-                self.filters_vx[name] = _f1d(sg["nvx"])
-            if "vy" in dimensions:
-                self.filters_vy[name] = _f1d(sg["nvy"])
 
     @staticmethod
     def _apply(f, sigma, axis):
@@ -207,10 +204,7 @@ class HouLiFilter:
     def __call__(self, f_dict):
         out = {}
         for name, f in f_dict.items():
-            ff = f
-            ff = self._apply(ff, self.filter_x, 0)
+            ff = self._apply(f, self.filter_x, 0)
             ff = self._apply(ff, self.filter_y, 1)
-            ff = self._apply(ff, self.filters_vx.get(name), 2)
-            ff = self._apply(ff, self.filters_vy.get(name), 3)
             out[name] = ff
         return out
