@@ -36,6 +36,29 @@ def test_write_units_density_derived_scales() -> None:
     assert quants["sim_duration"].to("ps").magnitude == pytest.approx(4.6583, rel=1e-3)
 
 
+def test_write_units_laser_intensity_in_icf_units() -> None:
+    # SRS deck: antenna{a0=0.004, omega0=1.0} with n0 = 9.05e21 cm^-3 =
+    # n_crit(351 nm), so w_laser = wp0 and lambda = 351 nm. The peak intensity
+    # of a linearly polarized drive follows the ICF convention
+    # I[W/cm^2] * lambda[um]^2 = 1.37e18 * a0^2.
+    quants = BaseOsiris({"osiris": {"deck": str(SRS_DECK)}}).write_units()
+    assert quants["w_laser"].to("rad/s").magnitude == pytest.approx(5.3668e15, rel=1e-3)
+    assert quants["laser_wavelength"].to("nm").magnitude == pytest.approx(351.0, rel=1e-3)
+    assert quants["laser_a0"] == pytest.approx(0.004)
+    lam_um = quants["laser_wavelength"].to("um").magnitude
+    assert quants["laser_intensity"].to("W/cm^2").magnitude == pytest.approx(
+        1.37e18 * 0.004**2 / lam_um**2, rel=1e-2
+    )
+
+
+def test_write_units_no_laser_keys_without_laser_section(tmp_path: Path) -> None:
+    deck = tmp_path / "no_laser"
+    deck.write_text("simulation { n0 = 9.05e21, }\n")
+    quants = BaseOsiris({"osiris": {"deck": str(deck)}}).write_units()
+    for key in ("w_laser", "laser_wavelength", "laser_a0", "laser_intensity"):
+        assert key not in quants
+
+
 def test_write_units_omits_temperature_keys() -> None:
     quants = BaseOsiris({"osiris": {"deck": str(SRS_DECK)}}).write_units()
     # OSIRIS has no single global temperature, so temperature-dependent

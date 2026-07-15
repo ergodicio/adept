@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+import math
+
 from adept._base_ import ADEPTModule
-from adept.normalization import skin_depth_normalization, skin_depth_normalization_from_frequency
+from adept.normalization import UREG, skin_depth_normalization, skin_depth_normalization_from_frequency
 from adept.osiris import deck as _deck
 from adept.osiris import density as _density
 from adept.osiris import post as _post
@@ -62,6 +64,13 @@ class BaseOsiris(ADEPTModule):
         reference temperature (species carry their own per-species thermal
         momenta), so the temperature-dependent keys (``T0``/``nuee``/
         ``logLambda_ee``) are intentionally omitted.
+
+        When the deck launches a laser (an ``antenna`` / ``zpulse_speckle`` /
+        ``zpulse`` section with ``a0`` and ``omega0``), the physical drive
+        scales are added too: ``w_laser`` (rad/s), ``laser_wavelength`` (nm),
+        ``laser_a0`` and ``laser_intensity`` — the peak intensity of a
+        linearly polarized drive in W/cm^2 (the ICF convention
+        ``I * lambda_um^2 = 1.37e18 * a0^2``).
         """
         sim = self._iter_first_section("simulation")
         n0 = sim.get("n0")
@@ -94,6 +103,26 @@ class BaseOsiris(ADEPTModule):
         if tmax is not None:
             tmin = time.get("tmin", 0.0)
             quants["sim_duration"] = ((float(tmax) - float(tmin)) * norm.tau).to("ps")
+
+        # Laser drive in physical / ICF units. The deck's laser section carries
+        # a0 and omega0 (in wp0 units); with wp0 fixed above these give the
+        # laser frequency, the vacuum wavelength lambda = 2 pi c / w_laser, and
+        # the peak intensity of a linearly polarized drive,
+        # I = eps0 c E0^2 / 2 with E0 = a0 m_e c w_laser / e — equivalently the
+        # usual ICF convention I[W/cm^2] * lambda[um]^2 = 1.37e18 * a0^2.
+        # Same section priority as the SRS postproc: antenna (1D), then
+        # zpulse_speckle / zpulse (2D).
+        for sec_name in ("antenna", "zpulse_speckle", "zpulse"):
+            laser = self._iter_first_section(sec_name)
+            if laser.get("a0") is not None and laser.get("omega0") is not None:
+                a0, omega0 = float(laser["a0"]), float(laser["omega0"])
+                w_laser = omega0 / norm.tau
+                e_peak = a0 * w_laser * UREG.m_e * UREG.c / UREG.e
+                quants["w_laser"] = w_laser.to("rad/s")
+                quants["laser_wavelength"] = (2.0 * math.pi * UREG.c / w_laser).to("nm")
+                quants["laser_a0"] = a0
+                quants["laser_intensity"] = (e_peak**2 * UREG.epsilon_0 * UREG.c / 2.0).to("W/cm^2")
+                break
 
         self.cfg.setdefault("units", {})["derived"] = quants
         return quants
