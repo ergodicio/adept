@@ -68,7 +68,10 @@ def _initialize_supergaussian_distribution_(
     # Thermal velocity: v_t = sqrt(T/m)
     v_thermal = np.sqrt(T0 / mass)
 
-    # Alpha factor for supergaussian normalization
+    # Alpha factor for supergaussian normalization. This fixes the moment ratio
+    # <v^4>/<v^2> = 3*T0/mass for every order m; the realized *variance* equals
+    # T0/mass only at m=2 (Maxwellian). For m>2 flat-tops the second-moment
+    # temperature exceeds T0 (x1.24 at m=3, x1.37 at m=4). See docs config.md.
     alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
 
     single_dist = -(np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
