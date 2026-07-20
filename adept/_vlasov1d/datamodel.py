@@ -69,6 +69,7 @@ class GridConfig(BaseModel):
     xmin: float | str
     nv: int | None = None
     vmax: float | None = None
+    vmin: float | None = None
     parallel: tuple[str, ...] | bool = False
 
     @field_validator("parallel", mode="before")
@@ -142,12 +143,23 @@ class EMDriverSetConfig(BaseModel):
 
 
 class HouLiFilterConfig(BaseModel):
-    """Configuration for optional Hou-Li spectral filtering."""
+    """Configuration for optional Hou-Li spectral filtering (configuration space only)."""
 
     is_on: bool
     alpha: float = 36.0
     order: int = 36
-    dimensions: list[str] = ["x", "v"]
+    dimensions: list[str] = ["x"]
+
+    @field_validator("dimensions")
+    @classmethod
+    def _no_velocity_space(cls, v: list[str]) -> list[str]:
+        bad = [d for d in v if d != "x"]
+        if bad:
+            raise ValueError(
+                "velocity-space Hou-Li filtering has been removed: the FFT filter is "
+                f"periodic in v and corrupts f(v). Only dimensions=['x'] is allowed; got {v}."
+            )
+        return v
 
 
 class FokkerPlanckConfig(BaseModel):
@@ -174,6 +186,7 @@ class SpeciesConfig(BaseModel):
     charge: float
     mass: float
     vmax: float
+    vmin: float | None = None
     nv: int
     density_components: list[str]
 

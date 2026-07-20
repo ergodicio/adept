@@ -42,6 +42,7 @@ def _initialize_supergaussian_distribution_(
     T0=1.0,
     mass=1.0,
     vmax=6.0,
+    vmin=None,
     n_prof=np.ones(1),
 ):
     """
@@ -56,14 +57,17 @@ def _initialize_supergaussian_distribution_(
         supergaussian_order: order of supergaussian (2 = Maxwell-Boltzmann)
         T0: temperature
         mass: species mass for thermal velocity calculation
-        vmax: maximum absolute value of v
+        vmax: upper bound of the velocity grid
+        vmin: lower bound of the velocity grid (defaults to ``-vmax``)
         n_prof: density profile (noise should already be applied)
 
     Returns:
         Tuple of (f[nx, nv], vax[nv])
     """
-    dv = 2.0 * vmax / nv
-    vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+    if vmin is None:
+        vmin = -vmax
+    dv = (vmax - vmin) / nv
+    vax = np.linspace(vmin + dv / 2.0, vmax - dv / 2.0, nv)
 
     # Thermal velocity: v_t = sqrt(T/m)
     v_thermal = np.sqrt(T0 / mass)
@@ -118,13 +122,14 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
         species_name = species_cfg.name
         density_components = species_distribution_specs[species_name]
         vmax = species_cfg.vmax
+        vmin = species_cfg.vmin
         nv = species_cfg.nv
         mass = species_cfg.mass
 
         # Initialize arrays for this species
         n_prof_species = np.zeros([grid.nx])
-        dv = 2.0 * vmax / nv
-        vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+        dv = (vmax - vmin) / nv
+        vax = np.linspace(vmin + dv / 2.0, vmax - dv / 2.0, nv)
         f_species = np.zeros([grid.nx, nv])
 
         # Sum contributions from all density components
@@ -142,6 +147,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
                 T0=distribution_spec.T0,
                 mass=mass,
                 vmax=vmax,
+                vmin=vmin,
                 n_prof=nprof,
             )
             f_species += temp_f
