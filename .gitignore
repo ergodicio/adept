@@ -129,6 +129,10 @@ dmypy.json
 *mlruns/
 mlflow.db
 
+# OSIRIS subprocess scratch (per-run dirs created by adept.osiris.runner)
+osiris_runs/
+scratch/
+
 # Pyre type checker
 .pyre/
 

@@ -48,6 +48,28 @@ units:
   normalizing_density: 1.5e21/cc
 ```
 
+### Normalization convention
+
+All Vlasov-1D quantities are normalized using the following unit system, built from
+`normalizing_density` ($n_0$) and `normalizing_temperature` ($T_0$):
+
+| Unit | Definition | Meaning |
+|------|-----------|---------|
+| time | $\tau = 1/\omega_{p0}$, $\omega_{p0} = \sqrt{n_0 e^2/(\epsilon_0 m_e)}$ | inverse plasma frequency |
+| velocity | $v_0 = \sqrt{T_0/m_e}$ | electron thermal speed (RMS / standard-deviation convention) |
+| length | $L_0 = v_0/\omega_{p0} = \lambda_{De}$ | electron Debye length |
+| wavenumber | $1/L_0$ | a code wavenumber is $k \lambda_{De}$ |
+
+Consequences of the $v_0 = \sqrt{T_0/m_e}$ (σ) convention:
+
+- A Maxwellian at code temperature $T = 1$ is $f \propto e^{-v^2/2}$ (unit variance).
+- The Bohm–Gross dispersion in code units is $\omega^2 = 1 + 3 k^2$.
+- The normalized speed of light is $\hat c = c/\sqrt{T_0/m_e}$ (e.g. $\hat c = 15.98$ at 2000 eV).
+
+Dimensional inputs (strings with units, e.g. `xmax: 100um`) are converted with these
+units; plain numeric inputs are taken to already be in code units and pass through
+unchanged.
+
 ## density
 
 Species and density configuration. You can define multiple "species" by using keys prefixed with `species-`.
@@ -65,9 +87,9 @@ Each species is defined with a key starting with `species-` (e.g., `species-back
 | `noise_seed` | int | Random seed for noise initialization |
 | `noise_type` | string | `"gaussian"` or `"uniform"` |
 | `noise_val` | float | Amplitude of noise |
-| `v0` | float | Drift velocity (normalized) |
-| `T0` | float | Temperature (normalized to `normalizing_temperature`) |
-| `m` | float | Exponent for super-Gaussian distribution. `2.0` is Maxwellian |
+| `v0` | float | Drift velocity in code units of $\sqrt{T_0/m_e}$ (thermal-σ units). Numeric only — dimensional strings are not supported here |
+| `T0` | float | Temperature in units of `normalizing_temperature`. The initialized distribution has velocity variance `T0/mass`. Numeric only |
+| `m` | float | Exponent for super-Gaussian distribution $f \propto \exp[-\|v/(\alpha v_{th})\|^m]$. `2.0` is Maxwellian. Note: $\alpha$ is chosen to fix the moment ratio $\langle v^4\rangle/\langle v^2\rangle = 3\,T_0/\mathrm{mass}$ for all $m$; the *variance* equals `T0/mass` only at `m: 2`. For flat-top distributions (`m > 2`) the second-moment temperature diagnostic will read higher than `T0` (e.g. ×1.24 at `m: 3`, ×1.37 at `m: 4`) |
 | `basis` | string | Spatial profile type (see below) |
 
 #### Basis Types
@@ -535,7 +557,7 @@ Both `fokker_planck` and `krook` use profile objects to define spatiotemporal va
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `baseline` | float | Base collision frequency |
+| `baseline` | float | Base collision frequency in code units of $\omega_{p0}$ (i.e. $\hat\nu = \nu[\mathrm{s}^{-1}]/\omega_{p0}$, a true rate — no $2\pi$). For reference, the NRL e–e rate in these units is logged as `nuee_norm` in `units.yaml`. Note the Dougherty/Lenard–Bernstein $\nu$ agrees with the NRL $\nu_{ee}$ only up to an O(1) factor |
 | `bump_or_trough` | string | `"bump"` or `"trough"` |
 | `center` | float | Profile center |
 | `rise` | float | Transition steepness |

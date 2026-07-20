@@ -227,7 +227,7 @@ class SpectralPoissonSolver:
 class AmpereSolver:
     """Ampere solver using current density to evolve electric field.
 
-    Solves: a single Euler step of ∂E/∂t = -j, where j = Σ_s (q_s/m_s) ∫v f_s dv
+    Solves: a single Euler step of ∂E/∂t = -j, where j = Σ_s q_s ∫v f_s dv
     is the total current density from all species.
     """
 

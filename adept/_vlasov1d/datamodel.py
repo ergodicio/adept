@@ -71,7 +71,6 @@ class GridConfig(BaseModel):
     vmax: float | None = None
     vmin: float | None = None
     parallel: tuple[str, ...] | bool = False
-    c_light: float | None = None
 
     @field_validator("parallel", mode="before")
     @classmethod

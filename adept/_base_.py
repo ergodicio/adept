@@ -326,6 +326,9 @@ class ergoExo:
         elif cfg["solver"] == "pic-1d":
             from adept.pic1d import BasePIC1D as this_module
 
+        elif cfg["solver"] == "osiris":
+            from adept.osiris import BaseOsiris as this_module
+
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
@@ -333,6 +336,12 @@ class ergoExo:
 
     def _setup_(self, cfg: dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> dict[str, Module]:
         from adept.utils import log_params
+
+        # Snapshot the config as provided, before the module mutates it in
+        # place (e.g. the OSIRIS module injects the parsed deck). config.yaml
+        # is the original config; the processed cfg lands in derived_config.yaml
+        # and the logged params.
+        original_cfg = deepcopy(cfg)
 
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
@@ -342,7 +351,7 @@ class ergoExo:
         # dump raw config
         if log:
             with open(os.path.join(td, "config.yaml"), "w") as fi:
-                yaml.dump(self.adept_module.cfg, fi)
+                yaml.dump(original_cfg, fi)
 
         # dump units
         quants_dict = self.adept_module.write_units()  # writes the units to the temporary directory

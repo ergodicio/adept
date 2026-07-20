@@ -76,9 +76,9 @@ class Dougherty(AbstractBetaBasedModel):
             f: Distribution function, shape (..., nv)
 
         Returns:
-            vbar: Mean velocity <v>, shape (...)
+            vbar: Mean velocity <v> = ∫v f dv / ∫f dv, shape (...)
         """
-        return jnp.sum(f * self.v, axis=-1) * self.dv
+        return jnp.sum(f * self.v, axis=-1) / jnp.sum(f, axis=-1)
 
     def compute_D(self, f: Array, beta: Array) -> Array:
         """
@@ -242,7 +242,11 @@ class Krook:
         self.cfg = cfg
         v = cfg["grid"]["species_grids"]["electron"]["v"]
         dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        f_mx = np.exp(-(v[None, :] ** 2.0) / 2.0)
+        params = cfg["grid"].get("species_params", {}).get("electron", {})
+        T0 = params.get("T0", 1.0)
+        mass = params.get("mass", 1.0)
+        # Maxwellian with variance T0/m (the species' bulk thermal width)
+        f_mx = np.exp(-(v[None, :] ** 2.0) / (2.0 * T0 / mass))
         self.f_mx = f_mx / np.sum(f_mx, axis=1)[:, None] / dv
         self.dv = dv
 

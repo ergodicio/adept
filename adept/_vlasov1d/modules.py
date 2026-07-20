@@ -118,6 +118,9 @@ class BaseVlasov1D(ADEPTModule):
         sim_duration = (grid.tmax * norm.tau).to("ps")
 
         nu_ee = norm.approximate_ee_collision_frequency()
+        # e-e collision rate in code units (1/wp0). This is what the FP/Krook
+        # `baseline` rates should be compared against.
+        nu_ee_norm = (nu_ee * norm.tau).to("").magnitude
 
         beta = 1.0 / norm.speed_of_light_norm()
 
@@ -131,6 +134,7 @@ class BaseVlasov1D(ADEPTModule):
             "beta": beta,
             "x0": norm.L0.to("nm"),
             "nuee": nu_ee.to("Hz"),
+            "nuee_norm": nu_ee_norm,
             "logLambda_ee": norm.logLambda_ee(),
             "box_length": box_length,
             "box_width": box_width,
@@ -238,10 +242,12 @@ class BaseVlasov1D(ADEPTModule):
             cfg_grid["species_grids"][species_name]["one_over_kvr"] = jnp.array(one_over_kvr)
 
             # Build species parameters (charge, mass, charge-to-mass ratio)
+            # T0 is the bulk (first-listed component) temperature, used e.g. by the Krook target
             cfg_grid["species_params"][species_name] = {
                 "charge": species_cfg.charge,
                 "mass": species_cfg.mass,
                 "charge_to_mass": species_cfg.charge / species_cfg.mass,
+                "T0": self.simulation.species_distributions[species_name][0].T0,
             }
 
         cfg_grid["n_prof_total"] = n_prof_total
