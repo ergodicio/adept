@@ -25,13 +25,45 @@ Both write the *same* on-disk schema as :func:`io.series_to_dataset`, so the
 Design notes
 ------------
 - **Unlimited ``t`` dimension, append in iteration order.** OSIRIS writes dumps
-  sequentially and we process them sorted by iteration, so a plain append (slot
-  ``i`` = the ``i``-th dump) is correct and needs no stride arithmetic. The
-  dimension is grown one slot at a time with ``resize_dimension`` so it ends up
-  sized to *exactly* the dumps produced — no pre-sized guess from the deck
+  sequentially and we process them sorted by iteration, so appending in that
+  order is correct. The dimension is grown with ``resize_dimension`` so it ends
+  up sized to *exactly* the dumps produced — no pre-sized guess from the deck
   (whose off-by-one is genuinely ambiguous) and no trailing fill slots to trim
-  on early termination. This deviates from the fixed-dim sketch in the perf
-  doc; it is simpler and equally correct given in-order processing.
+  on early termination.
+- **Batched, chunk-aligned writes.** :meth:`StreamWriter.append` buffers rows
+  in memory and lands them in chunk-sized batches (one HDF5 slice write and one
+  ``resize_dimension`` per batch). Appending row-by-row into a gzip chunk of
+  ``chunk_t`` rows costs a decompress+recompress of the whole ~1 MiB chunk *per
+  row* — ~40x write amplification at the every-3-step field cadence, which is
+  what let the drainer fall behind OSIRIS and fill the staging ramdisk in job
+  56005549 (see ``osiris-lpi/dev_docs/stream-drainer-recommendations.md``).
+  The buffer is bounded by one chunk (~1 MiB); :meth:`StreamWriter.flush`
+  (called once per watcher scan) spills any partial batch, so the on-disk file
+  trails the consumed dumps by at most one poll interval. Threads are *not*
+  used to parallelize conversion: h5py serializes every HDF5 call behind a
+  process-global lock, so batching + cheap compression is where the throughput
+  is.
+- **Iteration-based bookkeeping.** The writer tracks the last appended OSIRIS
+  iteration (persisted in the ``iter`` coordinate, so restarts recover it) and
+  the drain loops skip any dump at or below it. Unlike positional slot
+  arithmetic this survives corrupt dumps being removed from the listing.
+- **Corrupt dumps are quarantined, not fatal.** A dump that cannot be read
+  (e.g. truncated by ENOSPC) is renamed to ``*.h5.bad`` — invisible to the
+  ``*.h5`` listings — and the stream continues with the next dump. Previously a
+  single bad dump dropped the whole writer and the watcher re-hit the same file
+  every poll, forever.
+- **Backlog spill valve (staging mode).** The ramdisk footprint is only
+  "bounded by the poll interval" while conversion keeps up with production.
+  When a diagnostic's pending backlog exceeds ``spill_backlog_files`` /
+  ``spill_backlog_bytes`` (or the staging filesystem drops below
+  ``floor_free_bytes``), the converter stops converting it and *mirrors* its
+  dumps straight to the persist ``MS/`` tree instead (a plain copy is ~10x
+  cheaper than convert+compress), so the ramdisk keeps draining no matter what.
+  A spilled diagnostic stays mirror-only for the rest of the run (resuming the
+  stream mid-run would leave an iteration gap in the NetCDF) and is caught up
+  from the mirrored HDF5 during :meth:`StreamConverter.finalize`. OSIRIS must
+  never see ENOSPC on a dump: in 56005549 that permanently corrupted its
+  diagnostic output for the rest of the job.
 - **Write-completeness race.** A dump is only safe to read once OSIRIS has moved
   on to the next one, so the watcher processes every dump *except the current
   highest-numbered one*; the final sweep (run is dead) picks up that last dump.
@@ -41,8 +73,14 @@ Design notes
   those bounds actually move, so the constant bounds carried for a fixed spatial
   axis are harmless.
 - **Failure isolation.** Nothing here may abort the OSIRIS run: the watcher
-  swallows and logs every exception, and the batch path in
+  swallows and logs every exception (rate-limited — repeats of the same error
+  log once per ``error_log_every`` occurrences), and the batch path in
   :func:`io.save_run_datasets` remains the safety net for anything not produced.
+- **Observability.** Every ``stats_every_s`` the watcher logs one line with the
+  interval's streamed/spilled/backlog/quarantined counts, so a smoke can assert
+  the steady-state backlog is flat *while* OSIRIS runs. Checking the ramdisk
+  after the job proves nothing — the drainer always catches up once production
+  stops.
 """
 
 from __future__ import annotations
@@ -50,6 +88,7 @@ from __future__ import annotations
 import os
 import shutil
 import threading
+import time
 from pathlib import Path
 
 import h5netcdf
@@ -59,9 +98,9 @@ import xarray as xr
 from adept.osiris import io as _io
 
 # Target uncompressed bytes per (t-chunk x spatial) chunk. A modest t-chunk
-# keeps compression/read performance close to the batch path while bounding the
-# read-modify-write cost of slot writes (which is hidden behind OSIRIS compute
-# anyway). ~1 MiB is a reasonable HDF5 chunk size.
+# keeps compression/read performance close to the batch path; batched appends
+# (see StreamWriter) amortize the write cost of a chunk over its rows. ~1 MiB
+# is a reasonable HDF5 chunk size.
 _TARGET_CHUNK_BYTES = 1 << 20
 
 
@@ -91,48 +130,63 @@ class StreamWriter:
     """Append-only writer for one diagnostic's ``(t, ...)`` NetCDF time series.
 
     Created from the diagnostic's first dump (the schema template); each
-    :meth:`append` writes the next time slot, growing the unlimited ``t``
-    dimension by one. Reopening an existing file (``mode="a"``) resumes after the
-    slots already on disk, which is what makes a restart idempotent. The file is
+    :meth:`append` buffers the next time slot, and slots are landed on disk in
+    chunk-sized batches (or on :meth:`flush` / :meth:`close`), growing the
+    unlimited ``t`` dimension once per batch. Reopening an existing file
+    (``mode="a"``) resumes after the slots already on disk, which is what makes
+    a restart idempotent; ``last_iter`` (recovered from the ``iter`` coordinate
+    on resume) lets callers skip dumps already in the file. ``n_written``
+    counts consumed dumps — on-disk slots plus the pending batch. The file is
     held open for the lifetime of the writer; call :meth:`close` to finalize.
+
+    The default ``complevel`` is 1: at production dump cadences the drainer is
+    compression-bound, and gzip-1 is 2-4x cheaper than the old gzip-4 for a
+    modest size cost (offline postproc can always recompress).
     """
 
-    def __init__(self, dest, template: xr.DataArray, *, source_dir=None, chunk_t: int | None = None, complevel: int = 4):
+    def __init__(self, dest, template: xr.DataArray, *, source_dir=None, chunk_t: int | None = None, complevel: int = 1):
         self.dest = Path(dest)
         self.name = str(template.name)
         self.spatial_dims = [str(d) for d in template.dims]
         self.spatial_shape = tuple(int(s) for s in template.shape)
         self._f: h5netcdf.File | None = None
+        self._ct = int(chunk_t or _default_chunk_t(self.spatial_shape))
+        # The pending batch: rows consumed by append() but not yet on disk.
+        self._rows: list[np.ndarray] = []
+        self._ts: list[float] = []
+        self._its: list[int] = []
+        self._bounds: dict[str, list[tuple[float, float]]] = {d: [] for d in self.spatial_dims}
 
         if self.dest.exists():
             # Resume: trust the existing schema, continue after written slots.
             self._f = h5netcdf.File(self.dest, "a")
-            self._n = int(self._f.dimensions["t"].size)
+            self._n_disk = int(self._f.dimensions["t"].size)
+            self.last_iter = int(self._f.variables["iter"][self._n_disk - 1]) if self._n_disk else -1
         else:
             self.dest.parent.mkdir(parents=True, exist_ok=True)
             self._f = h5netcdf.File(self.dest, "w")
-            self._create_schema(template, source_dir if source_dir is not None else self.dest.parent, chunk_t, complevel)
-            self._n = 0
+            self._create_schema(template, source_dir if source_dir is not None else self.dest.parent, self._ct, complevel)
+            self._n_disk = 0
+            self.last_iter = -1
 
     @property
     def n_written(self) -> int:
-        return self._n
+        return self._n_disk + len(self._rows)
 
     def _create_schema(self, template, source_dir, chunk_t, complevel) -> None:
         f = self._f
         axis_units = template.attrs.get("axis_units", {}) or {}
         axis_long = template.attrs.get("axis_long_names", {}) or {}
 
-        f.dimensions["t"] = None  # unlimited; grown one slot per append
+        f.dimensions["t"] = None  # unlimited; grown one batch per landing
         for d, sz in zip(self.spatial_dims, self.spatial_shape):
             f.dimensions[d] = sz
 
-        ct = chunk_t or _default_chunk_t(self.spatial_shape)
         var = f.create_variable(
             self.name,
             ("t", *self.spatial_dims),
             dtype=np.dtype(_io._DIAG_DTYPE),
-            chunks=(ct, *self.spatial_shape),
+            chunks=(chunk_t, *self.spatial_shape),
             compression="gzip",
             compression_opts=complevel,
             shuffle=True,
@@ -158,28 +212,51 @@ class StreamWriter:
             f.create_variable(f"{d}_max", ("t",), dtype="f8")
 
     def append(self, da: xr.DataArray) -> None:
-        """Write ``da`` (one dump) into the next time slot."""
+        """Buffer ``da`` (one dump) as the next time slot; lands in batches."""
         if da.shape != self.spatial_shape:
             raise ValueError(f"shape mismatch for {self.name}: {da.shape} != {self.spatial_shape}")
-        f = self._f
-        i = self._n
-        f.resize_dimension("t", i + 1)
-        f.variables[self.name][i, ...] = np.asarray(da.values, dtype=_io._DIAG_DTYPE)
-        f.variables["t"][i] = float(da.attrs.get("time", np.nan))
-        f.variables["iter"][i] = int(da.attrs.get("iter", -1))
+        self._rows.append(np.asarray(da.values, dtype=_io._DIAG_DTYPE))
+        self._ts.append(float(da.attrs.get("time", np.nan)))
+        it = int(da.attrs.get("iter", -1))
+        self._its.append(it)
+        if it > self.last_iter:
+            self.last_iter = it
         for d in self.spatial_dims:
             cv = np.asarray(da.coords[d].values)
-            lo, hi = (float(cv[0]), float(cv[-1])) if cv.size else (np.nan, np.nan)
-            f.variables[f"{d}_min"][i] = lo
-            f.variables[f"{d}_max"][i] = hi
-        self._n = i + 1
+            self._bounds[d].append((float(cv[0]), float(cv[-1])) if cv.size else (np.nan, np.nan))
+        if len(self._rows) >= self._ct:
+            self._write_batch()
+
+    def _write_batch(self) -> None:
+        """Land the pending rows: one resize + one slice write per variable."""
+        k = len(self._rows)
+        if not k or self._f is None:
+            return
+        f = self._f
+        i = self._n_disk
+        f.resize_dimension("t", i + k)
+        f.variables[self.name][i : i + k, ...] = np.stack(self._rows)
+        f.variables["t"][i : i + k] = np.asarray(self._ts, dtype="f8")
+        f.variables["iter"][i : i + k] = np.asarray(self._its, dtype="i8")
+        for d in self.spatial_dims:
+            b = np.asarray(self._bounds[d], dtype="f8")
+            f.variables[f"{d}_min"][i : i + k] = b[:, 0]
+            f.variables[f"{d}_max"][i : i + k] = b[:, 1]
+        self._n_disk = i + k
+        self._rows.clear()
+        self._ts.clear()
+        self._its.clear()
+        for d in self.spatial_dims:
+            self._bounds[d].clear()
 
     def flush(self) -> None:
         if self._f is not None:
+            self._write_batch()
             self._f.flush()
 
     def close(self) -> None:
         if self._f is not None:
+            self._write_batch()
             self._f.close()
             self._f = None
 
@@ -188,8 +265,9 @@ def convert_diagnostic_streaming(diag_dir, dest, *, source_dir=None) -> Path:
     """Stage A: convert one grid diagnostic to NetCDF a dump at a time.
 
     A memory-bounded drop-in for ``series_to_dataset(load_series(diag_dir))``
-    followed by ``to_netcdf`` — peak RAM is one dump, not the whole stacked
-    series. Rebuilds ``dest`` from scratch (any partial file is removed first).
+    followed by ``to_netcdf`` — peak RAM is one dump plus one write batch
+    (~1 MiB), not the whole stacked series. Rebuilds ``dest`` from scratch (any
+    partial file is removed first).
     """
     diag_dir = Path(diag_dir)
     dest = Path(dest)
@@ -217,8 +295,8 @@ class StreamConverter:
     subprocess, it polls ``run_dir/MS`` and drains each grid diagnostic's
     completed dumps into ``out_dir/<relpath>.nc``. RAW (particle) diagnostics do
     not fit the fixed-slot model (variable particle count per dump) and are left
-    to the batch path. Every operation is best-effort: any error is logged and
-    the run is never affected.
+    to the batch path. Every operation is best-effort: any error is logged
+    (rate-limited) and the run is never affected.
 
     **Staging mode (``persist_dir`` set).** When OSIRIS writes its ``MS/`` dumps
     to a fast ephemeral scratch (e.g. a ``/dev/shm`` ramdisk passed as
@@ -233,10 +311,35 @@ class StreamConverter:
     post-processing reads it unchanged. With ``persist_dir=None`` nothing is
     mirrored or deleted — the converter only streams grid diagnostics in place,
     exactly as before.
+
+    **Backlog spill valve (staging mode).** The bound above only holds while
+    conversion keeps up with OSIRIS. When a diagnostic's pending backlog
+    exceeds ``spill_backlog_files`` or ``spill_backlog_bytes`` — or the staging
+    filesystem's free space drops below ``floor_free_bytes`` — that diagnostic
+    switches to mirror-only draining (plain copy to ``persist_dir/MS/``, ~10x
+    cheaper than convert+compress), so the ramdisk keeps draining no matter
+    what. A spilled diagnostic stays mirror-only for the rest of the run
+    (resuming the stream mid-run would leave an iteration gap in the NetCDF)
+    and its NetCDF is caught up from the mirrored HDF5 in :meth:`finalize`; in
+    ``discard_grid_h5`` mode the mirrored copies are deleted again once
+    appended.
     """
 
     def __init__(
-        self, run_dir, out_dir, *, poll_s: float = 10.0, logger=print, persist_dir=None, discard_grid_h5: bool = False
+        self,
+        run_dir,
+        out_dir,
+        *,
+        poll_s: float = 10.0,
+        logger=print,
+        persist_dir=None,
+        discard_grid_h5: bool = False,
+        spill_backlog_files: int = 20_000,
+        spill_backlog_bytes: int = 4 << 30,
+        floor_free_bytes: int = 8 << 30,
+        stats_every_s: float = 60.0,
+        rediscover_every: int = 12,
+        error_log_every: int = 200,
     ):
         self.ms = Path(run_dir) / "MS"
         self.out_dir = Path(out_dir)
@@ -246,17 +349,30 @@ class StreamConverter:
         # being appended to the NetCDF *without* being mirrored to persist_dir/MS
         # (the .nc is the durable artifact). Saves one inode+copy per dump on the
         # persist filesystem. RAW dumps are always mirrored (the batch path needs
-        # the HDF5). Trade-off: a grid diagnostic whose stream fails mid-run can
-        # only be rebuilt from the dumps not yet reaped (they are left in place
-        # and folded to persist by the runner's final sync).
+        # the HDF5), and so are spilled grid dumps (their bytes exist nowhere
+        # else until the finalize catch-up appends them).
         self.discard_grid_h5 = bool(discard_grid_h5)
         self.poll_s = float(poll_s)
+        self.spill_backlog_files = int(spill_backlog_files or 0)
+        self.spill_backlog_bytes = int(spill_backlog_bytes or 0)
+        self.floor_free_bytes = int(floor_free_bytes or 0)
+        self.stats_every_s = float(stats_every_s)
+        self.rediscover_every = max(1, int(rediscover_every))
+        self.error_log_every = max(1, int(error_log_every))
         self._log = logger
         self._writers: dict[str, StreamWriter] = {}
         self._completed: set[str] = set()  # grid relpaths fully converted to .nc
         self._raw_completed: set[str] = set()  # raw relpaths fully mirrored to persist
         self._is_raw: dict[str, bool] = {}  # rel -> raw? (cached; avoids re-peeking h5)
         self._multibase_skipped: set[str] = set()  # multi-report dirs left to the batch pass
+        self._spilled: set[str] = set()  # grid rels in sticky mirror-only mode
+        self._bad: set[Path] = set()  # unreadable dumps that could not be renamed away
+        self._err_counts: dict[str, int] = {}
+        self._known: dict[str, Path] = {}  # cached diagnostic discovery
+        self._scan_i = 0
+        self._stats = {"appended": 0, "appended_bytes": 0, "spilled": 0, "spilled_bytes": 0, "quarantined": 0}
+        self._stats_snapshot = dict(self._stats)
+        self._stats_t = time.monotonic()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -271,7 +387,7 @@ class StreamConverter:
             try:
                 self._scan_once(final=False)
             except Exception as e:  # a watcher must never crash the run
-                self._log(f"[stream] scan error (continuing): {e}")
+                self._log_every("scan", f"[stream] scan error (continuing): {e}")
             self._stop.wait(self.poll_s)
 
     def finalize(self) -> set[str]:
@@ -279,11 +395,12 @@ class StreamConverter:
 
         After OSIRIS has exited every dump is safe to read (no writer can still
         be racing), so the final sweep processes the last dump each diagnostic
-        had been holding back (and, in staging mode, drains it off the scratch)
-        before closing the files. Returns the set of *grid* diagnostic relpaths
-        fully converted by the stream (so the caller can skip rebuilding them in
-        the batch pass); RAW relpaths are mirrored but not returned, since the
-        batch pass still builds their NetCDFs from the mirrored HDF5.
+        had been holding back, catches spilled diagnostics up from their persist
+        mirror, and (in staging mode) drains everything off the scratch before
+        closing the files. Returns the set of *grid* diagnostic relpaths fully
+        converted by the stream (so the caller can skip rebuilding them in the
+        batch pass); RAW relpaths are mirrored but not returned, since the batch
+        pass still builds their NetCDFs from the mirrored HDF5.
         """
         self._stop.set()
         if self._thread is not None:
@@ -299,6 +416,41 @@ class StreamConverter:
                 pass
             self._completed.add(rel)
         return set(self._completed)
+
+    # --- logging / stats --------------------------------------------------
+
+    def _log_every(self, key: str, msg: str) -> None:
+        """Log ``msg`` on the first occurrence of ``key`` and every Nth after.
+
+        The ENOSPC failure mode repeats the *same* error for every dump on
+        every poll; unthrottled, that was megabytes of log spam per hour.
+        """
+        n = self._err_counts.get(key, 0) + 1
+        self._err_counts[key] = n
+        if n == 1 or n % self.error_log_every == 0:
+            self._log(msg + (f" [seen x{n}]" if n > 1 else ""))
+
+    def _maybe_stats(self, backlog_files: int, backlog_bytes: int, *, final: bool) -> None:
+        """One drain-vs-production line per ``stats_every_s`` (and at finalize)."""
+        now = time.monotonic()
+        if not final and (now - self._stats_t) < self.stats_every_s:
+            return
+        delta = {k: self._stats[k] - self._stats_snapshot[k] for k in self._stats}
+        if final or any(delta.values()) or backlog_files:
+            extra = ""
+            if self.persist_dir is not None:
+                try:
+                    extra = f", stage free {shutil.disk_usage(self.ms).free >> 30} GiB"
+                except OSError:
+                    pass
+            self._log(
+                f"[stream] stats({now - self._stats_t:.0f}s): streamed {delta['appended']} dumps "
+                f"({delta['appended_bytes'] >> 20} MiB), spilled {delta['spilled']} "
+                f"({delta['spilled_bytes'] >> 20} MiB), backlog {backlog_files} dumps "
+                f"({backlog_bytes >> 20} MiB), quarantined {delta['quarantined']}{extra}"
+            )
+        self._stats_t = now
+        self._stats_snapshot = dict(self._stats)
 
     # --- scanning ---------------------------------------------------------
 
@@ -329,6 +481,16 @@ class StreamConverter:
             out[rel] = d
         return out
 
+    def _discover(self, *, final: bool) -> dict[str, Path]:
+        """Cached discovery. The full ``rglob`` walk touches every backlogged
+        file, so its cost grows exactly when the drainer is behind; new
+        diagnostic *directories* appear rarely, so the walk runs only every
+        ``rediscover_every`` polls and the known dirs are re-listed directly in
+        between."""
+        if final or not self._known or (self._scan_i % self.rediscover_every == 1):
+            self._known = self._diags()
+        return self._known
+
     def _diag_is_raw(self, rel: str, d: Path) -> bool:
         cached = self._is_raw.get(rel)
         if cached is None:
@@ -337,7 +499,22 @@ class StreamConverter:
         return cached
 
     def _scan_once(self, *, final: bool) -> None:
-        for rel, d in self._diags().items():
+        self._scan_i += 1
+        force_spill = False
+        if self.persist_dir is not None and not final and self.floor_free_bytes:
+            try:
+                if shutil.disk_usage(self.ms).free < self.floor_free_bytes:
+                    force_spill = True
+                    self._log_every(
+                        "floor",
+                        f"[stream] CRITICAL: staging filesystem under {self.floor_free_bytes >> 30} GiB free"
+                        " -- spilling all grid dumps to persist (OSIRIS must never see ENOSPC)",
+                    )
+            except OSError:
+                pass
+        backlog_files = 0
+        backlog_bytes = 0
+        for rel, d in self._discover(final=final).items():
             if rel in self._completed or rel in self._raw_completed:
                 continue
             try:
@@ -347,12 +524,12 @@ class StreamConverter:
                     # the dumps on persist).
                     if self.persist_dir is not None:
                         self._drain_raw(rel, d, final=final)
-                elif self.persist_dir is None:
-                    self._drain_grid_inplace(rel, d, final=final)
                 else:
-                    self._drain_grid_staged(rel, d, final=final)
+                    nf, nb = self._drain_grid(rel, d, final=final, force_spill=force_spill)
+                    backlog_files += nf
+                    backlog_bytes += nb
             except Exception as e:
-                self._log(f"[stream] {rel}: {e} (will fall back to batch)")
+                self._log_every(f"drain:{rel}", f"[stream] {rel}: {e} (will fall back to batch)")
                 # Drop the writer so a half-written file is rebuilt by the batch
                 # pass rather than reused.
                 w = self._writers.pop(rel, None)
@@ -361,69 +538,157 @@ class StreamConverter:
                         w.close()
                     except Exception:
                         pass
+        self._maybe_stats(backlog_files, backlog_bytes, final=final)
 
     # --- draining ---------------------------------------------------------
 
-    def _drain_grid_inplace(self, rel: str, d: Path, *, final: bool) -> None:
-        """Stream a grid diagnostic to NetCDF in place — no mirror, no reap.
+    def _drain_grid(self, rel: str, d: Path, *, final: bool, force_spill: bool) -> tuple[int, int]:
+        """Drain one grid diagnostic; returns its (files, bytes) pending at entry.
 
-        The original non-staged behavior: dumps accumulate in ``run_dir`` and
-        slot ``i`` is the ``i``-th dump, indexed positionally against the full
-        (never-pruned) dump list.
+        Non-staged: stream to NetCDF in place — no mirror, no reap. Staged:
+        stream + reap (mirroring unless ``discard_grid_h5``), or mirror-only
+        when spilling. The final sweep additionally catches a spilled
+        diagnostic up from its persist mirror before closing.
         """
-        dumps = _io._sort_dumps(d)
-        if not dumps:
-            return
-        # Write-completeness: a dump is safe only once the next one exists (OSIRIS
-        # has moved on). The final sweep runs after OSIRIS is dead, so the last
-        # dump is safe too.
+        staged = self.persist_dir is not None
+        dumps = [p for p in _io._sort_dumps(d) if p not in self._bad]
+        # Write-completeness: a dump is safe only once the next one exists
+        # (OSIRIS has moved on). The final sweep runs after OSIRIS is dead, so
+        # the last dump is safe too.
         safe = dumps if final else dumps[:-1]
-        if not safe:
-            return  # nothing safe to write yet (only the in-progress dump exists)
+        n_pending = len(safe)
+        pending_bytes = 0
+        if staged:
+            for p in safe:
+                try:
+                    pending_bytes += p.stat().st_size
+                except OSError:
+                    pass
+
+        if staged and not final:
+            spill = (
+                force_spill
+                or rel in self._spilled
+                or (self.spill_backlog_files and n_pending > self.spill_backlog_files)
+                or (self.spill_backlog_bytes and pending_bytes > self.spill_backlog_bytes)
+            )
+            if spill:
+                if rel not in self._spilled:
+                    self._spilled.add(rel)
+                    self._log(
+                        f"[stream] {rel}: backlog {n_pending} dumps / {pending_bytes >> 20} MiB "
+                        "over spill threshold -- mirror-only until finalize"
+                    )
+                for p in safe:
+                    # Always mirror when spilling: these bytes exist nowhere else.
+                    self._reap(rel, p, mirror=True)
+                self._stats["spilled"] += n_pending
+                self._stats["spilled_bytes"] += pending_bytes
+                return n_pending, pending_bytes
+
+        candidates = list(safe)
+        if final and staged and rel in self._spilled:
+            # Catch up from the persist mirror first; merge by iteration so the
+            # append order stays monotonic.
+            spill_dir = self.persist_ms / rel
+            if spill_dir.is_dir():
+                candidates = sorted(
+                    [p for p in _io._sort_dumps(spill_dir) if p not in self._bad] + candidates,
+                    key=_io._iter_from_name,
+                )
+        if not candidates:
+            return n_pending, pending_bytes
 
         w = self._writers.get(rel)
         if w is None:
-            template = _io.load_grid_h5(dumps[0])
+            w, candidates = self._open_writer(rel, d, candidates)
+            if w is None:
+                return n_pending, pending_bytes
+
+        for p in candidates:
+            if _io._iter_from_name(p) <= w.last_iter:
+                # Already in the file (resume / idempotency): just tidy up.
+                self._cleanup_consumed(rel, p)
+                continue
+            try:
+                da = _io.load_grid_h5(p)
+            except Exception as e:
+                self._quarantine(rel, p, e)
+                continue
+            w.append(da)
+            self._stats["appended"] += 1
+            self._stats["appended_bytes"] += int(da.values.nbytes)
+            self._cleanup_consumed(rel, p)
+        w.flush()
+
+        if final:
+            w.close()
+            self._completed.add(rel)
+            if staged and self.discard_grid_h5:
+                self._prune_empty(self.persist_ms / rel)
+        return n_pending, pending_bytes
+
+    def _open_writer(self, rel: str, d: Path, candidates: list[Path]) -> tuple[StreamWriter | None, list[Path]]:
+        """Create (or reopen) the writer from the first readable candidate."""
+        while candidates:
+            p0 = candidates[0]
+            try:
+                template = _io.load_grid_h5(p0)
+            except Exception as e:
+                self._quarantine(rel, p0, e)
+                candidates = candidates[1:]
+                continue
             w = StreamWriter(self.out_dir / f"{rel}.nc", template, source_dir=d)
             self._writers[rel] = w
             if w.n_written == 0:
                 w.append(template)  # reuse the template we just loaded as slot 0
+                self._stats["appended"] += 1
+                self._stats["appended_bytes"] += int(template.values.nbytes)
+                self._cleanup_consumed(rel, p0)
+                candidates = candidates[1:]
+            # On resume (n_written > 0) p0 stays; the iteration filter decides.
+            return w, candidates
+        return None, []
 
-        for p in safe[w.n_written :]:
-            w.append(_io.load_grid_h5(p))
-        w.flush()
-
-        if final:
-            w.close()
-            self._completed.add(rel)
-
-    def _drain_grid_staged(self, rel: str, d: Path, *, final: bool) -> None:
-        """Stream a grid diagnostic *and* drain its dumps off the scratch.
-
-        Because every handled dump is deleted from the scratch (:meth:`_reap`),
-        the directory only ever holds dumps not yet processed (plus the
-        in-progress last one), so every ``safe`` dump is new — no positional
-        bookkeeping against on-disk slots is needed.
-        """
-        dumps = _io._sort_dumps(d)
-        if not dumps:
+    def _cleanup_consumed(self, rel: str, p: Path) -> None:
+        """Dispose of one dump whose contents are (now) in the NetCDF."""
+        if self.persist_dir is None:
+            return  # non-staged: the in-place tree is the durable copy
+        if self.persist_ms is not None and self.persist_ms in p.parents:
+            # A spilled dump drained from the persist mirror during finalize:
+            # in discard mode the .nc is the durable artifact, drop the HDF5.
+            if self.discard_grid_h5:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
             return
-        safe = dumps if final else dumps[:-1]
-        if not safe:
+        self._reap(rel, p, mirror=not self.discard_grid_h5)
+
+    def _quarantine(self, rel: str, p: Path, err: Exception) -> None:
+        """Sideline an unreadable dump (``*.h5.bad``) and keep streaming.
+
+        Truncated dumps are exactly what an ENOSPC-choked run leaves behind;
+        one of them must not stall the whole diagnostic (previously the writer
+        was dropped and the watcher re-hit the same file every poll)."""
+        self._stats["quarantined"] += 1
+        self._log_every(f"bad:{rel}", f"[stream] {rel}: quarantining unreadable dump {p.name}: {err}")
+        try:
+            p.rename(p.with_name(p.name + ".bad"))  # ".bad": invisible to *.h5 listings
+        except OSError:
+            self._bad.add(p)  # cannot rename: remember and skip it from now on
+
+    def _prune_empty(self, dirpath: Path) -> None:
+        """Remove now-empty persist-mirror directories after a discard catch-up."""
+        if self.persist_ms is None:
             return
-
-        w = self._writers.get(rel)
-        if w is None:
-            w = StreamWriter(self.out_dir / f"{rel}.nc", _io.load_grid_h5(dumps[0]), source_dir=d)
-            self._writers[rel] = w
-        for p in safe:
-            w.append(_io.load_grid_h5(p))
-            self._reap(rel, p, mirror=not self.discard_grid_h5)
-        w.flush()
-
-        if final:
-            w.close()
-            self._completed.add(rel)
+        cur = dirpath
+        try:
+            while (cur == self.persist_ms or self.persist_ms in cur.parents) and cur.is_dir() and not any(cur.iterdir()):
+                cur.rmdir()
+                cur = cur.parent
+        except OSError:
+            pass
 
     def _drain_raw(self, rel: str, d: Path, *, final: bool) -> None:
         """Mirror a RAW diagnostic's completed dumps to persist + reap scratch."""
@@ -455,4 +720,4 @@ class StreamConverter:
                     os.replace(tmp, dest)  # atomic publish on the persist filesystem
             p.unlink()
         except Exception as e:
-            self._log(f"[stream] reap {rel}/{p.name} deferred: {e}")
+            self._log_every(f"reap:{rel}", f"[stream] reap {rel}/{p.name} deferred: {e}")

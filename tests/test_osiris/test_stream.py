@@ -527,3 +527,77 @@ def test_collect_uses_streamed_binary(tmp_path: Path) -> None:
     assert not list(td.rglob("*.h5"))
     assert (td / "binary" / "FLD" / "e1.nc").exists()
     _assert_series_equiv(oio.load_series_nc(td / "binary" / "FLD" / "e1.nc"), oio.load_series(diag))
+
+
+# --- corrupt-dump quarantine + backlog spill valve ------------------------
+
+
+def test_corrupt_dump_quarantined_stream_continues(tmp_path: Path) -> None:
+    """One unreadable dump must not stall the diagnostic: it is renamed
+    ``*.h5.bad`` and the remaining dumps still stream (regression: job 56005549
+    dropped the writer and re-hit the same corrupt file every poll, forever)."""
+    run_dir = tmp_path / "run"
+    diag = _write_field(run_dir, "e1", n_steps=5, nx=8)
+    bad = diag / "e1-000020.h5"
+    bad.write_bytes(b"\x00" * 2048)  # ENOSPC-style truncated file
+
+    conv = ostream.StreamConverter(run_dir, tmp_path / "binary", poll_s=0.01)
+    completed = conv.finalize()
+
+    assert "FLD/e1" in completed
+    assert not bad.exists() and (diag / "e1-000020.h5.bad").exists()
+    streamed = oio.load_series_nc(tmp_path / "binary" / "FLD" / "e1.nc")
+    assert streamed.sizes["t"] == 4
+    assert list(streamed["iter"].values) == [0, 10, 30, 40]
+
+
+def test_spill_valve_mirrors_then_catches_up(tmp_path: Path) -> None:
+    """Over-threshold backlog flips a staged diagnostic to mirror-only (cheap
+    copy to persist, ramdisk keeps draining); finalize catches the NetCDF up
+    from the mirror so nothing is lost."""
+    stage = tmp_path / "stage"
+    persist = tmp_path / "persist"
+    diag = _write_field(stage, "e1", n_steps=6, nx=8)
+
+    conv = ostream.StreamConverter(
+        stage, persist / "binary", poll_s=0.01, persist_dir=persist, spill_backlog_files=2
+    )
+    conv._scan_once(final=False)
+    # 5 safe dumps > threshold 2 -> spilled: mirrored + reaped, nothing streamed.
+    assert "FLD/e1" in conv._spilled
+    assert not (persist / "binary" / "FLD" / "e1.nc").exists()
+    assert len(list((persist / "MS" / "FLD" / "e1").glob("*.h5"))) == 5
+    assert len(list(diag.glob("*.h5"))) == 1  # only the held-back newest dump
+
+    completed = conv.finalize()
+    assert "FLD/e1" in completed
+    streamed = oio.load_series_nc(persist / "binary" / "FLD" / "e1.nc")
+    assert streamed.sizes["t"] == 6
+    _assert_series_equiv(streamed, oio.load_series(persist / "MS" / "FLD" / "e1"))
+    assert not list((stage / "MS").rglob("*.h5"))
+
+
+def test_spill_valve_discard_mode_prunes_mirror(tmp_path: Path) -> None:
+    """In discard mode the spill mirror is a temporary holding area: after the
+    finalize catch-up the mirrored HDF5 (and its emptied dirs) are removed and
+    the streamed NetCDF is again the only grid artifact."""
+    stage = tmp_path / "stage"
+    persist = tmp_path / "persist"
+    _write_field(stage, "e1", n_steps=6, nx=8)
+
+    conv = ostream.StreamConverter(
+        stage,
+        persist / "binary",
+        poll_s=0.01,
+        persist_dir=persist,
+        discard_grid_h5=True,
+        spill_backlog_files=2,
+    )
+    conv._scan_once(final=False)
+    assert len(list((persist / "MS" / "FLD" / "e1").glob("*.h5"))) == 5  # spilled bytes exist nowhere else
+
+    completed = conv.finalize()
+    assert "FLD/e1" in completed
+    assert oio.load_series_nc(persist / "binary" / "FLD" / "e1.nc").sizes["t"] == 6
+    assert not (persist / "MS" / "FLD").exists()  # mirror consumed + pruned
+    assert not list((stage / "MS").rglob("*.h5"))
