@@ -28,7 +28,7 @@ class VlasovExternalE(eqx.Module):
         """Create interpolation helpers for x-advection and v-advection steps."""
         self.x = cfg["grid"]["x"]
         self.v = cfg["grid"]["v"]
-        self.f_interp = partial(interp2d, x=self.x, y=self.v, period=cfg["grid"]["xmax"])
+        self.f_interp = partial(interp2d, x=self.x, y=self.v, period=cfg["grid"]["xmax"] - cfg["grid"]["xmin"])
         self.dt = cfg["grid"]["dt"]
         self.dummy_x = jnp.ones_like(self.x)
         self.dummy_v = jnp.ones_like(self.v)[None, :]
