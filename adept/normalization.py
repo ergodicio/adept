@@ -79,7 +79,10 @@ def electron_debye_normalization(n0_str, T0_str):
     Returns the electron thermal normalization for the given density and temperature.
     Unit quantities are:
         - Debye length
-        - Electron thermal velocity
+        - Electron thermal velocity (RMS/std-dev convention: v0 = sqrt(T0/m_e), so a
+          Maxwellian at T_hat=1 is exp(-v_hat^2/2)) -- this is the convention the
+          _vlasov1d module's initializer, collision operators, and dispersion tests
+          actually run in.
         - Langmuir oscillation frequency
     """
     n0 = UREG.Quantity(n0_str)
@@ -88,7 +91,7 @@ def electron_debye_normalization(n0_str, T0_str):
     wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
     tau = 1 / wp0
 
-    v0 = ((2.0 * T0 / UREG.m_e) ** 0.5).to("m/s")
+    v0 = ((T0 / UREG.m_e) ** 0.5).to("m/s")
     x0 = (v0 / wp0).to("nm")
 
     return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)

@@ -16,6 +16,24 @@ where $f$ is the distribution function, $E$ is the electric field, $C(f)$ is the
 
 The distribution function is $f = f(t, x, v)$ and the electric field is $E = E(t, x)$.
 
+## Normalization
+
+`_vlasov1d` uses `adept.normalization.electron_debye_normalization`, which normalizes to:
+
+- Velocity unit $v_0 = \sqrt{T_0/m_e}$ (RMS / standard-deviation convention, **not**
+  the most-probable-speed $\sqrt{2T_0/m_e}$).
+- Length unit $L_0 = v_0/\omega_{p0} = \lambda_{De}$ (the electron Debye length).
+- Time unit $\tau = 1/\omega_{p0}$.
+- Code wavenumber $\hat k = k\,\lambda_{De}$.
+- A Maxwellian at $\hat T = 1$ is $f \propto e^{-v^2/2}$ (variance 1 in code units).
+
+This is the convention the initializer (`helpers.py`), the Lenard-Bernstein/Dougherty
+collision operators, and the Landau-damping/ion-acoustic dispersion tests all assume.
+Dimensionless (numeric) config inputs bypass normalization entirely and are unaffected
+by this convention; only dimensional-string inputs (temperatures, box sizes, gradient
+scale lengths, laser wavelengths) and logged physical units (`v0`, `x0`, `c_light`,
+`box_length`) go through it.
+
 ## Multispecies Support
 
 The solver supports multiple particle species (e.g., electrons and ions) evolving self-consistently under a shared electric field. Each species can have:
