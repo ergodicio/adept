@@ -68,7 +68,6 @@ class TimeIntegrator:
         hl = cfg["terms"].get("hou_li_filter", {"is_on": False})
         if hl.get("is_on", False):
             self.filter = vlasov.HouLiFilter(
-                species_grids=species_grids,
                 nx=cfg["grid"]["nx"],
                 ny=cfg["grid"]["ny"],
                 alpha=hl["alpha"],
