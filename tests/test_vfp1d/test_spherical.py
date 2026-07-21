@@ -179,6 +179,88 @@ def test_file_basis_profiles(tmp_path):
     np.testing.assert_allclose(np.asarray(state["ni"]), ne_expected / Z_ion, rtol=2e-2)
 
 
+def test_ion_mixture(tmp_path):
+    """A fully ionized CD mixture must be represented by an effective ion that
+    preserves quasineutrality (Z*ni = ne) and e-i collisionality (Z^2*ni = Zeff*ne)."""
+    from adept.vfp1d.base import BaseVFP1D
+
+    r_um = np.linspace(0.0, 125.0, 100)
+    ne_cc = 1.0e21 * np.ones_like(r_um)
+    zbar, zeff, abar = 3.0, 5.0, 6.304
+    m_u_g = float(UREG.Quantity(1.0, "amu").to("g").magnitude)
+    rho_gcc = ne_cc / zbar * abar * m_u_g
+
+    files = {}
+    for name, vals in [("ne", ne_cc), ("rho", rho_gcc)]:
+        path = tmp_path / f"{name}.csv"
+        np.savetxt(path, np.stack([r_um, vals], axis=1), delimiter=",", header="r_um,value")
+        files[name] = str(path)
+
+    cfg = _load_cfg("spherical-uniform")
+    cfg["units"]["Z"] = zeff
+    cfg["units"]["reference electron density"] = "1.0e21/cm^3"
+    cfg["units"]["logLambda"] = "lee-more"
+    cfg["density"]["species-background"]["n"] = {
+        "basis": "file",
+        "path": files["ne"],
+        "units": "1/cm^3",
+        "coordinate_units": "um",
+    }
+    cfg["density"]["ion"] = {
+        "A": abar,
+        "mixture": [
+            {"Z": 6, "A": 12.011, "fraction": 0.4},
+            {"Z": 1, "A": 2.0141, "fraction": 0.6},
+        ],
+        "mass_density": {
+            "basis": "file",
+            "path": files["rho"],
+            "units": "g/cm^3",
+            "coordinate_units": "um",
+        },
+    }
+
+    module = BaseVFP1D(cfg)
+    module.write_units()
+    module.init_state_and_args()
+    state = module.state
+
+    Z_phys = np.asarray(state["Z"]) * cfg["units"]["Z"]
+    np.testing.assert_allclose(Z_phys, zeff, rtol=1e-12)
+
+    # quasineutrality: Z * ni = ne
+    n0_cc = float(module.plasma_norm.n0.to("1/cc").magnitude)
+    ne_expected = ne_cc[0] / n0_cc
+    np.testing.assert_allclose(Z_phys * np.asarray(state["ni"]), ne_expected, rtol=1e-6)
+
+    # e-i collisionality: Z^2 * ni = Zeff * ne = sum_i n_i Z_i^2
+    np.testing.assert_allclose(Z_phys**2 * np.asarray(state["ni"]), zeff * ne_expected, rtol=1e-6)
+
+
+def test_lee_more_loglambda():
+    """Lee-More Coulomb logarithm: sensible values at conduction-zone conditions,
+    close to NRL there, and floored at 2 for cold dense plasma."""
+    from adept.vfp1d.helpers import calc_logLambda
+
+    def _cfg(loglam, Ti="1000eV"):
+        return {"units": {"logLambda": loglam, "reference ion temperature": Ti}}
+
+    ne = UREG.Quantity(1.0e21, "1/cc")
+    Te = UREG.Quantity(1000.0, "eV")
+    lm_ei, lm_ee = calc_logLambda(_cfg("lee-more"), ne, Te, Z=5, ion_species="CD")
+    assert lm_ee == lm_ei
+    assert 5.0 < lm_ei < 9.0
+
+    nrl_ei, _ = calc_logLambda(_cfg("nrl"), ne, Te, Z=5, ion_species="CD")
+    assert abs(lm_ei - nrl_ei) / nrl_ei < 0.25
+
+    # cold, dense -> hits the floor of 2
+    lm_cold, _ = calc_logLambda(
+        _cfg("lee-more", Ti="1eV"), UREG.Quantity(1.0e24, "1/cc"), UREG.Quantity(1.0, "eV"), Z=5, ion_species="CD"
+    )
+    assert lm_cold == 2.0
+
+
 @pytest.mark.parametrize("bad_key,bad_val", [("xmin", "10.0um"), ("boundary", "periodic")])
 def test_spherical_config_validation(bad_key, bad_val):
     """Spherical geometry requires xmin=0 and reflective boundaries."""

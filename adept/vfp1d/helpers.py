@@ -56,7 +56,35 @@ def calc_logLambda(
 
     """
     if isinstance(cfg["units"]["logLambda"], str):
-        if cfg["units"]["logLambda"].casefold() == "nrl":
+        if cfg["units"]["logLambda"].casefold() in ("lee-more", "lee_more", "leemore"):
+            # Lee & More 1984 (Phys. Fluids 27, 1273):
+            #   lnLambda = max(2, 0.5 * ln(1 + (bmax/bmin)^2))
+            # bmax: Debye-Hückel length with electron + ion screening, floored at
+            #       the ion-sphere radius R0
+            # bmin: max(classical closest approach, electron thermal de Broglie)
+            # With the Zeff convention (Z*ni = ne, Z^2*ni = sum_i n_i Z_i^2) the ion
+            # screening term Z^2*ni/Ti is exact for mixtures.
+            ne_cc = ne.to("1/cc").magnitude
+            Te_eV = Te.to("eV").magnitude
+            Ti_eV = UREG.Quantity(cfg["units"]["reference ion temperature"]).to("eV").magnitude
+            ni_cc = ne_cc / Z
+
+            e2 = 1.44e-7  # e^2 in eV cm (Gaussian)
+            hbar_c = 1.9732697e-5  # eV cm
+            me_c2 = 510998.95  # eV
+
+            inv_lD2 = 4 * np.pi * e2 * (ne_cc / Te_eV + Z**2 * ni_cc / Ti_eV)
+            R0 = (3.0 / (4 * np.pi * ni_cc)) ** (1.0 / 3.0)
+            b_max = max(inv_lD2**-0.5, R0)
+
+            b_classical = Z * e2 / (3.0 * Te_eV)
+            b_quantum = hbar_c / (2.0 * np.sqrt(3.0 * Te_eV * me_c2))
+            b_min = max(b_classical, b_quantum)
+
+            logLambda_ei = max(2.0, 0.5 * np.log(1.0 + (b_max / b_min) ** 2))
+            logLambda_ee = logLambda_ei
+
+        elif cfg["units"]["logLambda"].casefold() == "nrl":
             log_ne = np.log(ne.to("1/cc").magnitude)
             log_Te = np.log(Te.to("eV").magnitude)
             log_Z = np.log(Z)

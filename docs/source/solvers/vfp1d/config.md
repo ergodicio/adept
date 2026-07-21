@@ -41,7 +41,7 @@ Physical unit normalizations for the simulation.
 | `reference electron density` | string | Reference electron density with unit, e.g., `"2.275e21/cm^3"` |
 | `Z` | int | Ionization state |
 | `Ion` | string | Ion species label, e.g., `"Au+"` |
-| `logLambda` | string or float | Coulomb logarithm: `"nrl"` for NRL formula, or a numeric value |
+| `logLambda` | string or float | Coulomb logarithm: `"nrl"` (NRL formulary), `"lee-more"` (Lee & More 1984: $\ln\Lambda = \max[2, \tfrac{1}{2}\ln(1 + b_\max^2/b_\min^2)]$ with Debye-Hückel screening floored at the ion-sphere radius and quantum/classical $b_\min$), or a numeric value |
 
 Example:
 ```yaml
@@ -149,6 +149,22 @@ density:
 ```
 
 This sets $n_i(x) = \rho(x) / (A \, m_u)$ and $Z(x) = n_e(x)/n_i(x)$ pointwise. When the block is omitted, $Z$ is uniform (`units.Z`) and $n_i = n_e / Z$.
+
+For atomic **mixtures** (e.g. fully ionized CD), add a `mixture` list. The plasma is then represented by a single effective ion species that preserves both quasineutrality ($Z n_i = n_e$) and the electron-ion collision rate ($Z^2 n_i = \sum_i n_i Z_i^2 = Z_\text{eff}\, n_e$), with $Z_\text{eff} = \langle Z^2\rangle / \langle Z\rangle$. **Set `units.Z` to $Z_\text{eff}$** — it is the collisional/transport Z that enters the Epperlein-Haines and SNB coefficients. The mass-density profile is used to cross-check full-ionization quasineutrality ($\bar{Z}\rho/(A m_u)$ vs $n_e$); a warning is printed if they disagree by more than 5%.
+
+```yaml
+density:
+  ion:
+    A: 6.304                                # mean atomic weight (optional; default sum of fractions * A)
+    mixture:
+      - { Z: 6, A: 12.011, fraction: 0.4 }  # C
+      - { Z: 1, A: 2.0141, fraction: 0.6 }  # D
+    mass_density:
+      basis: file
+      path: /path/to/massdensity.csv
+      units: g/cm^3
+      coordinate_units: um
+```
 
 ## grid
 

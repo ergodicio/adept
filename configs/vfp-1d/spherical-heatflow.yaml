@@ -9,14 +9,18 @@
 # Update the three `path` entries, the reference values in `units`, and the ion
 # mass number `A` for your material before running.
 
+# Material: fully ionized CD (40% C / 60% D atomic mixture) in the conduction
+# zone. Zbar = <Z> = 3 (quasineutrality), Zeff = <Z^2>/<Z> = 5 (e-i collisionality
+# and transport), A = 6.304. units.Z must be Zeff; Zbar enters via the ion mixture.
+
 units:
   laser_wavelength: 351nm
   reference electron temperature: 1000eV # choose a typical Te of the profile
   reference ion temperature: 1000eV
   reference electron density: 1.0e21/cm^3 # choose a typical ne of the profile
-  Z: 4 # typical / reference ionization state
-  Ion: Be+
-  logLambda: nrl
+  Z: 5 # Zeff = <Z^2>/<Z> for the CD mixture
+  Ion: CD
+  logLambda: lee-more
 
 density:
   quasineutrality: true
@@ -38,8 +42,11 @@ density:
       units: eV
       coordinate_units: um
   ion:
-    A: 9.0122 # ion mass number (amu); sets ni = rho / (A * amu) and Z(r) = ne/ni
-    mass_density:
+    A: 6.304 # mean atomic weight of the CD mixture (amu)
+    mixture: # fully ionized CD: sets Zbar = 3, Zeff = 5
+      - { Z: 6, A: 12.011, fraction: 0.4 } # C
+      - { Z: 1, A: 2.0141, fraction: 0.6 } # D
+    mass_density: # used to cross-check quasineutrality against ne(r)
       basis: file
       path: /path/to/massdensity.csv
       units: g/cm^3
