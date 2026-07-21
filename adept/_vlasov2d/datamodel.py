@@ -140,7 +140,19 @@ class HouLiFilterConfig(BaseModel):
     is_on: bool = False
     alpha: float = 36.0
     order: int = 36
-    dimensions: list[str] = ["x", "y", "vx", "vy"]
+    dimensions: list[str] = ["x", "y"]
+
+    @field_validator("dimensions")
+    @classmethod
+    def _no_velocity_space(cls, v: list[str]) -> list[str]:
+        bad = [d for d in v if d not in ("x", "y")]
+        if bad:
+            raise ValueError(
+                "velocity-space Hou-Li filtering has been removed: the FFT filter is "
+                f"periodic in velocity and corrupts f(v). Only spatial dims ['x','y'] "
+                f"are allowed; got {v}."
+            )
+        return v
 
 
 class FokkerPlanckConfig(BaseModel):
