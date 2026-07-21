@@ -160,8 +160,10 @@ class SuperGaussianDougherty(Dougherty):
         is no secular drift. With max_steps = 0 (self_consistent_beta
         disabled) the continuum closure is used directly; its O(dv²)
         quadrature residual causes a slow secular temperature drift
-        (~1e-5 per collision time at nv=128), so enabling the solve is
-        recommended for long runs.
+        (measured ~5e-7 per collision time at nv=128 for m=3). The continuum
+        closure lands within O(dv²) of the root, so a SINGLE Newton step
+        (max_steps: 1) already reduces the drift to machine level; use it for
+        long collisional runs.
 
         Transient (off-equilibrium) energy conservation is additionally
         limited to O(nu·dt) by the operator splitting: β is frozen from f^n

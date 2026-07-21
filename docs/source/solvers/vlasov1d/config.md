@@ -578,10 +578,12 @@ Conservation properties:
 
 - **Density**: exact (zero-flux boundary conditions).
 - **Energy**: no secular drift at equilibrium when `self_consistent_beta` is
-  enabled (recommended for long runs; without it the continuum closure leaves
-  an O(dv²) quadrature residual that drifts T by ~1e-5 per collision time at
-  nv=128). Off-equilibrium transients carry a one-time O(nu·dt) offset from
-  operator splitting, negligible at production nu·dt.
+  enabled (recommended for long collisional runs; without it the continuum
+  closure leaves an O(dv²) quadrature residual that drifts T by ~5e-7 per
+  collision time at nv=128 for m=3 — already negligible unless many collision
+  times elapse). A single Newton step (`max_steps: 1`) reduces the drift to
+  machine level. Off-equilibrium transients carry a one-time O(nu·dt) offset
+  from operator splitting, negligible at production nu·dt.
 - **Momentum**: exact for distributions symmetric about $\bar v$; skewed
   transients exchange momentum at O(skewness), unlike $m=2$ where
   $C \propto (v-\bar v)$ makes it exact.
@@ -600,7 +602,7 @@ terms:
     m: 3.0
     self_consistent_beta:
       enabled: True
-      max_steps: 3
+      max_steps: 1   # one Newton step suffices (the closure lands within O(dv²) of the root)
     time:
       baseline: 1.0e-5
       # ...
