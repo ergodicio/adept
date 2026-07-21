@@ -6,7 +6,7 @@ from adept._base_ import ADEPTModule, Stepper
 from adept.normalization import UREG, laser_normalization
 from adept.utils import filter_scalars
 from adept.vfp1d.grid import Grid
-from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
+from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda, load_profile_on_grid
 from adept.vfp1d.storage import get_save_quantities, post_process
 from adept.vfp1d.vector_field import OSHUN1D
 
@@ -169,8 +169,23 @@ class BaseVFP1D(ADEPTModule):
         for field in ["e", "b"]:
             state[field] = jnp.zeros(grid.nx + 1)
 
-        state["Z"] = jnp.ones(grid.nx)
-        state["ni"] = ne_prof / self.cfg["units"]["Z"]
+        ion_cfg = self.cfg["density"].get("ion", None)
+        if ion_cfg is not None:
+            # Spatially varying ion density (in units of n0) from a mass-density
+            # profile, and pointwise Z = ne/ni. Requires the ion mass number A.
+            rho_cfg = ion_cfg["mass_density"]
+            if rho_cfg.get("basis", "file") != "file":
+                raise NotImplementedError("density.ion.mass_density only supports basis: file")
+            rho_q = load_profile_on_grid(rho_cfg, grid.x, self.plasma_norm)
+            ni_phys = rho_q / (ion_cfg["A"] * UREG.Quantity(1.0, "amu"))
+            ni_prof = jnp.asarray((ni_phys / self.plasma_norm.n0).to("").magnitude)
+            # state["Z"] is relative to units.Z -- FLMCollisions' nuei_coeff already
+            # carries units.Z**2, and the runtime rate goes as (Z*ni) * units.Z**2
+            state["Z"] = jnp.asarray(ne_prof) / ni_prof / self.cfg["units"]["Z"]
+            state["ni"] = ni_prof
+        else:
+            state["Z"] = jnp.ones(grid.nx)
+            state["ni"] = ne_prof / self.cfg["units"]["Z"]
 
         self.state = state
         self.args = {"drivers": self.cfg["drivers"]}

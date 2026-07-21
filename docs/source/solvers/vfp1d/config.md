@@ -124,6 +124,32 @@ T:
   width: 20um
 ```
 
+**`file`**: Tabulated profile from a two-column (coordinate, value) CSV or whitespace-delimited text file. Header rows are skipped automatically; the profile is interpolated onto the grid and clamped to the endpoint values outside the tabulated range. Density values are normalized by `units.reference electron density`, temperature values by `units.reference electron temperature`.
+```yaml
+n:
+  basis: file
+  path: /path/to/electrondensity.csv
+  units: 1/cm^3          # units of the value column
+  coordinate_units: um   # units of the coordinate column (default um)
+```
+
+### Ion block (optional)
+
+An optional `density.ion` block sets a spatially varying ion density and ionization state from a tabulated mass-density profile:
+
+```yaml
+density:
+  ion:
+    A: 9.0122            # ion mass number (amu)
+    mass_density:
+      basis: file        # only "file" is supported
+      path: /path/to/massdensity.csv
+      units: g/cm^3
+      coordinate_units: um
+```
+
+This sets $n_i(x) = \rho(x) / (A \, m_u)$ and $Z(x) = n_e(x)/n_i(x)$ pointwise. When the block is omitted, $Z$ is uniform (`units.Z`) and $n_i = n_e / Z$.
+
 ## grid
 
 Simulation grid parameters. All dimensioned quantities use astropy-style unit strings.
@@ -140,6 +166,7 @@ Simulation grid parameters. All dimensioned quantities use astropy-style unit st
 | `xmax` | string | Domain maximum x with unit |
 | `nl` | int | Maximum spherical harmonic order (typically `1`) |
 | `boundary` | string | Spatial boundary condition: `"periodic"` (default) or `"reflective"` |
+| `geometry` | string | Spatial geometry: `"cartesian"` (default) or `"spherical"` |
 
 Example:
 ```yaml
@@ -160,6 +187,15 @@ grid:
 
 - **`periodic`**: Standard periodic wrapping. Suitable for full-wavelength perturbations.
 - **`reflective`**: Zero-flux boundaries. Vector quantities ($f_{10}$, $E$) are zero at domain edges. Scalar quantities ($f_0$) use mirror ghost cells. Suitable for half-wavelength (cosine) perturbations where symmetry allows simulating half the domain.
+
+### Geometry
+
+- **`cartesian`**: Planar 1D geometry (default). The spatial coordinate is $x$.
+- **`spherical`**: Radial 1D geometry with spherical symmetry. The spatial coordinate is the radius $r$. Requires `xmin: 0` and `boundary: reflective` (the flux through $r=0$ vanishes by symmetry; the outer edge is a reflecting wall). Velocity space is unchanged. For $n_l = 1$ the only modification to the equations is the $f_0$ advection term becoming a radial divergence,
+
+$$\partial_t f_0 + \frac{v}{3}\frac{1}{r^2}\partial_r \left(r^2 f_{10}\right) = C[f_0], \qquad \partial_t f_{10} + v\, \partial_r f_0 - E\, \partial_v f_0 = C[f_{10}]$$
+
+  (the angular coupling term $\propto (1-\mu^2)/r$ only feeds $f_2$ into the $f_{10}$ equation, which is dropped at $n_l = 1$). The divergence is discretized in conservative finite-volume form with exact cell volumes $(r_+^3 - r_-^3)/3$.
 
 ## save
 
@@ -312,6 +348,24 @@ terms:
       ee: true
 ```
 
+## diagnostics
+
+Optional post-processing diagnostics configuration. The Spitzer-Härm / SNB / kinetic heat-flux comparison always runs during post-processing (it writes `plots/fields/heat-flux-comparison.png` and `binary/heat-flux-comparison.nc`, and logs the `q_ratio_kinetic_over_sh` and `q_ratio_snb_over_sh` metrics). The `diagnostics.snb` block tunes the SNB model (Schurtz et al. 2000; the "separated" variant recommended by Brodrick et al. 2017):
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `ngroups` | int | `32` | Number of energy groups in $\beta = v^2/(2T)$ |
+| `beta_max` | float | `30.0` | Upper edge of the group grid |
+| `r` | float | `2.0` | e-e absorption scaling of the group mfp, $\lambda_g^{ee}/r$ |
+
+```yaml
+diagnostics:
+  snb:
+    ngroups: 32
+    beta_max: 30.0
+    r: 2.0
+```
+
 ## Complete Examples
 
 ### Epperlein-Short Heat Transport
@@ -321,3 +375,7 @@ See `configs/vfp-1d/epp-short.yaml` - Epperlein-Short heat transport benchmark w
 ### Hotspot Relaxation
 
 See `configs/vfp-1d/hotspot.yaml` - Temperature hotspot relaxation with `tanh` temperature profile.
+
+### Spherical Heat Flow from Tabulated Profiles
+
+See `configs/vfp-1d/spherical-heatflow.yaml` - Radial (spherical) geometry with $n_e(r)$, $T_e(r)$, and mass-density profiles loaded from CSV files, set up for a kinetic vs SNB vs Spitzer-Härm heat-flow comparison.

@@ -1,0 +1,96 @@
+# Spherical (radial) VFP-1D heat-flow calculation from tabulated profiles.
+#
+# Loads ne(r), Te(r), and mass density rho(r) from two-column CSV files
+# (coordinate, value) and runs the kinetic VFP solver in spherical geometry.
+# Post-processing computes the Spitzer-Härm and SNB heat fluxes from the same
+# profiles and compares them with the kinetic heat flux
+# (plots/fields/heat-flux-comparison.png and binary/heat-flux-comparison.nc).
+#
+# Update the three `path` entries, the reference values in `units`, and the ion
+# mass number `A` for your material before running.
+
+units:
+  laser_wavelength: 351nm
+  reference electron temperature: 1000eV # choose a typical Te of the profile
+  reference ion temperature: 1000eV
+  reference electron density: 1.0e21/cm^3 # choose a typical ne of the profile
+  Z: 4 # typical / reference ionization state
+  Ion: Be+
+  logLambda: nrl
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    n:
+      basis: file
+      path: /path/to/electrondensity.csv
+      units: 1/cm^3
+      coordinate_units: um
+    T:
+      basis: file
+      path: /path/to/electronTemperature.csv
+      units: eV
+      coordinate_units: um
+  ion:
+    A: 9.0122 # ion mass number (amu); sets ni = rho / (A * amu) and Z(r) = ne/ni
+    mass_density:
+      basis: file
+      path: /path/to/massdensity.csv
+      units: g/cm^3
+      coordinate_units: um
+
+grid:
+  dt: 1fs
+  nv: 512
+  nx: 256
+  tmin: 0.
+  tmax: 5ps
+  vmax: 8.0
+  xmin: 0.0um
+  xmax: 500um # set to the outer radius of the profiles
+  nl: 1
+  boundary: reflective
+  geometry: spherical
+
+save:
+  fields:
+    t:
+      tmin: 0.0ps
+      tmax: 5ps
+      nt: 11
+  electron:
+    t:
+      tmin: 0.0ps
+      tmax: 5ps
+      nt: 6
+
+solver: vfp-1d
+
+mlflow:
+  experiment: vfp1d-spherical
+  run: heatflow-profiles
+
+drivers:
+  ex: {}
+  ey: {}
+
+terms:
+  fokker_planck:
+    flm:
+      ee: true
+    f00:
+      model: CoulombianKernel
+      scheme: chang_cooper
+  e_solver: oshun
+
+diagnostics:
+  snb:
+    ngroups: 32
+    beta_max: 30.0
+    r: 2.0
