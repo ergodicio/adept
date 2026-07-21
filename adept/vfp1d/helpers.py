@@ -115,7 +115,9 @@ def _read_two_column_file(path: str) -> tuple[np.ndarray, np.ndarray]:
     Reads a two-column (coordinate, value) text file.
 
     Tries comma-delimited first, then whitespace-delimited. Header rows and any
-    rows that fail to parse as numbers are dropped. Rows are sorted by coordinate.
+    rows that fail to parse as numbers are dropped. If the file has more than two
+    columns, the last two are used (a leading row-index column is thereby ignored).
+    Rows are sorted by coordinate.
 
     :param path: path to the file
     :return: (coordinate, value) arrays
@@ -133,7 +135,7 @@ def _read_two_column_file(path: str) -> tuple[np.ndarray, np.ndarray]:
     if data is None:
         raise ValueError(f"Could not parse two numeric columns from {path}")
 
-    data = data[:, :2]
+    data = data[:, -2:]
     data = data[~np.isnan(data).any(axis=1)]
     if data.shape[0] < 2:
         raise ValueError(f"Fewer than 2 valid (coordinate, value) rows in {path}")
@@ -332,5 +334,12 @@ def _initialize_total_distribution_(
 
     if not species_found:
         raise ValueError("No species found! Check the config")
+
+    # P1 positivity bound: f = f0 + mu*f1 >= 0 requires |f10| <= f0. The local
+    # (big-dt) initialization overshoots into free-streaming in strongly nonlocal
+    # regions (mean free path >> gradient length), which would immediately drive
+    # f0 negative; clamp to the flux-limited bound and let the kinetics relax.
+    f0_at_edges = np.concatenate([f0[:1], 0.5 * (f0[1:] + f0[:-1]), f0[-1:]], axis=0)
+    f10 = np.clip(f10, -f0_at_edges, f0_at_edges)
 
     return f0, f10, prof_total["n"]

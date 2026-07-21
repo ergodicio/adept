@@ -261,14 +261,21 @@ def test_lee_more_loglambda():
     assert lm_cold == 2.0
 
 
-@pytest.mark.parametrize("bad_key,bad_val", [("xmin", "10.0um"), ("boundary", "periodic")])
-def test_spherical_config_validation(bad_key, bad_val):
-    """Spherical geometry requires xmin=0 and reflective boundaries."""
-    cfg = _load_cfg("spherical-uniform")
-    cfg["grid"][bad_key] = bad_val
-
+def test_spherical_config_validation():
+    """Spherical geometry requires reflective boundaries; xmin > 0 is a valid
+    annular domain with dx = (xmax - xmin)/nx."""
     from adept.vfp1d.grid import Grid
 
+    cfg = _load_cfg("spherical-uniform")
     norm = laser_normalization(cfg["units"]["laser_wavelength"], cfg["units"]["reference electron temperature"])
+
+    cfg["grid"]["boundary"] = "periodic"
     with pytest.raises(ValueError):
         Grid.from_config(cfg["grid"], norm)
+
+    # annular domain
+    cfg["grid"]["boundary"] = "reflective"
+    cfg["grid"]["xmin"] = "25.0um"
+    grid = Grid.from_config(cfg["grid"], norm)
+    np.testing.assert_allclose(grid.dx, (grid.xmax - grid.xmin) / grid.nx)
+    np.testing.assert_allclose(np.asarray(grid.x_edge)[0], grid.xmin)

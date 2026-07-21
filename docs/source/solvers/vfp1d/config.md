@@ -207,7 +207,7 @@ grid:
 ### Geometry
 
 - **`cartesian`**: Planar 1D geometry (default). The spatial coordinate is $x$.
-- **`spherical`**: Radial 1D geometry with spherical symmetry. The spatial coordinate is the radius $r$. Requires `xmin: 0` and `boundary: reflective` (the flux through $r=0$ vanishes by symmetry; the outer edge is a reflecting wall). Velocity space is unchanged. For $n_l = 1$ the only modification to the equations is the $f_0$ advection term becoming a radial divergence,
+- **`spherical`**: Radial 1D geometry with spherical symmetry. The spatial coordinate is the radius $r$. Requires `xmin >= 0` and `boundary: reflective` (when `xmin: 0` the flux through $r=0$ vanishes by symmetry; `xmin > 0` gives an annular domain with a reflecting inner wall; the outer edge is a reflecting wall). Velocity space is unchanged. For $n_l = 1$ the only modification to the equations is the $f_0$ advection term becoming a radial divergence,
 
 $$\partial_t f_0 + \frac{v}{3}\frac{1}{r^2}\partial_r \left(r^2 f_{10}\right) = C[f_0], \qquad \partial_t f_{10} + v\, \partial_r f_0 - E\, \partial_v f_0 = C[f_{10}]$$
 

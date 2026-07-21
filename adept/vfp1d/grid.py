@@ -69,18 +69,22 @@ class Grid(eqx.Module):
         if geometry not in ("cartesian", "spherical"):
             raise ValueError(f"Unknown geometry '{geometry}', expected 'cartesian' or 'spherical'")
         if geometry == "spherical":
-            if xmin != 0.0:
-                raise ValueError("Spherical geometry requires xmin = 0 (the coordinate is the radius r)")
+            if xmin < 0.0:
+                raise ValueError(
+                    "Spherical geometry requires xmin >= 0 (the coordinate is the radius r; "
+                    "xmin > 0 gives an annular domain with a reflecting inner wall)"
+                )
             if boundary != "reflective":
                 raise ValueError(
                     "Spherical geometry requires boundary = 'reflective' "
-                    "(f10 and E vanish at r=0 by symmetry and at the outer wall)"
+                    "(f10 and E vanish at the inner boundary -- by symmetry when xmin = 0 -- "
+                    "and at the outer wall)"
                 )
         # -- Spatial ----------------------------------------------------------
         self.xmin = xmin
         self.xmax = xmax
         self.nx = nx
-        self.dx = xmax / nx
+        self.dx = (xmax - xmin) / nx
 
         self.x = jnp.linspace(xmin + self.dx / 2, xmax - self.dx / 2, nx)
         self.x_edge = jnp.linspace(xmin, xmax, nx + 1)
