@@ -5,7 +5,16 @@ import sys
 
 import pint
 import xarray as xr
-from diffrax import ConstantStepSize, NoProgressMeter, ODETerm, SaveAt, SubSaveAt, TqdmProgressMeter, diffeqsolve
+from diffrax import (
+    ConstantStepSize,
+    NoProgressMeter,
+    ODETerm,
+    PIDController,
+    SaveAt,
+    SubSaveAt,
+    TqdmProgressMeter,
+    diffeqsolve,
+)
 from jax import Array
 from jax import numpy as jnp
 
@@ -60,6 +69,19 @@ class BaseSpectrax1D(ADEPTModule):
         """
         super().__init__(cfg)
         self.ureg = pint.UnitRegistry()
+
+    def _compute_dtmax_from_driver(self) -> float | None:
+        """Return dt_max = 2π / (10 * w0) from the highest-frequency driver, or None."""
+        import math
+
+        dtmax = None
+        for field_key in ["ex", "ey", "ez"]:
+            for pulse in self.cfg.get("drivers", {}).get(field_key, {}).values():
+                if isinstance(pulse, dict) and "w0" in pulse:
+                    candidate = 2 * math.pi / (10 * float(pulse["w0"]))
+                    if dtmax is None or candidate < dtmax:
+                        dtmax = candidate
+        return dtmax
 
     def _compute_hermite_parameters(self, Nn: int, Nm: int, Np: int) -> dict:
         """
@@ -221,12 +243,16 @@ class BaseSpectrax1D(ADEPTModule):
         # Recalculate tmax to be consistent with dt and nt
         cfg_grid["tmax"] = dt * nt
 
-        # Set max_steps (safety limit)
-        if nt > 1e6:
+        # Set max_steps (safety limit).
+        # Adaptive stepping can take many more steps than nt, so allow 100x headroom.
+        adaptive = cfg_grid.get("adaptive_time_step", False)
+        step_multiplier = 100 if adaptive else 1
+        raw_max = int(nt * step_multiplier) + 4
+        if raw_max > 1e6:
             cfg_grid["max_steps"] = int(1e6)
             print(r"Only running $10^6$ steps")
         else:
-            cfg_grid["max_steps"] = nt + 4
+            cfg_grid["max_steps"] = raw_max
 
         self.cfg["grid"] = cfg_grid
 
@@ -588,6 +614,11 @@ class BaseSpectrax1D(ADEPTModule):
             from adept._spectrax1d.nonlinear_vector_field import NonlinearVectorField
 
             # Build exponential operators for all linear terms
+            filter_cfg = self.cfg.get("drivers", {}).get("hermite_filter", {})
+            filter_enabled = filter_cfg.get("enabled", False)
+            filter_strength = float(filter_cfg.get("strength", 0.0)) if filter_enabled else 0.0
+            filter_order = int(filter_cfg.get("order", 0)) if filter_enabled else 0
+
             combined_exp = build_combined_exponential(
                 grid_quantities_electrons=self.grid_quantities_electrons,
                 grid_quantities_ions=self.grid_quantities_ions,
@@ -605,6 +636,11 @@ class BaseSpectrax1D(ADEPTModule):
                 Ny=Ny,
                 Nz=Nz,
                 static_ions=static_ions,
+                filter_strength=filter_strength,
+                filter_order=filter_order,
+            )
+            print(
+                f"Free-streaming exponential: Hou-Li filter {f'enabled (strength={filter_strength}, order={filter_order})' if filter_enabled else 'disabled'}"  # noqa: E501
             )
 
             # Create nonlinear-only vector field
@@ -630,14 +666,76 @@ class BaseSpectrax1D(ADEPTModule):
             # Create Lawson-RK4 solver
             base_solver = LawsonRK4Solver(combined_exp=combined_exp)
 
-            # Exponential integrator uses fixed timestep (stiffness removed)
-            stepsize_controller = ConstantStepSize()
-            print(f"Using Lawson-RK4 exponential integrator with fixed dt={self.cfg['grid']['dt']}")
+            # Choose fixed or adaptive stepping.
+            # When adaptive_time_step: true, LawsonRK4Solver returns an embedded
+            # 2nd-order error estimate (Lawson-Heun companion) that PIDController
+            # uses to shrink dt when the nonlinear term becomes stiff.
+            adaptive_time_step = self.cfg["grid"].get("adaptive_time_step", False)
+            if adaptive_time_step:
+                dtmax = self._compute_dtmax_from_driver()
+                # Tolerances for the embedded 2nd-order companion error estimate.
+                # We accept the 4th-order solution, so these control stability, not accuracy.
+                # Loose defaults are intentional — tighten via grid.ode_rtol / grid.ode_atol
+                # if sharper step control is needed.
+                rtol = float(self.cfg["grid"].get("ode_rtol", 1e-3))
+                atol = float(self.cfg["grid"].get("ode_atol", 1e-3))
+                # error_order=3: our embedded companion is 2nd-order, so the
+                # error scales as O(dt^3). Without this, PIDController would
+                # infer order=5 from LawsonRK4Solver.order()=4 and over-reduce dt.
+                stepsize_controller = PIDController(rtol=rtol, atol=atol, dtmax=dtmax, error_order=3)
+                print(f"Using adaptive Lawson-RK4 (PIDController, rtol={rtol}, atol={atol}, dtmax={dtmax})")
+            else:
+                stepsize_controller = ConstantStepSize()
+                print(f"Using Lawson-RK4 exponential integrator with fixed dt={self.cfg['grid']['dt']}")
 
         else:
-            raise ValueError(
-                f"Unsupported integrator '{integrator_type}'. Only 'exponential' (Lawson-RK4) is supported."
+            # --- Explicit integrator path (DoPri8 / Tsit5 / etc.) ---
+            from adept._spectrax1d.vector_field import SpectraxVectorField
+
+            vector_field = SpectraxVectorField(
+                Nx=Nx,
+                Ny=Ny,
+                Nz=Nz,
+                Nn_electrons=Nn_e,
+                Nm_electrons=Nm_e,
+                Np_electrons=Np_e,
+                Nn_ions=Nn_i,
+                Nm_ions=Nm_i,
+                Np_ions=Np_i,
+                Ns=Ns,
+                xax=self.xax,
+                driver_config=self.driver_config,
+                grid_quantities_electrons=self.grid_quantities_electrons,
+                grid_quantities_ions=self.grid_quantities_ions,
+                dt=float(self.cfg["grid"]["dt"]),
+                static_ions=static_ions,
             )
+
+            adaptive_time_step = self.cfg["grid"].get("adaptive_time_step", True)
+            if adaptive_time_step:
+                dtmax = self._compute_dtmax_from_driver()
+                rtol = float(self.cfg["grid"].get("ode_rtol", 1e-3))
+                atol = float(self.cfg["grid"].get("ode_atol", 1e-3))
+                stepsize_controller = PIDController(rtol=rtol, atol=atol, dtmax=dtmax)
+            else:
+                stepsize_controller = ConstantStepSize()
+
+            # Resolve solver class by name from diffrax (default: Dopri8)
+            import inspect
+
+            import diffrax as _dfx
+
+            solver_name = integrator_type  # e.g. "Dopri8", "Tsit5"
+            base_solver = None
+            for cls_name, cls in inspect.getmembers(_dfx, inspect.isclass):
+                if issubclass(cls, _dfx.AbstractSolver) and cls_name == solver_name:
+                    base_solver = cls()
+                    break
+            if base_solver is None:
+                raise ValueError(
+                    f"Unknown integrator '{integrator_type}'. Use 'exponential' or a diffrax solver name (e.g. 'Dopri8')."  # noqa: E501
+                )
+            print(f"Using explicit integrator: {solver_name} (adaptive={adaptive_time_step})")
 
         # Build SubSaveAt dictionary for diagnostics
         subsaves = {}
@@ -649,11 +747,23 @@ class BaseSpectrax1D(ADEPTModule):
         # This applies sponge boundary damping analytically outside the solver substeps
         from adept._spectrax1d.integrators import SplitStepDampingSolver
 
+        # For the Lawson path, the hermite filter is applied as a split-step on the state here.
+        # For the explicit (DoPri8) path, the filter is already applied inside SpectraxVectorField's
+        # __call__ (to the derivative), matching the original implementation — do not double-apply.
+        if integrator_type == "exponential":
+            split_step_filter_e = vector_field.hermite_filter_electrons if vector_field.use_hermite_filter else None
+            split_step_filter_i = vector_field.hermite_filter_ions if vector_field.use_hermite_filter else None
+        else:
+            split_step_filter_e = None
+            split_step_filter_i = None
+
         solver = SplitStepDampingSolver(
             wrapped_solver=base_solver,
             sponge_fields=self.grid_quantities_electrons.get("sponge_fields", None),
             sponge_plasma_e=self.grid_quantities_electrons.get("sponge_plasma", None),
             sponge_plasma_i=self.grid_quantities_ions.get("sponge_plasma", None),
+            hermite_filter_e=split_step_filter_e,
+            hermite_filter_i=split_step_filter_i,
             Ny=Ny,
             Nx=Nx,
             Nz=Nz,
@@ -1036,6 +1146,12 @@ class BaseSpectrax1D(ADEPTModule):
         # Add timestep info from default save if available
         if "default" in sol.ts:
             metrics["n_timesteps"] = len(sol.ts["default"])
+
+        # Log adaptive solver step counts (present for both fixed and adaptive runs)
+        if hasattr(sol, "stats") and sol.stats is not None:
+            for stat_key in ("num_steps", "num_accepted_steps", "num_rejected_steps"):
+                if stat_key in sol.stats:
+                    metrics[stat_key] = int(sol.stats[stat_key])
 
         # Add final values from scalar diagnostics if available
         if "scalars" in saved_datasets:

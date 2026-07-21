@@ -17,3 +17,4 @@ Quick links to configuration references:
 - [Vlasov-2D Config](source/solvers/vlasov2d/config.md)
 - [LPSE-2D Config](source/solvers/lpse2d/config.md)
 - [Spectrax-1D Config](source/solvers/spectrax1d/config.md)
+- [Hermite-Legendre-1D Config](source/solvers/hermite_legendre_1d/config.md)

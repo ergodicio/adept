@@ -105,8 +105,5 @@ terms:
       width: 100000.0
   time: leapfrog
 units:
-  Z: 10
-  Zp: 10
-  laser_wavelength: 351nm
   normalizing_density: 1.5e21/cc
   normalizing_temperature: 2000eV

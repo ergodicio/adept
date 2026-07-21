@@ -26,7 +26,7 @@ def get_config_files():
 def test_config_validates_and_constructs(config_path: Path):
     """Test that config file can be loaded and passed to BaseVlasov1D constructor.
 
-    This validates the config against the EMDriverSetModel schema and other
+    This validates the config against the EMDriverSetConfig schema and other
     pydantic models used during simulation construction.
     """
     with open(config_path) as f:

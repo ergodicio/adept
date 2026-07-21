@@ -73,9 +73,8 @@ drivers:
   # Smoothly damps high Hermite modes to prevent aliasing and numerical instabilities
   hermite_filter:
     enabled: false              # Enable/disable Hermite space filtering
-    cutoff_fraction: 0.6667     # Start filtering at 2/3 of max Hermite mode (2/3 ≈ 0.6667)
-    strength: 36.0              # Filter strength parameter (higher = sharper cutoff)
-    order: 36                   # Filter order (higher = sharper transition)
+    strength: 36.0              # Filter strength parameter (higher = more aggressive damping)
+    order: 36                   # Filter order (higher = sharper roll-off near h_max)
 
 # Grid resolution parameters
 grid:

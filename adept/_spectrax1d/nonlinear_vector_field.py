@@ -161,13 +161,11 @@ class NonlinearVectorField(eqx.Module):
         if self.use_hermite_filter:
             filter_order = filter_config.get("order", 36)
             filter_strength = filter_config.get("strength", 36.0)
-            cutoff_fraction = filter_config.get("cutoff_fraction", 2.0 / 3.0)
-
             self.hermite_filter_electrons = self._compute_houli_hermite_filter(
-                Nn_electrons, Nm_electrons, Np_electrons, cutoff_fraction, filter_strength, filter_order
+                Nn_electrons, Nm_electrons, Np_electrons, filter_strength, filter_order
             )
             self.hermite_filter_ions = self._compute_houli_hermite_filter(
-                Nn_ions, Nm_ions, Np_ions, cutoff_fraction, filter_strength, filter_order
+                Nn_ions, Nm_ions, Np_ions, filter_strength, filter_order
             )
         else:
             self.hermite_filter_electrons = None
@@ -239,20 +237,31 @@ class NonlinearVectorField(eqx.Module):
 
         return (jnp.abs(ky) <= cy) & (jnp.abs(kx) <= cx) & (jnp.abs(kz) <= cz)
 
-    def _compute_houli_hermite_filter(
-        self, Nn: int, Nm: int, Np: int, cutoff_fraction: float, strength: float, order: int
-    ) -> Array:
-        """Compute Hou-Li exponential filter in Hermite space."""
-        n = jnp.arange(Nn)[None, None, :]
-        m = jnp.arange(Nm)[None, :, None]
-        p = jnp.arange(Np)[:, None, None]
+    @staticmethod
+    def _compute_houli_hermite_filter(Nn: int, Nm: int, Np: int, strength: float, order: int) -> Array:
+        """Compute the separable per-axis Hou-Li exponential filter in Hermite space.
 
-        h_max = jnp.sqrt((Nn - 1) ** 2 + (Nm - 1) ** 2 + (Np - 1) ** 2)
-        h_cutoff = cutoff_fraction * h_max
-        h = jnp.sqrt(n**2 + m**2 + p**2)
+        Each axis gets its own 1D filter exp(-strength * (i/(N_axis-1))^order); the
+        full 3D filter is the outer product. The previous 3D-radial formula
+        (h = sqrt(n^2+m^2+p^2), h_max = sqrt((Nn-1)^2+(Nm-1)^2+(Np-1)^2)) collapsed
+        to ~1.0 along the short axis when h_max was dominated by the long axis —
+        e.g. with Nn=128, Nm=4, Np=1 the top m-mode (m=3) had h/h_max ≈ 3/127, so
+        exp(-strength * (3/127)^36) ≈ 1 and the m-axis was effectively unfiltered.
 
-        filter_arg = jnp.where(h > h_cutoff, strength * ((h / h_cutoff) ** order), 0.0)
-        return jnp.exp(-filter_arg)
+        Matches the implementation already on the Dopri8 path
+        (vector_field.SpectraxVectorField._houli_filter, fixed in #274).
+        """
+
+        def axis_filter(N: int) -> Array:
+            if N <= 1:
+                return jnp.ones(N, dtype=jnp.float64)
+            i = jnp.arange(N, dtype=jnp.float64)
+            return jnp.exp(-strength * (i / (N - 1)) ** order)
+
+        fn = axis_filter(Nn)
+        fm = axis_filter(Nm)
+        fp = axis_filter(Np)
+        return fp[:, None, None] * fm[None, :, None] * fn[None, None, :]
 
     def _compute_plasma_current_single_species(
         self, Ck: Array, q: float, alpha: Array, u: Array, Nn: int, Nm: int, Np: int
@@ -361,13 +370,14 @@ class NonlinearVectorField(eqx.Module):
                 m=mi_me,
             )
 
-        # Apply Hermite filter
+        # Apply Hou-Li filter to the Hermite derivative at each RK sub-stage to
+        # attenuate the rate at which high-n modes are excited by the E·∂f/∂v
+        # nonlinearity inside the step. The split-step state filter in
+        # integrators.py still runs once per dt on top of this.
         if self.use_hermite_filter:
-            filter_broadcast_e = self.hermite_filter_electrons[:, :, :, None, None, None]
-            dCk_electrons_dt = dCk_electrons_dt * filter_broadcast_e
+            dCk_electrons_dt = dCk_electrons_dt * self.hermite_filter_electrons[:, :, :, None, None, None]
             if not self.static_ions:
-                filter_broadcast_i = self.hermite_filter_ions[:, :, :, None, None, None]
-                dCk_ions_dt = dCk_ions_dt * filter_broadcast_i
+                dCk_ions_dt = dCk_ions_dt * self.hermite_filter_ions[:, :, :, None, None, None]
 
         # Apply density noise
         if self.noise_enabled:
@@ -414,8 +424,14 @@ class NonlinearVectorField(eqx.Module):
 
         dFk_dt = jnp.concatenate([dEk_dt, dBk_dt], axis=0)
 
-        return {
+        out = {
             "Ck_electrons": dCk_electrons_dt.view(jnp.float64),
             "Ck_ions": dCk_ions_dt.view(jnp.float64),
             "Fk": dFk_dt.view(jnp.float64),
         }
+        # Zero derivatives for extra state keys (e.g. SSM hidden state,
+        # which is updated discretely by the closure solver, not the ODE RHS)
+        for k in y:
+            if k not in out:
+                out[k] = jnp.zeros_like(y[k])
+        return out

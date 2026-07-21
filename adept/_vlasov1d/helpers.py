@@ -1,3 +1,5 @@
+"""Initialization and post-processing helpers for Vlasov-1D simulations."""
+
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import os
@@ -23,10 +25,12 @@ from .. import patched_mlflow as mlflow
 
 
 def gamma_3_over_m(m):
+    """Evaluate Gamma(3 / m) for super-Gaussian normalization."""
     return gamma(3.0 / m)  # np.interp(m, m_ax, g_3_m)
 
 
 def gamma_5_over_m(m):
+    """Evaluate Gamma(5 / m) for super-Gaussian normalization."""
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
 
 
@@ -38,6 +42,7 @@ def _initialize_supergaussian_distribution_(
     T0=1.0,
     mass=1.0,
     vmax=6.0,
+    vmin=None,
     n_prof=np.ones(1),
 ):
     """
@@ -52,19 +57,25 @@ def _initialize_supergaussian_distribution_(
         supergaussian_order: order of supergaussian (2 = Maxwell-Boltzmann)
         T0: temperature
         mass: species mass for thermal velocity calculation
-        vmax: maximum absolute value of v
+        vmax: upper bound of the velocity grid
+        vmin: lower bound of the velocity grid (defaults to ``-vmax``)
         n_prof: density profile (noise should already be applied)
 
     Returns:
         Tuple of (f[nx, nv], vax[nv])
     """
-    dv = 2.0 * vmax / nv
-    vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+    if vmin is None:
+        vmin = -vmax
+    dv = (vmax - vmin) / nv
+    vax = np.linspace(vmin + dv / 2.0, vmax - dv / 2.0, nv)
 
     # Thermal velocity: v_t = sqrt(T/m)
     v_thermal = np.sqrt(T0 / mass)
 
-    # Alpha factor for supergaussian normalization
+    # Alpha factor for supergaussian normalization. This fixes the moment ratio
+    # <v^4>/<v^2> = 3*T0/mass for every order m; the realized *variance* equals
+    # T0/mass only at m=2 (Maxwellian). For m>2 flat-tops the second-moment
+    # temperature exceeds T0 (x1.24 at m=3, x1.37 at m=4). See docs config.md.
     alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
 
     single_dist = -(np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
@@ -73,7 +84,7 @@ def _initialize_supergaussian_distribution_(
 
     f = np.repeat(single_dist, nx, axis=0)
     # normalize
-    f = f / np.trapz(f, dx=dv, axis=1)[:, None]
+    f = f / np.sum(f, axis=1)[:, None] / dv
 
     if n_prof.size > 1:
         # scale by density profile
@@ -111,13 +122,14 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
         species_name = species_cfg.name
         density_components = species_distribution_specs[species_name]
         vmax = species_cfg.vmax
+        vmin = species_cfg.vmin
         nv = species_cfg.nv
         mass = species_cfg.mass
 
         # Initialize arrays for this species
         n_prof_species = np.zeros([grid.nx])
-        dv = 2.0 * vmax / nv
-        vax = np.linspace(-vmax + dv / 2.0, vmax - dv / 2.0, nv)
+        dv = (vmax - vmin) / nv
+        vax = np.linspace(vmin + dv / 2.0, vmax - dv / 2.0, nv)
         f_species = np.zeros([grid.nx, nv])
 
         # Sum contributions from all density components
@@ -135,6 +147,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
                 T0=distribution_spec.T0,
                 mass=mass,
                 vmax=vmax,
+                vmin=vmin,
                 n_prof=nprof,
             )
             f_species += temp_f
@@ -149,6 +162,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
+    """Write binary output and diagnostic plots from a completed Vlasov-1D solve."""
     t0 = time()
 
     # Get species names for directory creation

@@ -1,3 +1,5 @@
+"""Field drivers and field solvers for the Vlasov-1D system."""
+
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
@@ -8,31 +10,92 @@ from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.simulation import EMDriver
 
 
-class Driver:
+class LongitudinalElectricFieldDriver:
+    """Computes normalized E_tilde = ω * a0 * sin(kx - ωt) from EM drivers."""
+
     def __init__(self, xax, drivers: list[EMDriver]):
+        """Store the spatial axis and longitudinal driver list."""
         self.xax = xax
         self.drivers = drivers
 
-    def get_this_pulse(self, this_pulse: EMDriver, current_time: jnp.float64):
-        kk = this_pulse.k0
-        ww = this_pulse.w0
-        dw = this_pulse.dw0
-
-        factor = this_pulse.envelope(self.xax, current_time)
-
-        return factor * jnp.abs(kk) * this_pulse.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
+    def _single_driver_field(self, driver: EMDriver, current_time):
+        kk = driver.k0
+        ww = driver.w0
+        dw = driver.dw0
+        factor = driver.envelope(self.xax, current_time)
+        return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
     def __call__(self, t, args):
+        """Evaluate the total longitudinal driver field at time t."""
         total_de = jnp.zeros_like(self.xax)
-
         for pulse in self.drivers:
-            total_de += self.get_this_pulse(pulse, t)
-
+            total_de += self._single_driver_field(pulse, t)
         return total_de
 
 
+class TransverseCurrentSourceDriver:
+    """Computes source term for the transverse wave equation.
+
+    For extended sources (default): S = -ω² * a0 * envelope(x,t) * sin(kx - ωt)
+    For point sources: S = (F0/dx) * time_envelope(t) * δ_i0 * sin(ωt)
+
+    For point sources, the amplitude scaling uses vacuum dispersion. For a 1D wave
+    equation with point source S = F0 * delta(x - x0) * sin(wt), the Green's function
+    gives outgoing waves with amplitude F0 / (2*k*c^2). To get amplitude a0, we need
+    F0 = 2*k*c^2*a0. Using vacuum k = w/c, this gives F0 = 2*w*c*a0. In plasma
+    (k_plasma < k_vac), the actual amplitude will be slightly larger than a0 by a
+    factor k_vac / k_plasma.
+
+    Note: point sources radiate equally in both directions. Place the source near a
+    boundary with absorbing BCs to get a unidirectional wave.
+    """
+
+    def __init__(self, xax, drivers: list[EMDriver], c: float = 0.0):
+        """Precompute point-source masks and scales for transverse drivers."""
+        self.xax = xax
+        self.drivers = drivers
+        dx = float(xax[1] - xax[0])
+
+        self.point_source_masks = []
+        self.point_source_scales = []
+        for driver in drivers:
+            if driver.is_point_source:
+                center = driver.envelope.space_envelope.center
+                i0 = jnp.argmin(jnp.abs(xax - center))
+                mask = jnp.zeros_like(xax).at[i0].set(1.0)
+                w_total = driver.w0 + driver.dw0
+                F0 = 2.0 * w_total * c * driver.a0
+                self.point_source_masks.append(mask)
+                self.point_source_scales.append(F0 / dx)
+            else:
+                self.point_source_masks.append(None)
+                self.point_source_scales.append(None)
+
+    def _single_driver_source(self, driver: EMDriver, mask, scale, current_time):
+        ww = driver.w0
+        dw = driver.dw0
+        w_total = ww + dw
+        if driver.is_point_source:
+            time_env = driver.envelope.time_envelope(current_time)
+            return scale * time_env * mask * jnp.sin(w_total * current_time)
+        else:
+            kk = driver.k0
+            factor = driver.envelope(self.xax, current_time)
+            return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
+
+    def __call__(self, t, args):
+        """Evaluate the summed transverse current source at time t."""
+        total = jnp.zeros_like(self.xax)
+        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True):
+            total += self._single_driver_source(driver, mask, scale, t)
+        return total
+
+
 class WaveSolver:
+    """Finite-difference transverse wave-equation solver with absorbing boundaries."""
+
     def __init__(self, c: jnp.float64, dx: jnp.float64, dt: jnp.float64):
+        """Precompute constants for the second-order wave update."""
         super().__init__()
         self.dx = dx
         self.c = c
@@ -78,6 +141,7 @@ class WaveSolver:
         return jnp.concatenate([a_left, anew, a_right])
 
     def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_density: jnp.ndarray):
+        """Advance the vector potential one timestep or preserve it when waves are disabled."""
         if self.c > 0:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
@@ -163,7 +227,7 @@ class SpectralPoissonSolver:
 class AmpereSolver:
     """Ampere solver using current density to evolve electric field.
 
-    Solves: a single Euler step of ∂E/∂t = -j, where j = Σ_s (q_s/m_s) ∫v f_s dv
+    Solves: a single Euler step of ∂E/∂t = -j, where j = Σ_s q_s ∫v f_s dv
     is the total current density from all species.
     """
 
@@ -289,6 +353,7 @@ class ElectricFieldSolver:
     """
 
     def __init__(self, cfg: dict, grid: Grid):
+        """Select and configure the electrostatic field solver requested by cfg."""
         super().__init__()
 
         species_grids = cfg["grid"]["species_grids"]

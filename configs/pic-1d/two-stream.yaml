@@ -1,0 +1,87 @@
+units:
+  normalizing_temperature: 1eV
+  normalizing_density: 1e21/cc
+
+# Two equal-density, counter-streaming cold electron beams. The box is sized
+# so the fastest-growing mode (k v_b = ωp √(3/8)) is the fundamental:
+#   L = 2π / k_max = 2π / (ωp √(3/8) / v_b)  ≈ 10.2657
+# Theoretical growth rate at this k: γ_max = ωp / (2√2) ≈ 0.3536.
+
+density:
+  quasineutrality: true
+  species-beam-pos:
+    noise_seed: 1
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 1.0
+    T0: 5.0e-3   # thermal velocity ~0.07 ≪ v_b = 1
+    m: 2.0
+    basis: uniform
+    baseline: 0.5
+  species-beam-neg:
+    noise_seed: 2
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: -1.0
+    T0: 5.0e-3
+    m: 2.0
+    basis: uniform
+    baseline: 0.5
+
+grid:
+  dt: 0.05
+  nx: 64
+  tmin: 0.
+  tmax: 30.0
+  xmin: 0.0
+  xmax: 10.26566   # 2π / √(3/8)
+  ppc: 32768
+  particle_shape: tsc   # linear | tsc | cubic
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 30.0
+      nt: 601
+  beam_pos:
+    main:
+      t:
+        tmin: 0.0
+        tmax: 30.0
+        nt: 11
+  beam_neg:
+    main:
+      t:
+        tmin: 0.0
+        tmax: 30.0
+        nt: 11
+
+solver: pic-1d
+
+mlflow:
+  experiment: pic1d-two-stream
+  run: cold-equal-beams
+
+drivers:
+  ex: {}
+  ey: {}
+
+diagnostics: {}
+
+terms:
+  field: poisson
+  time: leapfrog
+  species:
+    - name: beam_pos
+      charge: -1.0
+      mass: 1.0
+      density_components: [species-beam-pos]
+      loading: random   # shot noise from random sampling seeds the instability
+      vmax_load: 4.0
+    - name: beam_neg
+      charge: -1.0
+      mass: 1.0
+      density_components: [species-beam-neg]
+      loading: random
+      vmax_load: 4.0

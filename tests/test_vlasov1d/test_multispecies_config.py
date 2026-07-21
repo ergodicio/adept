@@ -6,7 +6,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from adept._vlasov1d.datamodel import ConfigModel, SpeciesConfig
+from adept._vlasov1d.datamodel import SpeciesConfig, Vlasov1DConfig
 
 
 def test_multispecies_config_parsing():
@@ -17,7 +17,7 @@ def test_multispecies_config_parsing():
         config_dict = yaml.safe_load(f)
 
     # Validate with Pydantic model
-    config = ConfigModel(**config_dict)
+    config = Vlasov1DConfig(**config_dict)
 
     # Check that species are defined
     assert config.terms.species is not None
@@ -50,7 +50,7 @@ def test_backward_compatible_config():
         config_dict = yaml.safe_load(f)
 
     # Validate with Pydantic model
-    config = ConfigModel(**config_dict)
+    config = Vlasov1DConfig(**config_dict)
 
     # Check that species is None (not provided in old configs)
     assert config.terms.species is None

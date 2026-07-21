@@ -1,3 +1,5 @@
+"""ADEPT module classes and config-to-simulation builders for Vlasov-1D."""
+
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 
@@ -10,70 +12,74 @@ from jax import numpy as jnp
 
 from adept import ADEPTModule
 from adept._base_ import Stepper
-from adept._vlasov1d.datamodel import EMDriverSetModel
+from adept._vlasov1d.datamodel import SpeciesConfig, Vlasov1DConfig
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.helpers import _initialize_total_distribution_, post_process
 from adept._vlasov1d.simulation import EMDriverSet, Species, SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
-from adept.functions import SpaceTimeEnvelopeFunction
+from adept.functions import SpaceTimeEnvelopeConfig, SpaceTimeEnvelopeFunction
 from adept.normalization import electron_debye_normalization
 from adept.utils import filter_scalars
 
 
-def species_set_from_cfg(cfg: dict) -> list[Species]:
-    if cfg["terms"].get("species", None):
-        return [Species.from_config(cfg_species) for cfg_species in cfg["terms"]["species"]]
+def species_set_from_config(cfg: Vlasov1DConfig) -> list[Species]:
+    """Return explicit species or synthesize the legacy single-electron species."""
+    if cfg.terms.species:
+        return [Species.from_config(species_cfg) for species_cfg in cfg.terms.species]
     else:
         # Collect all density components (keys starting with "species-")
-        density_components = [name for name in cfg["density"].keys() if name.startswith("species-")]
+        density_components = [name for name in cfg.density.model_extra.keys() if name.startswith("species-")]
         if not density_components:
             raise ValueError("No density components found (expected keys starting with 'species-')")
 
         return [
             Species.from_config(
-                {
-                    "name": "electron",
-                    "charge": -1.0,
-                    "mass": 1.0,
-                    "vmax": cfg["grid"]["vmax"],
-                    "nv": cfg["grid"]["nv"],
-                    "density_components": density_components,
-                }
+                SpeciesConfig(
+                    name="electron",
+                    charge=-1.0,
+                    mass=1.0,
+                    vmax=cfg.grid.vmax,
+                    vmin=cfg.grid.vmin,
+                    nv=cfg.grid.nv,
+                    density_components=density_components,
+                )
             )
         ]
 
 
-def sim_from_cfg(
-    cfg: dict,
+def sim_from_config(
+    cfg: Vlasov1DConfig,
 ) -> Vlasov1DSimulation:
-    """Construct a Vlasov1DSimulation from a base config dict."""
+    """Construct a Vlasov1DSimulation from a Vlasov1DConfig."""
     plasma_norm = electron_debye_normalization(
-        cfg["units"]["normalizing_density"],
-        cfg["units"]["normalizing_temperature"],
+        cfg.units.normalizing_density,
+        cfg.units.normalizing_temperature,
     )
     beta = 1.0 / plasma_norm.speed_of_light_norm()
-    has_ey_driver = len(cfg.get("drivers", {}).get("ey", {}).keys()) > 0
-    grid = Grid.from_config(cfg["grid"], beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
+    has_ey_driver = len(cfg.drivers.ey) > 0
+    grid = Grid.from_config(cfg.grid, beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
 
     # Construct collision frequency profiles if enabled
     nu_fp_prof = None
-    if cfg["terms"]["fokker_planck"]["is_on"]:
-        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["fokker_planck"], norm=plasma_norm)
+    if cfg.terms.fokker_planck.is_on:
+        st_cfg = SpaceTimeEnvelopeConfig(time=cfg.terms.fokker_planck.time, space=cfg.terms.fokker_planck.space)
+        nu_fp_prof = SpaceTimeEnvelopeFunction.from_config(st_cfg, norm=plasma_norm)
 
     nu_K_prof = None
-    if cfg["terms"]["krook"]["is_on"]:
-        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(cfg["terms"]["krook"], norm=plasma_norm)
+    if cfg.terms.krook.is_on:
+        st_cfg = SpaceTimeEnvelopeConfig(time=cfg.terms.krook.time, space=cfg.terms.krook.space)
+        nu_K_prof = SpaceTimeEnvelopeFunction.from_config(st_cfg, norm=plasma_norm)
 
-    species = species_set_from_cfg(cfg)
+    species = species_set_from_config(cfg)
     species_distribution_specs = {
         s.name: [
-            SubspeciesDistributionSpec.from_config(cfg["density"][component_name], norm=plasma_norm)
+            SubspeciesDistributionSpec.from_config(cfg.density.get_component(component_name), norm=plasma_norm)
             for component_name in s.density_components
         ]
         for s in species
     }
-    drivers = EMDriverSet.from_model(EMDriverSetModel.model_validate(cfg["drivers"]), norm=plasma_norm)
+    drivers = EMDriverSet.from_config(cfg.drivers, norm=plasma_norm)
 
     return Vlasov1DSimulation(
         plasma_norm,
@@ -87,14 +93,20 @@ def sim_from_cfg(
 
 
 class BaseVlasov1D(ADEPTModule):
+    """ADEPT module wrapper for configuring, running, and post-processing Vlasov-1D."""
+
     def __init__(self, cfg) -> None:
+        """Validate configuration and construct the Vlasov-1D simulation domain."""
         super().__init__(cfg)
-        self.simulation = sim_from_cfg(cfg)
+        self.config_model = Vlasov1DConfig.model_validate(cfg)
+        self.simulation = sim_from_config(self.config_model)
 
     def post_process(self, run_output: dict, td: str):
+        """Post-process a solver result into plots, netCDF files, and MLflow metrics."""
         return post_process(run_output["solver result"], self.cfg, td, self.args)
 
     def write_units(self) -> dict:
+        """Compute and attach physical normalization quantities to the run config."""
         norm = self.simulation.plasma_norm
         grid = self.simulation.grid
 
@@ -106,6 +118,9 @@ class BaseVlasov1D(ADEPTModule):
         sim_duration = (grid.tmax * norm.tau).to("ps")
 
         nu_ee = norm.approximate_ee_collision_frequency()
+        # e-e collision rate in code units (1/wp0). This is what the FP/Krook
+        # `baseline` rates should be compared against.
+        nu_ee_norm = (nu_ee * norm.tau).to("").magnitude
 
         beta = 1.0 / norm.speed_of_light_norm()
 
@@ -119,6 +134,7 @@ class BaseVlasov1D(ADEPTModule):
             "beta": beta,
             "x0": norm.L0.to("nm"),
             "nuee": nu_ee.to("Hz"),
+            "nuee_norm": nu_ee_norm,
             "logLambda_ee": norm.logLambda_ee(),
             "box_length": box_length,
             "box_width": box_width,
@@ -200,8 +216,9 @@ class BaseVlasov1D(ADEPTModule):
 
             nv = species_cfg.nv
             vmax = species_cfg.vmax
+            vmin = species_cfg.vmin
 
-            dv = 2.0 * vmax / nv
+            dv = (vmax - vmin) / nv
 
             # Build velocity grid parameters for this species
             cfg_grid["species_grids"][species_name] = {
@@ -209,6 +226,7 @@ class BaseVlasov1D(ADEPTModule):
                 "dv": dv,
                 "nv": nv,
                 "vmax": vmax,
+                "vmin": vmin,
                 "kv": jnp.fft.fftfreq(nv, d=dv) * 2.0 * np.pi,
                 "kvr": jnp.fft.rfftfreq(nv, d=dv) * 2.0 * np.pi,
             }
@@ -224,10 +242,12 @@ class BaseVlasov1D(ADEPTModule):
             cfg_grid["species_grids"][species_name]["one_over_kvr"] = jnp.array(one_over_kvr)
 
             # Build species parameters (charge, mass, charge-to-mass ratio)
+            # T0 is the bulk (first-listed component) temperature, used e.g. by the Krook target
             cfg_grid["species_params"][species_name] = {
                 "charge": species_cfg.charge,
                 "mass": species_cfg.mass,
                 "charge_to_mass": species_cfg.charge / species_cfg.mass,
+                "T0": self.simulation.species_distributions[species_name][0].T0,
             }
 
         cfg_grid["n_prof_total"] = n_prof_total
@@ -290,6 +310,7 @@ class BaseVlasov1D(ADEPTModule):
         self.args = {"drivers": self.simulation.drivers, "terms": self.cfg["terms"]}
 
     def init_diffeqsolve(self):
+        """Assemble Diffrax terms, solver, save functions, and solve time bounds."""
         self.cfg = get_save_quantities(self.cfg)
         grid = self.simulation.grid
         self.time_quantities = {"t0": 0.0, "t1": grid.tmax, "max_steps": grid.max_steps}
@@ -308,6 +329,7 @@ class BaseVlasov1D(ADEPTModule):
         )
 
     def __call__(self, trainable_modules: dict, args: dict | None = None):
+        """Run the configured Vlasov-1D solve and return the raw Diffrax result."""
         if args is None:
             args = self.args
         grid = self.simulation.grid

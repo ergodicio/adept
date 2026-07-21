@@ -40,12 +40,15 @@ ignore = [
     "F401", # module imported in `__init__.py` but unused; consider removing or adding to `__all__`
     "F841", # Local variable (e.g. mlflow_run) is assigned to but never used
     "NPY002", # Replace legacy `np.random.uniform` call with `np.random.Generator`
-    "NPY201", # `np.trapz` will be removed in NumPy 2.0. Use `numpy.trapezoid` on NumPy 2.0
     "RUF005", # Consider unpacking instad of concatenation
     "RUF059", # Unpacked variable never used
 ]
 allowed-confusables = [
     "–", # EN DASH
+    "−", # MINUS SIGN (vs HYPHEN-MINUS)
+    "×", # MULTIPLICATION SIGN (vs LATIN SMALL LETTER X)
+    "γ", # GREEK SMALL LETTER GAMMA (vs LATIN SMALL LETTER Y) — physics notation
+    "α", # GREEK SMALL LETTER ALPHA (vs LATIN SMALL LETTER A) — physics notation (thermal velocity)
 ]
 
 [lint.extend-per-file-ignores]

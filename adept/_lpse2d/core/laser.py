@@ -8,6 +8,12 @@ class Light:
         self.E0_source = cfg["units"]["derived"]["E0_source"]
         self.c = cfg["units"]["derived"]["c"]
         self.w0 = cfg["units"]["derived"]["w0"]
+        self.wp0 = cfg["units"]["derived"]["wp0"]  # reference (envelope-density) plasma frequency
+        self.nx = cfg["grid"]["nx"]
+        self.ny = cfg["grid"]["ny"]
+        self.dx = cfg["grid"]["dx"]
+        self.dk = 2.0 * jnp.pi / (self.nx * self.dx)  # matches MATLAB makeKspaceAxes: dk = 2*pi/(N*dx)
+        self.Lx = self.nx * self.dx  # box length in x (um)
         self.dE0x = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
         self.x = cfg["grid"]["x"]
         self.background_density = cfg["grid"]["background_density"]
@@ -51,21 +57,37 @@ class Light:
         :return: updated laser field
         """
 
-        dE0y = jnp.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]), dtype=jnp.complex128)
+        # Build the pump in k-space, matching the MATLAB default path
+        # (flag.buildStaticFieldsInRealSpace = false; m201805_matlabLpse_v11.m:1551-1575).
+        # Each color is a single plane wave whose wavenumber is computed at the *reference*
+        # (envelope-density) plasma frequency wp0 and snapped to the nearest FFT grid mode, so the
+        # pump is exactly periodic on the grid. The local density swelling is applied as an
+        # amplitude factor *after* the transform (not as a spatially-varying phase).
+        E0y_k = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
             delta_omega = light_wave["delta_omega"][i]
-            intensity = light_wave["intensities"][i, :]
-            phase = light_wave["phases"][i, :]
+            intensity = light_wave["intensities"][i, :]  # (ny,)
+            phase = light_wave["phases"][i, :]  # (ny,)
 
-            wpe = self.w0 * jnp.sqrt(self.background_density)
-            k0 = self.w0 / self.c * jnp.sqrt((1 + 0j + delta_omega) ** 2 - wpe**2 / self.w0**2)
-            E0_static = (
-                (1 + 0j - wpe**2.0 / (self.w0 * (1 + delta_omega)) ** 2) ** -0.25
-                * self.E0_source
-                * jnp.sqrt(intensity[None, :])
-                * jnp.exp(1j * k0 * self.x[:, None] + 1j * phase[None, :])
+            # reference-density wavenumber, snapped to the FFT grid (MATLAB lines 1558-1559)
+            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.wp0**2 / self.w0**2)
+            k_index = (jnp.round(k0 / self.dk).astype(int) + self.nx // 2) % self.nx
+            phase_shift = self.Lx / 2.0 * k0  # MATLAB line 1561: matches the x-space construction
+
+            # complex amplitude placed at the snapped k-mode (MATLAB lines 1564-1565)
+            amp = (
+                self.E0_source
+                * jnp.sqrt(intensity)
+                * jnp.exp(-1j * (delta_omega * self.w0 * t_ps - (phase - phase_shift)))
             )
-            dE0y += E0_static * jnp.exp(-1j * delta_omega * self.w0 * t_ps)
+            E0y_k = E0y_k.at[k_index, :].add(amp)
+
+        # k-space -> x-space; the nx factor undoes the 1/nx in ifft (MATLAB line 1569: N*ifft)
+        dE0y = self.nx * jnp.fft.ifft(jnp.fft.ifftshift(E0y_k, axes=0), axis=0)
+
+        # local field swelling, applied once to the summed field (MATLAB line 1572: uses local wpe)
+        wpe = self.w0 * jnp.sqrt(self.background_density)
+        dE0y = dE0y * (1.0 - wpe**2 / self.w0**2) ** -0.25
 
         # Apply speckle envelope if configured (same for all colors)
         if self.speckle_profile is not None:

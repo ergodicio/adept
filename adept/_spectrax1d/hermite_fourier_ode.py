@@ -151,10 +151,17 @@ class HermiteFourierODE(eqx.Module):
         If a closure function is provided for a direction, it will be called to predict
         the value of out-of-range modes instead of using zero padding.
 
-        dn=+1 means 'use source at n-1' (upshift in n)
-        dn=-1 means 'use source at n+1' (downshift in n)
-        dn=0 means identity (no shift)
+        Semantics (verified empirically; locked by tests/test_spectrax1d/test_shift_and_lorentz.py):
+            dn=+1  →  result[n] = C[n+1]  (source at n+1; zero-padded at n=Nn-1)
+            dn=-1  →  result[n] = C[n-1]  (source at n-1; zero-padded at n=0)
+            dn=0   →  identity (no shift)
         Same for dm, dp.
+
+        WARNING: an earlier version of this docstring stated the opposite mapping.
+        Code written against that wording (instead of this function's behavior)
+        produced an inverted E·∂_v f coupling in a downstream solver. If you
+        transcribe this pattern, copy the slice arithmetic or call this method —
+        do not re-implement from the description.
 
         Args:
             Ck: Array with shape (Np, Nm, Nn, Ny, Nx, Nz) - Single species
@@ -194,7 +201,7 @@ class HermiteFourierODE(eqx.Module):
             P = P.at[-1, 1:-1, 1:-1, :, :, :].set(C_Np.squeeze(axis=0))
 
         # Extract shifted region (same as before)
-        n0 = 1 + dn  # dn=+1 -> 0 ; dn=0 -> 1 ; dn=-1 -> 2
+        n0 = 1 + dn  # dn=+1 -> 2 (source n+1) ; dn=0 -> 1 (identity) ; dn=-1 -> 0 (source n-1)
         m0 = 1 + dm
         p0 = 1 + dp
 

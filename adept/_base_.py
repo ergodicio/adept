@@ -301,6 +301,9 @@ class ergoExo:
 
             # config = ConfigModel(**cfg)
 
+        elif cfg["solver"] == "vlasov-2d":
+            from adept.vlasov2d import BaseVlasov2D as this_module
+
         elif cfg["solver"] == "envelope-2d":
             from adept.lpse2d import BaseLPSE2D as this_module
 
@@ -319,6 +322,12 @@ class ergoExo:
 
         elif cfg["solver"] == "hermite-maxwell-1d":
             from adept.spectrax1d import Maxwell1D as this_module
+
+        elif cfg["solver"] == "pic-1d":
+            from adept.pic1d import BasePIC1D as this_module
+
+        elif cfg["solver"] == "hermite-legendre-1d":
+            from adept.hermite_legendre_1d import BaseHermiteLegendre1D as this_module
 
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")

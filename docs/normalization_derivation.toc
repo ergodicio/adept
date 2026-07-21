@@ -1,0 +1,45 @@
+\contentsline {section}{\numberline {1}Normalization Convention}{3}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Reference Quantities}{3}{subsection.1.1}%
+\contentsline {subsection}{\numberline {1.2}Dimensionless Variables}{3}{subsection.1.2}%
+\contentsline {subsection}{\numberline {1.3}Normalized Charges and Masses}{3}{subsection.1.3}%
+\contentsline {subsection}{\numberline {1.4}Normalized Fields}{3}{subsection.1.4}%
+\contentsline {section}{\numberline {2}The Vlasov Equation and \texttt {edfdv} Push}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}SI Vlasov Equation}{4}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Normalized Form}{4}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Verification Against Code (\texttt {VelocityExponential})}{4}{subsection.2.3}%
+\contentsline {section}{\numberline {3}Poisson Solver}{5}{section.3}%
+\contentsline {subsection}{\numberline {3.1}SI Poisson Equation}{5}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Normalization}{5}{subsection.3.2}%
+\contentsline {subsection}{\numberline {3.3}Verification Against Code (\texttt {SpectralPoissonSolver})}{5}{subsection.3.3}%
+\contentsline {section}{\numberline {4}Ampere Solver}{6}{section.4}%
+\contentsline {subsection}{\numberline {4.1}SI Ampere's Law (1D Electrostatic)}{6}{subsection.4.1}%
+\contentsline {subsection}{\numberline {4.2}Normalization}{6}{subsection.4.2}%
+\contentsline {subsection}{\numberline {4.3}Verification Against Code (\texttt {AmpereSolver})}{6}{subsection.4.3}%
+\contentsline {subsection}{\numberline {4.4}Hamiltonian Ampere Solver (\texttt {HampereSolver})}{6}{subsection.4.4}%
+\contentsline {section}{\numberline {5}Wave Equation for the Transverse Vector Potential}{7}{section.5}%
+\contentsline {subsection}{\numberline {5.1}SI Wave Equation}{7}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Normalization}{7}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Normalized Wave Equation}{7}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Verification Against Code (\texttt {WaveSolver})}{7}{subsection.5.4}%
+\contentsline {subsubsection}{\numberline {5.4.1}The electron density term}{8}{subsubsection.5.4.1}%
+\contentsline {subsubsection}{\numberline {5.4.2}The source term \texttt {djy\_array}}{8}{subsubsection.5.4.2}%
+\contentsline {section}{\numberline {6}Ponderomotive Force}{9}{section.6}%
+\contentsline {subsection}{\numberline {6.1}SI Derivation for General Species}{9}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Normalization}{9}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Expressing as an Effective Electric Field}{9}{subsection.6.3}%
+\contentsline {subsection}{\numberline {6.4}Verification Against Code}{10}{subsection.6.4}%
+\contentsline {section}{\numberline {7}The \texttt {ex\_driver} --- Longitudinal Electric Field Source}{11}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Physical Setup}{11}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Derivation}{11}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Comparison with Current Code}{11}{subsection.7.3}%
+\contentsline {section}{\numberline {8}The \texttt {ey\_driver} --- Transverse Current Source for the Wave Equation}{12}{section.8}%
+\contentsline {subsection}{\numberline {8.1}Physical Setup}{12}{subsection.8.1}%
+\contentsline {subsection}{\numberline {8.2}Derivation: Required External Current}{12}{subsection.8.2}%
+\contentsline {subsection}{\numberline {8.3}Interpretation}{12}{subsection.8.3}%
+\contentsline {subsection}{\numberline {8.4}Comparison with Current Code}{13}{subsection.8.4}%
+\contentsline {section}{\numberline {9}Summary}{14}{section.9}%
+\contentsline {subsection}{\numberline {9.1}Components Verified Correct}{14}{subsection.9.1}%
+\contentsline {subsection}{\numberline {9.2}Bugs Found}{14}{subsection.9.2}%
+\contentsline {subsection}{\numberline {9.3}Recommended Fixes}{14}{subsection.9.3}%
+\contentsline {subsubsection}{\numberline {9.3.1}Ponderomotive force (multi-species correct)}{14}{subsubsection.9.3.1}%
+\contentsline {subsubsection}{\numberline {9.3.2}Driver classes}{14}{subsubsection.9.3.2}%

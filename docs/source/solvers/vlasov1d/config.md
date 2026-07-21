@@ -38,21 +38,37 @@ Physical unit normalizations for the simulation.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `laser_wavelength` | string | Laser wavelength with unit, e.g., `"351nm"` |
 | `normalizing_temperature` | string | Reference temperature with unit, e.g., `"2000eV"` |
 | `normalizing_density` | string | Reference density with unit, e.g., `"1.5e21/cc"` |
-| `Z` | int | Ionization state |
-| `Zp` | int | Plasma Z |
 
 Example:
 ```yaml
 units:
-  laser_wavelength: 351nm
   normalizing_temperature: 2000eV
   normalizing_density: 1.5e21/cc
-  Z: 10
-  Zp: 10
 ```
+
+### Normalization convention
+
+All Vlasov-1D quantities are normalized using the following unit system, built from
+`normalizing_density` ($n_0$) and `normalizing_temperature` ($T_0$):
+
+| Unit | Definition | Meaning |
+|------|-----------|---------|
+| time | $\tau = 1/\omega_{p0}$, $\omega_{p0} = \sqrt{n_0 e^2/(\epsilon_0 m_e)}$ | inverse plasma frequency |
+| velocity | $v_0 = \sqrt{T_0/m_e}$ | electron thermal speed (RMS / standard-deviation convention) |
+| length | $L_0 = v_0/\omega_{p0} = \lambda_{De}$ | electron Debye length |
+| wavenumber | $1/L_0$ | a code wavenumber is $k \lambda_{De}$ |
+
+Consequences of the $v_0 = \sqrt{T_0/m_e}$ (σ) convention:
+
+- A Maxwellian at code temperature $T = 1$ is $f \propto e^{-v^2/2}$ (unit variance).
+- The Bohm–Gross dispersion in code units is $\omega^2 = 1 + 3 k^2$.
+- The normalized speed of light is $\hat c = c/\sqrt{T_0/m_e}$ (e.g. $\hat c = 15.98$ at 2000 eV).
+
+Dimensional inputs (strings with units, e.g. `xmax: 100um`) are converted with these
+units; plain numeric inputs are taken to already be in code units and pass through
+unchanged.
 
 ## density
 
@@ -71,9 +87,9 @@ Each species is defined with a key starting with `species-` (e.g., `species-back
 | `noise_seed` | int | Random seed for noise initialization |
 | `noise_type` | string | `"gaussian"` or `"uniform"` |
 | `noise_val` | float | Amplitude of noise |
-| `v0` | float | Drift velocity (normalized) |
-| `T0` | float | Temperature (normalized to `normalizing_temperature`) |
-| `m` | float | Exponent for super-Gaussian distribution. `2.0` is Maxwellian |
+| `v0` | float | Drift velocity in code units of $\sqrt{T_0/m_e}$ (thermal-σ units). Numeric only — dimensional strings are not supported here |
+| `T0` | float | Temperature in units of `normalizing_temperature`. The initialized distribution has velocity variance `T0/mass`. Numeric only |
+| `m` | float | Exponent for super-Gaussian distribution $f \propto \exp[-\|v/(\alpha v_{th})\|^m]$. `2.0` is Maxwellian. Note: $\alpha$ is chosen to fix the moment ratio $\langle v^4\rangle/\langle v^2\rangle = 3\,T_0/\mathrm{mass}$ for all $m$; the *variance* equals `T0/mass` only at `m: 2`. For flat-top distributions (`m > 2`) the second-moment temperature diagnostic will read higher than `T0` (e.g. ×1.24 at `m: 3`, ×1.37 at `m: 4`) |
 | `basis` | string | Spatial profile type (see below) |
 
 #### Basis Types
@@ -168,12 +184,15 @@ Simulation grid parameters.
 | `nx` | int | Number of spatial grid points |
 | `tmin` | float | Start time |
 | `tmax` | float | End time |
-| `vmax` | float | Maximum velocity extent (not needed for multispecies) |
+| `vmax` | float | Upper bound of the velocity grid (not needed for multispecies) |
+| `vmin` | float | Lower bound of the velocity grid. Optional; defaults to `-vmax` (symmetric grid). Use to specify an asymmetric velocity extent (not needed for multispecies). |
 | `xmin` | float | Domain minimum x |
 | `xmax` | float | Domain maximum x |
 | `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. |
 
-**Note:** For multispecies simulations, `nv` and `vmax` are defined per-species in `terms.species` and the global values are not used.
+The velocity grid is uniform and cell-centered: `dv = (vmax - vmin) / nv` with cell centers spanning `vmin + dv/2` to `vmax - dv/2`. An asymmetric grid (`vmin != -vmax`) is useful, for example, for a bump-on-tail distribution where less resolution is needed on one side. As with `vmax`, choose bounds wide enough that `f ~ 0` at *both* edges so that the spectral velocity push and the zero-flux collision boundary conditions remain accurate.
+
+**Note:** For multispecies simulations, `nv`, `vmax`, and `vmin` are defined per-species in `terms.species` and the global values are not used.
 
 Example:
 ```yaml
@@ -299,7 +318,7 @@ Each driver is identified by a string key (e.g., `"0"`, `"1"`) and has these par
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `a0` | float | Driver amplitude |
+| `a0` | float | Normalized vector potential amplitude of the wave (see below) |
 | `k0` | float | Wavenumber |
 | `w0` | float | Frequency |
 | `dw0` | float | Frequency offset/chirp |
@@ -309,6 +328,16 @@ Each driver is identified by a string key (e.g., `"0"`, `"1"`) and has these par
 | `x_center` | float | Spatial envelope center |
 | `x_rise` | float | Spatial envelope rise distance |
 | `x_width` | float | Spatial envelope width |
+| `source_type` | string | `"extended"` (default) or `"point"`. Only affects `ey` drivers. See below. |
+
+### Driver normalization and `a0`
+
+The parameter `a0` has the same meaning for both `ex` and `ey` drivers: **the normalized vector potential amplitude** of the wave. The difference is how `a0` determines the forcing magnitude in each context:
+
+- **`ex` drivers** (longitudinal electric field): The driver produces an electric field with amplitude `ω · a0`, derived from `E = -∂A/∂t`. This field enters the Vlasov equation directly.
+- **`ey` drivers** (transverse wave equation source): The driver produces a source term for the wave equation. The source type controls the spatial profile:
+  - `"extended"` (default): Source is `S = -ω² · a0 · envelope(x,t) · sin(kx - ωt)`, spread over the spatial envelope width. The resulting wave amplitude depends on the source geometry.
+  - `"point"`: Source is concentrated at a single grid cell (nearest to `x_center`). The amplitude is calibrated using the vacuum Green's function so that the outgoing wave has amplitude `a0`. Point sources radiate equally in both directions; place the source near a boundary with absorbing BCs to get a unidirectional wave.
 
 ### Example: Single ex driver
 
@@ -398,13 +427,14 @@ For multispecies simulations, you can define multiple particle species (e.g., el
 | `name` | string | Species identifier (e.g., `"electron"`, `"ion"`) |
 | `charge` | float | Charge in units of fundamental charge (e.g., `-1.0` for electrons, `10.0` for Z=10 ions) |
 | `mass` | float | Mass in units of electron mass (e.g., `1.0` for electrons, `1836.0` for protons) |
-| `vmax` | float | Maximum velocity extent for this species |
+| `vmax` | float | Upper bound of the velocity grid for this species |
+| `vmin` | float | Lower bound of the velocity grid for this species. Optional; defaults to `-vmax` (symmetric grid) |
 | `nv` | int | Number of velocity grid points for this species |
 | `density_components` | list | List of density component names (from `density` section) that belong to this species |
 
 **Important notes:**
 
-- Each species can have its own velocity grid parameters (`vmax`, `nv`), allowing heavier species to use smaller velocity extents
+- Each species can have its own velocity grid parameters (`vmax`, `vmin`, `nv`), allowing heavier species to use smaller velocity extents or asymmetric velocity bounds
 - The `density_components` field maps species to their density profiles defined in the `density` section
 - For single-species simulations, `terms.species` can be omitted; a default electron species will be auto-generated from the `grid.vmax`, `grid.nv`, and all `species-*` density components
 - When using multispecies, `grid.vmax` and `grid.nv` are not used (each species defines its own)
@@ -527,7 +557,7 @@ Both `fokker_planck` and `krook` use profile objects to define spatiotemporal va
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `baseline` | float | Base collision frequency |
+| `baseline` | float | Base collision frequency in code units of $\omega_{p0}$ (i.e. $\hat\nu = \nu[\mathrm{s}^{-1}]/\omega_{p0}$, a true rate — no $2\pi$). For reference, the NRL e–e rate in these units is logged as `nuee_norm` in `units.yaml`. Note the Dougherty/Lenard–Bernstein $\nu$ agrees with the NRL $\nu_{ee}$ only up to an O(1) factor |
 | `bump_or_trough` | string | `"bump"` or `"trough"` |
 | `center` | float | Profile center |
 | `rise` | float | Transition steepness |

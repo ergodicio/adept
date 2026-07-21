@@ -1,3 +1,5 @@
+"""Save-function construction and netCDF writers for Vlasov-1D output."""
+
 import os
 import warnings
 
@@ -115,11 +117,13 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
 
 
 def get_field_save_func(cfg):
+    """Build the Diffrax save callback for field and species moment snapshots."""
     if {"t"} == set(cfg["save"]["fields"].keys()):
         species_grids = cfg["grid"]["species_grids"]
         species_names = list(species_grids.keys())
 
         def fields_save_func(t, y, args):
+            """Compute field, moment, and ponderomotive quantities for one save time."""
             result = {}
 
             # Compute moments for each species
@@ -133,11 +137,12 @@ def get_field_save_func(cfg):
                 f = y[species_name]
                 species_moments = {}
                 species_moments["n"] = _calc_moment_(f)
-                species_moments["v"] = _calc_moment_(f * v[None, :])
+                species_moments["j"] = _calc_moment_(f * v[None, :])
+                species_moments["v"] = species_moments["j"] / species_moments["n"]
                 v_m_vbar = v[None, :] - species_moments["v"][:, None]
                 species_moments["p"] = _calc_moment_(f * v_m_vbar**2.0)
                 species_moments["q"] = _calc_moment_(f * v_m_vbar**3.0)
-                species_moments["-flogf"] = _calc_moment_(f * jnp.log(jnp.abs(f)))
+                species_moments["-flogf"] = _calc_moment_(-jnp.abs(f) * jnp.log(jnp.abs(f)))
                 species_moments["f^2"] = _calc_moment_(f * f)
 
                 result[species_name] = species_moments
@@ -158,9 +163,11 @@ def get_field_save_func(cfg):
 
 
 def get_dist_save_func(axes, dist_save_config, dist_key):
+    """Build a save callback for full or interpolated distribution-function output."""
     if {"t"} == set(dist_save_config.keys()):
 
         def dist_save_func(t, y, args):
+            """Return the full distribution for this save point."""
             return y[dist_key]
 
     elif {"t", "x", "v"} == set(dist_save_config.keys()):
@@ -169,6 +176,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         out_shape = xq.shape
 
         def dist_save_func(t, y, args):
+            """Return the distribution interpolated on configured x-v sample points."""
             return interp2d(xq_flat, vq_flat, axes["x"], axes["v"], y[dist_key], method="linear").reshape(out_shape)
 
     elif {"t", "kx", "v"} == set(dist_save_config.keys()):
@@ -177,6 +185,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
         out_shape = kxq.shape
 
         def dist_save_func(t, y, args):
+            """Return the distribution spectrum interpolated on configured kx-v points."""
             fkx = jnp.abs(jnp.fft.rfft(y[dist_key], axes=0))
             return interp2d(kxq_flat, vq_flat, axes["kx"], axes["v"], fkx, method="linear").reshape(out_shape)
 
@@ -196,14 +205,17 @@ def _add_dim_axes(save_config: dict) -> None:
     for dim_key, dim_config in save_config.items():
         if not isinstance(dim_config, dict) or f"n{dim_key}" not in dim_config:
             continue
+        dim_min = float(dim_config[f"{dim_key}min"])
+        dim_max = float(dim_config[f"{dim_key}max"])
+        dim_n = int(dim_config[f"n{dim_key}"])
         if dim_key == "x":
-            dx = (dim_config[f"{dim_key}max"] - dim_config[f"{dim_key}min"]) / dim_config[f"n{dim_key}"]
+            dx = (dim_max - dim_min) / dim_n
         else:
             dx = 0.0
         dim_config["ax"] = np.linspace(
-            dim_config[f"{dim_key}min"] + dx / 2.0,
-            dim_config[f"{dim_key}max"] - dx / 2.0,
-            dim_config[f"n{dim_key}"],
+            dim_min + dx / 2.0,
+            dim_max - dx / 2.0,
+            dim_n,
         )
 
 
@@ -272,16 +284,20 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
+    """Build the default scalar save callback for species moments and field energies."""
     species_grids = cfg["grid"]["species_grids"]
     species_names = list(species_grids.keys())
 
     def save(t, y, args):
+        """Compute scalar diagnostics at one solver save point."""
         scalars = {}
 
         # Compute scalars for each species
+        mean_kinetic_energy = 0.0
         for species_name in species_names:
             v = species_grids[species_name]["v"][None, :]
             dv = species_grids[species_name]["dv"]
+            mass = cfg["grid"]["species_params"][species_name]["mass"]
 
             def _calc_mean_moment_(inp, _dv=dv):
                 return jnp.mean(jnp.sum(inp, axis=1) * _dv)
@@ -293,11 +309,18 @@ def get_default_save_func(cfg):
             scalars[f"mean_q_{species_name}"] = _calc_mean_moment_(f * v**3.0)
             scalars[f"mean_-flogf_{species_name}"] = _calc_mean_moment_(-jnp.log(jnp.abs(f)) * jnp.abs(f))
             scalars[f"mean_f2_{species_name}"] = _calc_mean_moment_(f * f)
+            mean_kinetic_energy += 0.5 * mass * scalars[f"mean_P_{species_name}"]
 
         # Shared field scalars (not species-specific)
         scalars["mean_de2"] = jnp.mean(y["de"] ** 2.0)
         scalars["mean_e2"] = jnp.mean(y["e"] ** 2.0)
         scalars["mean_pond"] = jnp.mean(-0.5 * jnp.gradient(y["a"] ** 2.0, cfg["grid"]["dx"])[1:-1])
+
+        # Energy conservation monitor (electrostatic): x-averaged kinetic + E-field
+        # energy density. Transverse (EM) field energy is not included.
+        scalars["mean_kinetic_energy"] = mean_kinetic_energy
+        scalars["mean_field_energy"] = 0.5 * scalars["mean_e2"]
+        scalars["mean_total_energy"] = mean_kinetic_energy + 0.5 * scalars["mean_e2"]
 
         return scalars
 

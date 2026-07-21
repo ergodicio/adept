@@ -4,6 +4,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from adept._vlasov1d.datamodel import GridConfig
 from adept.normalization import UREG, PlasmaNormalization, normalize
 
 
@@ -44,18 +45,19 @@ class Grid(eqx.Module):
         should_override_dt_for_em_waves: bool,
         beta: float,
     ):
+        """Build all spatial, temporal, and Fourier grid arrays from scalar inputs."""
         self.xmin = xmin
         self.xmax = xmax
         self.nx = nx
         self.tmin = tmin
 
         # Compute dx
-        self.dx = xmax / nx
+        self.dx = (xmax - xmin) / nx
 
         # Override dt for EM wave stability if needed
         if should_override_dt_for_em_waves:
             c_light = 1.0 / beta
-            self.dt = float(0.95 * self.dx / c_light)
+            self.dt = min(dt_requested, float(0.95 * self.dx / c_light))
         else:
             self.dt = dt_requested
 
@@ -87,23 +89,23 @@ class Grid(eqx.Module):
 
     @staticmethod
     def from_config(
-        cfg_grid: dict, beta: float, should_override_dt_for_em_waves: bool, norm: PlasmaNormalization | None
+        cfg: GridConfig, beta: float, should_override_dt_for_em_waves: bool, norm: PlasmaNormalization | None
     ) -> "Grid":
-        """Construct Grid from config dict.
+        """Construct Grid from a GridConfig.
 
         Args:
-            cfg_grid: Dictionary of grid configuration
+            cfg: GridConfig with grid parameters
             beta: Speed of light normalization (1/c_norm), needed for EM dt override
             should_override_dt_for_em_waves: Whether dt should be limited to ensure stability of EM waves.
         """
 
         return Grid(
-            xmin=normalize(cfg_grid["xmin"], norm, dim="x"),
-            xmax=normalize(cfg_grid["xmax"], norm, dim="x"),
-            nx=cfg_grid["nx"],
-            tmin=normalize(cfg_grid.get("tmin", 0.0), norm, dim="t"),
-            tmax_requested=normalize(cfg_grid["tmax"], norm, dim="t"),
-            dt_requested=normalize(cfg_grid["dt"], norm, dim="t"),
+            xmin=normalize(cfg.xmin, norm, dim="x"),
+            xmax=normalize(cfg.xmax, norm, dim="x"),
+            nx=cfg.nx,
+            tmin=normalize(cfg.tmin, norm, dim="t"),
+            tmax_requested=normalize(cfg.tmax, norm, dim="t"),
+            dt_requested=normalize(cfg.dt, norm, dim="t"),
             should_override_dt_for_em_waves=should_override_dt_for_em_waves,
             beta=beta,
         )

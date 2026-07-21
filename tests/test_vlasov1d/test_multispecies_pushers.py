@@ -111,7 +111,7 @@ def test_velocity_exponential_convergence():
 
         # Apply pusher to both species with same initial condition
         f_dict = {"electron": f_init, "ion": f_init}
-        result = pusher(f_dict, e, dt)
+        result = pusher(f_dict, e, jnp.zeros_like(e), dt)
         f_electron_numerical = result["electron"]
         f_ion_numerical = result["ion"]
 

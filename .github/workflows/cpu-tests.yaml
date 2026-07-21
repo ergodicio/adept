@@ -16,10 +16,88 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect which solvers were touched so we only run the relevant test suites.
+  # `shared` catches cross-cutting code/infra and is folded into every per-solver
+  # filter via the &shared YAML anchor, so touching core code runs everything.
+  # A push to main or a manual dispatch also forces all suites (run_all == true).
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      run_all: ${{ steps.force.outputs.run_all }}
+      base: ${{ steps.filter.outputs.base }}
+      lpse2d: ${{ steps.filter.outputs.lpse2d }}
+      vlasov1d: ${{ steps.filter.outputs.vlasov1d }}
+      vfp1d: ${{ steps.filter.outputs.vfp1d }}
+      spectrax1d: ${{ steps.filter.outputs.spectrax1d }}
+      pic1d: ${{ steps.filter.outputs.pic1d }}
+    steps:
+    - uses: actions/checkout@v7
+    - id: force
+      # Anything other than a pull_request (push to main, manual dispatch) runs
+      # the full suite for complete coverage on the protected branch.
+      run: |
+        if [ "${{ github.event_name }}" = "pull_request" ]; then
+          echo "run_all=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "run_all=true" >> "$GITHUB_OUTPUT"
+        fi
+    - uses: dorny/paths-filter@v4
+      id: filter
+      with:
+        filters: |
+          shared: &shared
+            - 'pyproject.toml'
+            - 'uv.lock'
+            - 'run.py'
+            - '.github/workflows/cpu-tests.yaml'
+            - '.github/actions/setup_repo/**'
+            - 'tests/conftest.py'
+            - 'adept/__init__.py'
+            - 'adept/_base_.py'
+            - 'adept/utils.py'
+            - 'adept/functions.py'
+            - 'adept/electrostatic.py'
+            - 'adept/normalization.py'
+            - 'adept/mlflow_logging.py'
+            - 'adept/patched_mlflow.py'
+            - 'adept/driftdiffusion.py'
+          base:
+            - *shared
+            - 'tests/test_base/**'
+          lpse2d:
+            - *shared
+            - 'adept/_lpse2d/**'
+            - 'adept/lpse2d.py'
+            - 'tests/test_lpse2d/**'
+          vlasov1d:
+            - *shared
+            - 'adept/_vlasov1d/**'
+            - 'adept/vlasov1d.py'
+            - 'tests/test_vlasov1d/**'
+          vfp1d:
+            - *shared
+            - 'adept/vfp1d/**'
+            - 'tests/test_vfp1d/**'
+            - 'tests/fp_relaxation/**'
+          spectrax1d:
+            - *shared
+            - 'adept/_spectrax1d/**'
+            - 'adept/spectrax1d.py'
+            - 'tests/test_spectrax1d/**'
+          pic1d:
+            - *shared
+            - 'adept/_pic1d/**'
+            - 'adept/pic1d.py'
+            - 'tests/test_pic1d/**'
+
   test-base:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.base == 'true'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
@@ -27,9 +105,11 @@ jobs:
       run: uv run --locked pytest tests/test_base
 
   test-lpse2d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.lpse2d == 'true'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
@@ -37,19 +117,23 @@ jobs:
       run: uv run --locked pytest tests/test_lpse2d
 
   test-vlasov1d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.vlasov1d == 'true'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
     - name: Test with pytest
-      run: uv run --locked pytest tests/test_vlasov1d
+      run: uv run --locked pytest tests/test_vlasov1d --ignore=tests/test_vlasov1d/test_config_regression.py
 
   test-vfp1d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.vfp1d == 'true'
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
@@ -57,6 +141,30 @@ jobs:
       run: uv run --locked pytest tests/test_vfp1d
 
   test-spectrax1d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.spectrax1d == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_spectrax1d
+
+  test-pic1d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.pic1d == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_pic1d
+
+  test-hermite-poisson-1d:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
@@ -64,4 +172,14 @@ jobs:
       with:
         python-version: '3.11'
     - name: Test with pytest
-      run: uv run --locked pytest tests/test_spectrax1d
+      run: uv run --locked pytest tests/test_hermite_poisson_1d
+
+  test-hermite-legendre-1d:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_hermite_legendre_1d

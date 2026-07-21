@@ -321,6 +321,7 @@ def plot_epw_diagnostics(
         axes[0].set_xlabel(r"Time ($\omega_{pe}^{-1}$)", fontsize=12)
         axes[0].set_ylabel(r"$|E_x(k=1)|$", fontsize=12)
         axes[0].set_title("EPW Amplitude (First Mode)", fontsize=12)
+        axes[0].set_ylim([0.01 * np.max(amplitude), np.max(amplitude) * 1.5])
         axes[0].grid(True, alpha=0.3)
 
         # Right panel: Frequency (zoomed to driver-on period, excluding final 50)

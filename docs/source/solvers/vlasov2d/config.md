@@ -1,445 +1,247 @@
 # Vlasov-2D Configuration Reference
 
-This document describes how to construct a configuration file for the `vlasov-2d` solver. This is a 2D2V (2 spatial dimensions, 2 velocity dimensions) Vlasov-Maxwell solver.
+The `vlasov-2d` solver evolves the 2D2V Vlasov–Maxwell system
 
-## Top-Level Structure
-
-```yaml
-units:
-  # Physical unit normalizations
-
-density:
-  # Species definitions
-
-grid:
-  # Simulation grid parameters
-
-save:
-  # Output configuration
-
-mlflow:
-  # Experiment tracking
-
-drivers:
-  # External drivers
-
-krook:
-  # Krook collision operator
-
-solver:
-  # Solver algorithm configuration
+```
+∂f/∂t + v·∇_x f + (q/m)(E + v × B)·∇_v f = C[f]
+∂Ex/∂t =  c² ∂Bz/∂y − Jx
+∂Ey/∂t = −c² ∂Bz/∂x − Jy
+∂Bz/∂t = ∂Ex/∂y − ∂Ey/∂x
 ```
 
-## units
+with `f(x, y, vx, vy)` on a periodic 2D box. Time stepping is Strang-split:
 
-Physical unit normalizations for the simulation. Same structure as vlasov-1d.
+1. ½ x-streaming (spectral)  →  ½ y-streaming (spectral)
+2. Velocity push: ½ E_x → ½ E_y → full Bz-rotation (2D SL) → ½ E_y → ½ E_x
+3. ½ y-streaming  →  ½ x-streaming
+4. Spectral Maxwell update with currents `(Jx_self + Jx_driver, Jy_self + Jy_driver)`
+5. Collisions (Dougherty FP, Krook) and optional Hou–Li filter
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `laser_wavelength` | string | Laser wavelength with unit, e.g., `"351nm"` |
-| `normalizing_temperature` | string | Reference temperature with unit, e.g., `"2000eV"` |
-| `normalizing_density` | string | Reference density with unit, e.g., `"1.5e21/cc"` |
-| `Z` | int | Ionization state |
-| `Zp` | int | Plasma Z |
+## Top-level keys
 
-Example:
+| Key | Required | Description |
+| --- | --- | --- |
+| `solver` | yes | Must be `vlasov-2d`. |
+| `units` | yes | Plasma normalization. |
+| `density` | yes | Density-component definitions. |
+| `grid` | yes | Spatial and temporal grid. |
+| `terms` | no | Time-integration & physics toggles. |
+| `drivers` | no | External EM current drivers. |
+| `save` | yes | Output / diagnostic save points. |
+| `mlflow` | yes | Experiment name and run name. |
+
+## `units`
+
 ```yaml
 units:
-  laser_wavelength: 351nm
+  laser_wavelength: 351nm    # optional
   normalizing_temperature: 2000eV
   normalizing_density: 1.5e21/cc
-  Z: 10
-  Zp: 10
 ```
 
-## density
+Sets `n0`, `T0`, `v0 = √(T0/m_e)`, `λ_D`, `ωp0`. Lengths in the config are in
+Debye lengths, times in `1/ωp0`, velocities in `v0`, fields normalized to
+`m_e v0 ωp0 / e`.
 
-Species and density configuration.
+## `grid`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `quasineutrality` | bool | Whether to enforce quasineutrality |
+```yaml
+grid:
+  dt: 0.1
+  nx: 32
+  ny: 16
+  nvx: 64
+  nvy: 64
+  tmin: 0.0
+  tmax: 60.0
+  vmax: 6.0
+  xmin: 0.0
+  xmax: 20.94
+  ymin: -10.0
+  ymax: 10.0
+  parallel: false
+  distribution-sharding:
+    enabled: false
+    mesh_axes: ["x"]
+    mesh_shape: [1]
+    partition: ["x", null, null, null]
+```
 
-### Species Definition
+`dt` will be capped to `0.5 * min(dx, dy) / c_norm` whenever any EM driver is
+enabled (Maxwell CFL).
 
-Each species is defined with a key starting with `species-` (e.g., `species-background`).
+`distribution-sharding` enables distributed initialization of the global
+`f(x, y, vx, vy)` arrays. When enabled, the solver uses JAX
+`make_array_from_callback` to materialize each device's shard directly instead
+of allocating the full distribution on the host first. The `partition` tuple is
+ordered as `[x, y, vx, vy]` and each entry must either be `null` or a name from
+`mesh_axes`.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `noise_seed` | int | Random seed for noise initialization |
-| `noise_type` | string | `"gaussian"` or `"uniform"` |
-| `noise_val` | float | Amplitude of noise |
-| `v0` | float | Drift velocity (normalized) |
-| `T0` | float | Temperature (normalized to `normalizing_temperature`) |
-| `m` | float | Exponent for super-Gaussian distribution. `2.0` is Maxwellian |
-| `basis` | string | Spatial profile type. Currently only `"uniform"` is supported |
-| `space-profile` | object | Spatial profile configuration |
+For example, a two-dimensional spatial mesh over all visible devices can be
+configured as:
 
-#### space-profile
+```yaml
+grid:
+  distribution-sharding:
+    enabled: true
+    mesh_axes: ["x", "y"]
+    mesh_shape: [4, 2]
+    partition: ["x", "y", null, null]
+```
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `baseline` | float | Base density |
-| `bump_or_trough` | string | `"bump"` or `"trough"` |
-| `center` | float | Profile center |
-| `rise` | float | Transition steepness |
-| `slope` | float | Linear slope (typically 0.0) |
-| `wall_height` | float | Height of profile feature |
-| `width` | float | Profile width |
+If `mesh_shape` is omitted, all visible JAX devices are placed on the first mesh
+axis. Sharded initialization currently requires deterministic density profiles:
+set `noise_type: none` or `noise_val: 0.0`. The sharding helper also exposes a
+reshard primitive for future distributed FFT pushers to make a transform axis
+local before an exponential step.
 
-Example:
+## `density`
+
+Like the 1D solver, each `species-<name>` key under `density` describes one
+additive component that contributes a density profile and a bi-supergaussian
+in (vx, vy):
+
 ```yaml
 density:
   quasineutrality: true
   species-background:
-    noise_seed: 420
-    noise_type: gaussian
+    noise_type: gaussian       # uniform | gaussian | none
     noise_val: 0.0
-    v0: 0.0
-    T0: 1.0
-    m: 2.0
-    basis: uniform
-    space-profile:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      wall_height: 0.0
-      width: 100000.0
+    noise_seed: 420
+    v0x: 0.0                   # drift in vx
+    v0y: 0.0                   # drift in vy
+    T0: 1.0                    # temperature
+    m: 2.0                     # supergaussian order; 2 = Maxwellian
+    basis: sine                # uniform | sine
+    baseline: 1.0
+    amplitude: 1.0e-3          # for `basis: sine`
+    wavenumber-x: 0.3
+    wavenumber-y: 0.0
+    # Optional spatial masks (multiplied in):
+    space-x: {center: 10.0, rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
+    space-y: {center: 0.0,  rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
 ```
 
-## grid
+For multi-species runs add a `terms.species` list of explicit `SpeciesConfig`
+entries (name, charge, mass, vmax, nvx, nvy, density_components).
 
-Simulation grid parameters for 2D2V phase space.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `dt` | float | Timestep (normalized) |
-| `nx` | int | Number of spatial grid points in x |
-| `ny` | int | Number of spatial grid points in y |
-| `nvx` | int | Number of velocity grid points in vx |
-| `nvy` | int | Number of velocity grid points in vy |
-| `tmin` | float | Start time |
-| `tmax` | float | End time |
-| `vmax` | float | Maximum velocity extent (same for vx and vy) |
-| `xmin` | float | Domain minimum x |
-| `xmax` | float | Domain maximum x |
-| `ymin` | float | Domain minimum y |
-| `ymax` | float | Domain maximum y |
-
-Example:
-```yaml
-grid:
-  dt: 0.1
-  nx: 24
-  ny: 8
-  nvx: 128
-  nvy: 128
-  tmin: 0.0
-  tmax: 150.0
-  vmax: 6.4
-  xmin: 0.0
-  xmax: 20.94
-  ymin: -4.0
-  ymax: 4.0
-```
-
-## save
-
-Configures what data to save and at what times.
-
-### Structure
+## `terms`
 
 ```yaml
-save:
-  fields:
-    t:
-      tmin: 0.0
-      tmax: 150.0
-      nt: 301
-  electron:
-    t:
-      tmin: 0.0
-      tmax: 150.0
-      nt: 3
+terms:
+  edfdv: exponential    # exponential | sl   (sl = 2D cubic interpolation)
+  vdfdx: exponential    # exponential (only option)
+  fokker_planck:
+    is_on: false
+    type: dougherty
+    time:    {center: 0.0, rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
+    space-x: {center: 0.0, rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
+    space-y: {center: 0.0, rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
+  krook:
+    is_on: false
+    time:    {...}      # same shape as fokker_planck
+    space-x: {...}
+    space-y: {...}
+  hou_li_filter:
+    is_on: false
+    alpha: 36.0
+    order: 36
+    dimensions: ["x", "y", "vx", "vy"]
 ```
 
-| Save Key | Description |
-|----------|-------------|
-| `fields` | Electric field (ex, ey), magnetic field (bz), and driver fields (dex, dey) |
-| `electron` | Electron distribution function |
+- The Dougherty FP relaxes `f` toward a local Maxwellian centred at the local
+  mean velocity, separable in vx then vy (Lie split). Conserves density,
+  momentum, and energy along each axis exactly.
+- The Krook operator drags `f` toward `n(x,y) · M(vx) · M(vy)` with unit
+  thermal speed.
+- The Hou–Li filter is separable; pick any subset of `{x, y, vx, vy}`.
 
-Each save key contains a `t` sub-key with:
+## `drivers`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `tmin` | float | Start time for saving |
-| `tmax` | float | End time for saving |
-| `nt` | int | Number of save points |
+External EM current sources. Each driver adds
+`J = −w² · a0 · env(x, y, t) · sin(kx·x + ky·y − w·t)` to either Jx or Jy:
 
-### Optional Spatial Subsampling
-
-Fields can optionally include spatial or spectral subsampling:
-
-```yaml
-save:
-  fields:
-    t:
-      tmin: 0.5
-      tmax: 99.0
-      nt: 64
-    x:
-      xmin: 0.5
-      xmax: 19.0
-      nx: 16
-    y:
-      ymin: -2.0
-      ymax: 2.0
-      ny: 2
-```
-
-## mlflow
-
-Experiment tracking configuration.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `experiment` | string | MLflow experiment name |
-| `run` | string | MLflow run name |
-
-Example:
-```yaml
-mlflow:
-  experiment: ld-2d2v
-  run: envelope-driver-small-amp
-```
-
-## drivers
-
-External electromagnetic drivers. The `ex` driver includes y-dimension envelope parameters.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `ex` | dict | Longitudinal electric field drivers |
-| `ey` | dict | Transverse electric field drivers (typically empty `{}`) |
-
-Each driver is identified by a string key (e.g., `"0"`) and has these parameters:
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `a0` | float | Driver amplitude |
-| `k0` | float | Wavenumber |
-| `w0` | float | Frequency |
-| `dw0` | float | Frequency offset/chirp |
-| `t_center` | float | Temporal envelope center |
-| `t_rise` | float | Temporal envelope rise time |
-| `t_width` | float | Temporal envelope width |
-| `x_center` | float | Spatial envelope center (x) |
-| `x_rise` | float | Spatial envelope rise distance (x) |
-| `x_width` | float | Spatial envelope width (x) |
-| `y_center` | float | Spatial envelope center (y) |
-| `y_rise` | float | Spatial envelope rise distance (y) |
-| `y_width` | float | Spatial envelope width (y) |
-
-Example:
 ```yaml
 drivers:
-  ex:
-    '0':
-      a0: 1.e-6
-      k0: 0.3
-      w0: 1.1598
-      dw0: 0.0
-      t_center: 30.0
-      t_rise: 5.0
-      t_width: 30.0
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
-      y_center: 0.0
-      y_rise: 10.0
-      y_width: 200.0
-  ey: {}
+  ex: {}
+  ey:
+    "0":
+      params: {a0: 1.0e-5, k0x: 0.0, k0y: 0.5, w0: 1.5, dw0: 0.0}
+      envelope:
+        time:    {center: 5.0, rise: 1.0, width: 30.0, baseline: 0.0, bump_height: 1.0}
+        space-x: {center: 10.0, rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
+        space-y: {center: 0.0,  rise: 1.0, width: 1e6, baseline: 0.0, bump_height: 1.0}
+      polarization: y      # "x" or "y"
 ```
 
-## krook
+The driver source enters Maxwell as an additional current at time `t + dt/2`.
 
-Krook collision operator configuration (at top level, not under `terms`).
+## `save`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `space-profile` | object | Spatial profile for collision frequency |
-| `time-profile` | object | Temporal profile for collision frequency |
-
-### Profile Objects
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `baseline` | float | Base collision frequency |
-| `bump_or_trough` | string | `"bump"` or `"trough"` |
-| `center` | float | Profile center |
-| `rise` | float | Transition steepness |
-| `slope` | float | Linear slope (typically 0.0) |
-| `wall_height` | float | Height of profile feature |
-| `width` | float | Profile width |
-
-Example:
 ```yaml
-krook:
-  space-profile:
-    baseline: 0.0
-    bump_or_trough: bump
-    center: 2500
-    rise: 10.0
-    slope: 0.0
-    wall_height: 0.0
-    width: 48000000.0
-  time-profile:
-    baseline: 0.0
-    bump_or_trough: bump
-    center: 0.0
-    rise: 10.0
-    slope: 0.0
-    wall_height: 0.0
-    width: 100000.0
+save:
+  fields:
+    t: {nt: 32}              # only {t} is supported for fields right now
+  electron:
+    snapshots:
+      t:  {nt: 5}
+      x:  {xmin: 0.0,  xmax: 20.94, nx: 16}
+      y:  {ymin: -10.0, ymax: 10.0, ny: 8}
+      vx: {vxmin: -6.0, vxmax: 6.0, nvx: 32}
+      vy: {vymin: -6.0, vymax: 6.0, nvy: 32}
 ```
 
-## solver
+- `fields` writes species moments (n, ux, uy, Txx, Tyy, T) plus shared fields
+  (Ex, Ey, Bz, Jx_driver, Jy_driver).
+- Distribution saves under a species name accept either `{t}` (full
+  resolution) or `{t, x, y, vx, vy}` (linear interpolation onto a coarser
+  output grid). 4D output files are large; the coarse grid keeps things sane.
 
-Solver algorithm configuration. Note: This is structured differently from vlasov-1d.
+## `mlflow`
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `dfdt` | string | Time integrator: `"leapfrog"` |
-| `edfdv` | string | Velocity advection scheme: `"exponential"` or `"center_difference"` |
-| `vdfdx` | string | Spatial advection scheme: `"exponential"` |
-| `field` | string | Field solver: `"ampere"` |
-| `fp_operator` | string | Fokker-Planck operator type: `"dougherty"` |
-| `num_unroll` | int | Number of steps to unroll for JIT compilation |
-| `push_f` | bool | Whether to push the distribution function |
-
-Example:
 ```yaml
-solver:
-  dfdt: leapfrog
-  edfdv: exponential
-  vdfdx: exponential
-  field: ampere
-  fp_operator: dougherty
-  num_unroll: 32
-  push_f: True
+mlflow:
+  experiment: vlasov-2d-tests
+  run: my-run-name
 ```
 
-## Complete Example
+## Example: 2D Landau damping
 
 ```yaml
-units:
-  laser_wavelength: 351nm
-  normalizing_temperature: 2000eV
-  normalizing_density: 1.5e21/cc
-  Z: 10
-  Zp: 10
-
+solver: vlasov-2d
+units: {normalizing_temperature: 2000eV, normalizing_density: 1.5e21/cc}
 density:
   quasineutrality: true
   species-background:
-    noise_seed: 420
-    noise_type: gaussian
-    noise_val: 0.0
-    v0: 0.0
+    v0x: 0.0
+    v0y: 0.0
     T0: 1.0
     m: 2.0
-    basis: uniform
-    space-profile:
-      baseline: 1.0
-      bump_or_trough: bump
-      center: 0.0
-      rise: 25.0
-      slope: 0.0
-      wall_height: 0.0
-      width: 100000.0
-
+    basis: sine
+    baseline: 1.0
+    amplitude: 1.0e-3
+    wavenumber-x: 0.3
+    wavenumber-y: 0.0
 grid:
   dt: 0.1
-  nvx: 128
-  nvy: 128
-  nx: 24
-  ny: 8
-  tmin: 0.0
-  tmax: 150.0
-  vmax: 6.4
-  xmax: 20.94
+  nx: 32
+  ny: 16
+  nvx: 64
+  nvy: 64
+  tmax: 60.0
+  vmax: 6.0
   xmin: 0.0
-  ymin: -4.0
-  ymax: 4.0
-
+  xmax: 20.94
+  ymin: -10.0
+  ymax: 10.0
+terms: {edfdv: exponential, vdfdx: exponential}
+drivers: {ex: {}, ey: {}}
 save:
-  fields:
-    t:
-      tmin: 0.0
-      tmax: 150.0
-      nt: 301
+  fields: {t: {nt: 32}}
   electron:
-    t:
-      tmin: 0.0
-      tmax: 150.0
-      nt: 3
-
-krook:
-  space-profile:
-    baseline: 0.0
-    bump_or_trough: bump
-    center: 2500
-    rise: 10.0
-    slope: 0.0
-    wall_height: 0.0
-    width: 48000000.0
-  time-profile:
-    baseline: 0.0
-    bump_or_trough: bump
-    center: 0.0
-    rise: 10.0
-    slope: 0.0
-    wall_height: 0.0
-    width: 100000.0
-
-mlflow:
-  experiment: ld-2d2v
-  run: my-simulation
-
-drivers:
-  ex:
-    '0':
-      a0: 1.e-6
-      k0: 0.3
-      t_center: 30.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
-      dw0: 0.0
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
-      y_center: 0.0
-      y_rise: 10.0
-      y_width: 200.0
-  ey: {}
-
-solver:
-  dfdt: leapfrog
-  edfdv: exponential
-  fp_operator: dougherty
-  num_unroll: 32
-  field: ampere
-  vdfdx: exponential
-  push_f: True
+    snapshots:
+      t: {nt: 5}
+mlflow: {experiment: vlasov-2d-tests, run: landau-damping}
 ```
 
-## Example Configurations
-
-### Landau Damping (2D)
-
-See `configs/vlasov-2d/base.yaml` - 2D Landau damping simulation with small-amplitude driver.
-
-See `tests/test_vlasov2d/configs/damping.yaml` - Test configuration for Landau damping verification.
+A full template ships in `configs/vlasov-2d/base.yaml`.
