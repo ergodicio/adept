@@ -20745,6 +20745,7 @@ grid:
       - 6.3625
       - 6.3875
       vmax: 6.4
+      vmin: -6.4
   species_params:
     electron:
       T0: 1.0
