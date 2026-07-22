@@ -49,6 +49,7 @@ class Grid(eqx.Module):
     # Physics / mode parameters stored on the grid for convenience
     nl: int  # number of Legendre harmonics
     boundary: str  # "periodic" or "reflective"
+    geometry: str  # "cartesian" or "spherical"
 
     def __init__(
         self,
@@ -63,12 +64,27 @@ class Grid(eqx.Module):
         vmax: float,
         nl: int,
         boundary: str = "periodic",
+        geometry: str = "cartesian",
     ):
+        if geometry not in ("cartesian", "spherical"):
+            raise ValueError(f"Unknown geometry '{geometry}', expected 'cartesian' or 'spherical'")
+        if geometry == "spherical":
+            if xmin < 0.0:
+                raise ValueError(
+                    "Spherical geometry requires xmin >= 0 (the coordinate is the radius r; "
+                    "xmin > 0 gives an annular domain with a reflecting inner wall)"
+                )
+            if boundary != "reflective":
+                raise ValueError(
+                    "Spherical geometry requires boundary = 'reflective' "
+                    "(f10 and E vanish at the inner boundary -- by symmetry when xmin = 0 -- "
+                    "and at the outer wall)"
+                )
         # -- Spatial ----------------------------------------------------------
         self.xmin = xmin
         self.xmax = xmax
         self.nx = nx
-        self.dx = xmax / nx
+        self.dx = (xmax - xmin) / nx
 
         self.x = jnp.linspace(xmin + self.dx / 2, xmax - self.dx / 2, nx)
         self.x_edge = jnp.linspace(xmin, xmax, nx + 1)
@@ -99,6 +115,7 @@ class Grid(eqx.Module):
         # -- Physics ----------------------------------------------------------
         self.nl = nl
         self.boundary = boundary
+        self.geometry = geometry
 
     @staticmethod
     def from_config(cfg_grid: dict, norm: PlasmaNormalization) -> Grid:
@@ -112,6 +129,7 @@ class Grid(eqx.Module):
 
         xmax = normalize(cfg_grid["xmax"], norm, dim="x")
         xmin = normalize(cfg_grid["xmin"], norm, dim="x")
+        geometry = cfg_grid.get("geometry", "cartesian")
         tmax = normalize(cfg_grid["tmax"], norm, dim="t")
         dt = normalize(cfg_grid["dt"], norm, dim="t")
 
@@ -127,7 +145,8 @@ class Grid(eqx.Module):
             nv=cfg_grid["nv"],
             vmax=vmax,
             nl=cfg_grid["nl"],
-            boundary=cfg_grid.get("boundary", "periodic"),
+            boundary=cfg_grid.get("boundary", "reflective" if geometry == "spherical" else "periodic"),
+            geometry=geometry,
         )
 
     def as_dict(self) -> dict:
