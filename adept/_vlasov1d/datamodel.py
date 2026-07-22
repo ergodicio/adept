@@ -169,6 +169,9 @@ class FokkerPlanckConfig(BaseModel):
     type: str
     time: EnvelopeConfig
     space: EnvelopeConfig
+    # Super-Gaussian exponent of the operator's equilibrium (only used by
+    # type: super_gaussian; m=2 is Maxwellian)
+    m: float = Field(default=2.0, ge=1.0)
 
 
 class KrookConfig(BaseModel):
