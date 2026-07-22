@@ -13,12 +13,19 @@ from typing import Any
 import jax
 import lineax as lx
 import numpy as np
+import optimistix as optx
 from jax import Array, shard_map, vmap
 from jax import numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
-from adept.driftdiffusion import AbstractBetaBasedModel, CentralDifferencing, ChangCooper
+from adept.driftdiffusion import (
+    AbstractBetaBasedModel,
+    CentralDifferencing,
+    ChangCooper,
+    analytic_supergaussian_temperature_ratio,
+    chang_cooper_delta,
+)
 
 
 class LenardBernstein(AbstractBetaBasedModel):
@@ -96,6 +103,158 @@ class Dougherty(AbstractBetaBasedModel):
         return 1.0 / (2.0 * beta)
 
 
+class SuperGaussianDougherty(Dougherty):
+    """
+    Dougherty-type collision model whose equilibrium is a super-Gaussian.
+
+    Physics:
+        Equilibrium: f₀ ∝ exp(-β·|v - vbar|^m)   (m = 2 recovers Dougherty)
+        C = D · Δφ/dv with φ = β·|v - vbar|^m = -ln f₀   (exact finite
+            difference of the potential across each edge; the continuum limit
+            of C/D = -∂v ln f₀)
+        D = β^(-2/m)·Γ(3/m)/Γ(1/m)   (the analytic temperature of the target
+            super-Gaussian; reduces to D = 1/(2β) = T at m = 2)
+
+    Here β is the super-Gaussian shape parameter (units of v^-m), computed by
+    compute_beta from the energy-conservation closure β = n/(m·⟨|v-vbar|^m⟩)
+    (the generalization of the Lenard-Bernstein/Dougherty β = 1/(2T), which it
+    equals at m = 2). Paired with the Chang-Cooper scheme and the exact-Δφ
+    drift below, the sampled discrete super-Gaussian is the exact fixed point.
+
+    This maintains a prescribed super-Gaussian order m — e.g. a Langdon/DLM
+    inverse-bremsstrahlung-heated distribution — against collisional
+    relaxation to a Maxwellian. Conserves density exactly (zero-flux BC) and
+    energy up to discretization error (via the β closure). Momentum is exact
+    only for f symmetric about vbar; skewed transients exchange momentum at
+    O(skewness) — unlike m = 2, where C ∝ (v - vbar) makes it exact.
+    """
+
+    m: float
+
+    def __init__(self, v: Array, dv: float, m: float):
+        """Initialize model with velocity grid and super-Gaussian exponent m."""
+        super().__init__(v=v, dv=dv)
+        self.m = m
+
+    def compute_beta(self, f: Array, rtol: float = 1e-8, atol: float = 1e-12, max_steps: int = 3) -> Array:
+        """
+        Compute the energy-conserving shape parameter β.
+
+        The continuum operator conserves energy instantaneously iff
+        m·β·⟨|v-vbar|^m⟩ = ⟨1⟩ (from ∫v²·∂v[D·(φ'f + ∂vf)]dv = 0), giving the
+        closure β = n/(m·⟨|v-vbar|^m⟩). At m = 2 this reduces to
+        β = n/(2·⟨(v-vbar)²⟩) = 1/(2T), the Buet beta computed from the
+        discrete temperature — where it coincides with temperature matching,
+        which is why the Maxwellian operators get both for free.
+
+        With max_steps > 0, β is refined by a Newton solve of the DISCRETE
+        energy-flux condition consistent with the Chang-Cooper weighting,
+
+            h(β) = Σ_edges v_e·[w·f̃(w) + Δf] = 0,   w = β·Δψ,
+            f̃(w) = δ(w)·f_i + (1-δ(w))·f_{i+1},     ψ = |v - vbar|^m,
+
+        which zeroes the discrete energy flux of the operator exactly for the
+        current f. At a sampled super-Gaussian every edge term vanishes
+        identically (the Chang-Cooper equilibrium property), so β₀ is an
+        exact root: the discrete equilibrium is exactly stationary and there
+        is no secular drift. With max_steps = 0 (self_consistent_beta
+        disabled) the continuum closure is used directly; its O(dv²)
+        quadrature residual causes a slow secular temperature drift
+        (measured ~5e-7 per collision time at nv=128 for m=3). The continuum
+        closure lands within O(dv²) of the root, so a SINGLE Newton step
+        (max_steps: 1) already reduces the drift to machine level; use it for
+        long collisional runs.
+
+        Transient (off-equilibrium) energy conservation is additionally
+        limited to O(nu·dt) by the operator splitting: β is frozen from f^n
+        while the implicit step advances to f^{n+1}. This is a one-time
+        offset proportional to the shape change, negligible for the small
+        nu·dt of production runs.
+
+        Args:
+            f: Distribution function, shape (..., nv)
+            rtol: Relative tolerance for the Newton solve
+            atol: Absolute tolerance for the Newton solve
+            max_steps: Maximum Newton iterations (0 = continuum closure only)
+
+        Returns:
+            beta: Shape parameter (units of v^-m), shape (...)
+        """
+        m = self.m
+        v = self.v
+        v_edge = 0.5 * (v[1:] + v[:-1])
+
+        def beta_single(f_v: Array) -> Array:
+            vbar = jnp.sum(f_v * v) / jnp.sum(f_v)
+            psi = jnp.abs(v - vbar) ** m
+            # Continuum closure: β = n / (m·⟨ψ⟩); dv cancels in the ratio
+            beta_init = jnp.sum(f_v) / (m * jnp.sum(f_v * psi))
+            if max_steps == 0:
+                return beta_init
+
+            d_psi = psi[1:] - psi[:-1]
+            d_f = f_v[1:] - f_v[:-1]
+
+            def residual(beta, args):
+                del args
+                w = beta * d_psi
+                delta = chang_cooper_delta(w)
+                f_tilde = delta * f_v[:-1] + (1.0 - delta) * f_v[1:]
+                return jnp.sum(v_edge * (w * f_tilde + d_f))
+
+            solver = optx.Newton(rtol=rtol, atol=atol)
+            sol = optx.root_find(fn=residual, solver=solver, y0=beta_init, args=None, max_steps=max_steps, throw=False)
+            return sol.value
+
+        return vmap(beta_single)(f)
+
+    def compute_D(self, f: Array, beta: Array) -> Array:
+        """
+        Compute diffusion coefficient from the super-Gaussian shape parameter.
+
+        D = β^(-2/m)·Γ(3/m)/Γ(1/m) is the analytic temperature of the target
+        shape, so that the m=2 case reduces to the Dougherty D = 1/(2β) = T.
+
+        Args:
+            f: Distribution function, shape (..., nv) - unused
+            beta: Super-Gaussian shape parameter, shape (...)
+
+        Returns:
+            D: Diffusion coefficient, shape (...)
+        """
+        return beta ** (-2.0 / self.m) * analytic_supergaussian_temperature_ratio(self.m)
+
+    def compute_C_and_D(self, f: Array, beta: Array) -> tuple[Array, Array]:
+        """
+        Compute C and D from the super-Gaussian equilibrium condition.
+
+        C is the exact finite difference of the equilibrium potential
+        φ(v) = β·|v - vbar|^m = -ln f₀ across each cell edge:
+
+            C_edge = D · (φ(v_{i+1}) - φ(v_i)) / dv
+
+        rather than the midpoint derivative m·β·|v_eff|^(m-1)·sgn(v_eff).
+        The Chang-Cooper fixed point satisfies f_{i+1}/f_i = exp(-C·dv/D),
+        so this choice makes the SAMPLED super-Gaussian the exact discrete
+        equilibrium (the midpoint form is only exact for m=2 and causes
+        secular temperature drift for m≠2). For m=2 the two coincide:
+        Δ(v²)/dv = 2·v_edge exactly.
+
+        Args:
+            f: Distribution function, shape (..., nv)
+            beta: Super-Gaussian shape parameter, shape (...)
+
+        Returns:
+            C_edge: Drift coefficient at cell edges, shape (..., nv-1)
+            D: Diffusion coefficient, shape (...)
+        """
+        D = self.compute_D(f, beta)
+        vbar = self.compute_vbar(f)
+        phi = beta[..., None] * jnp.abs(self.v - vbar[..., None]) ** self.m
+        C_edge = D[..., None] * (phi[..., 1:] - phi[..., :-1]) / self.dv
+        return C_edge, D
+
+
 class Collisions:
     """High-level collision operator that wraps Fokker-Planck and Krook terms."""
 
@@ -150,6 +309,10 @@ class Collisions:
         elif fp_type == "dougherty":
             model = Dougherty(v=v, dv=dv)
             return model, CentralDifferencing(dv=dv)
+        elif fp_type in ("super_gaussian", "super_gaussian_chang_cooper"):
+            m = float(self.cfg["terms"]["fokker_planck"].get("m", 2.0))
+            model = SuperGaussianDougherty(v=v, dv=dv, m=m)
+            return model, ChangCooper(dv=dv)
         else:
             raise NotImplementedError(f"Unknown Fokker-Planck type: {fp_type}")
 
@@ -200,17 +363,25 @@ class Collisions:
 
         def _collide(f_shard, nu_fp_shard, nu_K_shard):
             if self.cfg["terms"]["fokker_planck"]["is_on"]:
-                vbar = self.fp_model.compute_vbar(f_shard)
-                beta = find_self_consistent_beta(
-                    f_shard,
-                    v,
-                    dv,
-                    spherical=False,
-                    vbar=vbar,
-                    rtol=self._sc_rtol,
-                    atol=self._sc_atol,
-                    max_steps=self._sc_max_steps,
-                )
+                if hasattr(self.fp_model, "compute_beta"):
+                    # Model defines its own beta closure (e.g. the energy-conserving
+                    # super-Gaussian beta); the self_consistent_beta knobs control
+                    # its Newton refinement of the discrete energy-flux condition.
+                    beta = self.fp_model.compute_beta(
+                        f_shard, rtol=self._sc_rtol, atol=self._sc_atol, max_steps=self._sc_max_steps
+                    )
+                else:
+                    vbar = self.fp_model.compute_vbar(f_shard)
+                    beta = find_self_consistent_beta(
+                        f_shard,
+                        v,
+                        dv,
+                        spherical=False,
+                        vbar=vbar,
+                        rtol=self._sc_rtol,
+                        atol=self._sc_atol,
+                        max_steps=self._sc_max_steps,
+                    )
                 C_edge, D = self.fp_model.compute_C_and_D(f_shard, beta)
                 f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
 

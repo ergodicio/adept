@@ -537,9 +537,93 @@ Fokker-Planck collision operator.
 | Field | Type | Description |
 |-------|------|-------------|
 | `is_on` | bool | Enable/disable |
-| `type` | string | Collision type: `"Dougherty"` |
+| `type` | string | Collision type (see table below) |
+| `m` | float | Super-Gaussian exponent of the equilibrium (only used by `type: super_gaussian`; default `2.0` = Maxwellian) |
+| `self_consistent_beta` | object | Optional Newton refinement of the equilibrium shape parameter (see below) |
 | `time` | object | Temporal profile |
 | `space` | object | Spatial profile |
+
+Available `type` values (case-insensitive):
+
+| `type` | Model | Scheme | Equilibrium |
+|--------|-------|--------|-------------|
+| `lenard_bernstein` | Lenard-Bernstein | central differencing | Maxwellian at v=0 |
+| `chang_cooper` | Lenard-Bernstein | Chang-Cooper | Maxwellian at v=0 |
+| `dougherty` | Dougherty | central differencing | Maxwellian at $\bar v$ |
+| `chang_cooper_dougherty` | Dougherty | Chang-Cooper | Maxwellian at $\bar v$ |
+| `super_gaussian` | Super-Gaussian Dougherty | Chang-Cooper | Super-Gaussian of order `m` at $\bar v$ |
+
+The Chang-Cooper scheme is positivity-preserving and conserves density exactly; central differencing is provided for comparison only.
+
+#### super_gaussian
+
+Drift-diffusion operator whose equilibrium is a super-Gaussian
+$f_0 \propto \exp(-\beta\,|v-\bar v|^m)$ instead of a Maxwellian
+($m=2$ recovers `chang_cooper_dougherty`). Use this to *maintain* a prescribed
+non-Maxwellian order — e.g. a Langdon/DLM inverse-bremsstrahlung-heated
+distribution — against collisional relaxation during Landau-damping or LPI
+runs. Note it does not *generate* super-Gaussians dynamically (there is no
+competition between heating and e-e collisions as in the VFP-1D
+inverse-bremsstrahlung operator); it relaxes toward the prescribed order `m`.
+
+The drift coefficient is the exact finite difference of the equilibrium
+potential $\varphi = \beta|v-\bar v|^m$, so the sampled super-Gaussian is the
+exact fixed point of the Chang-Cooper discretization. The shape parameter
+$\beta$ is set by the energy-conservation closure
+$\beta = n/(m\,\langle|v-\bar v|^m\rangle)$ (the generalization of the
+Lenard-Bernstein/Dougherty $\beta = 1/(2T)$), refined by a Newton solve of the
+discrete energy-flux condition when `self_consistent_beta` is enabled.
+
+Conservation properties:
+
+- **Density**: exact (zero-flux boundary conditions).
+- **Energy**: no secular drift at equilibrium when `self_consistent_beta` is
+  enabled (recommended for long collisional runs; without it the continuum
+  closure leaves an O(dv²) quadrature residual that drifts T by ~5e-7 per
+  collision time at nv=128 for m=3 — already negligible unless many collision
+  times elapse). A single Newton step (`max_steps: 1`) reduces the drift to
+  machine level. Off-equilibrium transients carry a one-time O(nu·dt) offset
+  from operator splitting, negligible at production nu·dt.
+- **Momentum**: exact for distributions symmetric about $\bar v$; skewed
+  transients exchange momentum at O(skewness), unlike $m=2$ where
+  $C \propto (v-\bar v)$ makes it exact.
+
+Note on initialization: the super-Gaussian initializer (`m` in the species
+config) uses a width convention that fixes $\langle v^4\rangle/\langle v^2\rangle$,
+while this operator preserves the super-Gaussian carrying the distribution's
+own variance. Any super-Gaussian of order `m` is (approximately) a fixed
+point regardless of width convention, so the two compose without drift.
+
+```yaml
+terms:
+  fokker_planck:
+    is_on: True
+    type: super_gaussian
+    m: 3.0
+    self_consistent_beta:
+      enabled: True
+      max_steps: 1   # one Newton step suffices (the closure lands within O(dv²) of the root)
+    time:
+      baseline: 1.0e-5
+      # ...
+    space:
+      baseline: 1.0
+      # ...
+```
+
+#### self_consistent_beta
+
+Optional sub-object controlling the Newton refinement of the equilibrium shape
+parameter β. For the Maxwellian operators it matches the *discrete* temperature
+of the equilibrium to that of f (eliminating equilibrium drift in Chang-Cooper
+schemes); for `super_gaussian` it solves the discrete energy-flux condition.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `False` | Enable the Newton solve |
+| `max_steps` | int | `3` | Maximum Newton iterations |
+| `rtol` | float | `1e-8` | Relative tolerance |
+| `atol` | float | `1e-12` | Absolute tolerance |
 
 ### krook
 
