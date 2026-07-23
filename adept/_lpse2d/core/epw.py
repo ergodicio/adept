@@ -346,6 +346,22 @@ class SpectralEPWSolver:
         if self.tpd_enabled:
             self.tpd_prefactor = 1j * self.e / (8.0 * self.wp0 * self.me)
 
+        # SRS parameters
+        self.srs_enabled = cfg["terms"]["epw"]["source"].get("srs", False)
+        if self.srs_enabled:
+            self.w1 = cfg["units"]["derived"]["w1"]
+            self.c = cfg["units"]["derived"]["c"]
+            # MATLAB line 2073: srsSourceTerm = 1i * e * wp0/(4*me*w0*w1) .* (1 + dn) .* E0_dot_E1
+            self.srs_prefactor = 1j * self.e * self.wp0 / (4.0 * self.me * self.w0 * self.w1)
+            # high-k filter for the light fields entering the source product
+            # (MATLAB isSuppressHighKSource, lines 637-645): only wavevectors near the
+            # light-wave envelope produce physically-realistic SRS
+            max_source_k_multiplier = 1.2
+            n_min = float(np.min(np.array(self.background_density)))
+            max_k1_sq = max_source_k_multiplier**2 * max(1.0 - n_min * self.w0**2 / self.w1**2, 0.0)
+            is_outside_max_k1 = self.k_sq * (self.c / self.w1) ** 2 > max_k1_sq
+            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+
         # Noise parameters
         self.noise_enabled = cfg["terms"]["epw"]["source"]["noise"]
         self.noise_amplitude = 1e-10  # matches MATLAB noiseAmp (m201805_matlabLpse_v11.m:49)
@@ -504,6 +520,33 @@ class SpectralEPWSolver:
 
         return source
 
+    def calc_srs_source(self, E0: Array, E1: Array) -> Array:
+        """
+        Calculate the SRS source term for the EPW potential.
+
+        Matches MATLAB lines 2052-2078 for isSolveForPotential=true:
+          E0_dot_E1 = E0 . conj(E1)  (E1 high-k filtered first, evaluate_E0_dot_E1 lines 2302-2354)
+          srsSource = 1i * e * wp0/(4*me*w0*w1) * (1 + dn) * E0_dot_E1
+          srsSource -> k-space
+
+        The pump is static/prescribed here, so only E1 is filtered (in MATLAB the E0
+        filter is skipped on the static-laser path, line 2308).
+
+        Args:
+            E0: Pump field (shape: nx, ny, 2)
+            E1: Raman field (shape: nx, ny, 2)
+
+        Returns:
+            SRS source term in k-space
+        """
+        E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
+        E0_dot_E1 = E0[..., 0] * jnp.conj(E1_filtered[..., 0]) + E0[..., 1] * jnp.conj(E1_filtered[..., 1])
+
+        # (1 + backgroundDensityPerturbation) = n / n_envelope
+        source = self.srs_prefactor * self.background_density / self.envelope_density * E0_dot_E1
+
+        return jnp.fft.fft2(source)
+
     def get_noise(self, t: float) -> Array:
         """
         Generate random noise for plasma waves.
@@ -606,6 +649,11 @@ class SpectralEPWSolver:
             E0_y = E0[..., 1]  # y-component of laser field
             tpd_source = self.calc_tpd_source(t, phi_k, ey, E0_y)
 
+        srs_source = None
+        if self.srs_enabled:
+            # MATLAB lines 2052-2078
+            srs_source = self.calc_srs_source(E0, y["E1"])
+
         # ========================================================================
         # STEP 7: Apply density gradient to E fields (in REAL space)
         # ========================================================================
@@ -640,5 +688,12 @@ class SpectralEPWSolver:
         if self.tpd_enabled and tpd_source is not None:
             # MATLAB line 2109: divE = divE + tpdSourceTerm * DT
             phi_k = phi_k + self.dt * tpd_source
+
+        # ========================================================================
+        # STEP 11: Add SRS source
+        # ========================================================================
+        if self.srs_enabled and srs_source is not None:
+            # MATLAB line 2113: divE = divE + srsSourceTerm * DT
+            phi_k = phi_k + self.dt * srs_source
 
         return phi_k

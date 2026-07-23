@@ -255,9 +255,56 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     cfg_grid["max_steps"] = cfg_grid["nt"] + 2048
 
+    # SRS: the Raman light is advanced with an explicit conditionally-stable scheme, so it is
+    # sub-cycled within each EPW step. The stability bound follows MATLAB line 500
+    # (dt_max_seed), generalized to 2D
+    if cfg["terms"]["epw"]["source"].get("srs", False):
+        derived = cfg["units"]["derived"]
+        wpe_max_sq = derived["w0"] ** 2 * max(cfg["density"].get("max", 1.0), cfg["density"].get("min", 0.0))
+        dt_max = 1.0 / (
+            2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
+            + np.abs(derived["w1"] ** 2 - wpe_max_sq) / (4.0 * derived["w1"])
+        )
+        if "light_substeps" in cfg_grid:
+            n_sub = int(cfg_grid["light_substeps"])
+            if cfg_grid["dt"] / n_sub > dt_max:
+                raise ValueError(
+                    f"grid.light_substeps = {n_sub} gives a light step of {cfg_grid['dt'] / n_sub:.2e} ps "
+                    f"which exceeds the Raman stability limit of {dt_max:.2e} ps"
+                )
+        else:
+            n_sub = int(np.ceil(cfg_grid["dt"] / (0.9 * dt_max)))
+        cfg_grid["light_substeps"] = n_sub
+        print(f"SRS is on -- the Raman light is sub-cycled {n_sub}x per EPW step (dt_light limit {dt_max:.2e} ps)")
+
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
         cfg["drivers"][k]["derived"] = {}
+        if k == "E1":
+            # Raman seed injector -- different parameter set than the envelope drivers
+            c_cgs = 2.99792458e10
+            seed_intensity = _Q(cfg["drivers"][k]["intensity"]).to("W/cm^2").value
+            # the injector must sit clear of the absorbing boundary, whose tanh skirt
+            # (rise = boundary_width / 5) extends past xmax - boundary_width into the box
+            boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+            min_offset = 1.6 * boundary_width
+            if "offset" in cfg["drivers"][k]:
+                offset = _Q(cfg["drivers"][k]["offset"]).to("um").value
+                if offset < min_offset:
+                    print(
+                        f"WARNING: drivers.E1.offset = {offset}um is inside the absorbing-boundary skirt "
+                        f"(< 1.6 * boundary_width = {min_offset}um); the seed will be damped at the source"
+                    )
+            else:
+                offset = min_offset
+            cfg["drivers"][k]["derived"] = {
+                "amplitude": np.sqrt(8 * np.pi * seed_intensity * 1e7 / c_cgs) / cfg["units"]["derived"]["fieldScale"],
+                "delta_omega": float(cfg["drivers"][k].get("delta_omega", 0.0)),
+                "turn_on_time": _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value,
+                "offset": offset,
+                "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
+            }
+            continue
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
@@ -434,7 +481,7 @@ def get_density_profile(cfg: dict) -> Array:
     :param cfg: Dict
     """
     if cfg["density"]["basis"] == "uniform":
-        nprof = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
+        nprof = cfg["density"].get("val", 1.0) * np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
     elif cfg["density"]["basis"] == "linear":
         left = cfg["grid"]["xmin"] + _Q("5.0um").to("um").value
@@ -486,20 +533,20 @@ def plot_fields(fields, td):
     t_skip = t_skip if t_skip > 1 else 1
     tslice = slice(0, -1, t_skip)
 
-    dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
-    dy = fields.coords["y (um)"].data[1] - fields.coords["y (um)"].data[0]
+    ny = fields.coords["y (um)"].data.size
 
     for k, v in fields.items():
         fld_dir = os.path.join(td, "plots", k)
         os.makedirs(fld_dir)
 
-        np.abs(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"{k}_x.png"), bbox_inches="tight")
-        plt.close()
+        if ny > 1:
+            np.abs(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
+            plt.savefig(os.path.join(fld_dir, f"{k}_x.png"), bbox_inches="tight")
+            plt.close()
 
-        np.real(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"{k}_x_r.png"), bbox_inches="tight")
-        plt.close()
+            np.real(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
+            plt.savefig(os.path.join(fld_dir, f"{k}_x_r.png"), bbox_inches="tight")
+            plt.close()
 
         # fig, ax = plt.subplots(1, 1, figsize=(10, 4))
         # np.abs(v[:, 1, 0]).plot(ax=ax)
@@ -551,14 +598,17 @@ def plot_kt(kfields, td):
 
         kx_slice = slice(ikx_min, ikx_max)
         ky_slice = slice(iky_min, iky_max)
+        n_ky = kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data.size
 
         for k, v in kfields.items():
             fld_dir = os.path.join(td, "plots", k)
             os.makedirs(fld_dir, exist_ok=True)
 
-            # np.log10(np.abs(v[tslice, kx_slice, 0])).T.plot(col="t (ps)", col_wrap=4)
-            # plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_k0_absmax{abs_kmax}.png"), bbox_inches="tight")
-            # plt.close()
+            if n_ky == 1:
+                np.log10(np.abs(v[tslice, kx_slice, 0])).plot(col="t (ps)", col_wrap=4)
+                plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_absmax{abs_kmax}.png"), bbox_inches="tight")
+                plt.close()
+                continue
 
             np.abs(v[tslice, kx_slice, ky_slice]).T.plot(col="t (ps)", col_wrap=4)
             plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky_absmax{abs_kmax}.png"), bbox_inches="tight")
@@ -601,14 +651,7 @@ def plot_series(series, td):
 
 
 def make_series_xarrays(cfg, this_t, state, td):
-    esq = state["e_sq"]
-    max_phi = state["max_phi"]
-    series_xr = xr.Dataset(
-        {
-            "e_sq": xr.DataArray(esq, coords=(("t (ps)", this_t),)),
-            "max_phi": xr.DataArray(max_phi, coords=(("t (ps)", this_t),)),
-        }
-    )
+    series_xr = xr.Dataset({k: xr.DataArray(v, coords=(("t (ps)", this_t),)) for k, v in state.items()})
     series_xr.to_netcdf(os.path.join(td, "binary", "series.xr"), engine="h5netcdf", invalid_netcdf=True)
     return series_xr
 
@@ -638,8 +681,8 @@ def make_field_xarrays(cfg, this_t, state, td):
     xax_tuple = ("x (um)", xax)
     yax_tuple = ("y (um)", yax)
 
-    # check if state["epw"] is a complex64 or 128 and choose accordingly
-    if state["epw"].dtype == jnp.complex128:
+    # the state is stored as a float view of a complex array; pick the matching complex dtype
+    if state["epw"].dtype in (np.float64, np.complex128):
         _complex = np.complex128
     else:
         _complex = np.complex64
@@ -784,6 +827,20 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
+    srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
+    if srs_on:
+        # Reflectivity probe: sample |E1_y|^2 on the low-density side, just inside the absorber.
+        # R = sqrt(eps1) * <|E1_y|^2>_y / E0_source^2 where eps1 = 1 - wpe^2/w1^2 accounts for
+        # the reduced group velocity (Poynting flux ~ sqrt(eps) |E|^2) relative to the vacuum pump.
+        boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+        x_probe = cfg["grid"]["xmin"] + 1.6 * boundary_width  # clear of the absorber's tanh skirt
+        ix_probe = int(np.argmin(np.abs(np.array(cfg["grid"]["x"]) - x_probe)))
+        w0 = cfg["units"]["derived"]["w0"]
+        w1 = cfg["units"]["derived"]["w1"]
+        n_probe = float(np.mean(np.array(cfg["grid"]["background_density"])[ix_probe, :]))
+        sqrt_eps1 = np.sqrt(max(1.0 - n_probe * w0**2 / w1**2, 0.0))
+        E0_source_sq = cfg["units"]["derived"]["E0_source"] ** 2
+
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
         ex = -1j * cfg["grid"]["kx"][:, None] * phi_k
@@ -792,6 +849,13 @@ def get_default_save_func(cfg):
         ey = jnp.fft.ifft2(ey)
         e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
 
-        return {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
+        out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
+
+        if srs_on:
+            e1 = y["E1"].view(jnp.complex128)
+            out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))
+            out["reflectivity"] = sqrt_eps1 * jnp.mean(jnp.abs(e1[ix_probe, :, 1]) ** 2) / E0_source_sq
+
+        return out
 
     return {"t": {"ax": cfg["grid"]["t"]}, "func": save_func}

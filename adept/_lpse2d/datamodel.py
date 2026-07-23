@@ -81,6 +81,23 @@ class E0DriverModel(BaseModel):
     speckle: SpeckleModel | None = None
 
 
+class E1DriverModel(BaseModel):
+    """
+    Raman seed driver.
+
+    Injects a counter-propagating (-x) scattered-light wave at x = xmax - offset
+    with the given (vacuum) intensity. Only used when terms.epw.source.srs is on.
+    """
+
+    intensity: str  # e.g. "1.0e+12W/cm^2"
+    delta_omega: float = 0.0  # seed frequency shift relative to w1 = w0 - wp0 (fraction of w1)
+    turn_on_time: str = "10fs"
+    # distance of the injector from the right boundary; defaults to 1.6 * boundary_width,
+    # which places it just inside the absorbing boundary's tanh skirt
+    offset: str | None = None
+    yw: str | None = None  # super-Gaussian width of the seed in y; omit for uniform in y
+
+
 class DriversModel(BaseModel):
     """
     Define the drivers for the simulation
@@ -88,6 +105,7 @@ class DriversModel(BaseModel):
     """
 
     E0: E0DriverModel
+    E1: E1DriverModel | None = None
 
 
 class GridModel(BaseModel):
@@ -105,6 +123,9 @@ class GridModel(BaseModel):
     tmin: str
     ymax: str
     ymin: str
+    # number of Raman-light sub-steps per EPW step (SRS only); computed from the
+    # stability limit if omitted
+    light_substeps: int | None = None
 
 
 class TimeSaveModel(BaseModel):
@@ -140,6 +161,7 @@ class DampingModel(BaseModel):
 class SourceModel(BaseModel):
     noise: bool
     tpd: bool
+    srs: bool = False
 
 
 class EPWModel(BaseModel):
