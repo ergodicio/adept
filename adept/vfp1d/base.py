@@ -6,7 +6,7 @@ from adept._base_ import ADEPTModule, Stepper
 from adept.normalization import UREG, laser_normalization
 from adept.utils import filter_scalars
 from adept.vfp1d.grid import Grid
-from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda
+from adept.vfp1d.helpers import _initialize_total_distribution_, calc_logLambda, load_profile_on_grid
 from adept.vfp1d.storage import get_save_quantities, post_process
 from adept.vfp1d.vector_field import OSHUN1D
 
@@ -169,8 +169,54 @@ class BaseVFP1D(ADEPTModule):
         for field in ["e", "b"]:
             state[field] = jnp.zeros(grid.nx + 1)
 
-        state["Z"] = jnp.ones(grid.nx)
-        state["ni"] = ne_prof / self.cfg["units"]["Z"]
+        ion_cfg = self.cfg["density"].get("ion", None)
+        if ion_cfg is not None:
+            # Spatially varying ion density (in units of n0) from a mass-density
+            # profile. Requires the ion mass number A (or a mixture that provides it).
+            # state["Z"] is relative to units.Z -- FLMCollisions' nuei_coeff already
+            # carries units.Z**2, and the runtime rate goes as (Z**2 * ni) * units.Z**2
+            rho_cfg = ion_cfg["mass_density"]
+            if rho_cfg.get("basis", "file") != "file":
+                raise NotImplementedError("density.ion.mass_density only supports basis: file")
+            rho_q = load_profile_on_grid(rho_cfg, grid.x, self.plasma_norm)
+
+            mixture = ion_cfg.get("mixture", None)
+            if mixture is not None:
+                # Multi-species atomic mixture represented as a single effective ion
+                # that preserves both quasineutrality (Z*ni = ne) and the e-i
+                # collision rate (Z^2*ni = sum_i n_i Z_i^2 = Zeff*ne), with
+                # Zeff = <Z^2>/<Z>. units.Z should be set to Zeff.
+                fracs = np.array([sp["fraction"] for sp in mixture])
+                if not np.isclose(fracs.sum(), 1.0):
+                    raise ValueError(f"Ion mixture fractions must sum to 1, got {fracs.sum()}")
+                Zs = np.array([sp["Z"] for sp in mixture])
+                zbar = float(np.sum(fracs * Zs))
+                zeff = float(np.sum(fracs * Zs**2)) / zbar
+                abar = float(ion_cfg.get("A", np.sum(fracs * np.array([sp["A"] for sp in mixture]))))
+
+                # cross-check: fully ionized quasineutrality between the mass-density
+                # and electron-density profiles
+                n_atom = (rho_q / (abar * UREG.Quantity(1.0, "amu")) / self.plasma_norm.n0).to("").magnitude
+                ne_from_rho = zbar * np.asarray(n_atom)
+                mismatch = float(np.max(np.abs(ne_from_rho - np.asarray(ne_prof))) / np.max(np.asarray(ne_prof)))
+                if mismatch > 0.05:
+                    print(
+                        f"WARNING: ne from the mass density (Zbar * rho / (A*amu)) deviates from the "
+                        f"electron-density profile by up to {mismatch:.1%} of its peak. "
+                        f"Check A, the mixture fractions, and the profile units."
+                    )
+
+                state["Z"] = zeff / self.cfg["units"]["Z"] * jnp.ones(grid.nx)
+                state["ni"] = jnp.asarray(ne_prof) / zeff
+            else:
+                # single species: ni from the mass density and pointwise Z = ne/ni
+                ni_phys = rho_q / (ion_cfg["A"] * UREG.Quantity(1.0, "amu"))
+                ni_prof = jnp.asarray((ni_phys / self.plasma_norm.n0).to("").magnitude)
+                state["Z"] = jnp.asarray(ne_prof) / ni_prof / self.cfg["units"]["Z"]
+                state["ni"] = ni_prof
+        else:
+            state["Z"] = jnp.ones(grid.nx)
+            state["ni"] = ne_prof / self.cfg["units"]["Z"]
 
         self.state = state
         self.args = {"drivers": self.cfg["drivers"]}
