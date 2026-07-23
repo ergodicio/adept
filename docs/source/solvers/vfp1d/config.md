@@ -370,15 +370,17 @@ Optional post-processing diagnostics configuration. The Spitzer-Härm / SNB / ki
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `ngroups` | int | `32` | Number of energy groups in $\beta = v^2/(2T)$ |
-| `beta_max` | float | `30.0` | Upper edge of the group grid |
+| `ngroups` | int | `300` | Number of energy groups on the absolute-energy grid $\varepsilon = v^2/2$ spanning $[0,\ \beta_\text{max}\max(T)]$ |
+| `beta_max` | float | `20.0` | $\beta = \varepsilon/T$ coverage at the hottest cell (sets the grid's top energy $\varepsilon_\text{max} = \beta_\text{max}\max(T)$) |
 | `r` | float | `2.0` | e-e absorption scaling of the group mfp, $\lambda_g^{ee}/r$ |
+
+The energy groups are bands of fixed *kinetic energy* $\varepsilon = v^2/2$ (uniform in space), so the multigroup diffusion transports each group at fixed energy — required for the nonlocal preheat to be captured correctly. `ngroups` needs to be a few hundred because cold cells sample the grid coarsely in $\beta = \varepsilon/T$; the flux-carrying groups sit at $\beta \approx 16$, so `beta_max` $\gtrsim 20$ keeps them on the grid.
 
 ```yaml
 diagnostics:
   snb:
-    ngroups: 32
-    beta_max: 30.0
+    ngroups: 300
+    beta_max: 20.0
     r: 2.0
 ```
 
