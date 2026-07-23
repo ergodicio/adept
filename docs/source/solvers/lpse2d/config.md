@@ -117,8 +117,11 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `tmin` | string | Start time with unit |
 | `ymax` | string | Domain maximum y with unit |
 | `ymin` | string | Domain minimum y with unit |
+| `light_substeps` | int | (SRS only, optional) Raman-light sub-steps per EPW step. Computed from the explicit-scheme stability limit `dt_light < 1 / (2c^2/(dx^2 w1) + \|w1^2 - wpe_max^2\|/(4 w1))` if omitted; a `ValueError` is raised if a user-supplied value violates it |
 
 Note: `nx` and `ny` are computed automatically from the grid parameters. The grid is optimized for FFT performance (sizes with small prime factors).
+
+Note: setting `ymax`/`ymin` smaller than `dx` collapses the box to `ny = 1`, which runs the solver in a true 1D mode (useful for cheap 1D SRS simulations; TPD requires 2D).
 
 Example:
 ```yaml
@@ -277,6 +280,34 @@ drivers:
     w0: 20.0
 ```
 
+### E1 - Raman Seed Driver (Optional)
+
+Injects a counter-propagating (-x) scattered-light wave for seeded SRS. Only used when
+`terms.epw.source.srs` is on. The injector sits at `x = xmax - offset` and drives the
+`E1` field with a two-point antisymmetric source (the MATLAB LPSE injector), so the seed
+propagates toward the low-density side while backscatter growth amplifies it against the pump.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `intensity` | string | Seed vacuum intensity with unit, e.g. `"1.0e+12W/cm^2"` |
+| `delta_omega` | float | Seed frequency shift relative to `w1 = w0 - wp0`, as a fraction of `w1` (default 0) |
+| `turn_on_time` | string | Ramp-up time of the injector (default `10fs`) |
+| `offset` | string | Distance of the injector from the right boundary. Defaults to `1.6 * boundary_width`, just inside the absorbing boundary's tanh skirt; a warning is printed for smaller values because the seed would be damped at the source |
+| `yw` | string | Super-Gaussian (4th order) width of the seed in y; omit for uniform in y |
+
+The density at the injector must be below the `w1` critical density (`n < 0.25 n_c` for
+envelope density 0.25), otherwise the seed is evanescent and setup raises an error. Without
+`drivers.E1`, SRS grows from the EPW noise source instead (the noise-seeded configuration).
+
+Example:
+```yaml
+drivers:
+  E1:
+    intensity: 1.0e+12W/cm^2
+    delta_omega: 0.0
+    turn_on_time: 10fs
+```
+
 ## terms
 
 Physics terms configuration.
@@ -319,7 +350,7 @@ Physics terms configuration.
 |-------|------|-------------|
 | `noise` | bool | Add random noise source |
 | `tpd` | bool | Include two-plasmon decay source |
-| `srs` | bool | Include stimulated Raman scattering source (optional) |
+| `srs` | bool | Include stimulated Raman scattering (optional, default false). Turning this on also evolves the Raman scattered-light field `E1` with a finite-difference paraxial solver, sub-cycled `grid.light_substeps` times per EPW step, and adds the SRS source `i e wp0/(4 me w0 w1) (n/n_env) E0 . conj(E1)` to the EPW potential. The default time series then also records `e1_sq` and `reflectivity` (Poynting-corrected `|E1_y|^2/E0^2` at a probe on the low-density side, `x = 1.6 * boundary_width`) |
 
 #### hyperviscosity (optional)
 
@@ -474,4 +505,7 @@ See `configs/envelope-2d/tpd.yaml` - TPD simulation with linear density gradient
 
 ### SRS / Reflection
 
-See `configs/envelope-2d/reflection.yaml` - SRS simulation with kinetic corrections.
+See `configs/envelope-2d/srs.yaml` - Noise-seeded backward SRS on a linear density ramp
+(the lpse-matlab `srs_1D` case), with a reflectivity time series recorded at a probe on
+the low-density side. Also see `configs/envelope-2d/reflection.yaml` - SRS simulation
+with kinetic corrections.
