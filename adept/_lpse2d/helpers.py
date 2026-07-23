@@ -714,13 +714,24 @@ def make_field_xarrays(cfg, this_t, state, td):
 
     from scipy import interpolate
 
-    density_interpolator = interpolate.RegularGridInterpolator(
-        (cfg["grid"]["x"], cfg["grid"]["y"]), cfg["grid"]["background_density"], bounds_error=False, fill_value=0.0
-    )
-
-    grid_x, grid_y = np.meshgrid(xax, yax, indexing="ij")
-    points = np.array([grid_x.flatten(), grid_y.flatten()]).T
-    density_on_save_grid = density_interpolator(points).reshape((nx, ny))
+    if ny == 1:
+        # Quasi-1D: RegularGridInterpolator cannot take a single-node y axis (and the
+        # save row lies off it -> fill_value=0). Interpolate the density in x only.
+        density_1d = np.asarray(cfg["grid"]["background_density"])[:, 0]
+        density_interpolator = interpolate.interp1d(
+            np.asarray(cfg["grid"]["x"]), density_1d, bounds_error=False, fill_value="extrapolate"
+        )
+        density_on_save_grid = density_interpolator(np.asarray(xax)).reshape((nx, ny))
+    else:
+        density_interpolator = interpolate.RegularGridInterpolator(
+            (cfg["grid"]["x"], cfg["grid"]["y"]),
+            cfg["grid"]["background_density"],
+            bounds_error=False,
+            fill_value=0.0,
+        )
+        grid_x, grid_y = np.meshgrid(xax, yax, indexing="ij")
+        points = np.array([grid_x.flatten(), grid_y.flatten()]).T
+        density_on_save_grid = density_interpolator(points).reshape((nx, ny))
 
     background_density = xr.DataArray(
         np.repeat(density_on_save_grid[None, ...], repeats=len(this_t), axis=0),
@@ -786,14 +797,24 @@ def get_save_quantities(cfg: dict) -> dict:
 
         xq, yq = jnp.meshgrid(cfg["save"]["fields"]["x"]["ax"], cfg["save"]["fields"]["y"]["ax"], indexing="ij")
 
-        interpolator = partial(
-            interpax.interp2d,
-            xq=jnp.reshape(xq, (nx * ny), order="F"),
-            yq=jnp.reshape(yq, (nx * ny), order="F"),
-            x=cfg["grid"]["x"],
-            y=cfg["grid"]["y"],
-            method="linear",
-        )
+        if ny == 1:
+            # Quasi-1D (single transverse cell): interpax.interp2d needs >=2 nodes per
+            # axis and returns NaN off the lone y-node, so interpolate in x only and
+            # keep the single y-row. save_func reshapes the flat (nx,) result to (nx, 1).
+            x_save = cfg["save"]["fields"]["x"]["ax"]
+            x_src = cfg["grid"]["x"]
+
+            def interpolator(f):
+                return interpax.interp1d(x_save, x_src, jnp.reshape(f, (-1,)), method="linear")
+        else:
+            interpolator = partial(
+                interpax.interp2d,
+                xq=jnp.reshape(xq, (nx * ny), order="F"),
+                yq=jnp.reshape(yq, (nx * ny), order="F"),
+                x=cfg["grid"]["x"],
+                y=cfg["grid"]["y"],
+                method="linear",
+            )
 
         def save_func(t, y, args):
             save_y = {}
