@@ -6,6 +6,30 @@ from jax import numpy as jnp
 from adept._lpse2d.core.driver import Driver
 
 
+def landau_damping_rate(k_sq: Array, wp0: float, vte_sq: float, zero_mask: Array) -> Array:
+    """
+    Landau damping rate for each k mode (amplitude rate, 1/ps).
+
+    Matches MATLAB line 913:
+    gammaLandauEpw = sqrt(pi/8) * (1 + 3/2*k^2*vte^2/wp^2) * wp^4/(k^3*vte^3) * exp(...)
+
+    Module-level so the solver (`SpectralEPWSolver`) and the dissipation
+    diagnostic (`helpers.get_default_save_func`) use the *same* rates and can
+    never drift apart.
+    """
+    k_sq_safe = jnp.where(k_sq > 0, k_sq, 1.0)
+
+    damping = (
+        jnp.sqrt(np.pi / 8.0)
+        * (1.0 + 1.5 * k_sq * vte_sq / wp0**2)
+        * wp0**4
+        / (k_sq_safe**1.5 * vte_sq**1.5)
+        * jnp.exp(-(1.5 + 0.5 * wp0**2 / (k_sq_safe * vte_sq)))
+    )
+
+    return damping * zero_mask
+
+
 class SpectralPotential:
     def __init__(self, cfg) -> None:
         self.background_density = cfg["grid"]["background_density"]
@@ -362,10 +386,14 @@ class SpectralEPWSolver:
             is_outside_max_k1 = self.k_sq * (self.c / self.w1) ** 2 > max_k1_sq
             self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
 
-        # Noise parameters
+        # Noise parameters. Amplitude default matches MATLAB noiseAmp
+        # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
+        # the cfg, so MLflow logs it) in helpers.get_derived_quantities; the fallback
+        # here only fires if that step was skipped.
         self.noise_enabled = cfg["terms"]["epw"]["source"]["noise"]
-        self.noise_amplitude = 1e-10  # matches MATLAB noiseAmp (m201805_matlabLpse_v11.m:49)
-        self.noise_seed = np.random.randint(2**20)
+        self.noise_amplitude = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
+        cfg_seed = cfg["terms"]["epw"]["source"].get("noise_seed")
+        self.noise_seed = int(cfg_seed) if cfg_seed is not None else np.random.randint(2**20)
 
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
@@ -383,21 +411,7 @@ class SpectralEPWSolver:
         Returns:
             Landau damping rate array (shape: nx, ny)
         """
-        # Avoid issues at k=0
-        k_sq_safe = jnp.where(self.k_sq > 0, self.k_sq, 1.0)
-
-        damping = (
-            jnp.sqrt(np.pi / 8.0)
-            * (1.0 + 1.5 * self.k_sq * self.vte_sq / self.wp0**2)
-            * self.wp0**4
-            / (k_sq_safe**1.5 * self.vte_sq**1.5)
-            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 / (k_sq_safe * self.vte_sq)))
-        )
-
-        # Zero out k=0 mode
-        damping = damping * self.zero_mask
-
-        return damping
+        return landau_damping_rate(self.k_sq, self.wp0, self.vte_sq, self.zero_mask)
 
     def phi_k_to_e_fields(self, phi_k: Array) -> tuple[Array, Array]:
         """
