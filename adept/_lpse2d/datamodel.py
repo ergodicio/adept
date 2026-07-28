@@ -160,6 +160,8 @@ class DampingModel(BaseModel):
 
 class SourceModel(BaseModel):
     noise: bool
+    noise_amplitude: float = 1e-10
+    noise_seed: int | None = None
     tpd: bool
     srs: bool = False
 
@@ -172,8 +174,16 @@ class EPWModel(BaseModel):
     source: SourceModel
 
 
+class LightModel(BaseModel):
+    """Light-wave evolution options. pump_depletion evolves E0 with the FD envelope
+    solver (boundary injector + EPW coupling) instead of prescribing it analytically."""
+
+    pump_depletion: bool = False
+
+
 class TermsModel(BaseModel):
     epw: EPWModel
+    light: LightModel = LightModel()
     zero_mask: bool
 
 

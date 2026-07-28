@@ -385,6 +385,14 @@ class SpectralEPWSolver:
             max_k1_sq = max_source_k_multiplier**2 * max(1.0 - n_min * self.w0**2 / self.w1**2, 0.0)
             is_outside_max_k1 = self.k_sq * (self.c / self.w1) ** 2 > max_k1_sq
             self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+            # when the pump is evolved (terms.light.pump_depletion) it is filtered too,
+            # exactly as MATLAB's evaluate_E0_dot_E1 (lines 2302-2354) does on the
+            # dynamic-laser path and skips on the static path (line 2307-2308)
+            self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
+            if self.pump_depletion:
+                max_k0_sq = max_source_k_multiplier**2 * max(1.0 - n_min, 0.0)
+                is_outside_max_k0 = self.k_sq * (self.c / self.w0) ** 2 > max_k0_sq
+                self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
 
         # Noise parameters. Amplitude default matches MATLAB noiseAmp
         # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
@@ -554,6 +562,8 @@ class SpectralEPWSolver:
             SRS source term in k-space
         """
         E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
+        if self.pump_depletion:
+            E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
         E0_dot_E1 = E0[..., 0] * jnp.conj(E1_filtered[..., 0]) + E0[..., 1] * jnp.conj(E1_filtered[..., 1])
 
         # (1 + backgroundDensityPerturbation) = n / n_envelope

@@ -275,6 +275,18 @@ def get_derived_quantities(cfg: dict) -> dict:
         if epw_source.get("noise_seed") is None:
             epw_source["noise_seed"] = int(np.random.randint(2**20))
 
+    pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
+    if pump_depletion:
+        if not cfg["terms"]["epw"]["source"].get("srs", False):
+            raise ValueError("terms.light.pump_depletion requires terms.epw.source.srs: true")
+        if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
+            raise ValueError("terms.light.pump_depletion does not support drivers.E0.speckle yet")
+        if cfg["terms"]["epw"]["boundary"]["x"] != "absorbing":
+            raise ValueError(
+                "terms.light.pump_depletion requires terms.epw.boundary.x: absorbing "
+                "(the pump is launched by a boundary injector and must exit the box)"
+            )
+
     if cfg["terms"]["epw"]["source"].get("srs", False):
         derived = cfg["units"]["derived"]
         wpe_max_sq = derived["w0"] ** 2 * max(cfg["density"].get("max", 1.0), cfg["density"].get("min", 0.0))
@@ -282,6 +294,14 @@ def get_derived_quantities(cfg: dict) -> dict:
             2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
             + np.abs(derived["w1"] ** 2 - wpe_max_sq) / (4.0 * derived["w1"])
         )
+        if pump_depletion:
+            # the evolved pump has its own (looser, but not guaranteed) stability limit;
+            # sub-cycle to the tighter of the two carriers
+            dt_max_pump = 1.0 / (
+                2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
+                + np.abs(derived["w0"] ** 2 - wpe_max_sq) / (4.0 * derived["w0"])
+            )
+            dt_max = min(dt_max, dt_max_pump)
         if "light_substeps" in cfg_grid:
             n_sub = int(cfg_grid["light_substeps"])
             if cfg_grid["dt"] / n_sub > dt_max:
@@ -322,6 +342,17 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
             }
             continue
+        if k == "E0" and pump_depletion:
+            # boundary-injector parameters for the evolved pump: the injector sits at
+            # xmin + offset (default 2*boundary_width, clear of the absorber skirt)
+            boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+            if "offset" in cfg["drivers"][k]:
+                cfg["drivers"][k]["derived"]["offset"] = _Q(cfg["drivers"][k]["offset"]).to("um").value
+            else:
+                cfg["drivers"][k]["derived"]["offset"] = 2.0 * boundary_width
+            cfg["drivers"][k]["derived"]["turn_on_time"] = (
+                _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value
+            )
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
@@ -968,9 +999,38 @@ def get_default_save_func(cfg):
         x_grid = np.array(cfg["grid"]["x"])
         ix_left = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + probe_offset))))
         ix_right = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmax"] - probe_offset))))
+        # with an evolved pump, the incident probe must sit downstream (+x) of the pump
+        # injector rows or it reads the near-field of the two-point source
+        ix_left_e0 = ix_left
+        if cfg["terms"].get("light", {}).get("pump_depletion", False):
+            pump_offset = cfg["drivers"]["E0"]["derived"]["offset"]
+            ix_inject = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + pump_offset))))
+            ix_left_e0 = max(ix_left, ix_inject + 4)
         flux_coeff_w0 = derived["c"] ** 2 / (derived["w0"] * cfg["grid"]["dx"])
         flux_coeff_w1 = derived["c"] ** 2 / (derived["w1"] * cfg["grid"]["dx"])
         I0_code = derived["I0_code"]
+
+        def flux_correction(w, ix):
+            # The discrete two-point flux of the FD mode at local wavenumber k is
+            # |E|^2 * v_g,discrete with v_g,disc = (c^2/w) sin(k_grid dx)/dx, where
+            # k_grid satisfies the FD dispersion (2/dx^2)(1 - cos k_grid dx) = k^2.
+            # Dividing by sin(k_grid dx)/(k dx) converts it to the physical flux
+            # |E|^2 * c * sqrt(eps). Evanescent probes get 1 (their flux is ~0 anyway).
+            n_loc = float(np.mean(np.array(cfg["grid"]["background_density"])[ix, :]))
+            eps = 1.0 - n_loc * w0**2 / w**2
+            if eps <= 0:
+                return 1.0
+            k_dx = w / derived["c"] * np.sqrt(eps) * cfg["grid"]["dx"]
+            cos_kg = 1.0 - k_dx**2 / 2.0
+            if cos_kg <= -1.0:
+                return 1.0
+            sin_kg = float(np.sqrt(1.0 - cos_kg**2))
+            return float(sin_kg / k_dx)
+
+        corr_e0_left = flux_correction(w0, ix_left_e0)
+        corr_e0_right = flux_correction(w0, ix_right)
+        corr_e1_left = flux_correction(w1, ix_left)
+        corr_e1_right = flux_correction(w1, ix_right)
 
         def discrete_flux(E, ix, coeff):
             # sum over polarization components, mean over y
@@ -988,21 +1048,26 @@ def get_default_save_func(cfg):
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 
         out["epw_energy"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq, axis=1))
+        # dissipation/boundary channels are TOTAL EPW-energy rates: the wave's kinetic
+        # (sloshing) energy equals the cycle-averaged electric energy that epw_energy
+        # counts (the OSIRIS field-only convention), so the energy actually handed to
+        # electrons -- and the budget sink -- is 2x the electric-part rate
         out["epw_dissipation"] = (
-            epw_energy_prefactor / (nx * ny**2) * jnp.sum(k_sq * jnp.abs(phi_k) ** 2 * energy_loss_factor)
+            2.0 * epw_energy_prefactor / (nx * ny**2) * jnp.sum(k_sq * jnp.abs(phi_k) ** 2 * energy_loss_factor)
         )
-        out["epw_boundary_loss"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq * boundary_sq_loss, axis=1))
+        out["epw_boundary_loss"] = 2.0 * epw_energy_prefactor * jnp.sum(jnp.mean(e_sq * boundary_sq_loss, axis=1))
 
         if srs_on:
             e1 = y["E1"].view(jnp.complex128)
             e0 = y["E0"].view(jnp.complex128)
             out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))
             out["reflectivity"] = sqrt_eps1 * jnp.mean(jnp.abs(e1[ix_probe, :, 1]) ** 2) / E0_source_sq
-            # laser budget channels, all normalized to the nominal incident flux
-            out["incident_flux"] = discrete_flux(e0, ix_left, flux_coeff_w0) / I0_code
-            out["transmitted_flux"] = discrete_flux(e0, ix_right, flux_coeff_w0) / I0_code
-            out["reflected_flux"] = -discrete_flux(e1, ix_left, flux_coeff_w1) / I0_code
-            out["backrefl_flux"] = discrete_flux(e1, ix_right, flux_coeff_w1) / I0_code
+            # laser budget channels: physical fluxes (discrete fluxes converted via the
+            # local group-velocity factor), normalized to the nominal incident flux
+            out["incident_flux"] = discrete_flux(e0, ix_left_e0, flux_coeff_w0) / corr_e0_left / I0_code
+            out["transmitted_flux"] = discrete_flux(e0, ix_right, flux_coeff_w0) / corr_e0_right / I0_code
+            out["reflected_flux"] = -discrete_flux(e1, ix_left, flux_coeff_w1) / corr_e1_left / I0_code
+            out["backrefl_flux"] = discrete_flux(e1, ix_right, flux_coeff_w1) / corr_e1_right / I0_code
 
         return out
 

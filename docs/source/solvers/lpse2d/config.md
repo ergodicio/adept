@@ -65,15 +65,7 @@ Density profile configuration.
 | `gradient scale length` | string | Scale length with unit (for `linear` basis) |
 | `max` | float | Maximum density fraction (for `linear` basis) |
 | `min` | float | Minimum density fraction (for `linear` basis) |
-| `noise` | object | Initial noise configuration |
-
-### noise
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `max` | float | Maximum noise amplitude |
-| `min` | float | Minimum noise amplitude |
-| `type` | string | `"uniform"` or `"normal"` |
+| `noise` | object | Ignored (legacy). The initial EPW is identically zero; noise-seeded runs use the per-step `terms.epw.source.noise` source instead |
 
 ### Example: Uniform Density
 
@@ -117,7 +109,8 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `tmin` | string | Start time with unit |
 | `ymax` | string | Domain maximum y with unit |
 | `ymin` | string | Domain minimum y with unit |
-| `light_substeps` | int | (SRS only, optional) Raman-light sub-steps per EPW step. Computed from the explicit-scheme stability limit `dt_light < 1 / (2c^2/(dx^2 w1) + \|w1^2 - wpe_max^2\|/(4 w1))` if omitted; a `ValueError` is raised if a user-supplied value violates it |
+| `light_substeps` | int | (SRS only, optional) Raman-light sub-steps per EPW step. Computed from the explicit-scheme stability limit `dt_light < 1 / (2c^2/(dx^2 w1) + \|w1^2 - wpe_max^2\|/(4 w1))` if omitted (with `terms.light.pump_depletion` the limit is the tighter of the `w0` and `w1` carriers); a `ValueError` is raised if a user-supplied value violates it |
+| `probe_offset` | string | (SRS only, optional) Distance of the laser-budget flux probes from each box edge, with unit. Default `2 * boundary_width`, which is clear of the absorber's tanh skirt (the legacy `reflectivity` probe at `1.6 * boundary_width` sits inside it and reads ~10% low) |
 
 Note: `nx` and `ny` are computed automatically from the grid parameters. The grid is optimized for FFT performance (sizes with small prime factors).
 
@@ -214,6 +207,8 @@ The main laser pump for TPD/SRS simulations.
 | `delta_omega_max` | float | Maximum frequency spread (optional) |
 | `num_colors` | int | Number of laser colors (optional) |
 | `shape` | string | Amplitude shape: `"uniform"` (optional) |
+| `offset` | string | (pump depletion only, optional) Distance of the pump boundary injector from `xmin`, with unit. Default `2 * boundary_width` |
+| `turn_on_time` | string | (pump depletion only, optional) Gaussian turn-on time of the injector. Default `10fs` |
 
 #### envelope
 
@@ -315,7 +310,14 @@ Physics terms configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `epw` | object | Electron plasma wave configuration |
+| `light` | object | (optional) Light-wave evolution configuration |
 | `zero_mask` | bool | Whether to zero out k=0 mode |
+
+### light (optional)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pump_depletion` | bool | (default `false`) Evolve the pump `E0` with the same staggered FD envelope solver as the Raman light instead of prescribing it analytically. The pump is launched by a two-point boundary injector at `x = xmin + drivers.E0.offset` and is depleted by the EPW through `-i e/(4 w1 me) (laplacian phi) E1`. Requires `terms.epw.source.srs: true` and `terms.epw.boundary.x: absorbing`; incompatible with `drivers.E0.speckle`. Enables the true net-flux `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics and lets above-threshold runs saturate |
 
 ### epw
 
@@ -349,6 +351,8 @@ Physics terms configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `noise` | bool | Add random noise source |
+| `noise_amplitude` | float | (optional) Amplitude of the per-step EPW noise source. Default `1.0e-10` (the MATLAB `noiseAmp`) |
+| `noise_seed` | int | (optional) Seed for the EPW noise source. Default `null`, which draws a random seed once and pins it into the config before parameters are logged, so every run is exactly reproducible from its logged `noise_seed` |
 | `tpd` | bool | Include two-plasmon decay source |
 | `srs` | bool | Include stimulated Raman scattering (optional, default false). Turning this on also evolves the Raman scattered-light field `E1` with a finite-difference paraxial solver, sub-cycled `grid.light_substeps` times per EPW step, and adds the SRS source `i e wp0/(4 me w0 w1) (n/n_env) E0 . conj(E1)` to the EPW potential. The default time series then also records `e1_sq` and `reflectivity` (Poynting-corrected `|E1_y|^2/E0^2` at a probe on the low-density side, `x = 1.6 * boundary_width`) |
 

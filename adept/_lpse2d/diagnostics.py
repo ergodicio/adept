@@ -214,6 +214,18 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
         s_left = inc - refl  # F0_left + F1_left, in units of I0_code
         s_right = trans + backrefl
 
+        # With an evolved pump the injector's launched amplitude carries a small grid-
+        # dispersion deficit (sin(k0 dx)/sin(k_grid dx), ~2% at 8 cells/wavelength), so
+        # the budget is normalized to the *measured* incident flux -- i.e. fractions of
+        # the pump that actually entered the box, exactly like OSIRIS normalizes to its
+        # own launched flux. With a prescribed pump the physical incident flux is
+        # nominal by construction, so normalize by 1.
+        inc_ref = 1.0
+        if pump_evolved and len(inc) > 1:
+            inc_ref = float(np.mean(inc[len(inc) // 2 :]))
+            if not np.isfinite(inc_ref) or inc_ref <= 0:
+                inc_ref = 1.0
+
         windows = segment_windows(t_ps, last_frac=0.25, n_segments=4)
         for win in windows:
             suffix = "" if win["is_last"] else f"_seg{win['index']}of{win['n']}"
@@ -221,16 +233,16 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
             t_naive = _wmean(trans, win["mask"])
             if r_naive is None:
                 continue
-            metrics[f"laser_reflectivity_naive{suffix}"] = r_naive
-            metrics[f"laser_transmissivity_naive{suffix}"] = t_naive
+            metrics[f"laser_reflectivity_naive{suffix}"] = r_naive / inc_ref
+            metrics[f"laser_transmissivity_naive{suffix}"] = t_naive / inc_ref
             if pump_evolved:
-                metrics[f"laser_reflectivity{suffix}"] = 1.0 - _wmean(s_left, win["mask"])
-                metrics[f"laser_transmissivity{suffix}"] = _wmean(s_right, win["mask"])
-                metrics[f"laser_absorbed_frac{suffix}"] = _wmean(s_left - s_right, win["mask"])
+                metrics[f"laser_reflectivity{suffix}"] = 1.0 - _wmean(s_left, win["mask"]) / inc_ref
+                metrics[f"laser_transmissivity{suffix}"] = _wmean(s_right, win["mask"]) / inc_ref
+                metrics[f"laser_absorbed_frac{suffix}"] = _wmean(s_left - s_right, win["mask"]) / inc_ref
             else:
                 # pump is prescribed: the one-way Raman flux is the only measurable
                 # reflectivity, and there is no transmission/absorption budget
-                metrics[f"laser_reflectivity{suffix}"] = r_naive
+                metrics[f"laser_reflectivity{suffix}"] = r_naive / inc_ref
             if "epw_dissipation" in series:
                 d = _wmean(np.asarray(series["epw_dissipation"].values, dtype=float), win["mask"])
                 if d is not None and I0_osiris > 0:
