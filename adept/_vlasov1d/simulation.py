@@ -1,16 +1,21 @@
 """Domain objects that represent a configured Vlasov-1D simulation."""
 
-import math
 import warnings
+from typing import List
 
 import equinox as eqx
-import jax
+import jax 
+import jax.numpy as jnp
+import numpy as np
+from jaxtyping import Array
+from jax import tree_util as jtu
 
 from adept._vlasov1d.datamodel import (
     AKWDriverConfig,
     EMDriverConfig,
     EMDriverSetConfig,
     IntensityWavelengthDriverConfig,
+    BroadbandConfig,
     SpeciesComponentConfig,
     SpeciesConfig,
 )
@@ -28,25 +33,29 @@ from adept.functions import (
     SpaceTimeEnvelopeFunction,
     UniformFunction,
 )
-from adept.normalization import UREG, PlasmaNormalization, normalize
+from adept.normalization import PlasmaNormalization
 
-
+#%% # the place from where config is picked up from
 class EMDriver(eqx.Module):
     """Normalized electromagnetic driver used by longitudinal or transverse sources."""
 
     a0: float
     k0: float
     w0: float
+    phase: float
     dw0: float
     envelope: SpaceTimeEnvelopeFunction
     is_point_source: bool = False
 
     @staticmethod
-    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> "EMDriver":
+    # TODO: figure out new class from BaseVlasov with init_modules and vg (see for a way to ingest trainabale and non-trainable modules)
+    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> List["EMDriver"]:
         """Convert user driver configuration into normalized solver parameters."""
         envelope = SpaceTimeEnvelopeFunction.from_config(cfg.envelope, norm)
 
         params = cfg.params
+        # local import avoids the simulation <-> helpers module cycle
+        from adept._vlasov1d.helpers import get_akw_from_intensity_wavelength
 
         match cfg.params:
             case AKWDriverConfig():
@@ -59,36 +68,141 @@ class EMDriver(eqx.Module):
                     k0, w0 = params.k0, params.w0
 
                 is_point = cfg.source_type == "point"
-                return EMDriver(params.a0, k0, w0, params.dw0, envelope, is_point_source=is_point)
+                return [EMDriver(params.a0, k0, w0, params.phase, params.dw0, envelope, is_point_source=is_point)]
 
             case IntensityWavelengthDriverConfig(intensity=intensity, wavelength=wavelength, leftgoing=leftgoing):
-                intensity = UREG.Quantity(intensity).to("W/m^2")
-                wavelength = UREG.Quantity(wavelength).to("nm")
+                a0, k0, w0 = get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm)
 
-                e = UREG.e
-                m_e = UREG.m_e
-                eps0 = UREG.epsilon_0
-                c = UREG.c
+                dw0 = params.dw0
+                is_point = cfg.source_type == "point"
+                return [EMDriver(a0, k0, w0, params.phase, dw0, envelope, is_point_source=is_point)]
 
-                # Standard a0 = eE0/(m_e c w0) — identical to HermiteSRS1D formula
-                a0_std = ((e * wavelength / (m_e * math.pi)) * (intensity / (2 * eps0 * c**5)) ** 0.5).to("").magnitude
-                # Vlasov normalization: a0_vlasov = a0_std / β  (β = v0/c)
-                a0 = a0_std * norm.speed_of_light_norm()
-
-                # k0 in Debye-length units: k0_vlasov = k_phys x v0/wp0
-                k0_phys = (2 * math.pi / wavelength).to("1/m")
-                k_sign = -1.0 if leftgoing else 1.0
-                k0 = k_sign * float((k0_phys * norm.L0).to("").magnitude)
-
-                # w0 normalized to wp0 (same normalization as Hermite)
-                w0_phys = (2 * math.pi * c / wavelength).to("1/s")
-                w0 = float((w0_phys * norm.tau).to("").magnitude)
-
-                dw0 = 0.0  # ???
+            case BroadbandConfig(intensities=intensities, wavelength=wavelength, leftgoing=leftgoing):
+                a0, k0, w0 = get_akw_from_intensity_wavelength(intensities['base_intensity'], wavelength, leftgoing, norm)
 
                 is_point = cfg.source_type == "point"
-                return EMDriver(a0, k0, w0, dw0, envelope, is_point_source=is_point)
+                # need to see if this object remaining for later is required i.e. if the other code in the class is dead
+                broadband_driver = BroadbandDriver(params.model_dump(), a0, k0, w0, envelope, is_point)
+                return broadband_driver.driver_list
 
+#%%
+
+class BroadbandDriver(eqx.Module):
+    params: dict
+    a0: float
+    k0: float
+    w0: float 
+    intensities: Array
+    delta_omega: Array
+    phases: Array
+    #ny: int #??
+    envelope: SpaceTimeEnvelopeFunction
+    is_point_source: bool = False
+    driver_list: list
+    
+    def __init__(self, cfg: dict, a0, k0, w0, envelope, is_point):
+        self.params = cfg
+        self.a0 = a0
+        self.k0 = k0
+        self.w0 = w0
+        self.envelope = envelope
+        self.is_point_source = is_point
+
+        # intensities
+        if self.params["intensities"]["init"] == "random": #what do we want random to exactly be?
+            # note: random is not required for reproducing RK Follett results
+            self.intensities = jnp.array(np.random.uniform(0, 2, self.params["num_colors"]))
+            # 1: multiplicative shift as random amplitude broadband (changed from -1 to 1 TO 0 to 2)???
+                # does a0 * self.intensities
+            # 2: what is the proper range (right now it is 0 to 2)
+        elif self.params["intensities"]["init"] == "uniform":
+            self.intensities = jnp.ones(self.params["num_colors"])
+        else:
+            raise NotImplementedError(
+                f"Initialization type -- {self.params['intensities']['init']} -- not implemented"
+            )
+        self.intensities = self.a0 * jnp.sqrt((self.intensities / jnp.sum(self.intensities))) # sqrt normalization to have the same power spectrum
+        # otherwise for uniform, power be N times the expected power
+
+        # frequency shift
+        self.delta_omega = jnp.linspace(
+                    -self.params["delta_omega"], self.params["delta_omega"], self.params["num_colors"]
+                ) * self.w0
+
+        # phases (to add: chirp very later (not to worry now))
+        # opt and chirp
+        if self.params["intensities"]["init"] == "random": #what do we want random to exactly be?
+            phase_rng = np.random.default_rng(seed=self.params["phases"]["seed"])
+            self.phases = jnp.array(phase_rng.uniform(-1, 1, self.params["num_colors"]))
+            self.phases = jnp.tanh(self.phases) * jnp.pi
+        elif self.params["intensities"]["init"] == "uniform":
+            self.phases = jnp.ones(self.params["num_colors"]) * self.params["phases"]['base_phase']
+        else:
+            raise NotImplementedError(
+                f"Initialization type -- {self.params['phases']['init']} -- not implemented"
+            )
+
+        DriverList = []
+        for a, dw, phase in zip(self.intensities, self.delta_omega, self.phases):
+            driver_obj = EMDriver(a, self.k0, self.w0, phase, dw, self.envelope, self.is_point_source)
+            DriverList.append(driver_obj)
+            
+        self.driver_list = DriverList
+
+    def scale_intensities(self, intensities): # check if needed for the vlasov opt loops (was needed for lpse2d)
+        # reconfigures the intensities into weight-like values
+        if self.params["intensities"]["activation"] == "linear":
+            ints = 0.5 * (jnp.tanh(intensities) + 1.0)
+        elif self.params["intensities"]["activation"] == "log":
+            ints = 3 * (jnp.tanh(intensities) + 1.0) - 3
+            ints = 10**ints
+        elif self.params["intensities"]["activation"] == "log-3wide":
+            ints = -1.5 * (jnp.tanh(intensities) + 1.0)  # from 0 to -3
+            ints = 10**ints
+        else:
+            raise NotImplementedError(
+                f"Amplitude Output type -- {self.params['intensities']['activation']} -- not implemented"
+            )
+
+        return ints
+
+    def get_partition_spec(self): # Maybe rewrite this to account for changes in the way broadband driver is injested now
+        """
+        Get the partition spec for the model
+
+        Only intensities and phases can be learned
+
+        Returns
+        -------
+        filter_spec : pytree with the same structure as the model
+
+        """
+        # figure out tracing arrays here
+        # jit and gradient boundary (figure if that might cause problems)
+        filter_spec = jtu.tree_map(lambda _: False, self)
+
+        if self.params["intensities"]["learned"]:
+            filter_spec = eqx.tree_at(lambda tree: tree.intensities, filter_spec, replace=True)
+
+        if self.params["phases"]["learned"]:
+            filter_spec = eqx.tree_at(lambda tree: tree.phases, filter_spec, replace=True)
+
+        return filter_spec
+
+    def __call__(self, state: dict, args: dict) -> tuple: 
+        # intensities = self.scale_intensities(self.intensities)
+        # intensities = intensities / jnp.sum(intensities)
+
+        ''' figure out what this really does in lpse2d --> is this needed in vlasov (only passed in additional paramteres)
+        but how does diffeqsolve even use these additional parameters'''
+        args["drivers"]["ey"] = {
+            "delta_omega": self.delta_omega,
+            "phases": jnp.tanh(self.phases) * jnp.pi,
+            "intensities": self.intensities,
+        } | self.envelope 
+        # self.envelope configured differently in lpse2d --> connects to larger 'derived' parameters 
+
+        return state, args 
 
 class EMDriverSet(eqx.Module):
     """Container for longitudinal (Ex) and transverse (Ey) driver lists."""
@@ -99,8 +213,16 @@ class EMDriverSet(eqx.Module):
     @staticmethod
     def from_config(cfg: EMDriverSetConfig, norm: PlasmaNormalization | None = None) -> "EMDriverSet":
         """Build normalized Ex and Ey driver lists from configuration."""
-        ex = [EMDriver.from_config(ex_cfg, norm) for ex_cfg in cfg.ex.values()]
-        ey = [EMDriver.from_config(ey_cfg, norm) for ey_cfg in cfg.ey.values()]
+        ex = []
+        for ex_cfg in cfg.ex.values():
+            obj = EMDriver.from_config(ex_cfg, norm)
+            ex.extend(obj if isinstance(obj, list) else [obj])
+
+        ey = []
+        for ey_cfg in cfg.ey.values():
+            obj = EMDriver.from_config(ey_cfg, norm)
+            ey.extend(obj if isinstance(obj, list) else [obj])
+
         return EMDriverSet(ex, ey)
 
 

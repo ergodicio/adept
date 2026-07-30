@@ -71,18 +71,20 @@ class TransverseCurrentSourceDriver:
                 self.point_source_masks.append(None)
                 self.point_source_scales.append(None)
 
+#%%
     def _single_driver_source(self, driver: EMDriver, mask, scale, current_time):
         ww = driver.w0
         dw = driver.dw0
+        phase = driver.phase
         w_total = ww + dw
         if driver.is_point_source:
             time_env = driver.envelope.time_envelope(current_time)
-            return scale * time_env * mask * jnp.sin(w_total * current_time)
+            return scale * time_env * mask * jnp.sin((w_total * current_time) + phase)
         else:
             kk = driver.k0
             factor = driver.envelope(self.xax, current_time)
-            return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
-
+            return -factor * w_total**2 * driver.a0 * jnp.sin((kk * self.xax - w_total * current_time) + phase)
+#%%
     def __call__(self, t, args):
         """Evaluate the summed transverse current source at time t."""
         total = jnp.zeros_like(self.xax)

@@ -3,6 +3,7 @@
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
 import os
+import math
 from time import time
 
 import numpy as np
@@ -14,7 +15,7 @@ from scipy.special import gamma
 
 from adept._vlasov1d.simulation import SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.storage import store_f, store_fields
-from adept.normalization import PlasmaNormalization
+from adept.normalization import UREG, PlasmaNormalization, normalize
 
 from .. import patched_mlflow as mlflow
 
@@ -160,6 +161,31 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
     return species_distributions
 
+def get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm: PlasmaNormalization | None = None):
+    # encapsulate the logic into a separate function here
+    intensity = UREG.Quantity(intensity).to("W/m^2")
+    wavelength = UREG.Quantity(wavelength).to("nm")
+
+    e = UREG.e
+    m_e = UREG.m_e
+    eps0 = UREG.epsilon_0
+    c = UREG.c
+
+    # Standard a0 = eE0/(m_e c w0) — identical to HermiteSRS1D formula
+    a0_std = ((e * wavelength / (m_e * math.pi)) * (intensity / (2 * eps0 * c**5)) ** 0.5).to("").magnitude
+    # Vlasov normalization: a0_vlasov = a0_std / β  (β = v0/c)
+    a0 = a0_std * norm.speed_of_light_norm()
+
+    # k0 in Debye-length units: k0_vlasov = k_phys x v0/wp0
+    k0_phys = (2 * math.pi / wavelength).to("1/m")
+    k_sign = -1.0 if leftgoing else 1.0
+    k0 = k_sign * float((k0_phys * norm.L0).to("").magnitude)
+
+    # w0 normalized to wp0 (same normalization as Hermite)
+    w0_phys = (2 * math.pi * c / wavelength).to("1/s")
+    w0 = float((w0_phys * norm.tau).to("").magnitude)
+
+    return a0, k0, w0
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
     """Write binary output and diagnostic plots from a completed Vlasov-1D solve."""
