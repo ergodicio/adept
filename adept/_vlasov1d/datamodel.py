@@ -109,6 +109,8 @@ class IntensityWavelengthDriverConfig(BaseModel):
     intensity: str
     wavelength: str
     leftgoing: bool = False
+    dw0: float = 0.0
+    phase: float = 0.0
 
 class BroadbandConfig(BaseModel):
     """Broadband laser driver parameters specified by intensity and wavelength configuration (dicts)"""
@@ -127,6 +129,7 @@ class AKWDriverConfig(BaseModel):
     k0: float | None = None
     w0: float | None = None
     dw0: float
+    phase: float = 0.0
 
     @model_validator(mode="after")
     def check_w_or_k(self) -> "AKWDriverConfig":

@@ -111,10 +111,9 @@ class BroadbandDriver(eqx.Module):
         # intensities
         if self.params["intensities"]["init"] == "random": #what do we want random to exactly be?
             # note: random is not required for reproducing RK Follett results
-            self.intensities = jnp.array(np.random.uniform(0, 2, self.params["num_colors"]))
-            # 1: multiplicative shift as random amplitude broadband (changed from -1 to 1 TO 0 to 2)???
-                # does a0 * self.intensities
-            # 2: what is the proper range (right now it is 0 to 2)
+            int_lo, int_hi = self.params["intensities"].get("range", (0.0, 2.0))
+            int_rng = np.random.default_rng(seed=self.params["intensities"]["seed"])
+            self.intensities = jnp.array(int_rng.uniform(int_lo, int_hi, self.params["num_colors"]))
         elif self.params["intensities"]["init"] == "uniform":
             self.intensities = jnp.ones(self.params["num_colors"])
         else:
@@ -131,11 +130,13 @@ class BroadbandDriver(eqx.Module):
 
         # phases (to add: chirp very later (not to worry now))
         # opt and chirp
-        if self.params["intensities"]["init"] == "random": #what do we want random to exactly be?
+        if self.params["phases"]["init"] == "random": #what do we want random to exactly be?
+            # Follett 2019: spectral phases drawn uniformly over (0, 2*pi) -- the default;
+            # override via phases.range
+            phase_lo, phase_hi = self.params["phases"].get("range", (0.0, 2.0 * np.pi))
             phase_rng = np.random.default_rng(seed=self.params["phases"]["seed"])
-            self.phases = jnp.array(phase_rng.uniform(-1, 1, self.params["num_colors"]))
-            self.phases = jnp.tanh(self.phases) * jnp.pi
-        elif self.params["intensities"]["init"] == "uniform":
+            self.phases = jnp.array(phase_rng.uniform(phase_lo, phase_hi, self.params["num_colors"]))
+        elif self.params["phases"]["init"] == "uniform":
             self.phases = jnp.ones(self.params["num_colors"]) * self.params["phases"]['base_phase']
         else:
             raise NotImplementedError(
