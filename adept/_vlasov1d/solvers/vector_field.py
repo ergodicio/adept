@@ -242,14 +242,13 @@ class VlasovPoissonFokkerPlanck:
 
         diags = {}
 
+        # Diagnostics use a single reference species and unsuffixed keys to match
+        # the state built in modules.init_state and the save machinery (gh-174).
+        ref_species = "electron" if "electron" in f_dict else next(iter(f_dict))
         if self.vlasov_dfdt:
-            # Compute diagnostics for each species
-            for species_name in f_dict.keys():
-                diags[f"diag-vlasov-dfdt-{species_name}"] = (f_vlasov[species_name] - f_dict[species_name]) / self.dt
+            diags["diag-vlasov-dfdt"] = (f_vlasov[ref_species] - f_dict[ref_species]) / self.dt
         if self.fp_dfdt:
-            # Compute diagnostics for each species
-            for species_name in f_dict.keys():
-                diags[f"diag-fp-dfdt-{species_name}"] = (f_fp[species_name] - f_vlasov[species_name]) / self.dt
+            diags["diag-fp-dfdt"] = (f_fp[ref_species] - f_vlasov[ref_species]) / self.dt
 
         return e, f_fp, diags
 

@@ -289,10 +289,12 @@ class BaseVlasov1D(ADEPTModule):
         for species_name, (n_prof, f_s, v_ax) in dist_result.items():
             state[species_name] = jnp.array(f_s)
 
-        # Reference distribution for diagnostics (use first species)
+        # Reference distribution for diagnostics — must match the reference species
+        # used by VlasovPoissonFokkerPlanck for the dfdt diagnostics and the electron
+        # grid used by the diag save machinery in storage.py.
         # TODO(gh-174): Store species distributions separately for multi-species diagnostics
-        first_species_name = next(iter(dist_result.keys()))
-        f_ref = dist_result[first_species_name][1]
+        ref_species = "electron" if "electron" in dist_result else next(iter(dist_result.keys()))
+        f_ref = dist_result[ref_species][1]
 
         # Field quantities (same for all modes)
         for field in ["e", "de"]:
