@@ -135,11 +135,48 @@ class EMDriverConfig(BaseModel):
     source_type: Literal["extended", "point"] = "extended"
 
 
+class StochasticDriverConfig(BaseModel):
+    """Time-correlated (Ornstein-Uhlenbeck) stochastic forcing of the longitudinal field.
+
+    Each entry of ``modes`` is an integer mode number m of the periodic box
+    (k_m = 2 pi m / L). The complex amplitude of each mode evolves as an
+    independent OU process with correlation time ``tau`` and stationary RMS
+    ``amplitude``, so the forcing field is
+
+        dE(x, t) = sum_m Re[a_m(t) exp(i k_m x)]
+
+    The realization is precomputed from ``seed`` on a uniform time grid of
+    spacing ``dt_update`` (default tau/10) and linearly interpolated in time,
+    so a given seed is reproducible and independent of the solver timestep.
+    """
+
+    modes: list[int] = [1]
+    amplitude: float
+    tau: float
+    seed: int = 42
+    dt_update: float | None = None
+
+    @field_validator("modes")
+    @classmethod
+    def _positive_modes(cls, v: list[int]) -> list[int]:
+        if not v or any(m < 1 for m in v):
+            raise ValueError(f"stochastic driver modes must be positive integers, got {v}")
+        return v
+
+    @field_validator("tau")
+    @classmethod
+    def _positive_tau(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError(f"stochastic driver correlation time tau must be > 0, got {v}")
+        return v
+
+
 class EMDriverSetConfig(BaseModel):
     """Longitudinal and transverse electromagnetic driver collections."""
 
     ex: dict[str, EMDriverConfig]
     ey: dict[str, EMDriverConfig]
+    ex_stochastic: StochasticDriverConfig | None = None
 
 
 class HouLiFilterConfig(BaseModel):
@@ -194,6 +231,20 @@ class SpeciesConfig(BaseModel):
     density_components: list[str]
 
 
+class BoltzmannElectronsConfig(BaseModel):
+    """Linearized Boltzmann electron closure parameters (``field: poisson-boltzmann``).
+
+    The closure is e phi / T_e = delta n_i / n_0 + lambda_De^2 d^2/dx^2 (e phi / T_e),
+    i.e. a screened Poisson solve where the electrons respond adiabatically.
+    """
+
+    # Electron temperature in code units (units of the normalizing temperature)
+    Te: float = 1.0
+    # Screening length in code units. None -> the consistent sqrt(Te / rho_0);
+    # 0.0 -> quasineutral closure e phi / T_e = delta n / n_0
+    lambda_De: float | None = None
+
+
 class TermsConfig(BaseModel):
     """Numerical term selections and optional physics operators."""
 
@@ -201,10 +252,28 @@ class TermsConfig(BaseModel):
     edfdv: str
     time: str
     species: list[SpeciesConfig] | None = None
+    boltzmann_electrons: BoltzmannElectronsConfig | None = None
     fokker_planck: FokkerPlanckConfig
     krook: KrookConfig
     hou_li_filter: HouLiFilterConfig = HouLiFilterConfig(is_on=False)
     diags: bool | None = None
+
+    @model_validator(mode="after")
+    def check_boltzmann_electrons(self) -> "TermsConfig":
+        """Require an explicit, ion-only species list for the Boltzmann-electron field solver."""
+        if self.field == "poisson-boltzmann":
+            if not self.species:
+                raise ValueError(
+                    "field: poisson-boltzmann requires an explicit terms.species list "
+                    "(the legacy single-electron default is incompatible with a Boltzmann electron closure)"
+                )
+            negative = [s.name for s in self.species if s.charge < 0]
+            if negative:
+                raise ValueError(
+                    "field: poisson-boltzmann treats electrons with an adiabatic (Boltzmann) closure; "
+                    f"all kinetic species must have positive charge but got negative charge for {negative}"
+                )
+        return self
 
 
 class MLFlowConfig(BaseModel):

@@ -1,0 +1,120 @@
+# Ion-acoustic turbulence: kinetic ions + linearized Boltzmann electrons,
+# driven by compressive, time-correlated (Ornstein-Uhlenbeck) forcing at the
+# box scale. Modeled after Madan, Ewart & Kunz, "Phase-space turbulence of
+# ion-acoustic fluctuations" (17th Plasma Kinetics Working Meeting, 2026).
+#
+# Ion-unit convention: the single kinetic species has mass = charge = 1 and
+# T0 = 1, so code time is 1/omega_pi, velocity is the ion thermal speed v_ti,
+# and length is v_ti/omega_pi. The electron physics enters only through the
+# closure: Te sets the restoring force (here Te/Ti = 0.05, strongly
+# ion-Landau-damped waves) and the screening length is
+# lambda_De = sqrt(Te) = 0.2236 in these units.
+
+units:
+  normalizing_temperature: 1000eV
+  normalizing_density: 1.0e19/cc
+
+density:
+  quasineutrality: true
+  species-ion-background:
+    noise_seed: 416
+    noise_type: gaussian
+    noise_val: 1.0e-6
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+
+grid:
+  dt: 0.25
+  nx: 2048
+  tmin: 0.0
+  tmax: 10000.0
+  xmax: 458.0
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      nt: 1001
+  ion:
+    main:
+      t:
+        tmin: 0.0
+        tmax: 10000.0
+        nt: 11
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: iaw-turbulence
+  run: te-over-ti-0.05
+
+drivers:
+  ex: {}
+  ey: {}
+  ex_stochastic:
+    modes: [1]
+    amplitude: 1.0e-2
+    tau: 2000.0
+    seed: 42
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 0.05
+    # lambda_De defaults to sqrt(Te / n0) = 0.2236 here; set explicitly (e.g. to
+    # the grid spacing) to mimic reference runs where the cell size takes the
+    # place of the Debye length, or to 0.0 for the quasineutral closure.
+  edfdv: cubic-spline
+  time: sixth
+  species:
+    - name: ion
+      charge: 1.0
+      mass: 1.0
+      vmax: 6.4
+      nv: 512
+      density_components:
+        - species-ion-background
+  fokker_planck:
+    is_on: False
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

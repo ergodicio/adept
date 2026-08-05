@@ -79,7 +79,7 @@ def sim_from_config(
         ]
         for s in species
     }
-    drivers = EMDriverSet.from_config(cfg.drivers, norm=plasma_norm)
+    drivers = EMDriverSet.from_config(cfg.drivers, norm=plasma_norm, grid=grid)
 
     return Vlasov1DSimulation(
         plasma_norm,
