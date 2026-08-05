@@ -1,0 +1,95 @@
+units:
+  normalizing_temperature: 1000eV
+  normalizing_density: 1.0e19/cc
+density:
+  quasineutrality: true
+  species-ion-background:
+    noise_seed: 416
+    noise_type: gaussian
+    noise_val: 1.0e-06
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+grid:
+  dt: 0.25
+  nx: 17280
+  tmin: 0.0
+  tmax: 2500.0
+  xmax: 966.0
+  xmin: 0.0
+  parallel:
+  - x
+  - v
+save:
+  fields:
+    t:
+      nt: 6
+solver: vlasov-1d
+mlflow:
+  experiment: iaw-turbulence
+  run: big-te-ti-0.05-bench
+drivers:
+  ex: {}
+  ey: {}
+  ex_stochastic:
+    modes:
+    - 1
+    amplitude: 0.0010352
+    tau: 966.0
+    seed: 42
+diagnostics:
+  diag-vlasov-dfdt: false
+  diag-fp-dfdt: false
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 0.05
+  edfdv: cubic-spline
+  time: sixth
+  species:
+  - name: ion
+    charge: 1.0
+    mass: 1.0
+    vmax: 6.4
+    nv: 2048
+    density_components:
+    - species-ion-background
+  fokker_planck:
+    is_on: false
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: false
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

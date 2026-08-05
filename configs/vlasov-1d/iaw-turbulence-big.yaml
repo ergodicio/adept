@@ -1,0 +1,140 @@
+# Production IAW turbulence run: kinetic ions + linearized Boltzmann electrons
+# at Te/Ti = 0.05 (deck parameters), critically balanced box-scale forcing,
+# 50 box-crossing times, sharded across all visible GPUs (grid.parallel).
+#
+# Ion units: v_ti = 1, lambda_De = sqrt(Te) = 0.2236.
+# Box: L = 966 = 4320 lambda_De with nx = 17280 -> dx = lambda_De / 4.
+# Velocity: nv = 2048 over +-6.4 v_ti -> dv = 0.00625; trapping widths at
+# Te/Ti = 0.05 are ~0.14 v_ti so islands get ~20 points.
+# Forcing (critical balance): tau = L/v_ti = 966, amplitude = v_ti^2/L = 1/966.
+
+units:
+  normalizing_temperature: 1000eV
+  normalizing_density: 1.0e19/cc
+
+density:
+  quasineutrality: true
+  species-ion-background:
+    noise_seed: 416
+    noise_type: gaussian
+    noise_val: 1.0e-6
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+
+grid:
+  dt: 0.25
+  nx: 17280
+  tmin: 0.0
+  tmax: 48300.0     # 50 * L / v_ti
+  xmax: 966.0
+  xmin: 0.0
+  parallel: ["x", "v"]
+
+save:
+  fields:
+    t:
+      nt: 1001
+  ion:
+    # decimated full-box view (2.5 lambda_De per point in x)
+    main:
+      t:
+        tmin: 0.0
+        tmax: 48300.0
+        nt: 26
+      x:
+        xmin: 0.0
+        xmax: 966.0
+        nx: 1728
+      v:
+        vmin: -6.4
+        vmax: 6.4
+        nv: 1024
+    # full-resolution zoom: first 10% of the box (432 lambda_De), bulk velocities
+    zoom:
+      t:
+        tmin: 0.0
+        tmax: 48300.0
+        nt: 51
+      x:
+        xmin: 0.0
+        xmax: 96.6
+        nx: 1728
+      v:
+        vmin: -3.2
+        vmax: 3.2
+        nv: 1024
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: iaw-turbulence
+  run: big-te-ti-0.05-50tau
+
+drivers:
+  ex: {}
+  ey: {}
+  # Critically balanced: tau = L/v_ti = 966, amplitude = v_ti^2/L = 1/966
+  ex_stochastic:
+    modes: [1]
+    amplitude: 1.0352e-3
+    tau: 966.0
+    seed: 42
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 0.05       # Te/Ti = 0.05; lambda_De defaults to sqrt(Te/n0) = 0.2236
+  edfdv: cubic-spline
+  time: sixth
+  species:
+    - name: ion
+      charge: 1.0
+      mass: 1.0
+      vmax: 6.4
+      nv: 2048
+      density_components:
+        - species-ion-background
+  fokker_planck:
+    is_on: False
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
