@@ -127,10 +127,13 @@ class BaseVlasov1D2V(BaseVlasov1D):
         for field_key in ["a", "da", "prev_a"]:
             state[field_key] = jnp.zeros(grid.nx + 2)
 
-        # dfdt diagnostics are MARGINAL (nx, nv) arrays — see solvers.vector_field
+        # Diagnostics are MARGINAL (nx, nv) accumulators holding the running time
+        # integral of each term's contribution — see solvers.vector_field for why
+        # they are integrated rather than sampled. Start from zero; post-processing
+        # differences them to get exact interval-averaged rates.
         ref_species = "electron" if "electron" in dist_result else next(iter(dist_result.keys()))
         nv = dist_result[ref_species][1].shape[1]
-        for k in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
+        for k in ["diag-vlasov-cumulative", "diag-fp-cumulative"]:
             if self.cfg["diagnostics"][k]:
                 state[k] = jnp.zeros((grid.nx, nv))
 

@@ -42,24 +42,44 @@ def test_marginal_matches_vlasov1d(fp_type):
     assert e_scale > 1e-4, "driver did not couple"
     assert np.abs(e2 - e1).max() / e_scale < 1e-8, f"E-field mismatch {np.abs(e2 - e1).max() / e_scale:.2e}"
 
-    # Marginal dfdt diagnostics vs the 1D diagnostics
-    for diag in ["diag-vlasov-dfdt", "diag-fp-dfdt"]:
-        if diag in res2.ys:
-            d2 = np.asarray(res2.ys[diag])
-            d1 = np.asarray(res1.ys[diag])
-            dscale = np.abs(d1).max() + 1e-300
-            assert np.abs(d2 - d1).max() / dscale < 1e-6, f"{diag} mismatch"
+    # NOTE: the 2V diagnostics are time-INTEGRALS while the 1D ones are sampled
+    # rates, so they are not directly comparable; the marginal-f and E-field
+    # checks above already establish the 1D-limit equivalence. The accumulators
+    # get their own (stronger) identity test below.
 
 
-def test_dfdt_diags_present_and_marginal_shaped():
-    """The dfdt diagnostics must be emitted with marginal (t, x, v_par) shape."""
-    cfg = base_config(nx=16, nv=128, nvperp=8, tmax=20.0)
-    cfg["save"]["diag-vlasov-dfdt"] = {"t": {"tmin": 0.0, "tmax": 20.0, "nt": 5}}
-    cfg["save"]["diag-fp-dfdt"] = {"t": {"tmin": 0.0, "tmax": 20.0, "nt": 5}}
+def test_cumulative_diags_telescope_to_the_marginal_change():
+    """acc_vlasov + acc_fp must equal F(t) - F(0) exactly, by construction.
+
+    The two accumulators partition every step's change in the marginal between
+    the Vlasov and collision substeps, so their sum telescopes to the total
+    change. This is the identity that makes the differenced accumulators a
+    valid (and alias-free) decomposition of d(Delta_eps)/dt.
+    """
+    tmax, nt = 20.0, 5
+    cfg = base_config(nx=16, nv=128, nvperp=8, tmax=tmax)
+    cfg["save"]["electron"]["main"]["t"] = {"tmin": 0.0, "tmax": tmax, "nt": nt}
+    cfg["save"]["diag-vlasov-cumulative"] = {"t": {"tmin": 0.0, "tmax": tmax, "nt": nt}}
+    cfg["save"]["diag-fp-cumulative"] = {"t": {"tmin": 0.0, "tmax": tmax, "nt": nt}}
+
     mod, res = run_module(BaseVlasov1D2V, cfg)
-    assert res.ys["diag-vlasov-dfdt"].shape == (5, 16, 128)
-    assert res.ys["diag-fp-dfdt"].shape == (5, 16, 128)
-    # FP dfdt must integrate to ~zero density change (conservative operator)
-    dv = mod.cfg["grid"]["species_grids"]["electron"]["dv"]
-    dn = np.abs(np.asarray(res.ys["diag-fp-dfdt"]).sum(axis=-1) * dv)
+
+    assert res.ys["diag-vlasov-cumulative"].shape == (nt, 16, 128)
+    assert res.ys["diag-fp-cumulative"].shape == (nt, 16, 128)
+
+    grid = mod.cfg["grid"]["species_grids"]["electron"]
+    wperp = np.asarray(grid["wperp"])
+    F = marginal(res.ys["electron.main"], wperp)  # (t, x, v_par)
+    acc = np.asarray(res.ys["diag-vlasov-cumulative"]) + np.asarray(res.ys["diag-fp-cumulative"])
+
+    lhs = acc - acc[0]
+    rhs = F - F[0]
+    scale = np.abs(rhs).max()
+    assert scale > 0, "nothing evolved"
+    assert np.abs(lhs - rhs).max() / scale < 1e-10, (
+        f"accumulators do not telescope: {np.abs(lhs - rhs).max() / scale:.2e}"
+    )
+
+    # the FP accumulator must carry no density (conservative operator)
+    dn = np.abs(np.asarray(res.ys["diag-fp-cumulative"]).sum(axis=-1) * grid["dv"])
     assert dn.max() < 1e-10

@@ -66,7 +66,14 @@ def base_config(nx=32, nv=256, nvperp=16, tmax=100.0, dt=0.25, nu=1.0e-3, fp_typ
             },
             "ey": {},
         },
-        "diagnostics": {"diag-vlasov-dfdt": True, "diag-fp-dfdt": True},
+        # both key sets: the comparison tests drive this same config through the
+        # 1D module (sampled dfdt diags) and the 2V module (accumulated diags)
+        "diagnostics": {
+            "diag-vlasov-cumulative": True,
+            "diag-fp-cumulative": True,
+            "diag-vlasov-dfdt": True,
+            "diag-fp-dfdt": True,
+        },
         "terms": {
             "field": "poisson",
             "edfdv": "exponential",

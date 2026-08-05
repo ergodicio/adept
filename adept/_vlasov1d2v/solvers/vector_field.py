@@ -123,8 +123,8 @@ class VlasovPoissonFokkerPlanck:
         else:
             raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)
-        self.vlasov_dfdt = cfg["diagnostics"]["diag-vlasov-dfdt"]
-        self.fp_dfdt = cfg["diagnostics"]["diag-fp-dfdt"]
+        self.vlasov_cumulative = cfg["diagnostics"]["diag-vlasov-cumulative"]
+        self.fp_cumulative = cfg["diagnostics"]["diag-fp-cumulative"]
 
     def __call__(
         self, f_dict: dict, a: Array, prev_ex: Array, dex_array: Array, nu_fp: Array, nu_K: Array
@@ -136,24 +136,32 @@ class VlasovPoissonFokkerPlanck:
 
         diags = {}
 
-        # dfdt diagnostics are emitted on the MARGINAL F(x, v_par): that is what
-        # the electrostatic dielectric (and the Delta-eps decomposition of the
-        # NLEPW analysis) sees, it keeps the save arrays 1D-shaped so the
-        # vlasov-1d storage/postprocess machinery applies verbatim, and it is
-        # cheap enough to save at high cadence.
+        # Diagnostics are emitted on the MARGINAL F(x, v_par): that is what the
+        # electrostatic dielectric (and the Delta-eps decomposition of the NLEPW
+        # analysis) sees, and it keeps the save arrays 1D-shaped so the vlasov-1d
+        # storage/postprocess machinery applies verbatim.
+        #
+        # These are per-step INCREMENTS, which VlasovMaxwell2V accumulates into
+        # running time-integrals. Saving the instantaneous rate instead would
+        # alias: the x-averaged wave-particle exchange carries 2*omega content
+        # (period ~2.7 at k lambda_D = 0.3) while affordable save cadences are
+        # dt_save ~ 10. Differencing the accumulated integral between two save
+        # points instead returns the EXACT interval-averaged rate -- a box
+        # filter applied before decimation -- for one extra array and no
+        # filter design.
         ref_species = "electron" if "electron" in f_dict else next(iter(f_dict))
-        if self.vlasov_dfdt or self.fp_dfdt:
+        if self.vlasov_cumulative or self.fp_cumulative:
             marg = self.vlasov_poisson.marginals
-            if self.vlasov_dfdt:
-                diags["diag-vlasov-dfdt"] = (
+            if self.vlasov_cumulative:
+                diags["diag-vlasov-cumulative"] = (
                     marg({ref_species: f_vlasov[ref_species]})[ref_species]
                     - marg({ref_species: f_dict[ref_species]})[ref_species]
-                ) / self.dt
-            if self.fp_dfdt:
-                diags["diag-fp-dfdt"] = (
+                )
+            if self.fp_cumulative:
+                diags["diag-fp-cumulative"] = (
                     marg({ref_species: f_fp[ref_species]})[ref_species]
                     - marg({ref_species: f_vlasov[ref_species]})[ref_species]
-                ) / self.dt
+                )
 
         return e, f_fp, diags
 
@@ -224,6 +232,8 @@ class VlasovMaxwell2V:
             "e": e,
         }
         result.update(f_dict_new)
-        result.update(diags)
+        # accumulate the per-step increments into running time-integrals
+        for key, increment in diags.items():
+            result[key] = y[key] + increment
 
         return result

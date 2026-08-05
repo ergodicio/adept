@@ -11,8 +11,10 @@ verbatim. Species distribution saves come in two kinds:
 - ``{t}`` label: the full f(x, v_par, v_perp) at full resolution — rank-4,
   intended for sparse snapshot cadences.
 
-Diagnostic saves (diag-vlasov-dfdt / diag-fp-dfdt) are already marginal
-arrays in the state, so the 1D save machinery is reused directly.
+Diagnostic saves (diag-vlasov-cumulative / diag-fp-cumulative) are already
+marginal arrays in the state, so the 1D save machinery is reused directly.
+They hold running TIME INTEGRALS, not sampled rates — difference them
+between save points to get exact interval-averaged rates.
 """
 
 import os
@@ -98,9 +100,7 @@ def get_dist_save_func_2v(axes, dist_save_config, dist_key, wperp):
             everywhere downstream.
             """
             F = jnp.einsum("xvp,p->xv", y[dist_key], wperp)
-            return interp2d(
-                xq_flat, vq_flat, axes["x"], axes["v"], F, method="linear", extrap=True
-            ).reshape(out_shape)
+            return interp2d(xq_flat, vq_flat, axes["x"], axes["v"], F, method="linear", extrap=True).reshape(out_shape)
 
     else:
         raise NotImplementedError(f"Unsupported 2V dist save axes: {set(dist_save_config.keys())}")
@@ -161,7 +161,7 @@ def get_default_save_func(cfg):
 def get_save_quantities(cfg: dict) -> dict:
     """Expand the save config into flat keys with attached JAX save functions."""
     species_names = list(cfg["grid"]["species_grids"].keys())
-    diag_types = ["diag-vlasov-dfdt", "diag-fp-dfdt"]
+    diag_types = ["diag-vlasov-cumulative", "diag-fp-cumulative"]
 
     new_save: dict = {}
 
