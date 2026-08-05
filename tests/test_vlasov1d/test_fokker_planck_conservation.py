@@ -22,7 +22,9 @@ import yaml
 from adept import ergoExo
 
 
-@pytest.mark.parametrize("operator_type", ["chang_cooper_dougherty", "chang_cooper", "Dougherty", "Lenard_Bernstein"])
+@pytest.mark.parametrize(
+    "operator_type", ["chang_cooper_dougherty", "chang_cooper", "Dougherty", "Lenard_Bernstein", "dougherty_nodrag"]
+)
 def test_fokker_planck_conservation(operator_type):
     """
     Test that Fokker-Planck operators conserve density and energy.

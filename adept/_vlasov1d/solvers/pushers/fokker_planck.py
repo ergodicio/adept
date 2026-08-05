@@ -266,6 +266,7 @@ class Collisions:
         """
         self.cfg = cfg
         self.fp_model, self.fp_scheme = self.__init_fp_operator__()
+        self._nodrag = cfg["terms"]["fokker_planck"].get("type", "").casefold() == "dougherty_nodrag"
         self.krook = Krook(self.cfg)
 
         v = cfg["grid"]["species_grids"]["electron"]["v"]
@@ -313,6 +314,15 @@ class Collisions:
             m = float(self.cfg["terms"]["fokker_planck"].get("m", 2.0))
             model = SuperGaussianDougherty(v=v, dv=dv, m=m)
             return model, ChangCooper(dv=dv)
+        elif fp_type == "dougherty_nodrag":
+            # Diffusion-of-the-deviation operator: nu * T * d^2/dv^2 (f - f_M[n, u, T]).
+            # Same moments machinery as Dougherty, but the implicit solve runs with
+            # C_edge = 0 (pure diffusion) and the analytic Maxwellian diffusion is
+            # subtracted explicitly with the same discrete stencil, so that
+            # C[f_M] = 0 and n, P, E are conserved while the operator carries NO
+            # drag acting on the deviation (parity-preserving in v - vph).
+            model = Dougherty(v=v, dv=dv)
+            return model, CentralDifferencing(dv=dv)
         else:
             raise NotImplementedError(f"Unknown Fokker-Planck type: {fp_type}")
 
@@ -383,7 +393,24 @@ class Collisions:
                         max_steps=self._sc_max_steps,
                     )
                 C_edge, D = self.fp_model.compute_C_and_D(f_shard, beta)
-                f_shard = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
+                if self._nodrag:
+                    C_edge = jnp.zeros_like(C_edge)
+                f_new = vmap(self._solve_one_x, in_axes=(0, 0, 0, 0, None))(C_edge, D, nu_fp_shard, f_shard, dt)
+                if self._nodrag:
+                    # subtract the diffusion of the self-consistent Maxwellian using
+                    # the SAME zero-flux stencil as the implicit operator, so f_M is
+                    # a discrete fixed point and n, P, E are conserved.
+                    vbar_col = vbar[..., None]
+                    n_prof = jnp.sum(f_shard, axis=-1) * dv
+                    f_mx = jnp.exp(-beta[..., None] * (v[None, :] - vbar_col) ** 2)
+                    f_mx = f_mx * (n_prof / (jnp.sum(f_mx, axis=-1) * dv))[..., None]
+                    DfM = D[..., None] * f_mx
+                    lap = jnp.zeros_like(DfM)
+                    lap = lap.at[..., 1:-1].set((DfM[..., 2:] - 2.0 * DfM[..., 1:-1] + DfM[..., :-2]) / dv**2)
+                    lap = lap.at[..., 0].set((DfM[..., 1] - DfM[..., 0]) / dv**2)
+                    lap = lap.at[..., -1].set((DfM[..., -2] - DfM[..., -1]) / dv**2)
+                    f_new = f_new - dt * nu_fp_shard[..., None] * lap
+                f_shard = f_new
 
             if self.cfg["terms"]["krook"]["is_on"]:
                 f_shard = self.krook(nu_K_shard, f_shard, dt)

@@ -551,6 +551,7 @@ Available `type` values (case-insensitive):
 | `chang_cooper` | Lenard-Bernstein | Chang-Cooper | Maxwellian at v=0 |
 | `dougherty` | Dougherty | central differencing | Maxwellian at $\bar v$ |
 | `chang_cooper_dougherty` | Dougherty | Chang-Cooper | Maxwellian at $\bar v$ |
+| `dougherty_nodrag` | Dougherty (diffusion of the deviation) | central differencing | Maxwellian at $\bar v$ |
 | `super_gaussian` | Super-Gaussian Dougherty | Chang-Cooper | Super-Gaussian of order `m` at $\bar v$ |
 
 The Chang-Cooper scheme is positivity-preserving and conserves density exactly; central differencing is provided for comparison only.
@@ -610,6 +611,19 @@ terms:
       baseline: 1.0
       # ...
 ```
+
+#### dougherty_nodrag
+
+Diffusion-of-the-deviation operator
+$C[f] = \nu\, T\, \partial_v^2 \left(f - f_M[n, \bar v, T]\right)$.
+It uses the same moments machinery as `dougherty`, but the implicit solve runs
+with the drag coefficient zeroed (pure diffusion) and the diffusion of the
+self-consistent Maxwellian is subtracted explicitly using the same discrete
+zero-flux stencil, so $f_M$ is a discrete fixed point and $n$, $P$, and $E$
+are conserved. Because the operator carries no drag acting on the deviation,
+it is parity-preserving in $v - v_\phi$ — useful as a control for isolating
+the role of collisional drag (e.g. in ratchet/pawl-style transport
+experiments) while retaining Maxwellian-preserving velocity diffusion.
 
 #### self_consistent_beta
 
