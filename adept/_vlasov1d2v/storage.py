@@ -88,9 +88,19 @@ def get_dist_save_func_2v(axes, dist_save_config, dist_key, wperp):
         out_shape = xq.shape
 
         def dist_save_func(t, y, args):
-            """Return the marginal interpolated on configured x-v sample points."""
+            """Return the marginal interpolated on configured x-v sample points.
+
+            extrap=True is required, not cosmetic: interpax returns NaN outside
+            the knot range, and a save axis built from a rounded config value
+            (e.g. xmax: 20.94 against a box of 2*pi/0.3 = 20.94395) puts the
+            first sample ~3e-5 below the first node. That silently NaNs a whole
+            column, and any x-average of the save then propagates NaN
+            everywhere downstream.
+            """
             F = jnp.einsum("xvp,p->xv", y[dist_key], wperp)
-            return interp2d(xq_flat, vq_flat, axes["x"], axes["v"], F, method="linear").reshape(out_shape)
+            return interp2d(
+                xq_flat, vq_flat, axes["x"], axes["v"], F, method="linear", extrap=True
+            ).reshape(out_shape)
 
     else:
         raise NotImplementedError(f"Unsupported 2V dist save axes: {set(dist_save_config.keys())}")
