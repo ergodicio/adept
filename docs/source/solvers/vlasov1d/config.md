@@ -588,6 +588,38 @@ See `configs/vlasov-1d/iaw-turbulence.yaml` for a complete working example with
 box-scale stochastic forcing, and `tests/test_vlasov1d/configs/boltzmann_iaw.yaml`
 for an ion-acoustic dispersion test setup.
 
+### solver: vlasov-1d-iaw (IAW turbulence module)
+
+`solver: vlasov-1d-iaw` selects `IAWTurbulence1D`, a problem-specific module for
+driven ion-acoustic turbulence that extends the base Vlasov-1D module with
+
+- an **nk save stream**: the low-|k| complex spectrum of the total kinetic
+  charge density, sampled densely in time (each sample is only
+  `2 * (nk_modes + 1)` floats, so it can be saved far more often than full
+  moment profiles). Written to `binary/nk.nc` with real/imag parts and
+  `P = |n_k|^2`.
+- **IAW post-processing**: `plots/iaw/density_spectrum.png` (late-window-averaged
+  P(m) with a k*lambda_De axis and m^-2 / m^-3/2 guides),
+  `plots/iaw/nk_spectrogram.png` (P(m, t)), and `phase_space_dfx.png`
+  (f - <f>_x panels) for every configured distribution save.
+
+Options live in an optional top-level `iaw_diagnostics` block:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `nk_modes` | int | `1024` | Number of box modes in the nk stream (clipped to `nx // 2`) |
+| `nk_nt` | int | `2001` | Number of nk time samples |
+| `spectrum_window` | [float, float] | `[0.5, 1.0]` | Averaging window for the spectrum plot, as fractions of `tmax` |
+
+```yaml
+solver: vlasov-1d-iaw
+
+iaw_diagnostics:
+  nk_modes: 2048
+  nk_nt: 4001
+  spectrum_window: [0.4, 1.0]
+```
+
 ### hou_li_filter
 
 Hou-Li exponential spectral filter applied after each timestep. Damps high-wavenumber modes to suppress numerical oscillations without significantly affecting well-resolved physics. Can be applied in position space (x), velocity space (v), or both.

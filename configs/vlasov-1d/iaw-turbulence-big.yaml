@@ -1,14 +1,3 @@
-# Production IAW turbulence run: kinetic ions + linearized Boltzmann electrons
-# at Te/Ti = 0.05 (deck parameters), critically balanced box-scale forcing,
-# 50 box-crossing times, sharded across all visible GPUs (grid.parallel).
-#
-# Ion units: v_ti = 1, lambda_De = sqrt(Te) = 0.2236.
-# Box: L = 3864 = 17280 lambda_De (full deck-scale separation) with
-# nx = 17280 -> dx = lambda_De. The Te/Ti = 1 test spectrum falls ~5 decades
-# by k lambda_De ~ 3, so sub-Debye x-resolution is not needed.
-# Velocity: nv = 2048 over +-6.4 v_ti -> dv = 0.00625; trapping widths at
-# Te/Ti = 0.05 are ~0.14 v_ti so islands get ~20 points.
-# Forcing (critical balance): tau = L/v_ti = 3864, amplitude = v_ti^2/L = 1/3864.
 units:
   normalizing_temperature: 1000eV
   normalizing_density: 1.0e19/cc
@@ -64,7 +53,7 @@ save:
         vmin: -3.2
         vmax: 3.2
         nv: 1024
-solver: vlasov-1d
+solver: vlasov-1d-iaw
 mlflow:
   experiment: iaw-turbulence
   run: big-te-ti-0.05-50tau
@@ -85,7 +74,7 @@ terms:
   boltzmann_electrons:
     Te: 0.05
   edfdv: cubic-spline
-  time: sixth
+  time: leapfrog
   species:
   - name: ion
     charge: 1.0
@@ -131,3 +120,9 @@ terms:
       slope: 0.0
       bump_height: 0.0
       width: 100000.0
+iaw_diagnostics:
+  nk_modes: 2048
+  nk_nt: 4001
+  spectrum_window:
+  - 0.4
+  - 1.0

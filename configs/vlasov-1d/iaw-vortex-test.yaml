@@ -1,34 +1,24 @@
-# Short phase-space-vortex test: kinetic ions + Boltzmann electrons at
-# Te/Ti = 1, critically balanced box-scale forcing, tmax = 7 L/v_ti.
-# Ion units (mass = charge = T0 = 1): v_ti = 1, and with Te = 1 also
-# cs = lambda_De = 1. The IAW phase velocity ~ 2 v_ti sits on the ion tail,
-# so trapping structures (ion holes / phase-space vortices) should form
-# within a few box-crossing times. dx = lambda_De / 2.
-
 units:
   normalizing_temperature: 1000eV
   normalizing_density: 1.0e19/cc
-
 density:
   quasineutrality: true
   species-ion-background:
     noise_seed: 416
     noise_type: gaussian
-    noise_val: 1.0e-6
+    noise_val: 1.0e-06
     v0: 0.0
     T0: 1.0
     m: 2.0
     basis: uniform
     baseline: 1.0
-
 grid:
   dt: 0.25
   nx: 2048
   tmin: 0.0
-  tmax: 7168.0     # 7 * L / v_ti
+  tmax: 7168.0
   xmax: 1024.0
   xmin: 0.0
-
 save:
   fields:
     t:
@@ -38,44 +28,39 @@ save:
       t:
         tmin: 0.0
         tmax: 7168.0
-        nt: 57      # phase-space snapshot every tau/8 = 128 (1/omega_pi)
-
-solver: vlasov-1d
-
+        nt: 57
+solver: vlasov-1d-iaw
 mlflow:
   experiment: iaw-turbulence
   run: vortex-test-te-ti-1
-
 drivers:
   ex: {}
   ey: {}
-  # Critically balanced: tau = L/v_ti = 1024, amplitude = v_ti^2/L = 1/1024
   ex_stochastic:
-    modes: [1]
-    amplitude: 9.7656e-4
+    modes:
+    - 1
+    amplitude: 0.00097656
     tau: 1024.0
     seed: 29
-
 diagnostics:
-  diag-vlasov-dfdt: False
-  diag-fp-dfdt: False
-
+  diag-vlasov-dfdt: false
+  diag-fp-dfdt: false
 terms:
   field: poisson-boltzmann
   boltzmann_electrons:
-    Te: 1.0        # Te/Ti = 1; lambda_De defaults to sqrt(Te/n0) = 1
+    Te: 1.0
   edfdv: cubic-spline
   time: sixth
   species:
-    - name: ion
-      charge: 1.0
-      mass: 1.0
-      vmax: 6.4
-      nv: 512
-      density_components:
-        - species-ion-background
+  - name: ion
+    charge: 1.0
+    mass: 1.0
+    vmax: 6.4
+    nv: 512
+    density_components:
+    - species-ion-background
   fokker_planck:
-    is_on: False
+    is_on: false
     type: Dougherty
     time:
       baseline: 1.0
@@ -94,7 +79,7 @@ terms:
       bump_height: 0.0
       width: 100000.0
   krook:
-    is_on: False
+    is_on: false
     time:
       baseline: 1.0
       bump_or_trough: bump
@@ -111,3 +96,9 @@ terms:
       slope: 0.0
       bump_height: 0.0
       width: 100000.0
+iaw_diagnostics:
+  nk_modes: 1024
+  nk_nt: 2001
+  spectrum_window:
+  - 0.5
+  - 1.0

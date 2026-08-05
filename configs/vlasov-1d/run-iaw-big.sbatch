@@ -2,10 +2,13 @@
 # Single-node 4-GPU sbatch launcher for the Te/Ti = 0.05 production IAW
 # turbulence run (configs/vlasov-1d/iaw-turbulence-big.yaml).
 #
-# Benchmarked at ~45 ms/step on 4x A100-40GB (10k-step bench, 2026-08-05);
-# 772,800 steps -> ~10 h, so this rides the regular queue (interactive QOS
-# caps at 4 h and rejects sbatch). grid.parallel = [x, v] shards the pushers
-# across the 4 GPUs via shard_map.
+# Benchmarked at ~45 ms/step with time: sixth on 4x A100-40GB (10k-step bench,
+# 2026-08-05); the production config now uses time: leapfrog (validated against
+# sixth on the Te/Ti=1 vortex test: identical energy history, heating, and
+# n(k) through k*lambda_De ~ 0.6), which is ~6x cheaper -> ~2 h for 772,800
+# steps. That fits an interactive 4-GPU node; use this sbatch when the queue
+# or a longer variant makes batch preferable. grid.parallel = [x, v] shards
+# the pushers across the 4 GPUs via shard_map.
 #
 # Submit from the repo root with:
 #     ~/.claude/scripts/ergodic/submit-batch.sh configs/vlasov-1d/run-iaw-big.sbatch
@@ -15,7 +18,7 @@
 #SBATCH --constraint=gpu
 #SBATCH --nodes=1
 #SBATCH --gpus-per-node=4
-#SBATCH --time=14:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=workdir/%x-%j.out
 
 set -e

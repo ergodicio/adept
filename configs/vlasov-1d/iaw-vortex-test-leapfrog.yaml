@@ -29,7 +29,7 @@ save:
         tmin: 0.0
         tmax: 7168.0
         nt: 57
-solver: vlasov-1d
+solver: vlasov-1d-iaw
 mlflow:
   experiment: iaw-turbulence
   run: vortex-test-te-ti-1-leapfrog
@@ -96,3 +96,9 @@ terms:
       slope: 0.0
       bump_height: 0.0
       width: 100000.0
+iaw_diagnostics:
+  nk_modes: 1024
+  nk_nt: 2001
+  spectrum_window:
+  - 0.5
+  - 1.0

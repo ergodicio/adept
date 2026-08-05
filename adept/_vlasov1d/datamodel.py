@@ -292,6 +292,27 @@ class DiagnosticsConfig(BaseModel):
     diag_fp_dfdt: bool = Field(default=False, alias="diag-fp-dfdt")
 
 
+class IAWDiagnosticsConfig(BaseModel):
+    """Options for the IAW-turbulence module's nk save stream and spectrum plots.
+
+    Only used by ``solver: vlasov-1d-iaw`` (see adept/_vlasov1d/iaw.py).
+    """
+
+    # Number of box modes in the saved charge-density spectrum (clipped to nx // 2)
+    nk_modes: int = 1024
+    # Number of time samples of the nk stream
+    nk_nt: int = 2001
+    # Averaging window for the late-time spectrum plot, as fractions of tmax
+    spectrum_window: tuple[float, float] = (0.5, 1.0)
+
+    @field_validator("spectrum_window")
+    @classmethod
+    def _valid_window(cls, v: tuple[float, float]) -> tuple[float, float]:
+        if not (0.0 <= v[0] < v[1] <= 1.0):
+            raise ValueError(f"spectrum_window must satisfy 0 <= t0 < t1 <= 1, got {v}")
+        return v
+
+
 class Vlasov1DConfig(BaseModel):
     """Validated top-level configuration for a Vlasov-1D ADEPT run."""
 
@@ -304,3 +325,4 @@ class Vlasov1DConfig(BaseModel):
     drivers: EMDriverSetConfig
     terms: TermsConfig
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    iaw_diagnostics: IAWDiagnosticsConfig | None = None
