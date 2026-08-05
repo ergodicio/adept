@@ -384,15 +384,18 @@ and independent of the solver timestep.
 | `seed` | int | `42` | RNG seed for the forcing realization |
 | `dt_update` | float | `tau/10` | Time resolution of the precomputed OU series (clamped to at most `tau/2`) |
 
-Example (box-scale driving):
+Example (critically balanced box-scale driving — the correlation time is the
+ion thermal box-crossing time `tau = L/v_ti` and the amplitude is `v_ti^2/L`,
+so the velocity kick per correlation time is ~`v_ti`; here `v_ti = 1`,
+`L = 458`):
 ```yaml
 drivers:
   ex: {}
   ey: {}
   ex_stochastic:
     modes: [1]
-    amplitude: 1.0e-2
-    tau: 2000.0
+    amplitude: 2.1834e-3   # v_ti^2 / L
+    tau: 458.0             # L / v_ti
     seed: 42
 ```
 

@@ -54,10 +54,16 @@ mlflow:
 drivers:
   ex: {}
   ey: {}
+  # Critically balanced box-scale forcing: the correlation time is the ion
+  # thermal box-crossing time tau = L / v_ti and the forcing amplitude (an
+  # acceleration, since q = m = 1) is v_ti^2 / L, so the velocity kick
+  # accumulated over one correlation time is ~ v_ti. With v_ti = 1 and
+  # L = xmax - xmin = 458: tau = 458, amplitude = 1/458. Keep these in sync
+  # with the box size.
   ex_stochastic:
     modes: [1]
-    amplitude: 1.0e-2
-    tau: 2000.0
+    amplitude: 2.1834e-3
+    tau: 458.0
     seed: 42
 
 diagnostics:
