@@ -313,6 +313,7 @@ External electromagnetic drivers. Both `ex` and `ey` are dictionaries of named d
 |-------|------|-------------|
 | `ex` | dict | Longitudinal electric field drivers |
 | `ey` | dict | Transverse electric field drivers (for electromagnetic simulations) |
+| `ex_stochastic` | object | (Optional) Band-limited, time-correlated stochastic forcing of the longitudinal field (see below) |
 
 Each driver is identified by a string key (e.g., `"0"`, `"1"`) and has these parameters:
 
@@ -356,6 +357,46 @@ drivers:
       x_rise: 10.0
       x_width: 4000000.0
   ey: {}
+```
+
+### Stochastic forcing: `ex_stochastic`
+
+Drives the plasma with an external longitudinal electric field built from a set
+of periodic-box Fourier modes whose complex amplitudes evolve as independent
+Ornstein-Uhlenbeck (OU) processes. This is the standard "compressive,
+time-correlated" forcing used for driven-turbulence simulations (e.g. ion-acoustic
+turbulence with Boltzmann electrons):
+
+```
+dE(x, t) = sum_m Re[ a_m(t) exp(i k_m x) ],   k_m = 2 pi m / L
+```
+
+Each `a_m(t)` has correlation time `tau` and stationary RMS `amplitude`. The
+realization is drawn once from `seed` on a uniform time grid of spacing
+`dt_update` and linearly interpolated in time, so a run is exactly reproducible
+and independent of the solver timestep.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `modes` | list[int] | `[1]` | Box mode numbers m to force (k_m = 2πm/L) |
+| `amplitude` | float | — | Stationary RMS of each mode's complex amplitude (code-unit E field) |
+| `tau` | float | — | OU correlation time (code units) |
+| `seed` | int | `42` | RNG seed for the forcing realization |
+| `dt_update` | float | `tau/10` | Time resolution of the precomputed OU series (clamped to at most `tau/2`) |
+
+Example (critically balanced box-scale driving — the correlation time is the
+ion thermal box-crossing time `tau = L/v_ti` and the amplitude is `v_ti^2/L`,
+so the velocity kick per correlation time is ~`v_ti`; here `v_ti = 1`,
+`L = 458`):
+```yaml
+drivers:
+  ex: {}
+  ey: {}
+  ex_stochastic:
+    modes: [1]
+    amplitude: 2.1834e-3   # v_ti^2 / L
+    tau: 458.0             # L / v_ti
+    seed: 42
 ```
 
 ### Example: Multiple ey drivers (SRS simulation)
@@ -410,13 +451,14 @@ Solver algorithm configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `field` | string | Electric field solver: `"poisson"`, `"ampere"`, or `"hampere"` |
+| `field` | string | Electric field solver: `"poisson"`, `"poisson-boltzmann"`, `"ampere"`, or `"hampere"` |
 | `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
 | `hou_li_filter` | object | Hou-Li spectral filter (optional, default off) |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
+| `boltzmann_electrons` | object | (Optional) Linearized Boltzmann electron closure parameters, used with `field: poisson-boltzmann` |
 
 ### species (Multispecies Configuration)
 
@@ -493,6 +535,91 @@ terms:
 
 See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` for a complete working example.
 
+### boltzmann_electrons (kinetic ions with adiabatic electrons)
+
+With `field: poisson-boltzmann`, only ions are evolved kinetically; the electrons
+respond adiabatically through the linearized Boltzmann (screened Poisson) closure
+
+```
+e phi / T_e = delta n_i / n_0 + lambda_De^2 d^2/dx^2 (e phi / T_e)
+```
+
+solved spectrally as `e phi_k / T_e = (delta n_k / n_0) / (1 + k^2 lambda_De^2)`.
+The k=0 force vanishes identically, so no static neutralizing background is
+needed. This is the standard setup for ion-acoustic wave and IAW-turbulence
+simulations: it removes all electron timescales from the problem, so the
+timestep is limited only by ion dynamics.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Te` | float | `1.0` | Electron temperature in code units (units of `normalizing_temperature`) |
+| `lambda_De` | float | `sqrt(Te / n_0)` | Screening length in code units. Omit for the physically consistent value; set explicitly to move the screening scale (e.g. to the grid spacing, mimicking PIC references where the cell size takes the place of the Debye length); `0.0` gives the quasineutral closure `e phi / T_e = delta n / n_0` |
+
+**Requirements:** `terms.species` must be given explicitly and all kinetic
+species must have positive charge (electrons are the closure, not a species).
+
+**Ion-unit convention:** with a single ion species at `charge: 1.0, mass: 1.0`
+and `T0: 1.0`, code time is `1/omega_pi`, velocity is the ion thermal speed
+`v_ti`, and length is `v_ti/omega_pi`. Then `Te` is the electron-to-ion
+temperature ratio `Te/Ti`, the sound speed is `c_s = sqrt(Te)`, and the electron
+Debye length is `lambda_De = sqrt(Te)` in code units. Note that the physical
+quantities reported by `write_units()` assume an electron reference species and
+are nominal for such runs.
+
+Example (ion-acoustic turbulence, `Te/Ti = 0.05`):
+```yaml
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 0.05
+  edfdv: cubic-spline
+  time: sixth
+  species:
+    - name: ion
+      charge: 1.0
+      mass: 1.0
+      vmax: 6.4
+      nv: 512
+      density_components:
+        - species-ion-background
+```
+
+See `configs/vlasov-1d/iaw-turbulence.yaml` for a complete working example with
+box-scale stochastic forcing, and `tests/test_vlasov1d/configs/boltzmann_iaw.yaml`
+for an ion-acoustic dispersion test setup.
+
+### solver: vlasov-1d-iaw (IAW turbulence module)
+
+`solver: vlasov-1d-iaw` selects `IAWTurbulence1D`, a problem-specific module for
+driven ion-acoustic turbulence that extends the base Vlasov-1D module with
+
+- an **nk save stream**: the low-|k| complex spectrum of the total kinetic
+  charge density, sampled densely in time (each sample is only
+  `2 * (nk_modes + 1)` floats, so it can be saved far more often than full
+  moment profiles). Written to `binary/nk.nc` with real/imag parts and
+  `P = |n_k|^2`.
+- **IAW post-processing**: `plots/iaw/density_spectrum.png` (late-window-averaged
+  P(m) with a k*lambda_De axis and m^-2 / m^-3/2 guides),
+  `plots/iaw/nk_spectrogram.png` (P(m, t)), and `phase_space_dfx.png`
+  (f - <f>_x panels) for every configured distribution save.
+
+Options live in an optional top-level `iaw_diagnostics` block:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `nk_modes` | int | `1024` | Number of box modes in the nk stream (clipped to `nx // 2`) |
+| `nk_nt` | int | `2001` | Number of nk time samples |
+| `spectrum_window` | [float, float] | `[0.5, 1.0]` | Averaging window for the spectrum plot, as fractions of `tmax` |
+
+```yaml
+solver: vlasov-1d-iaw
+
+iaw_diagnostics:
+  nk_modes: 2048
+  nk_nt: 4001
+  spectrum_window: [0.4, 1.0]
+```
+
 ### hou_li_filter
 
 Hou-Li exponential spectral filter applied after each timestep. Damps high-wavenumber modes to suppress numerical oscillations without significantly affecting well-resolved physics. Can be applied in position space (x), velocity space (v), or both.
@@ -527,6 +654,7 @@ If `hou_li_filter` is omitted entirely, it defaults to `is_on: False`.
 ### Field Solvers
 
 - `"poisson"`: Spectral Poisson solver (works with any time integrator)
+- `"poisson-boltzmann"`: Spectral screened-Poisson solver for kinetic ions with linearized Boltzmann electrons (works with any time integrator; see `boltzmann_electrons` above)
 - `"ampere"`: Ampere solver (requires `"leapfrog"` time integrator)
 - `"hampere"`: Hamiltonian Ampere solver (requires `"leapfrog"` time integrator)
 
@@ -734,3 +862,7 @@ See `configs/vlasov-1d/nlepw-ic.yaml` - large-amplitude initial perturbation wit
 ### Ion Acoustic Wave (Multispecies)
 
 See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` - two-species (electron + ion) simulation demonstrating multispecies support.
+
+### Ion-Acoustic Turbulence (Boltzmann Electrons)
+
+See `configs/vlasov-1d/iaw-turbulence.yaml` - kinetic ions with the linearized Boltzmann electron closure (`field: poisson-boltzmann`), driven by box-scale time-correlated stochastic forcing (`drivers.ex_stochastic`).
