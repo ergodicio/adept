@@ -1,6 +1,7 @@
 units:
   normalizing_temperature: 2000eV
   normalizing_density: 1.5e21/cc
+  reference: ion
 
 
 # Kinetic ions with linearized Boltzmann electrons, in ion units:

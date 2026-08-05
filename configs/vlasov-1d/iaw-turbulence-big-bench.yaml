@@ -1,6 +1,9 @@
 units:
   normalizing_temperature: 1000eV
   normalizing_density: 1.0e19/cc
+  reference: ion
+  A: 1.0
+  Z: 1.0
 density:
   quasineutrality: true
   species-ion-background:

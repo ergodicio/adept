@@ -19,7 +19,6 @@ from adept._vlasov1d.simulation import EMDriverSet, Species, SubspeciesDistribut
 from adept._vlasov1d.solvers.vector_field import VlasovMaxwell
 from adept._vlasov1d.storage import get_save_quantities
 from adept.functions import SpaceTimeEnvelopeConfig, SpaceTimeEnvelopeFunction
-from adept.normalization import electron_debye_normalization
 from adept.utils import filter_scalars
 
 
@@ -52,10 +51,7 @@ def sim_from_config(
     cfg: Vlasov1DConfig,
 ) -> Vlasov1DSimulation:
     """Construct a Vlasov1DSimulation from a Vlasov1DConfig."""
-    plasma_norm = electron_debye_normalization(
-        cfg.units.normalizing_density,
-        cfg.units.normalizing_temperature,
-    )
+    plasma_norm = cfg.units.make_normalization()
     beta = 1.0 / plasma_norm.speed_of_light_norm()
     has_ey_driver = len(cfg.drivers.ey) > 0
     grid = Grid.from_config(cfg.grid, beta, should_override_dt_for_em_waves=has_ey_driver, norm=plasma_norm)
@@ -117,13 +113,10 @@ class BaseVlasov1D(ADEPTModule):
             box_width = "inf"
         sim_duration = (grid.tmax * norm.tau).to("ps")
 
-        nu_ee = norm.approximate_ee_collision_frequency()
-        # e-e collision rate in code units (1/wp0). This is what the FP/Krook
-        # `baseline` rates should be compared against.
-        nu_ee_norm = (nu_ee * norm.tau).to("").magnitude
-
         beta = 1.0 / norm.speed_of_light_norm()
 
+        # wp0/tp0/v0/x0 are the plasma frequency, thermal speed, and Debye length
+        # of the reference species selected by units.reference (electron or ion).
         all_quantities = {
             "wp0": (1 / norm.tau).to("rad/s"),
             "tp0": norm.tau.to("fs"),
@@ -133,13 +126,25 @@ class BaseVlasov1D(ADEPTModule):
             "c_light": norm.speed_of_light_norm(),
             "beta": beta,
             "x0": norm.L0.to("nm"),
-            "nuee": nu_ee.to("Hz"),
-            "nuee_norm": nu_ee_norm,
-            "logLambda_ee": norm.logLambda_ee(),
             "box_length": box_length,
             "box_width": box_width,
             "sim_duration": sim_duration,
         }
+
+        if self.config_model.units.reference == "ion":
+            nu_ii = norm.approximate_ii_collision_frequency()
+            all_quantities["reference_species"] = "ion"
+            all_quantities["nuii"] = nu_ii.to("Hz")
+            # i-i collision rate in code units (1/wpi) — the ion analogue of nuee_norm.
+            all_quantities["nuii_norm"] = (nu_ii * norm.tau).to("").magnitude
+            all_quantities["logLambda_ii"] = norm.logLambda_ii()
+        else:
+            nu_ee = norm.approximate_ee_collision_frequency()
+            all_quantities["nuee"] = nu_ee.to("Hz")
+            # e-e collision rate in code units (1/wp0). This is what the FP/Krook
+            # `baseline` rates should be compared against.
+            all_quantities["nuee_norm"] = (nu_ee * norm.tau).to("").magnitude
+            all_quantities["logLambda_ee"] = norm.logLambda_ee()
 
         self.cfg["units"]["derived"] = all_quantities
 

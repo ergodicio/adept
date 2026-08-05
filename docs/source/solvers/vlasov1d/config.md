@@ -40,6 +40,9 @@ Physical unit normalizations for the simulation.
 |-------|------|-------------|
 | `normalizing_temperature` | string | Reference temperature with unit, e.g., `"2000eV"` |
 | `normalizing_density` | string | Reference density with unit, e.g., `"1.5e21/cc"` |
+| `reference` | string | Reference species for the normalization: `"electron"` (default) or `"ion"` |
+| `A` | float | Ion mass number, $m_i = A\,m_p$ (only used with `reference: ion`; default `1.0`) |
+| `Z` | float | Ion charge state, $q_i = Z e$ (only used with `reference: ion`; default `1.0`) |
 
 Example:
 ```yaml
@@ -69,6 +72,37 @@ Consequences of the $v_0 = \sqrt{T_0/m_e}$ (σ) convention:
 Dimensional inputs (strings with units, e.g. `xmax: 100um`) are converted with these
 units; plain numeric inputs are taken to already be in code units and pass through
 unchanged.
+
+### Ion reference (`reference: ion`)
+
+For runs where only ions are evolved kinetically (e.g. `terms.field:
+poisson-boltzmann`), set `reference: ion` to build the normalization from the ion
+species instead:
+
+| Unit | Definition | Meaning |
+|------|-----------|---------|
+| time | $\tau = 1/\omega_{pi}$, $\omega_{pi} = \sqrt{n_i Z^2 e^2/(\epsilon_0 m_i)}$ | inverse ion plasma frequency |
+| velocity | $v_0 = \sqrt{T_0/m_i}$ | ion thermal speed (same σ convention) |
+| length | $L_0 = v_0/\omega_{pi}$ | ion Debye length |
+
+with $m_i = A\,m_p$ and charge $Z e$; `normalizing_density` and
+`normalizing_temperature` are then the ion density $n_i$ and ion temperature
+$T_i$. Dimensional string inputs (e.g. `xmax: 300um`, `tmax: 50ps`) convert with
+these ion units, and the physical quantities logged by `write_units()` (`wp0`,
+`tp0`, `x0`, `v0`, ...) refer to the ion reference. The electron-specific
+collision entries (`nuee`, `nuee_norm`, `logLambda_ee`) are replaced by their
+ion-ion counterparts (`nuii`, `nuii_norm`, `logLambda_ii`, from the NRL
+formulary).
+
+Example (deuterium):
+```yaml
+units:
+  normalizing_temperature: 100eV   # T_i
+  normalizing_density: 1.0e20/cc   # n_i
+  reference: ion
+  A: 2.0
+  Z: 1.0
+```
 
 ## density
 
@@ -562,9 +596,11 @@ species must have positive charge (electrons are the closure, not a species).
 and `T0: 1.0`, code time is `1/omega_pi`, velocity is the ion thermal speed
 `v_ti`, and length is `v_ti/omega_pi`. Then `Te` is the electron-to-ion
 temperature ratio `Te/Ti`, the sound speed is `c_s = sqrt(Te)`, and the electron
-Debye length is `lambda_De = sqrt(Te)` in code units. Note that the physical
-quantities reported by `write_units()` assume an electron reference species and
-are nominal for such runs.
+Debye length is `lambda_De = sqrt(Te)` in code units. Set `units.reference: ion`
+(see [units](#units)) so that dimensional string inputs and the physical
+quantities reported by `write_units()` follow this same ion convention — with
+the default electron reference they are electron-referenced and therefore
+nominal for such runs.
 
 Example (ion-acoustic turbulence, `Te/Ti = 0.05`):
 ```yaml

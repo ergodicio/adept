@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from adept.functions import EnvelopeConfig, SpaceTimeEnvelopeConfig
+from adept.normalization import PlasmaNormalization, electron_debye_normalization, ion_debye_normalization
 
 
 # TODO(gh-250): refactor to use a nested SpaceTimeEnvelopeConfig instead of inlining
@@ -56,6 +57,23 @@ class UnitsConfig(BaseModel):
 
     normalizing_temperature: str
     normalizing_density: str
+    # Reference species for the normalization. The default "electron" gives
+    # electron units (t in 1/omega_pe, v in sqrt(T0/m_e), L0 = lambda_De).
+    # "ion" gives the ion analogue (t in 1/omega_pi, v in v_ti = sqrt(T0/m_i))
+    # for kinetic-ion runs such as `terms.field: poisson-boltzmann`; there
+    # normalizing_density and normalizing_temperature are the *ion* density
+    # and temperature.
+    reference: Literal["electron", "ion"] = "electron"
+    # Ion mass number (m_i = A m_p) and charge state (q_i = Z e).
+    # Only used when reference == "ion".
+    A: float = Field(default=1.0, gt=0)
+    Z: float = Field(default=1.0, gt=0)
+
+    def make_normalization(self) -> PlasmaNormalization:
+        """Build the reference-species normalization described by this config."""
+        if self.reference == "ion":
+            return ion_debye_normalization(self.normalizing_density, self.normalizing_temperature, A=self.A, Z=self.Z)
+        return electron_debye_normalization(self.normalizing_density, self.normalizing_temperature)
 
 
 class GridConfig(BaseModel):
