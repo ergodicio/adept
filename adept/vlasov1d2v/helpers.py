@@ -17,7 +17,8 @@ from adept.vlasov1d2v.storage import store_f, store_fields
 
 from .. import patched_mlflow as mlflow
 
-gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "..", "vlasov1d", "gamma_func_for_sg.nc"))
+# vlasov1d was renamed _vlasov1d; this module carries its own copy of the table
+gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 m_ax = gamma_da.coords["m"].data
 g_3_m = np.squeeze(gamma_da.loc[{"gamma": "3/m"}].data)
 g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)

@@ -111,6 +111,7 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `boundary_abs_coeff` | float | Absorbing boundary coefficient |
 | `boundary_width` | string | Width of absorbing boundary layer with unit |
 | `low_pass_filter` | float | Low-pass filter cutoff as fraction of kmax (0-1) |
+| `dealias` | string | Shape of the anti-aliasing mask: `isotropic` (default) or `shifted-band` |
 | `dt` | string | Timestep with unit |
 | `dx` | string | Spatial resolution with unit |
 | `tmax` | string | End time with unit |
@@ -119,6 +120,44 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `ymin` | string | Domain minimum y with unit |
 
 Note: `nx` and `ny` are computed automatically from the grid parameters. The grid is optimized for FFT performance (sizes with small prime factors).
+
+### Anti-aliasing: `dealias`
+
+The TPD and SRS source terms are products of the pump with a plasma-wave field, formed pointwise in
+real space. Such a product aliases if it puts content past the Nyquist wavenumber, so part of the
+band has to be left empty.
+
+Because the pump is built as a plane wave along x (`laser.py`), the product *translates* the
+plasma-wave spectrum by `k0` rather than convolving it against a broad kernel. The band that has to
+stay empty is therefore a rectangle, not a disc, and the usual 2/3-style isotropic cutoff is the
+wrong shape for the job — it discards high-`ky` modes that can never alias.
+
+| Value | Mask |
+|-------|------|
+| `isotropic` (default) | `|k| < low_pass_filter * kmax` only. Alias-free only if `low_pass_filter * kmax + k0 <= kmax`, which is not checked. |
+| `shifted-band` | Additionally requires `|kx| <= kmax_x - k0` and `|ky| <= kmax_y - k0 * NA`, which is exactly alias-free for the source products. `NA` is the numerical aperture of the speckle profile, and is zero without one. |
+
+`shifted-band` computes its limits from `k0` and the grid, so it stays correct as `dx`, the laser
+wavelength, or the density change — unlike a hand-tuned `low_pass_filter`.
+
+The two knobs are independent, and `low_pass_filter` is still applied on top:
+
+- `dealias` handles aliasing.
+- `low_pass_filter` is a *physics* cap. The Landau damping rate in `epw.py` is the asymptotic
+  small-`k*lambda_D` expression, which peaks near `k*lambda_D ~ 0.7` and then decreases, so it
+  under-damps beyond that. Keep the band edge below roughly `k*lambda_D = 0.5`.
+
+Both limits are printed at setup, along with the fraction of the k-grid retained and the
+`k*lambda_D` the band edge reaches, so the interaction between the two is visible.
+
+To take advantage of `shifted-band`, raise `low_pass_filter` until the printed `k*lambda_D` is as
+large as you are willing to trust:
+
+```yaml
+grid:
+  dealias: shifted-band
+  low_pass_filter: 1.0
+```
 
 Example:
 ```yaml
