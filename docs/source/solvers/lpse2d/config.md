@@ -357,8 +357,36 @@ Physics terms configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `noise` | bool | Add random noise source |
+| `noise_scaling` | string | How the noise increment scales with the timestep: `dt` (default) or `sqrt_dt` |
 | `tpd` | bool | Include two-plasmon decay source |
 | `srs` | bool | Include stimulated Raman scattering source (optional) |
+
+##### `noise_scaling`
+
+The EPW state starts at exactly zero, so this noise source is the only thing seeding TPD, and its
+level sets when the instability emerges.
+
+A fresh random phase is drawn every step, so successive contributions add in quadrature rather than
+coherently. After `T/dt` steps the accumulated noise power is `(T/dt) * increment^2 * amplitude^2`:
+
+| `noise_scaling` | increment | accumulated noise power | seed level |
+|---|---|---|---|
+| `dt` (default) | `dt` | `T * dt * amplitude^2` | scales as `sqrt(dt)` |
+| `sqrt_dt` | `sqrt(dt)` | `T * amplitude^2` | independent of `dt` |
+
+Under the default, halving the timestep quietly lowers the seed by 1.4x, so a resolution study
+changes the physics input as well as the discretisation. `sqrt_dt` is what a white-noise source
+should do.
+
+`dt` remains the default because it is what the MATLAB reference does and what every archived run
+used. Two things to expect when switching:
+
+- The seed jumps by `sqrt(dt)/dt` — 14x at `dt = 5fs` — so onset moves earlier. Absolute onset times
+  are not comparable across the two settings.
+- Onset time becomes *less* sensitive to `dt`, but not insensitive. The seed enters onset time
+  logarithmically, while the growth rate — first-order accurate, since the TPD source is added with
+  forward Euler — enters linearly. Fixing the noise removes the first dependence and leaves the
+  second.
 
 #### hyperviscosity (optional)
 

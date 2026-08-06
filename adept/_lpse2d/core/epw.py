@@ -351,6 +351,24 @@ class SpectralEPWSolver:
         self.noise_amplitude = 1e-10  # matches MATLAB noiseAmp (m201805_matlabLpse_v11.m:49)
         self.noise_seed = np.random.randint(2**20)
 
+        # The noise source draws a fresh random phase every step, so successive contributions add in
+        # quadrature rather than coherently: after T/dt steps the accumulated variance is
+        # (T/dt) * increment^2 * amplitude^2. With increment = dt that comes to T * dt * amplitude^2,
+        # so the seed level the instability grows out of scales as sqrt(dt) -- halving the timestep
+        # quietly lowers the seed by 1.4x. Using sqrt(dt) makes the injected noise power independent
+        # of the discretisation, which is what a white-noise source should be.
+        #
+        # "dt" stays the default because it is what the MATLAB reference does and what every archived
+        # run used. Switching to "sqrt_dt" raises the seed by sqrt(dt)/dt (14x at dt = 5fs), which
+        # brings the onset of the instability forward.
+        noise_scaling = cfg["terms"]["epw"]["source"].get("noise_scaling", "dt")
+        if noise_scaling == "dt":
+            self.noise_increment = self.dt
+        elif noise_scaling == "sqrt_dt":
+            self.noise_increment = float(np.sqrt(self.dt))
+        else:
+            raise ValueError(f"Unknown terms.epw.source.noise_scaling '{noise_scaling}'. Choose 'dt' or 'sqrt_dt'.")
+
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
 
@@ -588,8 +606,9 @@ class SpectralEPWSolver:
         # ========================================================================
         if self.noise_enabled:
             # MATLAB line 1988: divE = divE + epwNoise * DT
+            # noise_increment is dt by default; see the note in __init__ on the sqrt_dt option
             noise = self.get_noise(t)
-            phi_k = phi_k + self.dt * noise
+            phi_k = phi_k + self.noise_increment * noise
 
         # ========================================================================
         # STEP 5: Calculate electric fields

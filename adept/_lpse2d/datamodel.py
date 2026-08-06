@@ -140,6 +140,7 @@ class DampingModel(BaseModel):
 
 class SourceModel(BaseModel):
     noise: bool
+    noise_scaling: str = "dt"
     tpd: bool
 
 
