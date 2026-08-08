@@ -13,5 +13,6 @@ uv run run.py --cfg path_to_my_config
 - [LPSE-2D (Envelope-2D)](source/solvers/lpse2d/config.md) - 2D laser-plasma envelope solver for TPD/SRS
 - [Spectrax-1D](source/solvers/spectrax1d/config.md) - 1D Hermite-Fourier Vlasov-Maxwell solver
 - [Hermite-Legendre-1D](source/solvers/hermite_legendre_1d/config.md) - 1D-1V mixed Hermite-Legendre electrostatic Vlasov-Poisson solver
+- [Two-Fluid-1D](source/solvers/tf1d/config.md) - 1D electrostatic two-fluid solver with kinetic closure and particle trapping
 
 See the [full documentation](https://ergodicio.github.io/adept/) for detailed guides and API reference.
