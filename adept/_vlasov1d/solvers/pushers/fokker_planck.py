@@ -255,6 +255,20 @@ class SuperGaussianDougherty(Dougherty):
         return C_edge, D
 
 
+def _collision_species(cfg: Mapping[str, Any]) -> str:
+    """Return the species that collisions act on.
+
+    TODO(gh-173): Properly handle multi-species collisions. For now the
+    operators are built on (and applied to) a single reference species:
+    "electron" when present for backward compatibility, otherwise the first
+    configured species (e.g. ion-only Boltzmann-electron runs).
+    """
+    species_grids = cfg["grid"]["species_grids"]
+    if "electron" in species_grids:
+        return "electron"
+    return next(iter(species_grids))
+
+
 class Collisions:
     """High-level collision operator that wraps Fokker-Planck and Krook terms."""
 
@@ -265,11 +279,12 @@ class Collisions:
         :param cfg: Simulation configuration containing term toggles and grid parameters.
         """
         self.cfg = cfg
+        self.ref_species = _collision_species(cfg)
         self.fp_model, self.fp_scheme = self.__init_fp_operator__()
         self._nodrag = cfg["terms"]["fokker_planck"].get("type", "").casefold() == "dougherty_nodrag"
         self.krook = Krook(self.cfg)
 
-        v = cfg["grid"]["species_grids"]["electron"]["v"]
+        v = cfg["grid"]["species_grids"][self.ref_species]["v"]
         self.v_edge = 0.5 * (v[1:] + v[:-1])
 
         parallel = cfg["grid"].get("parallel", False)
@@ -292,9 +307,9 @@ class Collisions:
         :raises NotImplementedError: When the configured operator type is unknown.
         :returns: Tuple of (model, scheme)
         """
-        # TODO(gh-173): For multi-species, use electron grid for FP for now
-        v = self.cfg["grid"]["species_grids"]["electron"]["v"]
-        dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+        # TODO(gh-173): For multi-species, use the reference species grid for FP for now
+        v = self.cfg["grid"]["species_grids"][self.ref_species]["v"]
+        dv = self.cfg["grid"]["species_grids"][self.ref_species]["dv"]
 
         fp_type = self.cfg["terms"]["fokker_planck"]["type"].casefold()
 
@@ -337,14 +352,14 @@ class Collisions:
         :return: Updated distribution function after collisions.
         """
         # TODO(gh-173): Properly handle multi-species collisions
-        # For now, only apply to electron distribution for backward compatibility
+        # For now, only apply to the reference species (see _collision_species)
         if isinstance(f, dict):
             result = {}
             for species_name, f_species in f.items():
-                if species_name == "electron":
+                if species_name == self.ref_species:
                     result[species_name] = self._apply_collisions(nu_fp, nu_K, f_species, dt)
                 else:
-                    # For non-electron species, just pass through unchanged for now
+                    # For other species, just pass through unchanged for now
                     result[species_name] = f_species
             return result
         else:
@@ -366,8 +381,8 @@ class Collisions:
         nu_fp_in = nu_fp if nu_fp is not None else jnp.zeros(f.shape[0])
         nu_K_in = nu_K if nu_K is not None else jnp.zeros(f.shape[0])
 
-        v = self.cfg["grid"]["species_grids"]["electron"]["v"]
-        dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+        v = self.cfg["grid"]["species_grids"][self.ref_species]["v"]
+        dv = self.cfg["grid"]["species_grids"][self.ref_species]["dv"]
 
         from adept.driftdiffusion import find_self_consistent_beta
 
@@ -438,9 +453,10 @@ class Krook:
         :param cfg: Simulation configuration containing grid spacing and velocity grid.
         """
         self.cfg = cfg
-        v = cfg["grid"]["species_grids"]["electron"]["v"]
-        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        params = cfg["grid"].get("species_params", {}).get("electron", {})
+        ref_species = _collision_species(cfg)
+        v = cfg["grid"]["species_grids"][ref_species]["v"]
+        dv = cfg["grid"]["species_grids"][ref_species]["dv"]
+        params = cfg["grid"].get("species_params", {}).get(ref_species, {})
         T0 = params.get("T0", 1.0)
         mass = params.get("mass", 1.0)
         # Maxwellian with variance T0/m (the species' bulk thermal width)
