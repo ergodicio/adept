@@ -406,6 +406,16 @@ class SpectralEPWSolver:
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
 
+        # Landau damping flag (previously ignored -- damping was unconditionally on)
+        self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
+        # HPE (Follett-style particle feedback): the damping rate is read from the
+        # state (y["gamma_L"], written by HybridParticleEvolution) instead of the
+        # static analytic array
+        self.hpe_enabled = bool(cfg["terms"].get("hpe", {}).get("active", False))
+
+        # direct EPW driver (drivers.E2), used by the validation/test configs
+        self.driver = Driver(cfg)
+
         # Store config for reference
         self.cfg = cfg
 
@@ -640,7 +650,12 @@ class SpectralEPWSolver:
         phi_k = phi_k * thermal_phase
 
         # MATLAB line 1981: divE = divE .* exp(-(gammaLandau + nu_coll) * DT)
-        gamma_landau = self.calc_landau_damping_rate()
+        if self.hpe_enabled:
+            gamma_landau = y["gamma_L"]
+        elif self.landau_enabled:
+            gamma_landau = self.calc_landau_damping_rate()
+        else:
+            gamma_landau = 0.0
         damping_factor = jnp.exp(-(gamma_landau + self.nu_coll) * self.dt)
         phi_k = phi_k * damping_factor
 

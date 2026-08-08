@@ -35,6 +35,13 @@ class SplitStep:
             self.raman = None
         else:
             self.raman = RamanLight(cfg) if srs_on else None
+        if cfg["terms"].get("hpe", {}).get("active", False):
+            from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+            self.hpe = HybridParticleEvolution(cfg)
+        else:
+            self.hpe = None
+        # the HPE keys (x_e, u_e, epw_hist, gamma_L) are real and stay out of this list
         self.complex_state_vars = ["E0", "epw", "E1"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
@@ -116,6 +123,11 @@ class SplitStep:
             new_y["epw"] += jnp.fft.fft2(self.dt * self.epw.driver(args["drivers"]["E2"], t))
         # epw split step
         new_y["epw"] = self.epw(t, new_y, args)
+
+        # particle push + Landau-damping feedback; the gamma_L written here is the
+        # rate the EPW update applies on the next step (one-step lag)
+        if self.hpe is not None:
+            new_y = self.hpe(t, new_y)
 
         # pack y into float64
         y, new_y = self._pack_y_(y, new_y)

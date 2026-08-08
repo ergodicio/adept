@@ -275,6 +275,41 @@ def get_derived_quantities(cfg: dict) -> dict:
         if epw_source.get("noise_seed") is None:
             epw_source["noise_seed"] = int(np.random.randint(2**20))
 
+    # HPE (Follett-style test-particle Landau damping): resolve defaults, convert
+    # units, and derive the substep count here so everything lands in MLflow params
+    hpe = cfg["terms"].get("hpe", {})
+    if hpe.get("active", False):
+        if cfg_grid["ny"] != 1:
+            raise NotImplementedError("terms.hpe requires a quasi-1D box (ny == 1); shrink the y extent")
+        if not cfg["terms"]["epw"]["damping"].get("landau", True):
+            raise ValueError("terms.hpe requires terms.epw.damping.landau: true (it replaces the static rate)")
+        hpe.setdefault("n_particles", 500000)
+        hpe["n_particles"] = int(hpe["n_particles"])
+        hpe.setdefault("v_min", 2.5)  # tail cutoff, units of vte
+        hpe.setdefault("v_max", 1.0)  # histogram span, units of c
+        hpe.setdefault("v_blend_buffer", 0.5)  # units of vte
+        hpe.setdefault("nv", 512)
+        hpe["nv"] = int(hpe["nv"])
+        hpe.setdefault("gather_refine", 4)  # spectral upsampling factor for the field gather
+        hpe["gather_refine"] = int(hpe["gather_refine"])
+        hpe.setdefault("substep_courant", 0.05)  # wp0 * dt_particle
+        hpe.setdefault("tau_damping", "100fs")
+        hpe.setdefault("t_start", "0ps")
+        hpe.setdefault("feedback", True)
+        hpe.setdefault("seed", 42)
+        hpe.setdefault("omega_res", "bohm_gross")
+        if hpe["omega_res"] not in ("bohm_gross", "wp0"):
+            raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
+        hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
+        hpe["t_start_ps"] = _Q(hpe["t_start"]).to("ps").value
+        wp0 = cfg["units"]["derived"]["wp0"]
+        hpe["substeps"] = int(np.ceil(wp0 * cfg_grid["dt"] / float(hpe["substep_courant"])))
+        cfg["terms"]["hpe"] = hpe
+        print(
+            f"HPE is on -- {hpe['n_particles']} tail particles (|v| > {hpe['v_min']} vte), "
+            f"{hpe['substeps']} particle substeps per EPW step"
+        )
+
     pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
     if pump_depletion:
         if not cfg["terms"]["epw"]["source"].get("srs", False):
@@ -739,9 +774,40 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
         fig.savefig(os.path.join(td, "plots", "electron_energy_vs_t.png"), bbox_inches="tight")
         plt.close(fig)
 
+    if "hpe_hist" in series:
+        # tail distribution vs time: flattening at the resonant v_phi and a growing
+        # high-energy shoulder are the HPE signatures
+        hist = np.asarray(series["hpe_hist"].values, dtype=float)
+        v = np.asarray(series["v (c)"].values, dtype=float)
+        fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
+        with np.errstate(divide="ignore"):
+            log_h = np.log10(np.where(hist > 0, hist, np.nan))
+        pcm = ax[0].pcolormesh(t, v, log_h.T, shading="auto")
+        fig.colorbar(pcm, ax=ax[0], label="log10 f(v)")
+        ax[0].set_xlabel("t (ps)")
+        ax[0].set_ylabel("v (c)")
+        for it in np.linspace(0, len(t) - 1, 5).astype(int):
+            ax[1].semilogy(v, np.where(hist[it] > 0, hist[it], np.nan), label=f"t = {t[it]:.1f} ps")
+        ax[1].set_xlabel("v (c)")
+        ax[1].set_ylabel("f(v)")
+        ax[1].legend(fontsize=7)
+        fig.savefig(os.path.join(td, "plots", "hpe_distribution.png"), bbox_inches="tight")
+        plt.close(fig)
+
+    if "hpe_gamma_ratio_min" in series:
+        fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
+        ax.plot(t, np.asarray(series["hpe_gamma_ratio_min"].values, dtype=float))
+        ax.set_xlabel("t (ps)")
+        ax.set_ylabel("min gamma_HPE / gamma_analytic")
+        ax.set_ylim(bottom=0)
+        fig.savefig(os.path.join(td, "plots", "hpe_damping_reduction_vs_t.png"), bbox_inches="tight")
+        plt.close(fig)
+
 
 def plot_series(series, td):
     for k in series.keys():
+        if series[k].ndim != 1:
+            continue
         fig, ax = plt.subplots(1, 2, figsize=(8, 3))
         series[k].plot(ax=ax[0])
         series[k].plot(ax=ax[1])
@@ -752,7 +818,19 @@ def plot_series(series, td):
 
 
 def make_series_xarrays(cfg, this_t, state, td):
-    series_xr = xr.Dataset({k: xr.DataArray(v, coords=(("t (ps)", this_t),)) for k, v in state.items()})
+    data = {}
+    for k, v in state.items():
+        v = np.asarray(v)
+        if k == "hpe_hist":
+            # (nt, nv) velocity histogram from the HPE module; the axis is v/c
+            # (a slash in a coord name is illegal in netCDF)
+            hpe = cfg["terms"]["hpe"]
+            edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
+            centers = 0.5 * (edges[1:] + edges[:-1])
+            data[k] = xr.DataArray(v, coords=(("t (ps)", this_t), ("v (c)", centers)))
+        else:
+            data[k] = xr.DataArray(v, coords=(("t (ps)", this_t),))
+    series_xr = xr.Dataset(data)
     series_xr.to_netcdf(os.path.join(td, "binary", "series.xr"), engine="h5netcdf", invalid_netcdf=True)
     return series_xr
 
@@ -918,8 +996,15 @@ def get_save_quantities(cfg: dict) -> dict:
             )
 
         def save_func(t, y, args):
+            from adept._lpse2d.core.hpe import PARTICLE_KEYS
+
             save_y = {}
             for k, v in y.items():
+                if k in PARTICLE_KEYS:
+                    # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
+                    # none of them fit the spatial interpolator; the histogram and the
+                    # damping-reduction scalars are saved through the default series
+                    continue
                 if k in ["E0", "E1"]:
                     cmplx_fld = v.view(jnp.complex128)
                     save_y[k] = jnp.concatenate(
@@ -939,7 +1024,11 @@ def get_save_quantities(cfg: dict) -> dict:
             return save_y
 
     else:
-        save_func = lambda t, y, args: y
+
+        def save_func(t, y, args):
+            from adept._lpse2d.core.hpe import PARTICLE_KEYS
+
+            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS}
 
     cfg["save"]["fields"]["func"] = save_func
 
@@ -969,10 +1058,32 @@ def get_default_save_func(cfg):
     # Parseval: sum_x <.>_y |E|^2 = (1/(nx*ny^2)) * sum_k k^2 |phi_k|^2.
     k_sq = np.array(kx[:, None] ** 2 + ky[None, :] ** 2)
     zero_mask = np.where(k_sq > 0, 1.0, 0.0)
-    gamma_total = np.array(landau_damping_rate(jnp.array(k_sq), derived["wp0"], derived["vte_sq"], jnp.array(zero_mask)))
+    if cfg["terms"]["epw"]["damping"].get("landau", True):
+        gamma_total = np.array(
+            landau_damping_rate(jnp.array(k_sq), derived["wp0"], derived["vte_sq"], jnp.array(zero_mask))
+        )
+    else:
+        gamma_total = np.zeros_like(k_sq)
     gamma_total = gamma_total + derived.get("nu_coll", 0.0) * zero_mask
     energy_loss_factor = (1.0 - np.exp(-2.0 * gamma_total * dt)) / dt  # 1/ps, per k mode
     boundary_sq_loss = (1.0 - np.array(cfg["grid"]["absorbing_boundaries"]) ** 2) / dt  # 1/ps, per cell
+
+    # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
+    # use the state's rate; also emit the hot-electron scalars and the histogram
+    hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
+    if hpe_on:
+        from adept._lpse2d.core.hpe import resonance_arrays
+
+        hpe_arrays = resonance_arrays(cfg)
+        n_p = int(cfg["terms"]["hpe"]["n_particles"])
+        w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
+        c_light = derived["c"]
+        nu_coll_arr = derived.get("nu_coll", 0.0) * zero_mask
+        gamma_an_1d = np.array(hpe_arrays["gamma_analytic"][:, 0])
+        # damping-reduction band: resonant modes where the analytic rate is non-negligible
+        ratio_band = np.array(hpe_arrays["mask_res"]) & (gamma_an_1d > 1.0e-4 * derived["wp0"])
+        have_ratio_band = bool(np.any(ratio_band))
+        gamma_an_safe = np.where(ratio_band, gamma_an_1d, 1.0)
 
     if srs_on:
         # Legacy reflectivity probe: sample |E1_y|^2 on the low-density side, just inside
@@ -1052,10 +1163,34 @@ def get_default_save_func(cfg):
         # (sloshing) energy equals the cycle-averaged electric energy that epw_energy
         # counts (the OSIRIS field-only convention), so the energy actually handed to
         # electrons -- and the budget sink -- is 2x the electric-part rate
+        if hpe_on:
+            # the applied rate is dynamic: read it from the state
+            gamma_dyn = y["gamma_L"] + nu_coll_arr
+            loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
+        else:
+            loss_factor = energy_loss_factor
         out["epw_dissipation"] = (
-            2.0 * epw_energy_prefactor / (nx * ny**2) * jnp.sum(k_sq * jnp.abs(phi_k) ** 2 * energy_loss_factor)
+            2.0 * epw_energy_prefactor / (nx * ny**2) * jnp.sum(k_sq * jnp.abs(phi_k) ** 2 * loss_factor)
         )
         out["epw_boundary_loss"] = 2.0 * epw_energy_prefactor * jnp.sum(jnp.mean(e_sq * boundary_sq_loss, axis=1))
+
+        if hpe_on:
+            u = y["u_e"]
+            gamma_rel = jnp.sqrt(1.0 + (u / c_light) ** 2)
+            ke_kev = 510.999 * (gamma_rel - 1.0)
+            out["fhot_50keV"] = w_tail * jnp.sum(ke_kev > 50.0)
+            out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
+            out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
+            out["hpe_hist"] = y["epw_hist"]
+            if have_ratio_band:
+                ratio = y["gamma_L"][:, 0] / gamma_an_safe
+                # inflation-o-meters: worst-case reduction across the resonant band
+                # (noisy at low n_particles -- one clamped mode reads 0), and the
+                # reduction at the band mode carrying the most EPW energy (robust,
+                # and the physically relevant one)
+                out["hpe_gamma_ratio_min"] = jnp.min(jnp.where(ratio_band, ratio, jnp.inf))
+                phi_amp = jnp.where(ratio_band, jnp.abs(phi_k[:, 0]), 0.0)
+                out["hpe_gamma_ratio_kpeak"] = ratio[jnp.argmax(phi_amp)]
 
         if srs_on:
             e1 = y["E1"].view(jnp.complex128)

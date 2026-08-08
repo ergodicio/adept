@@ -252,4 +252,49 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
         # (skip the first 5% of the run to avoid the fill-in transient)
         metrics["laser_incident_flux_ratio"] = float(np.mean(inc[max(1, len(inc) // 20) :]))
 
+    # --- HPE hot-electron metrics, named to match the OSIRIS scan2 set ---
+    if "fhot_50keV" in series:
+        hpe = cfg["terms"]["hpe"]
+        # one-particle resolution of the hot fraction; "first hot electrons" means a
+        # sustained signal of at least a few particles above threshold
+        try:
+            from scipy import special
+
+            f_tail = float(special.erfc(float(hpe["v_min"]) / np.sqrt(2.0)))
+        except Exception:
+            f_tail = 1.0
+        min_frac = 3.0 * f_tail / float(hpe["n_particles"])
+
+        for key in ("fhot_50keV", "fhot_100keV"):
+            if key not in series:
+                continue
+            fhot = np.asarray(series[key].values, dtype=float)
+            windows = segment_windows(t_ps, last_frac=0.25, n_segments=4)
+            metrics[key] = _wmean(fhot, windows[-1]["mask"])
+            # onset threshold: a few particles above the *initial* population -- at
+            # high Te the loaded Maxwellian tail itself crosses the energy threshold,
+            # so onset means a sustained excess over t=0, not any nonzero count
+            onset = _sustained_crossing(fhot, max(min_frac, 2.0 * fhot[0]))
+            thresh_kev = key.split("_")[1].replace("keV", "")
+            if onset is not None:
+                # OSIRIS logs onset times in 1/w0 code units
+                metrics[f"t_first_hot_e_{thresh_kev}keV"] = float(t_w0[onset])
+                metrics[f"t_first_hot_e_{thresh_kev}keV_ps"] = float(t_ps[onset])
+
+        if "hpe_gamma_ratio_kpeak" in series:
+            # headline damping-reduction factor: at the dominant band mode (robust);
+            # the band-min is also logged but is shot-noise-limited at low n_particles
+            ratio = np.asarray(series["hpe_gamma_ratio_kpeak"].values, dtype=float)
+            windows = segment_windows(t_ps, last_frac=0.25, n_segments=4)
+            metrics["hpe_damping_reduction_final"] = _wmean(ratio, windows[-1]["mask"])
+            metrics["hpe_damping_reduction_min"] = float(np.nanmin(ratio))
+        if "hpe_gamma_ratio_min" in series:
+            metrics["hpe_damping_reduction_band_min"] = float(
+                np.nanmin(np.asarray(series["hpe_gamma_ratio_min"].values, dtype=float))
+            )
+        if "hpe_mean_energy_keV" in series:
+            metrics["hpe_mean_energy_keV_final"] = float(
+                np.asarray(series["hpe_mean_energy_keV"].values, dtype=float)[-1]
+            )
+
     return metrics

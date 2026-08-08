@@ -311,6 +311,7 @@ Physics terms configuration.
 |-------|------|-------------|
 | `epw` | object | Electron plasma wave configuration |
 | `light` | object | (optional) Light-wave evolution configuration |
+| `hpe` | object | (optional) Hybrid particle evolution: test-particle Landau damping feedback (Follett et al. 2017) |
 | `zero_mask` | bool | Whether to zero out k=0 mode |
 
 ### light (optional)
@@ -329,7 +330,6 @@ Physics terms configuration.
 | `linear` | bool | Linear mode (disables nonlinear coupling) |
 | `source` | object | Source terms |
 | `hyperviscosity` | object | Optional hyperviscosity for numerical stability |
-| `trapping` | object | Optional trapping model |
 | `kinetic real part` | bool | Include kinetic correction to real frequency |
 
 #### boundary
@@ -363,13 +363,38 @@ Physics terms configuration.
 | `coeff` | float | Hyperviscosity coefficient |
 | `order` | int | Order of hyperviscosity (must be even) |
 
-#### trapping (optional)
+### hpe (optional)
+
+Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field $\tilde{E}_x = \mathrm{Re}[E_x e^{-i\omega_{p0}t}]$, their spatially-averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). Quasi-1D only (`ny == 1`), and requires `terms.epw.damping.landau: true`. The particle push dominates the runtime, so HPE runs want a GPU.
+
+The damping extraction is calibrated per k-mode so that the freshly loaded Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and the tail histogram `hpe_hist`; MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`, named for one-to-one comparison with the OSIRIS scan2 runs.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `active` | bool | Enable trapping model |
-| `kld` | float | k * lambda_D parameter |
-| `nuee` | float | Electron-electron collision frequency |
+| `active` | bool | Enable HPE (default `false`) |
+| `n_particles` | int | Number of tail test particles (default `500000`) |
+| `v_min` | float | Tail cutoff in units of `vte` (default `2.5`); only `~erfc(v_min/sqrt(2))` of a Maxwellian is simulated |
+| `v_max` | float | Histogram half-span in units of `c` (default `1.0`) |
+| `nv` | int | Velocity bins spanning `(-v_max, v_max)` (default `512`) |
+| `v_blend_buffer` | float | Buffer above `v_min` (units of `vte`) below which modes keep the analytic rate (default `0.5`) |
+| `gather_refine` | int | Spectral upsampling factor for `Ex` before the particle gather (default `4`). Linear interpolation of a wave with `k dx ~ 1-2` rad/cell attenuates the gathered field by `sinc^2(k dx / 2)` (15-30%); upsampling makes this ~1% |
+| `substep_courant` | float | `wp0 * dt_particle` for the sub-cycled push (default `0.05`; Follett used 0.035) |
+| `tau_damping` | string | EMA time constant for the velocity histogram (default `"100fs"`, Follett's update interval) |
+| `t_start` | string | Push/feedback disabled before this time (default `"0ps"`); use to let the fluid run reach steady state first |
+| `feedback` | bool | (default `true`) `false` = control run: particles evolve but the damping stays analytic (Follett's control experiment) |
+| `seed` | int | RNG seed for particle loading and wall re-injection (default `42`) |
+| `omega_res` | string | Resonance convention for `v_phi(k)`: `"bohm_gross"` (default, matches the analytic rate) or `"wp0"` (bare carrier, as in the paper) |
+
+```yaml
+terms:
+  hpe:
+    active: true
+    n_particles: 500000
+    v_min: 2.5
+    substep_courant: 0.05
+    tau_damping: 100fs
+    t_start: 2ps
+```
 
 ### Example: TPD Simulation
 

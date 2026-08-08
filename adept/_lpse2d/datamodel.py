@@ -181,9 +181,31 @@ class LightModel(BaseModel):
     pump_depletion: bool = False
 
 
+class HPEModel(BaseModel):
+    """Hybrid particle evolution (Follett et al. 2017): test electrons pushed in the
+    de-enveloped EPW field feed an evolving Landau damping rate back to the wave
+    solver (kinetic inflation + hot electrons). Quasi-1D (ny == 1) only, and
+    requires terms.epw.damping.landau: true."""
+
+    active: bool = False
+    n_particles: int = 500000
+    v_min: float = 2.5  # tail cutoff, units of vte
+    v_max: float = 1.0  # histogram half-span, units of c
+    v_blend_buffer: float = 0.5  # analytic/HPE blend buffer above v_min, units of vte
+    nv: int = 512  # velocity bins spanning (-v_max, v_max)
+    gather_refine: int = 4  # spectral upsampling of Ex before the particle gather
+    substep_courant: float = 0.05  # wp0 * particle substep
+    tau_damping: str = "100fs"  # EMA window for the velocity histogram
+    t_start: str = "0ps"  # push/feedback disabled before this time
+    feedback: bool = True  # False = control run: particles evolve, damping stays analytic
+    seed: int = 42
+    omega_res: str = "bohm_gross"  # resonance v_phi convention: "bohm_gross" or "wp0"
+
+
 class TermsModel(BaseModel):
     epw: EPWModel
     light: LightModel = LightModel()
+    hpe: HPEModel | None = None
     zero_mask: bool
 
 
