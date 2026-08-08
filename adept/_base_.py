@@ -304,6 +304,9 @@ class ergoExo:
         elif cfg["solver"] == "vlasov-1d2v":
             from adept.vlasov1d2v import BaseVlasov1D2V as this_module
 
+        elif cfg["solver"] == "vlasov-1d-iaw":
+            from adept.vlasov1d import IAWTurbulence1D as this_module
+
         elif cfg["solver"] == "vlasov-2d":
             from adept.vlasov2d import BaseVlasov2D as this_module
 

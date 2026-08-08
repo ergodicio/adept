@@ -285,6 +285,14 @@ class VlasovMaxwell:
         self.dt = grid.dt
         self.ey_driver = field.TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey, c=c)
         self.ex_driver = field.LongitudinalElectricFieldDriver(grid.x, drivers=drivers.ex)
+        self.ex_stochastic = drivers.ex_stochastic
+
+    def total_dex(self, t, args):
+        """Evaluate the deterministic plus (optional) stochastic external Ex at time t."""
+        dex = self.ex_driver(t, args)
+        if self.ex_stochastic is not None:
+            dex = dex + self.ex_stochastic(t, self.grid.x)
+        return dex
 
     def compute_electron_charge_density(self, f_dict):
         """Compute charge density from the electron distribution function."""
@@ -308,7 +316,7 @@ class VlasovMaxwell:
         :return:
         """
 
-        dex = [self.ex_driver(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
+        dex = [self.total_dex(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
         djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
 
         # Evaluate collision frequency profiles at current time
