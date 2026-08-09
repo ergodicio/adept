@@ -11,7 +11,7 @@ from adept._vlasov1d.simulation import (
     EMDriverSet,
     SubspeciesDistributionSpec,
 )
-from adept.normalization import PlasmaNormalization, electron_debye_normalization
+from adept.normalization import PlasmaNormalization
 
 
 class PICSpecies:
@@ -75,10 +75,7 @@ def _density_component_names(cfg: PIC1DConfig) -> list[str]:
 
 
 def sim_from_config(cfg: PIC1DConfig) -> PIC1DSimulation:
-    plasma_norm = electron_debye_normalization(
-        cfg.units.normalizing_density,
-        cfg.units.normalizing_temperature,
-    )
+    plasma_norm = cfg.units.make_normalization()
     # If a transverse EM driver is configured we also evolve a vector potential
     # ``a(x)`` via a wave equation; in that case dt must satisfy the EM CFL.
     has_ey_driver = len(cfg.drivers.ey) > 0

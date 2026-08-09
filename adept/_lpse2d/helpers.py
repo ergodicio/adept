@@ -277,6 +277,45 @@ def get_derived_quantities(cfg: dict) -> dict:
     return cfg
 
 
+def _pump_k_support(cfg: dict) -> tuple[float, float]:
+    """
+    Half-widths of the pump's support in k-space, returned as ``(kx, ky)`` in 1/um.
+
+    The TPD and SRS source terms are products of the pump with a plasma-wave field, so in k-space
+    the plasma-wave spectrum is *translated* by the pump wavenumber rather than convolved against a
+    broad kernel. These half-widths are how far that translation can reach, which is what sets the
+    part of the band that has to be left empty for the product not to wrap around Nyquist.
+
+    ``laser.Light.laser_update`` builds each color as a plane wave at ``k0(delta_omega)`` along x and
+    applies the speckle envelope as a function of y only, so the kx support is a single wavenumber
+    and the ky support is zero unless a speckle profile is attached -- in which case the beamlets
+    span the aperture and the numerical aperture bounds ky.
+
+    :param cfg: the full config, after ``write_units`` and ``get_derived_quantities`` have run
+    :return: ``(kx, ky)`` half-widths in 1/um; ``(0, 0)`` when there is no E0 driver
+    """
+    if "E0" not in cfg["drivers"]:
+        return 0.0, 0.0
+
+    derived = cfg["units"]["derived"]
+    w0, c, wp0 = derived["w0"], derived["c"], derived["wp0"]
+
+    # the largest k0 over the colors -- mirrors the per-color k0 in laser.py
+    delta_omega_max = cfg["drivers"]["E0"].get("delta_omega_max", 0.0)
+    k0 = w0 / c * np.sqrt((1.0 + delta_omega_max) ** 2 - (wp0 / w0) ** 2)
+
+    speckle_cfg = cfg["drivers"]["E0"].get("speckle", {})
+    if speckle_cfg.get("enabled", False):
+        focal_length_m = _Q(speckle_cfg["focal_length"]).to("m").value
+        beam_aperture_m = [_Q(a).to("m").value for a in speckle_cfg["beam_aperture"]]
+        numerical_aperture = max(beam_aperture_m) / (2.0 * focal_length_m)
+        ky = k0 * numerical_aperture
+    else:
+        ky = 0.0
+
+    return float(k0), float(ky)
+
+
 def get_solver_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are arrays
@@ -381,6 +420,43 @@ def get_solver_quantities(cfg: dict) -> dict:
             xi = (k_mag[taper_region] - taper_start) / (cutoff - taper_start)
             filter_grid[taper_region] = 0.5 * (1.0 + np.cos(np.pi * xi))
         cfg_grid["low_pass_filter_grid"] = filter_grid
+
+    # The isotropic cutoff above is a physics knob -- it is what keeps the retained band inside the
+    # range where the asymptotic Landau damping rate in epw.py is still valid. Dealiasing is a
+    # separate constraint, and an isotropic circle is the wrong shape for it: the pump translates
+    # the spectrum along x only, so the band that has to stay empty is a rectangle, not a disc.
+    dealias = cfg_grid.get("dealias", "isotropic")
+    if dealias == "shifted-band":
+        kx_pump, ky_pump = _pump_k_support(cfg)
+        kx_nyquist = float(np.abs(cfg_grid["kx"]).max())
+        ky_nyquist = float(np.abs(cfg_grid["ky"]).max())
+        kx_limit = kx_nyquist - kx_pump
+        ky_limit = ky_nyquist - ky_pump
+
+        if kx_limit <= 0.0 or ky_limit <= 0.0:
+            raise ValueError(
+                f"The pump support (kx={kx_pump:.2f}, ky={ky_pump:.2f} 1/um) does not leave any room "
+                f"inside the grid's Nyquist wavenumber (kx={kx_nyquist:.2f}, ky={ky_nyquist:.2f} 1/um), "
+                "so no choice of band is alias free. Decrease grid.dx."
+            )
+
+        alias_free_band = (np.abs(cfg_grid["kx"])[:, None] <= kx_limit) & (np.abs(cfg_grid["ky"])[None, :] <= ky_limit)
+        cfg_grid["low_pass_filter_grid"] = cfg_grid["low_pass_filter_grid"] * alias_free_band
+
+        print(
+            f"dealias='shifted-band': alias-free band is |kx| <= {kx_limit:.2f}, |ky| <= {ky_limit:.2f} 1/um "
+            f"(Nyquist {kx_nyquist:.2f}, {ky_nyquist:.2f}); low_pass_filter caps |k| <= {cutoff:.2f}"
+        )
+    elif dealias != "isotropic":
+        raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic' or 'shifted-band'.")
+
+    retained = float(np.mean(cfg_grid["low_pass_filter_grid"] > 0))
+    debye_length = np.sqrt(cfg["units"]["derived"]["vte_sq"]) / cfg["units"]["derived"]["wp0"]
+    k_edge = float(np.max(k_mag * (cfg_grid["low_pass_filter_grid"] > 0)))
+    print(
+        f"dealias='{dealias}' retains {100 * retained:.1f}% of the {cfg_grid['nx']}x{cfg_grid['ny']} k-grid; "
+        f"band edge reaches k*lambda_D = {k_edge * debye_length:.2f}"
+    )
 
     # Initialize LASY speckle profile if configured
     if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):

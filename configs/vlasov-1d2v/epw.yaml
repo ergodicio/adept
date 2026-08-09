@@ -1,10 +1,18 @@
+# Driven electron plasma wave in cylindrical (v_par, v_perp) velocity space.
+#
+# A resonant ponderomotive driver at k0 = 0.3 rings up a wave in a periodic
+# box one wavelength long, then switches off and the wave is left to damp
+# and trap. Collisions here are the v_par-only Dougherty operator whose
+# drift/diffusion coefficients are computed from the v_perp MARGINAL
+# F(x, v_par) = int f w_perp dv_perp, so the marginal dynamics reproduce the
+# equivalent vlasov-1d run (see tests/test_vlasov1d2v/test_1d_limit.py).
+#
+# For the full-geometry Coulomb operator that resolves pitch-angle
+# (Lorentz) and speed scattering separately, see epw-cylindrical-landau.yaml.
+
 units:
-  laser_wavelength: 351nm
   normalizing_temperature: 2000eV
   normalizing_density: 1.5e21/cc
-  Z: 10
-  Zp: 10
-
 
 density:
   quasineutrality: true
@@ -25,13 +33,24 @@ density:
 
 grid:
   dt: 0.1
-  nv: 1024
   nx: 32
+  xmin: 0.0
+  xmax: 20.94
+  # parallel axis: v_par in (-vmax, vmax)
+  nv: 1024
+  vmax: 8.0
+  # perpendicular axis: v_perp in (0, vperp_max), cell-centered, with
+  # integration weight w_perp = 2 pi v_perp dv_perp.
+  # This operator has no v_perp dynamics (each v_perp slice is pushed by the
+  # same marginal-coefficient v_par operator), so the perp axis is only a
+  # quadrature axis here and can stay coarse: at dvperp = 0.25 the saved
+  # P_perp carries ~0.3% midpoint-rule bias and nothing else is affected.
+  # cylindrical_landau does feed the measured moments back into its
+  # coefficients and wants a finer axis - see epw-cylindrical-landau.yaml.
+  nvperp: 32
+  vperp_max: 8.0
   tmin: 0.
   tmax: 1000.0
-  vmax: 8.0
-  xmax: 20.94
-  xmin: 0.0
 
 save:
   fields:
@@ -39,84 +58,115 @@ save:
       tmin: 0.0
       tmax: 1000.0
       nt: 1001
-  electron-fx-vx:
+  electron:
+    # {t, x, v} -> the marginal F(x, v_par), rank-3 and laid out exactly like
+    # a vlasov-1d distribution save, so the 1D analysis stack applies as-is
+    marginal:
+      t:
+        tmin: 0.0
+        tmax: 1000.0
+        nt: 101
+      x:
+        xmin: 0.0
+        xmax: 20.94
+        nx: 32
+      v:
+        vmin: -8.0
+        vmax: 8.0
+        nv: 512
+    # {t} alone -> the full f(x, v_par, v_perp) at full resolution; keep the
+    # cadence sparse, these are rank-4 arrays
+    full:
+      t:
+        tmin: 0.0
+        tmax: 1000.0
+        nt: 6
+  # running TIME INTEGRALS of each term's contribution to dF/dt, not sampled
+  # rates: difference them between save points for exact interval averages
+  diag-vlasov-cumulative:
     t:
       tmin: 0.0
       tmax: 1000.0
       nt: 101
-    x: {}
-    vx:
-      vxmin: 0.0
-      vxmax: 8.0
-      nvx: 512
-  electron-full:
+  diag-fp-cumulative:
     t:
       tmin: 0.0
       tmax: 1000.0
-      nt: 6
+      nt: 101
 
 solver: vlasov-1d2v
 
 mlflow:
   experiment: 1d2v-epw
-  run: a1em2-both-exact
+  run: dougherty-marginal
 
 drivers:
   ex:
     '0':
-      a0: 1.e-2
-      k0: 0.3
-      t_center: 40.0
-      t_rise: 5.0
-      t_width: 30.0
-      w0: 1.1598
-      dw0: 0.
-      x_center: 0.0
-      x_rise: 10.0
-      x_width: 4000000.0
+      params:
+        a0: 1.e-2
+        k0: 0.3
+        w0: 1.1598
+        dw0: 0.
+      envelope:
+        time:
+          center: 40.0
+          rise: 5.0
+          width: 30.0
+        space:
+          center: 0.0
+          rise: 10.0
+          width: 4000000.0
   ey: {}
+
+diagnostics:
+  diag-vlasov-cumulative: True
+  diag-fp-cumulative: True
 
 terms:
   field: poisson
-  edfdv: exponential
+  edfdv: exponential  # vlasov-1d2v supports the exponential v-push only
   time: sixth
   fokker_planck:
-    nu_ee:
-      is_on: true
-      time:
-        baseline: 1.0e-4
-        bump_or_trough: bump
-        center: 0.0
-        rise: 25.0
-        slope: 0.0
-        bump_height: 0.0
-        width: 100000.0
-      space:
-        baseline: 1.0
-        bump_or_trough: bump
-        center: 0.0
-        rise: 25.0
-        slope: 0.0
-        bump_height: 0.0
-        width: 100000.0
-    nu_ei:
-      nr: 384
-      nth: 2048
-      solver: exact-fft
-      is_on: true
-      time:
-        baseline: 1.0e-4
-        bump_or_trough: bump
-        center: 0.0
-        rise: 25.0
-        slope: 0.0
-        bump_height: 0.0
-        width: 100000.0
-      space:
-        baseline: 1.0
-        bump_or_trough: bump
-        center: 0.0
-        rise: 25.0
-        slope: 0.0
-        bump_height: 0.0
-        width: 100000.0
+    is_on: True
+    # dougherty | dougherty_nodrag | lenard_bernstein | cylindrical_landau
+    type: dougherty
+    # iterate beta so the discrete energy flux vanishes on the marginal,
+    # making n, P_par and E_par conserved to solver precision
+    self_consistent_beta:
+      enabled: True
+      max_steps: 3
+    time:
+      baseline: 1.0e-4
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False  # not implemented for vlasov-1d2v
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

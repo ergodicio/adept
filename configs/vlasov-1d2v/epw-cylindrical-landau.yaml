@@ -1,0 +1,177 @@
+# Driven electron plasma wave with the FULL-GEOMETRY Coulomb collision
+# operator (`fokker_planck.type: cylindrical_landau`).
+#
+# Same driven EPW as epw.yaml (k0 = 0.3, so the resonance sits at
+# v_phi = w0/k0 ~ 3.87 v_th), but collisions are the linearized Landau
+# operator on the cylindrical (v_par, v_perp) grid:
+#
+#   C[f] = nu div[ D(v) . M grad(f / M) ],
+#   D    = alpha_speed   Dhat_par(s) shat shat
+#        + alpha_lorentz Dhat_perp(s) (I - shat shat)
+#
+# with the erf-exact Rosenbluth coefficients of a Maxwellian field species.
+# The two channels are separately switchable, which is the point of this
+# deck: at this resonance the Lorentz (pitch-angle) channel carries ~47% of
+# the projected marginal diffusion Dbar(v_phi) and the speed channel ~53%,
+# so running `channels: {speed: 0, lorentz: 1}` and its mirror attributes
+# the collisional modification of the wave to one channel at a time.
+# See tests/test_vlasov1d2v/test_cylindrical_landau.py.
+#
+# Resolution note: the v_perp grid is finer than in epw.yaml. The operator
+# re-measures (n, u, T) from f every call, so the v_perp quadrature error
+# feeds back into the coefficients; dvperp = 0.1 is the resolution the
+# operator's validation gates were established at.
+
+units:
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+
+grid:
+  dt: 0.1
+  nx: 32
+  xmin: 0.0
+  xmax: 20.94
+  nv: 512
+  vmax: 6.4
+  nvperp: 64
+  vperp_max: 6.4
+  tmin: 0.
+  tmax: 1000.0
+
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 1000.0
+      nt: 1001
+  electron:
+    marginal:
+      t:
+        tmin: 0.0
+        tmax: 1000.0
+        nt: 101
+      x:
+        xmin: 0.0
+        xmax: 20.94
+        nx: 32
+      v:
+        vmin: -6.4
+        vmax: 6.4
+        nv: 512
+    full:
+      t:
+        tmin: 0.0
+        tmax: 1000.0
+        nt: 6
+  diag-vlasov-cumulative:
+    t:
+      tmin: 0.0
+      tmax: 1000.0
+      nt: 101
+  diag-fp-cumulative:
+    t:
+      tmin: 0.0
+      tmax: 1000.0
+      nt: 101
+
+solver: vlasov-1d2v
+
+mlflow:
+  experiment: 1d2v-epw
+  run: cylindrical-landau
+
+drivers:
+  ex:
+    '0':
+      params:
+        a0: 1.e-2
+        k0: 0.3
+        w0: 1.1598
+        dw0: 0.
+      envelope:
+        time:
+          center: 40.0
+          rise: 5.0
+          width: 30.0
+        space:
+          center: 0.0
+          rise: 10.0
+          width: 4000000.0
+  ey: {}
+
+diagnostics:
+  diag-vlasov-cumulative: True
+  diag-fp-cumulative: True
+
+terms:
+  field: poisson
+  edfdv: exponential
+  time: sixth
+  fokker_planck:
+    is_on: True
+    type: cylindrical_landau
+    # Per-channel weights. (1, 1) is the physical operator; set one to 0 to
+    # isolate the other channel's contribution to the wave's evolution.
+    channels:
+      speed: 1.0
+      lorentz: 1.0
+    # Project the momentum/energy exchanged with the implicit field
+    # particles back onto shifted/heated Maxwellian modes each step. REQUIRED
+    # for long runs: without it the live-moment loop chases its own
+    # O(dvperp^2) quadrature bias and T drifts secularly.
+    moment_restoration: True
+    # Substeps for the explicit cross-diffusion terms (the two diagonal
+    # sweeps are implicit). 1 is ample at nu dt = 1e-4; raise it if you
+    # increase nu or dt far beyond these values.
+    explicit_substeps: 1
+    time:
+      baseline: 1.0e-3
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False  # not implemented for vlasov-1d2v
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

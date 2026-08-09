@@ -18,6 +18,7 @@ from adept._vlasov1d.datamodel import (
     BroadbandConfig,
     SpeciesComponentConfig,
     SpeciesConfig,
+    StochasticDriverConfig,
 )
 from adept._vlasov1d.grid import Grid
 from adept.functions import (
@@ -35,7 +36,6 @@ from adept.functions import (
 )
 from adept.normalization import PlasmaNormalization
 
-#%% # the place from where config is picked up from
 class EMDriver(eqx.Module):
     """Normalized electromagnetic driver used by longitudinal or transverse sources."""
 
@@ -85,8 +85,6 @@ class EMDriver(eqx.Module):
                 broadband_driver = BroadbandDriver(params.model_dump(), a0, k0, w0, envelope, is_point)
                 return broadband_driver.driver_list
 
-#%%
-
 class BroadbandDriver(eqx.Module):
     params: dict
     a0: float
@@ -95,7 +93,6 @@ class BroadbandDriver(eqx.Module):
     intensities: Array
     delta_omega: Array
     phases: Array
-    #ny: int #??
     envelope: SpaceTimeEnvelopeFunction
     is_point_source: bool = False
     driver_list: list
@@ -205,15 +202,70 @@ class BroadbandDriver(eqx.Module):
 
         return state, args 
 
+class StochasticDriver(eqx.Module):
+    """Band-limited, time-correlated (Ornstein-Uhlenbeck) longitudinal field driver.
+
+    Drives the plasma with an external electric field built from a set of box
+    Fourier modes whose complex amplitudes evolve as independent OU processes
+    with correlation time ``tau`` and stationary RMS ``amplitude``:
+
+        dE(x, t) = sum_m Re[a_m(t) exp(i k_m x)],   k_m = 2 pi m / L
+
+    The realization is drawn once at construction from ``seed`` on a uniform
+    time grid, so the forcing is reproducible, deterministic inside the solve,
+    and independent of the solver timestep; the amplitudes are linearly
+    interpolated in time when evaluated.
+    """
+
+    t_grid: jnp.ndarray
+    amp_real: jnp.ndarray
+    amp_imag: jnp.ndarray
+    k_modes: jnp.ndarray
+
+    def __init__(self, cfg: StochasticDriverConfig, grid: Grid):
+        """Precompute the OU amplitude time series for each driven mode."""
+        length = grid.xmax - grid.xmin
+        modes = np.asarray(cfg.modes, dtype=np.float64)
+        n_modes = len(modes)
+
+        dt_update = cfg.dt_update if cfg.dt_update is not None else cfg.tau / 10.0
+        dt_update = min(dt_update, cfg.tau / 2.0)  # never undersample the OU process
+        nt = int(np.ceil((grid.tmax - grid.tmin) / dt_update)) + 2
+
+        rng = np.random.default_rng(cfg.seed)
+        theta = np.exp(-dt_update / cfg.tau)
+        kick = cfg.amplitude * np.sqrt(1.0 - theta**2)
+
+        amps = np.zeros((nt, n_modes), dtype=np.complex128)
+        amps[0] = cfg.amplitude * (rng.standard_normal(n_modes) + 1j * rng.standard_normal(n_modes)) / np.sqrt(2.0)
+        for it in range(1, nt):
+            xi = (rng.standard_normal(n_modes) + 1j * rng.standard_normal(n_modes)) / np.sqrt(2.0)
+            amps[it] = theta * amps[it - 1] + kick * xi
+
+        self.t_grid = jnp.array(grid.tmin + dt_update * np.arange(nt))
+        self.amp_real = jnp.array(amps.real)
+        self.amp_imag = jnp.array(amps.imag)
+        self.k_modes = jnp.array(2.0 * np.pi * modes / length)
+
+    def __call__(self, t: float, x: jax.Array) -> jax.Array:
+        """Evaluate the stochastic forcing field at time t on the spatial grid x."""
+        ar = jax.vmap(lambda col: jnp.interp(t, self.t_grid, col), in_axes=1)(self.amp_real)
+        ai = jax.vmap(lambda col: jnp.interp(t, self.t_grid, col), in_axes=1)(self.amp_imag)
+        phase = self.k_modes[:, None] * x[None, :]
+        return jnp.sum(ar[:, None] * jnp.cos(phase) - ai[:, None] * jnp.sin(phase), axis=0)
+
 class EMDriverSet(eqx.Module):
     """Container for longitudinal (Ex) and transverse (Ey) driver lists."""
 
     ex: list[EMDriver]
     ey: list[EMDriver]
+    ex_stochastic: StochasticDriver | None = None
 
     @staticmethod
-    def from_config(cfg: EMDriverSetConfig, norm: PlasmaNormalization | None = None) -> "EMDriverSet":
-        """Build normalized Ex and Ey driver lists from configuration."""
+    def from_config(
+        cfg: EMDriverSetConfig, norm: PlasmaNormalization | None = None, grid: Grid | None = None
+    ) -> "EMDriverSet":
+        """Build normalized Ex and Ey driver lists (and optional stochastic forcing) from configuration."""
         ex = []
         for ex_cfg in cfg.ex.values():
             obj = EMDriver.from_config(ex_cfg, norm)
@@ -224,7 +276,12 @@ class EMDriverSet(eqx.Module):
             obj = EMDriver.from_config(ey_cfg, norm)
             ey.extend(obj if isinstance(obj, list) else [obj])
 
-        return EMDriverSet(ex, ey)
+        ex_stochastic = None
+        if cfg.ex_stochastic is not None:
+            if grid is None:
+                raise ValueError("A Grid is required to construct the stochastic Ex driver")
+            ex_stochastic = StochasticDriver(cfg.ex_stochastic, grid)
+        return EMDriverSet(ex, ey, ex_stochastic)
 
 
 class Species(eqx.Module):
