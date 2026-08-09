@@ -628,9 +628,11 @@ def plot_omega_k(
     cmap: str = "magma",
     show_em: bool = True,
     show_langmuir: bool = False,
+    show_bam: bool = False,
     show_light_line: bool = False,
     v_th: float | None = None,
     omega_p: float = 1.0,
+    bam_vph: tuple[float, float] = (2.8, 5.0),
     k_max: float | None = None,
     omega_max: float | None = None,
     equal_aspect: bool = False,
@@ -641,10 +643,21 @@ def plot_omega_k(
     The OSIRIS convention has ω_p = 1, c = 1 in code units, so the
     relativistic-EM dispersion ω² = ω_p² + k² and the Langmuir
     Bohm–Gross dispersion ω² = ω_p² + 3 k² v_th² overlay directly when
-    you ask for them. ``show_light_line`` overlays the vacuum light line
+    you ask for them. When the simulation's reference density is *not* the
+    density the waves live at (e.g. SRS decks normalized to critical density
+    with the plasma at quarter-critical), pass ``omega_p = sqrt(n/n_ref)``
+    so both branches are evaluated at the actual local plasma frequency.
+    ``show_light_line`` overlays the vacuum light line
     ω = ±k (the ω = k diagonal that the EM branch asymptotes to), which is
     the useful guide when ``k_max`` / ``omega_max`` are set to zoom into the
     low-(k, ω) region where the plasma (Langmuir) waves live.
+
+    ``show_bam`` shades the beam-acoustic-mode (BAM) band ω = k v_φ with
+    v_φ ∈ ``bam_vph`` (units of ``v_th``; default 2.8–5, the phase-velocity
+    range of the BAM roots in Yin et al., PRE 73, 025401 (2006)). Driven SRS
+    moves the electrostatic daughter wave off the Langmuir branch into this
+    band as the tail flattens, so power below the Bohm–Gross curve inside
+    the band is the BAM signature.
     """
     da = _ensure_series(series)
     if da.ndim != 2:
@@ -718,9 +731,22 @@ def plot_omega_k(
         if v_th is None:
             raise ValueError("show_langmuir=True requires v_th=...")
         w_l = np.sqrt(omega_p**2 + 3 * (k_line * v_th) ** 2)
-        ax.plot(k_line, +w_l, "c:", lw=1, alpha=0.8, label=r"Langmuir: $\omega^2 = \omega_p^2 + 3 k^2 v_{th}^2$")
+        lbl = r"Langmuir: $\omega^2 = \omega_p^2 + 3 k^2 v_{th}^2$"
+        if omega_p != 1.0:
+            lbl += rf" ($\omega_p = {omega_p:g}$)"
+        ax.plot(k_line, +w_l, "c:", lw=1, alpha=0.8, label=lbl)
         ax.plot(k_line, -w_l, "c:", lw=1, alpha=0.8)
-    if show_em or show_langmuir or show_light_line:
+    if show_bam:
+        if v_th is None:
+            raise ValueError("show_bam=True requires v_th=...")
+        v_lo, v_hi = (float(v) * v_th for v in bam_vph)
+        bam_lbl = rf"BAM band: $\omega = k v_\phi$, $v_\phi \in [{bam_vph[0]:g}, {bam_vph[1]:g}]\,v_{{th}}$"
+        for sgn, lbl in ((+1, bam_lbl), (-1, None)):
+            ax.fill_between(k_line, sgn * v_lo * k_line, sgn * v_hi * k_line,
+                            color="yellow", alpha=0.15, lw=0, label=lbl)
+            ax.plot(k_line, sgn * v_lo * k_line, color="yellow", ls=":", lw=0.8, alpha=0.7)
+            ax.plot(k_line, sgn * v_hi * k_line, color="yellow", ls=":", lw=0.8, alpha=0.7)
+    if show_em or show_langmuir or show_bam or show_light_line:
         ax.legend(loc="upper right", fontsize=8, framealpha=0.6)
 
     ax.axhline(0, color="w", lw=0.4, alpha=0.4)
@@ -739,6 +765,9 @@ def plot_omega_k_figure(
     series: xr.DataArray | str | Path,
     *,
     v_th: float | None = None,
+    omega_p: float = 1.0,
+    show_bam: bool = False,
+    bam_vph: tuple[float, float] = (2.8, 5.0),
     omega_k_zoom: float | None = 4.0,
     cmap: str = "magma",
     log: bool = True,
@@ -750,6 +779,12 @@ def plot_omega_k_figure(
     the light line ``ω = k`` is a true 45° slope), limited to a square
     ``±z`` window with ``z = min(omega_k_zoom, Nyquist)`` so the slope-1 line —
     and any low-frequency power along it — is visible.
+
+    ``omega_p`` sets the plasma frequency the EM and Bohm–Gross overlays are
+    evaluated at (``sqrt(n/n_ref)`` — e.g. 0.5 for quarter-critical plasma in
+    a critical-density-normalized deck). ``show_bam`` adds the beam-acoustic
+    band ω = k·``bam_vph``·v_th on both panels (requires ``v_th``; see
+    :func:`plot_omega_k`).
 
     With a coarse dump cadence the ω-Nyquist is small, so that window is only a
     few k-cells wide and the lower panel looks blocky; that is the expected
@@ -763,7 +798,10 @@ def plot_omega_k_figure(
         log=log,
         cmap=cmap,
         show_langmuir=v_th is not None,
+        show_bam=show_bam and v_th is not None,
         v_th=v_th,
+        omega_p=omega_p,
+        bam_vph=bam_vph,
     )
     z = _omega_k_zoom_window(da, omega_k_zoom)
     plot_omega_k(
@@ -773,7 +811,10 @@ def plot_omega_k_figure(
         cmap=cmap,
         show_light_line=True,
         show_langmuir=v_th is not None,
+        show_bam=show_bam and v_th is not None,
         v_th=v_th,
+        omega_p=omega_p,
+        bam_vph=bam_vph,
         k_max=z,
         omega_max=z,
         equal_aspect=True,
@@ -1305,14 +1346,22 @@ def canned_plot_kwargs(output_cfg: dict | None) -> dict:
 
     Shared by the live post-processing path (``post.collect``) and the offline
     regeneration harness (``regen``) so both honour the same knobs:
-    ``v_th`` and ``omega_k_zoom`` (which may be explicitly ``null`` to disable
-    the zoom). Keys that are absent fall through to the ``save_canned_plots``
-    defaults.
+    ``v_th``, ``omega_k_zoom`` (which may be explicitly ``null`` to disable
+    the zoom), ``overlay_density`` (density, in units of the simulation
+    reference density, at which the ω-k dispersion overlays are evaluated —
+    mapped to ``omega_p = sqrt(n)``, e.g. 0.25 → 0.5 for quarter-critical in
+    a critical-normalized deck) and ``bam`` (bool: shade the beam-acoustic
+    band on the ω-k plots; needs ``v_th``). Keys that are absent fall through
+    to the ``save_canned_plots`` defaults.
     """
     output_cfg = output_cfg or {}
     kwargs: dict = {"v_th": output_cfg.get("v_th")}
     if "omega_k_zoom" in output_cfg:  # may be explicitly null to disable zoom
         kwargs["omega_k_zoom"] = output_cfg["omega_k_zoom"]
+    if output_cfg.get("overlay_density") is not None:
+        kwargs["omega_p"] = float(np.sqrt(float(output_cfg["overlay_density"])))
+    if "bam" in output_cfg:
+        kwargs["show_bam"] = bool(output_cfg["bam"])
     return kwargs
 
 
@@ -1341,6 +1390,8 @@ def save_canned_plots(
     out_dir: str | Path,
     *,
     v_th: float | None = None,
+    omega_p: float = 1.0,
+    show_bam: bool = False,
     dpi: int = 120,
     n_panels: int = 8,
     omega_k_zoom: float | None = 4.0,
@@ -1363,6 +1414,8 @@ def save_canned_plots(
     ``omega_k_zoom`` is the ``(k, ω)`` half-width (in ``ω_p`` units) for the
     equal-aspect lower panel of the dispersion plots, where ``ω = k`` is drawn
     at 45° (clamped to the data's Nyquist; ``None`` → full Nyquist window).
+    ``omega_p`` and ``show_bam`` steer the ω-k dispersion overlays (see
+    :func:`plot_omega_k_figure`).
     """
     run_dir = Path(run_dir)
     out_dir = Path(out_dir)
@@ -1403,7 +1456,7 @@ def save_canned_plots(
 
         # Full (k, ω) spectrum on top, equal-aspect square window below.
         written[f"omega_k/{comp}"] = _write(
-            plot_omega_k_figure(ser, v_th=v_th, omega_k_zoom=omega_k_zoom),
+            plot_omega_k_figure(ser, v_th=v_th, omega_p=omega_p, show_bam=show_bam, omega_k_zoom=omega_k_zoom),
             f"omega_k/{comp}.png",
         )
 

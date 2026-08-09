@@ -20,6 +20,7 @@ matplotlib.use("Agg")
 
 import h5py
 import numpy as np
+import pytest
 
 from adept.osiris import io as oio
 from adept.osiris import plots as oplt
@@ -148,6 +149,54 @@ def test_omega_k_light_line_drawn(tmp_path: Path) -> None:
     labels = [ln.get_label() for ln in ax.lines]
     assert any("light line" in str(lbl) for lbl in labels)
     plt.close("all")
+
+
+def test_omega_k_langmuir_uses_omega_p(tmp_path: Path) -> None:
+    run_dir = _make_rich_run(tmp_path)
+    ser = oio.load_series(run_dir / "MS/FLD/e2")
+    import matplotlib.pyplot as plt
+
+    _, ax = plt.subplots()
+    oplt.plot_omega_k(ser, ax=ax, show_em=False, show_langmuir=True, v_th=0.0885, omega_p=0.5)
+    lm = [ln for ln in ax.lines if "Langmuir" in str(ln.get_label())]
+    assert len(lm) == 1
+    # The Bohm-Gross branch bottoms out at omega_p (k -> 0), not at 1.
+    assert np.min(lm[0].get_ydata()) == pytest.approx(0.5, rel=1e-3)
+    plt.close("all")
+
+
+def test_omega_k_bam_band_drawn(tmp_path: Path) -> None:
+    run_dir = _make_rich_run(tmp_path)
+    ser = oio.load_series(run_dir / "MS/FLD/e2")
+    import matplotlib.pyplot as plt
+
+    v_th = 0.0885
+    _, ax = plt.subplots()
+    oplt.plot_omega_k(ser, ax=ax, show_em=False, show_bam=True, v_th=v_th, k_max=4, omega_max=4)
+    handles, labels = ax.get_legend_handles_labels()
+    assert sum("BAM" in lbl for lbl in labels) == 1  # one legend entry, both signs shaded
+    # Band edges are the acoustic lines omega = 2.8/5.0 * v_th * k.
+    slopes = sorted(
+        abs(ln.get_ydata()[-1] / ln.get_xdata()[-1])
+        for ln in ax.lines
+        if ln.get_xdata()[-1] != 0 and ln.get_linestyle() == ":"
+    )
+    assert slopes[0] == pytest.approx(2.8 * v_th, rel=1e-6)
+    assert slopes[-1] == pytest.approx(5.0 * v_th, rel=1e-6)
+    # BAM without v_th is an error, not a silent no-op.
+    _, ax2 = plt.subplots()
+    with pytest.raises(ValueError):
+        oplt.plot_omega_k(ser, ax=ax2, show_bam=True)
+    plt.close("all")
+
+
+def test_canned_plot_kwargs_overlay_density_and_bam() -> None:
+    kwargs = oplt.canned_plot_kwargs({"v_th": 0.0885, "overlay_density": 0.25, "bam": True})
+    assert kwargs["omega_p"] == pytest.approx(0.5)
+    assert kwargs["show_bam"] is True
+    # Absent keys fall through to the save_canned_plots defaults.
+    assert "omega_p" not in oplt.canned_plot_kwargs({"v_th": 0.1})
+    assert "show_bam" not in oplt.canned_plot_kwargs({"v_th": 0.1})
 
 
 # --- currents -------------------------------------------------------------
