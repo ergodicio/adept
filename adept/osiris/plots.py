@@ -47,6 +47,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
+from adept.osiris import deck as _deck
 from adept.osiris import io as _io
 
 # --- render-resolution downsampling ---------------------------------------
@@ -620,6 +621,64 @@ def plot_energy_partition(
     return ax
 
 
+def _first(v) -> float | None:
+    """First component of a deck value that may be a scalar or a list."""
+    if v is None:
+        return None
+    return float(v[0] if isinstance(v, list) else v)
+
+
+def _deck_get(params: dict, key: str):
+    """Deck param by base name — deck keys keep slice suffixes (``uth(1:3)``)."""
+    return next((v for k, v in params.items() if k.split("(")[0] == key), None)
+
+
+def ion_acoustic_speeds(run_dir: str | Path) -> list[tuple[str, float]]:
+    r"""Per-ion-species acoustic speeds ``c_s`` from a run's rendered deck.
+
+    Looks for ``os-stdin`` in ``run_dir`` (or its parent, for a ``binary/``
+    NetCDF directory) and walks the deck's ``species``/``udist`` pairs. For
+    each ion species (``rqm > 0``) the ion-acoustic speed in code units
+    (c = 1) is
+
+        c_s² = (Z T_e + 3 T_i) / m_i c²  =  v_th,e² / rqm  +  3 u_th,i²
+
+    (the charge state cancels through ``rqm = m_i / Z``; ``u_th`` is the
+    species' first thermal-velocity component). Electron temperature comes
+    from the first ``rqm < 0`` species' ``uth``. Returns ``(label, c_s)``
+    pairs — the deck ``name`` when present, else ``species N (rqm=…)`` —
+    or an empty list when there is no deck or no ions (so callers can make
+    the overlay unconditional and it self-disables on ion-free runs).
+    """
+    run_dir = Path(run_dir)
+    deck_path = next((p / "os-stdin" for p in (run_dir, run_dir.parent) if (p / "os-stdin").is_file()), None)
+    if deck_path is None:
+        return []
+    try:
+        sections = _deck.parse_deck_file(deck_path)
+    except Exception as e:
+        print(f"[plots] ion_acoustic: could not parse {deck_path}: {e}")
+        return []
+    species: list[dict] = []  # {name, rqm, uth} in deck order
+    for name, params in sections:
+        if name == "species":
+            species.append({"name": _deck_get(params, "name"), "rqm": _first(_deck_get(params, "rqm")), "uth": None})
+        elif name == "udist" and species and species[-1]["uth"] is None:
+            species[-1]["uth"] = _first(_deck_get(params, "uth"))
+    v_the = next((s["uth"] for s in species if s["rqm"] is not None and s["rqm"] < 0 and s["uth"]), None)
+    out: list[tuple[str, float]] = []
+    for i, s in enumerate(species, start=1):
+        rqm, uth = s["rqm"], s["uth"]
+        if rqm is None or rqm <= 0:
+            continue
+        cs2 = 3.0 * (uth or 0.0) ** 2
+        if v_the is not None:
+            cs2 += v_the**2 / rqm
+        if cs2 > 0:
+            out.append((s["name"] or f"species {i} (rqm={rqm:g})", float(np.sqrt(cs2))))
+    return out
+
+
 def plot_omega_k(
     series: xr.DataArray | str | Path,
     ax: plt.Axes | None = None,
@@ -633,6 +692,7 @@ def plot_omega_k(
     v_th: float | None = None,
     omega_p: float = 1.0,
     bam_vph: tuple[float, float] = (2.8, 5.0),
+    ion_acoustic: list[tuple[str, float]] | None = None,
     k_max: float | None = None,
     omega_max: float | None = None,
     equal_aspect: bool = False,
@@ -658,6 +718,11 @@ def plot_omega_k(
     moves the electrostatic daughter wave off the Langmuir branch into this
     band as the tail flattens, so power below the Bohm–Gross curve inside
     the band is the BAM signature.
+
+    ``ion_acoustic`` draws one acoustic line ω = ±k c_s per ``(label, c_s)``
+    pair (see :func:`ion_acoustic_speeds`, which derives them from a run's
+    rendered deck). The slopes are ~10⁻³ c for keV ions, so the lines hug
+    the k axis except in strongly zoomed views.
     """
     da = _ensure_series(series)
     if da.ndim != 2:
@@ -746,7 +811,14 @@ def plot_omega_k(
                             color="yellow", alpha=0.15, lw=0, label=lbl)
             ax.plot(k_line, sgn * v_lo * k_line, color="yellow", ls=":", lw=0.8, alpha=0.7)
             ax.plot(k_line, sgn * v_hi * k_line, color="yellow", ls=":", lw=0.8, alpha=0.7)
-    if show_em or show_langmuir or show_bam or show_light_line:
+    if ion_acoustic:
+        ia_styles = ("-.", (0, (5, 2, 1, 2, 1, 2)))  # dash-dot, dash-dot-dot per species
+        for j, (name, cs) in enumerate(ion_acoustic):
+            ls = ia_styles[j % len(ia_styles)]
+            ax.plot(k_line, +cs * k_line, color="springgreen", ls=ls, lw=1, alpha=0.8,
+                    label=rf"IAW {name}: $\omega = k c_s$, $c_s={cs:.2e}$")
+            ax.plot(k_line, -cs * k_line, color="springgreen", ls=ls, lw=1, alpha=0.8)
+    if show_em or show_langmuir or show_bam or show_light_line or ion_acoustic:
         ax.legend(loc="upper right", fontsize=8, framealpha=0.6)
 
     ax.axhline(0, color="w", lw=0.4, alpha=0.4)
@@ -768,6 +840,7 @@ def plot_omega_k_figure(
     omega_p: float = 1.0,
     show_bam: bool = False,
     bam_vph: tuple[float, float] = (2.8, 5.0),
+    ion_acoustic: list[tuple[str, float]] | None = None,
     omega_k_zoom: float | None = 4.0,
     cmap: str = "magma",
     log: bool = True,
@@ -784,7 +857,8 @@ def plot_omega_k_figure(
     evaluated at (``sqrt(n/n_ref)`` — e.g. 0.5 for quarter-critical plasma in
     a critical-density-normalized deck). ``show_bam`` adds the beam-acoustic
     band ω = k·``bam_vph``·v_th on both panels (requires ``v_th``; see
-    :func:`plot_omega_k`).
+    :func:`plot_omega_k`). ``ion_acoustic`` draws the ω = ±k c_s line per
+    ``(label, c_s)`` pair on both panels (:func:`ion_acoustic_speeds`).
 
     With a coarse dump cadence the ω-Nyquist is small, so that window is only a
     few k-cells wide and the lower panel looks blocky; that is the expected
@@ -802,6 +876,7 @@ def plot_omega_k_figure(
         v_th=v_th,
         omega_p=omega_p,
         bam_vph=bam_vph,
+        ion_acoustic=ion_acoustic,
     )
     z = _omega_k_zoom_window(da, omega_k_zoom)
     plot_omega_k(
@@ -815,6 +890,7 @@ def plot_omega_k_figure(
         v_th=v_th,
         omega_p=omega_p,
         bam_vph=bam_vph,
+        ion_acoustic=ion_acoustic,
         k_max=z,
         omega_max=z,
         equal_aspect=True,
@@ -1350,8 +1426,10 @@ def canned_plot_kwargs(output_cfg: dict | None) -> dict:
     the zoom), ``overlay_density`` (density, in units of the simulation
     reference density, at which the ω-k dispersion overlays are evaluated —
     mapped to ``omega_p = sqrt(n)``, e.g. 0.25 → 0.5 for quarter-critical in
-    a critical-normalized deck) and ``bam`` (bool: shade the beam-acoustic
-    band on the ω-k plots; needs ``v_th``). Keys that are absent fall through
+    a critical-normalized deck), ``bam`` (bool: shade the beam-acoustic
+    band on the ω-k plots; needs ``v_th``) and ``ion_acoustic`` (bool: draw
+    the ω = k c_s line for every ion species found in the run's rendered
+    deck — a no-op on ion-free runs). Keys that are absent fall through
     to the ``save_canned_plots`` defaults.
     """
     output_cfg = output_cfg or {}
@@ -1362,6 +1440,8 @@ def canned_plot_kwargs(output_cfg: dict | None) -> dict:
         kwargs["omega_p"] = float(np.sqrt(float(output_cfg["overlay_density"])))
     if "bam" in output_cfg:
         kwargs["show_bam"] = bool(output_cfg["bam"])
+    if "ion_acoustic" in output_cfg:
+        kwargs["show_ion_acoustic"] = bool(output_cfg["ion_acoustic"])
     return kwargs
 
 
@@ -1392,6 +1472,7 @@ def save_canned_plots(
     v_th: float | None = None,
     omega_p: float = 1.0,
     show_bam: bool = False,
+    show_ion_acoustic: bool = False,
     dpi: int = 120,
     n_panels: int = 8,
     omega_k_zoom: float | None = 4.0,
@@ -1415,12 +1496,18 @@ def save_canned_plots(
     equal-aspect lower panel of the dispersion plots, where ``ω = k`` is drawn
     at 45° (clamped to the data's Nyquist; ``None`` → full Nyquist window).
     ``omega_p`` and ``show_bam`` steer the ω-k dispersion overlays (see
-    :func:`plot_omega_k_figure`).
+    :func:`plot_omega_k_figure`). ``show_ion_acoustic`` overlays the
+    ω = k c_s line of every ion species found in the run's rendered deck
+    (:func:`ion_acoustic_speeds`; silently nothing on ion-free runs).
     """
     run_dir = Path(run_dir)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     written: dict[str, Path] = {}
+
+    ion_acoustic = ion_acoustic_speeds(run_dir) if show_ion_acoustic else []
+    if show_ion_acoustic and not ion_acoustic:
+        print("[plots] ion_acoustic requested but no ion species found — overlay skipped")
 
     def _write(fig: plt.Figure, rel: str) -> Path:
         p = out_dir / rel
@@ -1456,7 +1543,8 @@ def save_canned_plots(
 
         # Full (k, ω) spectrum on top, equal-aspect square window below.
         written[f"omega_k/{comp}"] = _write(
-            plot_omega_k_figure(ser, v_th=v_th, omega_p=omega_p, show_bam=show_bam, omega_k_zoom=omega_k_zoom),
+            plot_omega_k_figure(ser, v_th=v_th, omega_p=omega_p, show_bam=show_bam,
+                                ion_acoustic=ion_acoustic or None, omega_k_zoom=omega_k_zoom),
             f"omega_k/{comp}.png",
         )
 

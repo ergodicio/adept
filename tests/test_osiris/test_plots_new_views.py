@@ -191,12 +191,83 @@ def test_omega_k_bam_band_drawn(tmp_path: Path) -> None:
 
 
 def test_canned_plot_kwargs_overlay_density_and_bam() -> None:
-    kwargs = oplt.canned_plot_kwargs({"v_th": 0.0885, "overlay_density": 0.25, "bam": True})
+    kwargs = oplt.canned_plot_kwargs(
+        {"v_th": 0.0885, "overlay_density": 0.25, "bam": True, "ion_acoustic": True}
+    )
     assert kwargs["omega_p"] == pytest.approx(0.5)
     assert kwargs["show_bam"] is True
+    assert kwargs["show_ion_acoustic"] is True
     # Absent keys fall through to the save_canned_plots defaults.
     assert "omega_p" not in oplt.canned_plot_kwargs({"v_th": 0.1})
     assert "show_bam" not in oplt.canned_plot_kwargs({"v_th": 0.1})
+    assert "show_ion_acoustic" not in oplt.canned_plot_kwargs({"v_th": 0.1})
+
+
+_CH_DECK = """
+species
+{
+  rqm=-1.0,
+}
+udist
+{
+  uth(1:3) =0.088475 , 0.088475, 0.088475,
+}
+species
+{
+  rqm=1836.15,
+}
+udist
+{
+  uth(1:3) =0.002065 , 0.002065, 0.002065,
+}
+species
+{
+  name="C6+",
+  rqm=3672.31,
+}
+udist
+{
+  uth(1:3) =0.000596 , 0.000596, 0.000596,
+}
+"""
+
+
+def test_ion_acoustic_speeds_from_deck(tmp_path: Path) -> None:
+    (tmp_path / "os-stdin").write_text(_CH_DECK)
+    speeds = oplt.ion_acoustic_speeds(tmp_path)
+    assert len(speeds) == 2
+    # c_s^2 = v_th_e^2 / rqm + 3 u_th_i^2 (Z cancels through rqm = m_i/Z).
+    assert speeds[0][1] == pytest.approx(np.sqrt(0.088475**2 / 1836.15 + 3 * 0.002065**2), rel=1e-9)
+    assert speeds[1][1] == pytest.approx(np.sqrt(0.088475**2 / 3672.31 + 3 * 0.000596**2), rel=1e-9)
+    # Deck name wins when present; unnamed species fall back to index + rqm.
+    assert speeds[1][0] == "C6+"
+    assert "species 2" in speeds[0][0]
+    # binary/-style layout: deck sits in the parent of the passed dir.
+    sub = tmp_path / "binary"
+    sub.mkdir()
+    assert oplt.ion_acoustic_speeds(sub) == speeds
+    # No deck / no ions -> empty (the overlay self-disables). NB the parent
+    # of the passed dir is also searched, so go two levels down.
+    assert oplt.ion_acoustic_speeds(tmp_path / "deckless" / "nowhere") == []
+    (tmp_path / "os-stdin").write_text("species\n{\n  rqm=-1.0,\n}\nudist\n{\n  uth(1:3)=0.1,0.1,0.1,\n}\n")
+    assert oplt.ion_acoustic_speeds(tmp_path) == []
+
+
+def test_omega_k_ion_acoustic_lines_drawn(tmp_path: Path) -> None:
+    run_dir = _make_rich_run(tmp_path)
+    ser = oio.load_series(run_dir / "MS/FLD/e2")
+    import matplotlib.pyplot as plt
+
+    _, ax = plt.subplots()
+    oplt.plot_omega_k(ser, ax=ax, show_em=False, ion_acoustic=[("H+", 4.1e-3), ("C6+", 1.8e-3)])
+    iaw = [ln for ln in ax.lines if "IAW" in str(ln.get_label())]
+    assert [lbl for lbl in (str(ln.get_label()) for ln in iaw)] == [
+        rf"IAW H+: $\omega = k c_s$, $c_s={4.1e-3:.2e}$",
+        rf"IAW C6+: $\omega = k c_s$, $c_s={1.8e-3:.2e}$",
+    ]
+    slope = iaw[0].get_ydata()[-1] / iaw[0].get_xdata()[-1]
+    assert slope == pytest.approx(4.1e-3, rel=1e-9)
+    plt.close("all")
 
 
 # --- currents -------------------------------------------------------------
