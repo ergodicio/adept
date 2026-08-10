@@ -46,9 +46,7 @@ def test_write_units_laser_intensity_in_icf_units() -> None:
     assert quants["laser_wavelength"].to("nm").magnitude == pytest.approx(351.0, rel=1e-3)
     assert quants["laser_a0"] == pytest.approx(0.004)
     lam_um = quants["laser_wavelength"].to("um").magnitude
-    assert quants["laser_intensity"].to("W/cm^2").magnitude == pytest.approx(
-        1.37e18 * 0.004**2 / lam_um**2, rel=1e-2
-    )
+    assert quants["laser_intensity"].to("W/cm^2").magnitude == pytest.approx(1.37e18 * 0.004**2 / lam_um**2, rel=1e-2)
 
 
 def test_write_units_no_laser_keys_without_laser_section(tmp_path: Path) -> None:

@@ -38,7 +38,9 @@ def test_srun_chdir_warning_is_not_an_error() -> None:
     # srun's spurious launcher warning under /dev/shm staging must not be flagged
     # as an OSIRIS error (it aborts an otherwise-clean run); a real OSIRIS error
     # and a real abort still are.
-    chdir = "[2026-06-30T23:35:54] error: couldn't chdir to `/dev/shm/x`: No such file or directory: going to /tmp instead"
+    chdir = (
+        "[2026-06-30T23:35:54] error: couldn't chdir to `/dev/shm/x`: No such file or directory: going to /tmp instead"
+    )
     assert runner._looks_like_osiris_error(chdir) is False
     assert runner._looks_like_osiris_error("(*error*) Lindman not yet allowed with tiling") is True
     assert runner._looks_like_osiris_error("Error reading global simulation parameters, aborting...") is True
@@ -67,7 +69,7 @@ def test_run_osiris_crash_with_output_is_salvaged(tmp_path: Path) -> None:
     # plot what was written.
     fake = _write_fake_binary(
         tmp_path / "fake-osiris",
-        'mkdir -p MS/FLD/e1 && : > MS/FLD/e1/e1-000000.h5 && exit 139',
+        "mkdir -p MS/FLD/e1 && : > MS/FLD/e1/e1-000000.h5 && exit 139",
     )
     result = runner.run_osiris(
         "node_conf {}",

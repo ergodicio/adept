@@ -191,9 +191,7 @@ def test_omega_k_bam_band_drawn(tmp_path: Path) -> None:
 
 
 def test_canned_plot_kwargs_overlay_density_and_bam() -> None:
-    kwargs = oplt.canned_plot_kwargs(
-        {"v_th": 0.0885, "overlay_density": 0.25, "bam": True, "ion_acoustic": True}
-    )
+    kwargs = oplt.canned_plot_kwargs({"v_th": 0.0885, "overlay_density": 0.25, "bam": True, "ion_acoustic": True})
     assert kwargs["omega_p"] == pytest.approx(0.5)
     assert kwargs["show_bam"] is True
     assert kwargs["show_ion_acoustic"] is True

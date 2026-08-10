@@ -144,7 +144,9 @@ class StreamWriter:
     modest size cost (offline postproc can always recompress).
     """
 
-    def __init__(self, dest, template: xr.DataArray, *, source_dir=None, chunk_t: int | None = None, complevel: int = 1):
+    def __init__(
+        self, dest, template: xr.DataArray, *, source_dir=None, chunk_t: int | None = None, complevel: int = 1
+    ):
         self.dest = Path(dest)
         self.name = str(template.name)
         self.spatial_dims = [str(d) for d in template.dims]
@@ -165,7 +167,9 @@ class StreamWriter:
         else:
             self.dest.parent.mkdir(parents=True, exist_ok=True)
             self._f = h5netcdf.File(self.dest, "w")
-            self._create_schema(template, source_dir if source_dir is not None else self.dest.parent, self._ct, complevel)
+            self._create_schema(
+                template, source_dir if source_dir is not None else self.dest.parent, self._ct, complevel
+            )
             self._n_disk = 0
             self.last_iter = -1
 
@@ -179,7 +183,7 @@ class StreamWriter:
         axis_long = template.attrs.get("axis_long_names", {}) or {}
 
         f.dimensions["t"] = None  # unlimited; grown one batch per landing
-        for d, sz in zip(self.spatial_dims, self.spatial_shape):
+        for d, sz in zip(self.spatial_dims, self.spatial_shape, strict=True):
             f.dimensions[d] = sz
 
         var = f.create_variable(
@@ -684,7 +688,9 @@ class StreamConverter:
             return
         cur = dirpath
         try:
-            while (cur == self.persist_ms or self.persist_ms in cur.parents) and cur.is_dir() and not any(cur.iterdir()):
+            while (
+                (cur == self.persist_ms or self.persist_ms in cur.parents) and cur.is_dir() and not any(cur.iterdir())
+            ):
                 cur.rmdir()
                 cur = cur.parent
         except OSError:

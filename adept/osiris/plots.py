@@ -807,16 +807,24 @@ def plot_omega_k(
         v_lo, v_hi = (float(v) * v_th for v in bam_vph)
         bam_lbl = rf"BAM band: $\omega = k v_\phi$, $v_\phi \in [{bam_vph[0]:g}, {bam_vph[1]:g}]\,v_{{th}}$"
         for sgn, lbl in ((+1, bam_lbl), (-1, None)):
-            ax.fill_between(k_line, sgn * v_lo * k_line, sgn * v_hi * k_line,
-                            color="yellow", alpha=0.15, lw=0, label=lbl)
+            ax.fill_between(
+                k_line, sgn * v_lo * k_line, sgn * v_hi * k_line, color="yellow", alpha=0.15, lw=0, label=lbl
+            )
             ax.plot(k_line, sgn * v_lo * k_line, color="yellow", ls=":", lw=0.8, alpha=0.7)
             ax.plot(k_line, sgn * v_hi * k_line, color="yellow", ls=":", lw=0.8, alpha=0.7)
     if ion_acoustic:
         ia_styles = ("-.", (0, (5, 2, 1, 2, 1, 2)))  # dash-dot, dash-dot-dot per species
         for j, (name, cs) in enumerate(ion_acoustic):
             ls = ia_styles[j % len(ia_styles)]
-            ax.plot(k_line, +cs * k_line, color="springgreen", ls=ls, lw=1, alpha=0.8,
-                    label=rf"IAW {name}: $\omega = k c_s$, $c_s={cs:.2e}$")
+            ax.plot(
+                k_line,
+                +cs * k_line,
+                color="springgreen",
+                ls=ls,
+                lw=1,
+                alpha=0.8,
+                label=rf"IAW {name}: $\omega = k c_s$, $c_s={cs:.2e}$",
+            )
             ax.plot(k_line, -cs * k_line, color="springgreen", ls=ls, lw=1, alpha=0.8)
     if show_em or show_langmuir or show_bam or show_light_line or ion_acoustic:
         ax.legend(loc="upper right", fontsize=8, framealpha=0.6)
@@ -1297,9 +1305,7 @@ def efield_lr_components(run_dir: str | Path) -> dict[str, dict[str, xr.DataArra
     return out
 
 
-def transverse_field_boundary_slabs(
-    run_dir: str | Path, *, guard_cells: int = 1, window_cells: int = 3
-) -> dict | None:
+def transverse_field_boundary_slabs(run_dir: str | Path, *, guard_cells: int = 1, window_cells: int = 3) -> dict | None:
     r"""Left/right-going transverse E-field on just the two boundary slabs.
 
     The slab-restricted companion to :func:`efield_lr_components`. Every
@@ -1543,8 +1549,14 @@ def save_canned_plots(
 
         # Full (k, ω) spectrum on top, equal-aspect square window below.
         written[f"omega_k/{comp}"] = _write(
-            plot_omega_k_figure(ser, v_th=v_th, omega_p=omega_p, show_bam=show_bam,
-                                ion_acoustic=ion_acoustic or None, omega_k_zoom=omega_k_zoom),
+            plot_omega_k_figure(
+                ser,
+                v_th=v_th,
+                omega_p=omega_p,
+                show_bam=show_bam,
+                ion_acoustic=ion_acoustic or None,
+                omega_k_zoom=omega_k_zoom,
+            ),
             f"omega_k/{comp}.png",
         )
 

@@ -313,8 +313,7 @@ def test_run_osiris_streams_concurrently(tmp_path: Path) -> None:
         fn = f"e1-{k * 10:06d}.h5"
         data = rng.standard_normal(8)
         ref[fn] = data
-        _write_dump(stage / fn, "e1", data, t=k * 0.5, it=k * 10,
-                    axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)])
+        _write_dump(stage / fn, "e1", data, t=k * 0.5, it=k * 10, axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)])
 
     lines = ["#!/bin/sh", "set -e", "mkdir -p MS/FLD/e1"]
     for k in range(n_steps):
@@ -396,9 +395,7 @@ def test_staged_converter_discard_grid_h5(tmp_path: Path) -> None:
     for k in range(3):
         _write_raw_dump(stage / "MS" / "RAW" / "species_1" / f"RAW-species_1-{k * 10:06d}.h5", t=k * 0.5, it=k * 10)
 
-    conv = ostream.StreamConverter(
-        stage, persist / "binary", poll_s=0.01, persist_dir=persist, discard_grid_h5=True
-    )
+    conv = ostream.StreamConverter(stage, persist / "binary", poll_s=0.01, persist_dir=persist, discard_grid_h5=True)
     completed = conv.finalize()
 
     assert completed == {"FLD/e1"}
@@ -423,9 +420,7 @@ def test_discard_layout_discovery_and_batch(tmp_path: Path) -> None:
     _write_field(stage, "e1", n_steps=4, nx=8)
     for k in range(3):
         _write_raw_dump(stage / "MS" / "RAW" / "species_1" / f"RAW-species_1-{k * 10:06d}.h5", t=k * 0.5, it=k * 10)
-    conv = ostream.StreamConverter(
-        stage, persist / "binary", poll_s=0.01, persist_dir=persist, discard_grid_h5=True
-    )
+    conv = ostream.StreamConverter(stage, persist / "binary", poll_s=0.01, persist_dir=persist, discard_grid_h5=True)
     conv.finalize()
 
     # Discovery must see the union: RAW from MS/, grid from the streamed nc.
@@ -460,8 +455,14 @@ def test_run_osiris_staging_mirrors_and_frees_scratch(tmp_path: Path) -> None:
     src.mkdir()
     rng = np.random.default_rng(2)
     for k in range(n_steps):
-        _write_dump(src / f"e1-{k * 10:06d}.h5", "e1", rng.standard_normal(8), t=k * 0.5, it=k * 10,
-                    axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)])
+        _write_dump(
+            src / f"e1-{k * 10:06d}.h5",
+            "e1",
+            rng.standard_normal(8),
+            t=k * 0.5,
+            it=k * 10,
+            axes=[("x1", "x_1", r"c / \omega_p", 0.0, 10.0)],
+        )
 
     lines = ["#!/bin/sh", "set -e", "mkdir -p MS/FLD/e1"]
     for k in range(n_steps):
@@ -559,9 +560,7 @@ def test_spill_valve_mirrors_then_catches_up(tmp_path: Path) -> None:
     persist = tmp_path / "persist"
     diag = _write_field(stage, "e1", n_steps=6, nx=8)
 
-    conv = ostream.StreamConverter(
-        stage, persist / "binary", poll_s=0.01, persist_dir=persist, spill_backlog_files=2
-    )
+    conv = ostream.StreamConverter(stage, persist / "binary", poll_s=0.01, persist_dir=persist, spill_backlog_files=2)
     conv._scan_once(final=False)
     # 5 safe dumps > threshold 2 -> spilled: mirrored + reaped, nothing streamed.
     assert "FLD/e1" in conv._spilled

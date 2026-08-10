@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import math
+from typing import Any
 
 from adept._base_ import ADEPTModule
 from adept.normalization import UREG, skin_depth_normalization, skin_depth_normalization_from_frequency

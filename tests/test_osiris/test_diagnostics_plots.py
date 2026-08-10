@@ -127,14 +127,21 @@ def test_field_energy_picks_up_savg_and_excludes_poynting(tmp_path: Path) -> Non
     rng = np.random.default_rng(3)
     for k in range(4):
         it, t = k * 10, k * 0.5
-        _write_dump(run_dir / "MS/FLD/e1-savg" / f"e1-savg-{it:06d}.h5",
-                    "e1", rng.standard_normal(8), t=t, it=it, axes=[x_ax])
+        _write_dump(
+            run_dir / "MS/FLD/e1-savg" / f"e1-savg-{it:06d}.h5", "e1", rng.standard_normal(8), t=t, it=it, axes=[x_ax]
+        )
         # an s1 Poynting-flux lineout along x2 (would inflate field energy if summed)
-        _write_dump(run_dir / "MS/FLD/s1-line-x2-24" / f"s1-line-x2-24-{it:06d}.h5",
-                    "s1", 5.0 + rng.standard_normal(6), t=t, it=it, axes=[x2_ax])
+        _write_dump(
+            run_dir / "MS/FLD/s1-line-x2-24" / f"s1-line-x2-24-{it:06d}.h5",
+            "s1",
+            5.0 + rng.standard_normal(6),
+            t=t,
+            it=it,
+            axes=[x2_ax],
+        )
 
     ds = oplt.field_energy_components(run_dir)
-    assert np.all(ds["e1_energy"].values > 0)          # savg variant resolved
+    assert np.all(ds["e1_energy"].values > 0)  # savg variant resolved
     total = opost._total_field_energy(run_dir / "MS")
     # only e1 contributes; s1 is excluded, so the total matches the e1 energy of
     # the last dump (both are 0.5 * sum(e1^2) * dx).
@@ -150,8 +157,7 @@ def test_field_energy_components_2d_spatial(tmp_path: Path) -> None:
     for k in range(3):
         it, t = k * 10, k * 0.5
         data = rng.standard_normal((6, 8))  # (x2, x1)
-        _write_dump(run_dir / "MS/FLD/e1" / f"e1-{it:06d}.h5",
-                    "e1", data, t=t, it=it, axes=[x_ax, x2_ax])
+        _write_dump(run_dir / "MS/FLD/e1" / f"e1-{it:06d}.h5", "e1", data, t=t, it=it, axes=[x_ax, x2_ax])
     ds = oplt.field_energy_components(run_dir)
     assert ds["e1_energy"].sizes["t"] == 3
     assert np.all(ds["e1_energy"].values > 0)

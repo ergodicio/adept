@@ -281,8 +281,7 @@ def run_osiris(
     if rc != 0:
         tail = "".join(stderr_tail[-50:]) or "(empty stderr)"
         failure_msg = (
-            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n"
-            f"  cwd: {work_dir}\n  stderr tail:\n{tail}"
+            f"OSIRIS exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n  cwd: {work_dir}\n  stderr tail:\n{tail}"
         )
     else:
         # OSIRIS can exit 0 even on input-file errors: it prints something
@@ -311,9 +310,7 @@ def run_osiris(
                 "partial) data anyway. Verify results carefully."
             )
         else:
-            raise RuntimeError(
-                f"{failure_msg}\n  (no output files were written — nothing to salvage.)"
-            )
+            raise RuntimeError(f"{failure_msg}\n  (no output files were written — nothing to salvage.)")
 
     result: dict[str, Any] = {
         "run_dir": run_dir,
