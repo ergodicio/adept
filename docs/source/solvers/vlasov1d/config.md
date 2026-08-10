@@ -40,6 +40,9 @@ Physical unit normalizations for the simulation.
 |-------|------|-------------|
 | `normalizing_temperature` | string | Reference temperature with unit, e.g., `"2000eV"` |
 | `normalizing_density` | string | Reference density with unit, e.g., `"1.5e21/cc"` |
+| `reference` | string | Reference species for the normalization: `"electron"` (default) or `"ion"` |
+| `A` | float | Ion mass number, $m_i = A\,m_p$ (only used with `reference: ion`; default `1.0`) |
+| `Z` | float | Ion charge state, $q_i = Z e$ (only used with `reference: ion`; default `1.0`) |
 
 Example:
 ```yaml
@@ -69,6 +72,37 @@ Consequences of the $v_0 = \sqrt{T_0/m_e}$ (σ) convention:
 Dimensional inputs (strings with units, e.g. `xmax: 100um`) are converted with these
 units; plain numeric inputs are taken to already be in code units and pass through
 unchanged.
+
+### Ion reference (`reference: ion`)
+
+For runs where only ions are evolved kinetically (e.g. `terms.field:
+poisson-boltzmann`), set `reference: ion` to build the normalization from the ion
+species instead:
+
+| Unit | Definition | Meaning |
+|------|-----------|---------|
+| time | $\tau = 1/\omega_{pi}$, $\omega_{pi} = \sqrt{n_i Z^2 e^2/(\epsilon_0 m_i)}$ | inverse ion plasma frequency |
+| velocity | $v_0 = \sqrt{T_0/m_i}$ | ion thermal speed (same σ convention) |
+| length | $L_0 = v_0/\omega_{pi}$ | ion Debye length |
+
+with $m_i = A\,m_p$ and charge $Z e$; `normalizing_density` and
+`normalizing_temperature` are then the ion density $n_i$ and ion temperature
+$T_i$. Dimensional string inputs (e.g. `xmax: 300um`, `tmax: 50ps`) convert with
+these ion units, and the physical quantities logged by `write_units()` (`wp0`,
+`tp0`, `x0`, `v0`, ...) refer to the ion reference. The electron-specific
+collision entries (`nuee`, `nuee_norm`, `logLambda_ee`) are replaced by their
+ion-ion counterparts (`nuii`, `nuii_norm`, `logLambda_ii`, from the NRL
+formulary).
+
+Example (deuterium):
+```yaml
+units:
+  normalizing_temperature: 100eV   # T_i
+  normalizing_density: 1.0e20/cc   # n_i
+  reference: ion
+  A: 2.0
+  Z: 1.0
+```
 
 ## density
 
@@ -313,6 +347,7 @@ External electromagnetic drivers. Both `ex` and `ey` are dictionaries of named d
 |-------|------|-------------|
 | `ex` | dict | Longitudinal electric field drivers |
 | `ey` | dict | Transverse electric field drivers (for electromagnetic simulations) |
+| `ex_stochastic` | object | (Optional) Band-limited, time-correlated stochastic forcing of the longitudinal field (see below) |
 
 Each driver is identified by a string key (e.g., `"0"`, `"1"`) and has these parameters:
 
@@ -356,6 +391,46 @@ drivers:
       x_rise: 10.0
       x_width: 4000000.0
   ey: {}
+```
+
+### Stochastic forcing: `ex_stochastic`
+
+Drives the plasma with an external longitudinal electric field built from a set
+of periodic-box Fourier modes whose complex amplitudes evolve as independent
+Ornstein-Uhlenbeck (OU) processes. This is the standard "compressive,
+time-correlated" forcing used for driven-turbulence simulations (e.g. ion-acoustic
+turbulence with Boltzmann electrons):
+
+```
+dE(x, t) = sum_m Re[ a_m(t) exp(i k_m x) ],   k_m = 2 pi m / L
+```
+
+Each `a_m(t)` has correlation time `tau` and stationary RMS `amplitude`. The
+realization is drawn once from `seed` on a uniform time grid of spacing
+`dt_update` and linearly interpolated in time, so a run is exactly reproducible
+and independent of the solver timestep.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `modes` | list[int] | `[1]` | Box mode numbers m to force (k_m = 2πm/L) |
+| `amplitude` | float | — | Stationary RMS of each mode's complex amplitude (code-unit E field) |
+| `tau` | float | — | OU correlation time (code units) |
+| `seed` | int | `42` | RNG seed for the forcing realization |
+| `dt_update` | float | `tau/10` | Time resolution of the precomputed OU series (clamped to at most `tau/2`) |
+
+Example (critically balanced box-scale driving — the correlation time is the
+ion thermal box-crossing time `tau = L/v_ti` and the amplitude is `v_ti^2/L`,
+so the velocity kick per correlation time is ~`v_ti`; here `v_ti = 1`,
+`L = 458`):
+```yaml
+drivers:
+  ex: {}
+  ey: {}
+  ex_stochastic:
+    modes: [1]
+    amplitude: 2.1834e-3   # v_ti^2 / L
+    tau: 458.0             # L / v_ti
+    seed: 42
 ```
 
 ### Example: Multiple ey drivers (SRS simulation)
@@ -410,13 +485,14 @@ Solver algorithm configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `field` | string | Electric field solver: `"poisson"`, `"ampere"`, or `"hampere"` |
+| `field` | string | Electric field solver: `"poisson"`, `"poisson-boltzmann"`, `"ampere"`, or `"hampere"` |
 | `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
 | `hou_li_filter` | object | Hou-Li spectral filter (optional, default off) |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
+| `boltzmann_electrons` | object | (Optional) Linearized Boltzmann electron closure parameters, used with `field: poisson-boltzmann` |
 
 ### species (Multispecies Configuration)
 
@@ -493,6 +569,93 @@ terms:
 
 See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` for a complete working example.
 
+### boltzmann_electrons (kinetic ions with adiabatic electrons)
+
+With `field: poisson-boltzmann`, only ions are evolved kinetically; the electrons
+respond adiabatically through the linearized Boltzmann (screened Poisson) closure
+
+```
+e phi / T_e = delta n_i / n_0 + lambda_De^2 d^2/dx^2 (e phi / T_e)
+```
+
+solved spectrally as `e phi_k / T_e = (delta n_k / n_0) / (1 + k^2 lambda_De^2)`.
+The k=0 force vanishes identically, so no static neutralizing background is
+needed. This is the standard setup for ion-acoustic wave and IAW-turbulence
+simulations: it removes all electron timescales from the problem, so the
+timestep is limited only by ion dynamics.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `Te` | float | `1.0` | Electron temperature in code units (units of `normalizing_temperature`) |
+| `lambda_De` | float | `sqrt(Te / n_0)` | Screening length in code units. Omit for the physically consistent value; set explicitly to move the screening scale (e.g. to the grid spacing, mimicking PIC references where the cell size takes the place of the Debye length); `0.0` gives the quasineutral closure `e phi / T_e = delta n / n_0` |
+
+**Requirements:** `terms.species` must be given explicitly and all kinetic
+species must have positive charge (electrons are the closure, not a species).
+
+**Ion-unit convention:** with a single ion species at `charge: 1.0, mass: 1.0`
+and `T0: 1.0`, code time is `1/omega_pi`, velocity is the ion thermal speed
+`v_ti`, and length is `v_ti/omega_pi`. Then `Te` is the electron-to-ion
+temperature ratio `Te/Ti`, the sound speed is `c_s = sqrt(Te)`, and the electron
+Debye length is `lambda_De = sqrt(Te)` in code units. Set `units.reference: ion`
+(see [units](#units)) so that dimensional string inputs and the physical
+quantities reported by `write_units()` follow this same ion convention — with
+the default electron reference they are electron-referenced and therefore
+nominal for such runs.
+
+Example (ion-acoustic turbulence, `Te/Ti = 0.05`):
+```yaml
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 0.05
+  edfdv: cubic-spline
+  time: sixth
+  species:
+    - name: ion
+      charge: 1.0
+      mass: 1.0
+      vmax: 6.4
+      nv: 512
+      density_components:
+        - species-ion-background
+```
+
+See `configs/vlasov-1d/iaw-turbulence.yaml` for a complete working example with
+box-scale stochastic forcing, and `tests/test_vlasov1d/configs/boltzmann_iaw.yaml`
+for an ion-acoustic dispersion test setup.
+
+### solver: vlasov-1d-iaw (IAW turbulence module)
+
+`solver: vlasov-1d-iaw` selects `IAWTurbulence1D`, a problem-specific module for
+driven ion-acoustic turbulence that extends the base Vlasov-1D module with
+
+- an **nk save stream**: the low-|k| complex spectrum of the total kinetic
+  charge density, sampled densely in time (each sample is only
+  `2 * (nk_modes + 1)` floats, so it can be saved far more often than full
+  moment profiles). Written to `binary/nk.nc` with real/imag parts and
+  `P = |n_k|^2`.
+- **IAW post-processing**: `plots/iaw/density_spectrum.png` (late-window-averaged
+  P(m) with a k*lambda_De axis and m^-2 / m^-3/2 guides),
+  `plots/iaw/nk_spectrogram.png` (P(m, t)), and `phase_space_dfx.png`
+  (f - <f>_x panels) for every configured distribution save.
+
+Options live in an optional top-level `iaw_diagnostics` block:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `nk_modes` | int | `1024` | Number of box modes in the nk stream (clipped to `nx // 2`) |
+| `nk_nt` | int | `2001` | Number of nk time samples |
+| `spectrum_window` | [float, float] | `[0.5, 1.0]` | Averaging window for the spectrum plot, as fractions of `tmax` |
+
+```yaml
+solver: vlasov-1d-iaw
+
+iaw_diagnostics:
+  nk_modes: 2048
+  nk_nt: 4001
+  spectrum_window: [0.4, 1.0]
+```
+
 ### hou_li_filter
 
 Hou-Li exponential spectral filter applied after each timestep. Damps high-wavenumber modes to suppress numerical oscillations without significantly affecting well-resolved physics. Can be applied in position space (x), velocity space (v), or both.
@@ -527,6 +690,7 @@ If `hou_li_filter` is omitted entirely, it defaults to `is_on: False`.
 ### Field Solvers
 
 - `"poisson"`: Spectral Poisson solver (works with any time integrator)
+- `"poisson-boltzmann"`: Spectral screened-Poisson solver for kinetic ions with linearized Boltzmann electrons (works with any time integrator; see `boltzmann_electrons` above)
 - `"ampere"`: Ampere solver (requires `"leapfrog"` time integrator)
 - `"hampere"`: Hamiltonian Ampere solver (requires `"leapfrog"` time integrator)
 
@@ -537,9 +701,107 @@ Fokker-Planck collision operator.
 | Field | Type | Description |
 |-------|------|-------------|
 | `is_on` | bool | Enable/disable |
-| `type` | string | Collision type: `"Dougherty"` |
+| `type` | string | Collision type (see table below) |
+| `m` | float | Super-Gaussian exponent of the equilibrium (only used by `type: super_gaussian`; default `2.0` = Maxwellian) |
+| `self_consistent_beta` | object | Optional Newton refinement of the equilibrium shape parameter (see below) |
 | `time` | object | Temporal profile |
 | `space` | object | Spatial profile |
+
+Available `type` values (case-insensitive):
+
+| `type` | Model | Scheme | Equilibrium |
+|--------|-------|--------|-------------|
+| `lenard_bernstein` | Lenard-Bernstein | central differencing | Maxwellian at v=0 |
+| `chang_cooper` | Lenard-Bernstein | Chang-Cooper | Maxwellian at v=0 |
+| `dougherty` | Dougherty | central differencing | Maxwellian at $\bar v$ |
+| `chang_cooper_dougherty` | Dougherty | Chang-Cooper | Maxwellian at $\bar v$ |
+| `dougherty_nodrag` | Dougherty (diffusion of the deviation) | central differencing | Maxwellian at $\bar v$ |
+| `super_gaussian` | Super-Gaussian Dougherty | Chang-Cooper | Super-Gaussian of order `m` at $\bar v$ |
+
+The Chang-Cooper scheme is positivity-preserving and conserves density exactly; central differencing is provided for comparison only.
+
+#### super_gaussian
+
+Drift-diffusion operator whose equilibrium is a super-Gaussian
+$f_0 \propto \exp(-\beta\,|v-\bar v|^m)$ instead of a Maxwellian
+($m=2$ recovers `chang_cooper_dougherty`). Use this to *maintain* a prescribed
+non-Maxwellian order — e.g. a Langdon/DLM inverse-bremsstrahlung-heated
+distribution — against collisional relaxation during Landau-damping or LPI
+runs. Note it does not *generate* super-Gaussians dynamically (there is no
+competition between heating and e-e collisions as in the VFP-1D
+inverse-bremsstrahlung operator); it relaxes toward the prescribed order `m`.
+
+The drift coefficient is the exact finite difference of the equilibrium
+potential $\varphi = \beta|v-\bar v|^m$, so the sampled super-Gaussian is the
+exact fixed point of the Chang-Cooper discretization. The shape parameter
+$\beta$ is set by the energy-conservation closure
+$\beta = n/(m\,\langle|v-\bar v|^m\rangle)$ (the generalization of the
+Lenard-Bernstein/Dougherty $\beta = 1/(2T)$), refined by a Newton solve of the
+discrete energy-flux condition when `self_consistent_beta` is enabled.
+
+Conservation properties:
+
+- **Density**: exact (zero-flux boundary conditions).
+- **Energy**: no secular drift at equilibrium when `self_consistent_beta` is
+  enabled (recommended for long collisional runs; without it the continuum
+  closure leaves an O(dv²) quadrature residual that drifts T by ~5e-7 per
+  collision time at nv=128 for m=3 — already negligible unless many collision
+  times elapse). A single Newton step (`max_steps: 1`) reduces the drift to
+  machine level. Off-equilibrium transients carry a one-time O(nu·dt) offset
+  from operator splitting, negligible at production nu·dt.
+- **Momentum**: exact for distributions symmetric about $\bar v$; skewed
+  transients exchange momentum at O(skewness), unlike $m=2$ where
+  $C \propto (v-\bar v)$ makes it exact.
+
+Note on initialization: the super-Gaussian initializer (`m` in the species
+config) uses a width convention that fixes $\langle v^4\rangle/\langle v^2\rangle$,
+while this operator preserves the super-Gaussian carrying the distribution's
+own variance. Any super-Gaussian of order `m` is (approximately) a fixed
+point regardless of width convention, so the two compose without drift.
+
+```yaml
+terms:
+  fokker_planck:
+    is_on: True
+    type: super_gaussian
+    m: 3.0
+    self_consistent_beta:
+      enabled: True
+      max_steps: 1   # one Newton step suffices (the closure lands within O(dv²) of the root)
+    time:
+      baseline: 1.0e-5
+      # ...
+    space:
+      baseline: 1.0
+      # ...
+```
+
+#### dougherty_nodrag
+
+Diffusion-of-the-deviation operator
+$C[f] = \nu\, T\, \partial_v^2 \left(f - f_M[n, \bar v, T]\right)$.
+It uses the same moments machinery as `dougherty`, but the implicit solve runs
+with the drag coefficient zeroed (pure diffusion) and the diffusion of the
+self-consistent Maxwellian is subtracted explicitly using the same discrete
+zero-flux stencil, so $f_M$ is a discrete fixed point and $n$, $P$, and $E$
+are conserved. Because the operator carries no drag acting on the deviation,
+it is parity-preserving in $v - v_\phi$ — useful as a control for isolating
+the role of collisional drag (e.g. in ratchet/pawl-style transport
+experiments) while retaining Maxwellian-preserving velocity diffusion.
+
+#### self_consistent_beta
+
+Optional sub-object controlling the Newton refinement of the equilibrium shape
+parameter β. For the Maxwellian operators it matches the *discrete* temperature
+of the equilibrium to that of f (eliminating equilibrium drift in Chang-Cooper
+schemes); for `super_gaussian` it solves the discrete energy-flux condition.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enabled` | bool | `False` | Enable the Newton solve |
+| `max_steps` | int | `3` | Maximum Newton iterations |
+| `rtol` | float | `1e-8` | Relative tolerance |
+| `atol` | float | `1e-12` | Absolute tolerance |
 
 ### krook
 
@@ -636,3 +898,7 @@ See `configs/vlasov-1d/nlepw-ic.yaml` - large-amplitude initial perturbation wit
 ### Ion Acoustic Wave (Multispecies)
 
 See `tests/test_vlasov1d/configs/multispecies_ion_acoustic.yaml` - two-species (electron + ion) simulation demonstrating multispecies support.
+
+### Ion-Acoustic Turbulence (Boltzmann Electrons)
+
+See `configs/vlasov-1d/iaw-turbulence.yaml` - kinetic ions with the linearized Boltzmann electron closure (`field: poisson-boltzmann`), driven by box-scale time-correlated stochastic forcing (`drivers.ex_stochastic`).

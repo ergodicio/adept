@@ -8,7 +8,7 @@ from jax import numpy as jnp
 from scipy.special import gamma
 
 from adept._base_ import get_envelope
-from adept.normalization import PlasmaNormalization, normalize
+from adept.normalization import UREG, PlasmaNormalization, normalize
 
 # ideally this should be passed as as an argument and not re-initialised
 from adept.vfp1d.vector_field import OSHUN1D
@@ -56,7 +56,35 @@ def calc_logLambda(
 
     """
     if isinstance(cfg["units"]["logLambda"], str):
-        if cfg["units"]["logLambda"].casefold() == "nrl":
+        if cfg["units"]["logLambda"].casefold() in ("lee-more", "lee_more", "leemore"):
+            # Lee & More 1984 (Phys. Fluids 27, 1273):
+            #   lnLambda = max(2, 0.5 * ln(1 + (bmax/bmin)^2))
+            # bmax: Debye-Hückel length with electron + ion screening, floored at
+            #       the ion-sphere radius R0
+            # bmin: max(classical closest approach, electron thermal de Broglie)
+            # With the Zeff convention (Z*ni = ne, Z^2*ni = sum_i n_i Z_i^2) the ion
+            # screening term Z^2*ni/Ti is exact for mixtures.
+            ne_cc = ne.to("1/cc").magnitude
+            Te_eV = Te.to("eV").magnitude
+            Ti_eV = UREG.Quantity(cfg["units"]["reference ion temperature"]).to("eV").magnitude
+            ni_cc = ne_cc / Z
+
+            e2 = 1.44e-7  # e^2 in eV cm (Gaussian)
+            hbar_c = 1.9732697e-5  # eV cm
+            me_c2 = 510998.95  # eV
+
+            inv_lD2 = 4 * np.pi * e2 * (ne_cc / Te_eV + Z**2 * ni_cc / Ti_eV)
+            R0 = (3.0 / (4 * np.pi * ni_cc)) ** (1.0 / 3.0)
+            b_max = max(inv_lD2**-0.5, R0)
+
+            b_classical = Z * e2 / (3.0 * Te_eV)
+            b_quantum = hbar_c / (2.0 * np.sqrt(3.0 * Te_eV * me_c2))
+            b_min = max(b_classical, b_quantum)
+
+            logLambda_ei = max(2.0, 0.5 * np.log(1.0 + (b_max / b_min) ** 2))
+            logLambda_ee = logLambda_ei
+
+        elif cfg["units"]["logLambda"].casefold() == "nrl":
             log_ne = np.log(ne.to("1/cc").magnitude)
             log_Te = np.log(Te.to("eV").magnitude)
             log_Z = np.log(Z)
@@ -80,6 +108,67 @@ def calc_logLambda(
         logLambda_ee = logLambda_ei
 
     return logLambda_ei, logLambda_ee
+
+
+def _read_two_column_file(path: str) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Reads a two-column (coordinate, value) text file.
+
+    Tries comma-delimited first, then whitespace-delimited. Header rows and any
+    rows that fail to parse as numbers are dropped. If the file has more than two
+    columns, the last two are used (a leading row-index column is thereby ignored).
+    Rows are sorted by coordinate.
+
+    :param path: path to the file
+    :return: (coordinate, value) arrays
+    """
+    data = None
+    for delimiter in (",", None):
+        try:
+            candidate = np.genfromtxt(path, delimiter=delimiter, comments="#")
+        except ValueError:
+            continue
+        if candidate.ndim == 2 and candidate.shape[1] >= 2:
+            data = candidate
+            break
+
+    if data is None:
+        raise ValueError(f"Could not parse two numeric columns from {path}")
+
+    data = data[:, -2:]
+    data = data[~np.isnan(data).any(axis=1)]
+    if data.shape[0] < 2:
+        raise ValueError(f"Fewer than 2 valid (coordinate, value) rows in {path}")
+
+    order = np.argsort(data[:, 0])
+    return data[order, 0], data[order, 1]
+
+
+def load_profile_on_grid(prof_cfg: dict, x_grid: Array, norm: PlasmaNormalization):
+    """
+    Loads a (coordinate, value) profile from a file and interpolates it onto the
+    simulation grid. Values outside the file's coordinate range are clamped to
+    the endpoint values.
+
+    Expected config::
+
+        basis: file
+        path: /path/to/profile.csv
+        units: 1/cm^3          # units of the value column
+        coordinate_units: um   # units of the coordinate column (default um)
+
+    :param prof_cfg: the profile config dict (must contain "path" and "units")
+    :param x_grid: normalized spatial grid to interpolate onto (nx,)
+    :param norm: plasma normalization (provides L0 for coordinate conversion)
+    :return: pint Quantity of interpolated values on the grid (nx,)
+    """
+    x_file, val_file = _read_two_column_file(prof_cfg["path"])
+
+    coord_scale = float((UREG.Quantity(1.0, prof_cfg.get("coordinate_units", "um")) / norm.L0).to("").magnitude)
+    x_file_norm = x_file * coord_scale
+
+    on_grid = np.interp(np.asarray(x_grid), x_file_norm, val_file)
+    return UREG.Quantity(on_grid, prof_cfg["units"])
 
 
 def _initialize_distribution_(
@@ -175,6 +264,16 @@ def _initialize_total_distribution_(
 
                     profs[k] = baseline * (1.0 + amp * jnp.cos(2 * jnp.pi / ll * grid.x))
 
+                elif species_params[k]["basis"] == "file":
+                    prof_q = load_profile_on_grid(species_params[k], grid.x, norm)
+                    if k == "n":
+                        # relative to the reference electron density -- the physical
+                        # scaling to n/n0 happens in init_state_and_args
+                        ref = UREG.Quantity(cfg["units"]["reference electron density"])
+                        profs[k] = np.asarray((prof_q / ref).to("").magnitude)
+                    else:  # k == "T", relative to the reference electron temperature
+                        profs[k] = np.asarray((prof_q / norm.T0).to("").magnitude)
+
                 else:
                     raise NotImplementedError
 
@@ -235,5 +334,12 @@ def _initialize_total_distribution_(
 
     if not species_found:
         raise ValueError("No species found! Check the config")
+
+    # P1 positivity bound: f = f0 + mu*f1 >= 0 requires |f10| <= f0. The local
+    # (big-dt) initialization overshoots into free-streaming in strongly nonlocal
+    # regions (mean free path >> gradient length), which would immediately drive
+    # f0 negative; clamp to the flux-limited bound and let the kinetics relax.
+    f0_at_edges = np.concatenate([f0[:1], 0.5 * (f0[1:] + f0[:-1]), f0[-1:]], axis=0)
+    f10 = np.clip(f10, -f0_at_edges, f0_at_edges)
 
     return f0, f10, prof_total["n"]

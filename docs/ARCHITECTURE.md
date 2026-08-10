@@ -13,7 +13,11 @@ See the [full documentation](https://ergodicio.github.io/adept/) for detailed so
 
 Quick links to configuration references:
 - [Vlasov-1D Config](source/solvers/vlasov1d/config.md)
+- [Vlasov-1D2V Config](source/solvers/vlasov1d2v/config.md)
 - [VFP-1D Config](source/solvers/vfp1d/config.md)
 - [Vlasov-2D Config](source/solvers/vlasov2d/config.md)
 - [LPSE-2D Config](source/solvers/lpse2d/config.md)
 - [Spectrax-1D Config](source/solvers/spectrax1d/config.md)
+- [Hermite-Legendre-1D Config](source/solvers/hermite_legendre_1d/config.md)
+- [PIC-1D Config](source/solvers/pic1d/config.md)
+- [Two-Fluid-1D Config](source/solvers/tf1d/config.md)

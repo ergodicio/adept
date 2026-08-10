@@ -1,0 +1,79 @@
+units:
+  laser_wavelength: 351nm
+  reference electron temperature: 300eV
+  reference ion temperature: 300eV
+  reference electron density: 1.5e21/cm^3
+  Z: 6
+  Ion: Au+
+  logLambda: nrl
+
+
+density:
+  quasineutrality: true
+  species-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    n:
+      basis: uniform
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0m
+      rise: 1m
+      bump_height: 0.0
+      width: 1m
+    T:
+      basis: tanh
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0um
+      rise: 10um
+      bump_height: 0.1
+      width: 80um
+
+grid:
+  dt: 1fs
+  nv: 256
+  nx: 32
+  tmin: 0.ps
+  tmax: 0.3ps
+  vmax: 8.0
+  xmax: 125um
+  xmin: 0.0um
+  nl: 1
+  boundary: reflective
+  geometry: spherical
+
+save:
+  fields:
+    t:
+      tmin: 0.0ps
+      tmax: 0.3ps
+      nt: 6
+  electron:
+    t:
+      tmin: 0.0ps
+      tmax: 0.3ps
+      nt: 3
+
+solver: vfp-1d
+
+mlflow:
+  experiment: vfp1d-tests
+  run: spherical-hotspot
+
+drivers:
+  ex: {}
+  ey: {}
+
+terms:
+  fokker_planck:
+    flm:
+      ee: false
+    f00:
+      model: CoulombianKernel
+      scheme: chang_cooper
+  e_solver: oshun
