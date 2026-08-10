@@ -98,6 +98,6 @@ terms:
 
 diagnostics:
   snb:
-    ngroups: 32
-    beta_max: 30.0
+    ngroups: 300
+    beta_max: 20.0
     r: 2.0
