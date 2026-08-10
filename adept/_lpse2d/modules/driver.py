@@ -1,5 +1,4 @@
 import json
-import tempfile
 
 import equinox as eqx
 import numpy as np
@@ -7,46 +6,31 @@ from jax import Array
 from jax import numpy as jnp
 from jax import tree_util as jtu
 
-from adept.utils import download_from_s3
-
 
 def load(cfg: dict, DriverModule: eqx.Module) -> eqx.Module:
     filename = cfg["drivers"]["E0"]["file"]
-    with tempfile.TemporaryDirectory() as td:
-        # download the file if it is on s3
-        if "s3" in filename:
-            from os.path import join
 
-            print(filename)
+    # load the model
+    if "pkl" in filename:
+        loaded_model = DriverModule(cfg)
+        with open(filename, "rb") as f:
+            import pickle
 
-            cfg["drivers"]["E0"]["file"] = join(td, filename.split("/")[-1])
-            cfg["drivers"]["E0"]["file"] = download_from_s3(filename, cfg["drivers"]["E0"]["file"])
-        else:
-            cfg["drivers"]["E0"]["file"] = filename
+            _loaded_pickle_ = pickle.load(f)
+            loaded_model = eqx.tree_at(
+                lambda tree: tree.intensities, loaded_model, replace=_loaded_pickle_["E0"]["intensities"]
+            )
+            loaded_model = eqx.tree_at(lambda tree: tree.phases, loaded_model, replace=_loaded_pickle_["E0"]["phases"])
+    elif "eqx" in filename:
+        with open(filename, "rb") as f:
+            # read the model config
+            model_cfg = json.loads(f.readline().decode())
+            cfg["drivers"]["E0"]["params"] = model_cfg
+            model = DriverModule(cfg)
 
-        # load the model
-        if "pkl" in cfg["drivers"]["E0"]["file"]:
-            loaded_model = DriverModule(cfg)
-            with open(cfg["drivers"]["E0"]["file"], "rb") as f:
-                import pickle
-
-                _loaded_pickle_ = pickle.load(f)
-                loaded_model = eqx.tree_at(
-                    lambda tree: tree.intensities, loaded_model, replace=_loaded_pickle_["E0"]["intensities"]
-                )
-                loaded_model = eqx.tree_at(
-                    lambda tree: tree.phases, loaded_model, replace=_loaded_pickle_["E0"]["phases"]
-                )
-        elif "eqx" in cfg["drivers"]["E0"]["file"]:
-            with open(cfg["drivers"]["E0"]["file"], "rb") as f:
-                # read the model config
-                model_cfg = json.loads(f.readline().decode())
-                cfg["drivers"]["E0"]["params"] = model_cfg
-                model = DriverModule(cfg)
-
-                loaded_model = eqx.tree_deserialise_leaves(f, model)
-        else:
-            raise NotImplementedError(f"File type not recognized: {filename}. Must be .pkl or .eqx")
+            loaded_model = eqx.tree_deserialise_leaves(f, model)
+    else:
+        raise NotImplementedError(f"File type not recognized: {filename}. Must be .pkl or .eqx")
 
     return loaded_model
 

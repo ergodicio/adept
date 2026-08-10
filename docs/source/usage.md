@@ -55,13 +55,3 @@ once:
 
 usage/initialization
 ```
-
----
-
-## Running on AWS Batch
-
-```{toctree}
-:maxdepth: 2
-
-usage/cloud
-```

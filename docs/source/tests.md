@@ -43,7 +43,6 @@ Tests are organized one directory per solver.
 | `tests/test_hermite_poisson_1d` | Collisions, E-field coupling, drivers, integrators, filtering, linear response |
 | `tests/test_pic1d` | Bohm-Gross dispersion, Landau damping, two-stream instability |
 | `tests/test_tf1d` | Bohm-Gross and kinetic resonance (forward and backward pass), Landau damping, agreement with a Vlasov run |
-| `tests/test_cloud` | AWS Batch code-bundle construction |
 
 ## Continuous integration
 
@@ -53,6 +52,6 @@ code (`adept/_base_.py`, `adept/utils.py`, `pyproject.toml`, …) runs everythin
 a manual dispatch always runs the full set.
 
 ```{note}
-The `test_vlasov1d2v`, `test_vlasov2d`, `test_tf1d`, and `test_cloud` suites do not currently have a
-CI job and so are only run locally.
+The `test_vlasov1d2v`, `test_vlasov2d`, and `test_tf1d` suites do not currently have a CI job and so
+are only run locally.
 ```

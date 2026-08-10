@@ -84,8 +84,6 @@ differentiable simulation. In reference [1], neural networks are trained to lear
 system towards previously unseen behavior. In reference [2], neural networks are trained to help bridge the
 micro-macro physics gap in multiphysics simulations.
 
-Running on AWS Batch is documented in [docs/source/usage/cloud.md](docs/source/usage/cloud.md).
-
 ## Tests
 
 ```bash
