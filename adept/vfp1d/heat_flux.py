@@ -27,7 +27,7 @@ from scipy.linalg import solve_banded
 
 from adept.vfp1d.storage import calc_EH
 
-DEFAULT_SNB_CFG = {"ngroups": 32, "beta_max": 30.0, "r": 2.0}
+DEFAULT_SNB_CFG = {"ngroups": 300, "beta_max": 20.0, "r": 2.0}
 
 
 def _geometry_factors(x: np.ndarray, dx: float, geometry: str) -> tuple[np.ndarray, np.ndarray]:
@@ -103,14 +103,24 @@ def snb_heat_flux(
     """Multigroup SNB heat flux at cell edges (nx+1,).
 
     Implements the "separated" SNB variant recommended by Brodrick et al. (2017):
-    for each energy group g (beta = v^2 / 2T, group weights from the Spitzer-Härm
-    spectrum W(beta) = beta^4 exp(-beta) / 24),
+    for each energy group g on a *global absolute-energy grid* eps = v^2/2 (with
+    group weights from the Spitzer-Härm spectrum W(beta) = beta^4 exp(-beta) / 24,
+    beta = eps/T the local position in the Maxwellian spectrum),
 
         H_g / (lambda_g^ee / r) - div( (xi * lambda_g^ei / 3) grad H_g ) = -div(W_g q_SH)
 
     with r = 2, xi(Z) = (Z + 0.24)/(Z + 4.2), and
 
         q_SNB = q_SH - sum_g (xi * lambda_g^ei / 3) grad H_g.
+
+    The energy groups are bands of fixed *kinetic energy* eps = v^2/2 (uniform in
+    space), NOT of the local beta = eps/T. This is required for correctness: the
+    multigroup diffusion transports each group at fixed energy (energy is conserved
+    as electrons stream, so the groups decouple in energy and couple only in space).
+    Gridding on the local beta would make a group's absolute energy - and hence its
+    mfp lambda ~ eps^2 - vary from cell to cell, so the spatial stencil would couple
+    different energies between neighbouring cells (a spurious energy advection) and
+    would drop the suprathermal carriers that stream hot -> cold and set the preheat.
 
     The mean free paths use the same normalized collision rates as the kinetic
     solver: nu_ei(v) = nuee_coeff * logLam_ratio * Z^2 * ni / v^3 (the l=1 rate in
@@ -133,34 +143,39 @@ def snb_heat_flux(
     area, vol = _geometry_factors(x, dx, geometry)
     q_sh = spitzer_harm_heat_flux(x, dx, n, T, Z, cfg)
 
-    # group edges in beta = v^2/(2T); logarithmic spacing resolves the low-energy
-    # groups while still covering the suprathermal tail that carries q_SH
-    beta_edges = np.geomspace(beta_max / 400.0, beta_max, ngroups + 1)
-    beta_edges[0] = 0.0
+    # Global absolute-energy grid eps = v^2/2 (code units), uniform in space and
+    # spanning eps in [0, beta_max * max(T)]. The flux-carrying groups sit at
+    # beta = eps/T ~ 16 (v ~ 4 v_th, the v^9 heat-flux moment), so beta_max ~ 20
+    # keeps them on the grid even at the hottest cell. (Cold cells then reach
+    # beta = beta_max * max(T)/T_local >> beta_max, retaining the suprathermal
+    # carriers that stream in from the hot region and set the preheat.)
+    eps_edges = np.linspace(0.0, beta_max * float(np.max(T)), ngroups + 1)
+    eps_c = 0.5 * (eps_edges[1:] + eps_edges[:-1])  # group midpoints (nx-independent)
 
     def _cdf(b):
         # int_0^b beta^4 exp(-beta)/24 dbeta = 1 - exp(-b)(1 + b + b^2/2 + b^3/6 + b^4/24)
         return 1.0 - np.exp(-b) * (1.0 + b + b**2 / 2.0 + b**3 / 6.0 + b**4 / 24.0)
 
-    weights = np.diff(_cdf(beta_edges))
-    beta_c = np.sqrt(beta_edges[:-1] * beta_edges[1:])
-    beta_c[0] = 0.5 * beta_edges[1]
-
-    xi = (Z + 0.24) / (Z + 4.2)
+    xi_e = _interp_c2e((Z + 0.24) / (Z + 4.2))
     T_edge = _interp_c2e(T)
+    Z2ni_e = _interp_c2e(Z**2 * ni)
 
     q_nonlocal = np.zeros_like(q_sh)
     H_all = np.zeros((ngroups, x.size))
 
     for g in range(ngroups):
-        v2_c = 2.0 * beta_c[g] * T  # v_g^2 at centers
-        v2_e = 2.0 * beta_c[g] * T_edge
-        lam_ee_c = v2_c**2 / (nuee_coeff * n)
-        lam_ei_e = v2_e**2 / (nuee_coeff * logLam_ratio * _interp_c2e(Z**2 * ni))
-        D_e = _interp_c2e(xi) * lam_ei_e / 3.0
+        v2 = 2.0 * eps_c[g]  # v_g^2, fixed in space (energy is conserved during transport)
+        lam_ee_c = v2**2 / (nuee_coeff * n)  # centers (nx,)
+        lam_ei_e = v2**2 / (nuee_coeff * logLam_ratio * Z2ni_e)  # edges (nx+1,)
+        D_e = xi_e * lam_ei_e / 3.0
+
+        # local Spitzer-Härm group weight W_g(x) = int_{eps_g}^{eps_g+1} beta^4 e^-beta/24 dbeta,
+        # beta = eps / T(x): spatially varying because a fixed absolute-energy band samples a
+        # different part of the local Maxwellian spectrum as T changes.
+        w_e = _cdf(eps_edges[g + 1] / T_edge) - _cdf(eps_edges[g] / T_edge)
 
         # source: -div(W_g q_SH), finite volume with zero flux through boundary edges
-        q_g = weights[g] * q_sh
+        q_g = w_e * q_sh
         src = -np.diff(area * q_g) / vol
 
         # tridiagonal finite-volume diffusion operator
