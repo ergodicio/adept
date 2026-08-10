@@ -92,96 +92,24 @@ uv run mlflow ui --backend-store-uri file://$(pwd)/mlruns  # browse
 
 ## Manifest schema
 
+The full manifest schema — the `osiris:` section (deck path, binary resolution, MPI, staging,
+`overrides` deck-patching semantics, `density` adaptive box sizing) and the `output:` section — is
+documented in the [Configuration Reference](config.md). Minimal example:
+
 ```yaml
-solver: osiris                                    # required, dispatch key
+solver: osiris
 
 mlflow:
-  experiment: osiris-pic1d-twostream              # required
-  run: cold-equal-beams                           # required
+  experiment: osiris-pic1d-twostream
+  run: cold-equal-beams
 
 osiris:
-  deck: tests/test_osiris/decks/two-stream-1d     # required: source of truth (repo-relative)
-  # binary: /path/to/osiris-1D.e                  # optional: overrides the env-var default
-  #                                               #   (OSIRIS_BIN_<dim>D → OSIRIS_BIN)
-  mpi_ranks: 1                                    # 1 → direct, >1 → mpirun -n N
-  run_root: ./checkpoints                         # parent of per-run dirs (default)
-  # NOTE: the default sits inside checkpoints/ deliberately — sync-up.sh
-  # rsyncs with --delete but excludes checkpoints/, so in-flight and finished
-  # OSIRIS outputs survive a sync. If you point run_root anywhere outside an
-  # excluded directory, a sync-up invocation will delete those outputs.
-  # Nothing deletes run dirs automatically (post-processing only copies out
-  # of them), so clean them up manually on occasion — though $PSCRATCH's
-  # purge policy will take care of stale ones eventually.
-  extra_mpi_args: ["--oversubscribe"]             # optional, passed to mpirun
-
-  stream_convert: true                            # optional (default true): convert MS/
-                                                  #   HDF5 dumps to binary/*.nc concurrently
-                                                  #   with the run; set false for the old
-                                                  #   batch conversion at job end
-  stream_poll_s: 10.0                             # optional: watcher poll interval (s)
-  # stage_root: /dev/shm/osiris                   # optional: run OSIRIS on this fast
-                                                  #   ephemeral filesystem (ramdisk) and
-                                                  #   drain dumps to run_root in the
-                                                  #   background — see "Ramdisk staging".
-                                                  #   Requires stream_convert: true.
-
-  density:                                        # optional: adaptive box sizing (1D)
-    gradient_scale_length: 300um                  #   target L_n; scales the box so the
-                                                  #   deck's density ramp realizes this L
-    # min: 0.225                                  #   nmin (n_c units); default: deck profile.fx
-    # max: 0.275                                  #   nmax (n_c units); default: deck profile.fx
-    # reference_density: 0.25                     #   density (n_c units) where L is defined
-
-  overrides:                                      # optional: applied before render
-    time: {tmax: 50.0}                            #   merge into the (one) time block
-    grid: {nx_p: [256]}                           #   refresh an array key
-    species:                                      #   indexed for repeated sections:
-      0: {num_par_x: [512]}                       #     species 1: bump ppc
-      1: {ufl: [-2.0, 0.0, 0.0]}                  #     species 2: change drift
+  deck: tests/test_osiris/decks/two-stream-1d
+  mpi_ranks: 1
 
 output:
-  diagnostics_to_log: null                        # null = all; or [e1, charge, …]
-  v_th: 0.1                                         # optional: overlays the Bohm–Gross
-                                                    #   Langmuir branch on ω–k plots
-  omega_k_zoom: 4.0                                 # (k, ω) half-width [ω_p] for the
-                                                    #   equal-aspect lower ω–k panel
-                                                    #   (clamped to Nyquist); null = full
+  diagnostics_to_log: null
 ```
-
-Override keys can use the **base name** (`nx_p`) or the **exact key** (`nx_p(1:1)`). Indexed `{0: …, 1: …}` form addresses occurrences of repeated sections (`species`, `udist`, `profile`, `spe_bound`, `diag_species`, `zpulse`, …) in source order.
-
-## Adaptive box sizing from a density gradient scale length
-
-`osiris.density` (1D decks) scales the simulation box so the deck's linear density
-ramp realizes a target gradient scale length `L`, mirroring how adept's `_lpse2d`
-and `kinetic_srs` solvers size their grids. This is the **inverse** of holding the
-box fixed and steepening the ramp: here the density range (`nmin`/`nmax`) is held
-and the box length follows `L`.
-
-For a linear ramp `n(x): nmin → nmax`, the local scale length is
-`L(x) = n(x)/(dn/dx) = n(x)·ramp_span/(nmax−nmin)`, so requiring `L(n_ref) = L` at the
-reference density `n_ref` (default the quarter-critical surface, `n_c/4 = 0.25`)
-fixes the ramp span — the same relation adept uses, `ramp_span = L/0.25·(nmax−nmin)`.
-
-The result is a single spatial scale factor `s` applied to **every** length in the
-deck: `space.xmin`/`space.xmax`, all `profile.x` arrays, and all `diag_species`
-phase-space windows (`ps_xmin`/`ps_xmax`). `grid.nx_p` is scaled by `s` too — holding
-the cell size `dx` fixed (rounded up to a multiple of `node_conf.node_number(1)` for
-even domain decomposition). Time (`dt`, `tmax`) is untouched, so the CFL ratio is
-preserved.
-
-- Activates only when `osiris.density.gradient_scale_length` is present (decks
-  otherwise run with their hand-set box, unchanged). Runs **after** `overrides`, so
-  it supersedes any `space.xmax` override.
-- `gradient_scale_length` takes a unit string (`300um`, converted via the deck's
-  `simulation.n0`/`omega_p0`) or a bare number already in `c/wp0` units.
-- `min`/`max` default to the ramp's interior `profile.fx` endpoints; if given, they
-  are written into the primary `profile.fx`.
-- The computed quantities (`box_norm`, `nx`, `scale_factor`, …) are logged under
-  `osiris.density.derived.*`.
-- Multi-dimensional decks raise `NotImplementedError`. Drive positions (e.g. a
-  `zpulse` spatial center) are **not** rescaled — boundary antennas like the SRS
-  deck's `antenna_array` have no position to scale.
 
 ## What lands in MLflow
 
@@ -337,11 +265,5 @@ Edit `adept/osiris/post.py:collect`. The h5 dump for each diagnostic is at `run_
 
 ## Adding a new test problem
 
-Native-deck-as-truth: just write the deck, point a manifest at it, run. No code changes.
-
-```bash
-cp my-new.deck tests/test_osiris/decks/
-cp configs/osiris/twostream-1d.yaml configs/osiris/my-new.yaml
-$EDITOR configs/osiris/my-new.yaml          # change deck path + mlflow.run
-uv run run.py --cfg configs/osiris/my-new
-```
+Native-deck-as-truth: just write the deck, point a manifest at it, run. No code changes — see
+[Adding a new test problem](config.md#adding-a-new-test-problem) in the Configuration Reference.
