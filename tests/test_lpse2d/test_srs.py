@@ -261,9 +261,7 @@ def test_pump_depletion_budget_and_saturation():
 
     # the definitional identity R + T + absorbed = 1 from the metrics
     assert "laser_absorbed_frac" in ppo_metrics, "budget metrics missing from post_process"
-    total = (
-        ppo_metrics["laser_reflectivity"] + ppo_metrics["laser_transmissivity"] + ppo_metrics["laser_absorbed_frac"]
-    )
+    total = ppo_metrics["laser_reflectivity"] + ppo_metrics["laser_transmissivity"] + ppo_metrics["laser_absorbed_frac"]
     np.testing.assert_allclose(total, 1.0, atol=1e-6)
 
     # comparison run with the pump prescribed: transmission cannot deplete there
@@ -307,9 +305,7 @@ def test_epw_energy_normalization():
     derived = cfg["units"]["derived"]
     k = cfg["grid"]["kx"][ik]
     # single k-mode: |ex(x)| = k*amp/(nx*ny) everywhere; sum_x mean_y |ex|^2 = nx*(k*amp/(nx*ny))^2
-    expected = (
-        0.25 * cfg["grid"]["dx"] * derived["x_norm"] * derived["e_norm"] ** 2 * nx * (k * amp / (nx * ny)) ** 2
-    )
+    expected = 0.25 * cfg["grid"]["dx"] * derived["x_norm"] * derived["e_norm"] ** 2 * nx * (k * amp / (nx * ny)) ** 2
     np.testing.assert_allclose(float(out["epw_energy"]), expected, rtol=1e-10)
 
 
