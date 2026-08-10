@@ -128,10 +128,6 @@ def linkcode_resolve(domain, info):
     except subprocess.CalledProcessError as e:
         raise RuntimeError("Unable to determine the repository directory") from e
 
-    # For ReadTheDocs, repo is cloned to /path/to/<repo_dir>/checkouts/<version>/
-    if repo_dir.parent.stem == "checkouts":
-        repo_dir = repo_dir.parent.parent
-
     # path to source file
     try:
         filepath = os.path.relpath(inspect.getsourcefile(obj), repo_dir)
