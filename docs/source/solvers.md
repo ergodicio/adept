@@ -11,6 +11,13 @@ ADEPT provides several solver modules for different plasma physics applications.
 - [Overview & Equations](solvers/vlasov1d/overview.md)
 - [Configuration Reference](solvers/vlasov1d/config.md)
 
+### Vlasov-1D2V
+
+1D2V Vlasov-Poisson-Fokker-Planck solver in cylindrical $(v_\parallel, v_\perp)$ velocity space. Adds a full-geometry linearized Coulomb collision operator with separately switchable pitch-angle and speed-diffusion channels.
+
+- [Usage & Equations](usage/vlasov1d2v.md)
+- [Configuration Reference](solvers/vlasov1d2v/config.md)
+
 ### [Vlasov-2D](solvers/vlasov2d/overview.md)
 
 2D2V Vlasov-Maxwell solver for electromagnetic simulations in two spatial dimensions.

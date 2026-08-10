@@ -293,8 +293,9 @@ class ergoExo:
 
         if cfg["solver"] == "tf-1d":
             from adept.tf1d import BaseTwoFluid1D as this_module
+            from adept.tf1d import ConfigModel
 
-            # config = ConfigModel(**cfg)
+            ConfigModel(**cfg)  # validate the config, raises pydantic.ValidationError on a bad one
 
         elif cfg["solver"] == "vlasov-1d":
             from adept.vlasov1d import BaseVlasov1D as this_module
