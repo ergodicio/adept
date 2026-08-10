@@ -10,6 +10,15 @@ from jax import tree_util as jtu
 def load(cfg: dict, DriverModule: eqx.Module) -> eqx.Module:
     filename = cfg["drivers"]["E0"]["file"]
 
+    # Remote fetching lives in the calling repo, not here -- adept has no cloud SDK dependency.
+    # Checked before the suffix dispatch below, since `s3://.../laser.eqx` would otherwise reach
+    # `open()` and fail as a missing local file.
+    if "://" in filename:
+        raise ValueError(
+            f"drivers.E0.file must be a local path, got {filename!r}. Download the driver first and "
+            "point the config at the local copy."
+        )
+
     # load the model
     if "pkl" in filename:
         loaded_model = DriverModule(cfg)
