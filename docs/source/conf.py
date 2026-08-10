@@ -217,7 +217,6 @@ html_theme_options = {
     #    'canonical_url': '',
     #    'analytics_id': 'UA-XXXXXXX-1',  #  Provided by Google in your dashboard
     "logo_only": True,
-    "display_version": True,
     "prev_next_buttons_location": "both",
     "style_external_links": False,
     "style_nav_header_background": "#3c4142",
@@ -232,7 +231,7 @@ html_theme_options = {
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ["_static"]
+# NB html_static_path is set once, above, next to html_theme.
 html_css_files = ["custom.css"]
 
 # The name of an image file (relative to this directory) to place at the top

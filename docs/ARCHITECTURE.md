@@ -19,4 +19,5 @@ Quick links to configuration references:
 - [LPSE-2D Config](source/solvers/lpse2d/config.md)
 - [Spectrax-1D Config](source/solvers/spectrax1d/config.md)
 - [Hermite-Legendre-1D Config](source/solvers/hermite_legendre_1d/config.md)
+- [PIC-1D Config](source/solvers/pic1d/config.md)
 - [Two-Fluid-1D Config](source/solvers/tf1d/config.md)

@@ -24,7 +24,13 @@ print(result.job_id, result.adept_sha)
 or from the command line:
 
 ```bash
-python -m adept.cloud --cmd 'python run.py --cfg configs/vlasov-1d/epw' --queue gpu --extras gpu
+uv run python -m adept.cloud --cmd 'python run.py --cfg configs/vlasov-1d/epw' --queue gpu --extras gpu
+```
+
+```{note}
+The `--cmd` string runs *inside the Batch container*, after `bootstrap.sh` has done its own
+`uv sync --frozen`. It is not a local command, so it does not follow this repo's `uv run`
+convention.
 ```
 
 `--dry-run` bundles and reports without uploading or submitting — the cheapest way to see what a
