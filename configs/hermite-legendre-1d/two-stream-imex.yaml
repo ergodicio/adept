@@ -1,0 +1,52 @@
+# Mixed Hermite-Legendre 1D --- Two-stream instability, IMEX integrator (paper sec 4.3)
+#
+# Same physics as two-stream.yaml, but the stiff E.d_v f Lorentz force is advanced
+# with an unconditionally stable frozen-E Backward-Euler substep (integrator: imex).
+# This removes the explicit CFL limit, so the step can be ~5-10x larger than the
+# fully-explicit two-stream.yaml (dt=0.002).
+
+solver: hermite-legendre-1d
+
+mlflow:
+  experiment: hermite-legendre-1d
+  run: two-stream-imex
+
+units:
+  normalizing_density: 1e20/cc
+  normalizing_temperature: 1keV
+
+physics:
+  Lx: 12.566370614359172    # 4*pi
+  alpha: 1.4142135623730951 # sqrt(2)
+  u: 0.0
+  v_a: -2.5
+  v_b: 2.5
+  gamma: 0.5
+  nu_H: 0.0
+  nu_L: 1.0
+  enforce_conservation: true
+  field: true
+
+grid:
+  Nx: 64
+  Nh: 85
+  Nl: 171
+  tmax: 35.0
+  dt: 0.02
+  integrator: imex          # Lawson-RK4 + implicit (Backward-Euler) Lorentz substep
+
+initialization:
+  type: two-stream
+  eps: 0.01
+  mode: 1
+
+save:
+  fields:
+    t:
+      nt: 351
+  hermite:
+    t:
+      nt: 71
+  legendre:
+    t:
+      nt: 71

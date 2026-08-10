@@ -1,7 +1,5 @@
 # FAQ
 
----
-
 **Q. What is novel about ADEPT?**
 
 ADEPT has the following features that make it a unique tool for plasma physics simulations:

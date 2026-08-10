@@ -36,7 +36,7 @@ AbstractMaxwellianPreservingModel          (base: v, dv, compute_D, compute_C_an
 └── AbstractKernelBasedModel               (D, C via kernel integrals)
 
 Concrete models live alongside their solvers:
-- LenardBernstein, Dougherty → adept._vlasov1d.solvers.pushers.fokker_planck
+- LenardBernstein, Dougherty, SuperGaussianDougherty → adept._vlasov1d.solvers.pushers.fokker_planck
 - FastVFP → adept.vfp1d.fokker_planck
 - CoulombianKernel, AsymptoticLocal → adept.vfp1d.fokker_planck
 
@@ -71,6 +71,7 @@ import lineax as lx
 import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
+from jax.scipy.special import gammaln
 
 
 def chang_cooper_delta(w: Array) -> Array:
@@ -136,6 +137,27 @@ def discrete_temperature(
         return v2_moment / norm
 
 
+def analytic_supergaussian_temperature_ratio(m: float, spherical: bool = False) -> Array:
+    """
+    Analytic ratio T/v_m² for a super-Gaussian f ∝ exp(-(|v|/v_m)^m).
+
+    Cartesian (1D symmetric grid): T = ⟨v²⟩ = v_m²·Γ(3/m)/Γ(1/m)
+    Spherical (speed grid, v² weight): T = ⟨v⁴⟩/(3⟨v²⟩) = v_m²·Γ(5/m)/(3·Γ(3/m))
+
+    Both reduce to 1/2 at m=2, recovering the Maxwellian T = v_m²/2 (β = 1/(2T)).
+
+    Args:
+        m: Super-Gaussian exponent (m=2 is Maxwellian)
+        spherical: If True, use the spherical moment definition of T
+
+    Returns:
+        T/v_m², scalar
+    """
+    if spherical:
+        return jnp.exp(gammaln(5.0 / m) - gammaln(3.0 / m)) / 3.0
+    return jnp.exp(gammaln(3.0 / m) - gammaln(1.0 / m))
+
+
 def _find_self_consistent_beta_single(
     f: Array,
     v: Array,
@@ -145,14 +167,17 @@ def _find_self_consistent_beta_single(
     rtol: float = 1e-8,
     atol: float = 1e-12,
     max_steps: int = 3,
+    m: float = 2.0,
 ) -> Array:
     """
     Find beta for a single spatial point (internal, not vmapped).
 
-    Given a distribution f, finds β* such that a Maxwellian with that β*
-    has the same discrete temperature as f.
+    Given a distribution f, finds β* such that the target equilibrium shape
+    exp(-β·|v-vbar|^m) has the same discrete temperature as f.
 
-    Uses Buet notation: beta = 1/(2T) so f = exp(-beta * (v-vbar)²).
+    For m=2 (default) this is the Maxwellian in Buet notation: beta = 1/(2T)
+    so f = exp(-beta * (v-vbar)²). For m>2 the target is a super-Gaussian and
+    β is the shape parameter (units of v^-m).
 
     Args:
         f: Distribution function, shape (nv,)
@@ -163,27 +188,37 @@ def _find_self_consistent_beta_single(
         rtol: Relative tolerance for Newton solver (default: 1e-8)
         atol: Absolute tolerance for Newton solver (default: 1e-12)
         max_steps: Maximum Newton iterations (default: 3)
+        m: Super-Gaussian exponent of the target shape (default 2.0 = Maxwellian)
 
     Returns:
-        beta_star: Beta value where Maxwellian has T_discrete = T_f, scalar
+        beta_star: Beta value where the target shape has T_discrete = T_f, scalar
     """
     # Compute target temperature from f (using vbar if provided)
     T_target = discrete_temperature(f, v, dv, spherical, vbar)
 
-    # Initial guess: Buet beta = 1/(2*T_f)
-    beta_init = 1.0 / (2.0 * T_target)
+    # Initial guess from the analytic moment relation. m is a static Python
+    # float, so the m=2 branch keeps the historical bitwise-exact expressions.
+    if m == 2.0:
+        # Buet beta = 1/(2*T_f)
+        beta_init = 1.0 / (2.0 * T_target)
+    else:
+        # T = β^(-2/m) · (T/v_m² ratio)  →  β = (T / ratio)^(-m/2)
+        beta_init = (T_target / analytic_supergaussian_temperature_ratio(m, spherical)) ** (-m / 2.0)
 
-    # Short-circuit: no SC iterations means just use the discrete-T beta
+    # Short-circuit: no SC iterations means just use the analytic-moment beta
     if max_steps == 0:
         return beta_init
 
     def residual(beta, args):
         v, dv, T_target, spherical, vbar = args
-        # Maxwellian: f = exp(-beta * (v-vbar)²)
+        # Target shape: f = exp(-beta * |v-vbar|^m)
         v_shifted = v if vbar is None else (v - vbar)
-        f_maxwellian = jnp.exp(-beta * v_shifted**2)
-        T_maxwellian = discrete_temperature(f_maxwellian, v, dv, spherical, vbar)
-        return T_maxwellian - T_target
+        if m == 2.0:
+            f_model = jnp.exp(-beta * v_shifted**2)
+        else:
+            f_model = jnp.exp(-beta * jnp.abs(v_shifted) ** m)
+        T_model = discrete_temperature(f_model, v, dv, spherical, vbar)
+        return T_model - T_target
 
     solver = optx.Newton(rtol=rtol, atol=atol)
     sol = optx.root_find(
@@ -202,7 +237,7 @@ def _find_self_consistent_beta_single(
 # without needing a separate vmap definition.
 _find_self_consistent_beta_vmapped = eqx.filter_vmap(
     _find_self_consistent_beta_single,
-    in_axes=(0, None, None, None, 0, None, None, None),
+    in_axes=(0, None, None, None, 0, None, None, None, None),
 )
 
 
@@ -215,16 +250,19 @@ def find_self_consistent_beta(
     rtol: float = 1e-8,
     atol: float = 1e-12,
     max_steps: int = 3,
+    m: float = 2.0,
 ) -> Array:
     """
-    Find beta such that a Maxwellian has the same discrete temperature as f.
+    Find beta such that the target equilibrium shape has the same discrete temperature as f.
 
-    Given a distribution f, finds β* such that a Maxwellian with that β*
-    has the same discrete temperature as f. This eliminates equilibrium drift
-    in Chang-Cooper schemes caused by the mismatch between analytical and
+    Given a distribution f, finds β* such that exp(-β*·|v-vbar|^m) has the
+    same discrete temperature as f. This eliminates equilibrium drift in
+    Chang-Cooper schemes caused by the mismatch between analytical and
     discrete temperatures.
 
-    Uses Buet notation: beta = 1/(2T) so f = exp(-beta * (v-vbar)²).
+    For m=2 (default, Maxwellian) this uses Buet notation: beta = 1/(2T) so
+    f = exp(-beta * (v-vbar)²). For m≠2 the target is a super-Gaussian and β
+    is its shape parameter (units of v^-m).
 
     Vmapped over f (and vbar if provided) for batching over spatial points.
 
@@ -237,11 +275,12 @@ def find_self_consistent_beta(
         rtol: Relative tolerance for Newton solver (default: 1e-8)
         atol: Absolute tolerance for Newton solver (default: 1e-12)
         max_steps: Maximum Newton iterations (default: 3)
+        m: Super-Gaussian exponent of the target shape (default 2.0 = Maxwellian)
 
     Returns:
-        beta_star: Beta values where Maxwellian has T_discrete = T_f, shape (nx,)
+        beta_star: Beta values where the target shape has T_discrete = T_f, shape (nx,)
     """
-    return _find_self_consistent_beta_vmapped(f, v, dv, spherical, vbar, rtol, atol, max_steps)
+    return _find_self_consistent_beta_vmapped(f, v, dv, spherical, vbar, rtol, atol, max_steps, m)
 
 
 class AbstractMaxwellianPreservingModel(eqx.Module):

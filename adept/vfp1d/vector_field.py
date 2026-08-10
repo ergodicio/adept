@@ -104,6 +104,21 @@ class OSHUN1D:
         """d/dx of edge field, evaluated at centers. (nx+1, ...) -> (nx, ...)"""
         return jnp.diff(f, axis=0) / self.grid.dx
 
+    def div_e2c(self, f: Array) -> Array:
+        """Divergence of an edge flux, evaluated at centers. (nx+1, ...) -> (nx, ...)
+
+        Cartesian: df/dx. Spherical: (1/r^2) d(r^2 f)/dr in conservative
+        finite-volume form, using the edge radii so the flux through r=0
+        vanishes identically.
+        """
+        if self.grid.geometry == "spherical":
+            r_e = self.grid.x_edge.reshape((-1,) + (1,) * (f.ndim - 1))
+            # exact finite-volume cell volume (r_+^3 - r_-^3)/3 so that the
+            # volume-weighted sum of the divergence telescopes (conservation)
+            dvol = jnp.diff(r_e**3, axis=0) / 3.0
+            return jnp.diff(r_e**2 * f, axis=0) / dvol
+        return self.ddx_e2c(f)
+
     def interp_e2c(self, f: Array) -> Array:
         """Average edge values to centers. (nx+1, ...) -> (nx, ...)"""
         return 0.5 * (f[:-1] + f[1:])
@@ -317,7 +332,10 @@ class OSHUN1D:
         f0 = y["f0"]
         f10 = y["f10"]
 
-        df0dt_sa = -self.grid.v[None, :] / 3.0 * self.ddx_e2c(f10)  # (nx+1,nv) -> (nx,nv)
+        # In spherical geometry the f0 equation picks up the geometric 2*f10/r term
+        # via the radial divergence; the f10 equation keeps the plain gradient of f0
+        # (the l=1 angular coupling only involves f2, which is dropped for nl=1).
+        df0dt_sa = -self.grid.v[None, :] / 3.0 * self.div_e2c(f10)  # (nx+1,nv) -> (nx,nv)
         df10dt_sa = -self.grid.v[None, :] * self.ddx_c2e(f0)  # (nx,nv) -> (nx+1,nv)
 
         if self.grid.boundary == "reflective":

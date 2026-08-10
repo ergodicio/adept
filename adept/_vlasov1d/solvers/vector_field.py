@@ -242,14 +242,13 @@ class VlasovPoissonFokkerPlanck:
 
         diags = {}
 
+        # Diagnostics use a single reference species and unsuffixed keys to match
+        # the state built in modules.init_state and the save machinery (gh-174).
+        ref_species = "electron" if "electron" in f_dict else next(iter(f_dict))
         if self.vlasov_dfdt:
-            # Compute diagnostics for each species
-            for species_name in f_dict.keys():
-                diags[f"diag-vlasov-dfdt-{species_name}"] = (f_vlasov[species_name] - f_dict[species_name]) / self.dt
+            diags["diag-vlasov-dfdt"] = (f_vlasov[ref_species] - f_dict[ref_species]) / self.dt
         if self.fp_dfdt:
-            # Compute diagnostics for each species
-            for species_name in f_dict.keys():
-                diags[f"diag-fp-dfdt-{species_name}"] = (f_fp[species_name] - f_vlasov[species_name]) / self.dt
+            diags["diag-fp-dfdt"] = (f_fp[ref_species] - f_vlasov[ref_species]) / self.dt
 
         return e, f_fp, diags
 
@@ -286,6 +285,14 @@ class VlasovMaxwell:
         self.dt = grid.dt
         self.ey_driver = field.TransverseCurrentSourceDriver(grid.x_a, drivers=drivers.ey, c=c)
         self.ex_driver = field.LongitudinalElectricFieldDriver(grid.x, drivers=drivers.ex)
+        self.ex_stochastic = drivers.ex_stochastic
+
+    def total_dex(self, t, args):
+        """Evaluate the deterministic plus (optional) stochastic external Ex at time t."""
+        dex = self.ex_driver(t, args)
+        if self.ex_stochastic is not None:
+            dex = dex + self.ex_stochastic(t, self.grid.x)
+        return dex
 
     def compute_electron_charge_density(self, f_dict):
         """Compute charge density from the electron distribution function."""
@@ -309,7 +316,7 @@ class VlasovMaxwell:
         :return:
         """
 
-        dex = [self.ex_driver(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
+        dex = [self.total_dex(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
         djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
 
         # Evaluate collision frequency profiles at current time

@@ -186,7 +186,7 @@ class VelocityStepper(eqx.Module):
 
         if physics["trapping"]["is_on"]:
             self.nuee = physics["trapping"]["nuee"]
-            self.trapping_model = physics["trapping"]["model"]
+            self.trapping_model = physics["trapping"].get("model", "none")
             self.model_kld = physics["trapping"]["kld"]
             # table_klds = table_klds
             self.vph = jnp.interp(self.model_kld, table_klds, table_wrs, left=1.0, right=table_wrs[-1]) / self.model_kld
@@ -296,7 +296,9 @@ class ParticleTrapper(eqx.Module):
     norm_kld: float
     norm_nuee: float
     vph: float
-    nu_g_model: eqx.Module
+    # The growth-rate model is passed in through `args["nu_g"]` at call time, not
+    # stored on the Module. Declaring an un-assigned `nu_g_model` field here made
+    # every `trapping.is_on: true` config fail to construct.
     # nu_d_model: eqx.Module
 
     def __init__(self, cfg, species="electron"):

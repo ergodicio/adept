@@ -117,6 +117,7 @@ class GridModel(BaseModel):
     boundary_abs_coeff: float
     boundary_width: str
     low_pass_filter: float
+    dealias: str = "isotropic"
     dt: str
     dx: str
     tmax: str

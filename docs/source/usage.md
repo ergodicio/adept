@@ -2,19 +2,21 @@
 
 ## Installation
 
-To use ADEPT, first install the requirements using pip:
+ADEPT uses [uv](https://docs.astral.sh/uv/). Clone the repository and sync the environment:
 
 ```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+git clone https://github.com/ergodicio/adept.git
+cd adept
+uv sync --extra dev
 ```
 
-or using conda:
+This creates `.venv/` and installs the exact versions pinned in `uv.lock`. Python 3.11+ is required. For an NVIDIA
+GPU, use `uv sync --extra gpu` instead, which pulls `jax[cuda12]`.
+
+To use ADEPT as a dependency of another project:
 
 ```bash
-mamba env create -f env.yaml
-mamba activate adept
+uv add "adept @ git+https://github.com/ergodicio/adept.git"
 ```
 
 ---
@@ -24,16 +26,17 @@ mamba activate adept
 The most common use case for ADEPT is a simple forward simulation that can be run from the command line. For example, to run a 1D1V Vlasov simulation of a driven electron plasma wave:
 
 ```bash
-python3 run.py --cfg configs/vlasov-1d/epw
+uv run run.py --cfg configs/vlasov-1d/epw
 ```
 
-The input parameters are provided in `configs/vlasov-1d/epw.yaml`.
+The input parameters are provided in `configs/vlasov-1d/epw.yaml`. Note that `--cfg` takes the path *without* the
+`.yaml` extension.
 
 ### Access the Output
 
 The output will be saved and made accessible via MLFlow. To access it:
 
-1. Launch an mlflow server via running `mlflow ui` from the command line
+1. Launch an mlflow server via running `uv run mlflow ui` from the command line
 2. Open a web browser and navigate to http://localhost:5000
 3. Click on the experiment name to see the results
 
@@ -41,11 +44,24 @@ The output will be saved and made accessible via MLFlow. To access it:
 
 ## Solver-Specific Guides
 
+Each solver has a single page covering the equations it solves, its boundary conditions and forcing,
+what it writes out, and how to run it. They are listed under [Available Solvers](solvers.md).
+
+Shared initialization options — density profiles, tanh flat-tops, super-Gaussians — are documented
+once:
+
 ```{toctree}
 :maxdepth: 2
 
 usage/initialization
-usage/vlasov1d
-usage/vlasov1d2v
-usage/tf1d
+```
+
+---
+
+## Running on AWS Batch
+
+```{toctree}
+:maxdepth: 2
+
+usage/cloud
 ```

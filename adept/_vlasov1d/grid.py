@@ -52,7 +52,7 @@ class Grid(eqx.Module):
         self.tmin = tmin
 
         # Compute dx
-        self.dx = xmax / nx
+        self.dx = (xmax - xmin) / nx
 
         # Override dt for EM wave stability if needed
         if should_override_dt_for_em_waves:

@@ -48,13 +48,18 @@ mlflow:
   experiment: vlasov1d-srs
   run: debug-small
 
+# The ey driver pair is a backscatter-SRS matched triad in code units
+# (v0 = sqrt(T0/m_e), k in 1/lambda_De, w in wp0, c_hat = c/v0 = 15.984 at 2000 eV):
+#   pump:  w0 = 2.79,    k0 = +sqrt(w0^2 - 1)/c_hat = +0.162949 (rightgoing)
+#   seed:  w0 = 1.700942, k0 = -0.086080 (leftgoing)
+#   EPW:   k lambda_De = 0.249029, w = 1.089058 = w_pump - w_seed
 drivers:
   ex: {}
   ey:
     '0':
       params:
         a0: 1.0
-        k0: 1.0
+        k0: 0.162949
         w0: 2.79
         dw0: 0.
       envelope:
@@ -69,8 +74,8 @@ drivers:
     '1':
       params:
         a0: 1.e-6
-        k0: 1.0
-        w0: 1.63
+        k0: -0.086080
+        w0: 1.700942
         dw0: 0.
       envelope:
         time:

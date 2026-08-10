@@ -288,7 +288,14 @@ def post_process(soln: Solution, cfg: dict, td: str, args: dict | None = None) -
         "kappa_eh": float(round(calc_EH(cfg["units"]["Z"], 0.0), 4)),
     }
 
-    return {"fields": fields_xr, "dists": f_xr, "metrics": metrics}
+    # Spitzer-Härm / SNB / kinetic heat-flux comparison (lazy import: heat_flux
+    # imports calc_EH from this module)
+    from adept.vfp1d.heat_flux import compare_heat_flux
+
+    hf = compare_heat_flux(fields_xr, cfg, td)
+    metrics.update(hf["metrics"])
+
+    return {"fields": fields_xr, "dists": f_xr, "metrics": metrics, "heat_flux": hf["heat_flux"]}
 
 
 def get_field_save_func(cfg: dict, k: str) -> Callable:
@@ -325,6 +332,7 @@ def get_field_save_func(cfg: dict, k: str) -> Callable:
             temp["e"] = _interp_e2c_(y["e"])
             temp["b"] = _interp_e2c_(y["b"])
             temp["ni"] = y["ni"]
+            temp["Z"] = y["Z"]
 
             return temp
 
