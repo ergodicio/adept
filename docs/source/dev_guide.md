@@ -95,7 +95,9 @@ This is the mechanism behind the machine-learned-closure work in the
 2. Re-export the module class from `adept/mysolver.py`.
 3. Add a branch to `_get_adept_module_` in `adept/_base_.py` keyed on your `solver:` string.
 4. Add example configs under `configs/my-solver/` and tests under `tests/test_mysolver/`.
-5. Add `docs/source/solvers/mysolver/overview.md` and `config.md`, and list them in
+5. Add a paths filter and a test job for the solver in `.github/workflows/cpu-tests.yaml`. CI only runs the
+   suites for solvers it detects as changed, so without both the new tests never run.
+6. Add `docs/source/solvers/mysolver/overview.md` and `config.md`, and list them in
    `docs/source/solvers.md` and the toctrees in `docs/source/index.rst`.
 
 ## Libraries
