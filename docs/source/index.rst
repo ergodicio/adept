@@ -38,8 +38,10 @@ Documentation
    :caption: Configuration Reference
 
    solvers/vlasov1d/config
+   solvers/vlasov1d2v/config
    solvers/vlasov2d/config
    solvers/lpse2d/config
+   solvers/tf1d/config
 
 .. toctree::
    :maxdepth: 2

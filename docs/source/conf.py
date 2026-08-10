@@ -63,6 +63,9 @@ myst_enable_extensions = [
     "dollarmath",  # Enable $...$ and $$...$$ math
     "colon_fence",  # Enable ::: fenced directives
 ]
+# Generate anchor slugs for headings up to h4 so that in-page and cross-page
+# links like [grid](../vlasov1d/config.md#grid) resolve.
+myst_heading_anchors = 4
 # options for sphinx_github_style
 top_level = "adept"
 linkcode_blob = "head"

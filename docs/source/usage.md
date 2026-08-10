@@ -49,3 +49,13 @@ usage/vlasov1d
 usage/vlasov1d2v
 usage/tf1d
 ```
+
+---
+
+## Running on AWS Batch
+
+```{toctree}
+:maxdepth: 2
+
+usage/cloud
+```
