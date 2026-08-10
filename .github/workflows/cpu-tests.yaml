@@ -32,6 +32,7 @@ jobs:
       vfp1d: ${{ steps.filter.outputs.vfp1d }}
       spectrax1d: ${{ steps.filter.outputs.spectrax1d }}
       pic1d: ${{ steps.filter.outputs.pic1d }}
+      osiris: ${{ steps.filter.outputs.osiris }}
     steps:
     - uses: actions/checkout@v7
     - id: force
@@ -91,6 +92,10 @@ jobs:
             - 'adept/_pic1d/**'
             - 'adept/pic1d.py'
             - 'tests/test_pic1d/**'
+          osiris:
+            - *shared
+            - 'adept/osiris/**'
+            - 'tests/test_osiris/**'
 
   test-base:
     needs: changes
@@ -163,6 +168,21 @@ jobs:
         python-version: '3.11'
     - name: Test with pytest
       run: uv run --locked pytest tests/test_pic1d
+
+  # OSIRIS wrapper tests run without an OSIRIS binary: the runner smoke test and
+  # real-data IO tests skip themselves unless OSIRIS_BIN_1D / an existing run dir
+  # are provided, which CI does not do.
+  test-osiris:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.osiris == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_osiris
 
   test-hermite-poisson-1d:
     runs-on: ubuntu-latest
