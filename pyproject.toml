@@ -20,7 +20,6 @@ dependencies = [
     "mlflow",
     "h5netcdf",
     "optax",
-    "boto3",
     "pint",
     "plasmapy",
     "psutil",
@@ -33,7 +32,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/ergodicio/adept"
-Documentation = "https://adept.readthedocs.io/en/latest/"
+Documentation = "https://ergodicio.github.io/adept/"
 
 [project.optional-dependencies]
 cpu = []
@@ -42,11 +41,12 @@ gpu = [
     "nvidia-ml-py"
 ]
 docs = [
-    "sphinx",
-    "sphinx_autodoc_typehints",
+    "sphinx>=7.0",
     "sphinx_copybutton",
-    "sphinx-rtd-theme",
-    "sphinx-github-style",
+    "sphinx-rtd-theme>=2.0",
+    "sphinx-github-style>=1.1",
+    # lets sphinx read the markdown pages under docs/source; see conf.py extensions
+    "myst-parser>=4.0",
     "adept"
 ]
 dev = [

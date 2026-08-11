@@ -148,7 +148,7 @@ class ADEPTModule:
         """
         This function initializes the necessary (trainable) physics modules that are required to run the simulation.
         These can be modules that change the initial conditions, or the driver (boundary conditions),
-        or the metric calculation. These modules are usually `eqx.Module`s so that
+        or the metric calculation. These modules are usually ``eqx.Module`` instances so that
         you can take derivatives against the (parameters of the) modules.
 
         Returns:
@@ -293,8 +293,9 @@ class ergoExo:
 
         if cfg["solver"] == "tf-1d":
             from adept.tf1d import BaseTwoFluid1D as this_module
+            from adept.tf1d import ConfigModel
 
-            # config = ConfigModel(**cfg)
+            ConfigModel(**cfg)  # validate the config, raises pydantic.ValidationError on a bad one
 
         elif cfg["solver"] == "vlasov-1d":
             from adept.vlasov1d import BaseVlasov1D as this_module
