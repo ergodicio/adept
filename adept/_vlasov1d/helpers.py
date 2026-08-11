@@ -187,9 +187,131 @@ def get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm: Pl
 
     return a0, k0, w0
 
+
+def plot_driver_spectra(cfg: dict, td: str, args: dict):
+    """Per-line intensity and phase vs frequency offset, for each multi-line driver.
+
+    Reads the LIVE `EMDriver` objects out of `args["drivers"]` rather than re-deriving
+    the line set from the config's init/seed. That matters twice over: the plot cannot
+    drift if BroadbandDriver's construction changes, and it shows optimized line sets
+    from a backward pass (which never appear in the config) automatically.
+
+    Per-line intensity needs no normalization constant. The driver builds amplitudes as
+    A_j = a0 * sqrt(w_j / sum_k w_k), so
+
+        I_j / I_base = A_j^2 / sum_k A_k^2
+
+    exactly, independent of a0 and of the plasma normalization. `base_intensity` is
+    read from the config only to put an absolute scale on the axis.
+
+    Panels: I_j (linear), log10 I_j (dynamic range -- the informative one once an
+    optimizer produces structure, since I ~ A^2 doubles the span), and phi_j.
+    Single-line (monochromatic) drivers are skipped.
+    """
+    drivers = (args or {}).get("drivers")
+    if drivers is None:
+        return
+    out_dir = os.path.join(td, "plots", "drivers")
+
+    for field in ("ex", "ey"):
+        dlist = getattr(drivers, field, None)
+        if not dlist or len(dlist) < 2:
+            continue  # absent, or monochromatic -> no spectrum to show
+
+        amp = np.asarray([float(d.a0) for d in dlist])
+        w0 = float(dlist[0].w0)
+        dw = np.asarray([float(d.dw0) for d in dlist]) / w0  # -> dw_j/w0
+        phases = np.asarray([float(d.phase) for d in dlist])
+
+        power = amp**2
+        frac = power / power.sum() if power.sum() > 0 else power
+        base = ((cfg.get("drivers", {}).get(field, {}) or {}).get("0", {}) or {}) \
+            .get("params", {}).get("intensities", {})
+        base = base.get("base_intensity") if isinstance(base, dict) else None
+
+        I_j, unit = frac, ""
+        if isinstance(base, str) and base.split():          # "2.378e+14 W/cm^2"
+            val, _, u = base.partition(" ")
+            try:
+                I_j, unit = frac * float(val), u.strip()
+            except ValueError:
+                pass
+        elif isinstance(base, (int, float)):
+            I_j = frac * float(base)
+
+        order = np.argsort(dw)
+        dw, I_j, phases = dw[order], I_j[order], phases[order]
+
+        # constrained_layout sizes the suptitle band to the actual text; do NOT pair
+        # it with tight_layout(rect=...) + suptitle(y=...), which reserve a fixed band
+        # and leave a gap when the title is shorter than the reservation.
+        fig, axes = plt.subplots(3, 1, figsize=(7.2, 8.6), sharex=True,
+                                 constrained_layout=True)
+        bw_pct = (dw.max() - dw.min()) * 100.0
+        spacing = float(np.diff(np.sort(dw)).mean()) if len(dw) > 1 else 0.0
+        run_name = ((cfg.get("mlflow") or {}).get("run")) or ""
+
+        title = f"{field} driver — broadband line spectrum"
+        if run_name:
+            title += f"\n{run_name}"
+        title += (f"\n{len(dlist)} lines   |   full width $\\Delta\\omega/\\omega_0$ = "
+                  f"{bw_pct:.3g}%   |   spacing $\\delta\\omega/\\omega_0$ = {spacing:.3g}")
+        if base is not None:
+            title += f"\n$I_{{base}}$ = {base}"
+            if unit:
+                title += f"   |   $I_j$ = {I_j.mean():.4g} {unit} mean per line"
+        fig.suptitle(title, fontsize=9.5, linespacing=1.4)
+
+        axes[0].plot(dw, I_j, "o", ms=4, color="#1f77b4")
+        axes[0].set_ylabel("line intensity $I_j$" + (f"  [{unit}]" if unit else "  [$I_j/I_{base}$]"))
+        axes[0].set_ylim(bottom=0)
+        axes[0].annotate(rf"$\Sigma_j I_j$ = {I_j.sum():.4g}", xy=(0.02, 0.06),
+                         xycoords="axes fraction", fontsize=8, color="0.35")
+
+        pos = I_j > 0
+        if pos.any():
+            axes[1].plot(dw[pos], np.log10(I_j[pos]), "o", ms=4, color="#d62728")
+            lo_, hi_ = np.log10(I_j[pos]).min(), np.log10(I_j[pos]).max()
+            if hi_ - lo_ < 0.1:
+                axes[1].set_ylim(lo_ - 0.5, hi_ + 0.5)
+            axes[1].annotate(f"dynamic range: {10 ** (hi_ - lo_):.3g}x", xy=(0.02, 0.88),
+                             xycoords="axes fraction", fontsize=8, color="0.35")
+        if (~pos).any():  # an optimizer can drive lines to zero; don't hide them
+            floor = np.log10(I_j[pos]).min() if pos.any() else 0.0
+            axes[1].plot(dw[~pos], np.full(int((~pos).sum()), floor), "x", ms=6, color="0.5")
+            axes[1].annotate(f"{int((~pos).sum())} line(s) at I=0 (x)", xy=(0.02, 0.06),
+                             xycoords="axes fraction", fontsize=8, color="0.4")
+        axes[1].set_ylabel(r"$\log_{10} I_j$")
+
+        axes[2].plot(dw, phases, "o", ms=4, color="#2ca02c")
+        axes[2].set_ylabel(r"phase $\phi_j$ [rad]")
+        axes[2].set_xlabel(r"$\delta\omega_j/\omega_0$")
+        axes[2].set_ylim(-0.25, 2 * np.pi + 0.25)
+        axes[2].set_yticks([0, np.pi / 2, np.pi, 3 * np.pi / 2, 2 * np.pi])
+        axes[2].set_yticklabels(["0", r"$\pi/2$", r"$\pi$", r"$3\pi/2$", r"$2\pi$"])
+
+        for ax in axes:
+            ax.grid(alpha=0.3)
+            ax.axvline(0.0, color="0.6", lw=0.8, ls="--")
+
+        os.makedirs(out_dir, exist_ok=True)
+        # no tight_layout here — constrained_layout (set on the figure) already sized
+        # the title band; calling both would re-reserve a fixed strip and reopen the gap
+        fig.savefig(os.path.join(out_dir, f"{field}-lines.png"), bbox_inches="tight", dpi=150)
+        plt.close(fig)
+
+
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
     """Write binary output and diagnostic plots from a completed Vlasov-1D solve."""
     t0 = time()
+
+    # Driver line spectra (multi-line drivers only). Guarded: a diagnostics failure
+    # here must never cost a completed solve its binary output and field/dist plots.
+    try:
+        plot_driver_spectra(cfg, td, args)
+    except Exception as exc:  # noqa: BLE001 - diagnostics must not break post-processing
+        print(f"[post_process] driver spectrum plot skipped: {type(exc).__name__}: {exc}",
+              flush=True)
 
     # Get species names for directory creation
     species_names = list(cfg["grid"]["species_grids"].keys())
