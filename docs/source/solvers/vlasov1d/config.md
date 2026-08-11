@@ -222,7 +222,7 @@ Simulation grid parameters.
 | `vmin` | float | Lower bound of the velocity grid. Optional; defaults to `-vmax` (symmetric grid). Use to specify an asymmetric velocity extent (not needed for multispecies). |
 | `xmin` | float | Domain minimum x |
 | `xmax` | float | Domain maximum x |
-| `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. |
+| `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. See [Running on Multiple GPUs](overview.md#running-on-multiple-gpus) for the memory model, the launch command, and the reverse-mode AD caveat on `"v"`. |
 
 The velocity grid is uniform and cell-centered: `dv = (vmax - vmin) / nv` with cell centers spanning `vmin + dv/2` to `vmax - dv/2`. An asymmetric grid (`vmin != -vmax`) is useful, for example, for a bump-on-tail distribution where less resolution is needed on one side. As with `vmax`, choose bounds wide enough that `f ~ 0` at *both* edges so that the spectral velocity push and the zero-flux collision boundary conditions remain accurate.
 
