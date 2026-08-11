@@ -17,6 +17,7 @@ at the top of a configuration file selects which one runs.
 | `hermite-legendre-1d` | [Hermite-Legendre-1D](solvers/hermite_legendre_1d/overview.md) | 1D1V mixed Hermite-Legendre electrostatic Vlasov-Poisson |
 | `pic-1d` | [PIC-1D](solvers/pic1d/overview.md) | 1D1V electrostatic particle-in-cell |
 | `tf-1d` | [Two-Fluid 1D](solvers/tf1d/overview.md) | 1D warm two-fluid Poisson with kinetic closures |
+| `osiris` | [OSIRIS wrapper](solvers/osiris/overview.md) | Runs the external OSIRIS PIC code from a native input deck, with MLflow logging and post-processing |
 
 ## Kinetic Solvers
 
@@ -108,3 +109,15 @@ for the machine-learned-closure work.
 
 - [Overview & Equations](solvers/tf1d/overview.md)
 - [Configuration Reference](solvers/tf1d/config.md)
+
+## External Code Wrappers
+
+### [OSIRIS](solvers/osiris/overview.md)
+
+Wrapper that runs the external [OSIRIS](https://osiris-code.github.io/) PIC code under the `ergoExo`
+lifecycle. The native OSIRIS input deck is the source of truth; the manifest points at it, patches
+it with overrides, and handles execution, HDF5 → NetCDF conversion, canned plots, and MLflow
+logging. Requires a separately built OSIRIS binary.
+
+- [Usage Overview](solvers/osiris/overview.md)
+- [Configuration Reference](solvers/osiris/config.md)

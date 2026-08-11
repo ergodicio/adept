@@ -37,6 +37,7 @@ Documentation
    solvers/pic1d/overview
    solvers/lpse2d/overview
    solvers/tf1d/overview
+   solvers/osiris/overview
 
 .. toctree::
    :maxdepth: 2
@@ -51,6 +52,7 @@ Documentation
    solvers/pic1d/config
    solvers/lpse2d/config
    solvers/tf1d/config
+   solvers/osiris/config
 
 .. toctree::
    :maxdepth: 2
