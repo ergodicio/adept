@@ -37,13 +37,12 @@ Tests are organized one directory per solver.
 | `tests/test_vlasov1d2v` | Equivalence with the 1D solver in the separable limit, conservation, and the cylindrical Landau operator |
 | `tests/test_vlasov2d` | Landau damping, EM dispersion, gyrorotation, distributed initialization |
 | `tests/test_vfp1d` | Fokker-Planck models and relaxation, heating, Epperlein-Haines transport coefficients, spherical geometry |
-| `tests/test_lpse2d` | EPW frequency, TPD threshold, speckle, dealiasing |
+| `tests/test_lpse2d` | EPW frequency, TPD threshold, speckle, dealiasing, pretrained-driver loading |
 | `tests/test_spectrax1d` | Landau damping, Maxwell solver, shift and Lorentz operators |
 | `tests/test_hermite_legendre_1d` | Conservation, streaming, Landau damping, linear advection, implicit/IMEX integrators |
 | `tests/test_hermite_poisson_1d` | Collisions, E-field coupling, drivers, integrators, filtering, linear response |
 | `tests/test_pic1d` | Bohm-Gross dispersion, Landau damping, two-stream instability |
 | `tests/test_tf1d` | Bohm-Gross and kinetic resonance (forward and backward pass), Landau damping, agreement with a Vlasov run |
-| `tests/test_cloud` | AWS Batch code-bundle construction |
 
 ## Continuous integration
 
@@ -53,6 +52,6 @@ code (`adept/_base_.py`, `adept/utils.py`, `pyproject.toml`, …) runs everythin
 a manual dispatch always runs the full set.
 
 ```{note}
-The `test_vlasov1d2v`, `test_vlasov2d`, `test_tf1d`, and `test_cloud` suites do not currently have a
-CI job and so are only run locally.
+The `test_vlasov1d2v`, `test_vlasov2d`, and `test_tf1d` suites do not currently have a CI job and so
+are only run locally.
 ```
