@@ -1,0 +1,139 @@
+simulation
+{
+
+}
+
+node_conf
+{
+ node_number(1:2)=30,4,
+ if_periodic(1:2)=.false.,.true.,
+}
+
+
+grid
+{
+nx_p(1:2)=6000,3600,
+coordinates="cartesian",
+}
+time_step
+{
+dt=0.1259,
+ndump=50,
+}
+restart
+{
+ndump_fac = 5000,
+if_restart=.false.,
+}
+space
+{
+xmin(1:2)=0.0 ,0.0,
+xmax(1:2)=1076.04,645.624,
+if_move(1:2)=.false., .false.,
+}
+time
+{
+tmin=0.0d0,
+tmax=50000.0d0,
+}
+el_mag_fld
+{
+}
+emf_bound
+{
+type(1:2,1)="vpml","vpml",
+vpml_diffuse(1:2,1) = .true., .true.,
+vpml_bnd_size=45,
+}
+diag_emf
+{
+ndump_fac=10,
+reports="e1","e2","e3","b1","b2","b3",
+}
+particles
+{
+num_species=1,
+}
+
+species
+{
+ num_par_max=2300000,
+ rqm=-1.0,
+ num_par_x(1:2) = 8,8,
+}
+
+! uth=0.04423 is 1keV
+! uth=0.0
+udist
+{
+uth(1:3) =0.076621 , 0.076621, 0.076621,
+}
+
+profile
+{
+num_x=6,
+fx(1:6,1)=0.0,0.225,0.275,0.0,0.0,0.0,
+x(1:6,1)=0,0.00001,1076.03,1076.04,50000,100000,
+fx(1:6,2) = 1,1,1,1,1,1,
+x(1:6,2) = 0,1,2,3,4,5000,
+}
+
+!
+spe_bound
+{
+type(1:2,1)="thermal", "thermal",
+uth_bnd(1:3,1,1)=0.076621,0.076621,0.076621,
+uth_bnd(1:3,2,1)=0.076621,0.076621,0.076621,
+thermal_type(1:2,1) = "half max","half max",
+}
+
+
+diag_species
+{
+ndump_fac_pha=30,
+ndump_fac=30,
+reports="charge",
+ndump_fac_raw=100,
+ps_xmin(1:2)=0.0 ,0.0,
+ps_xmax(1:2)=1076.04,645.624,
+ps_pmin(1:3)=-0.3,-0.3,-0.3,
+ps_pmax(1:3)=1.0,1.0, 1.0,
+ps_nx(1:2)=1000,500,
+ps_np(1:3)=100,100,100,
+if_ps_p_auto(1:3)=.true., .true., .true.,
+phasespaces="p1x1","p1p2","p1p3","x1p1p2",
+ps_gammamin=1.0,
+ps_gammamax = 2000.0,
+ps_ngamma= 1024,
+if_ps_gamma_auto=.true.,
+raw_gamma_limit=1.2,
+raw_fraction = 0.1,
+n_ene_bins=6,
+ene_bins(1:6)=0.05,0.1,0.2,0.25,0.3,0.5,
+pha_ene_bin='x1_q1',
+}
+
+
+current{}
+
+
+smooth
+{
+
+}
+
+
+diag_current
+{
+}
+
+
+antenna_array
+{
+n_antenna=1,
+}
+antenna
+{
+a0=0.0033,t_rise=5,t_flat=50000.67,t_fall=5,omega0=1.0,x0=320,rad_x=500000.0,
+side=2,
+}
