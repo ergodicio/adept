@@ -123,7 +123,7 @@ Each species is defined with a key starting with `species-` (e.g., `species-back
 | `noise_val` | float | Amplitude of noise |
 | `v0` | float | Drift velocity in code units of $\sqrt{T_0/m_e}$ (thermal-σ units). Numeric only — dimensional strings are not supported here |
 | `T0` | float | Temperature in units of `normalizing_temperature`. The initialized distribution has velocity variance `T0/mass`. Numeric only |
-| `m` | float | Exponent for super-Gaussian distribution $f \propto \exp[-\|v/(\alpha v_{th})\|^m]$. `2.0` is Maxwellian. Note: $\alpha$ is chosen to fix the moment ratio $\langle v^4\rangle/\langle v^2\rangle = 3\,T_0/\mathrm{mass}$ for all $m$; the *variance* equals `T0/mass` only at `m: 2`. For flat-top distributions (`m > 2`) the second-moment temperature diagnostic will read higher than `T0` (e.g. ×1.24 at `m: 3`, ×1.37 at `m: 4`) |
+| `m` | float | Exponent for super-Gaussian distribution $f \propto \exp[-\|v/(\alpha v_{th})\|^m]$. `2.0` is Maxwellian. $\alpha = \sqrt{\Gamma(1/m)/\Gamma(3/m)}$ (the 1D normalization), so the realized *variance* equals `T0/mass` for **every** `m` — a species labeled `T0` is at temperature `T0` regardless of `m`, consistent with the Krook target and the `super_gaussian` collision operator. (Before this change $\alpha$ was the 3D-isotropic Matte/DLM value $\sqrt{3\Gamma(3/m)/\Gamma(5/m)}$, which fixes $\langle v^4\rangle/\langle v^2\rangle = 3\,T_0/\mathrm{mass}$ and inflates the 1D variance by $F(m)=3\Gamma(3/m)^2/[\Gamma(5/m)\Gamma(1/m)]$: ×1.24 at `m: 3`, ×1.37 at `m: 4`.) |
 | `basis` | string | Spatial profile type (see below) |
 
 #### Basis Types

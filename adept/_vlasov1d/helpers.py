@@ -25,6 +25,11 @@ from .. import patched_mlflow as mlflow
 # g_5_m = np.squeeze(gamma_da.loc[{"gamma": "5/m"}].data)
 
 
+def gamma_1_over_m(m):
+    """Evaluate Gamma(1 / m) for super-Gaussian normalization."""
+    return gamma(1.0 / m)
+
+
 def gamma_3_over_m(m):
     """Evaluate Gamma(3 / m) for super-Gaussian normalization."""
     return gamma(3.0 / m)  # np.interp(m, m_ax, g_3_m)
@@ -73,11 +78,16 @@ def _initialize_supergaussian_distribution_(
     # Thermal velocity: v_t = sqrt(T/m)
     v_thermal = np.sqrt(T0 / mass)
 
-    # Alpha factor for supergaussian normalization. This fixes the moment ratio
-    # <v^4>/<v^2> = 3*T0/mass for every order m; the realized *variance* equals
-    # T0/mass only at m=2 (Maxwellian). For m>2 flat-tops the second-moment
-    # temperature exceeds T0 (x1.24 at m=3, x1.37 at m=4). See docs config.md.
-    alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
+    # 1D super-Gaussian width normalization: alpha = sqrt(Gamma(1/m)/Gamma(3/m))
+    # makes the realized VARIANCE equal T0/mass for every order m, i.e. a species
+    # labeled T0 is at temperature T0 for any m (alpha = sqrt(2) at m=2, unchanged).
+    # This is also the convention the Krook target (variance T0/mass) and the
+    # SuperGaussianDougherty temperature relation D = beta^(-2/m)*G(3/m)/G(1/m)
+    # already use. The previous alpha = sqrt(3*G(3/m)/G(5/m)) is the 3D-isotropic
+    # (Matte/DLM) normalization -- it fixes <v^2>_3D = 3*T0/mass -- and on a 1D
+    # axis it inflates the variance by F(m) = 3*G(3/m)^2/(G(5/m)*G(1/m))
+    # (x1.24 at m=3, x1.37 at m=4). See docs config.md.
+    alpha = np.sqrt(gamma_1_over_m(supergaussian_order) / gamma_3_over_m(supergaussian_order))
 
     single_dist = -(np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
 
