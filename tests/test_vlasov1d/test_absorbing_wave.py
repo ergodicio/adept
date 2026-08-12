@@ -49,7 +49,7 @@ def test_absorbing_boundaries():
     time_env = EnvelopeFunction(center=40.0, width=30.0, rise=5.0, baseline=0.0, bump_height=1.0, is_trough=False)
     space_env = EnvelopeFunction(center=800.0, width=50.0, rise=10.0, baseline=0.0, bump_height=1.0, is_trough=False)
     envelope = SpaceTimeEnvelopeFunction(time_envelope=time_env, space_envelope=space_env)
-    ey_driver = EMDriver(a0=1.0e-4, k0=-1.4, w0=15.82, dw0=0.0, envelope=envelope)
+    ey_driver = EMDriver(a0=1.0e-4, k0=-1.4, w0=15.82, phase=0.0, dw0=0.0, envelope=envelope)
     drivers = [ey_driver]
 
     args = {}
