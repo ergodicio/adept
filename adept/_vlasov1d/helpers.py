@@ -2,8 +2,8 @@
 
 #  Copyright (c) Ergodic LLC 2023
 #  research@ergodic.io
-import os
 import math
+import os
 from time import time
 
 import numpy as np
@@ -171,6 +171,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
     return species_distributions
 
+
 def get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm: PlasmaNormalization | None = None):
     # encapsulate the logic into a separate function here
     intensity = UREG.Quantity(intensity).to("W/m^2")
@@ -235,12 +236,13 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
 
         power = amp**2
         frac = power / power.sum() if power.sum() > 0 else power
-        base = ((cfg.get("drivers", {}).get(field, {}) or {}).get("0", {}) or {}) \
-            .get("params", {}).get("intensities", {})
+        base = (
+            ((cfg.get("drivers", {}).get(field, {}) or {}).get("0", {}) or {}).get("params", {}).get("intensities", {})
+        )
         base = base.get("base_intensity") if isinstance(base, dict) else None
 
         I_j, unit = frac, ""
-        if isinstance(base, str) and base.split():          # "2.378e+14 W/cm^2"
+        if isinstance(base, str) and base.split():  # "2.378e+14 W/cm^2"
             val, _, u = base.partition(" ")
             try:
                 I_j, unit = frac * float(val), u.strip()
@@ -255,8 +257,7 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
         # constrained_layout sizes the suptitle band to the actual text; do NOT pair
         # it with tight_layout(rect=...) + suptitle(y=...), which reserve a fixed band
         # and leave a gap when the title is shorter than the reservation.
-        fig, axes = plt.subplots(3, 1, figsize=(7.2, 8.6), sharex=True,
-                                 constrained_layout=True)
+        fig, axes = plt.subplots(3, 1, figsize=(7.2, 8.6), sharex=True, constrained_layout=True)
         bw_pct = (dw.max() - dw.min()) * 100.0
         spacing = float(np.diff(np.sort(dw)).mean()) if len(dw) > 1 else 0.0
         run_name = ((cfg.get("mlflow") or {}).get("run")) or ""
@@ -264,8 +265,10 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
         title = f"{field} driver — broadband line spectrum"
         if run_name:
             title += f"\n{run_name}"
-        title += (f"\n{len(dlist)} lines   |   full width $\\Delta\\omega/\\omega_0$ = "
-                  f"{bw_pct:.3g}%   |   spacing $\\delta\\omega/\\omega_0$ = {spacing:.3g}")
+        title += (
+            f"\n{len(dlist)} lines   |   full width $\\Delta\\omega/\\omega_0$ = "
+            f"{bw_pct:.3g}%   |   spacing $\\delta\\omega/\\omega_0$ = {spacing:.3g}"
+        )
         if base is not None:
             title += f"\n$I_{{base}}$ = {base}"
             if unit:
@@ -275,8 +278,9 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
         axes[0].plot(dw, I_j, "o", ms=4, color="#1f77b4")
         axes[0].set_ylabel("line intensity $I_j$" + (f"  [{unit}]" if unit else "  [$I_j/I_{base}$]"))
         axes[0].set_ylim(bottom=0)
-        axes[0].annotate(rf"$\Sigma_j I_j$ = {I_j.sum():.4g}", xy=(0.02, 0.06),
-                         xycoords="axes fraction", fontsize=8, color="0.35")
+        axes[0].annotate(
+            rf"$\Sigma_j I_j$ = {I_j.sum():.4g}", xy=(0.02, 0.06), xycoords="axes fraction", fontsize=8, color="0.35"
+        )
 
         pos = I_j > 0
         if pos.any():
@@ -284,13 +288,23 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
             lo_, hi_ = np.log10(I_j[pos]).min(), np.log10(I_j[pos]).max()
             if hi_ - lo_ < 0.1:
                 axes[1].set_ylim(lo_ - 0.5, hi_ + 0.5)
-            axes[1].annotate(f"dynamic range: {10 ** (hi_ - lo_):.3g}x", xy=(0.02, 0.88),
-                             xycoords="axes fraction", fontsize=8, color="0.35")
+            axes[1].annotate(
+                f"dynamic range: {10 ** (hi_ - lo_):.3g}x",
+                xy=(0.02, 0.88),
+                xycoords="axes fraction",
+                fontsize=8,
+                color="0.35",
+            )
         if (~pos).any():  # an optimizer can drive lines to zero; don't hide them
             floor = np.log10(I_j[pos]).min() if pos.any() else 0.0
             axes[1].plot(dw[~pos], np.full(int((~pos).sum()), floor), "x", ms=6, color="0.5")
-            axes[1].annotate(f"{int((~pos).sum())} line(s) at I=0 (x)", xy=(0.02, 0.06),
-                             xycoords="axes fraction", fontsize=8, color="0.4")
+            axes[1].annotate(
+                f"{int((~pos).sum())} line(s) at I=0 (x)",
+                xy=(0.02, 0.06),
+                xycoords="axes fraction",
+                fontsize=8,
+                color="0.4",
+            )
         axes[1].set_ylabel(r"$\log_{10} I_j$")
 
         axes[2].plot(dw, phases, "o", ms=4, color="#2ca02c")
@@ -319,9 +333,8 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
     # here must never cost a completed solve its binary output and field/dist plots.
     try:
         plot_driver_spectra(cfg, td, args)
-    except Exception as exc:  # noqa: BLE001 - diagnostics must not break post-processing
-        print(f"[post_process] driver spectrum plot skipped: {type(exc).__name__}: {exc}",
-              flush=True)
+    except Exception as exc:
+        print(f"[post_process] driver spectrum plot skipped: {type(exc).__name__}: {exc}", flush=True)
 
     # Get species names for directory creation
     species_names = list(cfg["grid"]["species_grids"].keys())

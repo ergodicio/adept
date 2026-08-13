@@ -1,21 +1,20 @@
 """Domain objects that represent a configured Vlasov-1D simulation."""
 
 import warnings
-from typing import List
 
 import equinox as eqx
-import jax 
+import jax
 import jax.numpy as jnp
 import numpy as np
-from jaxtyping import Array
 from jax import tree_util as jtu
+from jaxtyping import Array
 
 from adept._vlasov1d.datamodel import (
     AKWDriverConfig,
+    BroadbandConfig,
     EMDriverConfig,
     EMDriverSetConfig,
     IntensityWavelengthDriverConfig,
-    BroadbandConfig,
     SpeciesComponentConfig,
     SpeciesConfig,
     StochasticDriverConfig,
@@ -36,6 +35,7 @@ from adept.functions import (
 )
 from adept.normalization import PlasmaNormalization
 
+
 class EMDriver(eqx.Module):
     """Normalized electromagnetic driver used by longitudinal or transverse sources."""
 
@@ -48,8 +48,7 @@ class EMDriver(eqx.Module):
     is_point_source: bool = False
 
     @staticmethod
-    # TODO: figure out new class from BaseVlasov with init_modules and vg (see for a way to ingest trainabale and non-trainable modules)
-    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> List["EMDriver"]:
+    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> list["EMDriver"]:
         """Convert user driver configuration into normalized solver parameters."""
         envelope = SpaceTimeEnvelopeFunction.from_config(cfg.envelope, norm)
 
@@ -78,25 +77,28 @@ class EMDriver(eqx.Module):
                 return [EMDriver(a0, k0, w0, params.phase, dw0, envelope, is_point_source=is_point)]
 
             case BroadbandConfig(intensities=intensities, wavelength=wavelength, leftgoing=leftgoing):
-                a0, k0, w0 = get_akw_from_intensity_wavelength(intensities['base_intensity'], wavelength, leftgoing, norm)
+                a0, k0, w0 = get_akw_from_intensity_wavelength(
+                    intensities["base_intensity"], wavelength, leftgoing, norm
+                )
 
                 is_point = cfg.source_type == "point"
                 # need to see if this object remaining for later is required i.e. if the other code in the class is dead
                 broadband_driver = BroadbandDriver(params.model_dump(), a0, k0, w0, envelope, is_point)
                 return broadband_driver.driver_list
 
+
 class BroadbandDriver(eqx.Module):
     params: dict
     a0: float
     k0: float
-    w0: float 
+    w0: float
     intensities: Array
     delta_omega: Array
     phases: Array
     envelope: SpaceTimeEnvelopeFunction
     is_point_source: bool = False
     driver_list: list
-    
+
     def __init__(self, cfg: dict, a0, k0, w0, envelope, is_point):
         self.params = cfg
         self.a0 = a0
@@ -106,49 +108,43 @@ class BroadbandDriver(eqx.Module):
         self.is_point_source = is_point
 
         # intensities
-        if self.params["intensities"]["init"] == "random": #what do we want random to exactly be?
-            # note: random is not required for reproducing RK Follett results
+        if self.params["intensities"]["init"] == "random":
             int_lo, int_hi = self.params["intensities"].get("range", (0.0, 2.0))
             int_rng = np.random.default_rng(seed=self.params["intensities"]["seed"])
             self.intensities = jnp.array(int_rng.uniform(int_lo, int_hi, self.params["num_colors"]))
         elif self.params["intensities"]["init"] == "uniform":
             self.intensities = jnp.ones(self.params["num_colors"])
         else:
-            raise NotImplementedError(
-                f"Initialization type -- {self.params['intensities']['init']} -- not implemented"
-            )
-        self.intensities = self.a0 * jnp.sqrt((self.intensities / jnp.sum(self.intensities))) # sqrt normalization to have the same power spectrum
+            raise NotImplementedError(f"Initialization type -- {self.params['intensities']['init']} -- not implemented")
+        self.intensities = self.a0 * jnp.sqrt(
+            self.intensities / jnp.sum(self.intensities)
+        )  # sqrt normalization to have the same power spectrum
         # otherwise for uniform, power be N times the expected power
 
         # frequency shift
-        self.delta_omega = jnp.linspace(
-                    -self.params["delta_omega"], self.params["delta_omega"], self.params["num_colors"]
-                ) * self.w0
+        self.delta_omega = (
+            jnp.linspace(-self.params["delta_omega"], self.params["delta_omega"], self.params["num_colors"]) * self.w0
+        )
 
-        # phases (to add: chirp very later (not to worry now))
-        # opt and chirp
-        if self.params["phases"]["init"] == "random": #what do we want random to exactly be?
-            # Follett 2019: spectral phases drawn uniformly over (0, 2*pi) -- the default;
-            # override via phases.range
+        if self.params["phases"]["init"] == "random":
+            # Spectral phases drawn uniformly over (0, 2*pi) -- the default;
+            # Override via phases.range
             phase_lo, phase_hi = self.params["phases"].get("range", (0.0, 2.0 * np.pi))
             phase_rng = np.random.default_rng(seed=self.params["phases"]["seed"])
             self.phases = jnp.array(phase_rng.uniform(phase_lo, phase_hi, self.params["num_colors"]))
         elif self.params["phases"]["init"] == "uniform":
-            self.phases = jnp.ones(self.params["num_colors"]) * self.params["phases"]['base_phase']
+            self.phases = jnp.ones(self.params["num_colors"]) * self.params["phases"]["base_phase"]
         else:
-            raise NotImplementedError(
-                f"Initialization type -- {self.params['phases']['init']} -- not implemented"
-            )
+            raise NotImplementedError(f"Initialization type -- {self.params['phases']['init']} -- not implemented")
 
         DriverList = []
-        for a, dw, phase in zip(self.intensities, self.delta_omega, self.phases):
+        for a, dw, phase in zip(self.intensities, self.delta_omega, self.phases, strict=True):
             driver_obj = EMDriver(a, self.k0, self.w0, phase, dw, self.envelope, self.is_point_source)
             DriverList.append(driver_obj)
-            
+
         self.driver_list = DriverList
 
-    def scale_intensities(self, intensities): # check if needed for the vlasov opt loops (was needed for lpse2d)
-        # reconfigures the intensities into weight-like values
+    def scale_intensities(self, intensities):
         if self.params["intensities"]["activation"] == "linear":
             ints = 0.5 * (jnp.tanh(intensities) + 1.0)
         elif self.params["intensities"]["activation"] == "log":
@@ -164,7 +160,7 @@ class BroadbandDriver(eqx.Module):
 
         return ints
 
-    def get_partition_spec(self): # Maybe rewrite this to account for changes in the way broadband driver is injested now
+    def get_partition_spec(self):
         """
         Get the partition spec for the model
 
@@ -187,20 +183,20 @@ class BroadbandDriver(eqx.Module):
 
         return filter_spec
 
-    def __call__(self, state: dict, args: dict) -> tuple: 
+    def __call__(self, state: dict, args: dict) -> tuple:
         # intensities = self.scale_intensities(self.intensities)
         # intensities = intensities / jnp.sum(intensities)
 
-        ''' figure out what this really does in lpse2d --> is this needed in vlasov (only passed in additional paramteres)
-        but how does diffeqsolve even use these additional parameters'''
+        """figure out what this does in lpse2d --> is this needed in vlasov (only passed in additional parameters)
+        but how does diffeqsolve even use these additional parameters"""
         args["drivers"]["ey"] = {
             "delta_omega": self.delta_omega,
             "phases": jnp.tanh(self.phases) * jnp.pi,
             "intensities": self.intensities,
-        } | self.envelope 
-        # self.envelope configured differently in lpse2d --> connects to larger 'derived' parameters 
+        } | self.envelope
 
-        return state, args 
+        return state, args
+
 
 class StochasticDriver(eqx.Module):
     """Band-limited, time-correlated (Ornstein-Uhlenbeck) longitudinal field driver.
@@ -253,6 +249,7 @@ class StochasticDriver(eqx.Module):
         ai = jax.vmap(lambda col: jnp.interp(t, self.t_grid, col), in_axes=1)(self.amp_imag)
         phase = self.k_modes[:, None] * x[None, :]
         return jnp.sum(ar[:, None] * jnp.cos(phase) - ai[:, None] * jnp.sin(phase), axis=0)
+
 
 class EMDriverSet(eqx.Module):
     """Container for longitudinal (Ex) and transverse (Ey) driver lists."""

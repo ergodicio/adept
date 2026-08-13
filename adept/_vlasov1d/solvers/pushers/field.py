@@ -83,7 +83,7 @@ class TransverseCurrentSourceDriver:
             kk = driver.k0
             factor = driver.envelope(self.xax, current_time)
             return -factor * w_total**2 * driver.a0 * jnp.sin((kk * self.xax - w_total * current_time) + phase)
-        
+
     def __call__(self, t, args):
         """Evaluate the summed transverse current source at time t."""
         total = jnp.zeros_like(self.xax)

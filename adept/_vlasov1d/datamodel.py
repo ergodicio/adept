@@ -120,7 +120,8 @@ class SaveConfig(BaseModel):
 
     fields: dict[str, TimeSaveConfig]
 
-#%%
+
+# %%
 class IntensityWavelengthDriverConfig(BaseModel):
     """Laser driver parameters specified by physical intensity and wavelength."""
 
@@ -129,6 +130,7 @@ class IntensityWavelengthDriverConfig(BaseModel):
     leftgoing: bool = False
     dw0: float = 0.0
     phase: float = 0.0
+
 
 class BroadbandConfig(BaseModel):
     """Broadband laser driver parameters specified by intensity and wavelength configuration (dicts)"""
@@ -139,6 +141,7 @@ class BroadbandConfig(BaseModel):
     intensities: dict
     phases: dict
     leftgoing: bool = False
+
 
 class AKWDriverConfig(BaseModel):
     """Laser driver parameters specified directly as amplitude, wavenumber, and frequency."""
@@ -155,7 +158,10 @@ class AKWDriverConfig(BaseModel):
         if self.k0 is None and self.w0 is None:
             raise ValueError("You must specify at least one of k0 or w0.")
         return self
-#%%
+
+
+# %%
+
 
 class EMDriverConfig(BaseModel):
     """One electromagnetic driver with parameters, envelope, and source geometry."""
