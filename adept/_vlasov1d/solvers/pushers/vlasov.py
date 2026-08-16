@@ -7,10 +7,62 @@ import equinox as eqx
 import jax
 import numpy as np
 from interpax import interp1d, interp2d
+from jax import Array, shard_map, vmap
 from jax import numpy as jnp
-from jax import shard_map, vmap
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+
+
+def _shift_spectrum_impl(spectrum: Array, k: Array, dt: float, shift: Array) -> Array:
+    """Multiply a half-spectrum by the translation factor exp(-i·k·dt·shift)."""
+    return jnp.exp(-1j * k[None, :] * dt * shift[:, None]) * spectrum
+
+
+@jax.custom_vjp
+def _shift_spectrum(spectrum: Array, k: Array, dt: float, shift: Array) -> Array:
+    """Translate `spectrum` by `dt * shift`, recomputing the phase factor when reversed.
+
+    Mathematically this is just ``exp(-1j * k * dt * shift) * spectrum``. The custom VJP
+    exists purely to trade a stored array for a cheap recomputation in the backward pass.
+
+    Reverse-mode over the plain expression has to keep *two* residuals alive per call: the
+    spectrum, because the phase gradient needs it, and the phase factor itself, because the
+    spectrum gradient needs it. Both are ``(nx, nv // 2 + 1)`` complex128, so a single
+    velocity push stores twice the distribution function it advects — and the sixth-order
+    integrator issues six of them per timestep. Saving only ``(spectrum, k, dt, shift)`` and
+    rebuilding the phase factor from those small generators halves that, at the cost of one
+    elementwise ``exp`` on the reverse pass. On bandwidth-bound hardware that exp is cheaper
+    than the round trip to memory it replaces.
+
+    The backward rule differentiates the recomputed primal with :func:`jax.vjp` rather than
+    hand-deriving the complex-multiply adjoint, so the gradients are exact by construction
+    rather than by argument.
+
+    Note this deliberately wraps only the phase multiply, not the surrounding transforms:
+    ``rfft``/``irfft`` are linear, so autodiff already stores nothing for them, and leaving
+    them alone keeps the FFT conventions (including the Nyquist bin's treatment) untouched.
+
+    :param spectrum: half-spectrum to translate, shape ``(nx, nk)``
+    :param k: wavenumbers along the transformed axis, shape ``(nk,)``
+    :param dt: timestep the shift is applied over
+    :param shift: per-row shift rate, shape ``(nx,)``
+    """
+    return _shift_spectrum_impl(spectrum, k, dt, shift)
+
+
+def _shift_spectrum_fwd(spectrum: Array, k: Array, dt: float, shift: Array):
+    """Return the translated spectrum, saving only the small phase generators."""
+    return _shift_spectrum_impl(spectrum, k, dt, shift), (spectrum, k, dt, shift)
+
+
+def _shift_spectrum_bwd(res, cotangent: Array):
+    """Rebuild the phase factor and take the exact VJP of the recomputed primal."""
+    spectrum, k, dt, shift = res
+    _, vjp = jax.vjp(_shift_spectrum_impl, spectrum, k, dt, shift)
+    return vjp(cotangent)
+
+
+_shift_spectrum.defvjp(_shift_spectrum_fwd, _shift_spectrum_bwd)
 
 
 class VlasovExternalE(eqx.Module):
@@ -84,7 +136,7 @@ class VelocityExponential:
             accel = force / m
             result[species_name] = jnp.real(
                 jnp.fft.irfft(
-                    jnp.exp(-1j * kv_real[None, :] * dt * accel[:, None]) * jnp.fft.rfft(f, axis=1),
+                    _shift_spectrum(jnp.fft.rfft(f, axis=1), kv_real, dt, accel),
                     axis=1,
                 )
             )
