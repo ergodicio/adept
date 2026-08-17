@@ -510,7 +510,6 @@ class FLMCollisions:
             if self.full_aniso_ee:
                 ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
                 pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
-                #
                 d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
 
                 ddv = v**-2.0 * jnp.gradient(pad_f0, dv, axis=1)[:, 2:]

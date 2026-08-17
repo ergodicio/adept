@@ -97,7 +97,6 @@ class ADEPTModule:
             A dictionary of the differential equation solver quantities
 
         """
-        pass
 
     def get_derived_quantities(self) -> dict:
         """
@@ -109,7 +108,6 @@ class ADEPTModule:
             An updated configuration dictionary
 
         """
-        pass
 
     def get_solver_quantities(self):
         """
@@ -121,7 +119,6 @@ class ADEPTModule:
             An updated configuration dictionary
 
         """
-        pass
 
     def get_save_func(self):
         """
@@ -132,7 +129,6 @@ class ADEPTModule:
         This dictionary is set as a class attribute for the ``ADEPTModule`` and are used in the ``__call__`` function
 
         """
-        pass
 
     def init_state_and_args(self):
         """

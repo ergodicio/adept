@@ -333,23 +333,21 @@ def get_solver_quantities(cfg: dict) -> dict:
 
     cfg_grid = {
         **cfg_grid,
-        **{
-            "x": np.linspace(
-                cfg_grid["xmin"] + cfg_grid["dx"] / 2,
-                cfg_grid["xmax"] - cfg_grid["dx"] / 2,
-                cfg_grid["nx"],
-            ),
-            "y": np.linspace(
-                cfg_grid["ymin"] + cfg_grid["dy"] / 2,
-                cfg_grid["ymax"] - cfg_grid["dy"] / 2,
-                cfg_grid["ny"],
-            ),
-            "t": np.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-            "kx": np.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
-            "kxr": np.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
-            "ky": np.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
-            "kyr": np.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
-        },
+        "x": np.linspace(
+            cfg_grid["xmin"] + cfg_grid["dx"] / 2,
+            cfg_grid["xmax"] - cfg_grid["dx"] / 2,
+            cfg_grid["nx"],
+        ),
+        "y": np.linspace(
+            cfg_grid["ymin"] + cfg_grid["dy"] / 2,
+            cfg_grid["ymax"] - cfg_grid["dy"] / 2,
+            cfg_grid["ny"],
+        ),
+        "t": np.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
+        "kx": np.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
+        "kxr": np.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
+        "ky": np.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
+        "kyr": np.fft.rfftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
     }
 
     one_over_kx = np.zeros_like(cfg_grid["kx"])
@@ -559,7 +557,7 @@ def get_density_profile(cfg: dict) -> Array:
 
 def plot_fields(fields, td):
     t_skip = int(fields.coords["t (ps)"].data.size // 8)
-    t_skip = t_skip if t_skip > 1 else 1
+    t_skip = max(1, t_skip)
     tslice = slice(0, -1, t_skip)
 
     dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
@@ -611,7 +609,7 @@ def plot_fields(fields, td):
 
 def plot_kt(kfields, td):
     t_skip = int(kfields.coords["t (ps)"].data.size // 6)
-    t_skip = t_skip if t_skip > 1 else 1
+    t_skip = max(1, t_skip)
     tslice = slice(0, -1, t_skip)
 
     for abs_kmax in [2.5, 1.25]:
