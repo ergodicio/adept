@@ -216,7 +216,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                 species_dir = os.path.join(fields_base_dir, species_name)
 
                 t_skip = int(species_xr.coords["t"].data.size // 8)
-                t_skip = t_skip if t_skip > 1 else 1
+                t_skip = max(1, t_skip)
                 tslice = slice(0, -1, t_skip)
 
                 for nm, fld in species_xr.items():
@@ -247,7 +247,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                 shared_xr = fields_dict["fields"]
 
                 t_skip = int(shared_xr.coords["t"].data.size // 8)
-                t_skip = t_skip if t_skip > 1 else 1
+                t_skip = max(1, t_skip)
                 tslice = slice(0, -1, t_skip)
 
                 for nm, fld in shared_xr.items():
@@ -311,7 +311,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
 
         # Select ~8 time snapshots for facet plot
         t_skip = int(f_species.coords["t"].data.size // 8)
-        t_skip = t_skip if t_skip > 1 else 1
+        t_skip = max(1, t_skip)
         tslice = slice(0, -1, t_skip)
 
         # Create f(x,v) phase space plot

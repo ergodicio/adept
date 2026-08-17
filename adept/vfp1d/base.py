@@ -161,7 +161,7 @@ class BaseVFP1D(ADEPTModule):
         state = {"f0": f0}
         # not currently necessary but kept for completeness
         for il in range(1, grid.nl + 1):
-            for im in range(0, il + 1):
+            for im in range(il + 1):
                 state[f"f{il}{im}"] = jnp.zeros((grid.nx + 1, grid.nv))
 
         state["f10"] = f10

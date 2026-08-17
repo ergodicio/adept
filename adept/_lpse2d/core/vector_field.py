@@ -41,7 +41,7 @@ class SplitStep:
 
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         new_y = {}
-        for k in y.keys():
+        for k in y:
             if k in self.complex_state_vars:
                 new_y[k] = y[k].view(jnp.complex128)
             else:
@@ -49,7 +49,7 @@ class SplitStep:
         return new_y
 
     def _pack_y_(self, y: dict[str, Array], new_y: dict[str, Array]) -> tuple[dict[str, Array], dict[str, Array]]:
-        for k in y.keys():
+        for k in y:
             y[k] = y[k].view(jnp.float64)
             new_y[k] = new_y[k].view(jnp.float64)
 

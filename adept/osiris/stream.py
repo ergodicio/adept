@@ -223,8 +223,7 @@ class StreamWriter:
         self._ts.append(float(da.attrs.get("time", np.nan)))
         it = int(da.attrs.get("iter", -1))
         self._its.append(it)
-        if it > self.last_iter:
-            self.last_iter = it
+        self.last_iter = max(self.last_iter, it)
         for d in self.spatial_dims:
             cv = np.asarray(da.coords[d].values)
             self._bounds[d].append((float(cv[0]), float(cv[-1])) if cv.size else (np.nan, np.nan))
