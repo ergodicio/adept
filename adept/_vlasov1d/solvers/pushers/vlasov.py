@@ -6,9 +6,9 @@ from functools import partial
 import equinox as eqx
 import jax
 import numpy as np
-from interpax import interp1d, interp2d
+from interpax import interp2d
 from jax import numpy as jnp
-from jax import shard_map, vmap
+from jax import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
@@ -103,6 +103,51 @@ class VelocityExponential:
             return self.push(f_dict, e, pond, dt)
 
 
+def _uniform_cubic_interp(f: jnp.ndarray, shift: jnp.ndarray, dv: float) -> jnp.ndarray:
+    """Shift each row of ``f`` on a uniform grid with local cubic splines.
+
+    This is the uniform-grid specialization of ``interpax.interp1d(method="cubic")``
+    used by the velocity pusher. Each row has one constant velocity shift, so its
+    cell offset and fractional displacement are shared by every velocity point.
+    The direct four-point stencil avoids constructing query grids, binary searches,
+    and a full array of spline derivatives.
+    """
+    _, nv = f.shape
+    if nv < 2:
+        raise ValueError("cubic interpolation requires at least two velocity cells")
+
+    scaled_shift = shift / jnp.asarray(dv, dtype=f.dtype)
+    velocity_index = jnp.arange(nv, dtype=jnp.int32)[None, :]
+
+    # For query index u = j - shift/dv, floor(u) separates into the velocity
+    # index j and one row-wise offset. Clipping selects the endpoint segment;
+    # t is then bounded to that segment so exterior queries cannot overflow.
+    row_offset = jnp.floor(-scaled_shift).astype(jnp.int32)[:, None]
+    left = jnp.clip(velocity_index + row_offset, 0, nv - 2)
+    query_index = velocity_index - scaled_shift[:, None]
+    t = jnp.clip(query_index - left, 0.0, 1.0)
+
+    fm1 = jnp.take_along_axis(f, jnp.clip(left - 1, 0, nv - 1), axis=1)
+    f0 = jnp.take_along_axis(f, left, axis=1)
+    f1 = jnp.take_along_axis(f, left + 1, axis=1)
+    f2 = jnp.take_along_axis(f, jnp.clip(left + 2, 0, nv - 1), axis=1)
+
+    # interpax's local cubic method uses one-sided endpoint slopes and the
+    # average of adjacent secant slopes in the interior. Multiplication by dv
+    # is folded into m0/m1, leaving differences of f values directly.
+    m0 = jnp.where(left == 0, f1 - f0, 0.5 * (f1 - fm1))
+    m1 = jnp.where(left == nv - 2, f1 - f0, 0.5 * (f2 - f0))
+
+    t2 = t * t
+    t3 = t2 * t
+    interpolated = (
+        (2.0 * t3 - 3.0 * t2 + 1.0) * f0 + (t3 - 2.0 * t2 + t) * m0 + (-2.0 * t3 + 3.0 * t2) * f1 + (t3 - t2) * m1
+    )
+
+    outside = (query_index < 0.0) | (query_index > nv - 1)
+    return jnp.where(outside, jnp.asarray(1.0e-30, dtype=f.dtype), interpolated)
+
+
 class VelocityCubicSpline:
     """Cubic-spline velocity-space advection under electric and ponderomotive forces."""
 
@@ -110,7 +155,6 @@ class VelocityCubicSpline:
         """Store per-species velocity grids, interpolation kernel, and sharding metadata."""
         self.species_grids = species_grids
         self.species_params = species_params
-        self.interp = vmap(partial(interp1d, extrap=1.0e-30), in_axes=0)
         self.parallel = parallel
         if self.parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
@@ -119,15 +163,12 @@ class VelocityCubicSpline:
         """Apply the unsharded cubic-spline velocity push to each species."""
         result = {}
         for species_name, f in f_dict.items():
-            v = self.species_grids[species_name]["v"]
+            dv = self.species_grids[species_name]["dv"]
             q = self.species_params[species_name]["charge"]
             m = self.species_params[species_name]["mass"]
-            nx = f.shape[0]
-            v_repeated = jnp.repeat(v[None, :], repeats=nx, axis=0)
             force = q * e + (q**2 / m) * pond
             accel = force / m
-            vq = v_repeated - accel[:, None] * dt
-            result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
+            result[species_name] = _uniform_cubic_interp(f, accel * dt, dv)
         return result
 
     def __call__(self, f_dict, e, pond, dt):
