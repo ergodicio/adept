@@ -1,0 +1,78 @@
+# Reduced, runnable heating/moment benchmark derived from Joglekar et al. PRL 112,
+# 105004 (2014). This is not yet the fully implicit PRL reproduction:
+# `kinetic-ohm` removes light/plasma waves using Eq. (2) plus a current-moment
+# projection, while the original IMPACTA calculation solved the kinetic current
+# response fully implicitly.
+solver: vfp-2d
+
+mlflow:
+  experiment: vfp2d-joglekar-2014
+  run: two-spot-ib-smoke
+
+units:
+  laser_wavelength: 351nm
+  reference electron temperature: 1600eV
+  reference ion temperature: 160eV
+  reference electron density: 2.5e22/cm^3
+  # The five-page Letter does not report ionization. Keep this explicit and
+  # replace it from the original input deck before a reference comparison.
+  Z: 1
+  Ion: Au+
+  logLambda: nrl
+
+density:
+  quasineutrality: true
+  species-electron:
+    m: 2.0
+    n: {basis: uniform, baseline: 1.0}
+    T: {basis: uniform, baseline: 1.0}
+
+grid:
+  # Central reduced box. Published lambda_mfp=0.34 um and r0=50 lambda_mfp=17 um.
+  xmin: -34um
+  xmax: 34um
+  nx: 32
+  ymin: -34um
+  ymax: 34um
+  ny: 32
+  tmin: 0fs
+  tmax: 0.02fs
+  dt: 0.01fs
+  nv: 96
+  vmax: 8.0
+  lmax: 2
+  mmax: 2
+
+terms:
+  field_solver:
+    mode: kinetic-ohm
+    hidden_density_gradient:
+      active: true
+      scale_length: 17um  # Ln=50 lambda_mfp
+      switch_off: 17.78ps  # 800 tau_n, using 27000 tau_n = 0.6 ns
+      profile:
+        basis: gaussian_spots
+        x_center: 0um
+        x_radius: 17um
+        # Placeholder separation; replace from the original input deck.
+        y_centers: [-8.5um, 8.5um]
+        y_radius: 17um
+  fokker_planck:
+    active: true
+    flm: {ee: true}
+    f00: {model: CoulombianKernel, scheme: central}
+
+drivers:
+  ib:
+    intensity_1e15_Wcm2: 0.25
+    polarisation: linear
+    profile:
+      basis: gaussian_spots
+      x_center: 0um
+      x_radius: 17um
+      # Placeholder separation: the Letter prints y_max but not its value.
+      y_centers: [-8.5um, 8.5um]
+      y_radius: 17um
+
+save:
+  t: {tmin: 0fs, tmax: 0.02fs, nt: 3}

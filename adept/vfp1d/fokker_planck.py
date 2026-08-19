@@ -352,7 +352,8 @@ class F0Collisions(eqx.Module):
 
 class FLMCollisions:
     """
-    The FLM collision operator is as described in Tzoufras2014.
+    The linearized anisotropic FLM collision operator is described by
+    Tzoufras et al., JCP 230 (2011), Eq. (41).
 
     It also has an implementation of electron-electron hack
     where the off-diagonal terms in the electron-electron collision
@@ -488,11 +489,23 @@ class FLMCollisions:
         Solves a tridiagonal system of equations.
         """
         op = lx.TridiagonalLinearOperator(diagonal=diag, upper_diagonal=upper, lower_diagonal=lower)
+        if jnp.iscomplexobj(f10):
+            # Lineax requires the operator and vector PyTree structures/dtypes
+            # to agree. The collision matrix is real, so solve the two complex
+            # components independently without constructing a complex matrix.
+            real = lx.linear_solve(op, jnp.real(f10), solver=lx.AutoLinearSolver(well_posed=True)).value
+            imag = lx.linear_solve(op, jnp.imag(f10), solver=lx.AutoLinearSolver(well_posed=True)).value
+            return real + 1j * imag
         return lx.linear_solve(op, f10, solver=lx.AutoLinearSolver(well_posed=True)).value
 
-    def __call__(self, Z, ni, f0, f10, dt, include_ee_offdiag_explicitly=True):
+    def solve_harmonic(self, Z, ni, f0, flm, dt, il: int, include_ee_offdiag_explicitly=True):
         """
-        Solves the FLM collision operator for all l and m.
+        Solve the collision operator for one harmonic order ``il``.
+
+        Collisions are diagonal in ``m`` for the linearized isotropic
+        background used here, so every ``m`` at a given ``il`` uses the same
+        radial operator. Inputs are flattened over configuration space with
+        shape ``(nspace, nv)``.
 
         The solve has two options:
 
@@ -502,32 +515,45 @@ class FLMCollisions:
         2. The ee collision operator is ignored and the Z* scaling is used instead
 
         """
+        if not 1 <= il <= self.grid.nl:
+            raise ValueError(f"il must satisfy 1 <= il <= {self.grid.nl}; got {il}")
+
         v = self.grid.v[None, :]
         dv = self.grid.dv
-        for il in range(1, self.grid.nl + 1):
-            ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
+        ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
 
-            if self.full_aniso_ee:
-                ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
-                pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
-                #
-                d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
+        if self.full_aniso_ee:
+            ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
+            pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
+            d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
 
-                ddv = v**-2.0 * jnp.gradient(pad_f0, dv, axis=1)[:, 2:]
+            ddv = v**-2.0 * jnp.gradient(pad_f0, dv, axis=1)[:, 2:]
 
-                diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)
-                lower = -dt * self.nuee_coeff * ee_lower
-                upper = -dt * self.nuee_coeff * ee_upper
+            diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)
+            lower = -dt * self.nuee_coeff * ee_lower
+            upper = -dt * self.nuee_coeff * ee_upper
 
-                new_f10 = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, f10)
+            new_flm = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, flm)
 
-                if include_ee_offdiag_explicitly:
-                    new_f10 = new_f10 + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
-                        None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
-                    )
+            if include_ee_offdiag_explicitly:
+                new_flm = new_flm + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
+                    None, flm, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
+                )
+        else:
+            # Epperlein--Haines Z* approximation to electron--electron scattering.
+            new_flm = flm / (1 - dt * self.nuei_coeff * self.Z_nuei_scaling * ei_diag)
 
-            else:
-                # only uses the Z* epperlein haines scaling instead of solving the ee collisions
-                new_f10 = f10 / (1 - dt * self.nuei_coeff * self.Z_nuei_scaling * ei_diag)
+        return new_flm
 
-        return new_f10
+    def __call__(self, Z, ni, f0, f10, dt, include_ee_offdiag_explicitly=True):
+        """Backward-compatible ``f10`` solve for the VFP-1D ``l=1`` state."""
+
+        return self.solve_harmonic(
+            Z=Z,
+            ni=ni,
+            f0=f0,
+            flm=f10,
+            dt=dt,
+            il=1,
+            include_ee_offdiag_explicitly=include_ee_offdiag_explicitly,
+        )

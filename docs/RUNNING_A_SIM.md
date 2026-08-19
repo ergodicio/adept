@@ -12,6 +12,7 @@ uv run run.py --cfg path_to_my_config
 - [Vlasov-1D2V](source/solvers/vlasov1d2v/config.md) - 1D2V Vlasov-Poisson-Fokker-Planck in cylindrical velocity space, with a full-geometry Coulomb collision operator
 - [Vlasov-2D](source/solvers/vlasov2d/config.md) - 2D2V Vlasov-Maxwell solver
 - [VFP-1D](source/solvers/vfp1d/config.md) - Vlasov-Fokker-Planck electron transport solver
+- [VFP-2D](source/solvers/vfp2d/config.md) - 2D3P arbitrary-spherical-harmonic Vlasov-Maxwell-Fokker-Planck solver
 - [LPSE-2D (Envelope-2D)](source/solvers/lpse2d/config.md) - 2D laser-plasma envelope solver for TPD/SRS
 - [Spectrax-1D](source/solvers/spectrax1d/config.md) - 1D Hermite-Fourier Vlasov-Maxwell solver
 - [Hermite-Legendre-1D](source/solvers/hermite_legendre_1d/config.md) - 1D-1V mixed Hermite-Legendre electrostatic Vlasov-Poisson solver
