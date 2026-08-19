@@ -27,7 +27,7 @@ The solver includes:
 - all three magnetic-field components, algebraic and tridiagonal in $m$ at fixed $\ell$;
 - all three components of Maxwell's equations with $\partial_z=0$;
 - a spectral initial Poisson solve;
-- conservative implicit isotropic electron-electron collisions;
+- density-conserving implicit isotropic electron-electron collisions;
 - the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$.
 - spatially shaped inverse-bremsstrahlung or Maxwellian heating;
 - distribution-function diagnostics for the scalar, vector, $f_2$ tensor, and Nernst moments used in kinetic Ohm's law.

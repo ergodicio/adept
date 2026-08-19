@@ -8,7 +8,7 @@ solver: vfp-2d
 
 mlflow:
   experiment: vfp2d-joglekar-2014
-  run: two-spot-nernst-reconnection-200ps-logmean
+  run: two-spot-nernst-reconnection-200ps-chang-cooper
 
 units:
   laser_wavelength: 351nm
@@ -62,9 +62,10 @@ terms:
   fokker_planck:
     active: true
     flm: {ee: true}
-    # Log-mean flux preserves the spherical energy moment. Central differencing
-    # cools a uniform Maxwellian and reaches a positivity failure near 50 ps.
-    f00: {model: CoulombianKernel, scheme: log_mean}
+    # Chang-Cooper is positivity preserving and is the safer choice once IB
+    # heating drives f00 far from Maxwellian. The 2 fs Strang step applies
+    # collisions in 1 fs half-steps, about 0.045 tau_n for this benchmark.
+    f00: {model: CoulombianKernel, scheme: chang_cooper}
 
 drivers:
   ib:

@@ -76,10 +76,15 @@ terms:
       ee: true
     f00:
       model: CoulombianKernel
-      scheme: central
+      scheme: chang_cooper
 ```
 
 `flm.ee: true` uses the full linearized anisotropic electron-electron terms. `false` uses the Epperlein-Haines $Z_*$ approximation. The `f00` model and differencing choices are shared with VFP-1D.
+`chang_cooper` is recommended when heating produces a strongly non-Maxwellian distribution
+because it is positivity preserving. `log_mean` has a zero semidiscrete spherical-energy
+derivative for the kernel model at the frozen distribution, but a finite implicit update is
+not exactly energy conserving away from a Maxwellian. Collision-step convergence is required;
+keep the collision half-step well below the shortest relevant collision time.
 
 ## Long-timescale kinetic Ohm mode
 

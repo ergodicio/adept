@@ -59,8 +59,8 @@ terms:
   fokker_planck:
     active: true
     flm: {ee: true}
-    # Preserve the spherical energy moment over transport timescales.
-    f00: {model: CoulombianKernel, scheme: log_mean}
+    # Chang-Cooper remains robust as IB heating drives f00 away from Maxwellian.
+    f00: {model: CoulombianKernel, scheme: chang_cooper}
 
 drivers:
   ib:

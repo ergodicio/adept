@@ -87,9 +87,9 @@ def test_collisional_end_to_end_step_is_finite():
         assert jnp.all(jnp.isfinite(value))
 
 
-def test_logmean_collisions_preserve_uniform_temperature():
+def test_chang_cooper_collisions_preserve_uniform_maxwellian():
     cfg = _config(collisions=True)
-    cfg["terms"]["fokker_planck"]["f00"]["scheme"] = "log_mean"
+    cfg["terms"]["fokker_planck"]["f00"]["scheme"] = "chang_cooper"
     cfg["grid"].update({"dt": "2fs", "tmax": "20fs"})
     cfg["save"]["t"].update({"tmax": "20fs", "nt": 2})
     module, output = _setup_and_run(cfg)

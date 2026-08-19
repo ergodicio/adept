@@ -56,6 +56,13 @@ wave problems. It is not a viable route to $27000\tau_n$: its timestep is constr
 light-wave CFL condition and electron plasma oscillations, neither of which is part of the
 slow collisional physics being studied. The PRL used a fully implicit VFP code.
 
+The production deck uses Chang--Cooper differencing for $f_{00}$ because laser heating
+drives the distribution away from a Maxwellian. The nominal 2 fs Strang step applies the
+collision operator in 1 fs half-steps, about $0.045\tau_n$ for the published normalization.
+The alternative log-mean flux has a zero semidiscrete energy derivative at the frozen state,
+not exact energy conservation for a finite nonlinear implicit step. Both the collision
+timestep and velocity grid must therefore be included in convergence scans.
+
 The implemented `kinetic-ohm` mode takes the following quasineutral path:
 
 1. enforce $n_e=Z n_i$;

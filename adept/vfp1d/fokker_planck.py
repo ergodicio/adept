@@ -248,6 +248,11 @@ class F0Collisions(eqx.Module):
     Uses a positive-only velocity grid (0 to vmax) with zero-flux boundary conditions.
     At v=0, where the drift coefficient C=v=0, zero-flux is equivalent to a reflective
     boundary condition, correctly representing the physics of the isotropic distribution.
+
+    Zero-flux boundaries conserve density. Energy conservation is timestep dependent
+    because the nonlinear drift and diffusion coefficients are frozen during each
+    implicit solve; neither differencing scheme should be treated as an exact finite-step
+    nonlinear energy projection.
     """
 
     nuee_coeff: float
