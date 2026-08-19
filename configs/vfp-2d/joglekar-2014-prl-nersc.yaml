@@ -8,7 +8,7 @@ solver: vfp-2d
 
 mlflow:
   experiment: vfp2d-joglekar-2014
-  run: two-spot-nernst-reconnection-200ps-dt2fs
+  run: two-spot-nernst-reconnection-50ps-dt2fs
 
 units:
   laser_wavelength: 351nm
@@ -37,7 +37,7 @@ grid:
   ymax: 85um
   ny: 96
   tmin: 0ps
-  tmax: 200ps
+  tmax: 50ps
   # The linear RK4 bound permits a larger step, but the coupled kinetic-Ohm
   # system needs this margin for velocity-space acceleration and positivity.
   # max(k v dt)=0.526, versus the RK4 imaginary-axis limit 2 sqrt(2).
@@ -78,7 +78,7 @@ drivers:
       y_radius: 17um
 
 save:
-  t: {tmin: 0ps, tmax: 200ps, nt: 21}
+  t: {tmin: 0ps, tmax: 50ps, nt: 21}
 
 output:
   n_panels: 9
