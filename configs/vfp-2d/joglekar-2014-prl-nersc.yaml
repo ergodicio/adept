@@ -8,7 +8,7 @@ solver: vfp-2d
 
 mlflow:
   experiment: vfp2d-joglekar-2014
-  run: two-spot-nernst-reconnection-40ps-dt2fs
+  run: two-spot-nernst-reconnection-200ps-logmean
 
 units:
   laser_wavelength: 351nm
@@ -37,7 +37,7 @@ grid:
   ymax: 85um
   ny: 96
   tmin: 0ps
-  tmax: 40ps
+  tmax: 200ps
   # The linear RK4 bound permits a larger step, but the coupled kinetic-Ohm
   # system needs this margin for velocity-space acceleration and positivity.
   # max(k v dt)=0.526, versus the RK4 imaginary-axis limit 2 sqrt(2).
@@ -62,7 +62,9 @@ terms:
   fokker_planck:
     active: true
     flm: {ee: true}
-    f00: {model: CoulombianKernel, scheme: central}
+    # Log-mean flux preserves the spherical energy moment. Central differencing
+    # cools a uniform Maxwellian and reaches a positivity failure near 50 ps.
+    f00: {model: CoulombianKernel, scheme: log_mean}
 
 drivers:
   ib:
@@ -78,7 +80,7 @@ drivers:
       y_radius: 17um
 
 save:
-  t: {tmin: 0ps, tmax: 40ps, nt: 21}
+  t: {tmin: 0ps, tmax: 200ps, nt: 21}
 
 output:
   n_panels: 9
