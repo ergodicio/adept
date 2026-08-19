@@ -87,6 +87,16 @@ def test_collisional_end_to_end_step_is_finite():
         assert jnp.all(jnp.isfinite(value))
 
 
+def test_logmean_collisions_preserve_uniform_temperature():
+    cfg = _config(collisions=True)
+    cfg["terms"]["fokker_planck"]["f00"]["scheme"] = "log_mean"
+    cfg["grid"].update({"dt": "2fs", "tmax": "20fs"})
+    cfg["save"]["t"].update({"tmax": "20fs", "nt": 2})
+    module, output = _setup_and_run(cfg)
+    temperature = module.post_process(output, "")["vfp2d"].temperature
+    np.testing.assert_allclose(temperature[-1], temperature[0], rtol=2e-12, atol=2e-12)
+
+
 def test_spatial_ib_driver_builds_two_gaussian_hotspots():
     cfg = _config(collisions=True)
     cfg["grid"].update({"nx": 12, "ny": 16, "xmin": "-3um", "xmax": "3um", "ymin": "-4um", "ymax": "4um"})

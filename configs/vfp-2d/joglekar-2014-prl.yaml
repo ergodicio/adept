@@ -59,7 +59,8 @@ terms:
   fokker_planck:
     active: true
     flm: {ee: true}
-    f00: {model: CoulombianKernel, scheme: central}
+    # Preserve the spherical energy moment over transport timescales.
+    f00: {model: CoulombianKernel, scheme: log_mean}
 
 drivers:
   ib:
