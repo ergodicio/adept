@@ -35,6 +35,7 @@ from adept.vfp2d.harmonics import (
     tensor_velocity_moment,
 )
 from adept.vfp2d.ohm import KineticOhm2D
+from adept.vfp2d.plotting import add_reconnection_diagnostics, reconnection_metrics, save_artifacts
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
@@ -80,19 +81,13 @@ def _profile_2d(profile: dict, grid: Grid, norm, reference=None) -> jnp.ndarray:
         y_radius = normalize(profile.get("y_radius", profile["x_radius"]), norm, dim="x")
         y_centers = profile.get("y_centers", [profile.get("y_center", 0.0)])
         y_centers = jnp.asarray([normalize(center, norm, dim="x") for center in y_centers])
-        x_envelope = jnp.exp(-((grid.x - x_center) / x_radius) ** 2)
-        y_envelope = jnp.sum(
-            jnp.exp(-((grid.y[:, None] - y_centers[None, :]) / y_radius) ** 2), axis=1
-        )
+        x_envelope = jnp.exp(-(((grid.x - x_center) / x_radius) ** 2))
+        y_envelope = jnp.sum(jnp.exp(-(((grid.y[:, None] - y_centers[None, :]) / y_radius) ** 2)), axis=1)
         return float(profile.get("amplitude", 1.0)) * x_envelope[:, None] * y_envelope[None, :]
 
     if "x" in profile or "y" in profile:
-        px = _profile_1d(
-            profile.get("x", {"basis": "uniform", "baseline": 1.0}), grid.x, norm, reference
-        )
-        py = _profile_1d(
-            profile.get("y", {"basis": "uniform", "baseline": 1.0}), grid.y, norm, reference
-        )
+        px = _profile_1d(profile.get("x", {"basis": "uniform", "baseline": 1.0}), grid.x, norm, reference)
+        py = _profile_1d(profile.get("y", {"basis": "uniform", "baseline": 1.0}), grid.y, norm, reference)
         return px[:, None] * py[None, :]
     target_axis = profile.get("axis", "x")
     if target_axis == "y":
@@ -232,9 +227,11 @@ class BaseVFP2D(ADEPTModule):
         )
         f00 = f00 * ne_over_n0
         n_total = n_total * ne_over_n0
-        flm = jnp.zeros(
-            (self.grid.nx, self.grid.ny, self.layout.size, self.grid.nv), dtype=jnp.complex128
-        ).at[..., self.layout.index(0, 0), :].set(f00)
+        flm = (
+            jnp.zeros((self.grid.nx, self.grid.ny, self.layout.size, self.grid.nv), dtype=jnp.complex128)
+            .at[..., self.layout.index(0, 0), :]
+            .set(f00)
+        )
 
         zref = float(self.cfg["units"]["Z"])
         ion_charge = n_total if self.cfg["density"].get("quasineutrality", True) else jnp.mean(n_total)
@@ -264,12 +261,15 @@ class BaseVFP2D(ADEPTModule):
                 self.grid,
                 self.plasma_norm,
             )
-            self.args["ib_vosc2"] = (
-                self.cfg["units"]["derived"]["vosc2_per_intensity"] * intensity * profile
-            )
-            self.args["ib_Z2ni_w0"] = (
-                self.args["Z"] ** 2 * self.args["ni"] / self.cfg["units"]["derived"]["w0_norm"]
-            )
+            self.args["ib_vosc2"] = self.cfg["units"]["derived"]["vosc2_per_intensity"] * intensity * profile
+            self.args["ib_Z2ni_w0"] = self.args["Z"] ** 2 * self.args["ni"] / self.cfg["units"]["derived"]["w0_norm"]
+            for source_key, arg_key in (
+                ("switch_on", "ib_t_on"),
+                ("switch_off", "ib_t_off"),
+                ("switch_width", "ib_switch_width"),
+            ):
+                if source_key in ib:
+                    self.args[arg_key] = normalize(ib[source_key], self.plasma_norm, dim="t")
 
         field_cfg = self.cfg.get("terms", {}).get("field_solver", {})
         if isinstance(field_cfg, dict) and self.field_mode == "kinetic-ohm":
@@ -282,18 +282,13 @@ class BaseVFP2D(ADEPTModule):
                 )
                 scale_length = normalize(hidden["scale_length"], self.plasma_norm, dim="x")
                 reference_density = float(
-                    (
-                        UREG.Quantity(self.cfg["units"]["reference electron density"])
-                        / self.plasma_norm.n0
-                    )
+                    (UREG.Quantity(self.cfg["units"]["reference electron density"]) / self.plasma_norm.n0)
                     .to("")
                     .magnitude
                 )
                 self.args["hidden_dndz"] = reference_density * profile / scale_length
                 if "switch_off" in hidden:
-                    self.args["hidden_gradient_t_off"] = normalize(
-                        hidden["switch_off"], self.plasma_norm, dim="t"
-                    )
+                    self.args["hidden_gradient_t_off"] = normalize(hidden["switch_off"], self.plasma_norm, dim="t")
                 if "switch_width" in hidden:
                     self.args["hidden_gradient_switch_width"] = normalize(
                         hidden["switch_width"], self.plasma_norm, dim="t"
@@ -371,10 +366,7 @@ class BaseVFP2D(ADEPTModule):
         elif self.field_mode == "kinetic-ohm":
             zref = float(self.cfg["units"]["Z"])
             resistivity_coefficient = (
-                0.5
-                * zref
-                * self.cfg["units"]["derived"]["nuee_coeff"]
-                * self.cfg["units"]["derived"]["logLam_ratio"]
+                0.5 * zref * self.cfg["units"]["derived"]["nuee_coeff"] * self.cfg["units"]["derived"]["logLam_ratio"]
             )
             self._kinetic_ohm = KineticOhm2D(
                 self.layout,
@@ -397,9 +389,7 @@ class BaseVFP2D(ADEPTModule):
             )
             initial_flm = real_to_complex(self.state["flm"])
             initial_current = maxwell.c2 * maxwell.curl(self.state["b"])
-            initial_hidden_dndz = KineticOhmStep._hidden_dndz(
-                self.tmin, self.args, self.state["b"][..., 0]
-            )
+            initial_hidden_dndz = KineticOhmStep._hidden_dndz(self.tmin, self.args, self.state["b"][..., 0])
             initial_e, _terms = self._kinetic_ohm(
                 initial_flm,
                 self.state["b"],
@@ -409,8 +399,7 @@ class BaseVFP2D(ADEPTModule):
             self.state = {**self.state, "e": initial_e}
         else:
             raise ValueError(
-                f"Unsupported VFP-2D field solver mode {self.field_mode!r}; "
-                "expected 'maxwell' or 'kinetic-ohm'"
+                f"Unsupported VFP-2D field solver mode {self.field_mode!r}; expected 'maxwell' or 'kinetic-ohm'"
             )
         save_cfg = self.cfg.get("save", {}).get("t", {})
         save_tmin = normalize(save_cfg.get("tmin", self.tmin), self.plasma_norm, dim="t")
@@ -443,12 +432,8 @@ class BaseVFP2D(ADEPTModule):
         plasma_current = current(flm_jax, self.layout, self.grid.v, self.grid.dv)
         mean_v2 = scalar_velocity_moment(flm_jax, self.layout, self.grid.v, self.grid.dv, power=2)
         temperature_normalized = (2.0 / 3.0) * mean_v2 / self.plasma_norm.vth_norm() ** 2
-        pressure_anisotropy = tensor_velocity_moment(
-            flm_jax, self.layout, self.grid.v, self.grid.dv, power=0
-        )
-        v_nernst = nernst_velocity(
-            flm_jax, self.layout, self.grid.v, self.grid.dv, plasma_current=plasma_current
-        )
+        pressure_anisotropy = tensor_velocity_moment(flm_jax, self.layout, self.grid.v, self.grid.dv, power=0)
+        v_nernst = nernst_velocity(flm_jax, self.layout, self.grid.v, self.grid.dv, plasma_current=plasma_current)
         coords = {
             "t": np.asarray(result.ts),
             "x": np.asarray(self.grid.x),
@@ -474,15 +459,10 @@ class BaseVFP2D(ADEPTModule):
             ),
         }
         if self._kinetic_ohm is not None and self._maxwell is not None:
-            ohm_history = {
-                key: []
-                for key in ("resistive", "hall", "nernst", "scalar_pressure", "tensor_pressure")
-            }
+            ohm_history = {key: [] for key in ("resistive", "hall", "nernst", "scalar_pressure", "tensor_pressure")}
             for index, time in enumerate(np.asarray(result.ts)):
                 target_current = self._maxwell.c2 * self._maxwell.curl(result.ys["b"][index])
-                hidden_dndz = KineticOhmStep._hidden_dndz(
-                    float(time), self.args, result.ys["b"][index, ..., 0]
-                )
+                hidden_dndz = KineticOhmStep._hidden_dndz(float(time), self.args, result.ys["b"][index, ..., 0])
                 _electric, terms = self._kinetic_ohm(
                     flm_jax[index],
                     result.ys["b"][index],
@@ -500,6 +480,15 @@ class BaseVFP2D(ADEPTModule):
         ds = xr.Dataset(
             data_vars,
             coords={**coords, "component_2": ["x", "y", "z"]},
-            attrs={"solver": "vfp-2d", "harmonic_convention": "Tzoufras JCP 230 (2011)"},
+            attrs={
+                "solver": "vfp-2d",
+                "harmonic_convention": "Tzoufras JCP 230 (2011)",
+                "length_unit_um": float(self.plasma_norm.L0.to("um").magnitude),
+                "time_unit_ps": float(self.plasma_norm.tau.to("ps").magnitude),
+            },
         )
-        return {"vfp2d": ds}
+        ds = add_reconnection_diagnostics(ds)
+        if td:
+            n_panels = int(self.cfg.get("output", {}).get("n_panels", 9))
+            save_artifacts(ds, td, n_panels=n_panels)
+        return {"vfp2d": ds, "metrics": reconnection_metrics(ds)}

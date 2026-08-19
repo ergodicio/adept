@@ -11,6 +11,26 @@ from adept.vfp2d.harmonics import HarmonicLayout, TzoufrasVlasov, complex_to_rea
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
 
 
+def _ib_gate(t: float, args: dict | None) -> Array:
+    """Return the optional smooth temporal envelope for IB heating."""
+
+    if not args:
+        return jnp.asarray(1.0)
+    width = jnp.asarray(args.get("ib_switch_width", 0.0))
+    gate = jnp.asarray(1.0)
+    if "ib_t_on" in args:
+        t_on = jnp.asarray(args["ib_t_on"])
+        sharp_on = jnp.where(t >= t_on, 1.0, 0.0)
+        smooth_on = 0.5 * (1.0 + jnp.tanh((t - t_on) / jnp.maximum(width, 1e-30)))
+        gate = gate * jnp.where(width > 0.0, smooth_on, sharp_on)
+    if "ib_t_off" in args:
+        t_off = jnp.asarray(args["ib_t_off"])
+        sharp_off = jnp.where(t < t_off, 1.0, 0.0)
+        smooth_off = 0.5 * (1.0 - jnp.tanh((t - t_off) / jnp.maximum(width, 1e-30)))
+        gate = gate * jnp.where(width > 0.0, smooth_off, sharp_off)
+    return gate
+
+
 class Maxwell2D:
     """Full three-component Maxwell curl operator with ``d/dz = 0``."""
 
@@ -121,7 +141,7 @@ class SplitStepVFP2D:
         self.dt = float(dt)
         self.collisions = collisions
 
-    def _collide(self, state: dict[str, Array], args: dict | None, dt: float) -> dict[str, Array]:
+    def _collide(self, t: float, state: dict[str, Array], args: dict | None, dt: float) -> dict[str, Array]:
         if self.collisions is None:
             return state
         z = 1.0 if not args else args.get("Z", 1.0)
@@ -131,6 +151,8 @@ class SplitStepVFP2D:
             for key in ("D0_heating", "ib_vosc2", "ib_Z2ni_w0"):
                 if key in args:
                     heating[key] = args[key]
+        if "ib_vosc2" in heating:
+            heating["ib_vosc2"] = heating["ib_vosc2"] * _ib_gate(t, args)
         flm = real_to_complex(state["flm"]) if self.rhs.real_storage else state["flm"]
         flm = self.collisions(flm, Z=z, ni=ni, dt=dt, **heating)
         if self.rhs.real_storage:
@@ -138,16 +160,16 @@ class SplitStepVFP2D:
         return {**state, "flm": flm}
 
     def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
-        state = self._collide(state, args, 0.5 * self.dt)
+        state = self._collide(t, state, args, 0.5 * self.dt)
         k1 = self.rhs(t, state, args)
         midpoint = jtu.tree_map(lambda value, slope: value + 0.5 * self.dt * slope, state, k1)
         k2 = self.rhs(t + 0.5 * self.dt, midpoint, args)
         result = jtu.tree_map(lambda value, slope: value + self.dt * slope, state, k2)
-        return self._collide(result, args, 0.5 * self.dt)
+        return self._collide(t + self.dt, result, args, 0.5 * self.dt)
 
 
 class KineticOhmStep:
-    """Long-timescale midpoint step using the inertia-free kinetic Ohm law.
+    """Long-timescale RK4 step using the inertia-free kinetic Ohm law.
 
     The quasistatic Ampere current is enforced by a minimal projection of the
     bulk-current moment of ``f1``. This removes light and plasma oscillations
@@ -178,7 +200,7 @@ class KineticOhmStep:
         self.collisions = collisions
         self.real_storage = bool(real_storage)
 
-    def _collide(self, flm: Array, args: dict | None, dt: float) -> Array:
+    def _collide(self, t: float, flm: Array, args: dict | None, dt: float) -> Array:
         if self.collisions is None:
             return flm
         z = 1.0 if not args else args.get("Z", 1.0)
@@ -188,6 +210,8 @@ class KineticOhmStep:
             for key in ("D0_heating", "ib_vosc2", "ib_Z2ni_w0"):
                 if key in args:
                     heating[key] = args[key]
+        if "ib_vosc2" in heating:
+            heating["ib_vosc2"] = heating["ib_vosc2"] * _ib_gate(t, args)
         return self.collisions(flm, Z=z, ni=ni, dt=dt, **heating)
 
     def _target_current(self, magnetic_field: Array) -> Array:
@@ -215,9 +239,7 @@ class KineticOhmStep:
         smooth_gate = 0.5 * (1.0 - jnp.tanh((t - t_off) / jnp.maximum(width, 1e-30)))
         return source * jnp.where(width > 0.0, smooth_gate, sharp_gate)
 
-    def _rates(
-        self, t: float, flm: Array, magnetic_field: Array, args: dict | None
-    ) -> tuple[Array, Array, Array]:
+    def _rates(self, t: float, flm: Array, magnetic_field: Array, args: dict | None) -> tuple[Array, Array, Array]:
         flm = self._project(flm, magnetic_field)
         hidden_dndz = self._hidden_dndz(t, args, magnetic_field[..., 0])
         electric_field, _terms = self.ohm(
@@ -235,18 +257,26 @@ class KineticOhmStep:
     def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
         flm = real_to_complex(state["flm"]) if self.real_storage else state["flm"]
         magnetic_field = state["b"]
-        flm = self._collide(flm, args, 0.5 * self.dt)
+        flm = self._collide(t, flm, args, 0.5 * self.dt)
         flm = self._project(flm, magnetic_field)
 
         df1, db1, _electric1 = self._rates(t, flm, magnetic_field, args)
-        midpoint_f = flm + 0.5 * self.dt * df1
-        midpoint_b = magnetic_field + 0.5 * self.dt * db1
-        midpoint_f = self._project(midpoint_f, midpoint_b)
-        df2, db2, _electric2 = self._rates(t + 0.5 * self.dt, midpoint_f, midpoint_b, args)
+        stage2_b = magnetic_field + 0.5 * self.dt * db1
+        stage2_f = self._project(flm + 0.5 * self.dt * df1, stage2_b)
+        df2, db2, _electric2 = self._rates(t + 0.5 * self.dt, stage2_f, stage2_b, args)
 
-        result_f = self._project(flm + self.dt * df2, magnetic_field + self.dt * db2)
-        result_f = self._collide(result_f, args, 0.5 * self.dt)
-        result_b = magnetic_field + self.dt * db2
+        stage3_b = magnetic_field + 0.5 * self.dt * db2
+        stage3_f = self._project(flm + 0.5 * self.dt * df2, stage3_b)
+        df3, db3, _electric3 = self._rates(t + 0.5 * self.dt, stage3_f, stage3_b, args)
+
+        stage4_b = magnetic_field + self.dt * db3
+        stage4_f = self._project(flm + self.dt * df3, stage4_b)
+        df4, db4, _electric4 = self._rates(t + self.dt, stage4_f, stage4_b, args)
+
+        result_b = magnetic_field + (self.dt / 6.0) * (db1 + 2.0 * db2 + 2.0 * db3 + db4)
+        result_f = flm + (self.dt / 6.0) * (df1 + 2.0 * df2 + 2.0 * df3 + df4)
+        result_f = self._project(result_f, result_b)
+        result_f = self._collide(t + self.dt, result_f, args, 0.5 * self.dt)
         result_f = self._project(result_f, result_b)
         hidden_dndz = self._hidden_dndz(t + self.dt, args, result_b[..., 0])
         result_e, _terms = self.ohm(

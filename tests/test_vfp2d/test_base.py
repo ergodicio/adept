@@ -94,6 +94,8 @@ def test_spatial_ib_driver_builds_two_gaussian_hotspots():
         "ib": {
             "intensity_1e15_Wcm2": 0.25,
             "polarisation": "linear",
+            "switch_off": "1fs",
+            "switch_width": "0.1fs",
             "profile": {
                 "basis": "gaussian_spots",
                 "x_center": "0um",
@@ -117,9 +119,10 @@ def test_spatial_ib_driver_builds_two_gaussian_hotspots():
     expected_y = float(2e-6 / module.plasma_norm.L0.to("m").magnitude)
     assert abs(abs(float(module.grid.y[hot_y])) - expected_y) < 2 * module.grid.dy
     assert heating[center_x, hot_y] > 10.0 * heating[0, module.grid.ny // 2]
+    assert module.args["ib_t_off"] > module.args["ib_switch_width"] > 0.0
 
 
-def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution():
+def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):
     cfg = _config(collisions=False)
     cfg["terms"]["field_solver"] = {
         "mode": "kinetic-ohm",
@@ -142,7 +145,8 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution():
     assert jnp.all(jnp.isfinite(saved["e"]))
     assert jnp.all(jnp.isfinite(saved["b"]))
     assert jnp.max(jnp.abs(saved["e"][-1, ..., 2])) > 0.0
-    dataset = module.post_process(output, "")["vfp2d"]
+    postprocessed = module.post_process(output, str(tmp_path))
+    dataset = postprocessed["vfp2d"]
     for name in (
         "ohm_resistive",
         "ohm_hall",
@@ -162,3 +166,21 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution():
         )
     )
     np.testing.assert_allclose(reconstructed, dataset.e, rtol=2e-12, atol=2e-12)
+    for diagnostic in (
+        "az",
+        "xpoint_ez",
+        "normalized_reconnection_rate",
+        "reconnected_flux",
+        "current_sheet_rms_width",
+    ):
+        assert diagnostic in dataset
+    assert postprocessed["metrics"]["vfp2d_peak_abs_reconnection_rate"] >= 0.0
+    for artifact in (
+        "binary/moments.nc",
+        "binary/distribution_flm.nc",
+        "plots/moments/xy_facet_temperature.png",
+        "plots/reconnection/xpoint_history.png",
+        "plots/reconnection/ohm_z_lineouts_x0.png",
+        "plots/reconnection/topology_nernst_final.png",
+    ):
+        assert (tmp_path / artifact).is_file()
