@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from jax import Array
+from jax.sharding import Mesh
 
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
     current,
     density,
     nernst_velocity,
+    periodic_central_derivative,
     scalar_velocity_moment,
     tensor_velocity_moment,
 )
@@ -33,6 +35,9 @@ class KineticOhm2D:
         ky: Array,
         *,
         resistivity_coefficient: float = 0.0,
+        dx: float | None = None,
+        dy: float | None = None,
+        mesh: Mesh | None = None,
     ):
         self.layout = layout
         self.v = jnp.asarray(v)
@@ -40,12 +45,19 @@ class KineticOhm2D:
         self.kx = jnp.asarray(kx)
         self.ky = jnp.asarray(ky)
         self.resistivity_coefficient = float(resistivity_coefficient)
+        self.dx = None if dx is None else float(dx)
+        self.dy = None if dy is None else float(dy)
+        self.mesh = mesh
 
     def ddx(self, value: Array) -> Array:
+        if self.dx is not None:
+            return periodic_central_derivative(value, self.dx, axis=0, mesh=self.mesh)
         shape = (self.kx.size,) + (1,) * (value.ndim - 1)
         return jnp.fft.ifft(1j * self.kx.reshape(shape) * jnp.fft.fft(value, axis=0), axis=0).real
 
     def ddy(self, value: Array) -> Array:
+        if self.dy is not None:
+            return periodic_central_derivative(value, self.dy, axis=1)
         shape = (1, self.ky.size) + (1,) * (value.ndim - 2)
         return jnp.fft.ifft(1j * self.ky.reshape(shape) * jnp.fft.fft(value, axis=1), axis=1).real
 

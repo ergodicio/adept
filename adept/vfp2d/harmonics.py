@@ -15,7 +15,9 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 import numpy as np
-from jax import Array
+from jax import Array, lax, shard_map
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,47 @@ def _spectral_derivative(a: Array, k: Array, axis: int) -> Array:
     return jnp.fft.ifft(multiplier * jnp.fft.fft(a, axis=axis), axis=axis)
 
 
+def periodic_central_derivative(
+    a: Array,
+    spacing: float,
+    axis: int,
+    mesh: Mesh | None = None,
+) -> Array:
+    """Periodic finite-difference derivative suitable for a partitioned axis."""
+
+    if mesh is not None:
+        if axis != 0:
+            raise ValueError("The partitioned finite-difference axis must be leading axis 0")
+        mesh_size = int(mesh.shape["x"])
+        local_size = a.shape[0] // mesh_size
+        halo = 2 if local_size >= 2 and a.shape[0] >= 5 else 1
+        permutation_left = tuple((rank, (rank + 1) % mesh_size) for rank in range(mesh_size))
+        permutation_right = tuple((rank, (rank - 1) % mesh_size) for rank in range(mesh_size))
+
+        def _local(local: Array) -> Array:
+            left = lax.ppermute(local[-halo:], "x", permutation_left)
+            right = lax.ppermute(local[:halo], "x", permutation_right)
+            padded = jnp.concatenate((left, local, right), axis=0)
+            if halo == 1:
+                return (padded[2:] - padded[:-2]) / (2.0 * spacing)
+            nlocal = local.shape[0]
+            return (
+                padded[:nlocal] - 8.0 * padded[1 : nlocal + 1] + 8.0 * padded[3 : nlocal + 3] - padded[4 : nlocal + 4]
+            ) / (12.0 * spacing)
+
+        spec = P("x", *(None for _ in range(a.ndim - 1)))
+        return shard_map(_local, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False)(a)
+
+    if a.shape[axis] < 5:
+        return (jnp.roll(a, -1, axis=axis) - jnp.roll(a, 1, axis=axis)) / (2.0 * spacing)
+    return (
+        jnp.roll(a, 2, axis=axis)
+        - 8.0 * jnp.roll(a, 1, axis=axis)
+        + 8.0 * jnp.roll(a, -1, axis=axis)
+        - jnp.roll(a, -2, axis=axis)
+    ) / (12.0 * spacing)
+
+
 class TzoufrasVlasov:
     """Arbitrary-``f_lm`` 2D3P Vlasov operator from Tzoufras (2011).
 
@@ -89,6 +132,9 @@ class TzoufrasVlasov:
         kx: Array,
         ky: Array,
         streaming_speed: Array | None = None,
+        dx: float | None = None,
+        dy: float | None = None,
+        mesh: Mesh | None = None,
     ):
         self.layout = layout
         self.v = jnp.asarray(v)
@@ -96,6 +142,9 @@ class TzoufrasVlasov:
         self.kx = jnp.asarray(kx)
         self.ky = jnp.asarray(ky)
         self.streaming_speed = self.v if streaming_speed is None else jnp.asarray(streaming_speed)
+        self.dx = None if dx is None else float(dx)
+        self.dy = None if dy is None else float(dy)
+        self.mesh = mesh
 
     def ddv(self, f: Array, ell: int) -> Array:
         """Centred radial derivative with the regularity parity ``f_l(-v)=(-1)^l f_l(v)``."""
@@ -125,8 +174,16 @@ class TzoufrasVlasov:
         for an integrable 2.5D density gradient without allocating a z grid.
         """
 
-        dfdx = _spectral_derivative(f, self.kx, axis=0)
-        dfdy = _spectral_derivative(f, self.ky, axis=1)
+        dfdx = (
+            _spectral_derivative(f, self.kx, axis=0)
+            if self.dx is None
+            else periodic_central_derivative(f, self.dx, axis=0, mesh=self.mesh)
+        )
+        dfdy = (
+            _spectral_derivative(f, self.ky, axis=1)
+            if self.dy is None
+            else periodic_central_derivative(f, self.dy, axis=1)
+        )
         if dfdz is None:
             dfdz = jnp.zeros_like(f)
         transverse_minus = dfdy - 1j * dfdz
@@ -294,7 +351,15 @@ class HouLiFilter2D:
     Velocity and harmonic axes are deliberately untouched.
     """
 
-    def __init__(self, nx: int, ny: int, alpha: float = 36.0, order: int = 36):
+    def __init__(
+        self,
+        nx: int,
+        ny: int,
+        alpha: float = 36.0,
+        order: int = 36,
+        dimensions: tuple[str, ...] = ("x", "y"),
+        mesh: Mesh | None = None,
+    ):
         if alpha <= 0.0:
             raise ValueError("Hou-Li filter alpha must be positive")
         if order < 1:
@@ -305,8 +370,12 @@ class HouLiFilter2D:
             eta = jnp.abs(2.0 * jnp.fft.fftfreq(n))
             return jnp.exp(-float(alpha) * eta ** (2 * int(order)))
 
-        self.filter_x = _kernel(nx)
-        self.filter_y = _kernel(ny)
+        unknown = set(dimensions) - {"x", "y"}
+        if unknown:
+            raise ValueError(f"Unknown Hou-Li filter dimensions: {sorted(unknown)}")
+        self.filter_x = _kernel(nx) if "x" in dimensions else None
+        self.filter_y = _kernel(ny) if "y" in dimensions else None
+        self.mesh = mesh
 
     @staticmethod
     def _apply(a: Array, kernel: Array, axis: int) -> Array:
@@ -317,7 +386,21 @@ class HouLiFilter2D:
     def __call__(self, a: Array) -> Array:
         """Filter an array whose leading axes are ``(x, y)``."""
 
-        return self._apply(self._apply(a, self.filter_x, axis=0), self.filter_y, axis=1)
+        if self.filter_x is not None:
+            a = self._apply(a, self.filter_x, axis=0)
+        if self.filter_y is not None:
+            if self.mesh is None:
+                a = self._apply(a, self.filter_y, axis=1)
+            else:
+                spec = P("x", *(None for _ in range(a.ndim - 1)))
+                a = shard_map(
+                    lambda local: self._apply(local, self.filter_y, axis=1),
+                    mesh=self.mesh,
+                    in_specs=spec,
+                    out_specs=spec,
+                    check_vma=False,
+                )(a)
+        return a
 
 
 def current(
@@ -385,11 +468,9 @@ def cartesian_l2(f: Array, layout: HarmonicLayout) -> Array:
     ``Fyz=-6 Im(f22)``; ``Fzz`` follows from tracelessness.
     """
 
-    shape = (*f.shape[:-2], 3, 3, f.shape[-1])
-    result = jnp.zeros(shape, dtype=jnp.real(f).dtype)
     i20, i21, i22 = (layout.index(2, m) for m in range(3))
     if i20 < 0:
-        return result
+        return jnp.zeros((*f.shape[:-2], 3, 3, f.shape[-1]), dtype=jnp.real(f).dtype)
     f20 = jnp.real(f[..., i20, :])
     f21 = f[..., i21, :] if i21 >= 0 else jnp.zeros_like(f20, dtype=f.dtype)
     f22 = f[..., i22, :] if i22 >= 0 else jnp.zeros_like(f20, dtype=f.dtype)
@@ -399,15 +480,14 @@ def cartesian_l2(f: Array, layout: HarmonicLayout) -> Array:
     fyy = -0.5 * f20 + 6.0 * jnp.real(f22)
     fyz = -6.0 * jnp.imag(f22)
     fzz = -0.5 * f20 - 6.0 * jnp.real(f22)
-    result = result.at[..., 0, 0, :].set(fxx)
-    result = result.at[..., 0, 1, :].set(fxy)
-    result = result.at[..., 1, 0, :].set(fxy)
-    result = result.at[..., 0, 2, :].set(fxz)
-    result = result.at[..., 2, 0, :].set(fxz)
-    result = result.at[..., 1, 1, :].set(fyy)
-    result = result.at[..., 1, 2, :].set(fyz)
-    result = result.at[..., 2, 1, :].set(fyz)
-    return result.at[..., 2, 2, :].set(fzz)
+    return jnp.stack(
+        (
+            jnp.stack((fxx, fxy, fxz), axis=-2),
+            jnp.stack((fxy, fyy, fyz), axis=-2),
+            jnp.stack((fxz, fyz, fzz), axis=-2),
+        ),
+        axis=-3,
+    )
 
 
 def tensor_velocity_moment(f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int) -> Array:

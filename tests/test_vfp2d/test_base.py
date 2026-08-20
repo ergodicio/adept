@@ -4,8 +4,11 @@ import copy
 
 import jax.numpy as jnp
 import numpy as np
+import xarray as xr
+from jax.sharding import NamedSharding
 
 from adept.vfp2d import BaseVFP2D
+from adept.vfp2d.plotting import add_reconnection_diagnostics
 
 
 def _config(collisions=False):
@@ -85,6 +88,31 @@ def test_collisional_end_to_end_step_is_finite():
     _module, output = _setup_and_run(_config(collisions=True))
     for value in output["solver result"].ys.values():
         assert jnp.all(jnp.isfinite(value))
+
+
+def test_x_sharding_places_spatial_state_and_args():
+    cfg = _config(collisions=True)
+    cfg["grid"]["nx"] = 4
+    cfg["grid"]["sharding"] = {"enabled": True, "axis": "x"}
+    cfg["terms"].update(
+        {
+            "field_solver": {"mode": "kinetic-ohm"},
+            "hou_li_filter": {"is_on": True, "dimensions": ["y"]},
+        }
+    )
+    module = BaseVFP2D(copy.deepcopy(cfg))
+    module.write_units()
+    module.get_derived_quantities()
+    module.get_solver_quantities()
+    module.init_state_and_args()
+    module.init_diffeqsolve()
+
+    assert isinstance(module.state["flm"].sharding, NamedSharding)
+    assert module.state["flm"].sharding.spec[0] == "x"
+    assert module.state["e"].sharding.spec[0] == "x"
+    assert module.args["ni"].sharding.spec[0] == "x"
+    output = module(None, None)
+    assert jnp.all(jnp.isfinite(output["solver result"].ys["flm"]))
 
 
 def test_chang_cooper_collisions_preserve_uniform_maxwellian():
@@ -219,6 +247,8 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):
         "normalized_reconnection_rate",
         "reconnected_flux",
         "current_sheet_rms_width",
+        "reconnection_valid",
+        "bz_quadrupole_purity",
     ):
         assert diagnostic in dataset
     assert postprocessed["metrics"]["vfp2d_peak_abs_reconnection_rate"] >= 0.0
@@ -228,6 +258,41 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):
         "plots/moments/xy_facet_temperature.png",
         "plots/reconnection/xpoint_history.png",
         "plots/reconnection/ohm_z_lineouts_x0.png",
+        "plots/reconnection/bx_jz_sheet_lineouts_x0.png",
+        "plots/reconnection/xy_facet_b_z.png",
         "plots/reconnection/topology_nernst_final.png",
     ):
         assert (tmp_path / artifact).is_file()
+
+
+def test_reconnection_gate_and_bz_quadrupole_detect_a_central_sheet():
+    n = 33
+    x = np.linspace(-np.pi, np.pi, n, endpoint=False)
+    y = np.linspace(-np.pi, np.pi, n, endpoint=False)
+    xx, yy = np.meshgrid(x, y, indexing="ij")
+    bx = np.tanh(3.0 * np.sin(yy))
+    by = 0.25 * np.sin(xx)
+    bz = np.sin(xx) * np.sin(yy)
+    current_z = 0.25 * np.cos(xx) - 3.0 * np.cos(yy) / np.cosh(3.0 * np.sin(yy)) ** 2
+    b = np.stack((bx, by, bz), axis=-1)[None, ...]
+    current_field = np.zeros_like(b)
+    current_field[0, ..., 2] = current_z
+    e = np.zeros_like(b)
+    e[0, ..., 2] = 0.1
+    vn = np.zeros_like(b)
+    vn[0, ..., 1] = -np.sign(yy)
+    ds = xr.Dataset(
+        {
+            "b": (("t", "x", "y", "component"), b),
+            "e": (("t", "x", "y", "component"), e),
+            "current": (("t", "x", "y", "component"), current_field),
+            "v_nernst": (("t", "x", "y", "component"), vn),
+        },
+        coords={"t": [0.0], "x": x, "y": y, "component": ["x", "y", "z"]},
+    )
+
+    diagnosed = add_reconnection_diagnostics(ds)
+    assert bool(diagnosed.reconnection_valid.item())
+    assert np.isfinite(diagnosed.normalized_reconnection_rate.item())
+    assert diagnosed.current_sheet_dominance.item() > 0.7
+    assert diagnosed.bz_quadrupole_purity.item() > 0.9

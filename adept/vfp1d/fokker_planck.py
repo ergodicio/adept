@@ -15,7 +15,7 @@ This module provides:
 import equinox as eqx
 import lineax as lx
 import numpy as np
-from jax import Array, vmap
+from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 from adept.driftdiffusion import (
@@ -40,6 +40,12 @@ def _linear_solve_value_or_nan(op: lx.AbstractLinearOperator, rhs: Array) -> Arr
     genuine runtime failure to NaNs so downstream finite checks cannot mistake it
     for a valid collision update.
     """
+
+    if isinstance(op, lx.TridiagonalLinearOperator):
+        zero = jnp.zeros((1,), dtype=op.diagonal.dtype)
+        lower = jnp.concatenate((zero, op.lower_diagonal))
+        upper = jnp.concatenate((op.upper_diagonal, zero))
+        return lax.linalg.tridiagonal_solve(lower, op.diagonal, upper, rhs[:, None])[:, 0]
 
     solution = lx.linear_solve(op, rhs, solver=lx.AutoLinearSolver(well_posed=True), throw=False)
     return jnp.where(

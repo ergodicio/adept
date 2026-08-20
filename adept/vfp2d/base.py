@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 
 import jax.numpy as jnp
+import jax.tree_util as jtu
 import numpy as np
 import xarray as xr
 from diffrax import ODETerm, SaveAt, diffeqsolve
@@ -23,6 +24,7 @@ from adept.vfp1d.fokker_planck import (
 from adept.vfp1d.grid import Grid as CollisionGrid
 from adept.vfp1d.helpers import _initialize_distribution_, calc_logLambda, load_profile_on_grid
 from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
+from adept.vfp2d.distributed import create_spatial_sharding
 from adept.vfp2d.grid import Grid
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
@@ -136,6 +138,7 @@ class BaseVFP2D(ADEPTModule):
         self.field_mode = field_cfg if isinstance(field_cfg, str) else field_cfg.get("mode", "maxwell")
         self._kinetic_ohm = None
         self._maxwell = None
+        self.spatial_sharding = create_spatial_sharding(g.get("sharding"), self.grid.nx)
 
     def write_units(self) -> dict:
         norm = self.plasma_norm
@@ -345,11 +348,18 @@ class BaseVFP2D(ADEPTModule):
             logLam_ratio=self.cfg["units"]["derived"]["logLam_ratio"],
             full_aniso_ee=fp.get("flm", {}).get("ee", True),
         )
-        return CollisionStep(self.layout, isotropic, AnisotropicCollisions(flm_operator, self.layout))
+        return CollisionStep(
+            self.layout,
+            isotropic,
+            AnisotropicCollisions(flm_operator, self.layout),
+            mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
+        )
 
     def init_diffeqsolve(self):
         relativistic = bool(self.cfg["grid"].get("relativistic", False))
         streaming_speed = self.grid.v / jnp.sqrt(1.0 + self.grid.v**2) if relativistic else self.grid.v
+        partitioned_dx = self.grid.dx if self.spatial_sharding is not None else None
+        partitioned_dy = self.grid.dy if self.spatial_sharding is not None else None
         vlasov = TzoufrasVlasov(
             self.layout,
             self.grid.v,
@@ -357,8 +367,18 @@ class BaseVFP2D(ADEPTModule):
             self.grid.kx,
             self.grid.ky,
             streaming_speed=streaming_speed,
+            dx=partitioned_dx,
+            dy=partitioned_dy,
+            mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
         )
-        maxwell = Maxwell2D(self.grid.kx, self.grid.ky, c=self.plasma_norm.speed_of_light_norm())
+        maxwell = Maxwell2D(
+            self.grid.kx,
+            self.grid.ky,
+            c=self.plasma_norm.speed_of_light_norm(),
+            dx=partitioned_dx,
+            dy=partitioned_dy,
+            mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
+        )
         self._maxwell = maxwell
         collisions = self._collision_step()
         if self.field_mode == "maxwell":
@@ -384,18 +404,25 @@ class BaseVFP2D(ADEPTModule):
                 self.grid.kx,
                 self.grid.ky,
                 resistivity_coefficient=resistivity_coefficient,
+                dx=partitioned_dx,
+                dy=partitioned_dy,
+                mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
             )
             filter_cfg = self.cfg.get("terms", {}).get("hou_li_filter", {})
             spatial_filter = None
             if filter_cfg.get("is_on", False):
                 dimensions = set(filter_cfg.get("dimensions", ["x", "y"]))
-                if dimensions != {"x", "y"}:
-                    raise ValueError("VFP-2D Hou-Li filtering currently requires dimensions: [x, y]")
+                if not dimensions or not dimensions <= {"x", "y"}:
+                    raise ValueError("VFP-2D Hou-Li filtering dimensions must be a nonempty subset of [x, y]")
+                if self.spatial_sharding is not None and "x" in dimensions:
+                    raise ValueError("x-sharded VFP-2D must omit x from spectral Hou-Li filter dimensions")
                 spatial_filter = HouLiFilter2D(
                     self.grid.nx,
                     self.grid.ny,
                     alpha=float(filter_cfg.get("alpha", 36.0)),
                     order=int(filter_cfg.get("order", 36)),
+                    dimensions=tuple(sorted(dimensions)),
+                    mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
                 )
             step = KineticOhmStep(
                 vlasov,
@@ -433,11 +460,26 @@ class BaseVFP2D(ADEPTModule):
         save_nt = int(save_cfg.get("nt", min(self.nt + 1, 101)))
         self.save_times = jnp.linspace(save_tmin, save_tmax, save_nt)
         self.time_quantities = {"t0": self.tmin, "t1": self.tmax, "max_steps": self.max_steps}
-        self.diffeqsolve_quants = {"terms": ODETerm(step), "solver": Stepper(), "saveat": SaveAt(ts=self.save_times)}
+        if self.spatial_sharding is not None:
+
+            def save_fn(_t, state, _args):
+                return jtu.tree_map(self.spatial_sharding.replicate, state)
+
+            saveat = SaveAt(ts=self.save_times, fn=save_fn)
+        else:
+            saveat = SaveAt(ts=self.save_times)
+        self.diffeqsolve_quants = {
+            "terms": ODETerm(step),
+            "solver": Stepper(),
+            "saveat": saveat,
+        }
+        if self.spatial_sharding is not None:
+            self.state = jtu.tree_map(self.spatial_sharding.put, self.state)
+            self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
 
     def __call__(self, trainable_modules: dict | None, args: dict | None):
-        return {
-            "solver result": diffeqsolve(
+        def solve():
+            return diffeqsolve(
                 terms=self.diffeqsolve_quants["terms"],
                 solver=self.diffeqsolve_quants["solver"],
                 t0=self.tmin,
@@ -448,7 +490,13 @@ class BaseVFP2D(ADEPTModule):
                 args=self.args if args is None else args,
                 saveat=self.diffeqsolve_quants["saveat"],
             )
-        }
+
+        if self.spatial_sharding is not None:
+            with self.spatial_sharding.mesh:
+                result = solve()
+        else:
+            result = solve()
+        return {"solver result": result}
 
     def post_process(self, run_output: dict, td: str) -> dict:
         result = run_output["solver result"]

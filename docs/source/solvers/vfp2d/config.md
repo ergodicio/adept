@@ -20,11 +20,20 @@ grid:
   lmax: 5
   mmax: 3
   relativistic: false
+  sharding: {enabled: false, axis: x}
 ```
 
 `lmax` is the highest retained $\ell$. `mmax` defaults to `lmax`; lowering it provides a controlled transverse-angular truncation. For compatibility, `nl` is accepted as an alias for `lmax`.
 
 By default, `vmax` is expressed in the same number-of-thermal-speeds convention as VFP-1D. Set `vmax_is_normalized: true` to provide the radial coordinate directly in code units. In relativistic mode this direct coordinate is $p/(m_ec)$.
+
+Set `sharding.enabled: true` to partition the state, spatial drivers, and collision batches
+along $x$ over every visible JAX device. `nx` must be divisible by the device count. The
+sharded path uses fourth-order periodic finite differences (with two-cell halo exchange)
+for spatial derivatives, because a global Fourier transform along a partitioned axis would
+replicate the dominant distribution array. Saved snapshots are replicated only when they
+are written. A spectral Hou--Li filter may be retained along local $y$, but its `dimensions`
+must omit `x`.
 
 ## Initial distribution
 
@@ -112,6 +121,12 @@ It enters the pressure-gradient Ohm residual and can be switched sharply (`switc
 omitted) or with a differentiable tanh gate (`switch_width` set). Output variables prefixed
 with `ohm_` contain the resistive, Hall, Nernst, scalar-pressure, and $f_2$ tensor-pressure
 contributions.
+
+The reconnection diagnostics report a normalized rate and flux only when the upstream
+$B_x$ fields are antiparallel and balanced and the origin contains both an in-plane null/
+$A_z$ saddle and a central current sheet. Invalid samples are stored as NaN rather than
+turning Biermann-ring motion into a false reconnection rate. `bz_quadrupole_purity` is the
+local L1 projection of $B_z$ onto the expected four-lobe `sign(x*y)` pattern.
 
 ## Saving
 

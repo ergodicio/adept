@@ -39,15 +39,17 @@ The published setup used:
 - $\Delta x=13.3333\lambda_{mfp}$, $\Delta y=3.125\lambda_{mfp}$, and
   $\Delta v=0.0625v_{th}$;
 - two Gaussian inverse-bremsstrahlung heating spots with $r_0=50\lambda_{mfp}$,
-  $H_0=0.5$, and laser intensity $2.5\times10^{14}\,\mathrm{W/cm^2}$;
+  $H_0=0.5$, laser intensity $2.5\times10^{14}\,\mathrm{W/cm^2}$, and centers at the
+  two $y$ boundaries;
 - a prescribed hidden density derivative $\partial_z n=(n_0/L_n)$ times the same spatial
   envelope, with $L_n=50\lambda_{mfp}$, switched off at $800\tau_n$;
 - stationary ions, with the main comparison at $19000\tau_n$ and the final state at
   $27000\tau_n\simeq0.6$ ns.
 
-The Letter does not state the spot separation or ionization in its five pages. Those values
-must come from an original input deck, a longer manuscript, or a controlled inference; they
-must not silently become “reference” values in ADEPT.
+The boundary-centered source fixes the spot separation from the published $y$ extent. The
+Letter does not state the mean ionization in its five pages; that value must come from an
+original input deck, a longer manuscript, or a controlled inference and must not silently
+become a “reference” value in ADEPT.
 
 ## Long-timescale field modes
 
@@ -139,9 +141,10 @@ useful operator test, but it should not be presented as the physical coupling.
 ## Delivery sequence
 
 1. Frozen-ion, moment-projected kinetic-Ohm solve on a periodic uniform mesh. **Implemented.**
-2. Published 2.5D hidden density gradient, IB profile, and five-term diagnostics. **Implemented
-   as a reduced benchmark; full-resolution validation remains.** Reproduce magnetic generation,
-   Nernst inflow, the five Ohm-law traces, and reconnection-rate history.
+2. Published 2.5D hidden density gradient, IB profile, five-term diagnostics, and x-sharded
+   wide-box pilot. **Implemented; long-time validation remains.** Reproduce magnetic
+   generation, Nernst inflow, the five Ohm-law traces, gated reconnection-rate history, and
+   the local $B_z$ quadrupole score.
 3. Fully implicit kinetic-current response and mapped/stretched $x$ mesh with non-periodic
    thermal boundaries for the full published box.
 4. Conservative ion-fluid coupling and moving-ion comparison.

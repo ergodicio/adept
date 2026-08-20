@@ -5,6 +5,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import Array
+from jax.sharding import Mesh
 
 from adept.vfp2d.collisions import CollisionStep
 from adept.vfp2d.harmonics import (
@@ -15,6 +16,7 @@ from adept.vfp2d.harmonics import (
     conservative_f00_positivity,
     current,
     density,
+    periodic_central_derivative,
     real_to_complex,
 )
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
@@ -43,15 +45,31 @@ def _ib_gate(t: float, args: dict | None) -> Array:
 class Maxwell2D:
     """Full three-component Maxwell curl operator with ``d/dz = 0``."""
 
-    def __init__(self, kx: Array, ky: Array, c: float):
+    def __init__(
+        self,
+        kx: Array,
+        ky: Array,
+        c: float,
+        *,
+        dx: float | None = None,
+        dy: float | None = None,
+        mesh: Mesh | None = None,
+    ):
         self.kx = jnp.asarray(kx)
         self.ky = jnp.asarray(ky)
         self.c2 = float(c) ** 2
+        self.dx = None if dx is None else float(dx)
+        self.dy = None if dy is None else float(dy)
+        self.mesh = mesh
 
     def ddx(self, a: Array) -> Array:
+        if self.dx is not None:
+            return periodic_central_derivative(a, self.dx, axis=0, mesh=self.mesh)
         return jnp.fft.ifft(1j * self.kx[:, None] * jnp.fft.fft(a, axis=0), axis=0).real
 
     def ddy(self, a: Array) -> Array:
+        if self.dy is not None:
+            return periodic_central_derivative(a, self.dy, axis=1)
         return jnp.fft.ifft(1j * self.ky[None, :] * jnp.fft.fft(a, axis=1), axis=1).real
 
     def curl(self, a: Array) -> Array:
