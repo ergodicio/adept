@@ -386,7 +386,8 @@ def _plot_ohm_lineouts(ds: xr.Dataset, path: str, n_panels: int) -> None:
 
 def _plot_topology(ds: xr.Dataset, path: str) -> None:
     x, y, t = _physical_axes(ds)
-    index = ds.sizes["t"] - 1
+    rate_valid_indices = np.flatnonzero(np.asarray(ds.rate_normalization_valid))
+    index = int(rate_valid_indices[-1]) if rate_valid_indices.size else ds.sizes["t"] - 1
     bmag = np.sqrt(np.asarray((ds.b.isel(t=index) ** 2).sum("component")))
     az = np.asarray(ds.az.isel(t=index))
     vx = np.asarray(ds.v_nernst.isel(t=index).sel(component="x"))
