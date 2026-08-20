@@ -115,6 +115,32 @@ def periodic_central_derivative(
     ) / (12.0 * spacing)
 
 
+def partitioned_high_order_filter(a: Array, mesh: Mesh) -> Array:
+    """Remove the x-Nyquist mode with an eighth-difference shard-local filter."""
+
+    mesh_size = int(mesh.shape["x"])
+    local_size = a.shape[0] // mesh_size
+    halo = 4 if local_size >= 4 else 1
+    permutation_left = tuple((rank, (rank + 1) % mesh_size) for rank in range(mesh_size))
+    permutation_right = tuple((rank, (rank - 1) % mesh_size) for rank in range(mesh_size))
+
+    def _local(local: Array) -> Array:
+        left = lax.ppermute(local[-halo:], "x", permutation_left)
+        right = lax.ppermute(local[:halo], "x", permutation_right)
+        padded = jnp.concatenate((left, local, right), axis=0)
+        if halo == 1:
+            return 0.25 * padded[:-2] + 0.5 * padded[1:-1] + 0.25 * padded[2:]
+        nlocal = local.shape[0]
+        coefficients = (1.0, -8.0, 28.0, -56.0, 70.0, -56.0, 28.0, -8.0, 1.0)
+        high_pass = sum(
+            coefficient * padded[offset : offset + nlocal] for offset, coefficient in enumerate(coefficients)
+        )
+        return local - high_pass / 256.0
+
+    spec = P("x", *(None for _ in range(a.ndim - 1)))
+    return shard_map(_local, mesh=mesh, in_specs=spec, out_specs=spec, check_vma=False)(a)
+
+
 class TzoufrasVlasov:
     """Arbitrary-``f_lm`` 2D3P Vlasov operator from Tzoufras (2011).
 
@@ -387,7 +413,10 @@ class HouLiFilter2D:
         """Filter an array whose leading axes are ``(x, y)``."""
 
         if self.filter_x is not None:
-            a = self._apply(a, self.filter_x, axis=0)
+            if self.mesh is None:
+                a = self._apply(a, self.filter_x, axis=0)
+            else:
+                a = partitioned_high_order_filter(a, self.mesh)
         if self.filter_y is not None:
             if self.mesh is None:
                 a = self._apply(a, self.filter_y, axis=1)

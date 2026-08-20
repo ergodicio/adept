@@ -97,7 +97,7 @@ def test_x_sharding_places_spatial_state_and_args():
     cfg["terms"].update(
         {
             "field_solver": {"mode": "kinetic-ohm"},
-            "hou_li_filter": {"is_on": True, "dimensions": ["y"]},
+            "hou_li_filter": {"is_on": True, "dimensions": ["x", "y"]},
         }
     )
     module = BaseVFP2D(copy.deepcopy(cfg))

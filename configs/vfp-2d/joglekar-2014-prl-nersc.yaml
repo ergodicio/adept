@@ -51,8 +51,8 @@ terms:
   # Suppress the grid-scale pseudospectral cascade without touching velocity
   # space. This is the same high-order Hou-Li regularization used elsewhere in
   # ADEPT; resolved spot and transport scales are effectively unchanged.
-  # Sharded spatial derivatives use fourth-order stencils; retain a local y Hou-Li filter.
-  hou_li_filter: {is_on: true, alpha: 36.0, order: 36, dimensions: [y]}
+  # The sharded path maps x filtering to an eighth-difference halo stencil.
+  hou_li_filter: {is_on: true, alpha: 36.0, order: 36, dimensions: [x, y]}
   field_solver:
     mode: kinetic-ohm
     hidden_density_gradient:

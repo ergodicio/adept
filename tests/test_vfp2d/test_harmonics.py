@@ -3,6 +3,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+from jax.sharding import Mesh
 
 from adept.vfp1d.fokker_planck import FLMCollisions
 from adept.vfp1d.grid import Grid as VFP1DGrid
@@ -174,6 +175,18 @@ def test_hou_li_filter_damps_only_grid_scale_configuration_modes():
     # The low Fourier mode is unaffected to roundoff, while the Nyquist mode
     # is attenuated by exp(-alpha) on each of the two axes.
     np.testing.assert_allclose(filtered, smooth, rtol=1e-12, atol=1e-12)
+
+
+def test_partitioned_x_filter_removes_checkerboard_and_preserves_smooth_mode():
+    nx, ny = 32, 8
+    x = jnp.arange(nx)[:, None]
+    smooth = jnp.exp(2j * jnp.pi * x / nx) * jnp.ones((1, ny))
+    checkerboard = (-1.0) ** x * jnp.ones((1, ny))
+    mesh = Mesh(np.asarray(jax.devices()), ("x",))
+
+    filtered = HouLiFilter2D(nx, ny, dimensions=("x",), mesh=mesh)(smooth + checkerboard)
+
+    np.testing.assert_allclose(filtered, smooth, rtol=2e-7, atol=2e-7)
 
 
 def test_joglekar_velocity_moments_and_l2_tensor_mapping():

@@ -417,8 +417,6 @@ class BaseVFP2D(ADEPTModule):
                 dimensions = set(filter_cfg.get("dimensions", ["x", "y"]))
                 if not dimensions or not dimensions <= {"x", "y"}:
                     raise ValueError("VFP-2D Hou-Li filtering dimensions must be a nonempty subset of [x, y]")
-                if self.spatial_sharding is not None and "x" in dimensions:
-                    raise ValueError("x-sharded VFP-2D must omit x from spectral Hou-Li filter dimensions")
                 spatial_filter = HouLiFilter2D(
                     self.grid.nx,
                     self.grid.ny,

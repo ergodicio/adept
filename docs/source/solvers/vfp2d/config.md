@@ -32,8 +32,9 @@ along $x$ over every visible JAX device. `nx` must be divisible by the device co
 sharded path uses fourth-order periodic finite differences (with two-cell halo exchange)
 for spatial derivatives, because a global Fourier transform along a partitioned axis would
 replicate the dominant distribution array. Saved snapshots are replicated only when they
-are written. A spectral Hou--Li filter may be retained along local $y$, but its `dimensions`
-must omit `x`.
+are written. On this path, an requested $x$ Hou--Li filter is implemented as a shard-local
+eighth-difference Nyquist filter with four-cell halo exchange; $y$ retains the spectral
+Hou--Li filter.
 
 ## Initial distribution
 
