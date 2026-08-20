@@ -9,6 +9,7 @@ import yaml
 parser = argparse.ArgumentParser(description="Automatic Differentiation Enabled Plasma Transport")
 parser.add_argument("--cfg", help="enter path to cfg")
 parser.add_argument("--run_id", help="enter run_id to continue")
+parser.add_argument("--dt", help="override grid.dt (for stability/timing runs)")
 parser.add_argument("--tmax", help="override grid.tmax and save.t.tmax (for smoke/timing runs)")
 parser.add_argument("--save-nt", type=int, help="override save.t.nt")
 parser.add_argument("--run-name", help="override mlflow.run")
@@ -25,6 +26,8 @@ if args.run_id is None and args.cfg:
     with open(f"{os.path.join(os.getcwd(), args.cfg)}.yaml") as fi:
         cfg = yaml.safe_load(fi)
 
+    if args.dt is not None:
+        cfg["grid"]["dt"] = args.dt
     if args.tmax is not None:
         cfg["grid"]["tmax"] = args.tmax
         cfg.setdefault("save", {}).setdefault("t", {})["tmax"] = args.tmax
