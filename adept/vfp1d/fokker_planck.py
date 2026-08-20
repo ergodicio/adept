@@ -30,6 +30,25 @@ from adept.driftdiffusion import (
 from adept.vfp1d.grid import Grid
 
 
+def _linear_solve_value_or_nan(op: lx.AbstractLinearOperator, rhs: Array) -> Array:
+    """Solve without executing Lineax's host error callback during shape tracing.
+
+    Diffrax evaluates a vector field with ``filter_eval_shape`` before compiling a
+    solve. With JAX 0.10, Lineax's default ``throw=True`` callback can inspect the
+    abstract placeholder values and report a spurious non-finite-input failure at
+    ``t=0``. ``throw=False`` keeps the result code in the traced computation. Map a
+    genuine runtime failure to NaNs so downstream finite checks cannot mistake it
+    for a valid collision update.
+    """
+
+    solution = lx.linear_solve(op, rhs, solver=lx.AutoLinearSolver(well_posed=True), throw=False)
+    return jnp.where(
+        solution.result == lx.RESULTS.successful,
+        solution.value,
+        jnp.full_like(solution.value, jnp.nan),
+    )
+
+
 def inverse_bremsstrahlung_resonance_ratio(
     Z: float | Array,
     ni: float | Array,
@@ -343,7 +362,7 @@ class F0Collisions(eqx.Module):
 
         # Delta formulation: solve for increment δ = f^{n+1} - f^n to reduce
         # floating-point error in density conservation (cf. diffrax)
-        delta = lx.linear_solve(op, f0 - op.mv(f0), solver=lx.AutoLinearSolver(well_posed=True)).value
+        delta = _linear_solve_value_or_nan(op, f0 - op.mv(f0))
         return f0 + delta
 
     def __call__(
@@ -524,10 +543,10 @@ class FLMCollisions:
             # Lineax requires the operator and vector PyTree structures/dtypes
             # to agree. The collision matrix is real, so solve the two complex
             # components independently without constructing a complex matrix.
-            real = lx.linear_solve(op, jnp.real(f10), solver=lx.AutoLinearSolver(well_posed=True)).value
-            imag = lx.linear_solve(op, jnp.imag(f10), solver=lx.AutoLinearSolver(well_posed=True)).value
+            real = _linear_solve_value_or_nan(op, jnp.real(f10))
+            imag = _linear_solve_value_or_nan(op, jnp.imag(f10))
             return real + 1j * imag
-        return lx.linear_solve(op, f10, solver=lx.AutoLinearSolver(well_posed=True)).value
+        return _linear_solve_value_or_nan(op, f10)
 
     def solve_harmonic(self, Z, ni, f0, flm, dt, il: int, include_ee_offdiag_explicitly=True):
         """
