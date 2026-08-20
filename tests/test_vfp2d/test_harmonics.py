@@ -14,6 +14,7 @@ from adept.vfp2d import (
     Maxwell2D,
     TzoufrasVlasov,
     cartesian_l2,
+    conservative_f00_positivity,
     current,
     density,
     nernst_velocity,
@@ -137,6 +138,26 @@ def test_density_and_current_use_tzoufras_moment_normalization():
     np.testing.assert_allclose(n, 4.0 * np.pi * radial2)
     expected = -(4.0 * np.pi / 3.0) * radial3 * jnp.asarray([0.2, 0.2, 0.1])
     np.testing.assert_allclose(j, jnp.broadcast_to(expected, j.shape))
+
+
+def test_conservative_f00_positivity_removes_undershoots_and_preserves_density():
+    grid, layout, _operator, flm = _make_problem(l_max=1, nx=2, ny=3)
+    f00 = jnp.exp(-(grid.v**2))
+    f00 = f00.at[-3:].set(jnp.asarray([-0.02, -0.01, -0.005]))
+    flm = flm.at[..., layout.index(0, 0), :].set(f00)
+    flm = flm.at[..., layout.index(1, 0), :].set(0.1 * jnp.exp(-(grid.v**2)))
+
+    density_before = density(flm, layout, grid.v, grid.dv)
+    projected = conservative_f00_positivity(flm, layout, grid.v, grid.dv)
+
+    assert jnp.all(jnp.real(projected[..., layout.index(0, 0), :]) >= 0.0)
+    np.testing.assert_allclose(density(projected, layout, grid.v, grid.dv), density_before, rtol=2e-15, atol=2e-15)
+    np.testing.assert_allclose(
+        projected[..., layout.index(1, 0), :],
+        flm[..., layout.index(1, 0), :],
+        rtol=0.0,
+        atol=0.0,
+    )
 
 
 def test_joglekar_velocity_moments_and_l2_tensor_mapping():

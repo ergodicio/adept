@@ -394,6 +394,13 @@ class BaseVFP2D(ADEPTModule):
                 self.grid.dt,
                 collisions=collisions,
                 real_storage=True,
+                enforce_f00_positivity=(
+                    self.cfg.get("terms", {})
+                    .get("fokker_planck", {})
+                    .get("f00", {})
+                    .get("positivity", "none")
+                    == "conservative"
+                ),
             )
             initial_flm = real_to_complex(self.state["flm"])
             initial_current = maxwell.c2 * maxwell.curl(self.state["b"])

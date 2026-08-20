@@ -68,7 +68,7 @@ terms:
     # Chang-Cooper is positivity preserving and is the safer choice once IB
     # heating drives f00 far from Maxwellian. The 2 fs Strang step applies
     # collisions in 1 fs half-steps, about 0.045 tau_n for this benchmark.
-    f00: {model: CoulombianKernel, scheme: chang_cooper}
+    f00: {model: CoulombianKernel, scheme: chang_cooper, positivity: conservative}
 
 drivers:
   ib:

@@ -261,6 +261,31 @@ def density(f: Array, layout: HarmonicLayout, v: Array, dv: float) -> Array:
     return 4.0 * jnp.pi * jnp.sum(jnp.real(f00) * v**2, axis=-1) * dv
 
 
+def conservative_f00_positivity(f: Array, layout: HarmonicLayout, v: Array, dv: float) -> Array:
+    """Clip negative ``f00`` cells while preserving each spatial density.
+
+    Explicit harmonic transport is not positivity preserving. Small high-speed
+    undershoots can therefore grow until the Coulomb collision coefficients are
+    undefined. The angular average must be non-negative physically; after
+    clipping, rescale its positive part so the ``4 pi integral(f00 v^2 dv)``
+    density is unchanged wherever the pre-projection density is positive.
+    """
+
+    i00 = layout.index(0, 0)
+    f00 = jnp.real(f[..., i00, :])
+    weights = 4.0 * jnp.pi * jnp.asarray(v) ** 2 * float(dv)
+    target_density = jnp.sum(f00 * weights, axis=-1, keepdims=True)
+    positive = jnp.maximum(f00, 0.0)
+    positive_density = jnp.sum(positive * weights, axis=-1, keepdims=True)
+    tiny = jnp.finfo(f00.dtype).tiny
+    scale = jnp.where(
+        (target_density > 0.0) & (positive_density > tiny),
+        target_density / jnp.maximum(positive_density, tiny),
+        0.0,
+    )
+    return f.at[..., i00, :].set((positive * scale).astype(f.dtype))
+
+
 def current(
     f: Array,
     layout: HarmonicLayout,

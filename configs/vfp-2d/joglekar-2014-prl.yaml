@@ -62,7 +62,7 @@ terms:
     active: true
     flm: {ee: true}
     # Chang-Cooper remains robust as IB heating drives f00 away from Maxwellian.
-    f00: {model: CoulombianKernel, scheme: chang_cooper}
+    f00: {model: CoulombianKernel, scheme: chang_cooper, positivity: conservative}
 
 drivers:
   ib:

@@ -11,6 +11,7 @@ from adept.vfp2d.harmonics import (
     HarmonicLayout,
     TzoufrasVlasov,
     complex_to_real,
+    conservative_f00_positivity,
     current,
     density,
     real_to_complex,
@@ -196,6 +197,7 @@ class KineticOhmStep:
         dt: float,
         collisions: CollisionStep | None = None,
         real_storage: bool = False,
+        enforce_f00_positivity: bool = False,
     ):
         self.vlasov = vlasov
         self.maxwell = maxwell
@@ -206,6 +208,12 @@ class KineticOhmStep:
         self.dt = float(dt)
         self.collisions = collisions
         self.real_storage = bool(real_storage)
+        self.enforce_f00_positivity = bool(enforce_f00_positivity)
+
+    def _positive_f00(self, flm: Array) -> Array:
+        if not self.enforce_f00_positivity:
+            return flm
+        return conservative_f00_positivity(flm, self.layout, self.v, self.dv)
 
     def _collide(self, t: float, flm: Array, args: dict | None, dt: float) -> Array:
         if self.collisions is None:
@@ -267,26 +275,26 @@ class KineticOhmStep:
     def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
         flm = real_to_complex(state["flm"]) if self.real_storage else state["flm"]
         magnetic_field = state["b"]
-        flm = self._collide(t, flm, args, 0.5 * self.dt)
+        flm = self._positive_f00(self._collide(t, flm, args, 0.5 * self.dt))
         flm = self._project(flm, magnetic_field)
 
         df1, db1, _electric1 = self._rates(t, flm, magnetic_field, args)
         stage2_b = magnetic_field + 0.5 * self.dt * db1
-        stage2_f = self._project(flm + 0.5 * self.dt * df1, stage2_b)
+        stage2_f = self._positive_f00(self._project(flm + 0.5 * self.dt * df1, stage2_b))
         df2, db2, _electric2 = self._rates(t + 0.5 * self.dt, stage2_f, stage2_b, args)
 
         stage3_b = magnetic_field + 0.5 * self.dt * db2
-        stage3_f = self._project(flm + 0.5 * self.dt * df2, stage3_b)
+        stage3_f = self._positive_f00(self._project(flm + 0.5 * self.dt * df2, stage3_b))
         df3, db3, _electric3 = self._rates(t + 0.5 * self.dt, stage3_f, stage3_b, args)
 
         stage4_b = magnetic_field + self.dt * db3
-        stage4_f = self._project(flm + self.dt * df3, stage4_b)
+        stage4_f = self._positive_f00(self._project(flm + self.dt * df3, stage4_b))
         df4, db4, _electric4 = self._rates(t + self.dt, stage4_f, stage4_b, args)
 
         result_b = magnetic_field + (self.dt / 6.0) * (db1 + 2.0 * db2 + 2.0 * db3 + db4)
         result_f = flm + (self.dt / 6.0) * (df1 + 2.0 * df2 + 2.0 * df3 + df4)
-        result_f = self._project(result_f, result_b)
-        result_f = self._collide(t + self.dt, result_f, args, 0.5 * self.dt)
+        result_f = self._positive_f00(self._project(result_f, result_b))
+        result_f = self._positive_f00(self._collide(t + self.dt, result_f, args, 0.5 * self.dt))
         result_f = self._project(result_f, result_b)
         hidden_dndz = self._hidden_dndz(t + self.dt, args, result_b[..., 0])
         result_e, _terms = self.ohm(
