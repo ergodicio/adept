@@ -113,6 +113,8 @@ def test_x_sharding_places_spatial_state_and_args():
     assert module.args["ni"].sharding.spec[0] == "x"
     output = module(None, None)
     assert jnp.all(jnp.isfinite(output["solver result"].ys["flm"]))
+    postprocessed = module.post_process(output, "")["vfp2d"]
+    assert np.all(np.isfinite(postprocessed.ohm_tensor_pressure))
 
 
 def test_chang_cooper_collisions_preserve_uniform_maxwellian():

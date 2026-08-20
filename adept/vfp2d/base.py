@@ -535,11 +535,16 @@ class BaseVFP2D(ADEPTModule):
         if self._kinetic_ohm is not None and self._maxwell is not None:
             ohm_history = {key: [] for key in ("resistive", "hall", "nernst", "scalar_pressure", "tensor_pressure")}
             for index, time in enumerate(np.asarray(result.ts)):
-                target_current = self._maxwell.c2 * self._maxwell.curl(result.ys["b"][index])
-                hidden_dndz = KineticOhmStep._hidden_dndz(float(time), self.args, result.ys["b"][index, ..., 0])
+                frame_flm = flm_jax[index]
+                frame_b = result.ys["b"][index]
+                if self.spatial_sharding is not None:
+                    frame_flm = self.spatial_sharding.put(frame_flm)
+                    frame_b = self.spatial_sharding.put(frame_b)
+                target_current = self._maxwell.c2 * self._maxwell.curl(frame_b)
+                hidden_dndz = KineticOhmStep._hidden_dndz(float(time), self.args, frame_b[..., 0])
                 _electric, terms = self._kinetic_ohm(
-                    flm_jax[index],
-                    result.ys["b"][index],
+                    frame_flm,
+                    frame_b,
                     plasma_current=target_current,
                     hidden_dndz=hidden_dndz,
                 )
