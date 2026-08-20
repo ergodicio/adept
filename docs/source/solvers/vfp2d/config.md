@@ -130,8 +130,11 @@ turning Biermann-ring motion into a false reconnection rate. The normalized rate
 suppressed when the signed inward Nernst speed is below 10% of its maximum over the saved
 history, where division by a vanishing inflow would otherwise create a spurious spike.
 `bz_quadrupole_purity` is the local L1 projection of $B_z$ onto the expected four-lobe
-`sign(x*y)` pattern. Wide-box runs save both full-domain facets and a central $B_z$ facet
-with an aspect ratio suited to the reconnection layer.
+`sign(x*y)` pattern. Full-domain facets use a free display aspect ratio so wide boxes remain
+readable. The `plots/reconnection_region` artifact directory also contains a curated set of
+moments and Ohm-law terms cropped to the central three y-half-widths in x, excluding the
+distant x boundaries and the outermost 25% of the y domain. This isolates the X-point and
+current-sheet neighborhood from the outflow extent and laser-source boundary cells.
 
 ## Saving
 

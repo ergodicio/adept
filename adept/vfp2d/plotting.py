@@ -34,12 +34,26 @@ def save_xy_facet(
     diverging: bool = True,
     title: str | None = None,
     xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    aspect: str = "auto",
 ) -> None:
     """Save evenly spaced x-y panels with one color scale for all times."""
 
     x, y, t = _physical_axes(ds)
     indices = _selected_indices(field.sizes["t"], n_panels)
-    values = np.asarray(field.isel(t=indices))
+    x_indices = np.arange(x.size)
+    if xlim is not None:
+        x_indices = np.flatnonzero((x >= xlim[0]) & (x <= xlim[1]))
+        if not x_indices.size:
+            raise ValueError(f"No x coordinates lie inside requested facet limits {xlim}")
+        x = x[x_indices]
+    y_indices = np.arange(y.size)
+    if ylim is not None:
+        y_indices = np.flatnonzero((y >= ylim[0]) & (y <= ylim[1]))
+        if not y_indices.size:
+            raise ValueError(f"No y coordinates lie inside requested facet limits {ylim}")
+        y = y[y_indices]
+    values = np.asarray(field.isel(t=indices, x=x_indices, y=y_indices))
     finite = values[np.isfinite(values)]
     if finite.size == 0:
         vmin, vmax = -1.0, 1.0
@@ -74,15 +88,13 @@ def save_xy_facet(
         ax.set_title(f"t = {t[index]:.3g} ps")
         ax.set_xlabel("x [μm]")
         ax.set_ylabel("y [μm]")
-        if xlim is not None:
-            ax.set_xlim(*xlim)
-        ax.set_aspect("equal")
+        ax.set_aspect(aspect)
     for ax in axes.flat[indices.size :]:
         ax.set_visible(False)
     if image is not None:
         fig.colorbar(image, ax=list(axes.flat[: indices.size]), shrink=0.82)
     if title:
-        fig.suptitle(title)
+        fig.suptitle(title, y=1.01)
     fig.savefig(path, dpi=140, bbox_inches="tight")
     plt.close(fig)
 
@@ -315,6 +327,46 @@ def _plot_regular_moments(ds: xr.Dataset, plot_dir: str, n_panels: int) -> None:
         )
 
 
+def _plot_reconnection_region(
+    ds: xr.Dataset,
+    plot_dir: str,
+    n_panels: int,
+    xlim: tuple[float, float],
+    ylim: tuple[float, float],
+) -> None:
+    """Plot a compact set of moments around the X-point, away from domain edges."""
+
+    fields: dict[str, tuple[xr.DataArray, bool]] = {
+        "density": (ds.ne, False),
+        "temperature": (ds.temperature, False),
+        "magnetic_field_magnitude": (np.sqrt((ds.b**2).sum("component")), False),
+        "current_magnitude": (np.sqrt((ds.current**2).sum("component")), False),
+        "nernst_velocity_magnitude": (np.sqrt((ds.v_nernst**2).sum("component")), False),
+        "b_x": (ds.b.sel(component="x"), True),
+        "b_z": (ds.b.sel(component="z"), True),
+        "e_z": (ds.e.sel(component="z"), True),
+        "current_z": (ds.current.sel(component="z"), True),
+        "v_nernst_y": (ds.v_nernst.sel(component="y"), True),
+        "vector_potential": (ds.az, True),
+    }
+    ohm_terms = ("ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure")
+    for name in ohm_terms:
+        if name in ds:
+            fields[f"{name}_z"] = (ds[name].sel(component="z"), True)
+
+    for name, (field, diverging) in fields.items():
+        save_xy_facet(
+            field,
+            ds,
+            os.path.join(plot_dir, f"xy_facet_{name}.png"),
+            n_panels=n_panels,
+            diverging=diverging,
+            title=f"reconnection region: {name.replace('_', ' ')}",
+            xlim=xlim,
+            ylim=ylim,
+        )
+
+
 def _plot_xpoint_history(ds: xr.Dataset, path: str) -> None:
     _, _, t = _physical_axes(ds)
     fig, axes = plt.subplots(4, 1, figsize=(8, 12), constrained_layout=True, sharex=True)
@@ -450,7 +502,8 @@ def save_artifacts(ds: xr.Dataset, td: str, *, n_panels: int = 9) -> None:
     binary_dir = os.path.join(td, "binary")
     moments_dir = os.path.join(td, "plots", "moments")
     reconnection_dir = os.path.join(td, "plots", "reconnection")
-    for directory in (binary_dir, moments_dir, reconnection_dir):
+    reconnection_region_dir = os.path.join(td, "plots", "reconnection_region")
+    for directory in (binary_dir, moments_dir, reconnection_dir, reconnection_region_dir):
         os.makedirs(directory, exist_ok=True)
     _write_binary(ds, binary_dir)
     _plot_regular_moments(ds, moments_dir, n_panels)
@@ -481,13 +534,17 @@ def save_artifacts(ds: xr.Dataset, td: str, *, n_panels: int = 9) -> None:
         )
     y_um = _physical_axes(ds)[1]
     central_half_width = 3.0 * max(abs(float(y_um[0])), abs(float(y_um[-1])))
+    reconnection_xlim = (-central_half_width, central_half_width)
+    reconnection_y_half_width = 0.75 * max(abs(float(y_um[0])), abs(float(y_um[-1])))
+    reconnection_ylim = (-reconnection_y_half_width, reconnection_y_half_width)
+    _plot_reconnection_region(ds, reconnection_region_dir, n_panels, reconnection_xlim, reconnection_ylim)
     save_xy_facet(
         ds.b.sel(component="z"),
         ds,
         os.path.join(reconnection_dir, "xy_facet_b_z_reconnection_region.png"),
         n_panels=n_panels,
         title="reconnection-region B_z quadrupole",
-        xlim=(-central_half_width, central_half_width),
+        xlim=reconnection_xlim,
     )
     for name in ("ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure"):
         if name in ds:

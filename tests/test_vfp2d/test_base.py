@@ -264,6 +264,9 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):
         "plots/reconnection/bx_jz_sheet_lineouts_x0.png",
         "plots/reconnection/xy_facet_b_z.png",
         "plots/reconnection/xy_facet_b_z_reconnection_region.png",
+        "plots/reconnection_region/xy_facet_temperature.png",
+        "plots/reconnection_region/xy_facet_current_z.png",
+        "plots/reconnection_region/xy_facet_ohm_nernst_z.png",
         "plots/reconnection/topology_nernst_final.png",
     ):
         assert (tmp_path / artifact).is_file()
