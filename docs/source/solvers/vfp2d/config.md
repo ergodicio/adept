@@ -126,8 +126,12 @@ contributions.
 The reconnection diagnostics report a normalized rate and flux only when the upstream
 $B_x$ fields are antiparallel and balanced and the origin contains both an in-plane null/
 $A_z$ saddle and a central current sheet. Invalid samples are stored as NaN rather than
-turning Biermann-ring motion into a false reconnection rate. `bz_quadrupole_purity` is the
-local L1 projection of $B_z$ onto the expected four-lobe `sign(x*y)` pattern.
+turning Biermann-ring motion into a false reconnection rate. The normalized rate is also
+suppressed when the signed inward Nernst speed is below 10% of its maximum over the saved
+history, where division by a vanishing inflow would otherwise create a spurious spike.
+`bz_quadrupole_purity` is the local L1 projection of $B_z$ onto the expected four-lobe
+`sign(x*y)` pattern. Wide-box runs save both full-domain facets and a central $B_z$ facet
+with an aspect ratio suited to the reconnection layer.
 
 ## Saving
 

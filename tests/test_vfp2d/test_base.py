@@ -250,6 +250,7 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):
         "reconnected_flux",
         "current_sheet_rms_width",
         "reconnection_valid",
+        "rate_normalization_valid",
         "bz_quadrupole_purity",
     ):
         assert diagnostic in dataset
@@ -262,6 +263,7 @@ def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):
         "plots/reconnection/ohm_z_lineouts_x0.png",
         "plots/reconnection/bx_jz_sheet_lineouts_x0.png",
         "plots/reconnection/xy_facet_b_z.png",
+        "plots/reconnection/xy_facet_b_z_reconnection_region.png",
         "plots/reconnection/topology_nernst_final.png",
     ):
         assert (tmp_path / artifact).is_file()
@@ -295,6 +297,7 @@ def test_reconnection_gate_and_bz_quadrupole_detect_a_central_sheet():
 
     diagnosed = add_reconnection_diagnostics(ds)
     assert bool(diagnosed.reconnection_valid.item())
+    assert bool(diagnosed.rate_normalization_valid.item())
     assert np.isfinite(diagnosed.normalized_reconnection_rate.item())
     assert diagnosed.current_sheet_dominance.item() > 0.7
     assert diagnosed.bz_quadrupole_purity.item() > 0.9
