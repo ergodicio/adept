@@ -12,6 +12,12 @@ parser.add_argument("--run_id", help="enter run_id to continue")
 parser.add_argument("--tmax", help="override grid.tmax and save.t.tmax (for smoke/timing runs)")
 parser.add_argument("--save-nt", type=int, help="override save.t.nt")
 parser.add_argument("--run-name", help="override mlflow.run")
+parser.add_argument("--disable-ib", action="store_true", help="disable inverse-bremsstrahlung heating")
+parser.add_argument(
+    "--disable-hidden-density-gradient",
+    action="store_true",
+    help="disable the kinetic-Ohm hidden density gradient",
+)
 args = parser.parse_args()
 
 # Enable float64 for kinetic solvers (must be done before importing adept)
@@ -26,6 +32,12 @@ if args.run_id is None and args.cfg:
         cfg.setdefault("save", {}).setdefault("t", {})["nt"] = args.save_nt
     if args.run_name is not None:
         cfg.setdefault("mlflow", {})["run"] = args.run_name
+    if args.disable_ib:
+        cfg.get("drivers", {}).pop("ib", None)
+    if args.disable_hidden_density_gradient:
+        hidden = cfg.get("terms", {}).get("field_solver", {}).get("hidden_density_gradient")
+        if hidden is not None:
+            hidden["active"] = False
 
     if cfg.get("solver") != "envelope-2d":
         from jax import config
