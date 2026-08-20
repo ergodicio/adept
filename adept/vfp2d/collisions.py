@@ -76,18 +76,12 @@ class CollisionStep:
             f00 = jnp.real(result[..., self.layout.index(0, 0), :]).reshape((-1, nv))
             heating = {}
             if D0_heating is not None:
-                heating["D0_heating"] = jnp.broadcast_to(
-                    jnp.asarray(D0_heating), spatial_shape
-                ).reshape(-1)
+                heating["D0_heating"] = jnp.broadcast_to(jnp.asarray(D0_heating), spatial_shape).reshape(-1)
             if ib_vosc2 is not None:
                 if ib_Z2ni_w0 is None:
                     raise ValueError("ib_Z2ni_w0 is required when inverse-bremsstrahlung heating is enabled")
-                heating["ib_vosc2"] = jnp.broadcast_to(
-                    jnp.asarray(ib_vosc2), spatial_shape
-                ).reshape(-1)
-                heating["ib_Z2ni_w0"] = jnp.broadcast_to(
-                    jnp.asarray(ib_Z2ni_w0), spatial_shape
-                ).reshape(-1)
+                heating["ib_vosc2"] = jnp.broadcast_to(jnp.asarray(ib_vosc2), spatial_shape).reshape(-1)
+                heating["ib_Z2ni_w0"] = jnp.broadcast_to(jnp.asarray(ib_Z2ni_w0), spatial_shape).reshape(-1)
             f00 = self.isotropic(None, f00, dt, **heating).reshape((*spatial_shape, nv))
             result = result.at[..., self.layout.index(0, 0), :].set(f00)
         if self.anisotropic is not None:
