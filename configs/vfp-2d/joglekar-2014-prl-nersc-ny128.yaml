@@ -6,7 +6,7 @@ solver: vfp-2d
 
 mlflow:
   experiment: vfp2d-joglekar-2014
-  run: wide-x-sharded-4gpu-ny128-dt1fs-30ps
+  run: wide-x-sharded-4gpu-ny128-dt1fs-30ps-houli-p12
 
 units:
   laser_wavelength: 351nm
@@ -43,7 +43,10 @@ grid:
   sharding: {enabled: true, axis: x}
 
 terms:
-  hou_li_filter: {is_on: true, alpha: 36.0, order: 36, dimensions: [x, y]}
+  # The p=36 taper left a grid-locked 2.5--4-cell y mode in Bz and the kinetic
+  # Ohm terms.  A p=12 convergence scan removes the upper-k shelf while keeping
+  # the 30 ps sheet width and reconnected flux within 1.5% of p=36.
+  hou_li_filter: {is_on: true, alpha: 36.0, order: 12, dimensions: [x, y]}
   field_solver:
     mode: kinetic-ohm
     hidden_density_gradient:
