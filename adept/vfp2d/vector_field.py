@@ -7,7 +7,14 @@ import jax.tree_util as jtu
 from jax import Array
 
 from adept.vfp2d.collisions import CollisionStep
-from adept.vfp2d.harmonics import HarmonicLayout, TzoufrasVlasov, complex_to_real, current, real_to_complex
+from adept.vfp2d.harmonics import (
+    HarmonicLayout,
+    TzoufrasVlasov,
+    complex_to_real,
+    current,
+    density,
+    real_to_complex,
+)
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
 
 
@@ -248,8 +255,11 @@ class KineticOhmStep:
             plasma_current=self._target_current(magnetic_field),
             hidden_dndz=hidden_dndz,
         )
+        ne = density(flm, self.layout, self.v, self.dv)
+        safe_ne = jnp.maximum(ne, jnp.finfo(ne.dtype).tiny)
+        dfdz = hidden_dndz[..., None, None] * flm / safe_ne[..., None, None]
         return (
-            self.vlasov(flm, electric_field, magnetic_field),
+            self.vlasov(flm, electric_field, magnetic_field, dfdz=dfdz),
             -self.maxwell.curl(electric_field),
             electric_field,
         )

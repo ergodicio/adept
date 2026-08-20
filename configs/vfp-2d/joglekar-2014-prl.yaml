@@ -49,11 +49,13 @@ terms:
     hidden_density_gradient:
       active: true
       scale_length: 17um  # Ln=50 lambda_mfp
+      switch_off: 17.78ps  # 800 tau_n in the Letter
+      switch_width: 0.5ps
+      # Joglekar et al. prescribe this same two-spot envelope for d(n)/dz.
       profile:
         basis: gaussian_spots
         x_center: 0um
         x_radius: 17um
-        # Three radii center-to-center: a 17 um gap between the 1/e contours.
         y_centers: [-25.5um, 25.5um]
         y_radius: 17um
   fokker_planck:

@@ -18,6 +18,7 @@ from adept.vfp1d.fokker_planck import (
     SelfConsistentBetaConfig,
     get_model,
     get_scheme,
+    inverse_bremsstrahlung_resonance_ratio,
 )
 from adept.vfp1d.grid import Grid as CollisionGrid
 from adept.vfp1d.helpers import _initialize_distribution_, calc_logLambda, load_profile_on_grid
@@ -262,7 +263,14 @@ class BaseVFP2D(ADEPTModule):
                 self.plasma_norm,
             )
             self.args["ib_vosc2"] = self.cfg["units"]["derived"]["vosc2_per_intensity"] * intensity * profile
-            self.args["ib_Z2ni_w0"] = self.args["Z"] ** 2 * self.args["ni"] / self.cfg["units"]["derived"]["w0_norm"]
+            derived = self.cfg["units"]["derived"]
+            self.args["ib_Z2ni_w0"] = inverse_bremsstrahlung_resonance_ratio(
+                self.args["Z"],
+                self.args["ni"],
+                derived["nuee_coeff"],
+                derived["logLam_ratio"],
+                derived["w0_norm"],
+            )
             for source_key, arg_key in (
                 ("switch_on", "ib_t_on"),
                 ("switch_off", "ib_t_off"),

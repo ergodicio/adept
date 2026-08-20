@@ -119,11 +119,20 @@ class TzoufrasVlasov:
             h = h.at[..., i, :].set(derivative + (ell + 1) * inv_v * f[..., i, :])
         return g, h
 
-    def streaming(self, f: Array) -> Array:
-        """Spatial-advection contribution, Eqs. (17)--(19), with ``d/dz = 0``."""
+    def streaming(self, f: Array, dfdz: Array | None = None) -> Array:
+        """Spatial-advection contribution from Tzoufras Eqs. (17)--(19).
+
+        Configuration space is evolved in x and y. ``dfdz`` optionally supplies
+        a prescribed derivative in the unresolved direction, which is useful
+        for an integrable 2.5D density gradient without allocating a z grid.
+        """
 
         dfdx = _spectral_derivative(f, self.kx, axis=0)
         dfdy = _spectral_derivative(f, self.ky, axis=1)
+        if dfdz is None:
+            dfdz = jnp.zeros_like(f)
+        transverse_minus = dfdy - 1j * dfdz
+        transverse_plus = dfdy + 1j * dfdz
         out = jnp.zeros_like(f)
         v = self.streaming_speed
 
@@ -142,7 +151,7 @@ class TzoufrasVlasov:
                 um = self.layout.index(ell + 1, m - 1)
                 up = self.layout.index(ell + 1, m + 1)
                 if lm >= 0:
-                    value -= 0.5 * v / (2 * ell - 1) * dfdy[..., lm, :]
+                    value -= 0.5 * v / (2 * ell - 1) * transverse_minus[..., lm, :]
                 if lp >= 0:
                     value += (
                         0.5
@@ -150,10 +159,10 @@ class TzoufrasVlasov:
                         * (ell - m)
                         * (ell - m - 1)
                         / (2 * ell - 1)
-                        * dfdy[..., lp, :]
+                        * transverse_plus[..., lp, :]
                     )
                 if um >= 0:
-                    value += 0.5 * v / (2 * ell + 3) * dfdy[..., um, :]
+                    value += 0.5 * v / (2 * ell + 3) * transverse_minus[..., um, :]
                 if up >= 0:
                     value -= (
                         0.5
@@ -161,16 +170,26 @@ class TzoufrasVlasov:
                         * (ell + m + 1)
                         * (ell + m + 2)
                         / (2 * ell + 3)
-                        * dfdy[..., up, :]
+                        * transverse_plus[..., up, :]
                     )
             else:
                 lower1 = self.layout.index(ell - 1, 1)
                 upper1 = self.layout.index(ell + 1, 1)
                 transverse = jnp.zeros_like(value)
                 if lower1 >= 0:
-                    transverse -= ell * (ell - 1) / (2 * ell - 1) * dfdy[..., lower1, :]
+                    transverse -= (
+                        ell
+                        * (ell - 1)
+                        / (2 * ell - 1)
+                        * transverse_plus[..., lower1, :]
+                    )
                 if upper1 >= 0:
-                    transverse += (ell + 1) * (ell + 2) / (2 * ell + 3) * dfdy[..., upper1, :]
+                    transverse += (
+                        (ell + 1)
+                        * (ell + 2)
+                        / (2 * ell + 3)
+                        * transverse_plus[..., upper1, :]
+                    )
                 value -= v * jnp.real(transverse)
 
             out = out.at[..., target, :].set(value)
@@ -261,8 +280,18 @@ class TzoufrasVlasov:
             out = out.at[..., target, :].set(value)
         return out
 
-    def __call__(self, f: Array, electric_field: Array, magnetic_field: Array) -> Array:
-        result = self.streaming(f) + self.electric(f, electric_field) + self.magnetic(f, magnetic_field)
+    def __call__(
+        self,
+        f: Array,
+        electric_field: Array,
+        magnetic_field: Array,
+        dfdz: Array | None = None,
+    ) -> Array:
+        result = (
+            self.streaming(f, dfdz=dfdz)
+            + self.electric(f, electric_field)
+            + self.magnetic(f, magnetic_field)
+        )
         # m=0 coefficients represent real surface harmonics. Project away
         # roundoff-level imaginary parts so the invariant is explicit.
         for i, (_ell, m) in enumerate(self.layout.pairs):

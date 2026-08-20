@@ -64,8 +64,9 @@ class KineticOhm2D:
         """Return ``E`` and its five PRL Eq. (2) contributions.
 
         ``hidden_dndz`` represents the prescribed density derivative in the
-        unresolved z direction. Moments other than density are assumed not to
-        vary in z, exactly matching the 2.5D source construction in the Letter.
+        unresolved z direction. The kinetic step supplies the matching
+        ``df/dz = (dndz/ne) f`` streaming term, so an isothermal Maxwellian is
+        in pressure balance instead of being spuriously accelerated by Ez.
         """
 
         ne = density(flm, self.layout, self.v, self.dv)

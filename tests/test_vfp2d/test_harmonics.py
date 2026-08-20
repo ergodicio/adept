@@ -82,6 +82,25 @@ def test_isotropic_spatial_gradient_drives_f10_and_f11_with_tzoufras_coefficient
     np.testing.assert_allclose(result[..., layout.index(1, 1), :], expected_f11, rtol=1e-12, atol=1e-12)
 
 
+def test_hidden_z_gradient_drives_imaginary_f11_with_tzoufras_coefficient():
+    grid, layout, operator, flm = _make_problem(nx=3, ny=2)
+    f00 = jnp.exp(-grid.v**2)
+    flm = flm.at[..., layout.index(0, 0), :].set(f00)
+    alpha = 0.07
+    dfdz = alpha * flm
+
+    result = operator.streaming(flm, dfdz=dfdz)
+    expected_f11 = jnp.broadcast_to(
+        0.5j * alpha * grid.v * f00,
+        (grid.nx, grid.ny, grid.nv),
+    )
+
+    np.testing.assert_allclose(result[..., layout.index(1, 0), :], 0.0, atol=1e-14)
+    np.testing.assert_allclose(
+        result[..., layout.index(1, 1), :], expected_f11, rtol=1e-12, atol=1e-12
+    )
+
+
 def test_isotropic_electric_push_matches_equations_20_and_21():
     grid, layout, operator, flm = _make_problem(nx=3, ny=2)
     f00 = jnp.exp(-(grid.v**2))[None, None, :]

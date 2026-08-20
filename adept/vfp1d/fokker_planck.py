@@ -30,6 +30,29 @@ from adept.driftdiffusion import (
 from adept.vfp1d.grid import Grid
 
 
+def inverse_bremsstrahlung_resonance_ratio(
+    Z: float | Array,
+    ni: float | Array,
+    nuee_coeff: float,
+    logLam_ratio: float,
+    w0_norm: float,
+) -> Array:
+    """Return the coefficient in ``nu_ei(v) / omega_0 = ratio / v**3``.
+
+    ``nuee_coeff`` contains the normalization-time and reference-density
+    factors, while ``logLam_ratio`` converts the electron-electron reference
+    rate to the electron-ion rate.
+    """
+
+    return (
+        jnp.asarray(nuee_coeff)
+        * jnp.asarray(logLam_ratio)
+        * jnp.asarray(Z) ** 2
+        * jnp.asarray(ni)
+        / jnp.asarray(w0_norm)
+    )
+
+
 class FastVFP(AbstractBetaBasedModel):
     """
     FastVFP model: D = 1/(2β·v).
@@ -278,7 +301,9 @@ class F0Collisions(eqx.Module):
         :param dt: time step
         :param D0_heating: Maxwellian heating rate D₀ (>0 heats, <0 cools). None to skip.
         :param ib_vosc2: IB quiver velocity squared v_osc². None to skip.
-        :param ib_Z2ni_w0: IB parameter Z²nᵢ/ω₀. Required when ib_vosc2 is not None.
+        :param ib_Z2ni_w0: Coefficient in νₑᵢ(v)/ω₀ = ib_Z2ni_w0/v³.
+            The legacy name is retained for API compatibility. Required when
+            ib_vosc2 is not None.
 
         :return: updated distribution function (nv,)
         """
@@ -306,7 +331,7 @@ class F0Collisions(eqx.Module):
             D = D + D0_heating * v_edge**2
         if ib_vosc2 is not None:
             # IB heating (Ridgers eq 4.39): D̄ = D + (v_osc²/(6v))·g(v)
-            # g(v) = [1 + (Z²nᵢ/(ω₀v³))²]⁻¹
+            # g(v) = [1 + (νₑᵢ(v)/ω₀)²]⁻¹
             ib_arg = ib_Z2ni_w0 / v_edge**3
             D = D + (ib_vosc2 / (6.0 * v_edge)) / (1.0 + ib_arg**2)
 
@@ -339,7 +364,8 @@ class F0Collisions(eqx.Module):
         :param dt: time step
         :param D0_heating: Maxwellian heating rate D₀. Scalar or (nx,). None to skip.
         :param ib_vosc2: IB quiver velocity squared. Scalar or (nx,). None to skip.
-        :param ib_Z2ni_w0: IB parameter Z²nᵢ/ω₀. Scalar or (nx,). Required with ib_vosc2.
+        :param ib_Z2ni_w0: Coefficient in νₑᵢ(v)/ω₀ = ib_Z2ni_w0/v³.
+            Scalar or (nx,). The legacy name is retained for API compatibility.
 
         :return: updated distribution function (nx, nv)
         """

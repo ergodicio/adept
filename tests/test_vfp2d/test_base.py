@@ -130,6 +130,47 @@ def test_spatial_ib_driver_builds_two_gaussian_hotspots():
     assert abs(abs(float(module.grid.y[hot_y])) - expected_y) < 2 * module.grid.dy
     assert heating[center_x, hot_y] > 10.0 * heating[0, module.grid.ny // 2]
     assert module.args["ib_t_off"] > module.args["ib_switch_width"] > 0.0
+    derived = module.cfg["units"]["derived"]
+    expected_ratio = (
+        derived["nuee_coeff"]
+        * derived["logLam_ratio"]
+        * module.args["Z"] ** 2
+        * module.args["ni"]
+        / derived["w0_norm"]
+    )
+    np.testing.assert_allclose(module.args["ib_Z2ni_w0"], expected_ratio)
+
+
+def test_isothermal_uniform_hidden_gradient_has_no_biermann_or_temperature_structure():
+    cfg = _config(collisions=False)
+    cfg["grid"].update({"nx": 4, "ny": 4})
+    cfg["terms"]["field_solver"] = {
+        "mode": "kinetic-ohm",
+        "hidden_density_gradient": {
+            "active": True,
+            "scale_length": "2um",
+            "profile": {"basis": "uniform", "baseline": 1.0},
+        },
+    }
+
+    module, output = _setup_and_run(cfg)
+    saved = output["solver result"].ys
+    dataset = module.post_process(output, "")["vfp2d"]
+
+    np.testing.assert_allclose(saved["b"], 0.0, atol=2e-13)
+    final_temperature = np.asarray(dataset.temperature[-1])
+    np.testing.assert_allclose(
+        final_temperature,
+        np.asarray(dataset.temperature[0]),
+        rtol=2e-8,
+        atol=2e-10,
+    )
+    np.testing.assert_allclose(
+        final_temperature,
+        np.mean(final_temperature),
+        rtol=2e-12,
+        atol=2e-12,
+    )
 
 
 def test_kinetic_ohm_mode_runs_without_explicit_maxwell_evolution(tmp_path):

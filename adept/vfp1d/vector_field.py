@@ -3,7 +3,14 @@ import optimistix as optx
 from jax import Array
 from jax import numpy as jnp
 
-from adept.vfp1d.fokker_planck import F0Collisions, FLMCollisions, SelfConsistentBetaConfig, get_model, get_scheme
+from adept.vfp1d.fokker_planck import (
+    F0Collisions,
+    FLMCollisions,
+    SelfConsistentBetaConfig,
+    get_model,
+    get_scheme,
+    inverse_bremsstrahlung_resonance_ratio,
+)
 
 
 class OSHUN1D:
@@ -51,6 +58,8 @@ class OSHUN1D:
         vosc2_per_intensity = cfg["units"]["derived"].get("vosc2_per_intensity", 0.0)
         self.ib_vosc2 = vosc2_per_intensity * ib_intensity
         self.ib_w0 = cfg["units"]["derived"].get("w0_norm", 1.0)
+        self.ib_nuee_coeff = nuee_coeff
+        self.ib_logLam_ratio = cfg["units"]["derived"].get("logLam_ratio", 1.0)
         self._ib_enabled = self.ib_vosc2 > 0.0
 
         self.solve_aniso = FLMCollisions(
@@ -393,7 +402,13 @@ class OSHUN1D:
             heating_kwargs["D0_heating"] = self.D0_heating
         if self._ib_enabled:
             heating_kwargs["ib_vosc2"] = self.ib_vosc2
-            heating_kwargs["ib_Z2ni_w0"] = Z**2 * ni / self.ib_w0
+            heating_kwargs["ib_Z2ni_w0"] = inverse_bremsstrahlung_resonance_ratio(
+                Z,
+                ni,
+                self.ib_nuee_coeff,
+                self.ib_logLam_ratio,
+                self.ib_w0,
+            )
         f0_star = self.solve_Cee0(None, f0_star, self.grid.dt, **heating_kwargs)
 
         # Interpolate center quantities to edges for FLM collision operator

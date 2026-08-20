@@ -91,10 +91,17 @@ rather than differentiating through every iteration.
 
 For gradients lying in the evolved $x$--$y$ plane, the Biermann field should emerge from the
 quasineutral electric solve. The PRL geometry is different: it evolves $x,y$ but prescribes
-$\partial_z n$. The implementation therefore needs an explicit `hidden_gradients.dndz`
-field which enters the pressure-gradient part of the same Ohm residual. It must not be
-implemented as an arbitrary magnetic source because doing so would lose the corresponding
-electric field and electron response.
+$\partial_z n$. The implementation therefore uses an explicit `hidden_density_gradient`
+field in the pressure-gradient part of the same Ohm residual. The kinetic equation receives
+the matching $\partial_z f=(\partial_z n/n)f$ Tzoufras streaming term; this balances the
+pressure electric field for an isothermal Maxwellian and prevents the current projection
+from turning that equilibrium force into numerical heating. It must not be implemented as
+an arbitrary magnetic source because doing so would lose the corresponding electric field
+and electron response.
+
+The published benchmark deliberately gives $\partial_z n$ the same two-spot Gaussian envelope
+as the laser source. A uniform in-plane hidden gradient is also tested as a null problem: it
+must leave an isothermal state spatially uniform and generate no Biermann field.
 
 The source gate is smooth and differentiable during optimization but can reproduce the
 published switch-off at $800\tau_n$ in validation mode. A direct $\nabla n\times\nabla T$

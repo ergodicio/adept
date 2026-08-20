@@ -53,6 +53,9 @@ terms:
     hidden_density_gradient:
       active: true
       scale_length: 17um
+      switch_off: 17.78ps  # 800 tau_n in the Letter
+      switch_width: 0.5ps
+      # Joglekar et al. prescribe this same two-spot envelope for d(n)/dz.
       profile:
         basis: gaussian_spots
         x_center: 0um
