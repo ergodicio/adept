@@ -408,10 +408,7 @@ class BaseVFP2D(ADEPTModule):
                 collisions=collisions,
                 real_storage=True,
                 enforce_f00_positivity=(
-                    self.cfg.get("terms", {})
-                    .get("fokker_planck", {})
-                    .get("f00", {})
-                    .get("positivity", "none")
+                    self.cfg.get("terms", {}).get("fokker_planck", {}).get("f00", {}).get("positivity", "none")
                     == "conservative"
                 ),
                 spatial_filter=spatial_filter,
