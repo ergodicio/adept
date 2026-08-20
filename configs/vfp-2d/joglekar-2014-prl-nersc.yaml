@@ -48,6 +48,10 @@ grid:
   mmax: 2
 
 terms:
+  # Suppress the grid-scale pseudospectral cascade without touching velocity
+  # space. This is the same high-order Hou-Li regularization used elsewhere in
+  # ADEPT; resolved spot and transport scales are effectively unchanged.
+  hou_li_filter: {is_on: true, alpha: 36.0, order: 36, dimensions: [x, y]}
   field_solver:
     mode: kinetic-ohm
     hidden_density_gradient:

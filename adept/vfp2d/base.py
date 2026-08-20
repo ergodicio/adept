@@ -26,6 +26,7 @@ from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
 from adept.vfp2d.grid import Grid
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
+    HouLiFilter2D,
     TzoufrasVlasov,
     complex_to_real,
     current,
@@ -384,6 +385,18 @@ class BaseVFP2D(ADEPTModule):
                 self.grid.ky,
                 resistivity_coefficient=resistivity_coefficient,
             )
+            filter_cfg = self.cfg.get("terms", {}).get("hou_li_filter", {})
+            spatial_filter = None
+            if filter_cfg.get("is_on", False):
+                dimensions = set(filter_cfg.get("dimensions", ["x", "y"]))
+                if dimensions != {"x", "y"}:
+                    raise ValueError("VFP-2D Hou-Li filtering currently requires dimensions: [x, y]")
+                spatial_filter = HouLiFilter2D(
+                    self.grid.nx,
+                    self.grid.ny,
+                    alpha=float(filter_cfg.get("alpha", 36.0)),
+                    order=int(filter_cfg.get("order", 36)),
+                )
             step = KineticOhmStep(
                 vlasov,
                 maxwell,
@@ -401,6 +414,7 @@ class BaseVFP2D(ADEPTModule):
                     .get("positivity", "none")
                     == "conservative"
                 ),
+                spatial_filter=spatial_filter,
             )
             initial_flm = real_to_complex(self.state["flm"])
             initial_current = maxwell.c2 * maxwell.curl(self.state["b"])

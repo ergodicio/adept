@@ -10,6 +10,7 @@ from adept.vfp2d import (
     AnisotropicCollisions,
     Grid,
     HarmonicLayout,
+    HouLiFilter2D,
     KineticOhm2D,
     Maxwell2D,
     TzoufrasVlasov,
@@ -158,6 +159,21 @@ def test_conservative_f00_positivity_removes_undershoots_and_preserves_density()
         rtol=0.0,
         atol=0.0,
     )
+
+
+def test_hou_li_filter_damps_only_grid_scale_configuration_modes():
+    nx, ny = 32, 24
+    x = jnp.arange(nx)[:, None, None, None]
+    y = jnp.arange(ny)[None, :, None, None]
+    smooth = jnp.exp(2j * jnp.pi * (2 * x / nx + 3 * y / ny))
+    checkerboard = (-1.0) ** (x + y)
+    value = smooth + checkerboard
+
+    filtered = HouLiFilter2D(nx, ny, alpha=36.0, order=36)(value)
+
+    # The low Fourier mode is unaffected to roundoff, while the Nyquist mode
+    # is attenuated by exp(-alpha) on each of the two axes.
+    np.testing.assert_allclose(filtered, smooth, rtol=1e-12, atol=1e-12)
 
 
 def test_joglekar_velocity_moments_and_l2_tensor_mapping():

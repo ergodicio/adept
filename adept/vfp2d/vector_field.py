@@ -9,6 +9,7 @@ from jax import Array
 from adept.vfp2d.collisions import CollisionStep
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
+    HouLiFilter2D,
     TzoufrasVlasov,
     complex_to_real,
     conservative_f00_positivity,
@@ -198,6 +199,7 @@ class KineticOhmStep:
         collisions: CollisionStep | None = None,
         real_storage: bool = False,
         enforce_f00_positivity: bool = False,
+        spatial_filter: HouLiFilter2D | None = None,
     ):
         self.vlasov = vlasov
         self.maxwell = maxwell
@@ -209,11 +211,15 @@ class KineticOhmStep:
         self.collisions = collisions
         self.real_storage = bool(real_storage)
         self.enforce_f00_positivity = bool(enforce_f00_positivity)
+        self.spatial_filter = spatial_filter
 
     def _positive_f00(self, flm: Array) -> Array:
         if not self.enforce_f00_positivity:
             return flm
         return conservative_f00_positivity(flm, self.layout, self.v, self.dv)
+
+    def _filter(self, value: Array) -> Array:
+        return value if self.spatial_filter is None else self.spatial_filter(value)
 
     def _collide(self, t: float, flm: Array, args: dict | None, dt: float) -> Array:
         if self.collisions is None:
@@ -295,6 +301,11 @@ class KineticOhmStep:
         result_f = flm + (self.dt / 6.0) * (df1 + 2.0 * df2 + 2.0 * df3 + df4)
         result_f = self._positive_f00(self._project(result_f, result_b))
         result_f = self._positive_f00(self._collide(t + self.dt, result_f, args, 0.5 * self.dt))
+        # Pseudospectral field products feed unresolved power into the grid
+        # scale during long heated runs. Filter only configuration space, once
+        # per full step, then restore the f00 and Ampere-moment invariants.
+        result_b = jnp.real(self._filter(result_b))
+        result_f = self._positive_f00(self._filter(result_f))
         result_f = self._project(result_f, result_b)
         hidden_dndz = self._hidden_dndz(t + self.dt, args, result_b[..., 0])
         result_e, _terms = self.ohm(

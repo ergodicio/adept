@@ -5,6 +5,7 @@ from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
 from adept.vfp2d.grid import Grid
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
+    HouLiFilter2D,
     TzoufrasVlasov,
     cartesian_l2,
     complex_to_real,
@@ -32,6 +33,7 @@ __all__ = [
     "CollisionStep",
     "Grid",
     "HarmonicLayout",
+    "HouLiFilter2D",
     "KineticOhm2D",
     "KineticOhmStep",
     "Maxwell2D",

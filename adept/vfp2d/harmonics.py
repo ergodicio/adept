@@ -286,6 +286,40 @@ def conservative_f00_positivity(f: Array, layout: HarmonicLayout, v: Array, dv: 
     return f.at[..., i00, :].set((positive * scale).astype(f.dtype))
 
 
+class HouLiFilter2D:
+    """Separable Hou--Li filter on the two configuration-space axes.
+
+    The VFP state is complex and periodic in configuration space, so use full
+    FFTs rather than the real transforms used by the Cartesian Vlasov solvers.
+    Velocity and harmonic axes are deliberately untouched.
+    """
+
+    def __init__(self, nx: int, ny: int, alpha: float = 36.0, order: int = 36):
+        if alpha <= 0.0:
+            raise ValueError("Hou-Li filter alpha must be positive")
+        if order < 1:
+            raise ValueError("Hou-Li filter order must be at least one")
+
+        def _kernel(n: int) -> Array:
+            # abs(2*fftfreq) runs from zero to one in standard FFT ordering.
+            eta = jnp.abs(2.0 * jnp.fft.fftfreq(n))
+            return jnp.exp(-float(alpha) * eta ** (2 * int(order)))
+
+        self.filter_x = _kernel(nx)
+        self.filter_y = _kernel(ny)
+
+    @staticmethod
+    def _apply(a: Array, kernel: Array, axis: int) -> Array:
+        shape = [1] * a.ndim
+        shape[axis] = kernel.size
+        return jnp.fft.ifft(jnp.fft.fft(a, axis=axis) * kernel.reshape(shape), axis=axis)
+
+    def __call__(self, a: Array) -> Array:
+        """Filter an array whose leading axes are ``(x, y)``."""
+
+        return self._apply(self._apply(a, self.filter_x, axis=0), self.filter_y, axis=1)
+
+
 def current(
     f: Array,
     layout: HarmonicLayout,

@@ -44,6 +44,7 @@ grid:
   mmax: 2
 
 terms:
+  hou_li_filter: {is_on: true, alpha: 36.0, order: 36, dimensions: [x, y]}
   field_solver:
     mode: kinetic-ohm
     hidden_density_gradient:
