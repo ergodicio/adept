@@ -356,6 +356,9 @@ class BaseVFP2D(ADEPTModule):
         )
 
     def init_diffeqsolve(self):
+        if self.spatial_sharding is not None:
+            self.state = jtu.tree_map(self.spatial_sharding.put, self.state)
+            self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
         relativistic = bool(self.cfg["grid"].get("relativistic", False))
         streaming_speed = self.grid.v / jnp.sqrt(1.0 + self.grid.v**2) if relativistic else self.grid.v
         partitioned_dx = self.grid.dx if self.spatial_sharding is not None else None
@@ -473,9 +476,6 @@ class BaseVFP2D(ADEPTModule):
             "solver": Stepper(),
             "saveat": saveat,
         }
-        if self.spatial_sharding is not None:
-            self.state = jtu.tree_map(self.spatial_sharding.put, self.state)
-            self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
 
     def __call__(self, trainable_modules: dict | None, args: dict | None):
         def solve():
