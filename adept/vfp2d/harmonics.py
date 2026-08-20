@@ -37,9 +37,7 @@ class HarmonicLayout:
 
         pairs = tuple((ell, m) for ell in range(l_max + 1) for m in range(min(ell, m_max) + 1))
         lookup = {pair: i for i, pair in enumerate(pairs)}
-        rows = tuple(
-            tuple(lookup.get((ell, m), -1) for m in range(m_max + 1)) for ell in range(l_max + 1)
-        )
+        rows = tuple(tuple(lookup.get((ell, m), -1) for m in range(m_max + 1)) for ell in range(l_max + 1))
         object.__setattr__(self, "l_max", l_max)
         object.__setattr__(self, "m_max", m_max)
         object.__setattr__(self, "pairs", pairs)
@@ -153,43 +151,19 @@ class TzoufrasVlasov:
                 if lm >= 0:
                     value -= 0.5 * v / (2 * ell - 1) * transverse_minus[..., lm, :]
                 if lp >= 0:
-                    value += (
-                        0.5
-                        * v
-                        * (ell - m)
-                        * (ell - m - 1)
-                        / (2 * ell - 1)
-                        * transverse_plus[..., lp, :]
-                    )
+                    value += 0.5 * v * (ell - m) * (ell - m - 1) / (2 * ell - 1) * transverse_plus[..., lp, :]
                 if um >= 0:
                     value += 0.5 * v / (2 * ell + 3) * transverse_minus[..., um, :]
                 if up >= 0:
-                    value -= (
-                        0.5
-                        * v
-                        * (ell + m + 1)
-                        * (ell + m + 2)
-                        / (2 * ell + 3)
-                        * transverse_plus[..., up, :]
-                    )
+                    value -= 0.5 * v * (ell + m + 1) * (ell + m + 2) / (2 * ell + 3) * transverse_plus[..., up, :]
             else:
                 lower1 = self.layout.index(ell - 1, 1)
                 upper1 = self.layout.index(ell + 1, 1)
                 transverse = jnp.zeros_like(value)
                 if lower1 >= 0:
-                    transverse -= (
-                        ell
-                        * (ell - 1)
-                        / (2 * ell - 1)
-                        * transverse_plus[..., lower1, :]
-                    )
+                    transverse -= ell * (ell - 1) / (2 * ell - 1) * transverse_plus[..., lower1, :]
                 if upper1 >= 0:
-                    transverse += (
-                        (ell + 1)
-                        * (ell + 2)
-                        / (2 * ell + 3)
-                        * transverse_plus[..., upper1, :]
-                    )
+                    transverse += (ell + 1) * (ell + 2) / (2 * ell + 3) * transverse_plus[..., upper1, :]
                 value -= v * jnp.real(transverse)
 
             out = out.at[..., target, :].set(value)
@@ -221,25 +195,11 @@ class TzoufrasVlasov:
                 if lm >= 0:
                     value += 0.5 * ey_minus_iez / (2 * ell - 1) * g[..., lm, :]
                 if lp >= 0:
-                    value -= (
-                        0.5
-                        * ey_plus_iez
-                        * (ell - m)
-                        * (ell - m - 1)
-                        / (2 * ell - 1)
-                        * g[..., lp, :]
-                    )
+                    value -= 0.5 * ey_plus_iez * (ell - m) * (ell - m - 1) / (2 * ell - 1) * g[..., lp, :]
                 if um >= 0:
                     value -= 0.5 * ey_minus_iez / (2 * ell + 3) * h[..., um, :]
                 if up >= 0:
-                    value += (
-                        0.5
-                        * ey_plus_iez
-                        * (ell + m + 1)
-                        * (ell + m + 2)
-                        / (2 * ell + 3)
-                        * h[..., up, :]
-                    )
+                    value += 0.5 * ey_plus_iez * (ell + m + 1) * (ell + m + 2) / (2 * ell + 3) * h[..., up, :]
             else:
                 lower1 = self.layout.index(ell - 1, 1)
                 upper1 = self.layout.index(ell + 1, 1)
@@ -268,9 +228,7 @@ class TzoufrasVlasov:
                 plus = self.layout.index(ell, m + 1)
                 minus = self.layout.index(ell, m - 1)
                 if plus >= 0:
-                    value += (
-                        0.5 * (ell - m) * (ell + m + 1) * bz_minus_iby * f[..., plus, :]
-                    )
+                    value += 0.5 * (ell - m) * (ell + m + 1) * bz_minus_iby * f[..., plus, :]
                 if minus >= 0:
                     value -= 0.5 * bz_plus_iby * f[..., minus, :]
             elif ell > 0:
@@ -287,11 +245,7 @@ class TzoufrasVlasov:
         magnetic_field: Array,
         dfdz: Array | None = None,
     ) -> Array:
-        result = (
-            self.streaming(f, dfdz=dfdz)
-            + self.electric(f, electric_field)
-            + self.magnetic(f, magnetic_field)
-        )
+        result = self.streaming(f, dfdz=dfdz) + self.electric(f, electric_field) + self.magnetic(f, magnetic_field)
         # m=0 coefficients represent real surface harmonics. Project away
         # roundoff-level imaginary parts so the invariant is explicit.
         for i, (_ell, m) in enumerate(self.layout.pairs):
@@ -329,15 +283,11 @@ def current(
         m11 = jnp.sum(f[..., i11, :] * weight, axis=-1) * dv
     else:
         m11 = jnp.zeros_like(m10, dtype=f.dtype)
-    velocity_moment = (4.0 * jnp.pi / 3.0) * jnp.stack(
-        (m10, 2.0 * jnp.real(m11), -2.0 * jnp.imag(m11)), axis=-1
-    )
+    velocity_moment = (4.0 * jnp.pi / 3.0) * jnp.stack((m10, 2.0 * jnp.real(m11), -2.0 * jnp.imag(m11)), axis=-1)
     return charge * velocity_moment
 
 
-def scalar_velocity_moment(
-    f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int
-) -> Array:
+def scalar_velocity_moment(f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int) -> Array:
     """Return ``<v^power>`` using the Joglekar et al. (2014) convention.
 
     The moment is normalized by the local electron density, so ``power=0``
@@ -352,9 +302,7 @@ def scalar_velocity_moment(
     return numerator / jnp.maximum(ne, jnp.finfo(ne.dtype).tiny)
 
 
-def vector_velocity_moment(
-    f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int
-) -> Array:
+def vector_velocity_moment(f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int) -> Array:
     """Return ``<v_vec v^power>`` from the packed ``l=1`` harmonics."""
 
     ne = density(f, layout, v, dv)
@@ -364,14 +312,8 @@ def vector_velocity_moment(
         return jnp.zeros((*f.shape[:-2], 3), dtype=jnp.real(f).dtype)
     weight = v ** (power + 3)
     m10 = jnp.sum(jnp.real(f[..., i10, :]) * weight, axis=-1) * dv
-    m11 = (
-        jnp.sum(f[..., i11, :] * weight, axis=-1) * dv
-        if i11 >= 0
-        else jnp.zeros_like(m10, dtype=f.dtype)
-    )
-    numerator = (4.0 * jnp.pi / 3.0) * jnp.stack(
-        (m10, 2.0 * jnp.real(m11), -2.0 * jnp.imag(m11)), axis=-1
-    )
+    m11 = jnp.sum(f[..., i11, :] * weight, axis=-1) * dv if i11 >= 0 else jnp.zeros_like(m10, dtype=f.dtype)
+    numerator = (4.0 * jnp.pi / 3.0) * jnp.stack((m10, 2.0 * jnp.real(m11), -2.0 * jnp.imag(m11)), axis=-1)
     return numerator / jnp.maximum(ne[..., None], jnp.finfo(ne.dtype).tiny)
 
 
@@ -409,16 +351,12 @@ def cartesian_l2(f: Array, layout: HarmonicLayout) -> Array:
     return result.at[..., 2, 2, :].set(fzz)
 
 
-def tensor_velocity_moment(
-    f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int
-) -> Array:
+def tensor_velocity_moment(f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int) -> Array:
     """Return the traceless ``<vv v^power>`` moment used in kinetic Ohm's law."""
 
     ne = density(f, layout, v, dv)
     tensor = cartesian_l2(f, layout)
-    numerator = (8.0 * jnp.pi / 15.0) * jnp.sum(
-        tensor * v ** (power + 4), axis=-1
-    ) * dv
+    numerator = (8.0 * jnp.pi / 15.0) * jnp.sum(tensor * v ** (power + 4), axis=-1) * dv
     return numerator / jnp.maximum(ne[..., None, None], jnp.finfo(ne.dtype).tiny)
 
 
@@ -437,9 +375,7 @@ def nernst_velocity(
     v3 = scalar_velocity_moment(f, layout, v, dv, power=3)
     vv3 = vector_velocity_moment(f, layout, v, dv, power=3)
     safe_v3 = jnp.maximum(v3, jnp.finfo(v3.dtype).tiny)
-    return vv3 / (2.0 * safe_v3[..., None]) + plasma_current / jnp.maximum(
-        ne[..., None], jnp.finfo(ne.dtype).tiny
-    )
+    return vv3 / (2.0 * safe_v3[..., None]) + plasma_current / jnp.maximum(ne[..., None], jnp.finfo(ne.dtype).tiny)
 
 
 def complex_to_real(f: Array) -> Array:

@@ -132,11 +132,7 @@ def test_spatial_ib_driver_builds_two_gaussian_hotspots():
     assert module.args["ib_t_off"] > module.args["ib_switch_width"] > 0.0
     derived = module.cfg["units"]["derived"]
     expected_ratio = (
-        derived["nuee_coeff"]
-        * derived["logLam_ratio"]
-        * module.args["Z"] ** 2
-        * module.args["ni"]
-        / derived["w0_norm"]
+        derived["nuee_coeff"] * derived["logLam_ratio"] * module.args["Z"] ** 2 * module.args["ni"] / derived["w0_norm"]
     )
     np.testing.assert_allclose(module.args["ib_Z2ni_w0"], expected_ratio)
 

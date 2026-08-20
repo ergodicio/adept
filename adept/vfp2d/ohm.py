@@ -43,15 +43,11 @@ class KineticOhm2D:
 
     def ddx(self, value: Array) -> Array:
         shape = (self.kx.size,) + (1,) * (value.ndim - 1)
-        return jnp.fft.ifft(
-            1j * self.kx.reshape(shape) * jnp.fft.fft(value, axis=0), axis=0
-        ).real
+        return jnp.fft.ifft(1j * self.kx.reshape(shape) * jnp.fft.fft(value, axis=0), axis=0).real
 
     def ddy(self, value: Array) -> Array:
         shape = (1, self.ky.size) + (1,) * (value.ndim - 2)
-        return jnp.fft.ifft(
-            1j * self.ky.reshape(shape) * jnp.fft.fft(value, axis=1), axis=1
-        ).real
+        return jnp.fft.ifft(1j * self.ky.reshape(shape) * jnp.fft.fft(value, axis=1), axis=1).real
 
     def __call__(
         self,
@@ -93,15 +89,11 @@ class KineticOhm2D:
         nernst = -jnp.cross(v_nernst, magnetic_field)
 
         scalar_flux = ne * v5
-        scalar_gradient = jnp.stack(
-            (self.ddx(scalar_flux), self.ddy(scalar_flux), hidden_dndz * v5), axis=-1
-        )
+        scalar_gradient = jnp.stack((self.ddx(scalar_flux), self.ddy(scalar_flux), hidden_dndz * v5), axis=-1)
         scalar_pressure = -scalar_gradient / (6.0 * safe_ne * safe_v3)[..., None]
 
         tensor_flux = ne[..., None, None] * tensor_v3
-        tensor_divergence = self.ddx(tensor_flux[..., :, 0]) + self.ddy(
-            tensor_flux[..., :, 1]
-        )
+        tensor_divergence = self.ddx(tensor_flux[..., :, 0]) + self.ddy(tensor_flux[..., :, 1])
         tensor_divergence = tensor_divergence + hidden_dndz[..., None] * tensor_v3[..., :, 2]
         tensor_pressure = -tensor_divergence / (2.0 * safe_ne * safe_v3)[..., None]
 
