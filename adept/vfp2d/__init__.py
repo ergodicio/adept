@@ -2,6 +2,11 @@
 
 from adept.vfp2d.base import BaseVFP2D
 from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
+from adept.vfp2d.exchange import (
+    ElectronIonExchange,
+    electron_kinetic_energy_density,
+    electron_momentum_density,
+)
 from adept.vfp2d.grid import Grid
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
@@ -25,6 +30,7 @@ from adept.vfp2d.hydro import (
     hllc_flux,
     primitive_to_conserved,
 )
+from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
@@ -38,10 +44,12 @@ __all__ = [
     "AnisotropicCollisions",
     "BaseVFP2D",
     "CollisionStep",
+    "ElectronIonExchange",
     "Grid",
     "HarmonicLayout",
     "HouLiFilter2D",
     "IonEuler2D",
+    "IonFrameVlasov",
     "KineticOhm2D",
     "KineticOhmStep",
     "Maxwell2D",
@@ -55,6 +63,8 @@ __all__ = [
     "conserved_to_primitive",
     "current",
     "density",
+    "electron_kinetic_energy_density",
+    "electron_momentum_density",
     "euler_flux",
     "hllc_flux",
     "nernst_velocity",

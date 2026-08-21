@@ -28,7 +28,7 @@ The solver includes:
 - all three components of Maxwell's equations with $\partial_z=0$;
 - a spectral initial Poisson solve;
 - density-conserving implicit isotropic electron-electron collisions;
-- the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$.
+- the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$;
 - spatially shaped inverse-bremsstrahlung or Maxwellian heating;
 - distribution-function diagnostics for the scalar, vector, $f_2$ tensor, and Nernst moments used in kinetic Ohm's law.
 
@@ -69,9 +69,15 @@ plan:
    contact, conservation, and coordinate-rotated Sod tests.
 2. **Gate 0b:** strong-shock, Sedov, isentropic-vortex, and magnetic-divergence tests,
    followed by configuration and diagnostic integration.
-3. **Gate 1:** conservative bulk advection and the compression, shear, and inertial
-   terms for spherical harmonics in the ion peculiar-velocity frame.
-4. **Gate 2:** equal-and-opposite kinetic/fluid exchange and coupled local-limit tests.
+3. **Gate 1a (implemented as an equation-level reference):** conservative bulk
+   advection plus compression, shear, and frame acceleration for arbitrary spherical
+   harmonics. See the [ion-frame derivation and tests](moving_frame.md).
+4. **Gate 1b (implemented as a local moment-exchange reference):** finite-mass
+   electron--ion temperature and momentum relaxation with measured, equal-and-opposite
+   ion updates. This verifies the discrete exchange accounting but is not yet a full
+   finite-mass Landau operator.
+5. **Gate 2:** production split integration, total exchange accounting, and coupled
+   local-limit tests.
 
 The production `vfp-2d` time loop still uses stationary ions until Gates 0b--2 land.
 
