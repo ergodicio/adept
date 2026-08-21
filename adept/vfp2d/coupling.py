@@ -1,9 +1,9 @@
 """Time-centered kinetic-electron / ion-fluid coupling for VFP-2D.
 
-Gate 2a composes the verified ion-frame electron, ideal-ion Euler, and local
-electron--ion exchange operators.  The split is deliberately explicit and
-auditable: hydro half-step, full kinetic step at midpoint ion kinematics,
-midpoint collisional exchange, then the second hydro half-step.
+The split composes ion-frame electrons, ideal-ion Euler transport, kinetic
+electron-pressure feedback, and finite-mass electron--ion exchange. It remains
+explicit and auditable: hydro half-step, full kinetic midpoint step, midpoint
+coupled sources, then the second hydro half-step.
 """
 
 from __future__ import annotations
@@ -13,11 +13,13 @@ from jax import Array
 
 from adept.vfp2d.exchange import (
     ElectronIonExchange,
+    VelocityFrameRemap,
     electron_kinetic_energy_density,
     electron_momentum_density,
 )
 from adept.vfp2d.harmonics import HarmonicLayout, complex_to_real, density, real_to_complex
 from adept.vfp2d.hydro import IonEuler2D, conserved_to_primitive
+from adept.vfp2d.pressure import ElectronPressureCoupling
 from adept.vfp2d.vector_field import KineticOhmStep
 
 
@@ -26,10 +28,9 @@ class CoupledIonKineticStep:
 
     The electron step must be a ``KineticOhmStep`` configured with an ion-frame
     operator. Ion kinematics are held at the hydro midpoint during its RK stages.
-    This first production coupling slice includes ideal-ion transport and local
-    thermal exchange; electron-pressure feedback belongs to Gate 2b. A nonzero
-    momentum-exchange rate is retained for isolated reference tests only and must
-    not be used in a production step until the finite-mass frame remap lands.
+    This production coupling includes ideal-ion transport and local finite-mass
+    thermal and momentum exchange. Electron-pressure feedback belongs to the
+    next Gate 2b slice.
     """
 
     def __init__(
@@ -39,6 +40,7 @@ class CoupledIonKineticStep:
         dt: float,
         *,
         exchange: ElectronIonExchange | None = None,
+        pressure: ElectronPressureCoupling | None = None,
         evolve_ions: bool = True,
     ):
         if electron_step.ion_frame is None:
@@ -49,6 +51,15 @@ class CoupledIonKineticStep:
         self.hydro = hydro
         self.dt = float(dt)
         self.exchange = exchange
+        self.pressure = pressure
+        electron_mass = 1.0
+        if exchange is not None:
+            electron_mass = exchange.electron_mass
+        if pressure is not None:
+            if exchange is not None and pressure.electron_mass != electron_mass:
+                raise ValueError("pressure and exchange electron masses must match")
+            electron_mass = pressure.electron_mass
+        self.frame_remap = VelocityFrameRemap(electron_step.ion_frame, electron_mass=electron_mass)
         self.evolve_ions = bool(evolve_ions)
 
     def _hydro_half_step(self, ions: Array) -> Array:
@@ -89,26 +100,52 @@ class CoupledIonKineticStep:
         return jnp.broadcast_to(jnp.asarray(value), template.shape)
 
     def _exchange(self, t: float, flm: Array, ions: Array, args: dict | None) -> tuple[Array, Array]:
-        if self.exchange is None:
+        if self.exchange is None and self.pressure is None:
             return flm, ions
         template = ions[..., 0]
         momentum_rate = self._rate(args, "ei_momentum_relaxation_rate", t, template)
         temperature_rate = self._rate(args, "ei_temperature_relaxation_rate", t, template)
-        df1, di1, _diagnostics = self.exchange(
-            flm,
-            ions,
-            momentum_relaxation_rate=momentum_rate,
-            temperature_relaxation_rate=temperature_rate,
-        )
-        midpoint_f = flm + 0.5 * self.dt * df1
+        df1 = jnp.zeros_like(flm)
+        di1 = jnp.zeros_like(ions)
+        if self.exchange is not None:
+            exchange_df1, exchange_di1, _diagnostics = self.exchange(
+                flm,
+                ions,
+                momentum_relaxation_rate=momentum_rate,
+                temperature_relaxation_rate=temperature_rate,
+            )
+            df1 += exchange_df1
+            di1 += exchange_di1
+        if self.pressure is not None:
+            pressure_df1, pressure_di1, _diagnostics = self.pressure(flm, ions)
+            df1 += pressure_df1
+            di1 += pressure_di1
         midpoint_i = ions + 0.5 * self.dt * di1
-        df2, di2, _diagnostics = self.exchange(
-            midpoint_f,
-            midpoint_i,
-            momentum_relaxation_rate=momentum_rate,
-            temperature_relaxation_rate=temperature_rate,
-        )
-        return flm + self.dt * df2, ions + self.dt * di2
+        initial_velocity = ions[..., 1:4] / ions[..., :1]
+        midpoint_velocity = midpoint_i[..., 1:4] / midpoint_i[..., :1]
+        half_frame_change = midpoint_velocity - initial_velocity
+        midpoint_f = self.frame_remap(flm + 0.5 * self.dt * df1, half_frame_change)
+        df2 = jnp.zeros_like(flm)
+        di2 = jnp.zeros_like(ions)
+        if self.exchange is not None:
+            exchange_df2, exchange_di2, _diagnostics = self.exchange(
+                midpoint_f,
+                midpoint_i,
+                momentum_relaxation_rate=momentum_rate,
+                temperature_relaxation_rate=temperature_rate,
+            )
+            df2 += exchange_df2
+            di2 += exchange_di2
+        if self.pressure is not None:
+            pressure_df2, pressure_di2, _diagnostics = self.pressure(midpoint_f, midpoint_i)
+            df2 += pressure_df2
+            di2 += pressure_di2
+        final_i = ions + self.dt * di2
+        final_velocity = final_i[..., 1:4] / final_i[..., :1]
+        base_in_midpoint_frame = self.frame_remap(flm, half_frame_change)
+        final_f_in_midpoint_frame = base_in_midpoint_frame + self.dt * df2
+        final_f = self.frame_remap(final_f_in_midpoint_frame, final_velocity - midpoint_velocity)
+        return final_f, final_i
 
     def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
         if "ions" not in state:

@@ -5,6 +5,7 @@ from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
 from adept.vfp2d.coupling import CoupledIonKineticStep, coupled_invariants
 from adept.vfp2d.exchange import (
     ElectronIonExchange,
+    VelocityFrameRemap,
     electron_kinetic_energy_density,
     electron_momentum_density,
 )
@@ -33,6 +34,7 @@ from adept.vfp2d.hydro import (
 )
 from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
+from adept.vfp2d.pressure import ElectronPressureCoupling, electron_pressure_tensor
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
@@ -47,6 +49,7 @@ __all__ = [
     "CollisionStep",
     "CoupledIonKineticStep",
     "ElectronIonExchange",
+    "ElectronPressureCoupling",
     "Grid",
     "HarmonicLayout",
     "HouLiFilter2D",
@@ -58,6 +61,7 @@ __all__ = [
     "SpectralPoisson2D",
     "SplitStepVFP2D",
     "TzoufrasVlasov",
+    "VelocityFrameRemap",
     "VlasovMaxwell",
     "cartesian_l2",
     "complex_to_real",
@@ -68,6 +72,7 @@ __all__ = [
     "density",
     "electron_kinetic_energy_density",
     "electron_momentum_density",
+    "electron_pressure_tensor",
     "euler_flux",
     "hllc_flux",
     "nernst_velocity",

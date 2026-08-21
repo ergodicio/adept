@@ -84,7 +84,7 @@ def test_uniform_collisionless_state_is_stationary_and_uses_real_diffrax_storage
     np.testing.assert_array_equal(dataset.m, [0, 0, 1, 0, 1, 2])
 
 
-def test_gate2a_uniform_coupled_run_saves_ion_state_and_invariants():
+def test_gate2b_uniform_coupled_run_saves_ion_state_and_invariants():
     cfg = _config(collisions=False)
     cfg["terms"].update(
         {
@@ -94,6 +94,7 @@ def test_gate2a_uniform_coupled_run_saves_ion_state_and_invariants():
                 "mass_ratio": 100.0,
                 "gamma": 5.0 / 3.0,
                 "boundaries": ["periodic", "periodic"],
+                "momentum_relaxation_rate": 0.25,
             },
         }
     )

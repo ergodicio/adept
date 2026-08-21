@@ -57,6 +57,25 @@ def test_angular_galerkin_transform_round_trips_physical_coefficients():
     )
 
 
+def test_sparse_deformation_matches_dense_galerkin_oracle():
+    _grid, layout, _vlasov, frame, f = _make_problem(l_max=5, nx=2, ny=1, nv=18)
+    rng = np.random.default_rng(123)
+    coefficients = rng.normal(size=f.shape) + 1j * rng.normal(size=f.shape)
+    for index, (_ell, m) in enumerate(layout.pairs):
+        if m == 0:
+            coefficients[..., index, :] = coefficients[..., index, :].real
+    f = jnp.asarray(coefficients)
+    gradient = jnp.asarray(rng.normal(scale=0.07, size=(*f.shape[:2], 3, 3)))
+
+    sparse = jax.jit(frame.deformation)(f, gradient)
+    dense = frame.deformation_reference(f, gradient)
+    np.testing.assert_allclose(sparse, dense, rtol=4e-12, atol=4e-12)
+
+    number_real_harmonics = (layout.l_max + 1) ** 2
+    dense_entries = 2 * 9 * number_real_harmonics**2
+    assert frame.sparse_angular.nnz < 0.3 * dense_entries
+
+
 def test_bulk_advection_is_conservative_for_every_harmonic_and_speed_cell():
     grid, layout, _vlasov, frame, f = _make_problem(l_max=2, nx=12, ny=10, nv=8)
     xx, yy = jnp.meshgrid(grid.x, grid.y, indexing="ij")

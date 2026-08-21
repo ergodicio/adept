@@ -1,4 +1,4 @@
-"""Coupled local-limit tests for the Gate 2a production split."""
+"""Coupled local-limit tests for the ion-fluid production split."""
 
 import jax
 import jax.numpy as jnp
@@ -7,6 +7,7 @@ import numpy as np
 from adept.vfp2d import (
     CoupledIonKineticStep,
     ElectronIonExchange,
+    ElectronPressureCoupling,
     Grid,
     HarmonicLayout,
     IonEuler2D,
@@ -149,3 +150,86 @@ def test_midpoint_temperature_exchange_preserves_coupled_energy():
     assert jnp.all(jnp.abs(density(updated_f - flm, layout, grid.v, grid.dv)) < 2e-14)
     assert after["electron_energy"] < before["electron_energy"]
     assert after["ion_energy"] > before["ion_energy"]
+
+
+def test_midpoint_momentum_exchange_preserves_lab_momentum_and_energy():
+    grid, layout, _maxwell, _stationary, moving, hydro, flm, field, ions, ion_mass = _make_problem()
+    f00 = jnp.real(flm[..., layout.index(0, 0), :])
+    flm = flm.at[..., layout.index(1, 0), :].set(0.07 * grid.v * f00)
+    flm = flm.at[..., layout.index(1, 1), :].set((-0.03 + 0.02j) * grid.v * f00)
+    exchange = ElectronIonExchange(layout, grid.v, grid.dv, ion_mass=ion_mass)
+    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, exchange=exchange, evolve_ions=False)
+    before = coupled_invariants(
+        flm,
+        ions,
+        field,
+        layout,
+        grid.v,
+        grid.dv,
+        dx=grid.dx,
+        dy=grid.dy,
+        ion_mass=ion_mass,
+        ion_charge=1.0,
+        light_speed=5.0,
+    )
+    updated_f, updated_ions = jax.jit(coupled._exchange)(
+        0.0,
+        flm,
+        ions,
+        {"ei_momentum_relaxation_rate": 0.4},
+    )
+    after = coupled_invariants(
+        updated_f,
+        updated_ions,
+        field,
+        layout,
+        grid.v,
+        grid.dv,
+        dx=grid.dx,
+        dy=grid.dy,
+        ion_mass=ion_mass,
+        ion_charge=1.0,
+        light_speed=5.0,
+    )
+
+    np.testing.assert_allclose(after["total_momentum"], before["total_momentum"], rtol=3e-13, atol=3e-13)
+    np.testing.assert_allclose(after["total_energy"], before["total_energy"], rtol=3e-13, atol=3e-13)
+    np.testing.assert_allclose(after["electron_number"], before["electron_number"], rtol=3e-14, atol=3e-14)
+    assert jnp.linalg.norm(updated_ions[..., 1:4]) > 0.0
+
+
+def test_midpoint_pressure_feedback_preserves_global_momentum_and_energy():
+    grid, layout, _maxwell, _stationary, moving, hydro, flm, field, ions, ion_mass = _make_problem()
+    pressure = ElectronPressureCoupling(moving.ion_frame)
+    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, pressure=pressure, evolve_ions=False)
+    before = coupled_invariants(
+        flm,
+        ions,
+        field,
+        layout,
+        grid.v,
+        grid.dv,
+        dx=grid.dx,
+        dy=grid.dy,
+        ion_mass=ion_mass,
+        ion_charge=1.0,
+        light_speed=5.0,
+    )
+    updated_f, updated_ions = jax.jit(coupled._exchange)(0.0, flm, ions, {})
+    after = coupled_invariants(
+        updated_f,
+        updated_ions,
+        field,
+        layout,
+        grid.v,
+        grid.dv,
+        dx=grid.dx,
+        dy=grid.dy,
+        ion_mass=ion_mass,
+        ion_charge=1.0,
+        light_speed=5.0,
+    )
+
+    np.testing.assert_allclose(after["total_momentum"], before["total_momentum"], rtol=3e-13, atol=3e-13)
+    np.testing.assert_allclose(after["total_energy"], before["total_energy"], rtol=3e-13, atol=3e-13)
+    assert jnp.linalg.norm(updated_ions[..., 1:4]) > 0.0

@@ -44,6 +44,7 @@ from adept.vfp2d.hydro import IonEuler2D, conserved_to_primitive, primitive_to_c
 from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import KineticOhm2D
 from adept.vfp2d.plotting import add_reconnection_diagnostics, reconnection_metrics, save_artifacts
+from adept.vfp2d.pressure import ElectronPressureCoupling
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
@@ -152,11 +153,6 @@ class BaseVFP2D(ADEPTModule):
             raise ValueError("terms.ion_fluid.mass_ratio must be positive")
         if self.ion_fluid_active and not cfg.get("density", {}).get("quasineutrality", True):
             raise ValueError("moving ion-fluid coupling requires density.quasineutrality=true")
-        if self.ion_fluid_active and float(self.ion_cfg.get("momentum_relaxation_rate", 0.0)) != 0.0:
-            raise NotImplementedError(
-                "Gate 2a production coupling requires momentum_relaxation_rate=0 "
-                "until the finite-mass frame remap lands"
-            )
         self.spatial_sharding = create_spatial_sharding(g.get("sharding"), self.grid.nx)
 
     def write_units(self) -> dict:
@@ -503,7 +499,7 @@ class BaseVFP2D(ADEPTModule):
             if self.ion_fluid_active:
                 boundaries = tuple(self.ion_cfg.get("boundaries", ["periodic", "periodic"]))
                 if boundaries != ("periodic", "periodic"):
-                    raise ValueError("Gate 2a moving-ion coupling currently requires periodic x/y boundaries")
+                    raise ValueError("moving-ion coupling currently requires periodic x/y boundaries")
                 hydro = IonEuler2D(
                     self.grid.dx,
                     self.grid.dy,
@@ -527,11 +523,17 @@ class BaseVFP2D(ADEPTModule):
                     ion_mass=self.ion_mass,
                     ion_gamma=self.ion_gamma,
                 )
+                pressure = (
+                    ElectronPressureCoupling(ion_frame)
+                    if bool(self.ion_cfg.get("electron_pressure_feedback", True))
+                    else None
+                )
                 step = CoupledIonKineticStep(
                     kinetic_step,
                     hydro,
                     self.grid.dt,
                     exchange=exchange,
+                    pressure=pressure,
                     evolve_ions=not bool(self.ion_cfg.get("frozen", False)),
                 )
                 self._coupled_step = step

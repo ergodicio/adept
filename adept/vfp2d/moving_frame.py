@@ -7,15 +7,15 @@ representing velocity as ``c = v - u_i(x, t)``.  For
 ``-div_x(u_i f) + div_c(A c f) + a_i . grad_c(f)``.
 
 Together with relative streaming, these terms are the non-relativistic limit
-of the mixed-frame VFP equation.  The deformation operator is evaluated by an
-angular Galerkin projection and a conservative radial velocity flux.  This is
-an equation-level reference implementation; coupling it to the production
-hydro/VFP split and optimizing the angular matrix products are later phases.
+of the mixed-frame VFP equation. The deformation operator compiles the angular
+Galerkin projection into sparse real-harmonic coupling rules and retains the
+dense quadrature implementation as a verification oracle.
 """
 
 from __future__ import annotations
 
 from math import factorial
+from typing import ClassVar
 
 import jax.numpy as jnp
 import numpy as np
@@ -119,6 +119,119 @@ class _AngularGalerkin:
         return coefficients
 
 
+class _SparseAngularCoupling:
+    """Sparse real-linear harmonic maps compiled from the Galerkin oracle."""
+
+    _operator_cache: ClassVar[dict[tuple[int, int], tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]]] = {}
+
+    def __init__(self, angular: _AngularGalerkin):
+        self.layout = angular.layout
+        self._dofs = tuple(
+            (index, imaginary)
+            for index, (_ell, m) in enumerate(self.layout.pairs)
+            for imaginary in ((False,) if m == 0 else (False, True))
+        )
+        key = (self.layout.l_max, self.layout.m_max)
+        if key not in self._operator_cache:
+            self._operator_cache[key] = self._compile(angular)
+        radial_edges, angular_edges = self._operator_cache[key]
+        self.radial_edges = tuple(jnp.asarray(value) for value in radial_edges)
+        self.angular_edges = tuple(jnp.asarray(value) for value in angular_edges)
+
+    def _pack_numpy(self, coefficients: np.ndarray) -> np.ndarray:
+        parts = [
+            np.imag(coefficients[..., index]) if imaginary else np.real(coefficients[..., index])
+            for index, imaginary in self._dofs
+        ]
+        return np.stack(parts, axis=-1)
+
+    @staticmethod
+    def _edges(matrices: np.ndarray) -> tuple[np.ndarray, ...]:
+        nonzero = np.argwhere(np.abs(matrices) > 1.0e-12)
+        component, output, input_ = nonzero.T
+        values = matrices[component, output, input_]
+        return (
+            component.astype(np.int32),
+            output.astype(np.int32),
+            input_.astype(np.int32),
+            values,
+        )
+
+    def _compile(self, angular: _AngularGalerkin) -> tuple[tuple[np.ndarray, ...], tuple[np.ndarray, ...]]:
+        number_dofs = len(self._dofs)
+        number_harmonics = self.layout.size
+        basis_coefficients = np.zeros((number_dofs, number_harmonics), dtype=np.complex128)
+        for dof, (index, imaginary) in enumerate(self._dofs):
+            basis_coefficients[dof, index] = 1j if imaginary else 1.0
+
+        reconstruction = np.asarray(angular.reconstruction_basis)
+        dtheta_reconstruction = np.asarray(angular.dtheta_reconstruction_basis)
+        dphi_reconstruction = np.asarray(angular.dphi_reconstruction_basis)
+        projection = np.asarray(angular.projection_basis)
+        directions = np.asarray(angular.directions)
+        theta_directions = np.asarray(angular.theta_directions)
+        phi_directions = np.asarray(angular.phi_directions)
+        sin_theta = np.asarray(angular.sin_theta)
+
+        samples = np.real(np.einsum("dh,hq->dq", basis_coefficients, reconstruction))
+        dtheta = np.real(np.einsum("dh,hq->dq", basis_coefficients, dtheta_reconstruction))
+        dphi = np.real(np.einsum("dh,hq->dq", basis_coefficients, dphi_reconstruction))
+        radial_matrices = np.zeros((9, number_dofs, number_dofs))
+        angular_matrices = np.zeros_like(radial_matrices)
+        for i in range(3):
+            for j in range(3):
+                component = 3 * i + j
+                radial_coefficient = directions[:, i] * directions[:, j]
+                theta_coefficient = theta_directions[:, i] * directions[:, j]
+                phi_coefficient = phi_directions[:, i] * directions[:, j]
+                radial_values = radial_coefficient[None, :] * samples
+                angular_values = theta_coefficient[None, :] * dtheta
+                angular_values += phi_coefficient[None, :] * dphi / sin_theta[None, :]
+                angular_values += ((1.0 if i == j else 0.0) - 3.0 * radial_coefficient)[None, :] * samples
+                radial_coefficients = np.einsum("dq,hq->dh", radial_values, projection)
+                angular_coefficients = np.einsum("dq,hq->dh", angular_values, projection)
+                radial_matrices[component] = self._pack_numpy(radial_coefficients).T
+                angular_matrices[component] = self._pack_numpy(angular_coefficients).T
+        return self._edges(radial_matrices), self._edges(angular_matrices)
+
+    def _pack(self, coefficients: Array) -> Array:
+        parts = [
+            jnp.imag(coefficients[..., index, :]) if imaginary else jnp.real(coefficients[..., index, :])
+            for index, imaginary in self._dofs
+        ]
+        return jnp.stack(parts, axis=-2)
+
+    def _unpack(self, coefficients: Array) -> Array:
+        output = jnp.zeros(
+            (*coefficients.shape[:-2], self.layout.size, coefficients.shape[-1]),
+            dtype=jnp.result_type(coefficients.dtype, jnp.complex64),
+        )
+        for dof, (index, imaginary) in enumerate(self._dofs):
+            value = 1j * coefficients[..., dof, :] if imaginary else coefficients[..., dof, :]
+            output = output.at[..., index, :].add(value)
+        return output
+
+    def _apply(self, coefficients: Array, velocity_gradient: Array, edges: tuple[Array, ...]) -> Array:
+        component, output, input_, values = edges
+        real_coefficients = self._pack(coefficients)
+        gradient_weights = velocity_gradient[..., component // 3, component % 3]
+        contributions = gradient_weights[..., None] * real_coefficients[..., input_, :]
+        contributions *= values[..., None]
+        result = jnp.zeros_like(real_coefficients)
+        result = result.at[..., output, :].add(contributions)
+        return self._unpack(result)
+
+    def radial(self, coefficients: Array, velocity_gradient: Array) -> Array:
+        return self._apply(coefficients, velocity_gradient, self.radial_edges)
+
+    def angular(self, coefficients: Array, velocity_gradient: Array) -> Array:
+        return self._apply(coefficients, velocity_gradient, self.angular_edges)
+
+    @property
+    def nnz(self) -> int:
+        return int(self.radial_edges[3].size + self.angular_edges[3].size)
+
+
 class IonFrameVlasov:
     """Add prescribed ion-frame kinematics to a ``TzoufrasVlasov`` operator.
 
@@ -132,6 +245,7 @@ class IonFrameVlasov:
         self.vlasov = vlasov
         self.layout = vlasov.layout
         self.angular = _AngularGalerkin(self.layout)
+        self.sparse_angular = _SparseAngularCoupling(self.angular)
 
     def velocity_gradient(self, ion_velocity: Array) -> Array:
         """Return ``partial_j u_i`` with unresolved z derivatives set to zero."""
@@ -155,8 +269,8 @@ class IonFrameVlasov:
             result -= ion_velocity[..., 2, None, None] * dfdz
         return result
 
-    def deformation(self, f: Array, velocity_gradient: Array) -> Array:
-        """Return the conservative velocity-space term ``div_c((grad u_i)c f)``."""
+    def deformation_reference(self, f: Array, velocity_gradient: Array) -> Array:
+        """Dense Galerkin oracle for ``div_c((grad u_i)c f)``."""
 
         expected_shape = (*f.shape[:-2], 3, 3)
         if velocity_gradient.shape != expected_shape:
@@ -182,6 +296,21 @@ class IonFrameVlasov:
         angular_divergence += phi_coefficient[..., None] * dphi / self.angular.sin_theta[..., None]
         angular_divergence += (trace[..., None] - 3.0 * radial_coefficient)[..., None] * samples
         return self.angular.project(radial_divergence + angular_divergence)
+
+    def deformation(self, f: Array, velocity_gradient: Array) -> Array:
+        """Return ``div_c((grad u_i)c f)`` using sparse harmonic couplings."""
+
+        expected_shape = (*f.shape[:-2], 3, 3)
+        if velocity_gradient.shape != expected_shape:
+            raise ValueError(f"velocity_gradient must have shape {expected_shape}")
+
+        face_speed = jnp.arange(self.vlasov.v.size + 1, dtype=self.vlasov.v.dtype) * self.vlasov.dv
+        face_average = 0.5 * (f[..., 1:] + f[..., :-1])
+        interior_flux = face_speed[1:-1] ** 3 * self.sparse_angular.radial(face_average, velocity_gradient)
+        zero_flux = jnp.zeros_like(f[..., :1])
+        radial_flux = jnp.concatenate((zero_flux, interior_flux, zero_flux), axis=-1)
+        radial_divergence = (radial_flux[..., 1:] - radial_flux[..., :-1]) / (self.vlasov.v**2 * self.vlasov.dv)
+        return radial_divergence + self.sparse_angular.angular(f, velocity_gradient)
 
     def frame_acceleration(self, f: Array, material_acceleration: Array) -> Array:
         """Return ``D_t u_i . grad_c(f)`` using the existing force operator."""
