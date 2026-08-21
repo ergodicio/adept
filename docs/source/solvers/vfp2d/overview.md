@@ -53,4 +53,26 @@ on a periodic box.
 - `kinetic-ohm` is inertia-free and uses a current-moment projection; a fully implicit kinetic-current response is not yet implemented;
 - moving-ion fluid coupling is not yet implemented.
 
+## Ion-fluid development phases
+
+The first moving-ion component is available as the standalone `IonEuler2D` finite-volume
+operator. It advances cell averages of
+$(\rho_i,\rho_i u_x,\rho_i u_y,\rho_i u_z,\mathcal E_i)$ with MUSCL reconstruction,
+HLLC fluxes, periodic or outflow boundaries, and SSP-RK2 time stepping. Keeping the
+operator separate from the kinetic split initially makes its conservation and shock
+tests auditable before electron pressure work or collisional exchange are introduced.
+
+Development follows the verification gates in the kinetic-electron / ion-fluid research
+plan:
+
+1. **Gate 0a (implemented):** conservative Euler core; uniform-flow, smooth-advection,
+   contact, conservation, and coordinate-rotated Sod tests.
+2. **Gate 0b:** strong-shock, Sedov, isentropic-vortex, and magnetic-divergence tests,
+   followed by configuration and diagnostic integration.
+3. **Gate 1:** conservative bulk advection and the compression, shear, and inertial
+   terms for spherical harmonics in the ion peculiar-velocity frame.
+4. **Gate 2:** equal-and-opposite kinetic/fluid exchange and coupled local-limit tests.
+
+The production `vfp-2d` time loop still uses stationary ions until Gates 0b--2 land.
+
 See the [configuration reference](config.md), the [Joglekar 2014 reconstruction design](joglekar2014.md), and [`configs/vfp-2d/landau-damping.yaml`](../../../../configs/vfp-2d/landau-damping.yaml).

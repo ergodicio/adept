@@ -18,6 +18,13 @@ from adept.vfp2d.harmonics import (
     tensor_velocity_moment,
     vector_velocity_moment,
 )
+from adept.vfp2d.hydro import (
+    IonEuler2D,
+    conserved_to_primitive,
+    euler_flux,
+    hllc_flux,
+    primitive_to_conserved,
+)
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
@@ -34,6 +41,7 @@ __all__ = [
     "Grid",
     "HarmonicLayout",
     "HouLiFilter2D",
+    "IonEuler2D",
     "KineticOhm2D",
     "KineticOhmStep",
     "Maxwell2D",
@@ -44,9 +52,13 @@ __all__ = [
     "cartesian_l2",
     "complex_to_real",
     "conservative_f00_positivity",
+    "conserved_to_primitive",
     "current",
     "density",
+    "euler_flux",
+    "hllc_flux",
     "nernst_velocity",
+    "primitive_to_conserved",
     "project_current_moment",
     "real_to_complex",
     "scalar_velocity_moment",
