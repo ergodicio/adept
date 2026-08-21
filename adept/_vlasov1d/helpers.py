@@ -10,6 +10,8 @@ import numpy as np
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
+from jax import tree_util as jtu
+import equinox as eqx
 from matplotlib import pyplot as plt
 from scipy.special import gamma
 
@@ -38,7 +40,6 @@ def gamma_3_over_m(m):
 def gamma_5_over_m(m):
     """Evaluate Gamma(5 / m) for super-Gaussian normalization."""
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
-
 
 def _initialize_supergaussian_distribution_(
     nx: int,
@@ -173,7 +174,10 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
 
 def get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm: PlasmaNormalization | None = None):
-    # encapsulate the logic into a separate function here
+    '''getting amplitude (a), wave number (k) and angular frequency (w)
+    from intensity and wavelength (passed in as args to this function) defined in
+    'intensity_wavelength' type of configs'''
+
     intensity = UREG.Quantity(intensity).to("W/m^2")
     wavelength = UREG.Quantity(wavelength).to("nm")
 
@@ -202,10 +206,13 @@ def get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm: Pl
 def plot_driver_spectra(cfg: dict, td: str, args: dict):
     """Per-line intensity and phase vs frequency offset, for each multi-line driver.
 
-    Reads the LIVE `EMDriver` objects out of `args["drivers"]` rather than re-deriving
+    Reads the LIVE driver objects out of `args["drivers"]` rather than re-deriving
     the line set from the config's init/seed. That matters twice over: the plot cannot
     drift if BroadbandDriver's construction changes, and it shows optimized line sets
-    from a backward pass (which never appear in the config) automatically.
+    from a backward pass (which never appear in the config) automatically. A
+    `BroadbandDriver` contributes its per-line arrays (`amplitudes`/`delta_omega`/
+    `phases`); plain `EMDriver`s contribute their scalars, so a hand-built list of
+    mono drivers still plots.
 
     Per-line intensity needs no normalization constant. The driver builds amplitudes as
     A_j = a0 * sqrt(w_j / sum_k w_k), so
@@ -226,20 +233,36 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
 
     for field in ("ex", "ey"):
         dlist = getattr(drivers, field, None)
-        if not dlist or len(dlist) < 2:
-            continue  # absent, or monochromatic -> no spectrum to show
+        if not dlist:
+            continue
 
-        amp = np.asarray([float(d.a0) for d in dlist])
-        w0 = float(dlist[0].w0)
-        dw = np.asarray([float(d.dw0) for d in dlist]) / w0  # -> dw_j/w0
-        phases = np.asarray([float(d.phase) for d in dlist])
+        amp_list, dw_list, phase_list = [], [], []
+        for d in dlist:
+            if hasattr(d, "amplitudes"):  # BroadbandDriver: (N,) array leaves
+                amp_list.extend(np.asarray(d.amplitudes, dtype=float))
+                dw_list.extend(np.asarray(d.delta_omega, dtype=float) / float(d.w0))
+                phase_list.extend(np.asarray(d.phases, dtype=float))
+            else:  # plain EMDriver: scalar leaves
+                amp_list.append(float(d.a0))
+                dw_list.append(float(d.dw0) / float(d.w0))
+                phase_list.append(float(d.phase))
+        if len(amp_list) < 2:
+            continue  # monochromatic -> no spectrum to show
+
+        amp = np.asarray(amp_list)
+        dw = np.asarray(dw_list)  # dw_j/w0
+        phases = np.asarray(phase_list)
 
         power = amp**2
         frac = power / power.sum() if power.sum() > 0 else power
-        base = (
-            ((cfg.get("drivers", {}).get(field, {}) or {}).get("0", {}) or {}).get("params", {}).get("intensities", {})
-        )
-        base = base.get("base_intensity") if isinstance(base, dict) else None
+        # absolute scale: base_intensity of the broadband driver in this field (whichever
+        # key it was given under -- a driver keyed '1' must not lose the axis scale)
+        base = None
+        for dcfg in (cfg.get("drivers", {}).get(field, {}) or {}).values():
+            ints = ((dcfg or {}).get("params", {}) or {}).get("intensities")
+            if isinstance(ints, dict) and ints.get("base_intensity") is not None:
+                base = ints["base_intensity"]
+                break
 
         I_j, unit = frac, ""
         if isinstance(base, str) and base.split():  # "2.378e+14 W/cm^2"

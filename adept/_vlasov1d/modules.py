@@ -337,8 +337,14 @@ class BaseVlasov1D(ADEPTModule):
 
     def __call__(self, trainable_modules: dict, args: dict | None = None):
         """Run the configured Vlasov-1D solve and return the raw Diffrax result."""
-        if args is None:
-            args = self.args
+        # Merge rather than replace, so a caller passing partial args cannot
+        # accidentally drop the "drivers" entry that the field pushers
+        # unconditionally read from args.
+        args = self.args | args if args is not None else self.args
+
+        for name, module in trainable_modules.items():
+            state, args = module(state, args)
+
         grid = self.simulation.grid
         solver_result = diffeqsolve(
             terms=self.diffeqsolve_quants["terms"],

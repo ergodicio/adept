@@ -463,6 +463,76 @@ drivers:
       x_width: 1.0
 ```
 
+### Broadband (multi-color) `ey` driver
+
+A single `ey` driver can launch a **comb of `num_colors` lines** instead of one
+monochromatic wave, by giving it the broadband `params` form (the driver entry takes
+`params:` + `envelope:` + `source_type:`; the monochromatic forms use
+`params: {a0, k0, w0, dw0, phase}` or `params: {intensity, wavelength, ...}`):
+
+```yaml
+drivers:
+  ex: {}
+  ey:
+    '0':
+      source_type: point
+      params:
+        num_colors: 50
+        delta_omega: 0.0025        # HALF-width, fraction of w0 -> full bandwidth 0.5%
+        wavelength: 351nm
+        leftgoing: false
+        intensities:
+          base_intensity: 2.378e+14 W/cm^2
+          init: uniform            # or random (then seed is required)
+        phases:
+          init: random
+          seed: 1
+      envelope:
+        time:   {center: 20500.0fs, rise: 100.0fs, width: 42000.0fs}
+        space:  {center: 5.0um, rise: 0.1um, width: 1.0um}
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `num_colors` | int ≥ 1 | — | Number of lines `N`. `num_colors: 1` is exactly the monochromatic `intensity`/`wavelength` driver (line at `w0`, `dw0 = 0`). |
+| `delta_omega` | float ≥ 0 | — | **Half-width** of the comb as a fraction of `w0`: lines sit at `w_j = w0 (1 + d_j)` with `d_j` uniformly spaced on `[-delta_omega, +delta_omega]`, so the **full bandwidth is `2 * delta_omega`**. A "0.25% bandwidth" run is `delta_omega: 0.00125`. |
+| `wavelength` | str | — | Carrier wavelength; sets `w0` and the shared `k0`. |
+| `leftgoing` | bool | `false` | Flip the sign of `k0`. |
+| `intensities.base_intensity` | str | — | Total intensity, e.g. `2.378e+14 W/cm^2`. It fixes the monochromatic amplitude `a0`; the comb carries the same time-averaged power (see below). |
+| `intensities.init` | `uniform` / `random` | `uniform` | Per-line weights `w_j`: all equal, or drawn uniformly from `intensities.range`. |
+| `intensities.seed` | int | — | RNG seed for `init: random` (required then). |
+| `intensities.range` | `[lo, hi]` | `[0, 2]` | Draw bounds for `init: random`. |
+| `phases.init` | `uniform` / `random` | `random` | Spectral phases: all equal to `phases.base_phase`, or drawn uniformly from `phases.range`. |
+| `phases.seed` | int | — | RNG seed for `init: random` (required then). |
+| `phases.range` | `[lo, hi]` | `[0, 2π]` | Draw bounds (radians) for `init: random`. |
+| `phases.base_phase` | float | `0.0` | Common phase for `init: uniform`. |
+
+How the lines are built (`BroadbandDriver` in `simulation.py`):
+
+- **Amplitudes.** With `a0` the monochromatic amplitude for `base_intensity`, line `j` gets
+  `a_j = a0 · sqrt(w_j / Σ_k w_k)`, so `Σ_j a_j² = a0²` — the comb has the **same
+  time-averaged power** as one line at `base_intensity`, and the per-line intensity is
+  `I_j = base_intensity · w_j / Σ_k w_k` (`base_intensity / N` for a uniform comb). A
+  phase-locked comb still reaches `a0·√N` at its recurrence time, which is the correct
+  coherent-sum physics; "same intensity" here means time-averaged, not peak.
+- **Frequencies.** `w_j = w0 (1 + d_j)`. The driver is a single `BroadbandDriver` module
+  carrying per-line arrays (`amplitudes`, `delta_omega`, `phases`, each shape `(N,)`);
+  the transverse source evaluates all lines vectorized. The line parameters are read
+  from the solver's `args` at evaluation time, so they are differentiable inputs
+  (gradients w.r.t. `amplitudes`/`phases` flow; see `test_broadband_driver.py`).
+- **Shared `k0`.** Every line is launched with the carrier wavenumber of `wavelength`:
+  the source is `-env · w_j² · a_j · sin(k0 x − w_j t + φ_j)`, so an off-center line is
+  **not** placed on its own dispersion branch. That is accurate for a localized antenna
+  (`source_type: point`, or a spatial envelope a wavelength wide, where `δk · L_antenna` is
+  negligible) and not for a source extended across the box (`δk · L ~ 10 rad` at 0.25% over
+  200 µm).
+- Both `init: random` draws use `numpy.random.default_rng(seed)`, so a deck is exactly
+  reproducible across builds; two runs differ only through the seeds.
+- With more than one line, `post_process` writes `plots/drivers/` (per-line intensity, its
+  log, and phase vs `Δω/ω0`) from the live driver objects.
+
+An example deck is `configs/vlasov-1d/srs-broadband.yaml`.
+
 ## diagnostics
 
 Enable/disable diagnostic outputs.

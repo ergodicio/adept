@@ -48,7 +48,7 @@ class EMDriver(eqx.Module):
     is_point_source: bool = False
 
     @staticmethod
-    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> list["EMDriver"]:
+    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> "list[EMDriver] | BroadbandDriver":
         """Convert user driver configuration into normalized solver parameters."""
         envelope = SpaceTimeEnvelopeFunction.from_config(cfg.envelope, norm)
 
@@ -77,27 +77,44 @@ class EMDriver(eqx.Module):
                 return [EMDriver(a0, k0, w0, params.phase, dw0, envelope, is_point_source=is_point)]
 
             case BroadbandConfig(intensities=intensities, wavelength=wavelength, leftgoing=leftgoing):
-                a0, k0, w0 = get_akw_from_intensity_wavelength(
-                    intensities["base_intensity"], wavelength, leftgoing, norm
-                )
+                a0, k0, w0 = get_akw_from_intensity_wavelength(intensities.base_intensity, wavelength, leftgoing, norm)
 
                 is_point = cfg.source_type == "point"
-                # need to see if this object remaining for later is required i.e. if the other code in the class is dead
                 broadband_driver = BroadbandDriver(params.model_dump(), a0, k0, w0, envelope, is_point)
-                return broadband_driver.driver_list
+                return broadband_driver
+
+            case _:
+                raise NotImplementedError(f"Unsupported driver params type: {type(cfg.params).__name__}")
 
 
 class BroadbandDriver(eqx.Module):
+    """Multi-color (broadband) ey driver carrying per-line parameter arrays.
+
+    Given the monochromatic amplitude ``a0`` for ``intensities.base_intensity`` and
+    per-line weights ``w_j`` (uniform or seeded-random), the line amplitudes are
+    ``a_j = a0 * sqrt(w_j / sum_k w_k)`` so that ``sum_j a_j^2 = a0^2`` -- the comb
+    carries the same *time-averaged* power as the single line (a phase-locked comb
+    still peaks at ``a0 * sqrt(N)`` at recurrence). Line frequencies are
+    ``w_j = w0 * (1 + d_j)``, ``d_j`` uniform on ``[-delta_omega, +delta_omega]``
+    (``delta_omega`` is the half-width; ``num_colors == 1`` sits exactly at ``w0``).
+
+    All lines share the carrier ``k0``: the source is
+    ``-env * w_j^2 * a_j * sin(k0 x - w_j t + phi_j)``, so an off-center line is not
+    placed on its own dispersion branch. This is accurate for a localized antenna
+    (``source_type: point`` / narrow spatial envelope, where ``dk * L_antenna`` is
+    negligible) and NOT for a source extended across the box.
+    """
+
     params: dict
     a0: float
     k0: float
     w0: float
-    intensities: Array
+    intensity_weights: Array  # raw per-line weights w_j (dimensionless)
+    amplitudes: Array  # per-line a_j = a0 * sqrt(w_j / sum w)
     delta_omega: Array
     phases: Array
     envelope: SpaceTimeEnvelopeFunction
     is_point_source: bool = False
-    driver_list: list
 
     def __init__(self, cfg: dict, a0, k0, w0, envelope, is_point):
         self.params = cfg
@@ -107,24 +124,27 @@ class BroadbandDriver(eqx.Module):
         self.envelope = envelope
         self.is_point_source = is_point
 
-        # intensities
+        n_colors = int(self.params["num_colors"])
+
+        # per-line intensity weights w_j
         if self.params["intensities"]["init"] == "random":
             int_lo, int_hi = self.params["intensities"].get("range", (0.0, 2.0))
             int_rng = np.random.default_rng(seed=self.params["intensities"]["seed"])
-            self.intensities = jnp.array(int_rng.uniform(int_lo, int_hi, self.params["num_colors"]))
+            self.intensity_weights = jnp.array(int_rng.uniform(int_lo, int_hi, n_colors))
         elif self.params["intensities"]["init"] == "uniform":
-            self.intensities = jnp.ones(self.params["num_colors"])
+            self.intensity_weights = jnp.ones(n_colors)
         else:
             raise NotImplementedError(f"Initialization type -- {self.params['intensities']['init']} -- not implemented")
-        self.intensities = self.a0 * jnp.sqrt(
-            self.intensities / jnp.sum(self.intensities)
-        )  # sqrt normalization to have the same power spectrum
-        # otherwise for uniform, power be N times the expected power
+        # amplitudes: sqrt normalization so sum_j a_j^2 = a0^2 (same time-averaged power as
+        # the monochromatic line; otherwise a uniform comb would carry N x the power)
+        self.amplitudes = self.a0 * jnp.sqrt(self.intensity_weights / jnp.sum(self.intensity_weights))
 
-        # frequency shift
-        self.delta_omega = (
-            jnp.linspace(-self.params["delta_omega"], self.params["delta_omega"], self.params["num_colors"]) * self.w0
-        )
+        # frequency shifts:
+        if n_colors == 1:
+            # a single line must sit exactly at w0 (this is what makes num_colors: 1 the monochromatic driver)
+            self.delta_omega = jnp.zeros(1)
+        else:
+            self.delta_omega = jnp.linspace(-self.params["delta_omega"], self.params["delta_omega"], n_colors) * self.w0
 
         if self.params["phases"]["init"] == "random":
             # Spectral phases drawn uniformly over (0, 2*pi) -- the default;
@@ -136,13 +156,6 @@ class BroadbandDriver(eqx.Module):
             self.phases = jnp.ones(self.params["num_colors"]) * self.params["phases"]["base_phase"]
         else:
             raise NotImplementedError(f"Initialization type -- {self.params['phases']['init']} -- not implemented")
-
-        DriverList = []
-        for a, dw, phase in zip(self.intensities, self.delta_omega, self.phases, strict=True):
-            driver_obj = EMDriver(a, self.k0, self.w0, phase, dw, self.envelope, self.is_point_source)
-            DriverList.append(driver_obj)
-
-        self.driver_list = DriverList
 
     def scale_intensities(self, intensities):
         if self.params["intensities"]["activation"] == "linear":
@@ -164,15 +177,13 @@ class BroadbandDriver(eqx.Module):
         """
         Get the partition spec for the model
 
-        Only intensities and phases can be learned
+        Depends what is learned based on the driver being passed in
 
         Returns
         -------
         filter_spec : pytree with the same structure as the model
 
         """
-        # figure out tracing arrays here
-        # jit and gradient boundary (figure if that might cause problems)
         filter_spec = jtu.tree_map(lambda _: False, self)
 
         if self.params["intensities"]["learned"]:
@@ -183,19 +194,17 @@ class BroadbandDriver(eqx.Module):
 
         return filter_spec
 
-    def __call__(self, state: dict, args: dict) -> tuple:
-        # intensities = self.scale_intensities(self.intensities)
-        # intensities = intensities / jnp.sum(intensities)
+    # def __call__(self, state: dict, args: dict) -> tuple:
+    #     # intensities = self.scale_intensities(self.intensity_weights)
+    #     # intensities = intensities / jnp.sum(intensities)
 
-        """figure out what this does in lpse2d --> is this needed in vlasov (only passed in additional parameters)
-        but how does diffeqsolve even use these additional parameters"""
-        args["drivers"]["ey"] = {
-            "delta_omega": self.delta_omega,
-            "phases": jnp.tanh(self.phases) * jnp.pi,
-            "intensities": self.intensities,
-        } | self.envelope
+    #     args["drivers"]["ey"] = {
+    #         "delta_omega": self.delta_omega,
+    #         "phases": self.phases,
+    #         "amplitudes": self.amplitudes,
+    #     } | self.envelope
 
-        return state, args
+    #     return state, args
 
 
 class StochasticDriver(eqx.Module):
@@ -255,7 +264,7 @@ class EMDriverSet(eqx.Module):
     """Container for longitudinal (Ex) and transverse (Ey) driver lists."""
 
     ex: list[EMDriver]
-    ey: list[EMDriver]
+    ey: list[EMDriver | BroadbandDriver]
     ex_stochastic: StochasticDriver | None = None
 
     @staticmethod
