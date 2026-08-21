@@ -4,7 +4,8 @@ Implements the method of Issan, Delzanno & Roytershteyn (arXiv:2606.12322). The
 electron distribution is split f = f0 + df with an AW-Hermite expansion for the
 near-Maxwellian bulk f0 and a Legendre expansion (on a bounded velocity window) for
 the strongly non-Maxwellian part df. Electrostatic, single electron species with an
-immobile neutralizing ion background; periodic in x (Fourier); explicit Lawson-RK4.
+immobile neutralizing ion background; periodic in x (Fourier); structured split,
+Lawson-RK4, and IMEX integration options.
 
 Normalization (paper sec 2.1): t*wpe, x/lambda_D, v/vthe.
 
@@ -319,12 +320,28 @@ class BaseHermiteLegendre1D(ADEPTModule):
             e0 = jnp.zeros(Nx)
             phi0 = jnp.zeros(Nx)
 
+        leg = legendre_constants(Nl, v_a, v_b)
+        df_a0 = jnp.tensordot(leg["xi_a"], jnp.asarray(B), axes=([0], [0]))
+        df_b0 = jnp.tensordot(leg["xi_b"], jnp.asarray(B), axes=([0], [0]))
+        boundary0 = jnp.maximum(jnp.max(jnp.abs(df_a0)), jnp.max(jnp.abs(df_b0)))
+        boundary_a0 = jnp.max(jnp.abs(df_a0))
+        boundary_b0 = jnp.max(jnp.abs(df_b0))
+        high_cutoff = max(3, (3 * Nl) // 4)
+        b_power = jnp.sum(jnp.abs(Bk) ** 2)
+        high_fraction0 = jnp.where(b_power > 0.0, jnp.sum(jnp.abs(Bk[high_cutoff:]) ** 2) / b_power, 0.0)
+
         self.state = {
             "Ck": Ck.view(jnp.float64),
             "Bk": Bk.view(jnp.float64),
             "e": e0,
             "phi": phi0,
             "de": jnp.zeros(Nx),  # external Ex driver field (diagnostic)
+            "boundary_df_a_max": boundary_a0,
+            "boundary_df_b_max": boundary_b0,
+            "boundary_df_max": boundary0,
+            "high_legendre_fraction": high_fraction0,
+            "step_residual": jnp.asarray(0.0),
+            "conservation_correction": jnp.asarray(0.0),
         }
         self.args = {}
 
@@ -346,8 +363,18 @@ class BaseHermiteLegendre1D(ADEPTModule):
         enforce = bool(physics.get("enforce_conservation", True))
         field_on = bool(physics.get("field", True))
         integrator = str(grid.get("integrator", "lawson")).lower()
+        if integrator not in {"lawson", "imex", "split"}:
+            raise ValueError(
+                f"Unknown hermite-legendre-1d integrator {integrator!r}; "
+                "supported integrators are 'split', 'lawson', and 'imex'"
+            )
         imex = integrator == "imex"
-        implicit_mp = integrator == "implicit"
+        split = integrator == "split"
+        if split and (Nh < 3 or Nl < 3):
+            raise ValueError("integrator='split' requires Nh >= 3 and Nl >= 3 for the conservation correction")
+        split_field_iters = int(grid.get("split_field_iters", 1))
+        if split_field_iters < 1:
+            raise ValueError("grid.split_field_iters must be at least 1")
         dt = float(grid["dt"])
 
         kx_1d = grid["kx_1d"]
@@ -375,18 +402,26 @@ class BaseHermiteLegendre1D(ADEPTModule):
         # Explicit-term constants
         n = jnp.arange(Nh, dtype=jnp.float64)
         sqrt_2n_over_alpha = jnp.sqrt(2.0 * n) / alpha
-        gamma_vec = jnp.where(jnp.arange(Nl) >= 3, gamma, 0.0)
+        # The split path defaults to the normal, all-mode gamma=0.5 penalty and
+        # restores invariants with a constrained correction. Other integrators retain
+        # the conservative low-mode penalty when enforcement is requested. Users can
+        # override the choice explicitly for the issue-343 discriminator runs.
+        penalty_all_modes = bool(physics.get("penalty_all_modes", split or not enforce))
+        gamma_vec = jnp.full(Nl, gamma) if penalty_all_modes else jnp.where(jnp.arange(Nl) >= 3, gamma, 0.0)
 
         J = hermite_legendre_coupling_vector(Nh, Nl, alpha, u, v_a, v_b, enforce_conservation=enforce)
         coupling_vec = -(alpha / width) * jnp.sqrt(Nh / 2.0) * J  # folds prefactor into J_{Nh,m}
 
-        # IMEX force operators (only built when integrator == "imex")
+        # Force operator data.  IMEX consumes the matrix directly.  The split
+        # all-mode penalty is skew-symmetric, so prediagonalize i*G_B once for a
+        # stable O(Nx*Nl^2) Cayley application at large Nl.
         G_C = jnp.asarray(hermite_force_operator(Nh, alpha)) if imex else None
-        G_B = (
-            jnp.asarray(legendre_force_operator(leg["deriv"], gamma_vec, leg["xi_a"], leg["xi_b"], width))
-            if imex
-            else None
-        )
+        G_B_matrix = legendre_force_operator(leg["deriv"], gamma_vec, leg["xi_a"], leg["xi_b"], width)
+        G_B = jnp.asarray(G_B_matrix) if imex else None
+        legendre_skew_eigenvalues = None
+        legendre_skew_eigenvectors = None
+        if split and np.allclose(G_B_matrix + G_B_matrix.T, 0.0, rtol=0.0, atol=1.0e-11):
+            legendre_skew_eigenvalues, legendre_skew_eigenvectors = np.linalg.eigh(1j * G_B_matrix)
 
         vector_field = HermiteLegendre1DVectorField(
             combined_exp=combined_exp,
@@ -405,20 +440,15 @@ class BaseHermiteLegendre1D(ADEPTModule):
             field_on=field_on,
             ex_driver=ex_driver,
             imex=imex,
+            split=split,
+            split_field_iters=split_field_iters,
+            legendre_skew_eigenvalues=legendre_skew_eigenvalues,
+            legendre_skew_eigenvectors=legendre_skew_eigenvectors,
+            enforce_conservation=enforce,
             G_C=G_C,
             G_B=G_B,
-            implicit=implicit_mp,
-            T_H=jnp.asarray(T_H) if implicit_mp else None,
-            T_L=jnp.asarray(np.asarray(leg["T_L"])) if implicit_mp else None,
-            col_e=col_e if implicit_mp else None,
-            col_l=col_l if implicit_mp else None,
-            nu_H=nu_H,
-            nu_L=nu_L,
-            newton_iters=int(grid.get("newton_iters", 3)),
-            gmres_restart=int(grid.get("gmres_restart", 20)),
-            gmres_maxiter=int(grid.get("gmres_maxiter", 4)),
-            gmres_tol=float(grid.get("gmres_tol", 1e-8)),
-            precondition=bool(grid.get("precondition", True)),
+            T_H=jnp.asarray(T_H) if split else None,
+            T_L=jnp.asarray(np.asarray(leg["T_L"])) if split else None,
         )
 
         self.cfg = get_save_quantities(self.cfg)

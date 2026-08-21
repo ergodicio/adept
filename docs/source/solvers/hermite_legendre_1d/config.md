@@ -24,12 +24,13 @@ is evolved against an immobile neutralizing ion background of density 1.
 
 **Numerics.** Space is treated spectrally (Fourier, periodic domain); both
 free-streaming operators are symmetric-tridiagonal in mode index and integrated
-*exactly* via prediagonalized matrix exponentials. The E-field force, the Legendre
-Dirichlet penalty, and the Hermite→Legendre coupling are advanced explicitly with
-**Lawson-RK4**. (The paper uses an implicit-midpoint integrator for machine-precision
-energy conservation; this module uses an explicit integrator — energy is then
-conserved to the time-integrator's order, which converges with `dt`, while mass and
-momentum remain conserved to machine precision.)
+*exactly* via prediagonalized matrix exponentials. The production `split` integrator
+wraps the velocity-force update in exact half streaming/collision steps. Its Hermite
+force solve is a bidiagonal recurrence. For the all-mode `gamma=0.5` penalty, the
+Legendre force generator is skew-symmetric and prediagonalized once, so its
+implicit-midpoint Cayley transform is applied with unit-modulus eigenvalue factors.
+Other penalties use a lower-triangular plus rank-2 Woodbury solve. Neither path needs
+a global Newton/GMRES iteration.
 
 ## Top-Level Structure
 
@@ -53,10 +54,11 @@ save: ...
 | `alpha` | float | — | AW-Hermite velocity **scale** parameter `α` (the benchmarks use `√2`) |
 | `u` | float | `0.0` | AW-Hermite velocity **shift** parameter `u` |
 | `v_a`, `v_b` | float | — | Legendre velocity-window bounds (`df` is resolved on `[v_a, v_b]`) |
-| `gamma` | float | `0.5` | Penalty coefficient `γ` for the weak Legendre Dirichlet BC (`df(v_a)=df(v_b)=0`). Applied only to modes `m ≥ 3` to preserve conservation. |
+| `gamma` | float | `0.5` | Penalty coefficient `γ` for the weak Legendre Dirichlet BC (`df(v_a)=df(v_b)=0`). |
+| `penalty_all_modes` | bool | integrator-dependent | Apply `gamma` to modes 0–2 as well as the high modes. Defaults to `true` for `split` (making the `gamma=0.5` force operator skew-symmetric) and when `enforce_conservation: false`; otherwise defaults to `false`. |
 | `nu_H` | float | `0.0` | Artificial (Lenard-Bernstein) Hermite collision rate `ν_H`. Keep small/zero so `f0` can feed `df` through the last Hermite moment. |
 | `nu_L` | float | `0.0` | Artificial Legendre collision rate `ν_L`. Controls filamentation/recurrence in `df`. |
-| `enforce_conservation` | bool | `true` | Zero the coupling integrals `J_{Nh,0}=J_{Nh,1}=J_{Nh,2}=0` so the discrete method conserves mass, momentum, and energy independent of `Nh` parity and of `α, u` (paper sec 3.4/4). |
+| `enforce_conservation` | bool | `true` | Zero the coupling integrals `J_{Nh,0}=J_{Nh,1}=J_{Nh,2}=0`. With `split`, also apply the minimum-L2 correction to the six low `k=0` Hermite/Legendre coefficients after each step, restoring total mass, momentum, and energy. With other integrators this also defaults the penalty on modes 0–2 to zero. |
 | `field` | bool | `true` | Self-consistent Poisson field. Set `false` for the pure linear-advection test (`φ = 0`); the linear Hermite→Legendre closure flux still acts. |
 
 The artificial collision operator (paper sec 2.5) uses the cubic spectrum
@@ -72,6 +74,12 @@ in the mid-`n` window and a spurious `k=0` velocity-space cascade grows there at
 basis closes the window structurally: bump-on-tail with `Nh=32` reproduces the
 `Nh=128` field observables to 3 digits with machine-precision energy conservation.
 
+**Choosing the Legendre window (equally important).** Keep both boundaries outside
+the evolving non-Maxwellian support and monitor `boundary_df_max`. In the production
+bump-on-tail discriminator, `[4,15]` becomes contaminated and fails near `t=659`,
+whereas `[2,18]` remains bounded through `t=700` with boundary occupancy about
+`5.1e-5` and high-mode energy fraction about `5.3e-6`.
+
 ---
 
 ## grid
@@ -83,37 +91,33 @@ basis closes the window structurally: bump-on-tail with `Nh=32` reproduces the
 | `Nl` | int | — | Number of Legendre modes for `df` (closure by truncation: `B_{Nl}=0`) |
 | `tmax` | float | — | Final simulation time (normalized). Snapped to an exact multiple of `dt`. |
 | `dt` | float | `0.01` | Timestep |
-| `integrator` | str | `"lawson"` | Time integrator: `"lawson"` (explicit Lawson-RK4), `"imex"` (Lawson-RK4 + implicit Lorentz substep), or `"implicit"` (implicit midpoint, AD-JFNK) — see below. |
-| `newton_iters` | int | `3` | (`implicit`) Newton iterations per step. |
-| `gmres_restart`, `gmres_maxiter`, `gmres_tol` | int/int/float | `20`/`4`/`1e-8` | (`implicit`) matrix-free GMRES controls for the Newton linear solves. |
-| `precondition` | bool | `true` | (`implicit`) use the streaming+collision operator as a physics-based GMRES preconditioner (see below). |
+| `integrator` | str | `"lawson"` | Time integrator: `"split"` (structured Strang/Cayley, recommended), `"lawson"` (explicit Lawson-RK4), or `"imex"` (Lawson-RK4 + implicit Lorentz substep) — see below. |
+| `split_field_iters` | int | `1` | (`split`) fixed-point midpoint-field corrector iterations. Increase to 2–3 for long, strongly nonlinear runs; `1` is the original predictor/corrector. |
 
-### `integrator: implicit` (implicit midpoint via AD-JFNK)
+### `integrator: split` (recommended)
 
-Advances the full RHS with the implicit-midpoint rule `y1 = y0 + dt·F((y0+y1)/2)`,
-solved by **Jacobian-free Newton-Krylov**: each Newton linear system uses a matrix-free
-GMRES whose Jacobian-vector products are *exact autodiff JVPs* (`jax.linearize`) — the
-Jacobian is never assembled (memory is the state plus a few Krylov vectors). Implicit
-midpoint is A-stable (no CFL at all) and conserves quadratic invariants, so it conserves
-mass exactly and energy to the solve tolerance, and stays stable into the saturated /
-long-time regime where both `lawson` and `imex` blow up (e.g. bump-on-tail). Cost: each
-step does `newton_iters × (GMRES iterations) × (RHS evals)`, so it is the most expensive
-per step — use it for the hard cases, not the cheap ones.
+The split path advances one timestep as:
 
-**Preconditioning** (`precondition: true`, default). The implicit operator's stiffness is
-dominated by the skew streaming term, whose eigenvalues smear along the imaginary axis
-(`~dt/2·α·k_max·√(2Nh)`) — the worst case for unpreconditioned GMRES, which then needs
-many iterations and can fail to converge at large `dt`/`Nx` (Newton then injects energy).
-The preconditioner `M = I − dt/2·(L_streaming + L_collision)` is block-diagonal in `k` and
-tridiagonal in mode index, so `M⁻¹` is a cheap per-`k` tridiagonal solve that captures
-exactly that stiff spectrum; GMRES on `M⁻¹A` then converges in a handful of iterations.
+1. an exact half-step of Hermite/Legendre streaming and diagonal collisions;
+2. a full local velocity-force step in real `x`, using a predicted midpoint electric
+   field, configurable fixed-point field correction, and implicit-midpoint Cayley
+   transforms;
+3. a second exact half-step of streaming and collisions.
 
-Two measured caveats. (1) Do **not** precondition the Lorentz-force block: its triangular
-factors are strongly non-normal (nilpotent ladders, norm `~Nl²/width·|E|`), and applying
-their inverse stalls GMRES entirely at saturation-scale fields. (2) At large `dt` (≳0.05)
-combined with large `|E|`, the stream-preconditioned solve itself degrades while
-*unpreconditioned* GMRES still converges — set `precondition: false` for large-`dt`
-experiments in strongly nonlinear regimes.
+The Hermite Cayley solve is an O(`Nx*Nh`) bidiagonal recurrence. With the default all-mode
+`gamma=0.5` penalty, the Legendre force generator is skew-symmetric to roundoff; a
+prediagonalized O(`Nx*Nl²`) Cayley update preserves the coefficient norm without the
+ill-conditioned triangular factors that appear at high `Nl`. Non-skew penalty choices
+fall back to the lower-triangular plus rank-2 Woodbury solve, also O(`Nx*Nl²`). No global
+nonlinear solve or Krylov vectors are allocated. When `enforce_conservation: true`,
+a minimum-L2 correction of `C_0..2(k=0)` and `B_0..2(k=0)` restores total mass, momentum,
+and energy after the split step. The correction is disabled when an external field
+driver is present so its physical work is not projected away.
+
+The standard scalar output includes `boundary_df_a_max`, `boundary_df_b_max`, their
+combined maximum `boundary_df_max`, `high_legendre_fraction`, `step_residual` (the
+final fixed-point midpoint-field defect), and
+`conservation_correction` (the L2 norm of the six-coefficient correction).
 
 ### `integrator: imex`
 
@@ -193,7 +197,7 @@ Standard ADEPT `save` block with `t: {nt: ...}` (or `tmin`/`tmax`/`nt`) sub-axes
 | `fields` | Electric field `e(x,t)`, potential `phi(x,t)`, and external driver field `de(x,t)` |
 | `hermite` | AW-Hermite-Fourier coefficient timeseries `Ck` (shape `nt × Nh × Nx`) |
 | `legendre` | Legendre-Fourier coefficient timeseries `Bk` (shape `nt × Nl × Nx`) |
-| `default` | Scalar invariants `mass`, `momentum`, `energy` (paper eqns 26, 28, 30-31) plus field energy and density extrema. Always added; the primary correctness gate. |
+| `default` | Scalar invariants `mass`, `momentum`, `energy` (paper eqns 26, 28, 30-31), field energy, density extrema, velocity-boundary occupancy, high-mode fraction, step residual, and conservation-correction norm. Always added; the primary correctness gate. |
 
 `post_process` writes netCDF binaries and spacetime/scalar plots, and reports the
 relative drift of each invariant as the metrics `reldrift_{mass,momentum,energy}`.

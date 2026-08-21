@@ -14,14 +14,15 @@ Spatial dependence is carried in Fourier space (d_x -> i*kx); velocity is spectr
 Normalization (paper sec 2.1): t*wpe, x/lambda_D, v/vthe, phi*e*lambda_D/Te, so
 the electric field is E = -d_x phi and the ion background density is 1.
 
-Integration: Lawson-RK4 (free-streaming exact for both bases via prediagonalized
-symmetric-tridiagonal streaming matrices; E-field force, Dirichlet penalty, and the
-Hermite->Legendre coupling are explicit). Uses the Stepper (discrete-map) convention
-from adept._base_, mirroring adept._hermite_poisson_1d.vector_field.
+Integration options include a structured Strang/Cayley split (exact half streaming
+and collision steps around a local midpoint force solve), explicit Lawson-RK4, and
+IMEX. Uses the Stepper (discrete-map) convention from adept._base_, mirroring
+adept._hermite_poisson_1d.vector_field.
 """
 
 import jax
 import jax.numpy as jnp
+import jax.scipy.linalg as jsla
 import numpy as np
 from jax import Array
 
@@ -451,8 +452,98 @@ def legendre_force_operator(deriv: Array, gamma_vec: Array, xi_a: Array, xi_b: A
     return P - D
 
 
+def hermite_cayley_update(C: Array, E: Array, dt: float, sqrt_2n_over_alpha: Array) -> Array:
+    """Apply the implicit-midpoint Cayley transform for the Hermite force.
+
+    ``G_C`` is strictly lower bidiagonal, so the solve is a mode-by-mode recurrence
+    rather than a dense batched solve. ``C`` is in real x with shape ``(Nh, Nx)``.
+    """
+    if C.shape[0] <= 1:
+        return C
+
+    scale = 0.5 * dt * E
+    subdiag = -sqrt_2n_over_alpha[1:]
+
+    def advance(previous_new, values):
+        current_old, previous_old, g = values
+        current_new = current_old + scale * g * (previous_old + previous_new)
+        return current_new, current_new
+
+    _, tail = jax.lax.scan(advance, C[0], (C[1:], C[:-1], subdiag))
+    return jnp.concatenate([C[:1], tail], axis=0)
+
+
+def legendre_cayley_update(
+    B: Array,
+    E: Array,
+    dt: float,
+    deriv: Array,
+    gamma_vec: Array,
+    xi_a: Array,
+    xi_b: Array,
+    width: float,
+    skew_eigenvalues: Array | None = None,
+    skew_eigenvectors: Array | None = None,
+) -> Array:
+    """Apply the Legendre force Cayley transform with a Woodbury solve.
+
+    For ``G_B = P - D``, ``D`` is strictly lower triangular and the penalty ``P``
+    has rank two.  The left Cayley factor is therefore ``A + U V^T`` with
+    ``A = I + dt E D / 2``.  A batched triangular solve followed by a 2x2 Woodbury
+    correction costs O(Nx*Nl^2), avoiding both Newton/GMRES and a dense O(Nl^3)
+    solve at every spatial point.
+    """
+    Nl = B.shape[0]
+    scale = (0.5 * dt * E).astype(B.dtype)
+
+    # With gamma=1/2 on every mode, G_B is real skew-symmetric.  Its Hermitian
+    # partner i*G_B can be diagonalized once, giving a unitary, cancellation-free
+    # Cayley application for every local E(x).  This remains accurate when the
+    # lower-triangular Woodbury factors become ill-conditioned at large Nl.
+    if skew_eigenvalues is not None and skew_eigenvectors is not None:
+        eigenvalues = skew_eigenvalues.astype(B.real.dtype)
+        eigenvectors = skew_eigenvectors.astype(B.dtype)
+        coefficients = eigenvectors.conj().T @ B
+        phase = (1.0 - 1j * eigenvalues[:, None] * scale[None, :]) / (1.0 + 1j * eigenvalues[:, None] * scale[None, :])
+        return eigenvectors @ (phase * coefficients)
+
+    D = deriv.astype(B.dtype)
+    xa = xi_a.astype(B.dtype)
+    xb = xi_b.astype(B.dtype)
+    penalty_scale = (gamma_vec / width).astype(B.dtype)
+
+    deriv_B = D @ B
+    df_b = jnp.tensordot(xb, B, axes=([0], [0]))
+    df_a = jnp.tensordot(xa, B, axes=([0], [0]))
+    penalty_B = penalty_scale[:, None] * (xb[:, None] * df_b[None, :] - xa[:, None] * df_a[None, :])
+    rhs = B + scale[None, :] * (penalty_B - deriv_B)
+
+    eye = jnp.eye(Nl, dtype=B.dtype)
+    A = eye[None, :, :] + scale[:, None, None] * D[None, :, :]
+    U = jnp.stack(
+        [
+            -scale[:, None] * (penalty_scale * xb)[None, :],
+            scale[:, None] * (penalty_scale * xa)[None, :],
+        ],
+        axis=-1,
+    )
+
+    # Solve A against the state and both Woodbury columns in one triangular solve.
+    packed_rhs = jnp.concatenate([rhs.T[..., None], U], axis=-1)
+    solved = jsla.solve_triangular(A, packed_rhs, lower=True, unit_diagonal=True)
+    z = solved[..., 0]
+    W = solved[..., 1:]
+
+    V = jnp.stack([xb, xa], axis=0)
+    small = jnp.eye(2, dtype=B.dtype)[None, :, :] + jnp.einsum("ri,xij->xrj", V, W)
+    projected = jnp.einsum("ri,xi->xr", V, z)
+    weights = jnp.linalg.solve(small, projected[..., None])[..., 0]
+    corrected = z - jnp.einsum("xir,xr->xi", W, weights)
+    return corrected.T
+
+
 # ---------------------------------------------------------------------------
-# Lawson-RK4 vector field (Stepper / discrete-map convention)
+# Time-stepping vector field (Stepper / discrete-map convention)
 # ---------------------------------------------------------------------------
 
 
@@ -494,20 +585,15 @@ class HermiteLegendre1DVectorField:
         field_on: bool = True,
         ex_driver: "ExternalExDriver | None" = None,
         imex: bool = False,
+        split: bool = False,
+        split_field_iters: int = 1,
+        legendre_skew_eigenvalues: Array | None = None,
+        legendre_skew_eigenvectors: Array | None = None,
+        enforce_conservation: bool = True,
         G_C: Array | None = None,
         G_B: Array | None = None,
-        implicit: bool = False,
         T_H: Array | None = None,
         T_L: Array | None = None,
-        col_e: Array | None = None,
-        col_l: Array | None = None,
-        nu_H: float = 0.0,
-        nu_L: float = 0.0,
-        newton_iters: int = 3,
-        gmres_restart: int = 20,
-        gmres_maxiter: int = 4,
-        gmres_tol: float = 1e-8,
-        precondition: bool = True,
     ):
         self.combined_exp = combined_exp
         self.poisson = poisson
@@ -527,62 +613,51 @@ class HermiteLegendre1DVectorField:
         # IMEX: treat the (stiff) E.d_v f Lorentz force implicitly via a frozen-E
         # backward-Euler substep, keeping the rest of the RHS in the explicit Lawson step.
         self.imex = bool(imex)
+        self.split = bool(split)
+        self.split_field_iters = int(split_field_iters)
+        self.legendre_skew_eigenvalues = (
+            None if legendre_skew_eigenvalues is None else jnp.asarray(legendre_skew_eigenvalues)
+        )
+        self.legendre_skew_eigenvectors = (
+            None if legendre_skew_eigenvectors is None else jnp.asarray(legendre_skew_eigenvectors)
+        )
+        self.enforce_conservation = bool(enforce_conservation)
         self.G_C = None if G_C is None else jnp.asarray(G_C, dtype=jnp.complex128)
         self.G_B = None if G_B is None else jnp.asarray(G_B, dtype=jnp.complex128)
-        # Implicit midpoint (AD-JFNK): needs the raw streaming/collision RHS operators.
-        self.implicit = bool(implicit)
         self.T_H = None if T_H is None else jnp.asarray(T_H)
         self.T_L = None if T_L is None else jnp.asarray(T_L)
-        self.col_e = None if col_e is None else jnp.asarray(col_e)
-        self.col_l = None if col_l is None else jnp.asarray(col_l)
-        self.nu_H = float(nu_H)
-        self.nu_L = float(nu_L)
-        self.newton_iters = int(newton_iters)
-        self.gmres_restart = int(gmres_restart)
-        self.gmres_maxiter = int(gmres_maxiter)
-        self.gmres_tol = float(gmres_tol)
-        self.precondition = bool(precondition)
-        if self.implicit and self.precondition:
-            self._setup_stream_preconditioner()
-
-    def _setup_stream_preconditioner(self) -> None:
-        """Precompute the per-k tridiagonal bands of M = I - (dt/2)(L_stream + L_coll).
-
-        L_stream is block-diagonal in k and tridiagonal in mode (the streaming matrices
-        T_H, T_L are tridiagonal), so M^{-1} is a batched tridiagonal solve. Including the
-        diagonal collision term improves conditioning for collisional runs. This M
-        captures the stiff (imaginary) streaming spectrum that otherwise cripples GMRES.
-        """
-        half = 0.5 * self.dt
-
-        def bands(T, prefac, nu, col):
-            T = jnp.asarray(T)
-            diagT = jnp.diagonal(T)  # (N,)
-            off = jnp.diagonal(T, offset=1)  # (N-1,)
-            N = diagT.shape[0]
-            c = prefac * half * self.kx_1d  # (Nx,) ; prefac = -1 * (-i alpha) etc. -> see below
-            # M = I + (dt/2)*(i*coef*kx*T) + (dt/2)*nu*col   (coef = alpha for H, 1 for L)
-            d = 1.0 + c[:, None] * diagT[None, :] + half * nu * col[None, :]
-            sub = jnp.concatenate([jnp.zeros(1, dtype=off.dtype), off])  # sub[n]=T[n,n-1]
-            sup = jnp.concatenate([off, jnp.zeros(1, dtype=off.dtype)])  # sup[n]=T[n,n+1]
-            dl = c[:, None] * sub[None, :]
-            du = c[:, None] * sup[None, :]
-            return dl.astype(jnp.complex128), d.astype(jnp.complex128), du.astype(jnp.complex128)
-
-        # L_stream C = -i*alpha*kx*(T_H C)  ->  M_H = I + i*(dt/2)*alpha*kx*T_H
-        self._pc_h = bands(self.T_H, 1j * self.alpha, self.nu_H, self.col_e)
-        # L_stream B = -i*kx*(T_L B)        ->  M_L = I + i*(dt/2)*kx*T_L
-        self._pc_l = bands(self.T_L, 1j, self.nu_L, self.col_l)
-
-    def _stream_precond_apply(self, v: dict) -> dict:
-        """Apply M^{-1} (streaming+collision preconditioner) to a real (re,im) pytree."""
-        Ck = v["Cr"] + 1j * v["Ci"]  # (Nh, Nx)
-        Bk = v["Br"] + 1j * v["Bi"]  # (Nl, Nx)
-        dl_h, d_h, du_h = self._pc_h
-        dl_l, d_l, du_l = self._pc_l
-        x = jax.lax.linalg.tridiagonal_solve(dl_h, d_h, du_h, Ck.T[..., None])[..., 0].T
-        y = jax.lax.linalg.tridiagonal_solve(dl_l, d_l, du_l, Bk.T[..., None])[..., 0].T
-        return {"Cr": x.real, "Ci": x.imag, "Br": y.real, "Bi": y.imag}
+        if self.split:
+            sigma_bar = self.T_L[0, 0]
+            sigma1 = self.T_L[0, 1]
+            sigma2 = self.T_L[1, 2]
+            alpha = self.alpha
+            width = self.width
+            # T_H's diagonal is u/alpha, so recover the Hermite velocity shift here.
+            u = alpha * self.T_H[0, 0]
+            self._moment_matrix = jnp.asarray(
+                [
+                    [alpha, 0.0, 0.0, width, 0.0, 0.0],
+                    [
+                        u * alpha,
+                        alpha**2 / jnp.sqrt(2.0),
+                        0.0,
+                        width * sigma_bar,
+                        width * sigma1,
+                        0.0,
+                    ],
+                    [
+                        0.5 * alpha * (alpha**2 / 2.0 + u**2),
+                        alpha**2 * u / jnp.sqrt(2.0),
+                        alpha**3 / (2.0 * jnp.sqrt(2.0)),
+                        0.5 * width * (sigma1**2 + sigma_bar**2),
+                        width * sigma1 * sigma_bar,
+                        0.5 * width * sigma2 * sigma1,
+                    ],
+                ],
+                dtype=jnp.float64,
+            )
+            gram = self._moment_matrix @ self._moment_matrix.T
+            self._moment_projector = self._moment_matrix.T @ jnp.linalg.inv(gram)
 
     def _nonlinear_rhs(self, t: float, state: dict, args: dict) -> dict:
         Ck = state["Ck"].view(jnp.complex128)
@@ -611,7 +686,17 @@ class HermiteLegendre1DVectorField:
         out = dict(state)
         out["Ck"] = dCk.view(jnp.float64)
         out["Bk"] = dBk.view(jnp.float64)
-        for k in ("e", "phi", "de"):
+        for k in (
+            "e",
+            "phi",
+            "de",
+            "boundary_df_a_max",
+            "boundary_df_b_max",
+            "boundary_df_max",
+            "high_legendre_fraction",
+            "step_residual",
+            "conservation_correction",
+        ):
             if k in out:
                 out[k] = jnp.zeros_like(state[k])
         return out
@@ -647,74 +732,127 @@ class HermiteLegendre1DVectorField:
         )
         return _tree_add(Ef_y, weighted)
 
-    def _full_rhs_complex(self, t: float, Ck: Array, Bk: Array) -> tuple:
-        """Raw RHS dy/dt = streaming + collisions + Lorentz force + closure coupling.
+    def _force_cayley(self, state: dict, E: Array, dt: float) -> dict:
+        """Advance the local Hermite and Legendre force blocks with midpoint Cayley maps."""
+        maskc = self.mask23[None, :] if self.mask23 is not None else 1.0
+        Ck = state["Ck"].view(jnp.complex128)
+        Bk = state["Bk"].view(jnp.complex128)
+        C = jnp.fft.ifft(Ck * maskc, axis=-1, norm="forward")
+        B = jnp.fft.ifft(Bk * maskc, axis=-1, norm="forward")
 
-        Unlike the Lawson path (which integrates streaming/collisions exactly via the
-        matrix exponential), the implicit-midpoint integrator needs the explicit RHS
-        operators: streaming d_t C = -i alpha kx (T_H C), d_t B = -i kx (T_L B), the
-        diagonal collision -nu col[n], and the (reused) E.d_v f force + coupling terms.
-        """
-        E = self.poisson.electric_field(Ck, Bk) if self.field_on else jnp.zeros(Ck.shape[1])
-        if self.ex_driver is not None:
-            E = E + self.ex_driver(t, None)
-
-        dCk = -1j * self.alpha * self.kx_1d[None, :] * (self.T_H @ Ck) - self.nu_H * self.col_e[:, None] * Ck
-        dBk = -1j * self.kx_1d[None, :] * (self.T_L @ Bk) - self.nu_L * self.col_l[:, None] * Bk
-
-        dCk = dCk + _hermite_force(Ck, E, self.sqrt_2n_over_alpha, self.mask23)
-        dBk = (
-            dBk
-            + _legendre_force(Bk, E, self.deriv, self.gamma_vec, self.xi_a, self.xi_b, self.width, self.mask23)
-            + _cross_coupling(Ck, E, self.kx_1d, self.coupling_vec, self.alpha, self.width, self.mask23)
+        C_new = hermite_cayley_update(C, E, dt, self.sqrt_2n_over_alpha)
+        B_new = legendre_cayley_update(
+            B,
+            E,
+            dt,
+            self.deriv,
+            self.gamma_vec,
+            self.xi_a,
+            self.xi_b,
+            self.width,
+            self.legendre_skew_eigenvalues,
+            self.legendre_skew_eigenvectors,
         )
-        return dCk, dBk
+        Ck_new = jnp.fft.fft(C_new, axis=-1, norm="forward") * maskc
+        Bk_new = jnp.fft.fft(B_new, axis=-1, norm="forward") * maskc
+        out = dict(state)
+        out["Ck"] = Ck_new.view(jnp.float64)
+        out["Bk"] = Bk_new.view(jnp.float64)
+        return out
 
-    def _implicit_midpoint_solve(self, t: float, Ck0: Array, Bk0: Array) -> tuple:
-        """One implicit-midpoint step via Jacobian-free Newton-Krylov (AD-JFNK).
+    def _moment_density(self, Ck: Array, Bk: Array, E: Array) -> Array:
+        """Return mass, momentum, and total-energy densities for one state."""
+        low_modes = jnp.stack(
+            [Ck[0, 0].real, Ck[1, 0].real, Ck[2, 0].real, Bk[0, 0].real, Bk[1, 0].real, Bk[2, 0].real]
+        )
+        moments = self._moment_matrix @ low_modes
+        return moments.at[2].add(0.5 * jnp.mean(E**2))
 
-        Solves y1 = y0 + dt F((y0+y1)/2). Implicit midpoint is A-stable and conserves
-        quadratic invariants (energy), so it has no CFL limit and no spurious energy
-        growth -- needed for the saturated/long-time regimes where the explicit and
-        IMEX paths blow up. The Newton linear solves use a matrix-free GMRES whose
-        Jacobian-vector products are EXACT autodiff JVPs (jax.linearize) -- the Jacobian
-        is never formed. Complex coefficients are carried as real (re, im) pytree leaves
-        so the Krylov inner products are the standard real ones.
-        """
-        import jax.scipy.sparse.linalg as jsla
+    def _conservation_correct(self, state: dict, target: Array) -> tuple[dict, Array]:
+        """Apply the minimum-L2 correction to the six low k=0 coefficients."""
+        Ck = state["Ck"].view(jnp.complex128)
+        Bk = state["Bk"].view(jnp.complex128)
+        E = self.poisson.electric_field(Ck, Bk) if self.field_on else jnp.zeros(Ck.shape[1])
+        defect = target - self._moment_density(Ck, Bk, E)
+        delta = self._moment_projector @ defect
 
+        Ck = Ck.at[:3, 0].add(delta[:3])
+        Bk = Bk.at[:3, 0].add(delta[3:])
+        out = dict(state)
+        out["Ck"] = Ck.view(jnp.float64)
+        out["Bk"] = Bk.view(jnp.float64)
+        return out, jnp.linalg.norm(delta)
+
+    def _coefficient_diagnostics(self, Bk: Array) -> tuple[Array, Array, Array, Array]:
+        """Return velocity-boundary occupancy and high-Legendre-mode energy fraction."""
+        B = jnp.fft.ifft(Bk, axis=-1, norm="forward")
+        df_a = jnp.tensordot(self.xi_a, B, axes=([0], [0]))
+        df_b = jnp.tensordot(self.xi_b, B, axes=([0], [0]))
+        boundary_a = jnp.max(jnp.abs(df_a))
+        boundary_b = jnp.max(jnp.abs(df_b))
+        boundary = jnp.maximum(boundary_a, boundary_b)
+
+        cutoff = max(3, (3 * Bk.shape[0]) // 4)
+        total = jnp.sum(jnp.abs(Bk) ** 2)
+        high = jnp.sum(jnp.abs(Bk[cutoff:]) ** 2)
+        high_fraction = jnp.where(total > 0.0, high / total, 0.0)
+        return boundary_a, boundary_b, boundary, high_fraction
+
+    def _split_step(self, t: float, state: dict, args: dict) -> tuple[dict, Array, Array]:
+        """Second-order split step with a frozen predicted midpoint electric field."""
         dt = self.dt
-        t_mid = t + 0.5 * dt
-        y0 = {"Cr": Ck0.real, "Ci": Ck0.imag, "Br": Bk0.real, "Bi": Bk0.imag}
+        Ck0 = state["Ck"].view(jnp.complex128)
+        Bk0 = state["Bk"].view(jnp.complex128)
+        E0 = self.poisson.electric_field(Ck0, Bk0) if self.field_on else jnp.zeros(Ck0.shape[1])
+        target = self._moment_density(Ck0, Bk0, E0)
 
-        def rhs(yr):
-            Ck = yr["Cr"] + 1j * yr["Ci"]
-            Bk = yr["Br"] + 1j * yr["Bi"]
-            dCk, dBk = self._full_rhs_complex(t_mid, Ck, Bk)
-            return {"Cr": dCk.real, "Ci": dCk.imag, "Br": dBk.real, "Bi": dBk.imag}
+        half = self.combined_exp.apply(state, 0.5 * dt)
+        Ckh = half["Ck"].view(jnp.complex128)
+        Bkh = half["Bk"].view(jnp.complex128)
+        E_left = self.poisson.electric_field(Ckh, Bkh) if self.field_on else jnp.zeros(Ckh.shape[1])
+        if self.ex_driver is not None:
+            E_left = E_left + self.ex_driver(t + 0.5 * dt, args)
 
-        def residual(y1):
-            y_mid = jax.tree.map(lambda a, b: 0.5 * (a + b), y0, y1)
-            f = rhs(y_mid)
-            return jax.tree.map(lambda a, b, ff: a - b - dt * ff, y1, y0, f)
+        # Predictor: frozen left field plus a midpoint estimate of the one-way closure flux.
+        predicted = self._force_cayley(half, E_left, dt)
+        cross_left = _cross_coupling(Ckh, E_left, self.kx_1d, self.coupling_vec, self.alpha, self.width, self.mask23)
+        Bkp = predicted["Bk"].view(jnp.complex128) + dt * cross_left
+        predicted["Bk"] = Bkp.view(jnp.float64)
+        Ckp = predicted["Ck"].view(jnp.complex128)
+        E_right = self.poisson.electric_field(Ckp, Bkp) if self.field_on else jnp.zeros(Ckp.shape[1])
+        if self.ex_driver is not None:
+            E_right = E_right + self.ex_driver(t + 0.5 * dt, args)
+        E_mid = 0.5 * (E_left + E_right)
 
-        # Streaming-only preconditioner. Do NOT precondition the Lorentz-force block:
-        # its triangular factors are strongly non-normal (nilpotent ladders with norm
-        # ~Nl^2/width * |E|), and left-multiplying by their inverse scrambles an
-        # otherwise well-conditioned system -- measured GMRES stalls (rel res ~1) with
-        # a force factor at saturation fields, while stream-only (dt <~ 0.02) and even
-        # unpreconditioned GMRES converge to tolerance in a few tens of iterations.
-        M = self._stream_precond_apply if self.precondition else None
-        y1 = y0
-        for _ in range(self.newton_iters):
-            r, jvp_fn = jax.linearize(residual, y1)  # jvp_fn(v) = J @ v, exact (AD)
-            neg_r = jax.tree.map(jnp.negative, r)
-            delta, _ = jsla.gmres(
-                jvp_fn, neg_r, M=M, tol=self.gmres_tol, atol=0.0, restart=self.gmres_restart, maxiter=self.gmres_maxiter
+        # Fixed-point corrector: converge the self-consistent midpoint field while
+        # retaining local Cayley solves for the velocity-space force.  One iteration
+        # exactly recovers the original predictor/corrector.  Extra iterations are
+        # cheap compared with a global Newton solve and prevent the late-time field
+        # residual from feeding an otherwise norm-preserving force update.
+        for _ in range(self.split_field_iters):
+            forced = self._force_cayley(half, E_mid, dt)
+            Ckf = forced["Ck"].view(jnp.complex128)
+            Ck_mid = 0.5 * (Ckh + Ckf)
+            cross_mid = _cross_coupling(
+                Ck_mid, E_mid, self.kx_1d, self.coupling_vec, self.alpha, self.width, self.mask23
             )
-            y1 = jax.tree.map(jnp.add, y1, delta)
+            Bkf = forced["Bk"].view(jnp.complex128) + dt * cross_mid
+            forced["Bk"] = Bkf.view(jnp.float64)
 
-        return y1["Cr"] + 1j * y1["Ci"], y1["Br"] + 1j * y1["Bi"]
+            E_final_force = self.poisson.electric_field(Ckf, Bkf) if self.field_on else jnp.zeros(Ckf.shape[1])
+            if self.ex_driver is not None:
+                E_final_force = E_final_force + self.ex_driver(t + 0.5 * dt, args)
+            E_next = 0.5 * (E_left + E_final_force)
+            midpoint_defect = E_mid - E_next
+            residual = jnp.linalg.norm(midpoint_defect) / jnp.maximum(jnp.linalg.norm(E_mid), 1.0e-14)
+            E_mid = E_next
+
+        out = self.combined_exp.apply(forced, 0.5 * dt)
+        correction = jnp.asarray(0.0)
+        # A prescribed driver performs real work; do not project that physical change away.
+        if self.enforce_conservation and self.ex_driver is None:
+            out, correction = self._conservation_correct(out, target)
+        return out, residual, correction
 
     def _implicit_E_substep(self, state: dict, E_real: Array, dt: float) -> dict:
         """Backward-Euler substep for the E.d_v f Lorentz force with frozen E.
@@ -754,30 +892,22 @@ class HermiteLegendre1DVectorField:
         return out
 
     def __call__(self, t: float, y: dict, args: dict) -> dict:
-        if self.implicit:
-            Ck0 = y["Ck"].view(jnp.complex128)
-            Bk0 = y["Bk"].view(jnp.complex128)
-            Ck, Bk = self._implicit_midpoint_solve(t, Ck0, Bk0)
-            if self.field_on:
-                e = self.poisson.electric_field(Ck, Bk)
-                phi = self.poisson.potential(Ck, Bk)
-            else:
-                e = jnp.zeros(Ck.shape[1])
-                phi = jnp.zeros(Ck.shape[1])
-            de = self.ex_driver(t, args) if self.ex_driver is not None else jnp.zeros(Ck.shape[1])
-            return {"Ck": Ck.view(jnp.float64), "Bk": Bk.view(jnp.float64), "e": e, "phi": phi, "de": de}
+        step_residual = jnp.asarray(0.0)
+        correction_norm = jnp.asarray(0.0)
+        if self.split:
+            y_new, step_residual, correction_norm = self._split_step(t, y, args)
+        else:
+            y_new = self._lawson_rk4(t, y, args)
 
-        y_new = self._lawson_rk4(t, y, args)
-
-        if self.imex:
-            # Frozen E from the post-explicit state (self-consistent + external driver
-            # at the end of the step), then one implicit Lorentz substep.
-            Ckp = y_new["Ck"].view(jnp.complex128)
-            Bkp = y_new["Bk"].view(jnp.complex128)
-            E_frozen = self.poisson.electric_field(Ckp, Bkp) if self.field_on else jnp.zeros(Ckp.shape[1])
-            if self.ex_driver is not None:
-                E_frozen = E_frozen + self.ex_driver(t + self.dt, args)
-            y_new = self._implicit_E_substep(y_new, E_frozen, self.dt)
+            if self.imex:
+                # Frozen E from the post-explicit state (self-consistent + external driver
+                # at the end of the step), then one implicit Lorentz substep.
+                Ckp = y_new["Ck"].view(jnp.complex128)
+                Bkp = y_new["Bk"].view(jnp.complex128)
+                E_frozen = self.poisson.electric_field(Ckp, Bkp) if self.field_on else jnp.zeros(Ckp.shape[1])
+                if self.ex_driver is not None:
+                    E_frozen = E_frozen + self.ex_driver(t + self.dt, args)
+                y_new = self._implicit_E_substep(y_new, E_frozen, self.dt)
 
         Ck = y_new["Ck"].view(jnp.complex128)
         Bk = y_new["Bk"].view(jnp.complex128)
@@ -787,5 +917,18 @@ class HermiteLegendre1DVectorField:
         else:
             e = jnp.zeros(Ck.shape[1])  # phi = 0 : pure advection
             phi = jnp.zeros(Ck.shape[1])
-        de = self.ex_driver(t, args) if self.ex_driver is not None else jnp.zeros(Ck.shape[1])
-        return {"Ck": y_new["Ck"], "Bk": y_new["Bk"], "e": e, "phi": phi, "de": de}
+        de = self.ex_driver(t + self.dt, args) if self.ex_driver is not None else jnp.zeros(Ck.shape[1])
+        boundary_a, boundary_b, boundary, high_fraction = self._coefficient_diagnostics(Bk)
+        return {
+            "Ck": y_new["Ck"],
+            "Bk": y_new["Bk"],
+            "e": e,
+            "phi": phi,
+            "de": de,
+            "boundary_df_a_max": boundary_a,
+            "boundary_df_b_max": boundary_b,
+            "boundary_df_max": boundary,
+            "high_legendre_fraction": high_fraction,
+            "step_residual": step_residual,
+            "conservation_correction": correction_norm,
+        }

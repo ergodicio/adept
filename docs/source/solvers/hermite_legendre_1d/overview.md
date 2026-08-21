@@ -53,13 +53,15 @@ many Hermite modes.
 
 Space is treated spectrally on a periodic domain (Fourier, $\partial_x \to i k_x$). Both
 free-streaming operators are symmetric-tridiagonal in mode index and are integrated **exactly** via
-prediagonalized matrix exponentials. The electric-field force, the Legendre Dirichlet penalty, and
-the Hermite→Legendre coupling are advanced explicitly with **Lawson-RK4**.
+prediagonalized matrix exponentials. The recommended **split** integrator uses exact half linear
+steps around a local velocity-force update. The Hermite force is solved by a bidiagonal recurrence;
+the Legendre implicit-midpoint Cayley transform uses the derivative matrix's lower-triangular plus
+rank-2 structure. This removes the global Newton/GMRES solve and its Krylov-vector memory cost.
 
 ```{note}
-The paper uses an implicit-midpoint integrator, which conserves energy to machine precision. This
-module uses an explicit integrator instead: mass and momentum are still conserved to machine
-precision, but energy is conserved only to the order of the time integrator, converging with `dt`.
+With `gamma=0.5` on every Legendre mode, the force generator is skew-symmetric to roundoff and the
+Cayley update preserves its coefficient norm. A minimum-norm correction of the six low `k=0`
+Hermite/Legendre coefficients restores total mass, momentum, and energy after each split step.
 ```
 
 Artificial collision rates `nu_H` and `nu_L` damp the highest modes of each basis to control
@@ -87,8 +89,8 @@ driver — useful for a clean Landau-damping measurement.
 | $v$ (Hermite part $f_0$) | **None** — spectral | The AW-Hermite basis is defined on the whole line; the truncation at $N_h$ is the effective closure. |
 | $v$ (Legendre part $\delta f$) | **Weak Dirichlet** | $\delta f(v_a) = \delta f(v_b) = 0$, enforced by a rank-2 penalty term $P[m,j] = (\gamma_m/\text{width})(\xi_b[m]\xi_b[j] - \xi_a[m]\xi_a[j])$ with strength `gamma`. This is what confines the Legendre correction to its velocity window instead of letting it leak. |
 
-The penalty is advanced explicitly along with the field force and the Hermite→Legendre coupling; both
-free-streaming operators are integrated exactly.
+In the split integrator the penalty is part of the structured local Cayley solve; both free-streaming
+operators are integrated exactly.
 
 ## Forcing and Drivers
 
@@ -117,9 +119,10 @@ free-streaming operators are integrated exactly.
 | `coefficients-facets.png` | Hermite and Legendre coefficient spectra |
 | `phase-space-f_xv.png` | Reconstructed phase space |
 
-The coefficient-facet plot is the one to watch: mass and momentum are conserved to machine precision
-but energy only to the integrator's order, so a growing tail in the coefficient spectra is the early
-warning that `nu_H`/`nu_L` or `dt` need attention.
+The scalar diagnostics directly report the largest Legendre-window boundary value, the high-mode
+Legendre energy fraction, the step residual, and the low-mode conservation-correction norm. Together
+with the coefficient-facet plot, these distinguish boundary contamination from spectral recurrence
+or loss of predictor/corrector convergence.
 
 ## Configuration Reference
 
