@@ -255,15 +255,20 @@ class HybridParticleEvolution:
         return -self.q_over_m * jnp.real(ex_p * carrier)
 
     def _substep(self, i, carry, ex_env, t0):
-        x, u = carry
+        # the leading kick reuses the acceleration carried from the previous substep's
+        # trailing kick (same x, same t -- bitwise identical), so _accel runs once per
+        # substep instead of twice; XLA does not CSE across fori_loop iterations, and
+        # the gather in _accel dominates the GPU cost of this loop
+        x, u, a = carry
         t_i = t0 + i * self.dtp
-        u_half = u + 0.5 * self.dtp * self._accel(x, ex_env, t_i)
+        u_half = u + 0.5 * self.dtp * a
         gamma = jnp.sqrt(1.0 + (u_half / self.c) ** 2)
         x = x + self.dtp * u_half / gamma
         if self.periodic:
             x = jnp.mod(x - self.xmin, self.Lx) + self.xmin
-        u = u_half + 0.5 * self.dtp * self._accel(x, ex_env, t_i + self.dtp)
-        return x, u
+        a = self._accel(x, ex_env, t_i + self.dtp)
+        u = u_half + 0.5 * self.dtp * a
+        return x, u, a
 
     def _apply_boundaries(self, x: Array, u: Array, t: float) -> tuple[Array, Array]:
         """Thermalizing walls: exiting particles are re-injected at the wall with an
@@ -284,7 +289,8 @@ class HybridParticleEvolution:
 
     def push(self, x: Array, u: Array, ex_env: Array, t: float) -> tuple[Array, Array]:
         """Subcycled relativistic KDK leapfrog across one field step [t, t + dt]."""
-        x, u = jax.lax.fori_loop(0, self.n_sub, lambda i, carry: self._substep(i, carry, ex_env, t), (x, u))
+        a0 = self._accel(x, ex_env, t)
+        x, u, _ = jax.lax.fori_loop(0, self.n_sub, lambda i, carry: self._substep(i, carry, ex_env, t), (x, u, a0))
         return self._apply_boundaries(x, u, t)
 
     # ------------------------------------------------- histogram and damping --
