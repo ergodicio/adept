@@ -54,9 +54,9 @@ Gate 1a tests establish:
 - the analytic pressure-anisotropy rate under prescribed trace-free strain; and
 - cancellation between a uniform force and an oppositely accelerating frame.
 
-This implementation is not yet wired into the production split step. The angular
-Galerkin path is intentionally a correctness reference; a sparse precomputed operator
-is required before high-$\ell$ production runs.
+Gate 2a wires this implementation into the opt-in `CoupledIonKineticStep`. The angular
+Galerkin path remains a correctness reference; a sparse precomputed operator is required
+before high-$\ell$ production runs.
 
 ## Gate 1b moment-exchange reference
 
@@ -81,5 +81,7 @@ residuals.
 This is a differential, weak-drift moment-relaxation reference, not a replacement for
 the full finite-mass Landau collision operator. In particular, momentum relaxation is
 energy-neutral to first order in the relative drift; drift-energy thermalization is a
-higher-order effect. Production coupling still requires the full moving-frame energy
-budget, time-centered exchange, and integration into the hydro/VFP split in Gate 2.
+higher-order effect. Gate 2a integrates time-centered thermal exchange into the hydro/VFP
+split and saves the resulting energy budget. Production momentum exchange remains disabled
+until Gate 2b adds the finite-mass velocity-frame remap; electron-pressure feedback and
+quantitative local transport convergence are also still required.

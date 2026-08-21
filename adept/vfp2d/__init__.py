@@ -2,6 +2,7 @@
 
 from adept.vfp2d.base import BaseVFP2D
 from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
+from adept.vfp2d.coupling import CoupledIonKineticStep, coupled_invariants
 from adept.vfp2d.exchange import (
     ElectronIonExchange,
     electron_kinetic_energy_density,
@@ -44,6 +45,7 @@ __all__ = [
     "AnisotropicCollisions",
     "BaseVFP2D",
     "CollisionStep",
+    "CoupledIonKineticStep",
     "ElectronIonExchange",
     "Grid",
     "HarmonicLayout",
@@ -61,6 +63,7 @@ __all__ = [
     "complex_to_real",
     "conservative_f00_positivity",
     "conserved_to_primitive",
+    "coupled_invariants",
     "current",
     "density",
     "electron_kinetic_energy_density",

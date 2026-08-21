@@ -76,9 +76,15 @@ plan:
    electron--ion temperature and momentum relaxation with measured, equal-and-opposite
    ion updates. This verifies the discrete exchange accounting but is not yet a full
    finite-mass Landau operator.
-5. **Gate 2:** production split integration, total exchange accounting, and coupled
-   local-limit tests.
+5. **Gate 2a (implemented, opt in):** time-centered kinetic-Ohm/ideal-ion production
+   split, ideal bulk magnetic advection, local temperature exchange, coupled invariant
+   histories, and an exact frozen-ion regression limit.
+6. **Gate 2b:** electron-pressure feedback, finite-mass momentum-frame remapping,
+   sparse high-$\ell$ operators, and quantitative Spitzer--Härm/Epperlein--Haines and
+   Biermann convergence tests.
 
-The production `vfp-2d` time loop still uses stationary ions until Gates 0b--2 land.
+The default production `vfp-2d` time loop still uses stationary ions. Gate 2a moving
+ions must be enabled explicitly and should not yet be used for production parameter
+scans; Gate 0b and Gate 2b remain acceptance boundaries.
 
 See the [configuration reference](config.md), the [Joglekar 2014 reconstruction design](joglekar2014.md), and [`configs/vfp-2d/landau-damping.yaml`](../../../../configs/vfp-2d/landau-damping.yaml).

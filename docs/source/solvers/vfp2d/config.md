@@ -123,6 +123,42 @@ omitted) or with a differentiable tanh gate (`switch_width` set). Output variabl
 with `ohm_` contain the resistive, Hall, Nernst, scalar-pressure, and $f_2$ tensor-pressure
 contributions.
 
+## Moving ion-fluid coupling (Gate 2a)
+
+The first opt-in production coupling slice is available for non-relativistic,
+unsharded `kinetic-ohm` runs on periodic grids:
+
+```yaml
+terms:
+  field_solver: {mode: kinetic-ohm}
+  ion_fluid:
+    active: true
+    mass_ratio: 1836.0
+    gamma: 1.6666666666666667
+    cfl: 0.4
+    boundaries: [periodic, periodic]
+    initial_velocity: [0.0, 0.0, 0.0]  # normalized to c
+    frozen: false
+    temperature_relaxation_rate: 0.0   # normalized inverse time
+    momentum_relaxation_rate: 0.0
+```
+
+`CoupledIonKineticStep` applies an ion Euler half-step, advances the kinetic-Ohm
+system with midpoint ion velocity/gradient/acceleration, applies midpoint local
+temperature exchange, and finishes the ion Euler step. The laboratory electric
+field includes the ideal bulk term $-\mathbf u_i\times\mathbf B$. Initial ion
+density is taken from the discretely integrated electron density, so
+$n_e=Z n_i$ is exact on the radial grid.
+
+Gate 2a intentionally rejects spatial sharding, nonperiodic boundaries,
+relativistic velocity coordinates, and nonzero production momentum relaxation.
+The last restriction avoids claiming lab-frame momentum conservation before the
+finite-mass velocity-frame remap is implemented. Electron-pressure feedback into
+the ion momentum equation and quantitative Spitzer--Härm/Epperlein--Haines
+convergence are Gate 2b requirements.
+The initial ion half-step is checked against the configured acoustic/advection
+`cfl`; the run timestep must remain conservative as the ion state evolves.
+
 The reconnection diagnostics report a normalized rate and flux only when the upstream
 $B_x$ fields are antiparallel and balanced and the origin contains both an in-plane null/
 $A_z$ saddle and a central current sheet. Invalid samples are stored as NaN rather than
@@ -148,7 +184,13 @@ save:
 
 Post-processing returns an xarray dataset with `flm_real`, `flm_imag`, `e`, `b`, density,
 temperature, current, Nernst velocity, and the traceless pressure-anisotropy moment. Harmonics
-are labeled by the `ell` and `m` coordinates.
+are labeled by the `ell` and `m` coordinates. Coupled runs additionally save the ion conserved
+state and primitives, particle counts, quasineutrality residual, lab-frame total momentum,
+separate electron/ion/magnetic energies, total energy, magnetic-divergence residual, negative
+isotropic mass, harmonic free energy, and the `ohm_bulk` field.
+Because `kinetic-ohm` has no displacement-current evolution, its algebraic electric field
+does not carry a separately evolved field-energy term; `total_energy` is electron lab-frame
+kinetic plus ion total plus magnetic energy.
 
 See the [Joglekar 2014 reconstruction and hydro-coupling design](joglekar2014.md) for the
 distinction between the runnable reduced benchmark and the planned long-time implicit solve.
