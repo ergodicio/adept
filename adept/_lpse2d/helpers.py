@@ -364,17 +364,28 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(or the envelope density) if you want SRS."
             )
 
-        wpe_max_sq = derived["w0"] ** 2 * max(cfg["density"].get("max", 1.0), cfg["density"].get("min", 0.0))
+        # The detuning term's operator norm is set by the density endpoint FARTHEST
+        # from each carrier's critical density, not the largest density -- and uniform
+        # boxes carry their density in `val`, which the old max(max, min) fallback
+        # silently replaced with 1.0 (an underestimate at low envelope density).
+        if cfg["density"]["basis"] == "uniform":
+            n_endpoints = [float(cfg["density"].get("val", 1.0))]
+        else:
+            n_endpoints = [float(cfg["density"][k]) for k in ("min", "max") if k in cfg["density"]] or [1.0]
+
+        def _worst_detuning_sq(w_carrier: float) -> float:
+            return max(abs(w_carrier**2 - derived["w0"] ** 2 * n) for n in n_endpoints)
+
         dt_max = 1.0 / (
             2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
-            + np.abs(derived["w1"] ** 2 - wpe_max_sq) / (4.0 * derived["w1"])
+            + _worst_detuning_sq(derived["w1"]) / (4.0 * derived["w1"])
         )
         if pump_depletion:
             # the evolved pump has its own (looser, but not guaranteed) stability limit;
             # sub-cycle to the tighter of the two carriers
             dt_max_pump = 1.0 / (
                 2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
-                + np.abs(derived["w0"] ** 2 - wpe_max_sq) / (4.0 * derived["w0"])
+                + _worst_detuning_sq(derived["w0"]) / (4.0 * derived["w0"])
             )
             dt_max = min(dt_max, dt_max_pump)
         if "light_substeps" in cfg_grid:
@@ -1184,6 +1195,15 @@ def get_default_save_func(cfg):
     energy_loss_factor = (1.0 - np.exp(-2.0 * gamma_total * dt)) / dt  # 1/ps, per k mode
     boundary_sq_loss = (1.0 - np.array(cfg["grid"]["absorbing_boundaries"]) ** 2) / dt  # 1/ps, per cell
 
+    # Total (electric + kinetic + thermal) EPW energy per unit of the electric energy
+    # that epw_energy counts. For the warm-fluid EPW, W_total/W_E = d(w*eps)/dw =
+    # 1 + wp^2/w^2 + 9 k^2 vte^2 wp^2 / w^4 evaluated at the envelope carrier w = wp0;
+    # the solver's detuning relation 3 k^2 vte^2 = wp0^2 - wp^2 with wp^2 = wp0^2 * n/n_env
+    # collapses it to the density-only factor 2*(2 - n/n_env). At n = n_env this is the
+    # familiar 2 (electric = kinetic); on the shipped ramps it reaches 2.56 at the
+    # low-density end, which the previously hard-coded 2 understated by ~28%.
+    energy_total_factor = 2.0 * (2.0 - np.array(cfg["grid"]["background_density"]) / cfg["units"]["envelope density"])
+
     # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
     # use the state's rate; also emit the hot-electron scalars and the histogram
     hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
@@ -1275,20 +1295,28 @@ def get_default_save_func(cfg):
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 
         out["epw_energy"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq, axis=1))
-        # dissipation/boundary channels are TOTAL EPW-energy rates: the wave's kinetic
-        # (sloshing) energy equals the cycle-averaged electric energy that epw_energy
-        # counts (the OSIRIS field-only convention), so the energy actually handed to
-        # electrons -- and the budget sink -- is 2x the electric-part rate
+        # dissipation/boundary channels are TOTAL EPW-energy rates: epw_energy counts
+        # only the electric part (the OSIRIS field-only convention), so the energy
+        # actually handed to electrons -- and the budget sink -- carries the local
+        # total-to-electric factor energy_total_factor = 2*(2 - n/n_env)
         if hpe_on:
             # the applied rate is dynamic: read it from the state
             gamma_dyn = y["gamma_L"] + nu_coll_arr
             loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
         else:
             loss_factor = energy_loss_factor
-        out["epw_dissipation"] = (
-            2.0 * epw_energy_prefactor / (nx * ny**2) * jnp.sum(k_sq * jnp.abs(phi_k) ** 2 * loss_factor)
+        # the per-k loss rate does not commute with the x-dependent energy factor, so
+        # build a local electric-energy loss density from the sqrt-weighted fields --
+        # its box integral equals the k-space total exactly (Parseval) and reduces to
+        # the previous 2x k-space sum on a uniform n = n_env box
+        sqrt_loss = jnp.sqrt(loss_factor)
+        ex_loss = jnp.fft.ifft2(-1j * kx[:, None] * phi_k * sqrt_loss)
+        ey_loss = jnp.fft.ifft2(-1j * ky[None, :] * phi_k * sqrt_loss)
+        loss_density = jnp.abs(ex_loss) ** 2 + jnp.abs(ey_loss) ** 2
+        out["epw_dissipation"] = epw_energy_prefactor * jnp.sum(jnp.mean(energy_total_factor * loss_density, axis=1))
+        out["epw_boundary_loss"] = epw_energy_prefactor * jnp.sum(
+            jnp.mean(energy_total_factor * e_sq * boundary_sq_loss, axis=1)
         )
-        out["epw_boundary_loss"] = 2.0 * epw_energy_prefactor * jnp.sum(jnp.mean(e_sq * boundary_sq_loss, axis=1))
 
         if hpe_on:
             u = y["u_e"]
