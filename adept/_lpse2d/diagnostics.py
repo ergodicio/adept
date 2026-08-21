@@ -42,12 +42,20 @@ def _sustained_crossing(W: np.ndarray, level: float) -> int | None:
     return None
 
 
-def fit_epw_growth(t: np.ndarray, W: np.ndarray) -> dict[str, float]:
+def fit_epw_growth(t: np.ndarray, W: np.ndarray, floor: float | None = None) -> dict[str, float]:
     """Automated exponential-rise fit of the EPW energy history; returns metric dict.
 
     Copied verbatim from ``osiris_lpi/epw_growth.py:fit_epw_growth`` so the window
     selection is bit-identical to the scan2 backfill. See that module's docstring
     for the algorithm; do not modify one copy without the other.
+
+    adept extension (the one deliberate departure): ``floor`` optionally supplies an
+    externally computed noise floor -- adept's EPW starts at exactly zero and its
+    noise level equilibrates over ``1/(2(gamma + nu))``, which can exceed the run
+    length, so the OSIRIS early-sample median badly underestimates the floor and can
+    certify spurious growth on pure-noise runs. When ``floor`` is given it drives
+    the window selection and is logged as ``epw_energy_floor``; the OSIRIS-style
+    estimate is still computed and logged as ``epw_energy_floor_measured``.
     """
     t = np.asarray(t, dtype=float)
     W = np.asarray(W, dtype=float)
@@ -62,16 +70,19 @@ def fit_epw_growth(t: np.ndarray, W: np.ndarray) -> dict[str, float]:
     # the fastest-growing runs), then widen the window to the detected onset so
     # slow-onset runs get the robust full pre-onset median
     i_seed = min(52, len(W))
-    floor = float(np.median(W[2:i_seed])) if i_seed > 4 else float(np.median(W))
+    measured = float(np.median(W[2:i_seed])) if i_seed > 4 else float(np.median(W))
     for _ in range(5):
-        onset_i = _sustained_crossing(W, ONSET_FACTOR * floor)
+        onset_i = _sustained_crossing(W, ONSET_FACTOR * measured)
         if onset_i is None or onset_i <= 60:
             break
         new_floor = float(np.median(W[2:onset_i]))
-        if abs(new_floor - floor) <= 0.02 * floor:
-            floor = new_floor
+        if abs(new_floor - measured) <= 0.02 * measured:
+            measured = new_floor
             break
-        floor = new_floor
+        measured = new_floor
+
+    out["epw_energy_floor_measured"] = measured
+    floor = measured if floor is None else float(floor)
 
     Wmax = float(W.max())
     out["epw_energy_floor"] = floor
@@ -125,6 +136,45 @@ def fit_epw_growth(t: np.ndarray, W: np.ndarray) -> dict[str, float]:
     out["epw_growth_measurable"] = 1.0
     out.update(best)
     return out
+
+
+def expected_noise_energy(cfg: dict, t_ps: float) -> float:
+    """Expected EPW energy of the pure noise-driven field at time ``t_ps`` (OSIRIS units).
+
+    Each retained k-mode is a damped random walk: the solver adds ``dt * A * e^{i phi}``
+    every step and damps by ``e^{-(gamma_k + nu) dt}``, so
+
+        <|phi_k|^2>(t) = (dt A)^2 * (1 - e^{-2 g t}) / (1 - e^{-2 g dt}),   g = gamma_k + nu
+
+    with the ``g -> 0`` limit ``(dt A)^2 * t/dt``. Summed to the same OSIRIS-normalized
+    energy as the ``epw_energy`` save quantity (Parseval). Absorbing boundaries and
+    detuning-induced mode mixing are neglected, so on absorbing/ramped boxes this is a
+    mild overestimate -- conservative for use as a growth-fit noise floor.
+    """
+    from adept._lpse2d.core.epw import landau_damping_rate
+
+    grid = cfg["grid"]
+    derived = cfg["units"]["derived"]
+    kx = np.array(grid["kx"])
+    ky = np.array(grid["ky"])
+    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
+    zero_mask = np.where(k_sq > 0, 1.0, 0.0)
+    if cfg["terms"]["epw"]["damping"].get("landau", True):
+        gamma = np.array(landau_damping_rate(k_sq, derived["wp0"], derived["vte_sq"], zero_mask))
+    else:
+        gamma = np.zeros_like(k_sq)
+    g = gamma + derived.get("nu_coll", 0.0) * zero_mask
+
+    dt = grid["dt"]
+    amp = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
+    mode_amp_sq = (dt * amp) ** 2 * np.array(grid["low_pass_filter_grid"]) ** 2 * zero_mask
+
+    small = 2.0 * g * dt < 1.0e-12  # undamped modes: plain random walk, variance ~ t
+    denom = np.where(small, 1.0, 1.0 - np.exp(-2.0 * g * dt))
+    growth = np.where(small, t_ps / dt, (1.0 - np.exp(-2.0 * g * t_ps)) / denom)
+
+    prefactor = 0.25 * grid["dx"] * derived["x_norm"] * derived["e_norm"] ** 2
+    return float(prefactor / (grid["nx"] * grid["ny"] ** 2) * np.sum(k_sq * mode_amp_sq * growth))
 
 
 # --- Time windows: same semantics as osiris_lpi/laser_budget.py:_segment_windows ---
@@ -181,7 +231,12 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
     # epw_growth_rate / epw_energy_floor / epw_energy_max are directly comparable
     # to the scan2 rows.
     W = np.asarray(series["epw_energy"].values, dtype=float)
-    fit = fit_epw_growth(t_w0, W)
+    # noise-seeded runs get the analytic expected-noise floor (see expected_noise_energy);
+    # seeded/driven runs keep the OSIRIS measured floor
+    floor = None
+    if cfg["terms"]["epw"]["source"].get("noise", False) and t_ps.size:
+        floor = expected_noise_energy(cfg, float(t_ps[-1]))
+    fit = fit_epw_growth(t_w0, W, floor=floor)
     metrics.update(fit)
     if "epw_growth_rate" in fit:
         metrics["epw_growth_rate_per_ps"] = fit["epw_growth_rate"] * w0
