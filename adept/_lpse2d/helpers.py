@@ -214,6 +214,29 @@ def get_derived_quantities(cfg: dict) -> dict:
     """
     cfg_grid = cfg["grid"]
 
+    # Explicit nulls mean "absent". The datamodel advertises `X | None = None` for these
+    # fields, so normalize them here -- before anything reads them -- to keep every
+    # spelling of "not set" (missing key, or `key: null` in the YAML) equivalent.
+    for term_key in ("hpe", "light"):
+        if term_key in cfg["terms"] and cfg["terms"][term_key] is None:
+            cfg["terms"][term_key] = {}
+    if "light_substeps" in cfg_grid and cfg_grid["light_substeps"] is None:
+        del cfg_grid["light_substeps"]
+    for driver in cfg["drivers"].values():
+        if isinstance(driver, dict):
+            for opt_key in [k for k, v in driver.items() if v is None]:
+                del driver[opt_key]
+
+    # A missing (or mistyped) drivers.E0 is legitimate only for the seed-only / direct-EPW-driver
+    # test paths; in every other case it silently zeroes the pump and the run completes with
+    # nothing but noise. Warn loudly rather than guess.
+    if "E0" not in cfg["drivers"]:
+        print(
+            "WARNING: no drivers.E0 -- the pump laser is identically zero. This is only sensible "
+            "for seed-only or direct-EPW-driver (drivers.E2) runs; if you expected a pump, check "
+            "the spelling of drivers.E0."
+        )
+
     # Default save.*.t.tmin/tmax to grid values (preserves unit strings)
     for save_type in cfg.get("save", {}).keys():
         if "t" in cfg["save"][save_type]:
@@ -283,21 +306,11 @@ def get_derived_quantities(cfg: dict) -> dict:
             raise NotImplementedError("terms.hpe requires a quasi-1D box (ny == 1); shrink the y extent")
         if not cfg["terms"]["epw"]["damping"].get("landau", True):
             raise ValueError("terms.hpe requires terms.epw.damping.landau: true (it replaces the static rate)")
-        hpe.setdefault("n_particles", 500000)
-        hpe["n_particles"] = int(hpe["n_particles"])
-        hpe.setdefault("v_min", 2.5)  # tail cutoff, units of vte
-        hpe.setdefault("v_max", 1.0)  # histogram span, units of c
-        hpe.setdefault("v_blend_buffer", 0.5)  # units of vte
-        hpe.setdefault("nv", 512)
-        hpe["nv"] = int(hpe["nv"])
-        hpe.setdefault("gather_refine", 4)  # spectral upsampling factor for the field gather
-        hpe["gather_refine"] = int(hpe["gather_refine"])
-        hpe.setdefault("substep_courant", 0.05)  # wp0 * dt_particle
-        hpe.setdefault("tau_damping", "100fs")
-        hpe.setdefault("t_start", "0ps")
-        hpe.setdefault("feedback", True)
-        hpe.setdefault("seed", 42)
-        hpe.setdefault("omega_res", "bohm_gross")
+        # defaults and type coercion come from the datamodel's HPEModel so they are
+        # defined in exactly one place; unknown keys are passed through untouched
+        from adept._lpse2d.datamodel import HPEModel
+
+        hpe = {**hpe, **HPEModel(**hpe).model_dump()}
         if hpe["omega_res"] not in ("bohm_gross", "wp0"):
             raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
         hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
@@ -314,6 +327,11 @@ def get_derived_quantities(cfg: dict) -> dict:
     if pump_depletion:
         if not cfg["terms"]["epw"]["source"].get("srs", False):
             raise ValueError("terms.light.pump_depletion requires terms.epw.source.srs: true")
+        if "E0" not in cfg["drivers"]:
+            raise ValueError(
+                "terms.light.pump_depletion requires drivers.E0 (the evolved pump is launched "
+                "by a boundary injector built from the E0 driver parameters)"
+            )
         if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
             raise ValueError("terms.light.pump_depletion does not support drivers.E0.speckle yet")
         if cfg["terms"]["epw"]["boundary"]["x"] != "absorbing":
@@ -324,6 +342,28 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     if cfg["terms"]["epw"]["source"].get("srs", False):
         derived = cfg["units"]["derived"]
+
+        # The SRS source filter only passes wavenumbers up to the local Raman light
+        # wavenumber k1(n_min). If the box's minimum density reaches the w1 critical
+        # density, that band is empty and E1_filter (epw.py) silently zeroes every
+        # mode of the source -- the run completes with reflectivity ~0 and reads as
+        # "below threshold". The seeded path already dies with a clear error at the
+        # injector; fail the noise-seeded path just as loudly here.
+        if cfg["density"]["basis"] == "uniform":
+            n_box_min = float(cfg["density"].get("val", 1.0))
+        elif "min" in cfg["density"]:
+            n_box_min = float(cfg["density"]["min"])
+        else:
+            n_box_min = None
+        n_crit_w1 = (derived["w1"] / derived["w0"]) ** 2
+        if n_box_min is not None and n_box_min >= n_crit_w1:
+            raise ValueError(
+                f"terms.epw.source.srs is on but the minimum box density {n_box_min:.3f} nc is at or "
+                f"above the Raman critical density {n_crit_w1:.3f} nc, so the scattered light is "
+                "evanescent everywhere and the SRS source is filtered to zero. Lower the density "
+                "(or the envelope density) if you want SRS."
+            )
+
         wpe_max_sq = derived["w0"] ** 2 * max(cfg["density"].get("max", 1.0), cfg["density"].get("min", 0.0))
         dt_max = 1.0 / (
             2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
@@ -1266,7 +1306,10 @@ def get_default_save_func(cfg):
                 # and the physically relevant one)
                 out["hpe_gamma_ratio_min"] = jnp.min(jnp.where(ratio_band, ratio, jnp.inf))
                 phi_amp = jnp.where(ratio_band, jnp.abs(phi_k[:, 0]), 0.0)
-                out["hpe_gamma_ratio_kpeak"] = ratio[jnp.argmax(phi_amp)]
+                # before the EPW has any energy in the band (e.g. the zero-initialized
+                # first steps) argmax lands on index 0 where the ratio is meaningless;
+                # emit NaN so the reduction metrics (nanmin / windowed means) skip it
+                out["hpe_gamma_ratio_kpeak"] = jnp.where(jnp.any(phi_amp > 0.0), ratio[jnp.argmax(phi_amp)], jnp.nan)
 
         if srs_on:
             e1 = y["E1"].view(jnp.complex128)

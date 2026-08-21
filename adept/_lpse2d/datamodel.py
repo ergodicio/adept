@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NoiseModel(BaseModel):
@@ -13,15 +13,23 @@ class NoiseModel(BaseModel):
 
 class DensityModel(BaseModel):
     """
-    Density profile for the simulation
+    Density profile for the simulation. Which keys apply depends on ``basis``
+    (see ``helpers.get_density_profile``):
 
+    - ``uniform``: ``val`` (fraction of critical). Omitting it silently defaults
+      to 1.0 -- at critical density -- so set it explicitly.
+    - ``linear``: ``min``, ``max``, and ``gradient scale length`` (note the YAML
+      key is spelled with spaces).
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     basis: str
-    gradient_scale_length: str
-    max: float
-    min: float
-    noise: NoiseModel
+    val: float | None = None
+    gradient_scale_length: str | None = Field(default=None, alias="gradient scale length")
+    max: float | None = None
+    min: float | None = None
+    noise: NoiseModel | None = None
 
 
 class EnvelopeModel(BaseModel):

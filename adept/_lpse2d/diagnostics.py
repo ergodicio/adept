@@ -284,10 +284,15 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
         if "hpe_gamma_ratio_kpeak" in series:
             # headline damping-reduction factor: at the dominant band mode (robust);
             # the band-min is also logged but is shot-noise-limited at low n_particles
+            # the series is NaN wherever the EPW had no in-band energy yet (pre-onset),
+            # so all reductions here must be NaN-aware
             ratio = np.asarray(series["hpe_gamma_ratio_kpeak"].values, dtype=float)
             windows = segment_windows(t_ps, last_frac=0.25, n_segments=4)
-            metrics["hpe_damping_reduction_final"] = _wmean(ratio, windows[-1]["mask"])
-            metrics["hpe_damping_reduction_min"] = float(np.nanmin(ratio))
+            ratio_last = ratio[np.asarray(windows[-1]["mask"], dtype=bool)]
+            if np.isfinite(ratio_last).any():
+                metrics["hpe_damping_reduction_final"] = float(np.nanmean(ratio_last))
+            if np.isfinite(ratio).any():
+                metrics["hpe_damping_reduction_min"] = float(np.nanmin(ratio))
         if "hpe_gamma_ratio_min" in series:
             metrics["hpe_damping_reduction_band_min"] = float(
                 np.nanmin(np.asarray(series["hpe_gamma_ratio_min"].values, dtype=float))

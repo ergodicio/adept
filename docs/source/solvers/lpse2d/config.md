@@ -62,6 +62,7 @@ Density profile configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `basis` | string | Profile type: `"uniform"` or `"linear"` |
+| `val` | float | Density fraction of critical (for `uniform` basis). **Defaults to 1.0 — at critical density — if omitted**, which is almost never what you want; set it explicitly |
 | `gradient scale length` | string | Scale length with unit (for `linear` basis) |
 | `max` | float | Maximum density fraction (for `linear` basis) |
 | `min` | float | Minimum density fraction (for `linear` basis) |
@@ -72,6 +73,7 @@ Density profile configuration.
 ```yaml
 density:
   basis: uniform
+  val: 0.2
   noise:
     max: 1.0e-09
     min: 1.0e-10
