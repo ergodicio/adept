@@ -39,7 +39,7 @@ Tests are organized one directory per solver.
 | `tests/test_vfp1d` | Fokker-Planck models and relaxation, heating, Epperlein-Haines transport coefficients, spherical geometry |
 | `tests/test_lpse2d` | EPW frequency, TPD threshold, speckle, dealiasing, pretrained-driver loading |
 | `tests/test_spectrax1d` | Landau damping, Maxwell solver, shift and Lorentz operators |
-| `tests/test_hermite_legendre_1d` | Conservation, streaming, Landau damping, linear advection, implicit/IMEX integrators |
+| `tests/test_hermite_legendre_1d` | Conservation, streaming, Landau damping, linear advection, structured split/IMEX integrators |
 | `tests/test_hermite_poisson_1d` | Collisions, E-field coupling, drivers, integrators, filtering, linear response |
 | `tests/test_pic1d` | Bohm-Gross dispersion, Landau damping, two-stream instability |
 | `tests/test_tf1d` | Bohm-Gross and kinetic resonance (forward and backward pass), Landau damping, agreement with a Vlasov run |
