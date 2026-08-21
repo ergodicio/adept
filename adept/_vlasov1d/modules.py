@@ -342,6 +342,10 @@ class BaseVlasov1D(ADEPTModule):
         # unconditionally read from args.
         args = self.args | args if args is not None else self.args
 
+        # The trainable-module loop (lpse2d pattern): each module may transform the
+        # initial state and/or inject its (possibly optimizer-updated) leaves into
+        # args before the solve.
+        state = self.state
         for name, module in trainable_modules.items():
             state, args = module(state, args)
 
@@ -353,7 +357,7 @@ class BaseVlasov1D(ADEPTModule):
             t1=self.time_quantities["t1"],
             max_steps=grid.max_steps,
             dt0=grid.dt,
-            y0=self.state,
+            y0=state,
             args=args,
             saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
             progress_meter=TqdmProgressMeter(refresh_steps=grid.max_steps // 100)
