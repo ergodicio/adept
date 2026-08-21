@@ -208,7 +208,11 @@ class HybridParticleEvolution:
         self.n_p = int(hpe["n_particles"])
         self.nv = int(hpe["nv"])
         self.v_min = float(hpe["v_min"]) * self.vte
-        self.seed = int(hpe["seed"]) + 7919  # decorrelate from the EPW noise seed
+        # wall re-injection stream: a fold_in stream tag decorrelates it from every
+        # other consumer of the HPE seed (the numpy loader) and from the EPW noise
+        # stream regardless of how the two seeds relate -- the old additive +7919
+        # offset overlapped the EPW stream after 7919 steps
+        self.wall_key = jax.random.fold_in(jax.random.PRNGKey(int(hpe["seed"])), 314159)
         # jnp.histogram needs concrete bin edges; keep them (and centers) on-device
         arrays = resonance_arrays(cfg)
         self.v_max = float(hpe["v_max"]) * self.c
@@ -278,7 +282,7 @@ class HybridParticleEvolution:
             return x, u
         out_left = x < self.xmin
         out_right = x > self.xmax
-        key = jax.random.PRNGKey(self.seed + jnp.asarray(t / self.dt).astype(jnp.int32))
+        key = jax.random.fold_in(self.wall_key, jnp.asarray(t / self.dt).astype(jnp.int32))
         uni = jax.random.uniform(key, (self.n_p,), minval=1.0e-12, maxval=1.0)
         speed = jnp.sqrt(self.v_min**2 - 2.0 * self.vte**2 * jnp.log(uni))
         speed = jnp.minimum(speed, 0.99 * self.c)

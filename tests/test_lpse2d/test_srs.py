@@ -327,6 +327,49 @@ def test_noise_seed_reproducibility():
     assert not np.array_equal(e_sq["a"], e_sq["c"]), "different seeds gave identical noise"
 
 
+def test_noise_streams_decorrelated_across_seeds():
+    """Nearby seeds must not share a time-shifted noise trajectory.
+
+    The old additive construction (PRNGKey(step + seed)) made seed-s step-m noise
+    bit-identical to seed-0 step-(m+s) noise, so a seed-sweep ensemble was a single
+    realization; the same-seed reproducibility test above cannot catch that.
+    """
+    from jax import numpy as jnp
+
+    from adept._lpse2d.core.epw import SpectralEPWSolver
+    from adept._lpse2d.helpers import (
+        get_density_profile,
+        get_derived_quantities,
+        get_solver_quantities,
+        write_units,
+    )
+
+    def _solver(seed):
+        cfg = _quasi_1d(_load_cfg())
+        cfg["terms"]["epw"]["source"]["noise_seed"] = seed
+        write_units(cfg)
+        cfg = get_derived_quantities(cfg)
+        cfg["grid"] = get_solver_quantities(cfg)
+        cfg["grid"]["background_density"] = get_density_profile(cfg)
+        return SpectralEPWSolver(cfg)
+
+    s0, s0_again, s1 = _solver(0), _solver(0), _solver(1)
+    dt = s0.dt
+
+    # determinism: same seed, same step -> bit-identical noise
+    np.testing.assert_array_equal(
+        np.array(s0.get_noise(jnp.asarray(5 * dt))), np.array(s0_again.get_noise(jnp.asarray(5 * dt)))
+    )
+
+    # independence: seed-1 noise at step m must differ from seed-0 noise at every
+    # nearby step. The additive keys matched it bit-exactly at shift = 1, so exact
+    # equality is the right check (allclose is useless at the 1e-10 noise amplitude).
+    n1 = np.array(s1.get_noise(jnp.asarray(10 * dt)))
+    for shift in range(-3, 4):
+        n0 = np.array(s0.get_noise(jnp.asarray((10 + shift) * dt)))
+        assert not np.array_equal(n1, n0), f"seed-1 noise equals seed-0 noise shifted by {shift} steps"
+
+
 if __name__ == "__main__":
     test_srs_seed_propagation()
     test_srs_growth_rate()

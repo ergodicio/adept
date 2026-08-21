@@ -129,6 +129,11 @@ class SpectralEPWSolver:
         self.noise_amplitude = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
         cfg_seed = cfg["terms"]["epw"]["source"].get("noise_seed")
         self.noise_seed = int(cfg_seed) if cfg_seed is not None else np.random.randint(2**20)
+        # per-step keys are derived with fold_in rather than PRNGKey(step + seed):
+        # additive seeds made nearby seeds share the same noise trajectory merely
+        # time-shifted by a few steps, so a seed-sweep ensemble was one realization.
+        # fold_in streams are still fully deterministic per (seed, step).
+        self.noise_key = jax.random.PRNGKey(self.noise_seed)
 
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
@@ -318,9 +323,10 @@ class SpectralEPWSolver:
         Returns:
             Random noise in k-space
         """
-        # Use time-dependent seed for reproducibility
-        seed = (t / self.dt).astype(int) + self.noise_seed
-        key = jax.random.PRNGKey(seed)
+        # Per-step key: deterministic in (noise_seed, step), and statistically
+        # independent across both steps and seeds (see __init__)
+        step = (t / self.dt).astype(int)
+        key = jax.random.fold_in(self.noise_key, step)
 
         # Random phases
         phases = 2.0 * np.pi * jax.random.uniform(key, (self.nx, self.ny))
