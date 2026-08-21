@@ -23,7 +23,6 @@ class SplitStep:
         self.cfg = cfg
         self.dt = cfg["grid"]["dt"]
         self.wp0 = cfg["units"]["derived"]["wp0"]
-        # self.epw = epw.SpectralPotential(cfg)
         self.epw = epw.SpectralEPWSolver(cfg)
         self.light = laser.Light(cfg)
         # the Raman scattered light is evolved iff the SRS source term is on; with

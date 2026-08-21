@@ -3,9 +3,10 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
+from adept._lpse2d.core.raman import RamanLight
 
 
-class CoupledLight:
+class CoupledLight(RamanLight):
     """
     Evolves the pump E0 and the Raman scattered light E1 together, with pump depletion.
 
@@ -34,6 +35,12 @@ class CoupledLight:
     the RHS at t, then both imaginary parts with the RHS at t + dt/2) -- advancing them
     with two independent RamanLight-style calls would break the discrete conservation.
 
+    The E1 half of the solver -- FD stencils, detuning/diffraction coefficients, SRS
+    coupling, and the seed injector -- is inherited from ``RamanLight`` (``self.rhs``),
+    so any numerics fix there applies to both the prescribed-pump and pump-depletion
+    paths. This class adds only the pump: its coefficients, its boundary injector, and
+    the coupled staggered loop.
+
     The pump injector amplitude is divided by sinc(k0 dx) so the launched amplitude is
     exactly E0_source * sqrt(intensity) / eps^(1/4) despite the two-point discrete
     source's sinc response (the E1 seed injector intentionally keeps the MATLAB
@@ -41,41 +48,20 @@ class CoupledLight:
     """
 
     def __init__(self, cfg: dict):
-        self.cfg = cfg
+        # E1 solver: coefficients, stencils, sub-stepping, seed injector
+        super().__init__(cfg)
+
         derived = cfg["units"]["derived"]
-        self.c = derived["c"]
-        self.w0 = derived["w0"]
-        self.w1 = derived["w1"]
-        self.wp0 = derived["wp0"]
-        self.e = derived["e"]
-        self.me = derived["me"]
         self.E0_source = derived["E0_source"]
-        self.envelope_density = cfg["units"]["envelope density"]
-
-        self.dx = cfg["grid"]["dx"]
-        self.dy = cfg["grid"]["dy"]
-        self.dt = cfg["grid"]["dt"]  # outer (EPW) step
-        self.n_sub = cfg["grid"]["light_substeps"]
-        self.dt_l = self.dt / self.n_sub
-        self.x = cfg["grid"]["x"]
-        self.y = cfg["grid"]["y"]
-        self.k_sq = cfg["grid"]["kx"][:, None] ** 2 + cfg["grid"]["ky"][None, :] ** 2
-
         background_density = cfg["grid"]["background_density"]
-        # local detuning of each envelope (MATLAB lines 1616-1626 / 1661-1671);
-        # with wp0^2 = w0^2 * n_env the pump coefficient reduces to i w0/2 (1 - n)
+
+        # pump detuning/diffraction (MATLAB lines 1616-1626); with wp0^2 = w0^2 * n_env
+        # the pump coefficient reduces to i w0/2 (1 - n)
         self.linear_coeff0 = (
             1j * self.w0 / 2.0 * (1.0 - self.wp0**2 / self.w0**2 * background_density / self.envelope_density)
         )
-        self.linear_coeff1 = (
-            1j * self.w1 / 2.0 * (1.0 - self.wp0**2 / self.w1**2 * background_density / self.envelope_density)
-        )
         self.diffraction_coeff0 = 1j * self.c**2 / (2.0 * self.w0)
-        self.diffraction_coeff1 = 1j * self.c**2 / (2.0 * self.w1)
-        self.srs_coeff1 = -1j * self.e / (4.0 * self.w0 * self.me)  # in dE1/dt, conj(lap phi) * E0
         self.depletion_coeff0 = -1j * self.e / (4.0 * self.w1 * self.me)  # in dE0/dt, lap phi * E1
-
-        self.sub_boundary = cfg["grid"]["absorbing_boundaries"] ** (1.0 / self.n_sub)
 
         # ---- pump injector (MATLAB lines 1707-1753, mirrored to the left edge) ----
         pump = cfg["drivers"]["E0"]["derived"]
@@ -91,39 +77,6 @@ class CoupledLight:
         self.n_src = n_src
         self.pump_turn_on_time = pump["turn_on_time"]
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
-
-        # E1 seed injector, identical to RamanLight's (MATLAB lines 1757-1769)
-        if "E1" in cfg["drivers"]:
-            seed = cfg["drivers"]["E1"]["derived"]
-            x_seed = cfg["grid"]["xmax"] - seed["offset"]
-            self.i1 = int(np.argmin(np.abs(np.array(self.x) - x_seed)))
-            wpe_i1 = self.w0 * np.sqrt(background_density[self.i1, 0])
-            self.wpe_sq_i1 = float(wpe_i1**2)
-            permittivity1 = 1.0 - self.wpe_sq_i1 / self.w1**2
-            if permittivity1 <= 0:
-                raise ValueError(
-                    f"The Raman seed injector at x = {float(self.x[self.i1]):.2f} um sits at density "
-                    f"{float(background_density[self.i1, 0]):.3f} nc, above the w1 critical density "
-                    f"{(self.w1 / self.w0) ** 2:.3f} nc where the seed is evanescent."
-                )
-            self.source_prefactor1 = self.c**2 / (2.0 * self.w1) / permittivity1**0.25 / self.dx**2
-            self.seed_enabled = True
-        else:
-            self.seed_enabled = False
-
-    def _d2x(self, f: Array) -> Array:
-        return (jnp.roll(f, -1, axis=0) - 2.0 * f + jnp.roll(f, 1, axis=0)) / self.dx**2
-
-    def _d2y(self, f: Array) -> Array:
-        return (jnp.roll(f, -1, axis=1) - 2.0 * f + jnp.roll(f, 1, axis=1)) / self.dy**2
-
-    def _dxdy(self, f: Array) -> Array:
-        return (
-            jnp.roll(f, (-1, -1), axis=(0, 1))
-            - jnp.roll(f, (1, -1), axis=(0, 1))
-            - jnp.roll(f, (-1, 1), axis=(0, 1))
-            + jnp.roll(f, (1, 1), axis=(0, 1))
-        ) / (4.0 * self.dx * self.dy)
 
     def calc_pump_source(self, t: float, pump_args: dict) -> tuple[Array, Array]:
         """
@@ -158,50 +111,28 @@ class CoupledLight:
         row_i0 = jnp.sum(1j * amp * jnp.exp(1j * k0[:, None] * self.x[self.i0 + 1]) * color_phase, axis=0)
         return row_i0, row_i0p1
 
-    def calc_seed_source(self, t: float, seed_args: dict) -> tuple[Array, Array]:
-        """Two-point Raman seed rows, identical to RamanLight.calc_seed_source."""
-        dw1 = seed_args["delta_omega"]
-        turn_on = 1.0 - jnp.exp(-((t / seed_args["turn_on_time"]) ** 2))
-        amp = self.source_prefactor1 * seed_args["amplitude"] * turn_on
-
-        if seed_args["yw"] > 0:
-            envelope_y = jnp.exp(-((self.y / (seed_args["yw"] / 2.0)) ** 4))
-        else:
-            envelope_y = jnp.ones_like(self.y)
-
-        k1 = self.w1 / self.c * jnp.sqrt((1.0 + dw1) ** 2 - self.wpe_sq_i1 / self.w1**2)
-
-        row_i1 = -1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[self.i1 + 1] - 1j * self.w1 * dw1 * t)
-        row_i1p1 = 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[self.i1] - 1j * self.w1 * dw1 * t)
-        return row_i1, row_i1p1
-
-    def rhs(
-        self, t: float, E0: Array, E1: Array, laplacian_phi: Array, pump_args: dict, seed_args: dict | None
-    ) -> tuple[Array, Array]:
+    def pump_rhs(self, t: float, E0: Array, E1: Array, laplacian_phi: Array, pump_args: dict) -> Array:
+        """Pump RHS: propagation + detuning (MATLAB lines 1616-1626), pump depletion
+        (lines 1640-1646: no conjugate, w1 denominator), and the boundary injector."""
         e0x, e0y = E0[..., 0], E0[..., 1]
         e1x, e1y = E1[..., 0], E1[..., 1]
 
-        # pump: propagation + detuning (MATLAB lines 1616-1626)
         k_e0x = self.diffraction_coeff0 * (self._d2y(e0x) - self._dxdy(e0y)) + self.linear_coeff0 * e0x
         k_e0y = self.diffraction_coeff0 * (self._d2x(e0y) - self._dxdy(e0x)) + self.linear_coeff0 * e0y
-        # pump depletion (MATLAB lines 1640-1646): no conjugate, w1 denominator
         k_e0x += self.depletion_coeff0 * laplacian_phi * e1x
         k_e0y += self.depletion_coeff0 * laplacian_phi * e1y
         row_i0, row_i0p1 = self.calc_pump_source(t, pump_args)
         k_e0y = k_e0y.at[self.i0, :].add(row_i0)
         k_e0y = k_e0y.at[self.i0 + 1, :].add(row_i0p1)
 
-        # Raman: propagation + detuning + SRS coupling (MATLAB lines 1661-1689)
-        k_e1x = self.diffraction_coeff1 * (self._d2y(e1x) - self._dxdy(e1y)) + self.linear_coeff1 * e1x
-        k_e1y = self.diffraction_coeff1 * (self._d2x(e1y) - self._dxdy(e1x)) + self.linear_coeff1 * e1y
-        k_e1x += self.srs_coeff1 * jnp.conj(laplacian_phi) * e0x
-        k_e1y += self.srs_coeff1 * jnp.conj(laplacian_phi) * e0y
-        if seed_args is not None:
-            row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)
-            k_e1y = k_e1y.at[self.i1, :].add(row_i1)
-            k_e1y = k_e1y.at[self.i1 + 1, :].add(row_i1p1)
+        return jnp.stack([k_e0x, k_e0y], axis=-1)
 
-        return jnp.stack([k_e0x, k_e0y], axis=-1), jnp.stack([k_e1x, k_e1y], axis=-1)
+    def coupled_rhs(
+        self, t: float, E0: Array, E1: Array, laplacian_phi: Array, pump_args: dict, seed_args: dict | None
+    ) -> tuple[Array, Array]:
+        # the E1 RHS (propagation + detuning + SRS coupling + seed rows) is exactly
+        # the RamanLight one
+        return self.pump_rhs(t, E0, E1, laplacian_phi, pump_args), self.rhs(t, E1, E0, laplacian_phi, seed_args)
 
     def __call__(self, t: float, E0: Array, E1: Array, phi_k: Array, pump_args: dict, seed_args: dict | None):
         """
@@ -217,10 +148,10 @@ class CoupledLight:
         def substep(i, fields):
             E0, E1 = fields
             t_i = t + i * self.dt_l
-            k_e0, k_e1 = self.rhs(t_i, E0, E1, laplacian_phi, pump_args, seed_args)
+            k_e0, k_e1 = self.coupled_rhs(t_i, E0, E1, laplacian_phi, pump_args, seed_args)
             E0 = E0 + self.dt_l * jnp.real(k_e0)
             E1 = E1 + self.dt_l * jnp.real(k_e1)
-            k_e0, k_e1 = self.rhs(t_i + self.dt_l / 2.0, E0, E1, laplacian_phi, pump_args, seed_args)
+            k_e0, k_e1 = self.coupled_rhs(t_i + self.dt_l / 2.0, E0, E1, laplacian_phi, pump_args, seed_args)
             E0 = E0 + 1j * self.dt_l * jnp.imag(k_e0)
             E1 = E1 + 1j * self.dt_l * jnp.imag(k_e1)
             E0 = E0 * self.sub_boundary[..., None]
