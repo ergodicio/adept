@@ -20,6 +20,8 @@ IMEX. Uses the Stepper (discrete-map) convention from adept._base_, mirroring
 adept._hermite_poisson_1d.vector_field.
 """
 
+import math
+
 import jax
 import jax.numpy as jnp
 import jax.scipy.linalg as jsla
@@ -160,6 +162,40 @@ def legendre_constants(Nl: int, v_a: float, v_b: float) -> dict:
     }
 
 
+def mixed_moment_matrix(alpha: float, u: float, T_L: Array, width: float) -> Array:
+    """Map ``(C_0..2, B_0..2)`` to density, momentum, and kinetic energy.
+
+    The last row is ``1/2 * integral(v**2 f dv)``.  Keeping this map in one
+    place is important: the Vlasov conservation correction and the physical
+    collision step must agree exactly about the three collision invariants.
+    """
+    sigma_bar = T_L[0, 0]
+    sigma1 = T_L[0, 1]
+    sigma2 = T_L[1, 2]
+    return jnp.asarray(
+        [
+            [alpha, 0.0, 0.0, width, 0.0, 0.0],
+            [
+                u * alpha,
+                alpha**2 / jnp.sqrt(2.0),
+                0.0,
+                width * sigma_bar,
+                width * sigma1,
+                0.0,
+            ],
+            [
+                0.5 * alpha * (alpha**2 / 2.0 + u**2),
+                alpha**2 * u / jnp.sqrt(2.0),
+                alpha**3 / (2.0 * jnp.sqrt(2.0)),
+                0.5 * width * (sigma1**2 + sigma_bar**2),
+                width * sigma1 * sigma_bar,
+                0.5 * width * sigma2 * sigma1,
+            ],
+        ],
+        dtype=jnp.float64,
+    )
+
+
 def _hermite_function_values(Nh_plus_1: int, v: np.ndarray, u: float, alpha: float) -> np.ndarray:
     """psi_n(v; u, alpha) for n = 0..Nh, shape (Nh+1, len(v)). Used for J integrals.
 
@@ -262,6 +298,229 @@ class DiagonalCollisionExp1D:
         if self.nu == 0.0:
             return Ck
         return Ck * jnp.exp(-self.nu * self.col[:, None] * s)
+
+
+class ConservingBGKCollision1D:
+    r"""Linear-time conservative BGK collisions for ``f = f0 + df``.
+
+    The collision map is the exact solution of
+
+    .. math:: C[f] = \nu\left(M[n,u,T] - f\right)
+
+    over one frozen-moment substep.  Density, flow, and temperature come from
+    the combined low Hermite and Legendre coefficients.  The same-moment
+    Maxwellian is represented entirely in the AW-Hermite basis, while the
+    Legendre correction decays by ``exp(-nu*s)``.  Consequently
+
+    ``C_new = r*C + (1-r)*C_M`` and ``B_new = r*B``,
+
+    which is O((Nh+Nl) Nx), involves no velocity-grid transform or modal solve,
+    and fixes the otherwise arbitrary mixed-basis collision equilibrium in the
+    natural way: the thermalized population belongs to the Hermite bulk.
+
+    ``C_M`` is generated in one pass.  If ``p = sqrt(2)*(u-u_H)/alpha`` and
+    ``q = T/alpha**2 - 1/2``, its normalized coefficients obey
+
+    ``h_0=1, h_1=p, h_n=p*h_(n-1)/sqrt(n) + 2*q*sqrt((n-1)/n)*h_(n-2)``,
+
+    with ``C_M,n=(density/alpha)*h_n``.  The first three coefficients reproduce
+    the requested density, momentum, and energy exactly; a final local correction
+    removes floating-point roundoff in those invariants.
+    """
+
+    def __init__(
+        self,
+        nu: float,
+        Nh: int,
+        alpha: float,
+        basis_u: float,
+        moment_matrix: Array,
+        min_temperature: float = 1.0e-8,
+    ):
+        if Nh < 3 or moment_matrix.shape[1] < 6:
+            raise ValueError("BGK collisions require Nh >= 3 and Nl >= 3")
+
+        self.nu = float(nu)
+        self.Nh = int(Nh)
+        self.alpha = float(alpha)
+        self.basis_u = float(basis_u)
+        self.min_temperature = float(min_temperature)
+        self.moment_matrix = jnp.asarray(moment_matrix)
+        self.hermite_moment_matrix = self.moment_matrix[:, :3]
+
+    def _moments(self, C: Array, B: Array) -> Array:
+        low = jnp.stack([C[0], C[1], C[2], B[0], B[1], B[2]], axis=0)
+        return self.moment_matrix @ low
+
+    def _maxwellian_coefficients(self, density: Array, mean_v: Array, temperature: Array) -> Array:
+        p = jnp.sqrt(2.0) * (mean_v - self.basis_u) / self.alpha
+        q = temperature / self.alpha**2 - 0.5
+        h = [jnp.ones_like(density)]
+        if self.Nh > 1:
+            h.append(p)
+        for n in range(2, self.Nh):
+            h.append((p / jnp.sqrt(float(n))) * h[n - 1] + 2.0 * q * jnp.sqrt(float(n - 1) / float(n)) * h[n - 2])
+        return (density / self.alpha)[None, :] * jnp.stack(h, axis=0)
+
+    def apply(self, state: dict, s: float) -> dict:
+        if self.nu == 0.0 or s == 0.0:
+            return state
+
+        Ck = state["Ck"].view(jnp.complex128)
+        Bk = state["Bk"].view(jnp.complex128)
+        C = jnp.fft.ifft(Ck, axis=-1, norm="forward").real
+        B = jnp.fft.ifft(Bk, axis=-1, norm="forward").real
+        target = self._moments(C, B)
+
+        density = jnp.maximum(target[0], 1.0e-14)
+        mean_v = target[1] / density
+        temperature = jnp.maximum(2.0 * target[2] / density - mean_v**2, self.min_temperature)
+
+        C_maxwellian = self._maxwellian_coefficients(density, mean_v, temperature)
+        decay = jnp.exp(-self.nu * s)
+        C_new = decay * C + (1.0 - decay) * C_maxwellian
+        B_new = decay * B
+
+        # Exact local field-particle restoration.  Density restoration also
+        # guarantees that this collision-only map leaves Poisson's E unchanged.
+        defect = target - self._moments(C_new, B_new)
+        low_correction = jnp.linalg.solve(self.hermite_moment_matrix, defect)
+        C_new = C_new.at[:3].add(low_correction)
+
+        out = dict(state)
+        out["Ck"] = jnp.fft.fft(C_new, axis=-1, norm="forward").astype(jnp.complex128).view(jnp.float64)
+        out["Bk"] = jnp.fft.fft(B_new, axis=-1, norm="forward").astype(jnp.complex128).view(jnp.float64)
+        return out
+
+
+class DoughertyCollision1D:
+    r"""Basis-native conserving Dougherty collisions for ``f = f0 + df``.
+
+    The nonlinear moments ``U[f]`` and ``T[f]`` are computed from the combined
+    low Hermite and Legendre coefficients. With those moments frozen, the
+    Dougherty operator is linear, so it can be applied independently in the two
+    bases without changing representations:
+
+    .. math:: C_{U,T}[f_0] + C_{U,T}[\delta f] = C_{U,T}[f_0+\delta f].
+
+    The AW-Hermite Ornstein--Uhlenbeck semigroup is evaluated exactly from its
+    generating function. The Legendre weak form is
+
+    ``L_B = -D @ ((V - U I) + T D.T)``.
+
+    Its symmetric diffusion block is prediagonalized once and applied exactly;
+    its lower-triangular drift block uses an implicit-midpoint solve. A symmetric
+    diffusion/drift/diffusion composition is second order. The runtime is
+    O((Nh^2+Nl^2) Nx), with no auxiliary velocity grid or mixed-basis projection.
+
+    The bounded Legendre weak form uses zero collisional flux at the velocity-
+    window boundaries. A local field-particle correction restores the exact
+    combined density, momentum, and kinetic energy after each substep.
+    """
+
+    def __init__(
+        self,
+        nu: float,
+        Nh: int,
+        alpha: float,
+        basis_u: float,
+        T_L: Array,
+        deriv: Array,
+        moment_matrix: Array,
+        min_temperature: float = 1.0e-8,
+    ):
+        if Nh < 3 or T_L.shape[0] < 3:
+            raise ValueError("Dougherty collisions require Nh >= 3 and Nl >= 3")
+
+        self.nu = float(nu)
+        self.Nh = int(Nh)
+        self.alpha = float(alpha)
+        self.basis_u = float(basis_u)
+        self.min_temperature = float(min_temperature)
+        self.moment_matrix = jnp.asarray(moment_matrix)
+        self.hermite_moment_matrix = self.moment_matrix[:, :3]
+
+        n = np.arange(Nh, dtype=np.float64)
+        sqrt_factorial = np.exp(np.asarray([0.5 * math.lgamma(float(i) + 1.0) for i in n]))
+        if not np.all(np.isfinite(sqrt_factorial)):
+            raise ValueError("Nh is too large for the basis-native Dougherty Hermite recurrence")
+        self.sqrt_factorial = jnp.asarray(sqrt_factorial)
+        self.hermite_mode = jnp.asarray(n)
+
+        D = np.asarray(deriv, dtype=np.float64)
+        V = np.asarray(T_L, dtype=np.float64)
+        diffusion = -(D @ D.T)
+        diffusion_eigenvalues, diffusion_eigenvectors = np.linalg.eigh(diffusion)
+        self.legendre_deriv = jnp.asarray(D)
+        self.legendre_drift_0 = jnp.asarray(np.tril(-(D @ V)))
+        self.diffusion_eigenvalues = jnp.asarray(np.minimum(diffusion_eigenvalues, 0.0))
+        self.diffusion_eigenvectors = jnp.asarray(diffusion_eigenvectors)
+
+    def _moments(self, C: Array, B: Array) -> Array:
+        low = jnp.stack([C[0], C[1], C[2], B[0], B[1], B[2]], axis=0)
+        return self.moment_matrix @ low
+
+    def _hermite_exact(self, C: Array, mean_v: Array, temperature: Array, s: float) -> Array:
+        tau = self.nu * s
+        r = jnp.exp(-tau)
+        A = jnp.sqrt(2.0) * (self.basis_u - mean_v) / self.alpha
+        B = 1.0 - 2.0 * temperature / self.alpha**2
+        p = -A * (1.0 - r)
+        q = -0.5 * B * (1.0 - r**2)
+
+        exp_coeff = [jnp.ones_like(mean_v)]
+        if self.Nh > 1:
+            exp_coeff.append(p)
+        for k in range(2, self.Nh):
+            exp_coeff.append((p * exp_coeff[k - 1] + 2.0 * q * exp_coeff[k - 2]) / k)
+
+        scaled = C / self.sqrt_factorial[:, None]
+        damped = scaled * r ** self.hermite_mode[:, None]
+        result = []
+        for n in range(self.Nh):
+            result.append(self.sqrt_factorial[n] * sum(damped[j] * exp_coeff[n - j] for j in range(n + 1)))
+        return jnp.stack(result, axis=0)
+
+    def _legendre_diffusion(self, B: Array, temperature: Array, s: float) -> Array:
+        modal = self.diffusion_eigenvectors.T @ B
+        factor = jnp.exp(self.nu * s * self.diffusion_eigenvalues[:, None] * temperature[None, :])
+        return self.diffusion_eigenvectors @ (factor * modal)
+
+    def _legendre_drift(self, B: Array, mean_v: Array, s: float) -> Array:
+        drift_B = self.legendre_drift_0 @ B + (self.legendre_deriv @ B) * mean_v[None, :]
+        rhs = B + 0.5 * self.nu * s * drift_B
+
+        drift = self.legendre_drift_0[None, :, :] + mean_v[:, None, None] * self.legendre_deriv[None, :, :]
+        lhs = jnp.eye(B.shape[0], dtype=B.dtype)[None, :, :] - 0.5 * self.nu * s * drift
+        return jsla.solve_triangular(lhs, rhs.T[..., None], lower=True)[..., 0].T
+
+    def apply(self, state: dict, s: float) -> dict:
+        if self.nu == 0.0 or s == 0.0:
+            return state
+
+        Ck = state["Ck"].view(jnp.complex128)
+        Bk = state["Bk"].view(jnp.complex128)
+        C = jnp.fft.ifft(Ck, axis=-1, norm="forward").real
+        B = jnp.fft.ifft(Bk, axis=-1, norm="forward").real
+        target = self._moments(C, B)
+
+        density = jnp.maximum(target[0], 1.0e-14)
+        mean_v = target[1] / density
+        temperature = jnp.maximum(2.0 * target[2] / density - mean_v**2, self.min_temperature)
+
+        C_new = self._hermite_exact(C, mean_v, temperature, s)
+        B_new = self._legendre_diffusion(B, temperature, 0.5 * s)
+        B_new = self._legendre_drift(B_new, mean_v, s)
+        B_new = self._legendre_diffusion(B_new, temperature, 0.5 * s)
+
+        defect = target - self._moments(C_new, B_new)
+        low_correction = jnp.linalg.solve(self.hermite_moment_matrix, defect)
+        C_new = C_new.at[:3].add(low_correction)
+
+        out = dict(state)
+        out["Ck"] = jnp.fft.fft(C_new, axis=-1, norm="forward").astype(jnp.complex128).view(jnp.float64)
+        out["Bk"] = jnp.fft.fft(B_new, axis=-1, norm="forward").astype(jnp.complex128).view(jnp.float64)
+        return out
 
 
 class CombinedLinearExp1D:
@@ -594,6 +853,7 @@ class HermiteLegendre1DVectorField:
         G_B: Array | None = None,
         T_H: Array | None = None,
         T_L: Array | None = None,
+        physical_collision: "ConservingBGKCollision1D | DoughertyCollision1D | None" = None,
     ):
         self.combined_exp = combined_exp
         self.poisson = poisson
@@ -626,36 +886,11 @@ class HermiteLegendre1DVectorField:
         self.G_B = None if G_B is None else jnp.asarray(G_B, dtype=jnp.complex128)
         self.T_H = None if T_H is None else jnp.asarray(T_H)
         self.T_L = None if T_L is None else jnp.asarray(T_L)
+        self.physical_collision = physical_collision
         if self.split:
-            sigma_bar = self.T_L[0, 0]
-            sigma1 = self.T_L[0, 1]
-            sigma2 = self.T_L[1, 2]
-            alpha = self.alpha
-            width = self.width
             # T_H's diagonal is u/alpha, so recover the Hermite velocity shift here.
-            u = alpha * self.T_H[0, 0]
-            self._moment_matrix = jnp.asarray(
-                [
-                    [alpha, 0.0, 0.0, width, 0.0, 0.0],
-                    [
-                        u * alpha,
-                        alpha**2 / jnp.sqrt(2.0),
-                        0.0,
-                        width * sigma_bar,
-                        width * sigma1,
-                        0.0,
-                    ],
-                    [
-                        0.5 * alpha * (alpha**2 / 2.0 + u**2),
-                        alpha**2 * u / jnp.sqrt(2.0),
-                        alpha**3 / (2.0 * jnp.sqrt(2.0)),
-                        0.5 * width * (sigma1**2 + sigma_bar**2),
-                        width * sigma1 * sigma_bar,
-                        0.5 * width * sigma2 * sigma1,
-                    ],
-                ],
-                dtype=jnp.float64,
-            )
+            u = self.alpha * self.T_H[0, 0]
+            self._moment_matrix = mixed_moment_matrix(self.alpha, u, self.T_L, self.width)
             gram = self._moment_matrix @ self._moment_matrix.T
             self._moment_projector = self._moment_matrix.T @ jnp.linalg.inv(gram)
 
@@ -892,6 +1127,9 @@ class HermiteLegendre1DVectorField:
         return out
 
     def __call__(self, t: float, y: dict, args: dict) -> dict:
+        if self.physical_collision is not None:
+            y = self.physical_collision.apply(y, 0.5 * self.dt)
+
         step_residual = jnp.asarray(0.0)
         correction_norm = jnp.asarray(0.0)
         if self.split:
@@ -908,6 +1146,9 @@ class HermiteLegendre1DVectorField:
                 if self.ex_driver is not None:
                     E_frozen = E_frozen + self.ex_driver(t + self.dt, args)
                 y_new = self._implicit_E_substep(y_new, E_frozen, self.dt)
+
+        if self.physical_collision is not None:
+            y_new = self.physical_collision.apply(y_new, 0.5 * self.dt)
 
         Ck = y_new["Ck"].view(jnp.complex128)
         Bk = y_new["Bk"].view(jnp.complex128)
