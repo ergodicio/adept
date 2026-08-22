@@ -8,7 +8,7 @@ from jaxtyping import Array
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.grid import Grid
-from adept._vlasov1d.simulation import EMDriver, BroadbandDriver
+from adept._vlasov1d.simulation import BroadbandDriver, EMDriver
 
 
 class LongitudinalElectricFieldDriver:
@@ -17,7 +17,7 @@ class LongitudinalElectricFieldDriver:
     def __init__(self, xax, drivers: list[EMDriver]):
         """Store the spatial axis and longitudinal driver list."""
         self.xax = xax
-        self.drivers = drivers 
+        self.drivers = drivers
 
     def _single_driver_field(self, driver: EMDriver, current_time):
         kk = driver.k0
@@ -67,12 +67,14 @@ class TransverseCurrentSourceDriver:
             F0 = 2.0 * w_total * self.c * amplitude
             point_source_masks = mask
             point_source_scales = F0 / self.dx
-        else: 
+        else:
             point_source_masks = None
-            point_source_scales = None 
+            point_source_scales = None
         return point_source_masks, point_source_scales
 
-    def _single_driver_source(self, driver: EMDriver, dw: Array, amplitude: Array, phase: Array, mask: Array, scale: Array, current_time):
+    def _single_driver_source(
+        self, driver: EMDriver, dw: Array, amplitude: Array, phase: Array, mask: Array, scale: Array, current_time
+    ):
         ww = driver.w0
         w_total = ww + dw
         if driver.is_point_source:
@@ -98,11 +100,13 @@ class TransverseCurrentSourceDriver:
         ey_list = args["drivers"].ey
         for driver in ey_list:
             amplitudes = driver.amplitudes if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.a0)
-            phases     = driver.phases if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.phase)
+            phases = driver.phases if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.phase)
             delta_omega = driver.delta_omega if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.dw0)
 
             point_source_masks, point_source_scales = self.make_scales(driver, delta_omega, amplitudes)
-            driver_source_array = self._single_driver_source(driver, delta_omega, amplitudes, phases, point_source_masks, point_source_scales, t)
+            driver_source_array = self._single_driver_source(
+                driver, delta_omega, amplitudes, phases, point_source_masks, point_source_scales, t
+            )
             total += jnp.sum(driver_source_array, axis=0)
         return total
 

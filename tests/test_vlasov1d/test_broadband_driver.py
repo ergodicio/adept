@@ -27,15 +27,15 @@ from jax import config as jax_config
 
 jax_config.update("jax_enable_x64", True)
 
-import equinox as eqx  # noqa: E402
-import jax  # noqa: E402
-from jax import numpy as jnp  # noqa: E402
-from pydantic import ValidationError  # noqa: E402
+import equinox as eqx
+import jax
+from jax import numpy as jnp
+from pydantic import ValidationError
 
-from adept._vlasov1d.datamodel import EMDriverConfig  # noqa: E402
-from adept._vlasov1d.simulation import BroadbandDriver, EMDriver, EMDriverSet  # noqa: E402
-from adept._vlasov1d.solvers.pushers.field import TransverseCurrentSourceDriver  # noqa: E402
-from adept.normalization import electron_debye_normalization  # noqa: E402
+from adept._vlasov1d.datamodel import EMDriverConfig
+from adept._vlasov1d.simulation import BroadbandDriver, EMDriver, EMDriverSet
+from adept._vlasov1d.solvers.pushers.field import TransverseCurrentSourceDriver
+from adept.normalization import electron_debye_normalization
 
 NORM = electron_debye_normalization("9.05e21/cc", "4000eV")
 C_NORM = NORM.speed_of_light_norm()
@@ -142,9 +142,9 @@ def test_seeded_line_sets_are_reproducible():
 
 def test_random_init_requires_seed():
     """init: random without a seed is a validation error, not a KeyError at build time."""
-    with pytest.raises(ValidationError, match="phases.seed"):
+    with pytest.raises(ValidationError, match=r"phases\.seed"):
         _comb(4, 0.001, phases={"init": "random"})
-    with pytest.raises(ValidationError, match="intensities.seed"):
+    with pytest.raises(ValidationError, match=r"intensities\.seed"):
         _comb(4, 0.001, intensities={"base_intensity": BASE_INTENSITY, "init": "random"})
     with pytest.raises(ValidationError):  # base_intensity is required
         _comb(4, 0.001, intensities={"init": "uniform"})

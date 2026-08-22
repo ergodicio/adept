@@ -6,12 +6,12 @@ import math
 import os
 from time import time
 
+import equinox as eqx
 import numpy as np
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
 from jax import tree_util as jtu
-import equinox as eqx
 from matplotlib import pyplot as plt
 from scipy.special import gamma
 
@@ -40,6 +40,7 @@ def gamma_3_over_m(m):
 def gamma_5_over_m(m):
     """Evaluate Gamma(5 / m) for super-Gaussian normalization."""
     return gamma(5.0 / m)  # np.interp(m, m_ax, g_5_m)
+
 
 def _initialize_supergaussian_distribution_(
     nx: int,
@@ -174,9 +175,9 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
 
 def get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm: PlasmaNormalization | None = None):
-    '''getting amplitude (a), wave number (k) and angular frequency (w)
+    """getting amplitude (a), wave number (k) and angular frequency (w)
     from intensity and wavelength (passed in as args to this function) defined in
-    'intensity_wavelength' type of configs'''
+    'intensity_wavelength' type of configs"""
 
     intensity = UREG.Quantity(intensity).to("W/m^2")
     wavelength = UREG.Quantity(wavelength).to("nm")

@@ -344,9 +344,10 @@ class BaseVlasov1D(ADEPTModule):
 
         # The trainable-module loop (lpse2d pattern): each module may transform the
         # initial state and/or inject its (possibly optimizer-updated) leaves into
-        # args before the solve.
+        # args before the solve. Callers may pass None (the pre-module-era calling
+        # convention) -- treat it as "no trainable modules".
         state = self.state
-        for name, module in trainable_modules.items():
+        for name, module in (trainable_modules or {}).items():
             state, args = module(state, args)
 
         grid = self.simulation.grid
