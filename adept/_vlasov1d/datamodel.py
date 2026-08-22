@@ -127,6 +127,67 @@ class IntensityWavelengthDriverConfig(BaseModel):
     intensity: str
     wavelength: str
     leftgoing: bool = False
+    dw0: float = 0.0
+    phase: float = 0.0
+
+
+class BroadbandIntensitiesConfig(BaseModel):
+    """Per-line intensity weights of a broadband (multi-color) driver.
+
+    The weights ``w_j`` set the line *amplitudes* as ``a_j = a0 * sqrt(w_j / sum_k w_k)``,
+    where ``a0`` is the monochromatic amplitude for ``base_intensity``; hence
+    ``sum_j a_j^2 = a0^2`` (same time-averaged power as a single line at
+    ``base_intensity``) and the per-line intensity is ``I_j = base_intensity * w_j / sum_k w_k``.
+    """
+
+    base_intensity: str  # e.g. "2.378e+14 W/cm^2"; the total (monochromatic-equivalent) intensity
+    init: Literal["uniform", "random"] = "uniform"
+    seed: int | None = None  # required for init: random
+    range: tuple[float, float] = (0.0, 2.0)  # uniform draw bounds for init: random
+
+    @model_validator(mode="after")
+    def check_seed(self) -> "BroadbandIntensitiesConfig":
+        """``init: random`` must be reproducible, so it needs a seed."""
+        if self.init == "random" and self.seed is None:
+            raise ValueError("intensities.init == 'random' requires intensities.seed")
+        return self
+
+
+class BroadbandPhasesConfig(BaseModel):
+    """Per-line spectral phases of a broadband (multi-color) driver."""
+
+    init: Literal["uniform", "random"] = "random"
+    seed: int | None = None  # required for init: random
+    range: tuple[float, float] = (0.0, 2.0 * 3.141592653589793)  # uniform draw bounds, radians
+    base_phase: float = 0.0  # the common phase for init: uniform
+
+    @model_validator(mode="after")
+    def check_seed(self) -> "BroadbandPhasesConfig":
+        """``init: random`` must be reproducible, so it needs a seed."""
+        if self.init == "random" and self.seed is None:
+            raise ValueError("phases.init == 'random' requires phases.seed")
+        return self
+
+
+class BroadbandConfig(BaseModel):
+    """Broadband (multi-color) laser driver: a comb of ``num_colors`` lines.
+
+    Line frequencies are ``w_j = w0 * (1 + d_j)`` with ``d_j`` spaced uniformly on
+    ``[-delta_omega, +delta_omega]`` (``num_colors: 1`` puts the single line exactly at
+    ``w0``). **``delta_omega`` is the HALF-width of the comb as a fraction of ``w0``;
+    the full bandwidth is ``2 * delta_omega``** -- a "0.25% bandwidth" run is
+    ``delta_omega: 0.00125``. All lines share the carrier wavenumber ``k0`` of
+    ``wavelength`` (an off-center line is not launched on its own dispersion branch),
+    which is accurate for a localized antenna (``source_type: point`` / a narrow
+    spatial envelope) and not for a source extended across the box.
+    """
+
+    num_colors: int = Field(ge=1)
+    delta_omega: float = Field(ge=0.0)  # half-width, fraction of w0
+    wavelength: str
+    intensities: BroadbandIntensitiesConfig
+    phases: BroadbandPhasesConfig
+    leftgoing: bool = False
 
 
 class AKWDriverConfig(BaseModel):
@@ -136,6 +197,7 @@ class AKWDriverConfig(BaseModel):
     k0: float | None = None
     w0: float | None = None
     dw0: float
+    phase: float = 0.0
 
     @model_validator(mode="after")
     def check_w_or_k(self) -> "AKWDriverConfig":
@@ -148,7 +210,7 @@ class AKWDriverConfig(BaseModel):
 class EMDriverConfig(BaseModel):
     """One electromagnetic driver with parameters, envelope, and source geometry."""
 
-    params: IntensityWavelengthDriverConfig | AKWDriverConfig
+    params: IntensityWavelengthDriverConfig | AKWDriverConfig | BroadbandConfig
     envelope: SpaceTimeEnvelopeConfig
     source_type: Literal["extended", "point"] = "extended"
 

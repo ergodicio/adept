@@ -16,7 +16,7 @@ from matplotlib import pyplot as plt
 from scipy.special import gamma
 
 from adept._pic1d.simulation import PIC1DSimulation
-from adept._vlasov1d.helpers import gamma_3_over_m, gamma_5_over_m
+from adept._vlasov1d.helpers import gamma_1_over_m, gamma_3_over_m
 
 from .. import patched_mlflow as mlflow
 
@@ -32,7 +32,9 @@ def _inverse_cdf_supergaussian(
     sampling that exactly reproduces the requested moments in expectation.
     """
     v_thermal = np.sqrt(T0 / mass)
-    alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
+    alpha = np.sqrt(
+        gamma_1_over_m(supergaussian_order) / gamma_3_over_m(supergaussian_order)
+    )  # 1D width: variance = T0/mass for every m (see _vlasov1d.helpers)
 
     nv = max(8192, 8 * n_particles)
     v_grid = np.linspace(-vmax, vmax, nv)
@@ -56,7 +58,9 @@ def _random_supergaussian(
 ) -> np.ndarray:
     """Random velocity sampling via rejection on a bounded supergaussian."""
     v_thermal = np.sqrt(T0 / mass)
-    alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
+    alpha = np.sqrt(
+        gamma_1_over_m(supergaussian_order) / gamma_3_over_m(supergaussian_order)
+    )  # 1D width: variance = T0/mass for every m (see _vlasov1d.helpers)
 
     out = np.empty(n_particles)
     filled = 0

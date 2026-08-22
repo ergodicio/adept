@@ -1,15 +1,17 @@
 """Domain objects that represent a configured Vlasov-1D simulation."""
 
-import math
 import warnings
 
 import equinox as eqx
 import jax
+import jax.numpy as jnp
 import numpy as np
-from jax import numpy as jnp
+from jax import tree_util as jtu
+from jaxtyping import Array
 
 from adept._vlasov1d.datamodel import (
     AKWDriverConfig,
+    BroadbandConfig,
     EMDriverConfig,
     EMDriverSetConfig,
     IntensityWavelengthDriverConfig,
@@ -31,7 +33,7 @@ from adept.functions import (
     SpaceTimeEnvelopeFunction,
     UniformFunction,
 )
-from adept.normalization import UREG, PlasmaNormalization, normalize
+from adept.normalization import PlasmaNormalization
 
 
 class EMDriver(eqx.Module):
@@ -40,16 +42,19 @@ class EMDriver(eqx.Module):
     a0: float
     k0: float
     w0: float
+    phase: float
     dw0: float
     envelope: SpaceTimeEnvelopeFunction
     is_point_source: bool = False
 
     @staticmethod
-    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> "EMDriver":
+    def from_config(cfg: EMDriverConfig, norm: PlasmaNormalization | None = None) -> "list[EMDriver] | BroadbandDriver":
         """Convert user driver configuration into normalized solver parameters."""
         envelope = SpaceTimeEnvelopeFunction.from_config(cfg.envelope, norm)
 
         params = cfg.params
+        # local import avoids the simulation <-> helpers module cycle
+        from adept._vlasov1d.helpers import get_akw_from_intensity_wavelength
 
         match cfg.params:
             case AKWDriverConfig():
@@ -62,35 +67,144 @@ class EMDriver(eqx.Module):
                     k0, w0 = params.k0, params.w0
 
                 is_point = cfg.source_type == "point"
-                return EMDriver(params.a0, k0, w0, params.dw0, envelope, is_point_source=is_point)
+                return [EMDriver(params.a0, k0, w0, params.phase, params.dw0, envelope, is_point_source=is_point)]
 
             case IntensityWavelengthDriverConfig(intensity=intensity, wavelength=wavelength, leftgoing=leftgoing):
-                intensity = UREG.Quantity(intensity).to("W/m^2")
-                wavelength = UREG.Quantity(wavelength).to("nm")
+                a0, k0, w0 = get_akw_from_intensity_wavelength(intensity, wavelength, leftgoing, norm)
 
-                e = UREG.e
-                m_e = UREG.m_e
-                eps0 = UREG.epsilon_0
-                c = UREG.c
+                dw0 = params.dw0
+                is_point = cfg.source_type == "point"
+                return [EMDriver(a0, k0, w0, params.phase, dw0, envelope, is_point_source=is_point)]
 
-                # Standard a0 = eE0/(m_e c w0) — identical to HermiteSRS1D formula
-                a0_std = ((e * wavelength / (m_e * math.pi)) * (intensity / (2 * eps0 * c**5)) ** 0.5).to("").magnitude
-                # Vlasov normalization: a0_vlasov = a0_std / β  (β = v0/c)
-                a0 = a0_std * norm.speed_of_light_norm()
-
-                # k0 in Debye-length units: k0_vlasov = k_phys x v0/wp0
-                k0_phys = (2 * math.pi / wavelength).to("1/m")
-                k_sign = -1.0 if leftgoing else 1.0
-                k0 = k_sign * float((k0_phys * norm.L0).to("").magnitude)
-
-                # w0 normalized to wp0 (same normalization as Hermite)
-                w0_phys = (2 * math.pi * c / wavelength).to("1/s")
-                w0 = float((w0_phys * norm.tau).to("").magnitude)
-
-                dw0 = 0.0  # ???
+            case BroadbandConfig(intensities=intensities, wavelength=wavelength, leftgoing=leftgoing):
+                a0, k0, w0 = get_akw_from_intensity_wavelength(intensities.base_intensity, wavelength, leftgoing, norm)
 
                 is_point = cfg.source_type == "point"
-                return EMDriver(a0, k0, w0, dw0, envelope, is_point_source=is_point)
+                broadband_driver = BroadbandDriver(params.model_dump(), a0, k0, w0, envelope, is_point)
+                return broadband_driver
+
+            case _:
+                raise NotImplementedError(f"Unsupported driver params type: {type(cfg.params).__name__}")
+
+
+class BroadbandDriver(eqx.Module):
+    """Multi-color (broadband) ey driver carrying per-line parameter arrays.
+
+    Given the monochromatic amplitude ``a0`` for ``intensities.base_intensity`` and
+    per-line weights ``w_j`` (uniform or seeded-random), the line amplitudes are
+    ``a_j = a0 * sqrt(w_j / sum_k w_k)`` so that ``sum_j a_j^2 = a0^2`` -- the comb
+    carries the same *time-averaged* power as the single line (a phase-locked comb
+    still peaks at ``a0 * sqrt(N)`` at recurrence). Line frequencies are
+    ``w_j = w0 * (1 + d_j)``, ``d_j`` uniform on ``[-delta_omega, +delta_omega]``
+    (``delta_omega`` is the half-width; ``num_colors == 1`` sits exactly at ``w0``).
+
+    All lines share the carrier ``k0``: the source is
+    ``-env * w_j^2 * a_j * sin(k0 x - w_j t + phi_j)``, so an off-center line is not
+    placed on its own dispersion branch. This is accurate for a localized antenna
+    (``source_type: point`` / narrow spatial envelope, where ``dk * L_antenna`` is
+    negligible) and NOT for a source extended across the box.
+    """
+
+    params: dict
+    a0: float
+    k0: float
+    w0: float
+    intensity_weights: Array  # raw per-line weights w_j (dimensionless)
+    amplitudes: Array  # per-line a_j = a0 * sqrt(w_j / sum w)
+    delta_omega: Array
+    phases: Array
+    envelope: SpaceTimeEnvelopeFunction
+    is_point_source: bool = False
+
+    def __init__(self, cfg: dict, a0, k0, w0, envelope, is_point):
+        self.params = cfg
+        self.a0 = a0
+        self.k0 = k0
+        self.w0 = w0
+        self.envelope = envelope
+        self.is_point_source = is_point
+
+        n_colors = int(self.params["num_colors"])
+
+        # per-line intensity weights w_j
+        if self.params["intensities"]["init"] == "random":
+            int_lo, int_hi = self.params["intensities"].get("range", (0.0, 2.0))
+            int_rng = np.random.default_rng(seed=self.params["intensities"]["seed"])
+            self.intensity_weights = jnp.array(int_rng.uniform(int_lo, int_hi, n_colors))
+        elif self.params["intensities"]["init"] == "uniform":
+            self.intensity_weights = jnp.ones(n_colors)
+        else:
+            raise NotImplementedError(f"Initialization type -- {self.params['intensities']['init']} -- not implemented")
+        # amplitudes: sqrt normalization so sum_j a_j^2 = a0^2 (same time-averaged power as
+        # the monochromatic line; otherwise a uniform comb would carry N x the power)
+        self.amplitudes = self.a0 * jnp.sqrt(self.intensity_weights / jnp.sum(self.intensity_weights))
+
+        # frequency shifts:
+        if n_colors == 1:
+            # a single line must sit exactly at w0 (this is what makes num_colors: 1 the monochromatic driver)
+            self.delta_omega = jnp.zeros(1)
+        else:
+            self.delta_omega = jnp.linspace(-self.params["delta_omega"], self.params["delta_omega"], n_colors) * self.w0
+
+        if self.params["phases"]["init"] == "random":
+            # Spectral phases drawn uniformly over (0, 2*pi) -- the default;
+            # Override via phases.range
+            phase_lo, phase_hi = self.params["phases"].get("range", (0.0, 2.0 * np.pi))
+            phase_rng = np.random.default_rng(seed=self.params["phases"]["seed"])
+            self.phases = jnp.array(phase_rng.uniform(phase_lo, phase_hi, self.params["num_colors"]))
+        elif self.params["phases"]["init"] == "uniform":
+            self.phases = jnp.ones(self.params["num_colors"]) * self.params["phases"]["base_phase"]
+        else:
+            raise NotImplementedError(f"Initialization type -- {self.params['phases']['init']} -- not implemented")
+
+    def scale_intensities(self, intensities):
+        if self.params["intensities"]["activation"] == "linear":
+            ints = 0.5 * (jnp.tanh(intensities) + 1.0)
+        elif self.params["intensities"]["activation"] == "log":
+            ints = 3 * (jnp.tanh(intensities) + 1.0) - 3
+            ints = 10**ints
+        elif self.params["intensities"]["activation"] == "log-3wide":
+            ints = -1.5 * (jnp.tanh(intensities) + 1.0)  # from 0 to -3
+            ints = 10**ints
+        else:
+            raise NotImplementedError(
+                f"Amplitude Output type -- {self.params['intensities']['activation']} -- not implemented"
+            )
+
+        return ints
+
+    def get_partition_spec(self):
+        """
+        Get the partition spec for the model
+
+        Depends what is learned based on the driver being passed in
+
+        Returns
+        -------
+        filter_spec : pytree with the same structure as the model
+
+        """
+        filter_spec = jtu.tree_map(lambda _: False, self)
+
+        if self.params["intensities"]["learned"]:
+            filter_spec = eqx.tree_at(lambda tree: tree.intensities, filter_spec, replace=True)
+
+        if self.params["phases"]["learned"]:
+            filter_spec = eqx.tree_at(lambda tree: tree.phases, filter_spec, replace=True)
+
+        return filter_spec
+
+    # def __call__(self, state: dict, args: dict) -> tuple:
+    #     # intensities = self.scale_intensities(self.intensity_weights)
+    #     # intensities = intensities / jnp.sum(intensities)
+
+    #     args["drivers"]["ey"] = {
+    #         "delta_omega": self.delta_omega,
+    #         "phases": self.phases,
+    #         "amplitudes": self.amplitudes,
+    #     } | self.envelope
+
+    #     return state, args
 
 
 class StochasticDriver(eqx.Module):
@@ -150,7 +264,7 @@ class EMDriverSet(eqx.Module):
     """Container for longitudinal (Ex) and transverse (Ey) driver lists."""
 
     ex: list[EMDriver]
-    ey: list[EMDriver]
+    ey: list[EMDriver | BroadbandDriver]
     ex_stochastic: StochasticDriver | None = None
 
     @staticmethod
@@ -158,8 +272,16 @@ class EMDriverSet(eqx.Module):
         cfg: EMDriverSetConfig, norm: PlasmaNormalization | None = None, grid: Grid | None = None
     ) -> "EMDriverSet":
         """Build normalized Ex and Ey driver lists (and optional stochastic forcing) from configuration."""
-        ex = [EMDriver.from_config(ex_cfg, norm) for ex_cfg in cfg.ex.values()]
-        ey = [EMDriver.from_config(ey_cfg, norm) for ey_cfg in cfg.ey.values()]
+        ex = []
+        for ex_cfg in cfg.ex.values():
+            obj = EMDriver.from_config(ex_cfg, norm)
+            ex.extend(obj if isinstance(obj, list) else [obj])
+
+        ey = []
+        for ey_cfg in cfg.ey.values():
+            obj = EMDriver.from_config(ey_cfg, norm)
+            ey.extend(obj if isinstance(obj, list) else [obj])
+
         ex_stochastic = None
         if cfg.ex_stochastic is not None:
             if grid is None:
