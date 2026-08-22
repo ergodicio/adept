@@ -291,6 +291,7 @@ class BaseVFP2D(ADEPTModule):
                 axis=-1,
             )
             self.state["ions"] = primitive_to_conserved(ion_primitive, self.ion_gamma)
+            self.state["current_projection_energy"] = jnp.zeros_like(ion_density)
             self.args["ei_momentum_relaxation_rate"] = float(self.ion_cfg.get("momentum_relaxation_rate", 0.0))
             self.args["ei_temperature_relaxation_rate"] = float(self.ion_cfg.get("temperature_relaxation_rate", 0.0))
         drivers = self.cfg.get("drivers", {})
@@ -653,6 +654,7 @@ class BaseVFP2D(ADEPTModule):
                 ion_mass=self.ion_mass,
                 ion_charge=float(self.cfg["units"]["Z"]),
                 light_speed=self.plasma_norm.speed_of_light_norm(),
+                current_projection_energy=result.ys["current_projection_energy"],
             )
             f00 = jnp.real(flm_jax[..., self.layout.index(0, 0), :])
             negative_f00_mass = (
@@ -691,6 +693,11 @@ class BaseVFP2D(ADEPTModule):
                     "ion_energy": (("t",), np.asarray(invariants["ion_energy"])),
                     "magnetic_energy": (("t",), np.asarray(invariants["magnetic_energy"])),
                     "total_energy": (("t",), np.asarray(invariants["total_energy"])),
+                    "current_projection_energy": (
+                        ("t",),
+                        np.asarray(invariants["current_projection_energy"]),
+                    ),
+                    "accounted_total_energy": (("t",), np.asarray(invariants["accounted_total_energy"])),
                     "div_b_linf": (("t",), np.asarray(div_b_linf)),
                     "negative_f00_mass": (("t",), np.asarray(negative_f00_mass)),
                     "harmonic_free_energy": (("t", "harmonic"), np.asarray(harmonic_free_energy)),

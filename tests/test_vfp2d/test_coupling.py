@@ -107,6 +107,58 @@ def test_lab_electric_field_recovers_ideal_bulk_magnetic_advection():
     np.testing.assert_allclose(divergence_rate, 0.0, atol=2e-13)
 
 
+def test_current_projection_ledger_matches_lab_frame_energy_change():
+    grid, layout, _maxwell, _stationary, moving, _hydro, flm, field, ions, ion_mass = _make_problem()
+    f00 = jnp.real(flm[..., layout.index(0, 0), :])
+    flm = flm.at[..., layout.index(1, 0), :].set(0.05 * grid.v * f00)
+    flm = flm.at[..., layout.index(1, 1), :].set((-0.02 + 0.01j) * grid.v * f00)
+    x = grid.x[:, None]
+    ion_velocity = jnp.stack(
+        (
+            0.2 + 0.03 * jnp.cos(x) * jnp.ones((1, grid.ny)),
+            -0.1 * jnp.ones((grid.nx, grid.ny)),
+            0.04 * jnp.ones((grid.nx, grid.ny)),
+        ),
+        axis=-1,
+    )
+    ion_density = ions[..., 0]
+    moving_ions = ions.at[..., 1:4].set(ion_density[..., None] * ion_velocity)
+    moving_ions = moving_ions.at[..., 4].add(0.5 * ion_density * jnp.sum(ion_velocity**2, axis=-1))
+
+    projected = moving._project(flm, field)
+    projection_work = moving._projection_energy_density(
+        flm,
+        projected,
+        {"ion_velocity": ion_velocity},
+    )
+    common = {
+        "layout": layout,
+        "v": grid.v,
+        "dv": grid.dv,
+        "dx": grid.dx,
+        "dy": grid.dy,
+        "ion_mass": ion_mass,
+        "ion_charge": 1.0,
+        "light_speed": 5.0,
+    }
+    before = coupled_invariants(flm, moving_ions, field, **common)
+    after = coupled_invariants(
+        projected,
+        moving_ions,
+        field,
+        current_projection_energy=projection_work,
+        **common,
+    )
+
+    np.testing.assert_allclose(
+        after["total_energy"] - before["total_energy"],
+        after["current_projection_energy"],
+        rtol=2e-13,
+        atol=2e-13,
+    )
+    np.testing.assert_allclose(after["accounted_total_energy"], before["total_energy"], rtol=2e-13, atol=2e-13)
+
+
 def test_midpoint_temperature_exchange_preserves_coupled_energy():
     grid, layout, _maxwell, _stationary, moving, hydro, flm, field, ions, ion_mass = _make_problem()
     exchange = ElectronIonExchange(layout, grid.v, grid.dv, ion_mass=ion_mass)

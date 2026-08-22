@@ -2,8 +2,8 @@
 
 The split composes ion-frame electrons, ideal-ion Euler transport, kinetic
 electron-pressure feedback, and finite-mass electron--ion exchange. It remains
-explicit and auditable: hydro half-step, full kinetic midpoint step, midpoint
-coupled sources, then the second hydro half-step.
+explicit and auditable: hydro half-step, coupled-source half-step, full kinetic
+step, the second coupled-source half-step, then the second hydro half-step.
 """
 
 from __future__ import annotations
@@ -29,8 +29,7 @@ class CoupledIonKineticStep:
     The electron step must be a ``KineticOhmStep`` configured with an ion-frame
     operator. Ion kinematics are held at the hydro midpoint during its RK stages.
     This production coupling includes ideal-ion transport and local finite-mass
-    thermal and momentum exchange. Electron-pressure feedback belongs to the
-    next Gate 2b slice.
+    thermal and momentum exchange together with electron-pressure feedback.
     """
 
     def __init__(
@@ -99,9 +98,17 @@ class CoupledIonKineticStep:
         value = value(t) if callable(value) else value
         return jnp.broadcast_to(jnp.asarray(value), template.shape)
 
-    def _exchange(self, t: float, flm: Array, ions: Array, args: dict | None) -> tuple[Array, Array]:
+    def _exchange(
+        self,
+        t: float,
+        flm: Array,
+        ions: Array,
+        args: dict | None,
+        source_dt: float | None = None,
+    ) -> tuple[Array, Array]:
         if self.exchange is None and self.pressure is None:
             return flm, ions
+        source_dt = self.dt if source_dt is None else float(source_dt)
         template = ions[..., 0]
         momentum_rate = self._rate(args, "ei_momentum_relaxation_rate", t, template)
         temperature_rate = self._rate(args, "ei_temperature_relaxation_rate", t, template)
@@ -120,11 +127,11 @@ class CoupledIonKineticStep:
             pressure_df1, pressure_di1, _diagnostics = self.pressure(flm, ions)
             df1 += pressure_df1
             di1 += pressure_di1
-        midpoint_i = ions + 0.5 * self.dt * di1
+        midpoint_i = ions + 0.5 * source_dt * di1
         initial_velocity = ions[..., 1:4] / ions[..., :1]
         midpoint_velocity = midpoint_i[..., 1:4] / midpoint_i[..., :1]
         half_frame_change = midpoint_velocity - initial_velocity
-        midpoint_f = self.frame_remap(flm + 0.5 * self.dt * df1, half_frame_change)
+        midpoint_f = self.frame_remap(flm + 0.5 * source_dt * df1, half_frame_change)
         df2 = jnp.zeros_like(flm)
         di2 = jnp.zeros_like(ions)
         if self.exchange is not None:
@@ -140,25 +147,33 @@ class CoupledIonKineticStep:
             pressure_df2, pressure_di2, _diagnostics = self.pressure(midpoint_f, midpoint_i)
             df2 += pressure_df2
             di2 += pressure_di2
-        final_i = ions + self.dt * di2
+        final_i = ions + source_dt * di2
         final_velocity = final_i[..., 1:4] / final_i[..., :1]
         base_in_midpoint_frame = self.frame_remap(flm, half_frame_change)
-        final_f_in_midpoint_frame = base_in_midpoint_frame + self.dt * df2
+        final_f_in_midpoint_frame = base_in_midpoint_frame + source_dt * df2
         final_f = self.frame_remap(final_f_in_midpoint_frame, final_velocity - midpoint_velocity)
         return final_f, final_i
 
     def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
         if "ions" not in state:
             raise ValueError("coupled state must contain the ion conserved array under 'ions'")
+        flm = real_to_complex(state["flm"]) if self.electron_step.real_storage else state["flm"]
         midpoint_ions = self._hydro_half_step(state["ions"])
+        flm, midpoint_ions = self._exchange(t + 0.25 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt)
         electron_args = {**({} if args is None else args), **self.ion_kinematics(midpoint_ions)}
-        electron_state = {key: state[key] for key in ("flm", "e", "b")}
+        electron_state = {
+            "flm": complex_to_real(flm) if self.electron_step.real_storage else flm,
+            "e": state["e"],
+            "b": state["b"],
+        }
+        if "current_projection_energy" in state:
+            electron_state["current_projection_energy"] = state["current_projection_energy"]
         advanced_electrons = self.electron_step(t, electron_state, electron_args)
 
         flm = (
             real_to_complex(advanced_electrons["flm"]) if self.electron_step.real_storage else advanced_electrons["flm"]
         )
-        flm, midpoint_ions = self._exchange(t + 0.5 * self.dt, flm, midpoint_ions, args)
+        flm, midpoint_ions = self._exchange(t + 0.75 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt)
         final_ions = self._hydro_half_step(midpoint_ions)
         final_args = {**({} if args is None else args), **self.ion_kinematics(final_ions)}
         hidden_dndz = self.electron_step._hidden_dndz(
@@ -190,11 +205,15 @@ def coupled_invariants(
     ion_charge: float,
     light_speed: float,
     electron_mass: float = 1.0,
+    current_projection_energy: Array | None = None,
 ) -> dict[str, Array]:
     """Return global number, momentum, and energy histories.
 
     ``flm`` is expressed in peculiar velocity. Electron lab-frame momentum and
     kinetic energy therefore include the ion-frame translation terms.
+    ``current_projection_energy`` records work introduced by enforcing the
+    quasistatic Ampere moment; subtracting it exposes the conservative energy
+    defect of the coupled evolution itself.
     Leading batch dimensions (normally time) are preserved.
     """
 
@@ -228,6 +247,11 @@ def coupled_invariants(
         jnp.abs(electron_density - float(ion_charge) * ion_density),
         axis=scalar_axes,
     )
+    total_energy = electron_energy + ion_energy + magnetic_energy
+    if current_projection_energy is None:
+        projection_energy = jnp.zeros_like(total_energy)
+    else:
+        projection_energy = cell_area * jnp.sum(current_projection_energy, axis=scalar_axes)
     return {
         "electron_number": electron_number,
         "ion_number": ion_number,
@@ -236,5 +260,7 @@ def coupled_invariants(
         "electron_energy": electron_energy,
         "ion_energy": ion_energy,
         "magnetic_energy": magnetic_energy,
-        "total_energy": electron_energy + ion_energy + magnetic_energy,
+        "total_energy": total_energy,
+        "current_projection_energy": projection_energy,
+        "accounted_total_energy": total_energy - projection_energy,
     }

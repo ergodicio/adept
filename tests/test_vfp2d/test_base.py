@@ -118,6 +118,8 @@ def test_gate2b_uniform_coupled_run_saves_ion_state_and_invariants():
         "ion_energy",
         "magnetic_energy",
         "total_energy",
+        "current_projection_energy",
+        "accounted_total_energy",
         "div_b_linf",
         "negative_f00_mass",
         "harmonic_free_energy",
