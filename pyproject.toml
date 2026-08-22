@@ -10,7 +10,11 @@ license = "MIT"
 license-files = ["LICENSE*"]
 requires-python = ">=3.11"
 dependencies = [
-    "lineax",
+    # >=0.1.0 required for the batched tridiagonal solve. Earlier lineax dispatches
+    # `lx.Tridiagonal` to a hand-rolled Thomas `jax.lax.scan`, which is serial over the
+    # velocity axis; lineax#152 routes it to `jax.lax.linalg.tridiagonal_solve` instead.
+    # This transitively floors jax>=0.6.1 (see the `jax` pin below).
+    "lineax>=0.1.0",
     "diffrax",
     "matplotlib",
     "scipy",
@@ -30,7 +34,10 @@ dependencies = [
     "tabulate",
     "pydantic",
     "scienceplots",
-    "jax",
+    # >=0.6.1 carries jax#28696, which lowers batched tridiagonal solves to the batched
+    # cuSPARSE gtsv2 routine. Before it, the CUDA path looped over the batch host-side,
+    # so a vmapped solve scaled linearly in the batch dimension.
+    "jax>=0.6.1",
 ]
 
 [project.urls]
