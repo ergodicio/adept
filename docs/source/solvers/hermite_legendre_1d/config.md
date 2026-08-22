@@ -56,14 +56,71 @@ save: ...
 | `v_a`, `v_b` | float | — | Legendre velocity-window bounds (`df` is resolved on `[v_a, v_b]`) |
 | `gamma` | float | `0.5` | Penalty coefficient `γ` for the weak Legendre Dirichlet BC (`df(v_a)=df(v_b)=0`). |
 | `penalty_all_modes` | bool | integrator-dependent | Apply `gamma` to modes 0–2 as well as the high modes. Defaults to `true` for `split` (making the `gamma=0.5` force operator skew-symmetric) and when `enforce_conservation: false`; otherwise defaults to `false`. |
-| `nu_H` | float | `0.0` | Artificial (Lenard-Bernstein) Hermite collision rate `ν_H`. Keep small/zero so `f0` can feed `df` through the last Hermite moment. |
-| `nu_L` | float | `0.0` | Artificial Legendre collision rate `ν_L`. Controls filamentation/recurrence in `df`. |
+| `nu_H` | float | `0.0` | Artificial cubic hypercollision rate `ν_H` for Hermite modes. Keep small/zero so `f0` can feed `df` through the last Hermite moment. |
+| `nu_L` | float | `0.0` | Artificial cubic hypercollision rate `ν_L` for Legendre modes. Controls filamentation/recurrence in `df`. |
+| `collisions` | mapping | `{model: none}` | Optional conservative collision model: `bgk` (linear cost) or `dougherty` (Fokker--Planck, quadratic modal cost). |
 | `enforce_conservation` | bool | `true` | Zero the coupling integrals `J_{Nh,0}=J_{Nh,1}=J_{Nh,2}=0`. With `split`, also apply the minimum-L2 correction to the six low `k=0` Hermite/Legendre coefficients after each step, restoring total mass, momentum, and energy. With other integrators this also defaults the penalty on modes 0–2 to zero. |
 | `field` | bool | `true` | Self-consistent Poisson field. Set `false` for the pure linear-advection test (`φ = 0`); the linear Hermite→Legendre closure flux still acts. |
 
 The artificial collision operator (paper sec 2.5) uses the cubic spectrum
 `col[n] = n(n-1)(n-2) / ((N-1)(N-2)(N-3))`, which is identically zero for
 `n = 0, 1, 2` — so collisions never touch the mass/momentum/energy moments.
+
+### Physical collisions: `physics.collisions`
+
+The cubic `nu_H`/`nu_L` terms are spectral recurrence absorbers, not a physical
+collision model. Physical collisions are configured separately:
+
+```yaml
+physics:
+  collisions:
+    model: dougherty  # or: bgk
+    nu: 0.01
+    # Optional positivity guard for the moment closure:
+    # min_temperature: 1.0e-8
+```
+
+Both models compute density, flow, and temperature from the **total**
+`f = f0 + df` and restore the exact combined density, momentum, and kinetic
+energy at every `x`. Neither uses an auxiliary velocity grid or projects between
+the Hermite and Legendre representations. The collision map is Strang-split
+around the selected Vlasov update.
+
+`bgk` advances
+
+$$
+C_{BGK}[f] = \nu\left(M[n,U,T]-f\right).
+$$
+
+The same-moment Maxwellian is generated directly in the AW-Hermite basis with
+a one-pass recurrence, while the Legendre correction decays by
+`exp(-nu*dt)`. This fixes the thermalized population in the Hermite bulk and
+costs `O(Nx*(Nh+Nl))`. It is the inexpensive physical-ish dissipation and
+regularization option, but it has only one relaxation rate.
+
+`dougherty` advances the nonlinear 1D Fokker--Planck operator
+
+$$
+C_D[f] = \nu\,\partial_v\left[(v-U[f])f + T[f]\,\partial_v f\right]
+$$
+
+With `U[f]` and `T[f]` frozen it uses an exact Ornstein--Uhlenbeck update for
+Hermite plus prediagonalized diffusion and a triangular drift solve for
+Legendre. It costs `O(Nx*(Nh^2+Nl^2))`, but is still inexpensive at the intended
+mode counts: the measured Legendre block at `Nx=32, Nl=171` was `0.45 ms` per
+half-step on the development machine, versus `0.054 ms` for a raw nodal
+tridiagonal solve and `0.15 ms` for the existing Legendre force Cayley update.
+The tridiagonal number excludes the Legendre/nodal transforms it would require.
+
+The Legendre collision flux is zero at `v_a` and `v_b`. This is a controlled
+approximation only while `df` and its physical collisional flux are negligible
+at both boundaries, so `boundary_df_max` remains an important validity gate in
+collisional runs as well as collisionless ones.
+
+This is a physical **1D model operator**, not the full Coulomb/Landau operator.
+Pitch-angle scattering and perpendicular energy diffusion require a 2V/3V
+velocity geometry; use `vlasov-1d2v` with `cylindrical_landau` when those effects
+are required.
 
 **Choosing `Nh` (important).** Keep the Hermite basis *bulk-only* — structure inside
 the Legendre window belongs to `df`. At large `Nh` (≳64) and saturation-scale fields,

@@ -10,6 +10,7 @@ at the top of a configuration file selects which one runs.
 | `vlasov-1d2v` | [Vlasov-1D2V](solvers/vlasov1d2v/overview.md) | 1D2V in cylindrical velocity space with a full-geometry Coulomb collision operator |
 | `vlasov-2d` | [Vlasov-2D](solvers/vlasov2d/overview.md) | 2D2V Vlasov-Maxwell |
 | `vfp-1d` | [VFP-1D](solvers/vfp1d/overview.md) | Vlasov-Fokker-Planck electron transport |
+| `vfp-2d` | [VFP-2D](solvers/vfp2d/overview.md) | 2D3P arbitrary-harmonic Vlasov-Maxwell-Fokker-Planck |
 | `envelope-2d` | [LPSE-2D](solvers/lpse2d/overview.md) | 2D laser-plasma envelope solver |
 | `spectrax-1d` | [Spectrax-1D](solvers/spectrax1d/overview.md) | Hermite-Fourier Vlasov-Maxwell |
 | `hermite-epw-1d` | [Spectrax-1D](solvers/spectrax1d/overview.md) | Spectrax-1D with electron plasma wave diagnostics |
@@ -56,6 +57,13 @@ Vlasov-Fokker-Planck solver for electron transport over collisional time-scales.
 
 - [Overview & Equations](solvers/vfp1d/overview.md)
 - [Configuration Reference](solvers/vfp1d/config.md)
+
+### [VFP-2D](solvers/vfp2d/overview.md)
+
+2D3P Vlasov-Maxwell-Fokker-Planck solver with arbitrary complex spherical harmonics, packed JAX-native storage, and full Tzoufras/KALOS angular couplings.
+
+- [Overview & Equations](solvers/vfp2d/overview.md)
+- [Configuration Reference](solvers/vfp2d/config.md)
 
 ## Spectral Solvers
 

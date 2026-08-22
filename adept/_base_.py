@@ -321,6 +321,9 @@ class ergoExo:
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
 
+        elif cfg["solver"] == "vfp-2d":
+            from adept.vfp2d import BaseVFP2D as this_module
+
         elif cfg["solver"] == "spectrax-1d":
             from adept.spectrax1d import BaseSpectrax1D as this_module
 

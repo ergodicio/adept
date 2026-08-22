@@ -68,6 +68,14 @@ Artificial collision rates `nu_H` and `nu_L` damp the highest modes of each basi
 filamentation, in the same spirit as the hypercollisions in
 [Spectrax-1D](../spectrax1d/overview.md).
 
+For collisional physics, `physics.collisions` offers two total-distribution models:
+`bgk` is a linear-cost relaxation to the same-moment Maxwellian, while `dougherty`
+is the higher-fidelity Fokker--Planck option with quadratic modal cost. Both use
+native Hermite/Legendre updates with no conversion or least-squares projection and
+restore density, momentum, and kinetic energy exactly. These remain 1D model
+operators; full Coulomb pitch-angle and perpendicular-energy scattering require the
+`vlasov-1d2v` solver's cylindrical Landau operator.
+
 ## Initialization
 
 The `initialization.type` key selects the initial condition:
@@ -99,6 +107,7 @@ operators are integrated exactly.
 | `initialization.type` | The dominant "forcing" here is the initial condition: `linear-advection`, `two-stream`, `bump-on-tail`, or `custom`, each with its own parameters. |
 | `drivers.ex` | A prescribed longitudinal field $E_\text{drive}(x,t) = \sum \text{env}(x,t)(\omega_0 + \delta\omega_0) a_0 \sin(k_0 x - (\omega_0+\delta\omega_0)t)$. It enters **only** the $E \cdot \partial_v f$ force term and never the Poisson solve, so the self-consistent field-energy diagnostic excludes the driver — which is what makes a clean Landau-damping measurement possible. |
 | `physics.nu_H`, `nu_L` | Artificial collision rates damping the highest modes of each basis, to control filamentation. |
+| `physics.collisions` | Optional conservative `bgk` or `dougherty` total-distribution collision model. |
 
 ## What Gets Saved
 

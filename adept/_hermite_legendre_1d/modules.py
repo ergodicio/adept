@@ -12,7 +12,8 @@ Normalization (paper sec 2.1): t*wpe, x/lambda_D, v/vthe.
 Config keys in cfg["physics"]:
   Lx (float), alpha (float, Hermite scale), u (float, Hermite shift, default 0),
   v_a, v_b (float, Legendre velocity window), gamma (penalty, default 0.5),
-  nu_H, nu_L (artificial collision rates, default 0), enforce_conservation (bool, default True)
+  nu_H, nu_L (artificial collision rates, default 0), enforce_conservation (bool, default True),
+  collisions ({model: bgk|dougherty, nu: float, ...}, optional conservative physical collisions)
 
 Config keys in cfg["grid"]:
   Nx (int), Nh (int, Hermite modes), Nl (int, Legendre modes), tmax (float), dt (float, default 0.01)
@@ -36,7 +37,9 @@ from adept._hermite_legendre_1d.storage import (
 )
 from adept._hermite_legendre_1d.vector_field import (
     CombinedLinearExp1D,
+    ConservingBGKCollision1D,
     DiagonalCollisionExp1D,
+    DoughertyCollision1D,
     ExternalExDriver,
     HermiteLegendre1DVectorField,
     PoissonSolver1D,
@@ -46,6 +49,7 @@ from adept._hermite_legendre_1d.vector_field import (
     hermite_streaming_matrix,
     legendre_constants,
     legendre_force_operator,
+    mixed_moment_matrix,
     safe_col,
 )
 
@@ -393,6 +397,35 @@ class BaseHermiteLegendre1D(ADEPTModule):
         legendre_coll = DiagonalCollisionExp1D(nu_L, col_l)
         combined_exp = CombinedLinearExp1D(hermite_stream, legendre_stream, hermite_coll, legendre_coll)
 
+        # Optional physical collisions.  nu_H/nu_L above remain independent
+        # truncation-edge absorbers. BGK is the linear-time baseline; Dougherty
+        # keeps the Fokker--Planck velocity-space structure at quadratic modal cost.
+        physical_collision = None
+        collision_cfg = physics.get("collisions", {})
+        collision_model = str(collision_cfg.get("model", "none")).casefold().replace("_", "-")
+        if collision_model not in {"none", "off", "bgk", "dougherty"}:
+            raise ValueError(
+                f"Unknown physics.collisions.model {collision_model!r}; "
+                "supported models are 'none', 'bgk', and 'dougherty'"
+            )
+        collision_nu = float(collision_cfg.get("nu", 0.0))
+        if collision_nu < 0.0:
+            raise ValueError("physics.collisions.nu must be non-negative")
+        if collision_model in {"bgk", "dougherty"} and collision_nu > 0.0:
+            moment_matrix = mixed_moment_matrix(alpha, u, jnp.asarray(leg["T_L"]), width)
+            common = {
+                "nu": collision_nu,
+                "Nh": Nh,
+                "alpha": alpha,
+                "basis_u": u,
+                "moment_matrix": moment_matrix,
+                "min_temperature": float(collision_cfg.get("min_temperature", 1.0e-8)),
+            }
+            if collision_model == "bgk":
+                physical_collision = ConservingBGKCollision1D(**common)
+            else:
+                physical_collision = DoughertyCollision1D(T_L=leg["T_L"], deriv=leg["deriv"], **common)
+
         poisson = PoissonSolver1D(one_over_kx=one_over_kx, kx_sq=kx_sq, alpha=alpha, width=width)
 
         # External longitudinal (Ex) driver, e.g. a resonant EPW kick for Landau damping
@@ -449,6 +482,7 @@ class BaseHermiteLegendre1D(ADEPTModule):
             G_B=G_B,
             T_H=jnp.asarray(T_H) if split else None,
             T_L=jnp.asarray(np.asarray(leg["T_L"])) if split else None,
+            physical_collision=physical_collision,
         )
 
         self.cfg = get_save_quantities(self.cfg)
