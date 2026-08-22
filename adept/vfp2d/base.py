@@ -24,7 +24,9 @@ from adept.vfp1d.fokker_planck import (
 from adept.vfp1d.grid import Grid as CollisionGrid
 from adept.vfp1d.helpers import _initialize_distribution_, calc_logLambda, load_profile_on_grid
 from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
+from adept.vfp2d.coupling import CoupledIonKineticStep, coupled_invariants
 from adept.vfp2d.distributed import create_spatial_sharding
+from adept.vfp2d.exchange import ElectronIonExchange
 from adept.vfp2d.grid import Grid
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
@@ -38,8 +40,11 @@ from adept.vfp2d.harmonics import (
     scalar_velocity_moment,
     tensor_velocity_moment,
 )
+from adept.vfp2d.hydro import IonEuler2D, conserved_to_primitive, primitive_to_conserved
+from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import KineticOhm2D
 from adept.vfp2d.plotting import add_reconnection_diagnostics, reconnection_metrics, save_artifacts
+from adept.vfp2d.pressure import ElectronPressureCoupling
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
@@ -137,7 +142,17 @@ class BaseVFP2D(ADEPTModule):
         field_cfg = cfg.get("terms", {}).get("field_solver", {})
         self.field_mode = field_cfg if isinstance(field_cfg, str) else field_cfg.get("mode", "maxwell")
         self._kinetic_ohm = None
+        self._kinetic_step = None
+        self._coupled_step = None
         self._maxwell = None
+        self.ion_cfg = cfg.get("terms", {}).get("ion_fluid", {})
+        self.ion_fluid_active = bool(self.ion_cfg.get("active", False))
+        self.ion_mass = float(self.ion_cfg.get("mass_ratio", 1836.0))
+        self.ion_gamma = float(self.ion_cfg.get("gamma", 5.0 / 3.0))
+        if self.ion_fluid_active and self.ion_mass <= 0.0:
+            raise ValueError("terms.ion_fluid.mass_ratio must be positive")
+        if self.ion_fluid_active and not cfg.get("density", {}).get("quasineutrality", True):
+            raise ValueError("moving ion-fluid coupling requires density.quasineutrality=true")
         self.spatial_sharding = create_spatial_sharding(g.get("sharding"), self.grid.nx)
 
     def write_units(self) -> dict:
@@ -248,6 +263,37 @@ class BaseVFP2D(ADEPTModule):
         self.state = {"flm": complex_to_real(flm), "e": e, "b": jnp.zeros_like(e)}
         self._density = n_total
         self.args = {"Z": jnp.ones_like(n_total), "ni": n_total / zref}
+        if self.ion_fluid_active:
+            # Tie the ion state to the discretely integrated electron density,
+            # not the analytic profile, so quasineutrality is exact on the
+            # finite radial grid at initialization.
+            ion_density = density(flm, self.layout, self.grid.v, self.grid.dv) / zref
+            self.args["ni"] = ion_density
+            ion_velocity = jnp.broadcast_to(
+                jnp.asarray(self.ion_cfg.get("initial_velocity", [0.0, 0.0, 0.0])),
+                (self.grid.nx, self.grid.ny, 3),
+            )
+            ion_temperature = float(
+                (
+                    UREG.Quantity(self.cfg["units"]["reference ion temperature"])
+                    / UREG.Quantity(self.cfg["units"]["reference electron temperature"])
+                )
+                .to("")
+                .magnitude
+            )
+            ion_temperature *= 0.5 * self.plasma_norm.vth_norm() ** 2
+            ion_primitive = jnp.concatenate(
+                (
+                    (self.ion_mass * ion_density)[..., None],
+                    ion_velocity,
+                    (ion_density * ion_temperature)[..., None],
+                ),
+                axis=-1,
+            )
+            self.state["ions"] = primitive_to_conserved(ion_primitive, self.ion_gamma)
+            self.state["current_projection_energy"] = jnp.zeros_like(ion_density)
+            self.args["ei_momentum_relaxation_rate"] = float(self.ion_cfg.get("momentum_relaxation_rate", 0.0))
+            self.args["ei_temperature_relaxation_rate"] = float(self.ion_cfg.get("temperature_relaxation_rate", 0.0))
         drivers = self.cfg.get("drivers", {})
         maxwellian = drivers.get("maxwellian_heating", {})
         if "D0" in maxwellian:
@@ -356,6 +402,13 @@ class BaseVFP2D(ADEPTModule):
         )
 
     def init_diffeqsolve(self):
+        if self.ion_fluid_active:
+            if self.field_mode != "kinetic-ohm":
+                raise ValueError("moving ion-fluid coupling currently requires terms.field_solver.mode='kinetic-ohm'")
+            if self.spatial_sharding is not None:
+                raise ValueError("moving ion-fluid coupling is not yet compatible with spatial sharding")
+            if self.cfg["grid"].get("relativistic", False):
+                raise ValueError("moving ion-fluid coupling currently requires grid.relativistic=false")
         if self.spatial_sharding is not None:
             self.state = jtu.tree_map(self.spatial_sharding.put, self.state)
             self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
@@ -425,7 +478,8 @@ class BaseVFP2D(ADEPTModule):
                     dimensions=tuple(sorted(dimensions)),
                     mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
                 )
-            step = KineticOhmStep(
+            ion_frame = IonFrameVlasov(vlasov) if self.ion_fluid_active else None
+            kinetic_step = KineticOhmStep(
                 vlasov,
                 maxwell,
                 self._kinetic_ohm,
@@ -440,14 +494,62 @@ class BaseVFP2D(ADEPTModule):
                     == "conservative"
                 ),
                 spatial_filter=spatial_filter,
+                ion_frame=ion_frame,
             )
+            self._kinetic_step = kinetic_step
+            if self.ion_fluid_active:
+                boundaries = tuple(self.ion_cfg.get("boundaries", ["periodic", "periodic"]))
+                if boundaries != ("periodic", "periodic"):
+                    raise ValueError("moving-ion coupling currently requires periodic x/y boundaries")
+                hydro = IonEuler2D(
+                    self.grid.dx,
+                    self.grid.dy,
+                    gamma=self.ion_gamma,
+                    boundaries=boundaries,
+                    limiter_theta=float(self.ion_cfg.get("limiter_theta", 1.5)),
+                    density_floor=float(self.ion_cfg.get("density_floor", 1.0e-12)),
+                    pressure_floor=float(self.ion_cfg.get("pressure_floor", 1.0e-12)),
+                )
+                ion_cfl = float(self.ion_cfg.get("cfl", 0.4))
+                initial_cfl_timestep = float(hydro.cfl_timestep(self.state["ions"], cfl=ion_cfl))
+                if 0.5 * self.grid.dt > initial_cfl_timestep:
+                    raise ValueError(
+                        "the VFP timestep violates the initial ion half-step CFL limit; "
+                        "reduce grid.dt or terms.ion_fluid.cfl"
+                    )
+                exchange = ElectronIonExchange(
+                    self.layout,
+                    self.grid.v,
+                    self.grid.dv,
+                    ion_mass=self.ion_mass,
+                    ion_gamma=self.ion_gamma,
+                )
+                pressure = (
+                    ElectronPressureCoupling(ion_frame)
+                    if bool(self.ion_cfg.get("electron_pressure_feedback", True))
+                    else None
+                )
+                step = CoupledIonKineticStep(
+                    kinetic_step,
+                    hydro,
+                    self.grid.dt,
+                    exchange=exchange,
+                    pressure=pressure,
+                    evolve_ions=not bool(self.ion_cfg.get("frozen", False)),
+                )
+                self._coupled_step = step
+            else:
+                step = kinetic_step
             initial_flm = real_to_complex(self.state["flm"])
-            initial_current = maxwell.c2 * maxwell.curl(self.state["b"])
             initial_hidden_dndz = KineticOhmStep._hidden_dndz(self.tmin, self.args, self.state["b"][..., 0])
-            initial_e, _terms = self._kinetic_ohm(
+            if self.ion_fluid_active:
+                initial_args = {**self.args, **step.ion_kinematics(self.state["ions"])}
+            else:
+                initial_args = self.args
+            initial_e, _terms = kinetic_step.electric_field(
                 initial_flm,
                 self.state["b"],
-                plasma_current=initial_current,
+                initial_args,
                 hidden_dndz=initial_hidden_dndz,
             )
             self.state = {**self.state, "e": initial_e}
@@ -530,20 +632,100 @@ class BaseVFP2D(ADEPTModule):
                 np.asarray(pressure_anisotropy),
             ),
         }
+        if self.ion_fluid_active:
+            ions_jax = result.ys["ions"]
+            ions = np.asarray(ions_jax)
+            ion_primitive = conserved_to_primitive(ions_jax, self.ion_gamma)
+            ion_number_density = ions_jax[..., 0] / self.ion_mass
+            ion_temperature_scale = 0.5 * self.plasma_norm.vth_norm() ** 2
+            ion_temperature = ion_primitive[..., 4] / jnp.maximum(
+                ion_number_density * ion_temperature_scale,
+                jnp.finfo(ion_number_density.dtype).tiny,
+            )
+            invariants = coupled_invariants(
+                flm_jax,
+                ions_jax,
+                result.ys["b"],
+                self.layout,
+                self.grid.v,
+                self.grid.dv,
+                dx=self.grid.dx,
+                dy=self.grid.dy,
+                ion_mass=self.ion_mass,
+                ion_charge=float(self.cfg["units"]["Z"]),
+                light_speed=self.plasma_norm.speed_of_light_norm(),
+                current_projection_energy=result.ys["current_projection_energy"],
+            )
+            f00 = jnp.real(flm_jax[..., self.layout.index(0, 0), :])
+            negative_f00_mass = (
+                4.0
+                * jnp.pi
+                * self.grid.dx
+                * self.grid.dy
+                * jnp.sum(jnp.maximum(-f00, 0.0) * self.grid.v**2, axis=(1, 2, 3))
+                * self.grid.dv
+            )
+            harmonic_free_energy = (
+                self.grid.dx
+                * self.grid.dy
+                * jnp.sum(jnp.abs(flm_jax) ** 2 * self.grid.v**2, axis=(1, 2, 4))
+                * self.grid.dv
+            )
+            div_b_linf = jnp.stack(
+                [
+                    jnp.max(jnp.abs(self._maxwell.ddx(frame[..., 0]) + self._maxwell.ddy(frame[..., 1])))
+                    for frame in result.ys["b"]
+                ]
+            )
+            coords["ion_conserved"] = ["rho", "rho_ux", "rho_uy", "rho_uz", "energy"]
+            data_vars.update(
+                {
+                    "ions": (("t", "x", "y", "ion_conserved"), ions),
+                    "ni": (("t", "x", "y"), np.asarray(ion_number_density)),
+                    "ion_velocity": (("t", "x", "y", "component"), np.asarray(ion_primitive[..., 1:4])),
+                    "ion_pressure": (("t", "x", "y"), np.asarray(ion_primitive[..., 4])),
+                    "ion_temperature": (("t", "x", "y"), np.asarray(ion_temperature)),
+                    "electron_number": (("t",), np.asarray(invariants["electron_number"])),
+                    "ion_number": (("t",), np.asarray(invariants["ion_number"])),
+                    "quasineutrality_linf": (("t",), np.asarray(invariants["quasineutrality_linf"])),
+                    "total_momentum": (("t", "component"), np.asarray(invariants["total_momentum"])),
+                    "electron_energy": (("t",), np.asarray(invariants["electron_energy"])),
+                    "ion_energy": (("t",), np.asarray(invariants["ion_energy"])),
+                    "magnetic_energy": (("t",), np.asarray(invariants["magnetic_energy"])),
+                    "total_energy": (("t",), np.asarray(invariants["total_energy"])),
+                    "current_projection_energy": (
+                        ("t",),
+                        np.asarray(invariants["current_projection_energy"]),
+                    ),
+                    "accounted_total_energy": (("t",), np.asarray(invariants["accounted_total_energy"])),
+                    "div_b_linf": (("t",), np.asarray(div_b_linf)),
+                    "negative_f00_mass": (("t",), np.asarray(negative_f00_mass)),
+                    "harmonic_free_energy": (("t", "harmonic"), np.asarray(harmonic_free_energy)),
+                }
+            )
         if self._kinetic_ohm is not None and self._maxwell is not None:
-            ohm_history = {key: [] for key in ("resistive", "hall", "nernst", "scalar_pressure", "tensor_pressure")}
+            ohm_keys = ["resistive", "hall", "nernst", "scalar_pressure", "tensor_pressure"]
+            if self.ion_fluid_active:
+                ohm_keys.insert(0, "bulk")
+            ohm_history = {key: [] for key in ohm_keys}
             for index, time in enumerate(np.asarray(result.ts)):
                 frame_flm = flm_jax[index]
                 frame_b = result.ys["b"][index]
                 if self.spatial_sharding is not None:
                     frame_flm = self.spatial_sharding.put(frame_flm)
                     frame_b = self.spatial_sharding.put(frame_b)
-                target_current = self._maxwell.c2 * self._maxwell.curl(frame_b)
                 hidden_dndz = KineticOhmStep._hidden_dndz(float(time), self.args, frame_b[..., 0])
-                _electric, terms = self._kinetic_ohm(
+                if self.ion_fluid_active:
+                    frame_args = {
+                        **self.args,
+                        **self._coupled_step.ion_kinematics(result.ys["ions"][index]),
+                    }
+                else:
+                    frame_args = self.args
+                _electric, terms = self._kinetic_step.electric_field(
                     frame_flm,
                     frame_b,
-                    plasma_current=target_current,
+                    frame_args,
                     hidden_dndz=hidden_dndz,
                 )
                 for key, value in terms.items():
@@ -562,6 +744,12 @@ class BaseVFP2D(ADEPTModule):
                 "harmonic_convention": "Tzoufras JCP 230 (2011)",
                 "length_unit_um": float(self.plasma_norm.L0.to("um").magnitude),
                 "time_unit_ps": float(self.plasma_norm.tau.to("ps").magnitude),
+                "ion_fluid_coupling": "gate2a" if self.ion_fluid_active else "stationary",
+                "coupled_energy_convention": (
+                    "electron lab kinetic + ion total + magnetic; algebraic kinetic-Ohm E has no field energy"
+                    if self.ion_fluid_active
+                    else "not applicable"
+                ),
             },
         )
         ds = add_reconnection_diagnostics(ds)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import jax.numpy as jnp
 import jax.tree_util as jtu
 from jax import Array
@@ -20,6 +22,9 @@ from adept.vfp2d.harmonics import (
     real_to_complex,
 )
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
+
+if TYPE_CHECKING:
+    from adept.vfp2d.moving_frame import IonFrameVlasov
 
 
 def _ib_gate(t: float, args: dict | None) -> Array:
@@ -218,6 +223,7 @@ class KineticOhmStep:
         real_storage: bool = False,
         enforce_f00_positivity: bool = False,
         spatial_filter: HouLiFilter2D | None = None,
+        ion_frame: IonFrameVlasov | None = None,
     ):
         self.vlasov = vlasov
         self.maxwell = maxwell
@@ -230,6 +236,7 @@ class KineticOhmStep:
         self.real_storage = bool(real_storage)
         self.enforce_f00_positivity = bool(enforce_f00_positivity)
         self.spatial_filter = spatial_filter
+        self.ion_frame = ion_frame
 
     def _positive_f00(self, flm: Array) -> Array:
         if not self.enforce_f00_positivity:
@@ -265,6 +272,41 @@ class KineticOhmStep:
             self._target_current(magnetic_field),
         )
 
+    def _projection_energy_density(self, before: Array, after: Array, args: dict | None) -> Array:
+        """Return lab-frame electron energy added by a current projection."""
+
+        if self.ion_frame is None:
+            return jnp.zeros(before.shape[:-2], dtype=jnp.real(before).dtype)
+        if not args or "ion_velocity" not in args:
+            raise ValueError("ion-frame current-projection accounting requires ion_velocity in args")
+        ion_velocity = jnp.broadcast_to(jnp.asarray(args["ion_velocity"]), (*before.shape[:-2], 3))
+        momentum_change = current(after - before, self.layout, self.v, self.dv, charge=1.0)
+        return jnp.sum(ion_velocity * momentum_change, axis=-1)
+
+    def electric_field(
+        self,
+        flm: Array,
+        magnetic_field: Array,
+        args: dict | None,
+        *,
+        hidden_dndz: Array,
+    ) -> tuple[Array, dict[str, Array]]:
+        """Return the laboratory electric field and resolved Ohm terms."""
+
+        electric_field, terms = self.ohm(
+            flm,
+            magnetic_field,
+            plasma_current=self._target_current(magnetic_field),
+            hidden_dndz=hidden_dndz,
+        )
+        if self.ion_frame is None:
+            return electric_field, terms
+        if not args or "ion_velocity" not in args:
+            raise ValueError("ion-frame kinetic stepping requires ion_velocity in args")
+        ion_velocity = jnp.broadcast_to(jnp.asarray(args["ion_velocity"]), magnetic_field.shape)
+        bulk = -jnp.cross(ion_velocity, magnetic_field)
+        return electric_field + bulk, {"bulk": bulk, **terms}
+
     @staticmethod
     def _hidden_dndz(t: float, args: dict | None, template: Array) -> Array:
         if not args or "hidden_dndz" not in args:
@@ -281,26 +323,40 @@ class KineticOhmStep:
     def _rates(self, t: float, flm: Array, magnetic_field: Array, args: dict | None) -> tuple[Array, Array, Array]:
         flm = self._project(flm, magnetic_field)
         hidden_dndz = self._hidden_dndz(t, args, magnetic_field[..., 0])
-        electric_field, _terms = self.ohm(
+        electric_field, _terms = self.electric_field(
             flm,
             magnetic_field,
-            plasma_current=self._target_current(magnetic_field),
+            args,
             hidden_dndz=hidden_dndz,
         )
         ne = density(flm, self.layout, self.v, self.dv)
         safe_ne = jnp.maximum(ne, jnp.finfo(ne.dtype).tiny)
         dfdz = hidden_dndz[..., None, None] * flm / safe_ne[..., None, None]
-        return (
-            self.vlasov(flm, electric_field, magnetic_field, dfdz=dfdz),
-            -self.maxwell.curl(electric_field),
-            electric_field,
-        )
+        if self.ion_frame is None:
+            dfdt = self.vlasov(flm, electric_field, magnetic_field, dfdz=dfdz)
+        else:
+            ion_velocity = jnp.broadcast_to(jnp.asarray(args["ion_velocity"]), magnetic_field.shape)
+            velocity_gradient = args.get("ion_velocity_gradient")
+            material_acceleration = args.get("ion_material_acceleration")
+            dfdt = self.ion_frame(
+                flm,
+                electric_field,
+                magnetic_field,
+                ion_velocity,
+                velocity_gradient=velocity_gradient,
+                material_acceleration=material_acceleration,
+                dfdz=dfdz,
+            )
+        return dfdt, -self.maxwell.curl(electric_field), electric_field
 
     def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
         flm = real_to_complex(state["flm"]) if self.real_storage else state["flm"]
         magnetic_field = state["b"]
         flm = self._positive_f00(self._collide(t, flm, args, 0.5 * self.dt))
-        flm = self._project(flm, magnetic_field)
+        projection_energy = jnp.zeros(flm.shape[:-2], dtype=jnp.real(flm).dtype)
+        projected_f = self._project(flm, magnetic_field)
+        projection_energy += self._projection_energy_density(flm, projected_f, args)
+        flm = projected_f
 
         df1, db1, _electric1 = self._rates(t, flm, magnetic_field, args)
         stage2_b = magnetic_field + 0.5 * self.dt * db1
@@ -317,21 +373,28 @@ class KineticOhmStep:
 
         result_b = magnetic_field + (self.dt / 6.0) * (db1 + 2.0 * db2 + 2.0 * db3 + db4)
         result_f = flm + (self.dt / 6.0) * (df1 + 2.0 * df2 + 2.0 * df3 + df4)
-        result_f = self._positive_f00(self._project(result_f, result_b))
+        projected_f = self._project(result_f, result_b)
+        projection_energy += self._projection_energy_density(result_f, projected_f, args)
+        result_f = self._positive_f00(projected_f)
         result_f = self._positive_f00(self._collide(t + self.dt, result_f, args, 0.5 * self.dt))
         # Pseudospectral field products feed unresolved power into the grid
         # scale during long heated runs. Filter only configuration space, once
         # per full step, then restore the f00 and Ampere-moment invariants.
         result_b = jnp.real(self._filter(result_b))
         result_f = self._positive_f00(self._filter(result_f))
-        result_f = self._project(result_f, result_b)
+        projected_f = self._project(result_f, result_b)
+        projection_energy += self._projection_energy_density(result_f, projected_f, args)
+        result_f = projected_f
         hidden_dndz = self._hidden_dndz(t + self.dt, args, result_b[..., 0])
-        result_e, _terms = self.ohm(
+        result_e, _terms = self.electric_field(
             result_f,
             result_b,
-            plasma_current=self._target_current(result_b),
+            args,
             hidden_dndz=hidden_dndz,
         )
         if self.real_storage:
             result_f = complex_to_real(result_f)
-        return {"flm": result_f, "e": result_e, "b": result_b}
+        result = {"flm": result_f, "e": result_e, "b": result_b}
+        if "current_projection_energy" in state:
+            result["current_projection_energy"] = state["current_projection_energy"] + projection_energy
+        return result

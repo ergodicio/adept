@@ -28,7 +28,7 @@ The solver includes:
 - all three components of Maxwell's equations with $\partial_z=0$;
 - a spectral initial Poisson solve;
 - density-conserving implicit isotropic electron-electron collisions;
-- the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$.
+- the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$;
 - spatially shaped inverse-bremsstrahlung or Maxwellian heating;
 - distribution-function diagnostics for the scalar, vector, $f_2$ tensor, and Nernst moments used in kinetic Ohm's law.
 
@@ -52,5 +52,39 @@ on a periodic box.
 - positivity is not guaranteed by a truncated spherical-harmonic expansion.
 - `kinetic-ohm` is inertia-free and uses a current-moment projection; a fully implicit kinetic-current response is not yet implemented;
 - moving-ion fluid coupling is not yet implemented.
+
+## Ion-fluid development phases
+
+The first moving-ion component is available as the standalone `IonEuler2D` finite-volume
+operator. It advances cell averages of
+$(\rho_i,\rho_i u_x,\rho_i u_y,\rho_i u_z,\mathcal E_i)$ with MUSCL reconstruction,
+HLLC fluxes, periodic or outflow boundaries, and SSP-RK2 time stepping. Keeping the
+operator separate from the kinetic split initially makes its conservation and shock
+tests auditable before electron pressure work or collisional exchange are introduced.
+
+Development follows the verification gates in the kinetic-electron / ion-fluid research
+plan:
+
+1. **Gate 0a (implemented):** conservative Euler core; uniform-flow, smooth-advection,
+   contact, conservation, and coordinate-rotated Sod tests.
+2. **Gate 0b:** strong-shock, Sedov, isentropic-vortex, and magnetic-divergence tests,
+   followed by configuration and diagnostic integration.
+3. **Gate 1a (implemented as an equation-level reference):** conservative bulk
+   advection plus compression, shear, and frame acceleration for arbitrary spherical
+   harmonics. See the [ion-frame derivation and tests](moving_frame.md).
+4. **Gate 1b (implemented as a local moment-exchange reference):** finite-mass
+   electron--ion temperature and momentum relaxation with measured, equal-and-opposite
+   ion updates. This verifies the discrete exchange accounting but is not yet a full
+   finite-mass Landau operator.
+5. **Gate 2a (implemented, opt in):** time-centered kinetic-Ohm/ideal-ion production
+   split, ideal bulk magnetic advection, local temperature exchange, coupled invariant
+   histories, and an exact frozen-ion regression limit.
+6. **Gate 2b:** electron-pressure feedback, finite-mass momentum-frame remapping,
+   sparse high-$\ell$ operators, and quantitative Spitzer--Härm/Epperlein--Haines and
+   Biermann convergence tests.
+
+The default production `vfp-2d` time loop still uses stationary ions. Gate 2a moving
+ions must be enabled explicitly and should not yet be used for production parameter
+scans; Gate 0b and Gate 2b remain acceptance boundaries.
 
 See the [configuration reference](config.md), the [Joglekar 2014 reconstruction design](joglekar2014.md), and [`configs/vfp-2d/landau-damping.yaml`](../../../../configs/vfp-2d/landau-damping.yaml).
