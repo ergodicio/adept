@@ -439,7 +439,7 @@ class FLMCollisions:
         b_coeffs = np.stack(
             [
                 (-ll - (il + 1)) / denom_plus,
-                (ll + (il + 2)) / denom_plus,
+                (-ll + (il + 2)) / denom_plus,
                 (ll + (il - 1)) / denom_minus,
                 (ll - il) / denom_minus,
             ]
@@ -503,14 +503,18 @@ class FLMCollisions:
 
         return contrib
 
-    def get_ee_diagonal_contrib(self, f0: Array) -> Array:
+    def get_ee_diagonal_contrib(self, f0: Array, il: int = 1) -> Array:
         """
         Returns the tridiagonal operator for the electron-electron collision operator.
 
         :param f0: the distribution function (nx, nv)
+        :param il: spherical-harmonic order
 
         :return: tuple(diagonal, lower diagonal, upper diagonal) of shape (nx, nv), (nx, nv-1), (nx, nv-1)
         """
+        if not 1 <= il <= self.grid.nl:
+            raise ValueError(f"il must satisfy 1 <= il <= {self.grid.nl}; got {il}")
+
         i0 = self.calc_ros_i(f0, power=0.0)
         jm1 = self.calc_ros_j(f0, power=-1.0)
         i2 = self.calc_ros_i(f0, power=2.0)
@@ -524,10 +528,12 @@ class FLMCollisions:
         diag_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
         upper_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
 
-        diag_angular = -(-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**3.0)
+        tri_i1 = (-i2 + 2 * jm1 + 3 * i0) / 3.0
+        angular_eigenvalue = il * (il + 1) / 2.0
+        diag_angular = -angular_eigenvalue * tri_i1 / v**3.0
 
-        lower_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**2.0) / 2 / dv
-        upper_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**2.0) / 2 / dv
+        lower_ddv = tri_i1 / v**2.0 / 2 / dv
+        upper_ddv = tri_i1 / v**2.0 / 2 / dv
 
         # adding spatial differencing coefficients here
         # 1  -2  1  for d2dv2
@@ -536,9 +542,16 @@ class FLMCollisions:
         diag = diag_term1 - 2.0 * diag_d2dv2 + diag_angular
         upper = upper_d2dv2 + upper_ddv
 
-        diag = diag.at[:, 0].add(lower[:, 0])
+        # Regular spherical harmonics satisfy f_l(-v) = (-1)^l f_l(v).
+        # Fold the origin ghost cell into the first diagonal with that parity.
+        origin_parity = -1.0 if il % 2 else 1.0
+        diag = diag.at[:, 0].add(origin_parity * lower[:, 0])
 
-        return diag, lower[:, :-1], upper[:, 1:]
+        # Lineax stores A[i + 1, i] in lower_diagonal[i] and A[i, i + 1]
+        # in upper_diagonal[i]. The finite-difference coefficients above are
+        # indexed by the matrix row, so the lower diagonal starts at row 1
+        # while the upper diagonal ends at row nv - 2.
+        return diag, lower[:, 1:], upper[:, :-1]
 
     def _solve_one_x_tridiag_(self, diag: Array, upper: Array, lower: Array, f10: Array) -> Array:
         """
@@ -579,7 +592,7 @@ class FLMCollisions:
         ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
 
         if self.full_aniso_ee:
-            ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
+            ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0, il=il)
             pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
             d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
 
