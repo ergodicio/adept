@@ -84,6 +84,29 @@ def test_uniform_collisionless_state_is_stationary_and_uses_real_diffrax_storage
     np.testing.assert_array_equal(dataset.m, [0, 0, 1, 0, 1, 2])
 
 
+def test_stationary_alternative_field_solvers_run_and_save_their_acceptance_diagnostics():
+    cases = (
+        ({"mode": "ampere", "relative_permittivity": 1.0e6}, "ampere"),
+        ({"mode": "oshun-implicit"}, "oshun-implicit"),
+    )
+    for field_solver, expected_mode in cases:
+        cfg = _config(collisions=False)
+        cfg["terms"]["field_solver"] = field_solver
+        module, output = _setup_and_run(cfg)
+        dataset = module.post_process(output, "")["vfp2d"]
+
+        assert module.field_mode == expected_mode
+        assert dataset.attrs["field_solver_mode"] == expected_mode
+        assert jnp.all(jnp.isfinite(output["solver result"].ys["flm"]))
+        assert dataset.ampere_residual.dims == ("t", "x", "y", "component")
+        np.testing.assert_allclose(dataset.ampere_residual_linf, 0.0, atol=2e-12)
+        if expected_mode == "ampere":
+            assert dataset.attrs["relative_permittivity"] == 1.0e6
+            assert "electromagnetic_field_energy" in dataset
+        else:
+            assert "electromagnetic_field_energy" not in dataset
+
+
 def test_gate2b_uniform_coupled_run_saves_ion_state_and_invariants():
     cfg = _config(collisions=False)
     cfg["terms"].update(

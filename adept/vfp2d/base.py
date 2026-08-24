@@ -48,6 +48,7 @@ from adept.vfp2d.pressure import ElectronPressureCoupling
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
+    OSHUNImplicitStep,
     SpectralPoisson2D,
     SplitStepVFP2D,
     VlasovMaxwell,
@@ -139,10 +140,14 @@ class BaseVFP2D(ADEPTModule):
         self.tmax = self.tmin + self.nt * self.grid.dt
         self.max_steps = self.nt + 4
         self._density = None
-        field_cfg = cfg.get("terms", {}).get("field_solver", {})
-        self.field_mode = field_cfg if isinstance(field_cfg, str) else field_cfg.get("mode", "maxwell")
+        field_cfg = cfg.get("terms", {}).get("field_solver", {}) or {}
+        if not isinstance(field_cfg, (str, dict)):
+            raise TypeError("terms.field_solver must be a mode string or mapping")
+        self.field_cfg = {"mode": field_cfg} if isinstance(field_cfg, str) else dict(field_cfg)
+        self.field_mode = self.field_cfg.get("mode", "maxwell")
         self._kinetic_ohm = None
         self._kinetic_step = None
+        self._implicit_current_step = None
         self._coupled_step = None
         self._maxwell = None
         self.ion_cfg = cfg.get("terms", {}).get("ion_fluid", {})
@@ -409,6 +414,8 @@ class BaseVFP2D(ADEPTModule):
                 raise ValueError("moving ion-fluid coupling is not yet compatible with spatial sharding")
             if self.cfg["grid"].get("relativistic", False):
                 raise ValueError("moving ion-fluid coupling currently requires grid.relativistic=false")
+        if self.field_mode == "oshun-implicit" and self.spatial_sharding is not None:
+            raise ValueError("the OSHUN implicit-current solver is not yet compatible with spatial sharding")
         if self.spatial_sharding is not None:
             self.state = jtu.tree_map(self.spatial_sharding.put, self.state)
             self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
@@ -427,17 +434,21 @@ class BaseVFP2D(ADEPTModule):
             dy=partitioned_dy,
             mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
         )
+        if self.field_mode == "ampere" and "relative_permittivity" not in self.field_cfg:
+            raise ValueError("terms.field_solver.relative_permittivity is required for mode='ampere'")
+        relative_permittivity = float(self.field_cfg["relative_permittivity"]) if self.field_mode == "ampere" else 1.0
         maxwell = Maxwell2D(
             self.grid.kx,
             self.grid.ky,
             c=self.plasma_norm.speed_of_light_norm(),
+            relative_permittivity=relative_permittivity,
             dx=partitioned_dx,
             dy=partitioned_dy,
             mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
         )
         self._maxwell = maxwell
         collisions = self._collision_step()
-        if self.field_mode == "maxwell":
+        if self.field_mode in ("maxwell", "ampere"):
             rhs = VlasovMaxwell(
                 vlasov,
                 maxwell,
@@ -448,6 +459,38 @@ class BaseVFP2D(ADEPTModule):
                 streaming_speed=streaming_speed,
             )
             step = SplitStepVFP2D(rhs, self.grid.dt, collisions=collisions)
+        elif self.field_mode == "oshun-implicit":
+            filter_cfg = self.cfg.get("terms", {}).get("hou_li_filter", {})
+            spatial_filter = None
+            if filter_cfg.get("is_on", False):
+                dimensions = set(filter_cfg.get("dimensions", ["x", "y"]))
+                if not dimensions or not dimensions <= {"x", "y"}:
+                    raise ValueError("VFP-2D Hou-Li filtering dimensions must be a nonempty subset of [x, y]")
+                spatial_filter = HouLiFilter2D(
+                    self.grid.nx,
+                    self.grid.ny,
+                    alpha=float(filter_cfg.get("alpha", 36.0)),
+                    order=int(filter_cfg.get("order", 36)),
+                    dimensions=tuple(sorted(dimensions)),
+                )
+            step = OSHUNImplicitStep(
+                vlasov,
+                maxwell,
+                self.layout,
+                self.grid.v,
+                self.grid.dv,
+                self.grid.dt,
+                collisions=collisions,
+                real_storage=True,
+                streaming_speed=streaming_speed,
+                enforce_f00_positivity=(
+                    self.cfg.get("terms", {}).get("fokker_planck", {}).get("f00", {}).get("positivity", "none")
+                    == "conservative"
+                ),
+                spatial_filter=spatial_filter,
+                response_regularization=float(self.field_cfg.get("response_regularization", 0.0)),
+            )
+            self._implicit_current_step = step
         elif self.field_mode == "kinetic-ohm":
             zref = float(self.cfg["units"]["Z"])
             resistivity_coefficient = (
@@ -555,7 +598,8 @@ class BaseVFP2D(ADEPTModule):
             self.state = {**self.state, "e": initial_e}
         else:
             raise ValueError(
-                f"Unsupported VFP-2D field solver mode {self.field_mode!r}; expected 'maxwell' or 'kinetic-ohm'"
+                f"Unsupported VFP-2D field solver mode {self.field_mode!r}; expected "
+                "'maxwell', 'ampere', 'oshun-implicit', or 'kinetic-ohm'"
             )
         save_cfg = self.cfg.get("save", {}).get("t", {})
         save_tmin = normalize(save_cfg.get("tmin", self.tmin), self.plasma_norm, dim="t")
@@ -632,6 +676,59 @@ class BaseVFP2D(ADEPTModule):
                 np.asarray(pressure_anisotropy),
             ),
         }
+        ampere_target_frames = []
+        for frame in result.ys["b"]:
+            ax, ay, az = frame[..., 0], frame[..., 1], frame[..., 2]
+            ampere_target_frames.append(
+                self._maxwell.c2
+                * np.stack(
+                    (
+                        np.asarray(self._maxwell.ddy(az)),
+                        -np.asarray(self._maxwell.ddx(az)),
+                        np.asarray(self._maxwell.ddx(ay)) - np.asarray(self._maxwell.ddy(ax)),
+                    ),
+                    axis=-1,
+                )
+            )
+        ampere_target = np.stack(ampere_target_frames)
+        ampere_residual = np.asarray(plasma_current) - ampere_target
+        magnetic_field_energy = (
+            0.5 * self._maxwell.c2 * self.grid.dx * self.grid.dy * jnp.sum(result.ys["b"] ** 2, axis=(1, 2, 3))
+        )
+        data_vars.update(
+            {
+                "ampere_target_current": (
+                    ("t", "x", "y", "component"),
+                    ampere_target,
+                ),
+                "ampere_residual": (
+                    ("t", "x", "y", "component"),
+                    ampere_residual,
+                ),
+                "ampere_residual_linf": (
+                    ("t",),
+                    np.max(np.abs(ampere_residual), axis=(1, 2, 3)),
+                ),
+                "magnetic_field_energy": (("t",), np.asarray(magnetic_field_energy)),
+            }
+        )
+        if self.field_mode in ("maxwell", "ampere"):
+            electric_field_energy = (
+                0.5
+                * self._maxwell.relative_permittivity
+                * self.grid.dx
+                * self.grid.dy
+                * jnp.sum(result.ys["e"] ** 2, axis=(1, 2, 3))
+            )
+            data_vars.update(
+                {
+                    "electric_field_energy": (("t",), np.asarray(electric_field_energy)),
+                    "electromagnetic_field_energy": (
+                        ("t",),
+                        np.asarray(electric_field_energy + magnetic_field_energy),
+                    ),
+                }
+            )
         if self.ion_fluid_active:
             ions_jax = result.ys["ions"]
             ions = np.asarray(ions_jax)
@@ -744,6 +841,9 @@ class BaseVFP2D(ADEPTModule):
                 "harmonic_convention": "Tzoufras JCP 230 (2011)",
                 "length_unit_um": float(self.plasma_norm.L0.to("um").magnitude),
                 "time_unit_ps": float(self.plasma_norm.tau.to("ps").magnitude),
+                "field_solver_mode": self.field_mode,
+                "relative_permittivity": self._maxwell.relative_permittivity,
+                "ampere_constraint": "current = c^2 curl(magnetic_field); residual is current minus target",
                 "ion_fluid_coupling": "gate2a" if self.ion_fluid_active else "stationary",
                 "coupled_energy_convention": (
                     "electron lab kinetic + ion total + magnetic; algebraic kinetic-Ohm E has no field energy"

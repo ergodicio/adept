@@ -38,6 +38,7 @@ from adept.vfp2d.pressure import ElectronPressureCoupling, electron_pressure_ten
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
+    OSHUNImplicitStep,
     SpectralPoisson2D,
     SplitStepVFP2D,
     VlasovMaxwell,
@@ -58,6 +59,7 @@ __all__ = [
     "KineticOhm2D",
     "KineticOhmStep",
     "Maxwell2D",
+    "OSHUNImplicitStep",
     "SpectralPoisson2D",
     "SplitStepVFP2D",
     "TzoufrasVlasov",

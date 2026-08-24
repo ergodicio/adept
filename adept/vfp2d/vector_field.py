@@ -48,7 +48,14 @@ def _ib_gate(t: float, args: dict | None) -> Array:
 
 
 class Maxwell2D:
-    """Full three-component Maxwell curl operator with ``d/dz = 0``."""
+    """Full three-component Maxwell curl operator with ``d/dz = 0``.
+
+    ``relative_permittivity`` provides the deliberately slowed explicit
+    Ampere response used by transport VFP codes. It divides the complete
+    Ampere residual, preserving the steady constraint
+    ``J = c^2 curl(B)`` while reducing both the light and plasma frequencies
+    by its square root.
+    """
 
     def __init__(
         self,
@@ -56,13 +63,17 @@ class Maxwell2D:
         ky: Array,
         c: float,
         *,
+        relative_permittivity: float = 1.0,
         dx: float | None = None,
         dy: float | None = None,
         mesh: Mesh | None = None,
     ):
+        if relative_permittivity < 1.0:
+            raise ValueError("relative_permittivity must be at least one")
         self.kx = jnp.asarray(kx)
         self.ky = jnp.asarray(ky)
         self.c2 = float(c) ** 2
+        self.relative_permittivity = float(relative_permittivity)
         self.dx = None if dx is None else float(dx)
         self.dy = None if dy is None else float(dy)
         self.mesh = mesh
@@ -82,7 +93,7 @@ class Maxwell2D:
         return jnp.stack((self.ddy(az), -self.ddx(az), self.ddx(ay) - self.ddy(ax)), axis=-1)
 
     def __call__(self, electric_field: Array, magnetic_field: Array, plasma_current: Array) -> tuple[Array, Array]:
-        dedt = self.c2 * self.curl(magnetic_field) - plasma_current
+        dedt = (self.c2 * self.curl(magnetic_field) - plasma_current) / self.relative_permittivity
         dbdt = -self.curl(electric_field)
         return dedt, dbdt
 
@@ -198,6 +209,164 @@ class SplitStepVFP2D:
         k2 = self.rhs(t + 0.5 * self.dt, midpoint, args)
         result = jtu.tree_map(lambda value, slope: value + self.dt * slope, state, k2)
         return self._collide(t + self.dt, result, args, 0.5 * self.dt)
+
+
+class OSHUNImplicitStep:
+    """Quasineutral kinetic-current response following Tzoufras et al. (2013).
+
+    Faraday's law advances ``B`` explicitly from the stored electric field,
+    while displacement current is omitted from Ampere's law. At each cell,
+    three discrete electric-force responses form the matrix ``dJ_i / dE_j``.
+    A batched 3x3 solve then chooses the next electric field whose kinetically
+    updated distribution satisfies ``J = c^2 curl(B)``. Unlike the kinetic-Ohm
+    mode, this changes the complete distribution through the Vlasov force
+    operator and never projects ``f1``. This is an implicit current response,
+    not a fully implicit Maxwell solve.
+    """
+
+    def __init__(
+        self,
+        vlasov: TzoufrasVlasov,
+        maxwell: Maxwell2D,
+        layout: HarmonicLayout,
+        v: Array,
+        dv: float,
+        dt: float,
+        *,
+        collisions: CollisionStep | None = None,
+        real_storage: bool = False,
+        streaming_speed: Array | None = None,
+        enforce_f00_positivity: bool = False,
+        spatial_filter: HouLiFilter2D | None = None,
+        response_regularization: float = 0.0,
+    ):
+        if dt <= 0.0:
+            raise ValueError("dt must be positive")
+        if layout.index(1, 1) < 0:
+            raise ValueError("the OSHUN implicit-current solver requires lmax >= 1 and mmax >= 1")
+        if response_regularization < 0.0:
+            raise ValueError("response_regularization must be nonnegative")
+        self.vlasov = vlasov
+        self.maxwell = maxwell
+        self.layout = layout
+        self.v = jnp.asarray(v)
+        self.dv = float(dv)
+        self.dt = float(dt)
+        self.collisions = collisions
+        self.real_storage = bool(real_storage)
+        self.streaming_speed = self.v if streaming_speed is None else jnp.asarray(streaming_speed)
+        self.enforce_f00_positivity = bool(enforce_f00_positivity)
+        self.spatial_filter = spatial_filter
+        self.response_regularization = float(response_regularization)
+
+    def _positive_f00(self, flm: Array) -> Array:
+        if not self.enforce_f00_positivity:
+            return flm
+        return conservative_f00_positivity(flm, self.layout, self.v, self.dv)
+
+    def _filter(self, value: Array) -> Array:
+        return value if self.spatial_filter is None else self.spatial_filter(value)
+
+    def _collide(self, t: float, flm: Array, args: dict | None, dt: float) -> Array:
+        if self.collisions is None:
+            return flm
+        z = 1.0 if not args else args.get("Z", 1.0)
+        ni = 1.0 if not args else args.get("ni", 1.0)
+        heating = {}
+        if args:
+            for key in ("D0_heating", "ib_vosc2", "ib_Z2ni_w0"):
+                if key in args:
+                    heating[key] = args[key]
+        if "ib_vosc2" in heating:
+            heating["ib_vosc2"] = heating["ib_vosc2"] * _ib_gate(t, args)
+        return self.collisions(flm, Z=z, ni=ni, dt=dt, **heating)
+
+    def _non_electric_rate(self, flm: Array, magnetic_field: Array) -> Array:
+        return self.vlasov.streaming(flm) + self.vlasov.magnetic(flm, magnetic_field)
+
+    def _non_electric_step(self, flm: Array, magnetic_field: Array) -> Array:
+        rate1 = self._non_electric_rate(flm, magnetic_field)
+        midpoint = flm + 0.5 * self.dt * rate1
+        rate2 = self._non_electric_rate(midpoint, magnetic_field)
+        return flm + self.dt * rate2
+
+    def electric_increment(self, flm: Array, electric_field: Array) -> Array:
+        """Return the discrete linear electric-force increment used by the response solve."""
+
+        return self.dt * self.vlasov.electric(flm, electric_field)
+
+    def current_response(self, flm: Array) -> tuple[Array, Array]:
+        """Return ``J(E=0)`` and the local discrete ``dJ_i/dE_j`` tensor."""
+
+        baseline = current(
+            flm,
+            self.layout,
+            self.v,
+            self.dv,
+            streaming_speed=self.streaming_speed,
+        )
+        spatial_shape = flm.shape[:-2]
+        basis = jnp.eye(3, dtype=jnp.real(flm).dtype)
+        columns = []
+        for component in range(3):
+            field = jnp.broadcast_to(basis[component], (*spatial_shape, 3))
+            response_flm = self.electric_increment(flm, field)
+            columns.append(
+                current(
+                    response_flm,
+                    self.layout,
+                    self.v,
+                    self.dv,
+                    streaming_speed=self.streaming_speed,
+                )
+            )
+        return baseline, jnp.stack(columns, axis=-1)
+
+    def solve_electric_field(
+        self,
+        flm: Array,
+        magnetic_field: Array,
+        *,
+        response: tuple[Array, Array] | None = None,
+    ) -> tuple[Array, Array, Array]:
+        """Apply the electric response and return ``(f, E, J-J_Ampere)``."""
+
+        baseline, matrix = self.current_response(flm) if response is None else response
+        target = self.maxwell.c2 * self.maxwell.curl(magnetic_field)
+        if self.response_regularization > 0.0:
+            matrix = matrix + self.response_regularization * jnp.eye(3, dtype=matrix.dtype)
+        electric_field = jnp.linalg.solve(matrix, (target - baseline)[..., None])[..., 0]
+        updated = flm + self.electric_increment(flm, electric_field)
+        residual = (
+            current(
+                updated,
+                self.layout,
+                self.v,
+                self.dv,
+                streaming_speed=self.streaming_speed,
+            )
+            - target
+        )
+        return updated, electric_field, residual
+
+    def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
+        flm = real_to_complex(state["flm"]) if self.real_storage else state["flm"]
+        old_electric = state["e"]
+        old_magnetic = state["b"]
+
+        flm = self._positive_f00(self._collide(t, flm, args, 0.5 * self.dt))
+        magnetic_field = old_magnetic - self.dt * self.maxwell.curl(old_electric)
+        magnetic_field = jnp.real(self._filter(magnetic_field))
+        midpoint_magnetic = 0.5 * (old_magnetic + magnetic_field)
+        flm = self._positive_f00(self._non_electric_step(flm, midpoint_magnetic))
+        flm = self._positive_f00(self._collide(t + self.dt, flm, args, 0.5 * self.dt))
+        flm = self._positive_f00(self._filter(flm))
+
+        result_f, electric_field, _residual = self.solve_electric_field(flm, magnetic_field)
+        result_f = self._positive_f00(result_f)
+        if self.real_storage:
+            result_f = complex_to_real(result_f)
+        return {"flm": result_f, "e": electric_field, "b": magnetic_field}
 
 
 class KineticOhmStep:
