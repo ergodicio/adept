@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NoiseModel(BaseModel):
@@ -13,15 +13,23 @@ class NoiseModel(BaseModel):
 
 class DensityModel(BaseModel):
     """
-    Density profile for the simulation
+    Density profile for the simulation. Which keys apply depends on ``basis``
+    (see ``helpers.get_density_profile``):
 
+    - ``uniform``: ``val`` (fraction of critical). Omitting it silently defaults
+      to 1.0 -- at critical density -- so set it explicitly.
+    - ``linear``: ``min``, ``max``, and ``gradient scale length`` (note the YAML
+      key is spelled with spaces).
     """
 
+    model_config = ConfigDict(populate_by_name=True)
+
     basis: str
-    gradient_scale_length: str
-    max: float
-    min: float
-    noise: NoiseModel
+    val: float | None = None
+    gradient_scale_length: str | None = Field(default=None, alias="gradient scale length")
+    max: float | None = None
+    min: float | None = None
+    noise: NoiseModel | None = None
 
 
 class EnvelopeModel(BaseModel):
@@ -81,6 +89,23 @@ class E0DriverModel(BaseModel):
     speckle: SpeckleModel | None = None
 
 
+class E1DriverModel(BaseModel):
+    """
+    Raman seed driver.
+
+    Injects a counter-propagating (-x) scattered-light wave at x = xmax - offset
+    with the given (vacuum) intensity. Only used when terms.epw.source.srs is on.
+    """
+
+    intensity: str  # e.g. "1.0e+12W/cm^2"
+    delta_omega: float = 0.0  # seed frequency shift relative to w1 = w0 - wp0 (fraction of w1)
+    turn_on_time: str = "10fs"
+    # distance of the injector from the right boundary; defaults to 1.6 * boundary_width,
+    # which places it just inside the absorbing boundary's tanh skirt
+    offset: str | None = None
+    yw: str | None = None  # super-Gaussian width of the seed in y; omit for uniform in y
+
+
 class DriversModel(BaseModel):
     """
     Define the drivers for the simulation
@@ -88,6 +113,7 @@ class DriversModel(BaseModel):
     """
 
     E0: E0DriverModel
+    E1: E1DriverModel | None = None
 
 
 class GridModel(BaseModel):
@@ -106,6 +132,9 @@ class GridModel(BaseModel):
     tmin: str
     ymax: str
     ymin: str
+    # number of Raman-light sub-steps per EPW step (SRS only); computed from the
+    # stability limit if omitted
+    light_substeps: int | None = None
 
 
 class TimeSaveModel(BaseModel):
@@ -140,7 +169,10 @@ class DampingModel(BaseModel):
 
 class SourceModel(BaseModel):
     noise: bool
+    noise_amplitude: float = 1e-10
+    noise_seed: int | None = None
     tpd: bool
+    srs: bool = False
 
 
 class EPWModel(BaseModel):
@@ -151,8 +183,38 @@ class EPWModel(BaseModel):
     source: SourceModel
 
 
+class LightModel(BaseModel):
+    """Light-wave evolution options. pump_depletion evolves E0 with the FD envelope
+    solver (boundary injector + EPW coupling) instead of prescribing it analytically."""
+
+    pump_depletion: bool = False
+
+
+class HPEModel(BaseModel):
+    """Hybrid particle evolution (Follett et al. 2017): test electrons pushed in the
+    de-enveloped EPW field feed an evolving Landau damping rate back to the wave
+    solver (kinetic inflation + hot electrons). Quasi-1D (ny == 1) only, and
+    requires terms.epw.damping.landau: true."""
+
+    active: bool = False
+    n_particles: int = 500000
+    v_min: float = 2.5  # tail cutoff, units of vte
+    v_max: float = 1.0  # histogram half-span, units of c
+    v_blend_buffer: float = 0.5  # analytic/HPE blend buffer above v_min, units of vte
+    nv: int = 512  # velocity bins spanning (-v_max, v_max)
+    gather_refine: int = 4  # spectral upsampling of Ex before the particle gather
+    substep_courant: float = 0.05  # wp0 * particle substep
+    tau_damping: str = "100fs"  # EMA window for the velocity histogram
+    t_start: str = "0ps"  # push/feedback disabled before this time
+    feedback: bool = True  # False = control run: particles evolve, damping stays analytic
+    seed: int = 42
+    omega_res: str = "bohm_gross"  # resonance v_phi convention: "bohm_gross" or "wp0"
+
+
 class TermsModel(BaseModel):
     epw: EPWModel
+    light: LightModel = LightModel()
+    hpe: HPEModel | None = None
     zero_mask: bool
 
 

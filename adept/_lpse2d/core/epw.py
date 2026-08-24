@@ -6,277 +6,28 @@ from jax import numpy as jnp
 from adept._lpse2d.core.driver import Driver
 
 
-class SpectralPotential:
-    def __init__(self, cfg) -> None:
-        self.background_density = cfg["grid"]["background_density"]
-        self.vte_sq = cfg["units"]["derived"]["vte_sq"]
-        self.kx = cfg["grid"]["kx"]
-        self.ky = cfg["grid"]["ky"]
-        self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
-        self.wp0 = cfg["units"]["derived"]["wp0"]
-        self.e = cfg["units"]["derived"]["e"]
-        self.me = cfg["units"]["derived"]["me"]
-        self.w0 = cfg["units"]["derived"]["w0"]
-        self.envelope_density = cfg["units"]["envelope density"]
-        self.one_over_ksq = cfg["grid"]["one_over_ksq"]
-        self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
-        self.dt = cfg["grid"]["dt"]
-        self.cfg = cfg
-        # self.amp_key, self.phase_key = jax.random.split(jax.random.PRNGKey(np.random.randint(2**20)), 2)
-        self.phase_seed = np.random.randint(2**20)
-        self.low_pass_filter = cfg["grid"]["low_pass_filter_grid"]
-        self.zero_mask = cfg["grid"]["zero_mask"]
-        self.nx = cfg["grid"]["nx"]
-        self.ny = cfg["grid"]["ny"]
-        self.driver = Driver(cfg)
-        self.tpd_const = 1j * self.e / (8 * self.wp0 * self.me)
-        self.nu_coll = cfg["units"]["derived"]["nu_coll"]
-        self.nx_pad = self.nx * 2  # + (self.nx + 1) // 2
-        self.ny_pad = self.ny * 2  # + (self.ny + 1) // 2
-        self.pad_x = self._compute_pad_width(self.nx_pad, self.nx)
-        self.pad_y = self._compute_pad_width(self.ny_pad, self.ny)
-        self.trunc_x_start = self.pad_x[0]
-        self.trunc_x_end = self.trunc_x_start + self.nx
-        self.trunc_y_start = self.pad_y[0]
-        self.trunc_y_end = self.trunc_y_start + self.ny
-        self.pad_norm = (self.nx_pad / self.nx) * (self.ny_pad / self.ny)
+def landau_damping_rate(k_sq: Array, wp0: float, vte_sq: float, zero_mask: Array) -> Array:
+    """
+    Landau damping rate for each k mode (amplitude rate, 1/ps).
 
-        if cfg["terms"]["epw"]["source"]["srs"]:
-            self.w1 = cfg["units"]["derived"]["w1"]
-            max_source_k_multiplier = 1.2
-            max_k0 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"])
-            max_k1 = max_source_k_multiplier * np.sqrt(1 - cfg["density"]["min"] * (self.w0**2) / (self.w1**2))
-            is_outside_max_k0 = self.k_sq * (1 / self.w0**2) > max_k0**2
-            is_outside_max_k1 = self.k_sq * (1 / self.w1**2) > max_k1**2
-            self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
-            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+    Matches MATLAB line 913:
+    gammaLandauEpw = sqrt(pi/8) * (1 + 3/2*k^2*vte^2/wp^2) * wp^4/(k^3*vte^3) * exp(...)
 
-            self.srs_const = self.e * self.wp0 / (4 * self.me * self.w0 * self.w1)
+    Module-level so the solver (`SpectralEPWSolver`) and the dissipation
+    diagnostic (`helpers.get_default_save_func`) use the *same* rates and can
+    never drift apart.
+    """
+    k_sq_safe = jnp.where(k_sq > 0, k_sq, 1.0)
 
-    def calc_fields_from_phi(self, phi: Array) -> tuple[Array, Array]:
-        """
-        Calculates ex(x, y) and ey(x, y) from phi.
+    damping = (
+        jnp.sqrt(np.pi / 8.0)
+        * (1.0 + 1.5 * k_sq * vte_sq / wp0**2)
+        * wp0**4
+        / (k_sq_safe**1.5 * vte_sq**1.5)
+        * jnp.exp(-(1.5 + 0.5 * wp0**2 / (k_sq_safe * vte_sq)))
+    )
 
-        Args:
-            phi (Array): phi(x, y)
-
-        Returns:
-            A Tuple containing ex(x, y) and ey(x, y)
-        """
-
-        phi_k = jnp.fft.fft2(phi)
-        return self.calc_fields_from_phi_k(phi_k)
-
-    def calc_fields_from_phi_k(self, phi_k: Array) -> tuple[Array, Array]:
-        """
-        Calculates ex(x, y) and ey(x, y) from phi_k.
-
-        Args:
-            phi (Array): phi(x, y)
-
-        Returns:
-            A Tuple containing ex(x, y) and ey(x, y)
-        """
-
-        # Filter is applied before calling this function
-        phi_k = phi_k * self.zero_mask
-        ex_k = -1j * self.kx[:, None] * phi_k
-        ey_k = -1j * self.ky[None, :] * phi_k
-        return jnp.fft.ifft2(ex_k), jnp.fft.ifft2(ey_k)
-
-    def calc_phi_from_fields(self, ex: Array, ey: Array) -> Array:
-        """
-        calculates phi from ex and ey
-
-        Args:
-            ex (Array): ex(x, y)
-            ey (Array): ey(x, y)
-
-        Returns:
-            Array: phi(x, y)
-
-        """
-
-        phi_k = self.calc_phi_k_from_fields(ex, ey)
-        # phi_k is already filtered by calc_phi_k_from_fields
-        phi = jnp.fft.ifft2(phi_k)
-
-        return phi
-
-    def calc_phi_k_from_fields(self, ex: Array, ey: Array) -> Array:
-        """
-        calculates phi_k from ex and ey
-
-        Args:
-            ex (Array): ex(x, y)
-            ey (Array): ey(x, y)
-
-        Returns:
-            Array: phi_k(x, y)
-        """
-
-        ex_k = jnp.fft.fft2(ex)
-        ey_k = jnp.fft.fft2(ey)
-        divE_k = 1j * (self.kx[:, None] * ex_k + self.ky[None, :] * ey_k) * self.low_pass_filter
-
-        phi_k = divE_k * self.one_over_ksq
-        return phi_k * self.zero_mask
-
-    @staticmethod
-    def _compute_pad_width(target: int, original: int) -> tuple[int, int]:
-        total = max(target - original, 0)
-        before = total // 2
-        after = total - before
-        return before, after
-
-    def _fft_pad(self, arr_k: Array) -> Array:
-        if self.nx_pad == self.nx and self.ny_pad == self.ny:
-            return arr_k
-        arr_shift = jnp.fft.fftshift(arr_k)
-        padded_shift = jnp.pad(
-            arr_shift,
-            ((self.pad_x[0], self.pad_x[1]), (self.pad_y[0], self.pad_y[1])),
-        )
-        return jnp.fft.ifftshift(padded_shift)
-
-    def _fft_truncate(self, arr_k_pad: Array) -> Array:
-        if self.nx_pad == self.nx and self.ny_pad == self.ny:
-            return arr_k_pad
-        arr_shift = jnp.fft.fftshift(arr_k_pad)
-        truncated_shift = arr_shift[self.trunc_x_start : self.trunc_x_end, self.trunc_y_start : self.trunc_y_end]
-        return jnp.fft.ifftshift(truncated_shift)
-
-    def _dealias_fft_product(self, first: Array, second: Array) -> Array:
-        first_k = jnp.fft.fft2(first)
-        second_k = jnp.fft.fft2(second)
-        first_k_pad = self._fft_pad(first_k)
-        second_k_pad = self._fft_pad(second_k)
-        first_pad = jnp.fft.ifft2(first_k_pad)
-        second_pad = jnp.fft.ifft2(second_k_pad)
-        prod_pad = first_pad * second_pad
-        prod_k_pad = jnp.fft.fft2(prod_pad) * self.pad_norm
-        return self._fft_truncate(prod_k_pad)
-
-    def tpd(self, t: float, phi_k: Array, ey: Array, args: dict) -> Array:
-        """
-        Calculates the two plasmon decay term
-
-        Args:
-            t (float): time
-            y (Array): phi(x, y)
-            args (Dict): dictionary containing E0
-
-        Returns:
-            Array: dphi(x, y)
-
-        """
-        E0 = args["E0"]
-        E0_y = E0[..., 1]
-        filtered_E0y = jnp.fft.ifft2(jnp.fft.fft2(E0_y) * self.low_pass_filter)
-        tpd1 = self._dealias_fft_product(filtered_E0y, jnp.conj(ey))
-
-        divE_true = jnp.fft.ifft2(self.k_sq * phi_k)
-        E0_divE_k = self._dealias_fft_product(filtered_E0y, jnp.conj(divE_true))
-        tpd2 = 1j * self.ky[None, :] * self.one_over_ksq * E0_divE_k
-
-        total_tpd = self.tpd_const * jnp.exp(-1j * (self.w0 - 2 * self.wp0) * t) * (tpd1 + tpd2)
-
-        # Source term will be filtered when added to phi_k
-        total_tpd *= self.zero_mask
-
-        return total_tpd
-
-    def eval_E0_dot_E1(self, t, y, args):
-        E0 = args["E0"]
-        E1 = y["E1"]
-
-        # filter E0 and E1
-        E0_filtered = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
-        E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
-        E0_x_source, E0_y_source = E0_filtered[..., 0], E0_filtered[..., 1]
-        E1_x_source, E1_y_source = E1_filtered[..., 0], E1_filtered[..., 1]
-
-        return E0_x_source * jnp.conj(E1_x_source) + E0_y_source * jnp.conj(E1_y_source)
-
-    def srs(self, t: float, y, args: dict) -> Array:
-        E0_dot_E1 = self.eval_E0_dot_E1(t, y, args)
-        return jnp.fft.fft2(1j * self.srs_const * self.background_density / self.envelope_density * E0_dot_E1)
-
-    def get_noise(self, t):
-        random_amps = 1.0e-12  # jax.random.uniform(self.amp_key, (self.nx, self.ny))
-        phase_key = jax.random.PRNGKey((t / self.dt).astype(int) + self.phase_seed)
-        random_phases = 2 * np.pi * jax.random.uniform(phase_key, (self.nx, self.ny))
-        return random_amps * jnp.exp(1j * random_phases) * self.zero_mask
-
-    def landau_damping(self, phi_k: Array):
-        gammaLandauEpw = (
-            jnp.sqrt(np.pi / 8)
-            * (1.0 + 1.5 * self.k_sq * (self.vte_sq / self.wp0**2))
-            * self.wp0**4
-            * self.one_over_ksq**1.5
-            / self.vte_sq**1.5
-            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 * self.one_over_ksq / self.vte_sq))
-        ) * self.zero_mask
-
-        # Filter is applied after this function returns
-        return phi_k * jnp.exp(-(gammaLandauEpw + self.nu_coll) * self.dt) * self.zero_mask
-
-    def __call__(self, t: float, y: dict[str, Array], args: dict) -> Array:
-        phi_k = y["epw"]
-        E0 = y["E0"]
-        background_density = self.background_density
-
-        # linear propagation - thermal dispersion
-        phi_k = phi_k * jnp.exp(-1j * 1.5 * self.vte_sq / self.wp0 * self.k_sq * self.dt)
-        # Landau damping
-        phi_k = self.landau_damping(phi_k)
-        # Apply filter AFTER thermal and damping (matching MATLAB line 1976)
-        phi_k = phi_k * self.low_pass_filter
-
-        if self.cfg["terms"]["epw"]["source"]["noise"]:
-            phi_k += self.dt * self.get_noise(t)
-
-        ex, ey = self.calc_fields_from_phi_k(phi_k)
-
-        if self.cfg["terms"]["epw"]["source"]["tpd"]:
-            tpd_term = self.tpd(t, phi_k, ey, args={"E0": E0})
-
-        if self.cfg["terms"]["epw"]["source"]["srs"]:
-            srs_term = self.srs(t, y, args={"E0": E0})
-
-        # density gradient
-        if self.cfg["terms"]["epw"]["density_gradient"]:
-            background_density_perturbation = background_density / self.envelope_density - 1.0
-            phase = jnp.exp(-1j * self.wp0 / 2.0 * background_density_perturbation * self.dt)
-            ex = ex * phase
-            ey = ey * phase
-
-        ex = ex * self.boundary_envelope
-        ey = ey * self.boundary_envelope
-        phi_k = self.calc_phi_k_from_fields(ex, ey)
-
-        # tpd
-        if self.cfg["terms"]["epw"]["source"]["tpd"]:
-            phi_k += self.dt * tpd_term
-
-        if self.cfg["terms"]["epw"]["source"]["srs"]:
-            phi_k += self.dt * srs_term
-
-        # add hyperviscosity in k space for phi
-        if self.cfg["terms"]["epw"].get("hyperviscosity", {}).get("coeff", 0) > 0:
-            if self.cfg["terms"]["epw"]["hyperviscosity"]["order"] % 2 != 0:
-                raise ValueError("Hyperviscosity order must be even")
-            # hypervisc_coeff * dt < coeff
-            # hypervisc_coeff = coeff / (kmax**order * dt)
-            coeff = self.cfg["terms"]["epw"]["hyperviscosity"]["coeff"]
-            order = self.cfg["terms"]["epw"]["hyperviscosity"]["order"]
-            # kmax = kmax * lowpass_filter
-            kmax = self.cfg["grid"]["low_pass_filter"] * jnp.sqrt(jnp.max(self.k_sq))
-            hypervisc_coeff = coeff / kmax**order / self.dt
-
-            phi_k = phi_k * jnp.exp(-hypervisc_coeff * (self.k_sq ** (order / 2.0)) * self.dt)
-
-        return phi_k
+    return damping * zero_mask
 
 
 class SpectralEPWSolver:
@@ -346,13 +97,56 @@ class SpectralEPWSolver:
         if self.tpd_enabled:
             self.tpd_prefactor = 1j * self.e / (8.0 * self.wp0 * self.me)
 
-        # Noise parameters
+        # SRS parameters
+        self.srs_enabled = cfg["terms"]["epw"]["source"].get("srs", False)
+        if self.srs_enabled:
+            self.w1 = cfg["units"]["derived"]["w1"]
+            self.c = cfg["units"]["derived"]["c"]
+            # MATLAB line 2073: srsSourceTerm = 1i * e * wp0/(4*me*w0*w1) .* (1 + dn) .* E0_dot_E1
+            self.srs_prefactor = 1j * self.e * self.wp0 / (4.0 * self.me * self.w0 * self.w1)
+            # high-k filter for the light fields entering the source product
+            # (MATLAB isSuppressHighKSource, lines 637-645): only wavevectors near the
+            # light-wave envelope produce physically-realistic SRS
+            max_source_k_multiplier = 1.2
+            n_min = float(np.min(np.array(self.background_density)))
+            max_k1_sq = max_source_k_multiplier**2 * max(1.0 - n_min * self.w0**2 / self.w1**2, 0.0)
+            is_outside_max_k1 = self.k_sq * (self.c / self.w1) ** 2 > max_k1_sq
+            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+            # when the pump is evolved (terms.light.pump_depletion) it is filtered too,
+            # exactly as MATLAB's evaluate_E0_dot_E1 (lines 2302-2354) does on the
+            # dynamic-laser path and skips on the static path (line 2307-2308)
+            self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
+            if self.pump_depletion:
+                max_k0_sq = max_source_k_multiplier**2 * max(1.0 - n_min, 0.0)
+                is_outside_max_k0 = self.k_sq * (self.c / self.w0) ** 2 > max_k0_sq
+                self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
+
+        # Noise parameters. Amplitude default matches MATLAB noiseAmp
+        # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
+        # the cfg, so MLflow logs it) in helpers.get_derived_quantities; the fallback
+        # here only fires if that step was skipped.
         self.noise_enabled = cfg["terms"]["epw"]["source"]["noise"]
-        self.noise_amplitude = 1e-10  # matches MATLAB noiseAmp (m201805_matlabLpse_v11.m:49)
-        self.noise_seed = np.random.randint(2**20)
+        self.noise_amplitude = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
+        cfg_seed = cfg["terms"]["epw"]["source"].get("noise_seed")
+        self.noise_seed = int(cfg_seed) if cfg_seed is not None else np.random.randint(2**20)
+        # per-step keys are derived with fold_in rather than PRNGKey(step + seed):
+        # additive seeds made nearby seeds share the same noise trajectory merely
+        # time-shifted by a few steps, so a seed-sweep ensemble was one realization.
+        # fold_in streams are still fully deterministic per (seed, step).
+        self.noise_key = jax.random.PRNGKey(self.noise_seed)
 
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
+
+        # Landau damping flag (previously ignored -- damping was unconditionally on)
+        self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
+        # HPE (Follett-style particle feedback): the damping rate is read from the
+        # state (y["gamma_L"], written by HybridParticleEvolution) instead of the
+        # static analytic array
+        self.hpe_enabled = bool(cfg["terms"].get("hpe", {}).get("active", False))
+
+        # direct EPW driver (drivers.E2), used by the validation/test configs
+        self.driver = Driver(cfg)
 
         # Store config for reference
         self.cfg = cfg
@@ -367,21 +161,7 @@ class SpectralEPWSolver:
         Returns:
             Landau damping rate array (shape: nx, ny)
         """
-        # Avoid issues at k=0
-        k_sq_safe = jnp.where(self.k_sq > 0, self.k_sq, 1.0)
-
-        damping = (
-            jnp.sqrt(np.pi / 8.0)
-            * (1.0 + 1.5 * self.k_sq * self.vte_sq / self.wp0**2)
-            * self.wp0**4
-            / (k_sq_safe**1.5 * self.vte_sq**1.5)
-            * jnp.exp(-(1.5 + 0.5 * self.wp0**2 / (k_sq_safe * self.vte_sq)))
-        )
-
-        # Zero out k=0 mode
-        damping = damping * self.zero_mask
-
-        return damping
+        return landau_damping_rate(self.k_sq, self.wp0, self.vte_sq, self.zero_mask)
 
     def phi_k_to_e_fields(self, phi_k: Array) -> tuple[Array, Array]:
         """
@@ -504,6 +284,35 @@ class SpectralEPWSolver:
 
         return source
 
+    def calc_srs_source(self, E0: Array, E1: Array) -> Array:
+        """
+        Calculate the SRS source term for the EPW potential.
+
+        Matches MATLAB lines 2052-2078 for isSolveForPotential=true:
+          E0_dot_E1 = E0 . conj(E1)  (E1 high-k filtered first, evaluate_E0_dot_E1 lines 2302-2354)
+          srsSource = 1i * e * wp0/(4*me*w0*w1) * (1 + dn) * E0_dot_E1
+          srsSource -> k-space
+
+        The pump is static/prescribed here, so only E1 is filtered (in MATLAB the E0
+        filter is skipped on the static-laser path, line 2308).
+
+        Args:
+            E0: Pump field (shape: nx, ny, 2)
+            E1: Raman field (shape: nx, ny, 2)
+
+        Returns:
+            SRS source term in k-space
+        """
+        E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
+        if self.pump_depletion:
+            E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
+        E0_dot_E1 = E0[..., 0] * jnp.conj(E1_filtered[..., 0]) + E0[..., 1] * jnp.conj(E1_filtered[..., 1])
+
+        # (1 + backgroundDensityPerturbation) = n / n_envelope
+        source = self.srs_prefactor * self.background_density / self.envelope_density * E0_dot_E1
+
+        return jnp.fft.fft2(source)
+
     def get_noise(self, t: float) -> Array:
         """
         Generate random noise for plasma waves.
@@ -514,9 +323,10 @@ class SpectralEPWSolver:
         Returns:
             Random noise in k-space
         """
-        # Use time-dependent seed for reproducibility
-        seed = (t / self.dt).astype(int) + self.noise_seed
-        key = jax.random.PRNGKey(seed)
+        # Per-step key: deterministic in (noise_seed, step), and statistically
+        # independent across both steps and seeds (see __init__)
+        step = (t / self.dt).astype(int)
+        key = jax.random.fold_in(self.noise_key, step)
 
         # Random phases
         phases = 2.0 * np.pi * jax.random.uniform(key, (self.nx, self.ny))
@@ -573,7 +383,12 @@ class SpectralEPWSolver:
         phi_k = phi_k * thermal_phase
 
         # MATLAB line 1981: divE = divE .* exp(-(gammaLandau + nu_coll) * DT)
-        gamma_landau = self.calc_landau_damping_rate()
+        if self.hpe_enabled:
+            gamma_landau = y["gamma_L"]
+        elif self.landau_enabled:
+            gamma_landau = self.calc_landau_damping_rate()
+        else:
+            gamma_landau = 0.0
         damping_factor = jnp.exp(-(gamma_landau + self.nu_coll) * self.dt)
         phi_k = phi_k * damping_factor
 
@@ -605,6 +420,11 @@ class SpectralEPWSolver:
             # MATLAB lines 1996-2035
             E0_y = E0[..., 1]  # y-component of laser field
             tpd_source = self.calc_tpd_source(t, phi_k, ey, E0_y)
+
+        srs_source = None
+        if self.srs_enabled:
+            # MATLAB lines 2052-2078
+            srs_source = self.calc_srs_source(E0, y["E1"])
 
         # ========================================================================
         # STEP 7: Apply density gradient to E fields (in REAL space)
@@ -640,5 +460,12 @@ class SpectralEPWSolver:
         if self.tpd_enabled and tpd_source is not None:
             # MATLAB line 2109: divE = divE + tpdSourceTerm * DT
             phi_k = phi_k + self.dt * tpd_source
+
+        # ========================================================================
+        # STEP 11: Add SRS source
+        # ========================================================================
+        if self.srs_enabled and srs_source is not None:
+            # MATLAB line 2113: divE = divE + srsSourceTerm * DT
+            phi_k = phi_k + self.dt * srs_source
 
         return phi_k

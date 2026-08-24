@@ -165,6 +165,14 @@ def write_units(cfg: dict) -> dict:
         "lambda_D": ld,
         "nu_coll": nu_coll,
         "E0_source": E0_source,
+        # Conversions to OSIRIS code units, for one-to-one metric comparison with PIC runs:
+        # multiply an E-field (code units) by e_norm to get it in me*c*w0/e units, and a
+        # length (um) by x_norm to get it in c/w0. I0_code is the nominal incident pump
+        # flux in this code's units (c * |E_envelope|^2); the WKB-swelled pump satisfies
+        # sqrt(eps) * |E0_local|^2 = E0_source^2 so this holds at any density below nc.
+        "e_norm": e / (me * c * w0),
+        "x_norm": w0 / c,
+        "I0_code": c * E0_source**2,
         "timeScale": timeScale,
         "spatialScale": spatialScale,
         "velocityScale": velocityScale,
@@ -205,6 +213,29 @@ def get_derived_quantities(cfg: dict) -> dict:
     :return:
     """
     cfg_grid = cfg["grid"]
+
+    # Explicit nulls mean "absent". The datamodel advertises `X | None = None` for these
+    # fields, so normalize them here -- before anything reads them -- to keep every
+    # spelling of "not set" (missing key, or `key: null` in the YAML) equivalent.
+    for term_key in ("hpe", "light"):
+        if term_key in cfg["terms"] and cfg["terms"][term_key] is None:
+            cfg["terms"][term_key] = {}
+    if "light_substeps" in cfg_grid and cfg_grid["light_substeps"] is None:
+        del cfg_grid["light_substeps"]
+    for driver in cfg["drivers"].values():
+        if isinstance(driver, dict):
+            for opt_key in [k for k, v in driver.items() if v is None]:
+                del driver[opt_key]
+
+    # A missing (or mistyped) drivers.E0 is legitimate only for the seed-only / direct-EPW-driver
+    # test paths; in every other case it silently zeroes the pump and the run completes with
+    # nothing but noise. Warn loudly rather than guess.
+    if "E0" not in cfg["drivers"]:
+        print(
+            "WARNING: no drivers.E0 -- the pump laser is identically zero. This is only sensible "
+            "for seed-only or direct-EPW-driver (drivers.E2) runs; if you expected a pump, check "
+            "the spelling of drivers.E0."
+        )
 
     # Default save.*.t.tmin/tmax to grid values (preserves unit strings)
     for save_type in cfg.get("save", {}).keys():
@@ -255,9 +286,159 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     cfg_grid["max_steps"] = cfg_grid["nt"] + 2048
 
+    # SRS: the Raman light is advanced with an explicit conditionally-stable scheme, so it is
+    # sub-cycled within each EPW step. The stability bound follows MATLAB line 500
+    # (dt_max_seed), generalized to 2D
+    # EPW noise source: resolve the amplitude/seed here (prior to log_params) so the
+    # run is reproducible and the actual seed lands in MLflow. noise_seed: null (or
+    # absent) draws a random seed once, then pins it in the cfg.
+    epw_source = cfg["terms"]["epw"]["source"]
+    if epw_source.get("noise", False):
+        epw_source.setdefault("noise_amplitude", 1e-10)
+        if epw_source.get("noise_seed") is None:
+            epw_source["noise_seed"] = int(np.random.randint(2**20))
+
+    # HPE (Follett-style test-particle Landau damping): resolve defaults, convert
+    # units, and derive the substep count here so everything lands in MLflow params
+    hpe = cfg["terms"].get("hpe", {})
+    if hpe.get("active", False):
+        if cfg_grid["ny"] != 1:
+            raise NotImplementedError("terms.hpe requires a quasi-1D box (ny == 1); shrink the y extent")
+        if not cfg["terms"]["epw"]["damping"].get("landau", True):
+            raise ValueError("terms.hpe requires terms.epw.damping.landau: true (it replaces the static rate)")
+        # defaults and type coercion come from the datamodel's HPEModel so they are
+        # defined in exactly one place; unknown keys are passed through untouched
+        from adept._lpse2d.datamodel import HPEModel
+
+        hpe = {**hpe, **HPEModel(**hpe).model_dump()}
+        if hpe["omega_res"] not in ("bohm_gross", "wp0"):
+            raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
+        hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
+        hpe["t_start_ps"] = _Q(hpe["t_start"]).to("ps").value
+        wp0 = cfg["units"]["derived"]["wp0"]
+        hpe["substeps"] = int(np.ceil(wp0 * cfg_grid["dt"] / float(hpe["substep_courant"])))
+        cfg["terms"]["hpe"] = hpe
+        print(
+            f"HPE is on -- {hpe['n_particles']} tail particles (|v| > {hpe['v_min']} vte), "
+            f"{hpe['substeps']} particle substeps per EPW step"
+        )
+
+    pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
+    if pump_depletion:
+        if not cfg["terms"]["epw"]["source"].get("srs", False):
+            raise ValueError("terms.light.pump_depletion requires terms.epw.source.srs: true")
+        if "E0" not in cfg["drivers"]:
+            raise ValueError(
+                "terms.light.pump_depletion requires drivers.E0 (the evolved pump is launched "
+                "by a boundary injector built from the E0 driver parameters)"
+            )
+        if cfg["drivers"].get("E0", {}).get("speckle", {}).get("enabled", False):
+            raise ValueError("terms.light.pump_depletion does not support drivers.E0.speckle yet")
+        if cfg["terms"]["epw"]["boundary"]["x"] != "absorbing":
+            raise ValueError(
+                "terms.light.pump_depletion requires terms.epw.boundary.x: absorbing "
+                "(the pump is launched by a boundary injector and must exit the box)"
+            )
+
+    if cfg["terms"]["epw"]["source"].get("srs", False):
+        derived = cfg["units"]["derived"]
+
+        # The SRS source filter only passes wavenumbers up to the local Raman light
+        # wavenumber k1(n_min). If the box's minimum density reaches the w1 critical
+        # density, that band is empty and E1_filter (epw.py) silently zeroes every
+        # mode of the source -- the run completes with reflectivity ~0 and reads as
+        # "below threshold". The seeded path already dies with a clear error at the
+        # injector; fail the noise-seeded path just as loudly here.
+        if cfg["density"]["basis"] == "uniform":
+            n_box_min = float(cfg["density"].get("val", 1.0))
+        elif "min" in cfg["density"]:
+            n_box_min = float(cfg["density"]["min"])
+        else:
+            n_box_min = None
+        n_crit_w1 = (derived["w1"] / derived["w0"]) ** 2
+        if n_box_min is not None and n_box_min >= n_crit_w1:
+            raise ValueError(
+                f"terms.epw.source.srs is on but the minimum box density {n_box_min:.3f} nc is at or "
+                f"above the Raman critical density {n_crit_w1:.3f} nc, so the scattered light is "
+                "evanescent everywhere and the SRS source is filtered to zero. Lower the density "
+                "(or the envelope density) if you want SRS."
+            )
+
+        # The detuning term's operator norm is set by the density endpoint FARTHEST
+        # from each carrier's critical density, not the largest density -- and uniform
+        # boxes carry their density in `val`, which the old max(max, min) fallback
+        # silently replaced with 1.0 (an underestimate at low envelope density).
+        if cfg["density"]["basis"] == "uniform":
+            n_endpoints = [float(cfg["density"].get("val", 1.0))]
+        else:
+            n_endpoints = [float(cfg["density"][k]) for k in ("min", "max") if k in cfg["density"]] or [1.0]
+
+        def _worst_detuning_sq(w_carrier: float) -> float:
+            return max(abs(w_carrier**2 - derived["w0"] ** 2 * n) for n in n_endpoints)
+
+        dt_max = 1.0 / (
+            2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
+            + _worst_detuning_sq(derived["w1"]) / (4.0 * derived["w1"])
+        )
+        if pump_depletion:
+            # the evolved pump has its own (looser, but not guaranteed) stability limit;
+            # sub-cycle to the tighter of the two carriers
+            dt_max_pump = 1.0 / (
+                2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
+                + _worst_detuning_sq(derived["w0"]) / (4.0 * derived["w0"])
+            )
+            dt_max = min(dt_max, dt_max_pump)
+        if "light_substeps" in cfg_grid:
+            n_sub = int(cfg_grid["light_substeps"])
+            if cfg_grid["dt"] / n_sub > dt_max:
+                raise ValueError(
+                    f"grid.light_substeps = {n_sub} gives a light step of {cfg_grid['dt'] / n_sub:.2e} ps "
+                    f"which exceeds the Raman stability limit of {dt_max:.2e} ps"
+                )
+        else:
+            n_sub = int(np.ceil(cfg_grid["dt"] / (0.9 * dt_max)))
+        cfg_grid["light_substeps"] = n_sub
+        print(f"SRS is on -- the Raman light is sub-cycled {n_sub}x per EPW step (dt_light limit {dt_max:.2e} ps)")
+
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
         cfg["drivers"][k]["derived"] = {}
+        if k == "E1":
+            # Raman seed injector -- different parameter set than the envelope drivers
+            c_cgs = 2.99792458e10
+            seed_intensity = _Q(cfg["drivers"][k]["intensity"]).to("W/cm^2").value
+            # the injector must sit clear of the absorbing boundary, whose tanh skirt
+            # (rise = boundary_width / 5) extends past xmax - boundary_width into the box
+            boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+            min_offset = 1.6 * boundary_width
+            if "offset" in cfg["drivers"][k]:
+                offset = _Q(cfg["drivers"][k]["offset"]).to("um").value
+                if offset < min_offset:
+                    print(
+                        f"WARNING: drivers.E1.offset = {offset}um is inside the absorbing-boundary skirt "
+                        f"(< 1.6 * boundary_width = {min_offset}um); the seed will be damped at the source"
+                    )
+            else:
+                offset = min_offset
+            cfg["drivers"][k]["derived"] = {
+                "amplitude": np.sqrt(8 * np.pi * seed_intensity * 1e7 / c_cgs) / cfg["units"]["derived"]["fieldScale"],
+                "delta_omega": float(cfg["drivers"][k].get("delta_omega", 0.0)),
+                "turn_on_time": _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value,
+                "offset": offset,
+                "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
+            }
+            continue
+        if k == "E0" and pump_depletion:
+            # boundary-injector parameters for the evolved pump: the injector sits at
+            # xmin + offset (default 2*boundary_width, clear of the absorber skirt)
+            boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+            if "offset" in cfg["drivers"][k]:
+                cfg["drivers"][k]["derived"]["offset"] = _Q(cfg["drivers"][k]["offset"]).to("um").value
+            else:
+                cfg["drivers"][k]["derived"]["offset"] = 2.0 * boundary_width
+            cfg["drivers"][k]["derived"]["turn_on_time"] = (
+                _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value
+            )
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
@@ -510,7 +691,7 @@ def get_density_profile(cfg: dict) -> Array:
     :param cfg: Dict
     """
     if cfg["density"]["basis"] == "uniform":
-        nprof = np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
+        nprof = cfg["density"].get("val", 1.0) * np.ones((cfg["grid"]["nx"], cfg["grid"]["ny"]))
 
     elif cfg["density"]["basis"] == "linear":
         left = cfg["grid"]["xmin"] + _Q("5.0um").to("um").value
@@ -562,20 +743,20 @@ def plot_fields(fields, td):
     t_skip = t_skip if t_skip > 1 else 1
     tslice = slice(0, -1, t_skip)
 
-    dx = fields.coords["x (um)"].data[1] - fields.coords["x (um)"].data[0]
-    dy = fields.coords["y (um)"].data[1] - fields.coords["y (um)"].data[0]
+    ny = fields.coords["y (um)"].data.size
 
     for k, v in fields.items():
         fld_dir = os.path.join(td, "plots", k)
         os.makedirs(fld_dir)
 
-        np.abs(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"{k}_x.png"), bbox_inches="tight")
-        plt.close()
+        if ny > 1:
+            np.abs(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
+            plt.savefig(os.path.join(fld_dir, f"{k}_x.png"), bbox_inches="tight")
+            plt.close()
 
-        np.real(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
-        plt.savefig(os.path.join(fld_dir, f"{k}_x_r.png"), bbox_inches="tight")
-        plt.close()
+            np.real(v[tslice]).T.plot(col="t (ps)", col_wrap=4)
+            plt.savefig(os.path.join(fld_dir, f"{k}_x_r.png"), bbox_inches="tight")
+            plt.close()
 
         # fig, ax = plt.subplots(1, 1, figsize=(10, 4))
         # np.abs(v[:, 1, 0]).plot(ax=ax)
@@ -627,14 +808,17 @@ def plot_kt(kfields, td):
 
         kx_slice = slice(ikx_min, ikx_max)
         ky_slice = slice(iky_min, iky_max)
+        n_ky = kfields.coords[r"ky ($kc\omega_0^{-1}$)"].data.size
 
         for k, v in kfields.items():
             fld_dir = os.path.join(td, "plots", k)
             os.makedirs(fld_dir, exist_ok=True)
 
-            # np.log10(np.abs(v[tslice, kx_slice, 0])).T.plot(col="t (ps)", col_wrap=4)
-            # plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_k0_absmax{abs_kmax}.png"), bbox_inches="tight")
-            # plt.close()
+            if n_ky == 1:
+                np.log10(np.abs(v[tslice, kx_slice, 0])).plot(col="t (ps)", col_wrap=4)
+                plt.savefig(os.path.join(fld_dir, f"log_{k}_kx_absmax{abs_kmax}.png"), bbox_inches="tight")
+                plt.close()
+                continue
 
             np.abs(v[tslice, kx_slice, ky_slice]).T.plot(col="t (ps)", col_wrap=4)
             plt.savefig(os.path.join(fld_dir, f"{k}_kx_ky_absmax{abs_kmax}.png"), bbox_inches="tight")
@@ -648,6 +832,8 @@ def plot_kt(kfields, td):
 
 
 def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
+    from adept._lpse2d.diagnostics import series_metrics
+
     os.makedirs(os.path.join(td, "binary"))
     metrics = {}
     t0 = time.time()
@@ -656,8 +842,12 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     metrics["write_time"] = time.time() - t0
     os.makedirs(os.path.join(td, "plots"))
 
+    # OSIRIS-comparable scalars (laser budget, EPW growth fit, electron energy)
+    metrics.update(series_metrics(series, cfg))
+
     t0 = time.time()
     plot_series(series, td)
+    plot_srs_diagnostics(series, metrics, cfg, td)
     plot_fields(fields, td)
     plot_kt(kfields, td)
     metrics["plot_time"] = time.time() - t0
@@ -665,8 +855,86 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     return {"k": kfields, "x": fields, "series": series, "metrics": metrics}
 
 
+def plot_srs_diagnostics(series, metrics, cfg, td):
+    """Composite diagnostic plots mirroring the OSIRIS scan2 figures: the laser
+    budget channels vs time, the EPW energy with the growth-fit window shaded, and
+    the cumulative electron energy (integrated EPW dissipation)."""
+    t = np.asarray(series["t (ps)"].values, dtype=float)
+
+    if "incident_flux" in series:
+        fig, ax = plt.subplots(1, 2, figsize=(9, 3.5))
+        for a in ax:
+            for key, label in [
+                ("incident_flux", "incident"),
+                ("reflected_flux", "reflected"),
+                ("transmitted_flux", "transmitted"),
+                ("backrefl_flux", "back-reflected"),
+            ]:
+                a.plot(t, np.asarray(series[key].values, dtype=float), label=label)
+            a.set_xlabel("t (ps)")
+            a.set_ylabel("flux / I0")
+        ax[1].set_yscale("log")
+        ax[0].legend(fontsize=8)
+        fig.savefig(os.path.join(td, "plots", "laser_budget_vs_t.png"), bbox_inches="tight")
+        plt.close(fig)
+
+    if "epw_energy" in series:
+        w0 = cfg["units"]["derived"]["w0"]
+        fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
+        ax.semilogy(t, np.asarray(series["epw_energy"].values, dtype=float))
+        if metrics.get("epw_growth_measurable"):
+            # fit window is stored in 1/w0 (OSIRIS code time); convert back to ps
+            ax.axvspan(metrics["epw_growth_fit_tstart"] / w0, metrics["epw_growth_fit_tend"] / w0, alpha=0.2)
+            ax.set_title(f"gamma/w0 = {metrics['epw_growth_rate']:.2e}, r2 = {metrics['epw_growth_rate_r2']:.3f}")
+        ax.set_xlabel("t (ps)")
+        ax.set_ylabel("W_epw (OSIRIS units)")
+        fig.savefig(os.path.join(td, "plots", "epw_energy_fit.png"), bbox_inches="tight")
+        plt.close(fig)
+
+    if "epw_dissipation" in series:
+        dissip = np.asarray(series["epw_dissipation"].values, dtype=float)
+        electron_energy = np.concatenate([[0.0], np.cumsum(0.5 * (dissip[1:] + dissip[:-1]) * np.diff(t))])
+        fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
+        ax.plot(t, electron_energy)
+        ax.set_xlabel("t (ps)")
+        ax.set_ylabel("cumulative electron energy (OSIRIS units)")
+        fig.savefig(os.path.join(td, "plots", "electron_energy_vs_t.png"), bbox_inches="tight")
+        plt.close(fig)
+
+    if "hpe_hist" in series:
+        # tail distribution vs time: flattening at the resonant v_phi and a growing
+        # high-energy shoulder are the HPE signatures
+        hist = np.asarray(series["hpe_hist"].values, dtype=float)
+        v = np.asarray(series["v (c)"].values, dtype=float)
+        fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
+        with np.errstate(divide="ignore"):
+            log_h = np.log10(np.where(hist > 0, hist, np.nan))
+        pcm = ax[0].pcolormesh(t, v, log_h.T, shading="auto")
+        fig.colorbar(pcm, ax=ax[0], label="log10 f(v)")
+        ax[0].set_xlabel("t (ps)")
+        ax[0].set_ylabel("v (c)")
+        for it in np.linspace(0, len(t) - 1, 5).astype(int):
+            ax[1].semilogy(v, np.where(hist[it] > 0, hist[it], np.nan), label=f"t = {t[it]:.1f} ps")
+        ax[1].set_xlabel("v (c)")
+        ax[1].set_ylabel("f(v)")
+        ax[1].legend(fontsize=7)
+        fig.savefig(os.path.join(td, "plots", "hpe_distribution.png"), bbox_inches="tight")
+        plt.close(fig)
+
+    if "hpe_gamma_ratio_min" in series:
+        fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
+        ax.plot(t, np.asarray(series["hpe_gamma_ratio_min"].values, dtype=float))
+        ax.set_xlabel("t (ps)")
+        ax.set_ylabel("min gamma_HPE / gamma_analytic")
+        ax.set_ylim(bottom=0)
+        fig.savefig(os.path.join(td, "plots", "hpe_damping_reduction_vs_t.png"), bbox_inches="tight")
+        plt.close(fig)
+
+
 def plot_series(series, td):
     for k in series.keys():
+        if series[k].ndim != 1:
+            continue
         fig, ax = plt.subplots(1, 2, figsize=(8, 3))
         series[k].plot(ax=ax[0])
         series[k].plot(ax=ax[1])
@@ -677,14 +945,19 @@ def plot_series(series, td):
 
 
 def make_series_xarrays(cfg, this_t, state, td):
-    esq = state["e_sq"]
-    max_phi = state["max_phi"]
-    series_xr = xr.Dataset(
-        {
-            "e_sq": xr.DataArray(esq, coords=(("t (ps)", this_t),)),
-            "max_phi": xr.DataArray(max_phi, coords=(("t (ps)", this_t),)),
-        }
-    )
+    data = {}
+    for k, v in state.items():
+        v = np.asarray(v)
+        if k == "hpe_hist":
+            # (nt, nv) velocity histogram from the HPE module; the axis is v/c
+            # (a slash in a coord name is illegal in netCDF)
+            hpe = cfg["terms"]["hpe"]
+            edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
+            centers = 0.5 * (edges[1:] + edges[:-1])
+            data[k] = xr.DataArray(v, coords=(("t (ps)", this_t), ("v (c)", centers)))
+        else:
+            data[k] = xr.DataArray(v, coords=(("t (ps)", this_t),))
+    series_xr = xr.Dataset(data)
     series_xr.to_netcdf(os.path.join(td, "binary", "series.xr"), engine="h5netcdf", invalid_netcdf=True)
     return series_xr
 
@@ -714,8 +987,8 @@ def make_field_xarrays(cfg, this_t, state, td):
     xax_tuple = ("x (um)", xax)
     yax_tuple = ("y (um)", yax)
 
-    # check if state["epw"] is a complex64 or 128 and choose accordingly
-    if state["epw"].dtype == jnp.complex128:
+    # the state is stored as a float view of a complex array; pick the matching complex dtype
+    if state["epw"].dtype in (np.float64, np.complex128):
         _complex = np.complex128
     else:
         _complex = np.complex64
@@ -747,13 +1020,24 @@ def make_field_xarrays(cfg, this_t, state, td):
 
     from scipy import interpolate
 
-    density_interpolator = interpolate.RegularGridInterpolator(
-        (cfg["grid"]["x"], cfg["grid"]["y"]), cfg["grid"]["background_density"], bounds_error=False, fill_value=0.0
-    )
-
-    grid_x, grid_y = np.meshgrid(xax, yax, indexing="ij")
-    points = np.array([grid_x.flatten(), grid_y.flatten()]).T
-    density_on_save_grid = density_interpolator(points).reshape((nx, ny))
+    if ny == 1:
+        # Quasi-1D: RegularGridInterpolator cannot take a single-node y axis (and the
+        # save row lies off it -> fill_value=0). Interpolate the density in x only.
+        density_1d = np.asarray(cfg["grid"]["background_density"])[:, 0]
+        density_interpolator = interpolate.interp1d(
+            np.asarray(cfg["grid"]["x"]), density_1d, bounds_error=False, fill_value="extrapolate"
+        )
+        density_on_save_grid = density_interpolator(np.asarray(xax)).reshape((nx, ny))
+    else:
+        density_interpolator = interpolate.RegularGridInterpolator(
+            (cfg["grid"]["x"], cfg["grid"]["y"]),
+            cfg["grid"]["background_density"],
+            bounds_error=False,
+            fill_value=0.0,
+        )
+        grid_x, grid_y = np.meshgrid(xax, yax, indexing="ij")
+        points = np.array([grid_x.flatten(), grid_y.flatten()]).T
+        density_on_save_grid = density_interpolator(points).reshape((nx, ny))
 
     background_density = xr.DataArray(
         np.repeat(density_on_save_grid[None, ...], repeats=len(this_t), axis=0),
@@ -819,18 +1103,35 @@ def get_save_quantities(cfg: dict) -> dict:
 
         xq, yq = jnp.meshgrid(cfg["save"]["fields"]["x"]["ax"], cfg["save"]["fields"]["y"]["ax"], indexing="ij")
 
-        interpolator = partial(
-            interpax.interp2d,
-            xq=jnp.reshape(xq, (nx * ny), order="F"),
-            yq=jnp.reshape(yq, (nx * ny), order="F"),
-            x=cfg["grid"]["x"],
-            y=cfg["grid"]["y"],
-            method="linear",
-        )
+        if ny == 1:
+            # Quasi-1D (single transverse cell): interpax.interp2d needs >=2 nodes per
+            # axis and returns NaN off the lone y-node, so interpolate in x only and
+            # keep the single y-row. save_func reshapes the flat (nx,) result to (nx, 1).
+            x_save = cfg["save"]["fields"]["x"]["ax"]
+            x_src = cfg["grid"]["x"]
+
+            def interpolator(f):
+                return interpax.interp1d(x_save, x_src, jnp.reshape(f, (-1,)), method="linear")
+        else:
+            interpolator = partial(
+                interpax.interp2d,
+                xq=jnp.reshape(xq, (nx * ny), order="F"),
+                yq=jnp.reshape(yq, (nx * ny), order="F"),
+                x=cfg["grid"]["x"],
+                y=cfg["grid"]["y"],
+                method="linear",
+            )
 
         def save_func(t, y, args):
+            from adept._lpse2d.core.hpe import PARTICLE_KEYS
+
             save_y = {}
             for k, v in y.items():
+                if k in PARTICLE_KEYS:
+                    # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
+                    # none of them fit the spatial interpolator; the histogram and the
+                    # damping-reduction scalars are saved through the default series
+                    continue
                 if k in ["E0", "E1"]:
                     cmplx_fld = v.view(jnp.complex128)
                     save_y[k] = jnp.concatenate(
@@ -850,7 +1151,11 @@ def get_save_quantities(cfg: dict) -> dict:
             return save_y
 
     else:
-        save_func = lambda t, y, args: y
+
+        def save_func(t, y, args):
+            from adept._lpse2d.core.hpe import PARTICLE_KEYS
+
+            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS}
 
     cfg["save"]["fields"]["func"] = save_func
 
@@ -860,14 +1165,192 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
+    from adept._lpse2d.core.epw import landau_damping_rate
+
+    srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
+    derived = cfg["units"]["derived"]
+    dt = cfg["grid"]["dt"]
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    kx, ky = cfg["grid"]["kx"], cfg["grid"]["ky"]
+
+    # OSIRIS-normalized EPW energy: W = 1/2 * dx * sum_x <e^2>_cycle with fields in
+    # me*c*w0/e and lengths in c/w0 (osiris_lpi/epw_growth.py convention). The complex
+    # envelope carries <e^2>_cycle = |E|^2/2, hence the 0.25. The transverse mean makes
+    # the 2D case a per-unit-y version of the same quantity; for ny=1 it is identical
+    # to the OSIRIS 1D reduction.
+    epw_energy_prefactor = 0.25 * cfg["grid"]["dx"] * derived["x_norm"] * derived["e_norm"] ** 2
+
+    # Per-step dissipated EPW energy, evaluated with the *same* rates the solver
+    # applies (phi_k *= exp(-(gamma_landau + nu_coll)*dt) => energy factor exp(-2(..)dt)).
+    # Parseval: sum_x <.>_y |E|^2 = (1/(nx*ny^2)) * sum_k k^2 |phi_k|^2.
+    k_sq = np.array(kx[:, None] ** 2 + ky[None, :] ** 2)
+    zero_mask = np.where(k_sq > 0, 1.0, 0.0)
+    if cfg["terms"]["epw"]["damping"].get("landau", True):
+        gamma_total = np.array(
+            landau_damping_rate(jnp.array(k_sq), derived["wp0"], derived["vte_sq"], jnp.array(zero_mask))
+        )
+    else:
+        gamma_total = np.zeros_like(k_sq)
+    gamma_total = gamma_total + derived.get("nu_coll", 0.0) * zero_mask
+    energy_loss_factor = (1.0 - np.exp(-2.0 * gamma_total * dt)) / dt  # 1/ps, per k mode
+    boundary_sq_loss = (1.0 - np.array(cfg["grid"]["absorbing_boundaries"]) ** 2) / dt  # 1/ps, per cell
+
+    # Total (electric + kinetic + thermal) EPW energy per unit of the electric energy
+    # that epw_energy counts. For the warm-fluid EPW, W_total/W_E = d(w*eps)/dw =
+    # 1 + wp^2/w^2 + 9 k^2 vte^2 wp^2 / w^4 evaluated at the envelope carrier w = wp0;
+    # the solver's detuning relation 3 k^2 vte^2 = wp0^2 - wp^2 with wp^2 = wp0^2 * n/n_env
+    # collapses it to the density-only factor 2*(2 - n/n_env). At n = n_env this is the
+    # familiar 2 (electric = kinetic); on the shipped ramps it reaches 2.56 at the
+    # low-density end, which the previously hard-coded 2 understated by ~28%.
+    energy_total_factor = 2.0 * (2.0 - np.array(cfg["grid"]["background_density"]) / cfg["units"]["envelope density"])
+
+    # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
+    # use the state's rate; also emit the hot-electron scalars and the histogram
+    hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
+    if hpe_on:
+        from adept._lpse2d.core.hpe import resonance_arrays
+
+        hpe_arrays = resonance_arrays(cfg)
+        n_p = int(cfg["terms"]["hpe"]["n_particles"])
+        w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
+        c_light = derived["c"]
+        nu_coll_arr = derived.get("nu_coll", 0.0) * zero_mask
+        gamma_an_1d = np.array(hpe_arrays["gamma_analytic"][:, 0])
+        # damping-reduction band: resonant modes where the analytic rate is non-negligible
+        ratio_band = np.array(hpe_arrays["mask_res"]) & (gamma_an_1d > 1.0e-4 * derived["wp0"])
+        have_ratio_band = bool(np.any(ratio_band))
+        gamma_an_safe = np.where(ratio_band, gamma_an_1d, 1.0)
+
+    if srs_on:
+        # Legacy reflectivity probe: sample |E1_y|^2 on the low-density side, just inside
+        # the absorber. R = sqrt(eps1) * <|E1_y|^2>_y / E0_source^2. Kept unchanged for
+        # backward comparability; it sits in the absorber's tanh skirt and reads ~10% low.
+        boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+        x_probe = cfg["grid"]["xmin"] + 1.6 * boundary_width
+        ix_probe = int(np.argmin(np.abs(np.array(cfg["grid"]["x"]) - x_probe)))
+        w0 = derived["w0"]
+        w1 = derived["w1"]
+        n_probe = float(np.mean(np.array(cfg["grid"]["background_density"])[ix_probe, :]))
+        sqrt_eps1 = np.sqrt(max(1.0 - n_probe * w0**2 / w1**2, 0.0))
+        E0_source_sq = derived["E0_source"] ** 2
+
+        # Flux probes for the OSIRIS-style laser budget. F_j = c^2/(w dx) * Im(E_j* E_j+1)
+        # is the exactly-conserved flux of the FD Schroedinger operator (equals
+        # c*sqrt(eps)|E|^2*sinc(k dx) for a plane wave, i.e. the grid's own dispersion is
+        # accounted for). Probes sit at probe_offset (default 2*boundary_width, clear of
+        # the absorber skirt whose transmission at 1.6*bw is only ~0.91).
+        if "probe_offset" in cfg["grid"]:
+            probe_offset = _Q(cfg["grid"]["probe_offset"]).to("um").value
+        else:
+            probe_offset = 2.0 * boundary_width
+        x_grid = np.array(cfg["grid"]["x"])
+        ix_left = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + probe_offset))))
+        ix_right = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmax"] - probe_offset))))
+        # with an evolved pump, the incident probe must sit downstream (+x) of the pump
+        # injector rows or it reads the near-field of the two-point source
+        ix_left_e0 = ix_left
+        if cfg["terms"].get("light", {}).get("pump_depletion", False):
+            pump_offset = cfg["drivers"]["E0"]["derived"]["offset"]
+            ix_inject = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + pump_offset))))
+            ix_left_e0 = max(ix_left, ix_inject + 4)
+        flux_coeff_w0 = derived["c"] ** 2 / (derived["w0"] * cfg["grid"]["dx"])
+        flux_coeff_w1 = derived["c"] ** 2 / (derived["w1"] * cfg["grid"]["dx"])
+        I0_code = derived["I0_code"]
+
+        def flux_correction(w, ix):
+            # The discrete two-point flux of the FD mode at local wavenumber k is
+            # |E|^2 * v_g,discrete with v_g,disc = (c^2/w) sin(k_grid dx)/dx, where
+            # k_grid satisfies the FD dispersion (2/dx^2)(1 - cos k_grid dx) = k^2.
+            # Dividing by sin(k_grid dx)/(k dx) converts it to the physical flux
+            # |E|^2 * c * sqrt(eps). Evanescent probes get 1 (their flux is ~0 anyway).
+            n_loc = float(np.mean(np.array(cfg["grid"]["background_density"])[ix, :]))
+            eps = 1.0 - n_loc * w0**2 / w**2
+            if eps <= 0:
+                return 1.0
+            k_dx = w / derived["c"] * np.sqrt(eps) * cfg["grid"]["dx"]
+            cos_kg = 1.0 - k_dx**2 / 2.0
+            if cos_kg <= -1.0:
+                return 1.0
+            sin_kg = float(np.sqrt(1.0 - cos_kg**2))
+            return float(sin_kg / k_dx)
+
+        corr_e0_left = flux_correction(w0, ix_left_e0)
+        corr_e0_right = flux_correction(w0, ix_right)
+        corr_e1_left = flux_correction(w1, ix_left)
+        corr_e1_right = flux_correction(w1, ix_right)
+
+        def discrete_flux(E, ix, coeff):
+            # sum over polarization components, mean over y
+            cross = jnp.sum(jnp.conj(E[ix, :, :]) * E[ix + 1, :, :], axis=-1)
+            return coeff * jnp.mean(jnp.imag(cross))
+
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
-        ex = -1j * cfg["grid"]["kx"][:, None] * phi_k
-        ey = -1j * cfg["grid"]["ky"][None, :] * phi_k
+        ex = -1j * kx[:, None] * phi_k
+        ey = -1j * ky[None, :] * phi_k
         ex = jnp.fft.ifft2(ex)
         ey = jnp.fft.ifft2(ey)
         e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
 
-        return {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
+        out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
+
+        out["epw_energy"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq, axis=1))
+        # dissipation/boundary channels are TOTAL EPW-energy rates: epw_energy counts
+        # only the electric part (the OSIRIS field-only convention), so the energy
+        # actually handed to electrons -- and the budget sink -- carries the local
+        # total-to-electric factor energy_total_factor = 2*(2 - n/n_env)
+        if hpe_on:
+            # the applied rate is dynamic: read it from the state
+            gamma_dyn = y["gamma_L"] + nu_coll_arr
+            loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
+        else:
+            loss_factor = energy_loss_factor
+        # the per-k loss rate does not commute with the x-dependent energy factor, so
+        # build a local electric-energy loss density from the sqrt-weighted fields --
+        # its box integral equals the k-space total exactly (Parseval) and reduces to
+        # the previous 2x k-space sum on a uniform n = n_env box
+        sqrt_loss = jnp.sqrt(loss_factor)
+        ex_loss = jnp.fft.ifft2(-1j * kx[:, None] * phi_k * sqrt_loss)
+        ey_loss = jnp.fft.ifft2(-1j * ky[None, :] * phi_k * sqrt_loss)
+        loss_density = jnp.abs(ex_loss) ** 2 + jnp.abs(ey_loss) ** 2
+        out["epw_dissipation"] = epw_energy_prefactor * jnp.sum(jnp.mean(energy_total_factor * loss_density, axis=1))
+        out["epw_boundary_loss"] = epw_energy_prefactor * jnp.sum(
+            jnp.mean(energy_total_factor * e_sq * boundary_sq_loss, axis=1)
+        )
+
+        if hpe_on:
+            u = y["u_e"]
+            gamma_rel = jnp.sqrt(1.0 + (u / c_light) ** 2)
+            ke_kev = 510.999 * (gamma_rel - 1.0)
+            out["fhot_50keV"] = w_tail * jnp.sum(ke_kev > 50.0)
+            out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
+            out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
+            out["hpe_hist"] = y["epw_hist"]
+            if have_ratio_band:
+                ratio = y["gamma_L"][:, 0] / gamma_an_safe
+                # inflation-o-meters: worst-case reduction across the resonant band
+                # (noisy at low n_particles -- one clamped mode reads 0), and the
+                # reduction at the band mode carrying the most EPW energy (robust,
+                # and the physically relevant one)
+                out["hpe_gamma_ratio_min"] = jnp.min(jnp.where(ratio_band, ratio, jnp.inf))
+                phi_amp = jnp.where(ratio_band, jnp.abs(phi_k[:, 0]), 0.0)
+                # before the EPW has any energy in the band (e.g. the zero-initialized
+                # first steps) argmax lands on index 0 where the ratio is meaningless;
+                # emit NaN so the reduction metrics (nanmin / windowed means) skip it
+                out["hpe_gamma_ratio_kpeak"] = jnp.where(jnp.any(phi_amp > 0.0), ratio[jnp.argmax(phi_amp)], jnp.nan)
+
+        if srs_on:
+            e1 = y["E1"].view(jnp.complex128)
+            e0 = y["E0"].view(jnp.complex128)
+            out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))
+            out["reflectivity"] = sqrt_eps1 * jnp.mean(jnp.abs(e1[ix_probe, :, 1]) ** 2) / E0_source_sq
+            # laser budget channels: physical fluxes (discrete fluxes converted via the
+            # local group-velocity factor), normalized to the nominal incident flux
+            out["incident_flux"] = discrete_flux(e0, ix_left_e0, flux_coeff_w0) / corr_e0_left / I0_code
+            out["transmitted_flux"] = discrete_flux(e0, ix_right, flux_coeff_w0) / corr_e0_right / I0_code
+            out["reflected_flux"] = -discrete_flux(e1, ix_left, flux_coeff_w1) / corr_e1_left / I0_code
+            out["backrefl_flux"] = discrete_flux(e1, ix_right, flux_coeff_w1) / corr_e1_right / I0_code
+
+        return out
 
     return {"t": {"ax": cfg["grid"]["t"]}, "func": save_func}

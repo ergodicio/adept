@@ -75,29 +75,22 @@ class BaseLPSE2D(ADEPTModule):
         )
 
     def init_state_and_args(self) -> dict:
-        if self.cfg["density"]["noise"]["type"] == "uniform":
-            random_amps = np.random.uniform(
-                self.cfg["density"]["noise"]["min"],
-                self.cfg["density"]["noise"]["max"],
-                (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]),
-            )
-
-        elif self.cfg["density"]["noise"]["type"] == "normal":
-            loc = 0.5 * (self.cfg["density"]["noise"]["min"] + self.cfg["density"]["noise"]["max"])
-            scale = 1.0
-            random_amps = np.random.normal(loc, scale, (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]))
-
-        else:
-            raise NotImplementedError
-
-        random_phases = np.random.uniform(0, 2 * np.pi, (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]))
-        phi_noise = 1 * np.exp(1j * random_phases)
-        epw = 0 * phi_noise
+        # The initial EPW is identically zero; noise-seeded runs get their seeding from
+        # terms.epw.source.noise (a per-step source in SpectralEPWSolver). The old
+        # density.noise draws were dead code, but they consumed the global numpy RNG
+        # stream and made "identical" runs differ -- so they are gone.
+        epw = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]), dtype=np.complex128)
 
         self.cfg["grid"]["background_density"] = get_density_profile(self.cfg)
         E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
         E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
         state = {"epw": epw, "E0": E0, "E1": E1}
+
+        if self.cfg["terms"].get("hpe", {}).get("active", False):
+            from adept._lpse2d.core.hpe import load_particles
+
+            # x_e/u_e/epw_hist/gamma_L are real float64, so the .view below is a no-op
+            state = state | load_particles(self.cfg)
 
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
