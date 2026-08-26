@@ -4,10 +4,11 @@
 #  research@ergodic.io
 
 from jax import numpy as jnp
+from jaxtyping import Array
 
 from adept._base_ import get_envelope
 from adept._vlasov1d.grid import Grid
-from adept._vlasov1d.simulation import EMDriver
+from adept._vlasov1d.simulation import BroadbandDriver, EMDriver
 
 
 class LongitudinalElectricFieldDriver:
@@ -54,40 +55,59 @@ class TransverseCurrentSourceDriver:
         """Precompute point-source masks and scales for transverse drivers."""
         self.xax = xax
         self.drivers = drivers
-        dx = float(xax[1] - xax[0])
+        self.c = c
+        self.dx = float(xax[1] - xax[0])
 
-        self.point_source_masks = []
-        self.point_source_scales = []
-        for driver in drivers:
-            if driver.is_point_source:
-                center = driver.envelope.space_envelope.center
-                i0 = jnp.argmin(jnp.abs(xax - center))
-                mask = jnp.zeros_like(xax).at[i0].set(1.0)
-                w_total = driver.w0 + driver.dw0
-                F0 = 2.0 * w_total * c * driver.a0
-                self.point_source_masks.append(mask)
-                self.point_source_scales.append(F0 / dx)
-            else:
-                self.point_source_masks.append(None)
-                self.point_source_scales.append(None)
+    def make_scales(self, driver: EMDriver, dw: Array, amplitude: Array):
+        if driver.is_point_source:
+            center = driver.envelope.space_envelope.center
+            i0 = jnp.argmin(jnp.abs(self.xax - center))
+            mask = jnp.zeros_like(self.xax).at[i0].set(1.0)
+            w_total = driver.w0 + dw
+            F0 = 2.0 * w_total * self.c * amplitude
+            point_source_masks = mask
+            point_source_scales = F0 / self.dx
+        else:
+            point_source_masks = None
+            point_source_scales = None
+        return point_source_masks, point_source_scales
 
-    def _single_driver_source(self, driver: EMDriver, mask, scale, current_time):
+    def _single_driver_source(
+        self, driver: EMDriver, dw: Array, amplitude: Array, phase: Array, mask: Array, scale: Array, current_time
+    ):
         ww = driver.w0
-        dw = driver.dw0
         w_total = ww + dw
         if driver.is_point_source:
             time_env = driver.envelope.time_envelope(current_time)
-            return scale * time_env * mask * jnp.sin(w_total * current_time)
+            return scale[:, None] * jnp.sin((w_total * current_time) + phase)[:, None] * mask[None, :] * time_env
         else:
             kk = driver.k0
             factor = driver.envelope(self.xax, current_time)
-            return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
+            # (N, nx): per-color rows so the caller's axis-0 sum works for broadband
+            return (
+                -factor[None, :]
+                * (w_total**2 * amplitude)[:, None]
+                * jnp.sin(kk * self.xax[None, :] - (w_total * current_time)[:, None] + phase[:, None])
+            )
 
     def __call__(self, t, args):
         """Evaluate the summed transverse current source at time t."""
         total = jnp.zeros_like(self.xax)
-        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True):
-            total += self._single_driver_source(driver, mask, scale, t)
+        # Drivers are read from args unconditionally: args is the differentiable route
+        # (BaseVlasov1D.__call__ guarantees args["drivers"] is present). No fallback to
+        # self.drivers -- a silent fallback would zero the driver gradients instead of
+        # erroring if the args plumbing ever broke.
+        ey_list = args["drivers"].ey
+        for driver in ey_list:
+            amplitudes = driver.amplitudes if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.a0)
+            phases = driver.phases if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.phase)
+            delta_omega = driver.delta_omega if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.dw0)
+
+            point_source_masks, point_source_scales = self.make_scales(driver, delta_omega, amplitudes)
+            driver_source_array = self._single_driver_source(
+                driver, delta_omega, amplitudes, phases, point_source_masks, point_source_scales, t
+            )
+            total += jnp.sum(driver_source_array, axis=0)
         return total
 
 
