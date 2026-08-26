@@ -12,9 +12,24 @@ These equations model the evolution and interaction of the complex envelopes of 
 
 ### Note on Pump Depletion
 
-One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. We do not currently have this implemented, so we have light waves that behave as external drivers for the plasma waves and we only model the plasma wave response.
+One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. By default the pump is prescribed analytically (an external driver for the plasma waves), which is adequate below the absolute instability threshold; above it the plasma-wave and Raman fields grow without bound because nothing depletes the pump.
 
-This approach is adequate for modeling laser plasma instabilities below the absolute instability threshold.
+For SRS, setting `terms.light.pump_depletion: true` evolves the pump `E0` with the same finite-difference envelope solver as the Raman light, sourced by a two-point boundary injector at the low-density side and coupled to the EPW through $-i e/(4 \omega_1 m_e) (\nabla^2 \phi) \mathbf{E}_1$ (the conjugate partner of the Raman coupling; the pair conserves $\int |E_0|^2 + |E_1|^2 + |\nabla\phi|^2$ together with the EPW source). This enables true transmission/absorption diagnostics and saturation of above-threshold runs.
+
+### SRS diagnostics
+
+With `terms.epw.source.srs` on, the default time series includes OSIRIS-comparable channels (fields converted to $m_e c \omega_0/e$, lengths to $c/\omega_0$, fluxes normalized to the nominal incident flux):
+
+| series | meaning | OSIRIS scan2 counterpart |
+|---|---|---|
+| `epw_energy` | $\frac{1}{4}\,dx \sum_x \langle\|E_{epw}\|^2\rangle_y$ (cycle-averaged field energy) | `W(t) = 1/2 dx sum e1^2` |
+| `epw_dissipation` | total EPW energy handed to electrons per ps (Landau + collisional, the solver's own rates; includes the kinetic half) | absorbed fraction / hot-electron source |
+| `epw_boundary_loss` | total EPW energy removed by the absorbing boundaries per ps | — |
+| `incident_flux`, `transmitted_flux` | pump flux at probes near each edge | `incident_t`, `T_t` |
+| `reflected_flux`, `backrefl_flux` | Raman flux leaving left / right | `R_t` |
+| `reflectivity`, `e1_sq` | legacy probes (unchanged) | — |
+
+`post_process` logs scalar metrics with the same names and definitions as `osiris_lpi` (`laser_reflectivity`, `laser_transmissivity`, `laser_absorbed_frac`, per-quarter `_seg{i}of4` variants, `epw_growth_rate` per $\omega_0$ with the identical automated fit window, `electron_energy_frac_final`, and the `laser_incident_flux_ratio` health check).
 
 ### Electron Plasma Waves
 
