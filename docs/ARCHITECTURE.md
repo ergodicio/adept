@@ -2,8 +2,64 @@
 
 ADEPT is incrementally moving toward explicit, logging-free preparation and a pure
 numerical transform boundary. [ADR 0001](adr/0001-explicit-simulation-boundaries.md)
-defines the target contracts and compatibility policy. The existing lifecycle below
-remains the active execution path while solvers migrate behind parity tests.
+defines the target contracts and compatibility policy. `tf-1d` and electrostatic
+`pic-1d` are the first registered builder pilots. Their legacy classes remain available
+as parallel fallback paths while downstream workflows migrate.
+
+## Explicit preparation and execution
+
+`SimulationSpec` adapts existing YAML without retaining its `mlflow` section. A
+registered builder validates and resolves that intent into immutable preparation data:
+
+```python
+import equinox as eqx
+import jax
+
+from adept import SimulationSpec, solver_registry
+
+spec = SimulationSpec.from_legacy_config(config)
+prepared = solver_registry.prepare(spec, key=42)
+
+
+def run(program, params, state, inputs, key):
+    return program(params, state, inputs, key)
+
+
+result = eqx.filter_jit(run)(
+    prepared.program,
+    prepared.params,
+    prepared.state,
+    prepared.inputs,
+    jax.random.key(42),
+)
+```
+
+The transformed boundary always receives five explicit PyTrees: `program`, `params`,
+`state`, runtime `inputs`, and `key`. Pass those fields individually; the manifest,
+analyzer, units, configuration models, tracking clients, and paths are host-side data
+and do not enter JAX transforms. Differentiate a chosen array in `params` with
+`jax.grad` or `eqx.filter_value_and_grad`. Fixed arrays belong in the program or state,
+not in the differentiation target. `vmap` is valid only when the builder advertises
+`capabilities.batchable`.
+
+Every numerical call returns the same `RawResult` named-tuple schema:
+
+```text
+RawResult(
+    final_state,   # complete state after the solve/rollout
+    observations,  # saved in-memory diagnostics; () when none are requested
+    times,         # observation times; an empty array when there are none
+    status,        # numerical completion status
+    stats,         # numerical counters and auxiliary solver statistics
+)
+```
+
+The `tf-1d` pilot uses the continuous `DiffraxProgram`; the electrostatic `pic-1d`
+pilot uses the discrete `ScanProgram`. Both are parity-tested against their legacy
+numerical maps. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
+closures, still produce an actionable error directing callers to `ergoExo`.
+
+## Legacy lifecycle
 
 - ADEPT solvers are packaged into `ADEPTModule`s and run via the `ergoExo`
   Code pointer: `adept/_base_.py`

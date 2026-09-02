@@ -16,9 +16,6 @@ from matplotlib import pyplot as plt
 from scipy.special import gamma
 
 from adept._pic1d.simulation import PIC1DSimulation
-from adept._vlasov1d.helpers import gamma_3_over_m, gamma_5_over_m
-
-from .. import patched_mlflow as mlflow
 
 
 def _inverse_cdf_supergaussian(
@@ -32,7 +29,7 @@ def _inverse_cdf_supergaussian(
     sampling that exactly reproduces the requested moments in expectation.
     """
     v_thermal = np.sqrt(T0 / mass)
-    alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
+    alpha = np.sqrt(3.0 * gamma(3.0 / supergaussian_order) / gamma(5.0 / supergaussian_order))
 
     nv = max(8192, 8 * n_particles)
     v_grid = np.linspace(-vmax, vmax, nv)
@@ -56,7 +53,7 @@ def _random_supergaussian(
 ) -> np.ndarray:
     """Random velocity sampling via rejection on a bounded supergaussian."""
     v_thermal = np.sqrt(T0 / mass)
-    alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
+    alpha = np.sqrt(3.0 * gamma(3.0 / supergaussian_order) / gamma(5.0 / supergaussian_order))
 
     out = np.empty(n_particles)
     filled = 0
@@ -72,13 +69,14 @@ def _random_supergaussian(
     return out
 
 
-def _initialize_particles_(cfg: dict, simulation: PIC1DSimulation) -> dict:
+def _initialize_particles_(cfg: dict, simulation: PIC1DSimulation, *, seed: int | None = None) -> dict:
     """Build particle arrays for every species.
 
     Returns a dict ``{species_name: (x, v, w, n_prof, vax)}`` where ``n_prof``
     is the requested density profile sampled on the grid (used as the
     neutralizing ion background) and ``vax`` is a synthetic velocity axis used
-    for downstream plots.
+    for downstream plots. When ``seed`` is supplied it overrides configured
+    noise seeds deterministically without mutating the input configuration.
     """
     grid = simulation.grid
     ppc = simulation.ppc
@@ -86,7 +84,7 @@ def _initialize_particles_(cfg: dict, simulation: PIC1DSimulation) -> dict:
     L = float(grid.xmax - grid.xmin)
 
     out = {}
-    for species in simulation.species:
+    for species_index, species in enumerate(simulation.species):
         # Combine density profile contributions; same convention as Vlasov-1D loader.
         n_prof = np.zeros(grid.nx)
         # The per-subspecies thermal parameters are needed when sampling v.
@@ -114,10 +112,11 @@ def _initialize_particles_(cfg: dict, simulation: PIC1DSimulation) -> dict:
         w_parts: list[np.ndarray] = []
 
         rng = np.random.default_rng(2025)  # fallback; per-subspecies seeds set below
-        for spec, sub_np, nprof in zip(sub_specs, np_per_sub, sub_profiles, strict=True):
+        for subspecies_index, (spec, sub_np, nprof) in enumerate(zip(sub_specs, np_per_sub, sub_profiles, strict=True)):
             sub_np = int(sub_np)
-            seed = spec.density_profile.noise_profile.noise_seed
-            rng = np.random.default_rng(int(seed))
+            configured_seed = spec.density_profile.noise_profile.noise_seed
+            this_seed = configured_seed if seed is None else seed + species_index * len(sub_specs) + subspecies_index
+            rng = np.random.default_rng(int(this_seed))
 
             if species.loading == "quiet":
                 # Uniform x slots; weight encodes the density profile so all
@@ -230,6 +229,8 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict) -> dict:
     the top of ``plots/fields/``. Scalars split similarly between
     ``plots/scalars/<species>/`` and ``plots/scalars/``.
     """
+    from .. import patched_mlflow as mlflow
+
     t0 = time()
 
     species_names = list(cfg["grid"]["species_params"].keys())
