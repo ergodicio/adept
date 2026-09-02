@@ -1,5 +1,10 @@
 # ADEPT Architecture
 
+ADEPT is incrementally moving toward explicit, logging-free preparation and a pure
+numerical transform boundary. [ADR 0001](adr/0001-explicit-simulation-boundaries.md)
+defines the target contracts and compatibility policy. The existing lifecycle below
+remains the active execution path while solvers migrate behind parity tests.
+
 - ADEPT solvers are packaged into `ADEPTModule`s and run via the `ergoExo`
   Code pointer: `adept/_base_.py`
 - The `ergoExo` manages creation of an MLflow "run" and calls lifecycle methods on the `ADEPTModule` to perform logging of configuration, parameters, and run artifacts.
