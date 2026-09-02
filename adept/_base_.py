@@ -15,6 +15,7 @@ from equinox import Module, filter_jit
 from jax import numpy as jnp
 
 from . import patched_mlflow as mlflow
+from ._jax_helpers import get_envelope as _get_envelope
 from .utils import robust_log_artifacts
 
 
@@ -24,7 +25,7 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
         DeprecationWarning,
         stacklevel=2,
     )
-    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
+    return _get_envelope(p_wL, p_wR, p_L, p_R, ax)
 
 
 class Stepper(Euler):

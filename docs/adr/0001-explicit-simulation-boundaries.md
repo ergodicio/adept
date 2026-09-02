@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-02
-- Issues: [#349](https://github.com/ergodicio/adept/issues/349), [#353](https://github.com/ergodicio/adept/issues/353)
+- Issues: [#349](https://github.com/ergodicio/adept/issues/349), [#350](https://github.com/ergodicio/adept/issues/350), [#353](https://github.com/ergodicio/adept/issues/353)
 
 ## Context
 
@@ -31,8 +31,9 @@ ADEPT will use the following vocabulary and ownership boundaries:
   manifest, analyzer, and solver capabilities. Changes produce a replaced value rather
   than mutating closure-captured fields.
 - `JaxProgram(params, state, inputs, key)` is the transformed numerical boundary. A
-  future numerical-core change will define its stable `RawResult` and the distinct
-  continuous `rhs` and discrete `step` contracts.
+  stable `RawResult` separates final state, observations, times, status, and stats.
+  `ContinuousSystem.rhs` exposes a true derivative, while `DiscreteSystem.step`
+  exposes a complete next-state map; Diffrax and scan adapters execute each kind.
 - A host-side executor turns a `RawResult` into a materialized `Result`. An `Analyzer`
   turns that result into a `Report` of metrics and artifact descriptions. Tracking,
   artifact upload, checkpointing, plotting, scheduling, and external processes remain
@@ -90,7 +91,9 @@ will receive an actionable migration error or use the legacy fallback.
 
 ## Consequences
 
-The initial change is additive and does not reroute simulations. It introduces some
+The change is additive and does not reroute legacy simulations. It introduces some
 temporary duplication while solvers migrate, but gives every migration a parity-tested
-rollback path. Keeping the contract layer dependency-free also enables future external
-and scheduler submitters to inspect plans without importing JAX or MLflow.
+rollback path. `tf-1d` and electrostatic `pic-1d` are the first builder pilots; their
+legacy modules remain intact. Keeping the contract layer dependency-free also enables
+future external and scheduler submitters to inspect plans without importing JAX or
+MLflow.

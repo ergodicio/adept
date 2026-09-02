@@ -12,7 +12,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
-from typing import Any, Generic, Protocol, TypeVar, runtime_checkable
+from typing import Any, Generic, NamedTuple, Protocol, TypeVar, runtime_checkable
 
 
 class ExecutionKind(StrEnum):
@@ -260,6 +260,25 @@ class RunManifest:
             raise ValueError(f"Invalid manifest fields: {exc}") from exc
 
 
+class RawResult(NamedTuple):
+    """Stable PyTree-shaped result returned by every numerical program."""
+
+    final_state: Any
+    observations: Any
+    times: Any
+    status: Any
+    stats: Any
+
+
+@dataclass(frozen=True, slots=True)
+class PassthroughAnalyzer:
+    """Side-effect-free analyzer used until a solver has a structured report."""
+
+    def analyze(self, result: RawResult, manifest: RunManifest) -> RawResult:
+        del manifest
+        return result
+
+
 ProgramT = TypeVar("ProgramT")
 ParamsT = TypeVar("ParamsT")
 StateT = TypeVar("StateT")
@@ -299,6 +318,20 @@ class JaxProgram(Protocol[ProgramParamsT, ProgramStateT, ProgramInputsT, KeyT, R
     def __call__(
         self, params: ProgramParamsT, state: ProgramStateT, inputs: ProgramInputsT, key: KeyT
     ) -> RawResultT: ...
+
+
+@runtime_checkable
+class ContinuousSystem(Protocol):
+    """A true continuous system returning a state time derivative."""
+
+    def rhs(self, t: Any, state: Any, params: Any, inputs: Any) -> Any: ...
+
+
+@runtime_checkable
+class DiscreteSystem(Protocol):
+    """A discrete system returning the complete state for the next step."""
+
+    def step(self, step: Any, state: Any, params: Any, inputs: Any, key: Any) -> Any: ...
 
 
 @runtime_checkable

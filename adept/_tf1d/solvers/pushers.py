@@ -3,7 +3,7 @@ import jax
 import numpy as np
 from jax import numpy as jnp
 
-from adept._base_ import get_envelope
+from adept._jax_helpers import get_envelope
 from adept.electrostatic import get_complex_frequency_table
 
 

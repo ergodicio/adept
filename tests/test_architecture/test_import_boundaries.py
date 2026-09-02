@@ -28,6 +28,24 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert loaded == [], loaded
         assert adept.SimulationSpec is SimulationSpec
         assert adept.SolverRegistry is SolverRegistry
+        assert adept.solver_registry.names() == ("pic-1d", "tf-1d")
+        """
+    )
+
+    assert process.returncode == 0, process.stderr
+
+
+def test_resolving_builtin_builders_does_not_load_mlflow():
+    process = run_isolated_python(
+        """
+        import sys
+
+        from adept.core import solver_registry
+
+        assert solver_registry.resolve("tf-1d").__class__.__name__ == "TwoFluid1DBuilder"
+        assert "mlflow" not in sys.modules
+        assert solver_registry.resolve("pic-1d").__class__.__name__ == "PIC1DBuilder"
+        assert "mlflow" not in sys.modules
         """
     )
 
