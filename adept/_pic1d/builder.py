@@ -118,9 +118,7 @@ def _initial_state(loaded: dict[str, Any], grid) -> dict[str, jax.Array]:
 
 def _runtime_drivers(drivers):
     return jax.tree.map(
-        lambda value: jnp.asarray(value)
-        if isinstance(value, (int, float)) and not isinstance(value, bool)
-        else value,
+        lambda value: jnp.asarray(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else value,
         drivers,
     )
 
@@ -147,8 +145,7 @@ class PIC1DBuilder:
             )
         if config_model.drivers.ex_stochastic is not None:
             raise ValueError(
-                "The new pic-1d builder does not yet support stochastic ex forcing; "
-                "use the legacy ergoExo path"
+                "The new pic-1d builder does not yet support stochastic ex forcing; use the legacy ergoExo path"
             )
 
         simulation = sim_from_config(config_model)

@@ -77,9 +77,9 @@ def test_continuous_program_jit_grad_and_changed_runtime_inputs():
 
     first = compiled(program, params, state, first_inputs, key)
     second = compiled(program, params, state, second_inputs, key)
-    derivative = jax.grad(
-        lambda rate: compiled(program, {"rate": rate}, state, first_inputs, key).final_state
-    )(params["rate"])
+    derivative = jax.grad(lambda rate: compiled(program, {"rate": rate}, state, first_inputs, key).final_state)(
+        params["rate"]
+    )
 
     expected_first = (state + first_inputs["forcing"] / params["rate"]) * jnp.exp(params["rate"])
     expected_first -= first_inputs["forcing"] / params["rate"]
@@ -114,9 +114,7 @@ def test_discrete_program_is_keyed_deterministic_and_vmappable():
     first = compiled(program, params, state, inputs, key)
     repeated = compiled(program, params, state, inputs, key)
     changed = compiled(program, params, state, inputs, jax.random.key(8))
-    batched = eqx.filter_jit(
-        eqx.filter_vmap(run_program, in_axes=(None, None, None, 0, 0))
-    )(
+    batched = eqx.filter_jit(eqx.filter_vmap(run_program, in_axes=(None, None, None, 0, 0)))(
         program,
         params,
         state,

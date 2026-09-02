@@ -131,9 +131,7 @@ def _derive_config(cfg: dict[str, Any]) -> None:
     one_over_kxr[1:] = 1.0 / grid["kxr"][1:]
     grid["one_over_kxr"] = jnp.asarray(one_over_kxr)
 
-    cfg["save"]["t"]["ax"] = jnp.linspace(
-        cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"]
-    )
+    cfg["save"]["t"]["ax"] = jnp.linspace(cfg["save"]["t"]["tmin"], cfg["save"]["t"]["tmax"], cfg["save"]["t"]["nt"])
     if "x" in cfg["save"]:
         save_x = cfg["save"]["x"]
         dx = (save_x["xmax"] - save_x["xmin"]) / save_x["nx"]
@@ -146,9 +144,9 @@ def _derive_config(cfg: dict[str, Any]) -> None:
 def _runtime_inputs(drivers: dict[str, Any]) -> dict[str, Any]:
     return {
         "drivers": jax.tree.map(
-            lambda value: jnp.asarray(value)
-            if isinstance(value, (int, float)) and not isinstance(value, bool)
-            else value,
+            lambda value: (
+                jnp.asarray(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else value
+            ),
             deepcopy(drivers),
         )
     }
@@ -171,8 +169,7 @@ class TwoFluid1DBuilder:
         config_model = ConfigModel.model_validate(validation_config)
         if config_model.physics.ion.trapping.is_on or config_model.physics.electron.trapping.is_on:
             raise ValueError(
-                "The new tf-1d builder does not yet support learned trapping closures; "
-                "use the legacy ergoExo path"
+                "The new tf-1d builder does not yet support learned trapping closures; use the legacy ergoExo path"
             )
 
         resolved: dict[str, Any] = config_model.model_dump(exclude={"mlflow"})

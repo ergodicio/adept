@@ -29,11 +29,7 @@ def assert_transform_boundary_is_numerical(prepared) -> None:
     leaves = jax.tree.leaves(transformed_values)
 
     assert any(eqx.is_array(leaf) for leaf in jax.tree.leaves(prepared.program))
-    assert not [
-        leaf
-        for leaf in leaves
-        if type(leaf).__module__.split(".", maxsplit=1)[0] in forbidden_modules
-    ]
+    assert not [leaf for leaf in leaves if type(leaf).__module__.split(".", maxsplit=1)[0] in forbidden_modules]
 
 
 def tf1d_config() -> dict:
@@ -197,6 +193,40 @@ def test_pic1d_preparation_is_seeded_and_structurally_reproducible():
     assert first.manifest.structural_fingerprint == repeated.manifest.structural_fingerprint
     assert_trees_allclose(first.state, repeated.state)
     assert not np.allclose(first.state["x_electron"], changed.state["x_electron"])
+
+
+def test_pic1d_seed_streams_are_unique_for_variable_component_counts():
+    from adept._pic1d.helpers import _particle_rng
+
+    first_component = _particle_rng(
+        configured_seed=42,
+        seed=12,
+        species_index=0,
+        subspecies_index=1,
+    ).random(16)
+    second_species = _particle_rng(
+        configured_seed=42,
+        seed=12,
+        species_index=1,
+        subspecies_index=0,
+    ).random(16)
+    repeated = _particle_rng(
+        configured_seed=99,
+        seed=12,
+        species_index=0,
+        subspecies_index=1,
+    ).random(16)
+    legacy_primary = np.random.default_rng(12).random(16)
+    primary = _particle_rng(
+        configured_seed=99,
+        seed=12,
+        species_index=0,
+        subspecies_index=0,
+    ).random(16)
+
+    assert not np.array_equal(first_component, second_species)
+    np.testing.assert_array_equal(first_component, repeated)
+    np.testing.assert_array_equal(primary, legacy_primary)
 
 
 def test_pic1d_runtime_driver_is_not_a_stale_program_constant():

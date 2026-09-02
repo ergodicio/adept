@@ -69,6 +69,22 @@ def _random_supergaussian(
     return out
 
 
+def _particle_rng(
+    *,
+    configured_seed: int,
+    seed: int | None,
+    species_index: int,
+    subspecies_index: int,
+) -> np.random.Generator:
+    """Return the deterministic stream for one species component."""
+
+    if seed is None:
+        return np.random.default_rng(int(configured_seed))
+
+    sequence = np.random.SeedSequence([int(seed), species_index, subspecies_index])
+    return np.random.default_rng(sequence)
+
+
 def _initialize_particles_(cfg: dict, simulation: PIC1DSimulation, *, seed: int | None = None) -> dict:
     """Build particle arrays for every species.
 
@@ -111,12 +127,15 @@ def _initialize_particles_(cfg: dict, simulation: PIC1DSimulation, *, seed: int 
         v_parts: list[np.ndarray] = []
         w_parts: list[np.ndarray] = []
 
-        rng = np.random.default_rng(2025)  # fallback; per-subspecies seeds set below
         for subspecies_index, (spec, sub_np, nprof) in enumerate(zip(sub_specs, np_per_sub, sub_profiles, strict=True)):
             sub_np = int(sub_np)
             configured_seed = spec.density_profile.noise_profile.noise_seed
-            this_seed = configured_seed if seed is None else seed + species_index * len(sub_specs) + subspecies_index
-            rng = np.random.default_rng(int(this_seed))
+            rng = _particle_rng(
+                configured_seed=configured_seed,
+                seed=seed,
+                species_index=species_index,
+                subspecies_index=subspecies_index,
+            )
 
             if species.loading == "quiet":
                 # Uniform x slots; weight encodes the density profile so all
