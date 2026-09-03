@@ -100,6 +100,12 @@ Experiment creation is race-tolerant. When another worker creates the experiment
 first, ADEPT resolves its explicit ID and creates the run there; it never silently
 falls back to MLflow's Default experiment.
 
+To resume an existing run, pass its ID in `RunRequest(run_id=...)`. The adapter
+validates that the run is active (not deleted), preserves its existing parent, and
+explicitly transitions it back to `RUNNING` before returning the handle. A process
+failure during resumed execution therefore leaves the run visibly incomplete rather
+than retaining a stale terminal status.
+
 For an MLflow service behind ADEPT's `/ajax-api/2.0` reverse-proxy route, configure the
 compatibility behavior only on the adapter:
 

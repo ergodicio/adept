@@ -30,8 +30,8 @@ def _configure_rest_api_path_prefix(prefix: str) -> None:
     rest_utils = importlib.import_module("mlflow.utils.rest_utils")
     service_module = importlib.import_module("mlflow.protos.service_pb2")
     store_module = importlib.import_module("mlflow.store.tracking.rest_store")
-    rest_utils._REST_API_PATH_PREFIX = prefix
-    rest_utils._TRACE_REST_API_PATH_PREFIX = f"{prefix}/mlflow/traces"
+    vars(rest_utils)["_REST_API_PATH_PREFIX"] = prefix
+    vars(rest_utils)["_TRACE_REST_API_PATH_PREFIX"] = f"{prefix}/mlflow/traces"
     store_module.RestStore._METHOD_TO_INFO = rest_utils.extract_api_info_for_service(
         service_module.MlflowService,
         prefix,
@@ -126,8 +126,22 @@ class MLflowTracker(_MLflowClientProvider):
 
         if request.run_id is not None:
             run = client.get_run(request.run_id)
+            if str(run.info.lifecycle_stage).lower() == "deleted":
+                raise ValueError(f"cannot resume deleted MLflow run {request.run_id!r}")
+
+            existing_parent_run_id = run.data.tags.get("mlflow.parentRunId")
+            if parent_run_id is not None and existing_parent_run_id != parent_run_id:
+                raise ValueError(
+                    f"MLflow run {request.run_id!r} belongs to parent {existing_parent_run_id!r}, not {parent_run_id!r}"
+                )
+            parent_run_id = existing_parent_run_id
+
+            client.update_run(run.info.run_id, status=RunStatus.RUNNING.value)
+            reopened = client.get_run(run.info.run_id)
+            if reopened.info.status != RunStatus.RUNNING.value:
+                raise RuntimeError(f"MLflow run {request.run_id!r} did not reopen: status is {reopened.info.status!r}")
             return RunHandle(
-                run_id=str(run.info.run_id),
+                run_id=str(reopened.info.run_id),
                 backend="mlflow",
                 parent_run_id=parent_run_id,
             )

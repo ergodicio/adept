@@ -3,8 +3,9 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 
 import mlflow
+import pytest
 
-from adept import Artifact, MetricEvent, RunRequest, RunStatus
+from adept import Artifact, MetricEvent, RunHandle, RunRequest, RunStatus
 from adept.core.tracking_mlflow import MLflowArtifactSink, MLflowTracker
 
 
@@ -57,3 +58,47 @@ def test_mlflow_tracker_uses_explicit_parent_child_runs_and_verified_artifacts(t
     assert receipt.path == "reports/result.txt"
     assert directory_receipt.path == "snapshots/snapshot"
     assert mlflow.active_run() is None
+
+
+def test_mlflow_resume_reopens_terminal_run_and_rejects_deleted_run(tmp_path):
+    tracking_uri = (tmp_path / "mlruns").as_uri()
+    tracker = MLflowTracker(tracking_uri=tracking_uri)
+    client = mlflow.tracking.MlflowClient(tracking_uri=tracking_uri)
+    experiment_id = client.create_experiment("resume-runs")
+
+    parent = client.create_run(experiment_id, run_name="parent")
+    terminal = client.create_run(
+        experiment_id,
+        run_name="terminal",
+        tags={"mlflow.parentRunId": parent.info.run_id},
+    )
+    client.set_terminated(terminal.info.run_id, status="FINISHED")
+    resumed = tracker.start(
+        RunRequest(
+            experiment="resume-runs",
+            run_id=terminal.info.run_id,
+        )
+    )
+
+    assert resumed.run_id == terminal.info.run_id
+    assert resumed.parent_run_id == parent.info.run_id
+    assert client.get_run(resumed.run_id).info.status == "RUNNING"
+
+    with pytest.raises(ValueError, match="belongs to parent"):
+        tracker.start(
+            RunRequest(
+                experiment="resume-runs",
+                run_id=terminal.info.run_id,
+                parent=RunHandle("different-parent", "mlflow"),
+            )
+        )
+
+    deleted = client.create_run(experiment_id, run_name="deleted")
+    client.delete_run(deleted.info.run_id)
+    with pytest.raises(ValueError, match="cannot resume deleted"):
+        tracker.start(
+            RunRequest(
+                experiment="resume-runs",
+                run_id=deleted.info.run_id,
+            )
+        )
