@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 import yaml
 
-from adept.core import ExecutionKind, SimulationSpec, solver_registry
+from adept.core import CallableObjective, ExecutionKind, SimulationSpec, partition_parameters, solver_registry
 
 
 def run_program(program, params, state, inputs, key):
@@ -146,6 +146,51 @@ def test_tf1d_builder_matches_the_legacy_continuous_path():
     assert_trees_allclose(result.observations, legacy_result.ys)
     np.testing.assert_allclose(result.times, legacy_result.ts)
     assert not np.allclose(result.final_state["electron"]["u"], prepared.state["electron"]["u"])
+
+
+def test_tf1d_objective_value_and_gradient_match_the_legacy_path():
+    from adept import value_and_grad
+    from adept.tf1d import BaseTwoFluid1D
+
+    config = tf1d_config()
+    legacy = BaseTwoFluid1D(deepcopy(config))
+    legacy.write_units()
+    legacy.get_derived_quantities()
+    legacy.get_solver_quantities()
+    legacy.init_state_and_args()
+    legacy.init_diffeqsolve()
+
+    prepared = solver_registry.prepare(SimulationSpec.from_legacy_config(config), key=0)
+    runtime_values = eqx.combine(prepared.params, prepared.inputs)
+    selector = jax.tree.map(lambda _: False, runtime_values)
+    selector = eqx.tree_at(lambda tree: tree["drivers"]["ex"]["0"]["a0"], selector, True)
+    partition = partition_parameters(runtime_values, selector)
+    objective = CallableObjective(
+        lambda result, params, inputs: jnp.mean(result.observations["x"]["electron"]["u"][-1] ** 2),
+        metric_name="electron_flow_energy",
+    )
+
+    new_run = eqx.filter_jit(value_and_grad)(
+        prepared.program,
+        objective,
+        partition.trainable,
+        prepared.state,
+        partition.frozen,
+        jax.random.key(0),
+    )
+
+    def legacy_loss(amplitude):
+        args = eqx.tree_at(lambda tree: tree["drivers"]["ex"]["0"]["a0"], legacy.args, amplitude)
+        result = legacy({}, args)["solver result"]
+        return jnp.mean(result.ys["x"]["electron"]["u"][-1] ** 2)
+
+    amplitude = runtime_values["drivers"]["ex"]["0"]["a0"]
+    legacy_value, legacy_gradient = eqx.filter_jit(eqx.filter_value_and_grad(legacy_loss))(amplitude)
+    new_gradient = new_run.gradients["drivers"]["ex"]["0"]["a0"]
+
+    np.testing.assert_allclose(new_run.objective.loss, legacy_value, rtol=2e-5, atol=1e-9)
+    np.testing.assert_allclose(new_gradient, legacy_gradient, rtol=2e-5, atol=1e-9)
+    assert eqx.tree_equal(eqx.combine(partition.trainable, partition.frozen), runtime_values)
 
 
 def test_pic1d_builder_matches_the_legacy_discrete_map():

@@ -18,7 +18,7 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         import sys
 
         import adept
-        from adept.core import SimulationSpec, SolverRegistry
+        from adept.core import Objective, ObjectiveResult, SimulationSpec, SolverRegistry
 
         forbidden = ("jax", "equinox", "mlflow", "diffrax")
         loaded = sorted(
@@ -28,6 +28,9 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert loaded == [], loaded
         assert adept.SimulationSpec is SimulationSpec
         assert adept.SolverRegistry is SolverRegistry
+        assert adept.Objective is Objective
+        assert adept.ObjectiveResult is ObjectiveResult
+        assert "adept.core.objectives" not in sys.modules
         assert adept.solver_registry.names() == ("pic-1d", "tf-1d")
         """
     )
@@ -45,6 +48,23 @@ def test_resolving_builtin_builders_does_not_load_mlflow():
         assert solver_registry.resolve("tf-1d").__class__.__name__ == "TwoFluid1DBuilder"
         assert "mlflow" not in sys.modules
         assert solver_registry.resolve("pic-1d").__class__.__name__ == "PIC1DBuilder"
+        assert "mlflow" not in sys.modules
+        """
+    )
+
+    assert process.returncode == 0, process.stderr
+
+
+def test_loading_objective_helpers_does_not_load_mlflow():
+    process = run_isolated_python(
+        """
+        import sys
+
+        from adept import CallableObjective, WeightedSumObjective, value_and_grad
+
+        assert CallableObjective.__name__ == "CallableObjective"
+        assert WeightedSumObjective.__name__ == "WeightedSumObjective"
+        assert callable(value_and_grad)
         assert "mlflow" not in sys.modules
         """
     )

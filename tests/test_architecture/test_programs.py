@@ -8,7 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from adept.core import RawResult
+from adept.core import ObjectiveResult, RawResult
 from adept.core.programs import DiffraxProgram, ScanProgram
 
 
@@ -63,6 +63,19 @@ def test_raw_result_has_a_stable_pytree_schema():
     assert RawResult._fields == ("final_state", "observations", "times", "status", "stats")
     assert jax.tree.structure(result) == jax.tree.structure(
         RawResult(jnp.array(0.0), jnp.array([0.0]), jnp.array([0.0]), result.status, {"num_steps": jnp.array(0)})
+    )
+
+
+def test_objective_result_has_a_stable_pytree_schema():
+    result = ObjectiveResult(
+        loss=jnp.asarray(1.0),
+        metrics={"error": jnp.asarray(1.0)},
+        aux={"prediction": jnp.asarray(2.0)},
+    )
+
+    assert ObjectiveResult._fields == ("loss", "metrics", "aux")
+    assert jax.tree.structure(result) == jax.tree.structure(
+        ObjectiveResult(jnp.asarray(0.0), {"error": jnp.asarray(0.0)}, {"prediction": jnp.asarray(0.0)})
     )
 
 

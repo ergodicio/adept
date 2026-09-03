@@ -1,7 +1,11 @@
 API Guide
 ----------
 
-There are two primary high level classes.
+The explicit logging-free program and objective API is described in
+:doc:`usage/explicit_programs`. It is currently opt-in for the ``tf-1d`` and
+electrostatic ``pic-1d`` pilots.
+
+The established API has two primary high level classes.
 
 1. `ergoExo` houses the solver and handles the mlflow logging and experiment management
 2. `ADEPTModule` is base class for the solver

@@ -34,8 +34,7 @@ class TwoFluid1DSystem(eqx.Module):
     vector_field: VF
 
     def rhs(self, t: Any, state: Any, params: Any, inputs: Any) -> Any:
-        del params
-        return self.vector_field(t, state, inputs)
+        return self.vector_field(t, state, eqx.combine(params, inputs))
 
 
 class TwoFluid1DObservation(eqx.Module):
@@ -188,8 +187,7 @@ class TwoFluid1DBuilder:
             }
             for species in ("ion", "electron")
         }
-        params: dict[str, Any] = {}
-        inputs = _runtime_inputs(cast(dict[str, Any], resolved["drivers"]))
+        params, inputs = eqx.partition(_runtime_inputs(cast(dict[str, Any], resolved["drivers"])), False)
         save_kx = save.get("kx")
         observation = TwoFluid1DObservation(
             x_input=grid["x"],

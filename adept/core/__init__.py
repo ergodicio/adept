@@ -5,12 +5,17 @@ solver implementations, JAX, and tracking backends are loaded by registered buil
 only when a simulation is prepared or executed.
 """
 
+from importlib import import_module
+from typing import Any
+
 from .contracts import (
     Analyzer,
     ContinuousSystem,
     DiscreteSystem,
     ExecutionKind,
     JaxProgram,
+    Objective,
+    ObjectiveResult,
     PassthroughAnalyzer,
     Placement,
     Precision,
@@ -45,13 +50,33 @@ def _load_pic_1d_builder():
 solver_registry.register_lazy("tf-1d", _load_two_fluid_1d_builder)
 solver_registry.register_lazy("pic-1d", _load_pic_1d_builder)
 
+_LAZY_ATTRIBUTES = {
+    "CallableObjective": (".objectives", "CallableObjective"),
+    "L2Penalty": (".objectives", "L2Penalty"),
+    "LegacyVGAdapter": (".objectives", "LegacyVGAdapter"),
+    "ObjectiveRun": (".objectives", "ObjectiveRun"),
+    "ParameterPartition": (".objectives", "ParameterPartition"),
+    "ValueAndGradResult": (".objectives", "ValueAndGradResult"),
+    "WeightedSumObjective": (".objectives", "WeightedSumObjective"),
+    "evaluate_objective": (".objectives", "evaluate_objective"),
+    "partition_parameters": (".objectives", "partition_parameters"),
+    "value_and_grad": (".objectives", "value_and_grad"),
+}
+
 __all__ = [
     "Analyzer",
+    "CallableObjective",
     "ContinuousSystem",
     "DiscreteSystem",
     "ExecutionKind",
     "InvalidSolverNameError",
     "JaxProgram",
+    "L2Penalty",
+    "LegacyVGAdapter",
+    "Objective",
+    "ObjectiveResult",
+    "ObjectiveRun",
+    "ParameterPartition",
     "PassthroughAnalyzer",
     "Placement",
     "Precision",
@@ -64,5 +89,26 @@ __all__ = [
     "SolverCapabilities",
     "SolverRegistry",
     "UnknownSolverError",
+    "ValueAndGradResult",
+    "WeightedSumObjective",
+    "evaluate_objective",
+    "partition_parameters",
     "solver_registry",
+    "value_and_grad",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    try:
+        module_name, attribute_name = _LAZY_ATTRIBUTES[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+
+    module = import_module(module_name, __name__)
+    value = getattr(module, attribute_name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

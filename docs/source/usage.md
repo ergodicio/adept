@@ -53,5 +53,6 @@ once:
 ```{toctree}
 :maxdepth: 2
 
+usage/explicit_programs
 usage/initialization
 ```
