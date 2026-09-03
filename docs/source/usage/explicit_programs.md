@@ -180,3 +180,6 @@ the structured objective. It does not create an MLflow run or emulate mutation o
 captured module attributes. New code should call `value_and_grad` directly. A later
 compatibility façade will route supported `ergoExo` behavior through these contracts;
 until then, existing `ergoExo` and `ADEPTModule` callers continue on the legacy path.
+
+For host-side execution, tracking, failure policies, and verified artifact storage, see
+[Host-side tracking and artifacts](host_runtime.md).

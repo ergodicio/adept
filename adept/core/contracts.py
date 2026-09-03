@@ -282,9 +282,11 @@ class ObjectiveResult(NamedTuple):
 class PassthroughAnalyzer:
     """Side-effect-free analyzer used until a solver has a structured report."""
 
-    def analyze(self, result: RawResult, manifest: RunManifest) -> RawResult:
+    def analyze(self, result: RawResult, manifest: RunManifest) -> Any:
         del manifest
-        return result
+        from .tracking import Report
+
+        return Report(result=result)
 
 
 ProgramT = TypeVar("ProgramT")

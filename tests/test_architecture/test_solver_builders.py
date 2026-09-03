@@ -10,7 +10,17 @@ import numpy as np
 import pytest
 import yaml
 
-from adept.core import CallableObjective, ExecutionKind, SimulationSpec, partition_parameters, solver_registry
+from adept.core import (
+    CallableObjective,
+    DirectoryArtifactSink,
+    ExecutionKind,
+    NullTracker,
+    Report,
+    SimulationSpec,
+    partition_parameters,
+    run_prepared,
+    solver_registry,
+)
 
 
 def run_program(program, params, state, inputs, key):
@@ -223,6 +233,26 @@ def test_pic1d_builder_matches_the_legacy_discrete_map():
     assert_transform_boundary_is_numerical(prepared)
     assert_trees_allclose(prepared.state, legacy.state)
     assert_trees_allclose(result.final_state, expected_state)
+
+
+def test_pic1d_prepared_run_completes_without_mlflow(tmp_path):
+    prepared = solver_registry.prepare(
+        SimulationSpec.from_legacy_config(pic1d_config()),
+        key=42,
+    )
+
+    result = run_prepared(
+        prepared,
+        key=jax.random.key(42),
+        tracker=NullTracker(),
+        artifact_sink=DirectoryArtifactSink(tmp_path / "artifacts"),
+    )
+
+    assert isinstance(result.report, Report)
+    assert result.report.result is result.raw_result
+    assert result.handle.backend == "null"
+    assert result.tracking_errors == ()
+    assert_trees_allclose(result.raw_result.final_state, result.report.result.final_state)
 
 
 def test_pic1d_preparation_is_seeded_and_structurally_reproducible():
