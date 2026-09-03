@@ -37,8 +37,8 @@ class PIC1DSystem(eqx.Module):
     dt: float = eqx.field(static=True)
 
     def step(self, step: Any, state: Any, params: Any, inputs: Any, key: jax.Array) -> Any:
-        del params, key
-        return self.vector_field(self.t0 + step * self.dt, state, inputs)
+        del key
+        return self.vector_field(self.t0 + step * self.dt, state, eqx.combine(params, inputs))
 
 
 def _write_units(resolved: dict[str, Any], simulation) -> dict[str, str]:
@@ -153,8 +153,7 @@ class PIC1DBuilder:
         units = _write_units(resolved, simulation)
         loaded = _derive_config(resolved, simulation, seed=seed)
         state = _initial_state(loaded, simulation.grid)
-        params: dict[str, Any] = {}
-        inputs = {"drivers": _runtime_drivers(simulation.drivers)}
+        params, inputs = eqx.partition({"drivers": _runtime_drivers(simulation.drivers)}, False)
 
         resolved_grid = cast(dict[str, Any], resolved["grid"])
         program_config = {

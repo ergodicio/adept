@@ -34,12 +34,20 @@ result = eqx.filter_jit(run)(
 )
 ```
 
+Pure objectives and explicit parameter selection are documented in the
+[explicit-program guide](source/usage/explicit_programs.md). `ObjectiveResult` keeps a
+scalar loss, metrics, and auxiliary values inside a stable PyTree. The standard
+`value_and_grad` helper differentiates only `params`; complementary fixed values remain
+in `state` and `inputs`. `WeightedSumObjective` and `L2Penalty` provide basic
+composition without adding tracking or host callbacks to the numerical graph.
+
 The transformed boundary always receives five explicit PyTrees: `program`, `params`,
 `state`, runtime `inputs`, and `key`. Pass those fields individually; the manifest,
 analyzer, units, configuration models, tracking clients, and paths are host-side data
-and do not enter JAX transforms. Differentiate a chosen array in `params` with
-`jax.grad` or `eqx.filter_value_and_grad`. Fixed arrays belong in the program or state,
-not in the differentiation target. `vmap` is valid only when the builder advertises
+and do not enter JAX transforms. Use `partition_parameters` to select controls from a
+runtime PyTree and keep the complementary leaves frozen, then call ADEPT's
+`value_and_grad` helper. Fixed arrays belong in the program, state, or inputs—not in
+the differentiation target. `vmap` is valid only when the builder advertises
 `capabilities.batchable`.
 
 Every numerical call returns the same `RawResult` named-tuple schema:

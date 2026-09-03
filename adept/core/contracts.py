@@ -270,6 +270,14 @@ class RawResult(NamedTuple):
     stats: Any
 
 
+class ObjectiveResult(NamedTuple):
+    """Pure objective output kept inside the JAX transform boundary."""
+
+    loss: Any
+    metrics: Any
+    aux: Any
+
+
 @dataclass(frozen=True, slots=True)
 class PassthroughAnalyzer:
     """Side-effect-free analyzer used until a solver has a structured report."""
@@ -289,6 +297,9 @@ ProgramStateT = TypeVar("ProgramStateT", contravariant=True)
 ProgramInputsT = TypeVar("ProgramInputsT", contravariant=True)
 KeyT = TypeVar("KeyT", contravariant=True)
 RawResultT = TypeVar("RawResultT", covariant=True)
+ObjectiveRawResultT = TypeVar("ObjectiveRawResultT", contravariant=True)
+ObjectiveParamsT = TypeVar("ObjectiveParamsT", contravariant=True)
+ObjectiveInputsT = TypeVar("ObjectiveInputsT", contravariant=True)
 AnalyzedResultT = TypeVar("AnalyzedResultT", contravariant=True)
 ReportT = TypeVar("ReportT", covariant=True)
 
@@ -318,6 +329,15 @@ class JaxProgram(Protocol[ProgramParamsT, ProgramStateT, ProgramInputsT, KeyT, R
     def __call__(
         self, params: ProgramParamsT, state: ProgramStateT, inputs: ProgramInputsT, key: KeyT
     ) -> RawResultT: ...
+
+
+@runtime_checkable
+class Objective(Protocol[ObjectiveRawResultT, ObjectiveParamsT, ObjectiveInputsT]):
+    """Composable pure loss evaluated from a numerical result and explicit data."""
+
+    def __call__(
+        self, result: ObjectiveRawResultT, params: ObjectiveParamsT, inputs: ObjectiveInputsT
+    ) -> ObjectiveResult: ...
 
 
 @runtime_checkable

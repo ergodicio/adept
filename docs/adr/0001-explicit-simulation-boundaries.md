@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-02
-- Issues: [#349](https://github.com/ergodicio/adept/issues/349), [#350](https://github.com/ergodicio/adept/issues/350), [#353](https://github.com/ergodicio/adept/issues/353)
+- Issues: [#349](https://github.com/ergodicio/adept/issues/349), [#350](https://github.com/ergodicio/adept/issues/350), [#352](https://github.com/ergodicio/adept/issues/352), [#353](https://github.com/ergodicio/adept/issues/353)
 
 ## Context
 
@@ -34,6 +34,10 @@ ADEPT will use the following vocabulary and ownership boundaries:
   stable `RawResult` separates final state, observations, times, status, and stats.
   `ContinuousSystem.rhs` exposes a true derivative, while `DiscreteSystem.step`
   exposes a complete next-state map; Diffrax and scan adapters execute each kind.
+- `Objective(result, params, inputs)` is a pure, composable transform-side loss. It
+  returns an `ObjectiveResult` containing a scalar loss plus stable metrics and
+  auxiliary PyTrees. ADEPT's standard value-and-gradient helper differentiates only
+  explicitly selected `params`; complementary runtime values remain fixed `inputs`.
 - A host-side executor turns a `RawResult` into a materialized `Result`. An `Analyzer`
   turns that result into a `Report` of metrics and artifact descriptions. Tracking,
   artifact upload, checkpointing, plotting, scheduling, and external processes remain
