@@ -4,9 +4,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 import mlflow
 import pytest
+from mlflow.store.tracking.rest_store import RestStore
+from mlflow.utils import rest_utils
 
 from adept import Artifact, MetricEvent, RunHandle, RunRequest, RunStatus
 from adept.core.tracking_mlflow import MLflowArtifactSink, MLflowTracker
+
+
+def _v2_endpoints(client):
+    return {endpoint for endpoint, _method in client._tracking_client.store._METHOD_TO_INFO.values()}
 
 
 def test_mlflow_tracker_uses_explicit_parent_child_runs_and_verified_artifacts(tmp_path):
@@ -102,3 +108,27 @@ def test_mlflow_resume_reopens_terminal_run_and_rejects_deleted_run(tmp_path):
                 run_id=deleted.info.run_id,
             )
         )
+
+
+def test_prefixed_and_ordinary_mlflow_clients_keep_independent_route_tables():
+    original_prefix = rest_utils._REST_API_PATH_PREFIX
+    original_routes = dict(RestStore._METHOD_TO_INFO)
+    original_endpoints = {endpoint for endpoint, _method in original_routes.values()}
+    ordinary_before = mlflow.tracking.MlflowClient(tracking_uri="https://ordinary-before.example")
+
+    prefixed = MLflowTracker(
+        tracking_uri="https://prefixed.example",
+        rest_api_path_prefix="/ajax-api/2.0",
+    )._get_client()
+    differently_prefixed = MLflowTracker(
+        tracking_uri="https://other-prefix.example",
+        rest_api_path_prefix="/other-api/2.0",
+    )._get_client()
+    ordinary_after = mlflow.tracking.MlflowClient(tracking_uri="https://ordinary-after.example")
+
+    assert all(endpoint.startswith("/ajax-api/2.0") for endpoint in _v2_endpoints(prefixed))
+    assert all(endpoint.startswith("/other-api/2.0") for endpoint in _v2_endpoints(differently_prefixed))
+    for ordinary in (ordinary_before, ordinary_after):
+        assert _v2_endpoints(ordinary) == original_endpoints
+    assert rest_utils._REST_API_PATH_PREFIX == original_prefix
+    assert RestStore._METHOD_TO_INFO == original_routes

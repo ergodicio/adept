@@ -116,6 +116,9 @@ tracker = MLflowTracker(
 )
 ```
 
+The prefixed route table belongs only to that adapter instance. Ordinary MLflow
+clients and adapters using another prefix in the same process keep their own routes.
+
 Credentials remain in the environment or normal MLflow/AWS configuration. They must
 not be placed in `RunRequest`, `RunManifest`, or a serialized simulation specification.
 

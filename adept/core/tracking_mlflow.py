@@ -6,8 +6,10 @@ import importlib
 import tempfile
 import time
 from collections.abc import Sequence
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlparse
 
 from .tracking import (
     Artifact,
@@ -21,21 +23,40 @@ from .tracking import (
 )
 
 
-def _configure_rest_api_path_prefix(prefix: str) -> None:
-    """Contain ADEPT's reverse-proxy compatibility patch in this adapter."""
+def _with_rest_api_path_prefix(client: Any, prefix: str) -> Any:
+    """Give one MLflow client an isolated REST route table."""
 
     if not prefix.startswith("/") or prefix.endswith("/"):
         raise ValueError("rest_api_path_prefix must start, but not end, with '/'")
 
     rest_utils = importlib.import_module("mlflow.utils.rest_utils")
+    credentials = importlib.import_module("mlflow.utils.credentials")
     service_module = importlib.import_module("mlflow.protos.service_pb2")
     store_module = importlib.import_module("mlflow.store.tracking.rest_store")
-    vars(rest_utils)["_REST_API_PATH_PREFIX"] = prefix
-    vars(rest_utils)["_TRACE_REST_API_PATH_PREFIX"] = f"{prefix}/mlflow/traces"
-    store_module.RestStore._METHOD_TO_INFO = rest_utils.extract_api_info_for_service(
+    tracking_client_module = importlib.import_module("mlflow.tracking._tracking_service.client")
+    base_tracking_client = vars(client)["_tracking_client"]
+    tracking_uri = str(base_tracking_client.tracking_uri)
+    if urlparse(tracking_uri).scheme not in {"http", "https"}:
+        raise ValueError("rest_api_path_prefix requires an HTTP(S) MLflow tracking URI")
+
+    route_table = rest_utils.extract_api_info_for_service(
         service_module.MlflowService,
         prefix,
     )
+    store = store_module.RestStore(partial(credentials.get_default_host_creds, tracking_uri))
+    vars(store)["_METHOD_TO_INFO"] = route_table
+
+    class ScopedTrackingServiceClient(tracking_client_module.TrackingServiceClient):
+        def __init__(self) -> None:
+            self.tracking_uri = tracking_uri
+            self._scoped_store = store
+
+        @property
+        def store(self) -> Any:
+            return self._scoped_store
+
+    vars(client)["_tracking_client"] = ScopedTrackingServiceClient()
+    return client
 
 
 class _MLflowClientProvider:
@@ -47,6 +68,8 @@ class _MLflowClientProvider:
         rest_api_path_prefix: str | None = None,
         client: Any | None = None,
     ) -> None:
+        if client is not None and rest_api_path_prefix is not None:
+            raise ValueError("rest_api_path_prefix cannot be applied to a caller-provided MLflow client")
         self.tracking_uri = tracking_uri
         self.registry_uri = registry_uri
         self.rest_api_path_prefix = rest_api_path_prefix
@@ -57,13 +80,14 @@ class _MLflowClientProvider:
         if self._provided_client is not None:
             return self._provided_client
         if self._client is None:
-            if self.rest_api_path_prefix is not None:
-                _configure_rest_api_path_prefix(self.rest_api_path_prefix)
             tracking = importlib.import_module("mlflow.tracking")
-            self._client = tracking.MlflowClient(
+            client = tracking.MlflowClient(
                 tracking_uri=self.tracking_uri,
                 registry_uri=self.registry_uri,
             )
+            if self.rest_api_path_prefix is not None:
+                client = _with_rest_api_path_prefix(client, self.rest_api_path_prefix)
+            self._client = client
         return self._client
 
 
