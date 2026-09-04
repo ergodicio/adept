@@ -432,19 +432,20 @@ terms:
 
 ### hpe (optional)
 
-Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field $\tilde{E}_x = \mathrm{Re}[E_x e^{-i\omega_{p0}t}]$, their spatially-averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). Quasi-1D only (`ny == 1`), and requires `terms.epw.damping.landau: true`. Because TPD requires transverse modes, setup explicitly rejects `hpe.active: true` together with `source.tpd: true`; angle-resolved TPD kinetic feedback needs a future multidimensional tracker. The particle push dominates the runtime, so HPE runs want a GPU.
+Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field, their spatially averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). For `ny == 1` the tracker uses `(x, p_x)`; in a 2-D box it uses `(x, y, p_x, p_y)` and gathers both $E_x$ and $E_y$. In both cases there is one box-wide ensemble, not a particle population at each grid point. HPE requires `terms.epw.damping.landau: true`. The particle push dominates runtime, so HPE runs want a GPU.
 
-The damping extraction is calibrated per k-mode so that the freshly loaded Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and the tail histogram `hpe_hist`; MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`, named for one-to-one comparison with the OSIRIS scan2 runs.
+In 2-D the box-wide distribution is represented by `n_angles` oriented projections $f(\mathbf{v}\cdot\hat{\mathbf{k}})$ over $[0,2\pi)$. Opposite directions remain distinct, and the two neighboring angular histograms are interpolated for every `(kx, ky)` mode. This is the Radon-projection form of the resonance integral: its memory is `n_angles * nv`, independent of the spatial mesh. The damping extraction is calibrated per k-mode so that a freshly loaded isotropic Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and `hpe_hist` (one velocity histogram in 1-D or an angle-by-velocity array in 2-D); MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `active` | bool | Enable HPE (default `false`) |
 | `n_particles` | int | Number of tail test particles (default `500000`) |
-| `v_min` | float | Tail cutoff in units of `vte` (default `2.5`); only `~erfc(v_min/sqrt(2))` of a Maxwellian is simulated |
+| `v_min` | float | Tail cutoff in units of `vte` (default `2.5`); the retained fraction is `erfc(v_min/sqrt(2))` in 1D1V and `exp(-v_min^2/2)` for the radial 2D2V tail |
 | `v_max` | float | Histogram half-span in units of `c` (default `1.0`) |
 | `nv` | int | Velocity bins spanning `(-v_max, v_max)` (default `512`) |
+| `n_angles` | int | Number of oriented global velocity projections spanning $2\pi$ in 2-D (default `32`; ignored for `ny == 1`) |
 | `v_blend_buffer` | float | Buffer above `v_min` (units of `vte`) below which modes keep the analytic rate (default `0.5`) |
-| `gather_refine` | int | Spectral upsampling factor for `Ex` before the particle gather (default `4`). Linear interpolation of a wave with `k dx ~ 1-2` rad/cell attenuates the gathered field by `sinc^2(k dx / 2)` (15-30%); upsampling makes this ~1% |
+| `gather_refine` | int | Spectral upsampling factor for `Ex` and `Ey` before the particle gather (default `4`). Linear interpolation of a wave with `k dx ~ 1-2` rad/cell attenuates the gathered field by `sinc^2(k dx / 2)` (15-30%); upsampling makes this ~1% |
 | `substep_courant` | float | `wp0 * dt_particle` for the sub-cycled push (default `0.05`; Follett used 0.035) |
 | `tau_damping` | string | EMA time constant for the velocity histogram (default `"100fs"`, Follett's update interval) |
 | `t_start` | string | Push/feedback disabled before this time (default `"0ps"`); use to let the fluid run reach steady state first |
@@ -608,7 +609,7 @@ with kinetic corrections.
 
 ### Coupled TPD + SRS + IAW
 
-See `configs/envelope-2d/tpd-srs-iaw.yaml` for the maximal 2D fluid model: both
-parametric instabilities, reciprocal pump depletion, ion-acoustic evolution, and
-shifted-band de-aliasing. See `configs/envelope-2d/srs-hpe.yaml` for the quasi-1D
-particle-feedback model; HPE cannot yet represent transverse TPD modes.
+See `configs/envelope-2d/tpd-srs-iaw.yaml` for the full 2-D model: both parametric
+instabilities, reciprocal pump depletion, ion-acoustic evolution, 2D2V particle
+feedback, and shifted-band de-aliasing. See `configs/envelope-2d/srs-hpe.yaml` for
+the less expensive quasi-1D particle-feedback model.

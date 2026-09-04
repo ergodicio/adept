@@ -1,9 +1,6 @@
-# Coupled 2D fluid LPI: TPD + backward SRS, reciprocal pump depletion, and
-# ion-acoustic ponderomotive response. This is the maximal genuinely 2D deck.
-#
-# HPE is intentionally absent: the current particle tracker is quasi-1D and
-# cannot represent the oblique resonances of TPD. See srs-hpe.yaml for the
-# kinetic-feedback path.
+# Full coupled 2D LPI: TPD + backward SRS, reciprocal pump depletion,
+# ion-acoustic ponderomotive response, and one box-averaged 2D2V tail-particle
+# ensemble feeding angle-resolved Landau damping back to every EPW mode.
 density:
   basis: linear
   gradient scale length: 200um
@@ -78,6 +75,14 @@ terms:
       collisions: 1.0e-5
       landau: 0.1
     max_density_perturbation: 0.1
+  hpe:
+    active: true
+    n_particles: 500000
+    n_angles: 32
+    v_min: 2.5
+    substep_courant: 0.05
+    tau_damping: 100fs
+    t_start: 0ps
   light:
     pump_depletion: true
   zero_mask: true

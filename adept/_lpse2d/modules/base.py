@@ -94,7 +94,8 @@ class BaseLPSE2D(ADEPTModule):
         if self.cfg["terms"].get("hpe", {}).get("active", False):
             from adept._lpse2d.core.hpe import load_particles
 
-            # x_e/u_e/epw_hist/gamma_L are real float64, so the .view below is a no-op
+            # particle positions/momenta and histogram/damping state are real float64,
+            # so the .view below is a no-op
             state = state | load_particles(self.cfg)
 
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}

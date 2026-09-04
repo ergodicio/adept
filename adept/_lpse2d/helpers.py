@@ -333,13 +333,6 @@ def get_derived_quantities(cfg: dict) -> dict:
     # units, and derive the substep count here so everything lands in MLflow params
     hpe = cfg["terms"].get("hpe", {})
     if hpe.get("active", False):
-        if cfg["terms"]["epw"]["source"].get("tpd", False):
-            raise NotImplementedError(
-                "terms.hpe cannot be combined with TPD yet: TPD requires transverse modes, "
-                "while the current particle tracker evolves only (x, p_x) in a ny == 1 box"
-            )
-        if cfg_grid["ny"] != 1:
-            raise NotImplementedError("terms.hpe requires a quasi-1D box (ny == 1); shrink the y extent")
         if not cfg["terms"]["epw"]["damping"].get("landau", True):
             raise ValueError("terms.hpe requires terms.epw.damping.landau: true (it replaces the static rate)")
         # defaults and type coercion come from the datamodel's HPEModel so they are
@@ -349,13 +342,17 @@ def get_derived_quantities(cfg: dict) -> dict:
         hpe = {**hpe, **HPEModel(**hpe).model_dump()}
         if hpe["omega_res"] not in ("bohm_gross", "wp0"):
             raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
+        if hpe["n_angles"] < 4:
+            raise ValueError("terms.hpe.n_angles must be at least 4")
         hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
         hpe["t_start_ps"] = _Q(hpe["t_start"]).to("ps").value
         wp0 = cfg["units"]["derived"]["wp0"]
         hpe["substeps"] = int(np.ceil(wp0 * cfg_grid["dt"] / float(hpe["substep_courant"])))
         cfg["terms"]["hpe"] = hpe
+        dimensionality = f"2D2V with {hpe['n_angles']} projections" if cfg_grid["ny"] > 1 else "1D1V"
         print(
-            f"HPE is on -- {hpe['n_particles']} tail particles (|v| > {hpe['v_min']} vte), "
+            f"HPE is on -- {hpe['n_particles']} box-averaged tail particles ({dimensionality}, "
+            f"|v| > {hpe['v_min']} vte), "
             f"{hpe['substeps']} particle substeps per EPW step"
         )
 
@@ -956,8 +953,11 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
 
     if "hpe_hist" in series:
         # tail distribution vs time: flattening at the resonant v_phi and a growing
-        # high-energy shoulder are the HPE signatures
+        # high-energy shoulder are the HPE signatures. The 2-D tracker stores one
+        # projected histogram per angle; show their box-wide angular mean here.
         hist = np.asarray(series["hpe_hist"].values, dtype=float)
+        if hist.ndim == 3:
+            hist = np.mean(hist, axis=1)
         v = np.asarray(series["v (c)"].values, dtype=float)
         fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
         with np.errstate(divide="ignore"):
@@ -1002,12 +1002,19 @@ def make_series_xarrays(cfg, this_t, state, td):
     for k, v in state.items():
         v = np.asarray(v)
         if k == "hpe_hist":
-            # (nt, nv) velocity histogram from the HPE module; the axis is v/c
-            # (a slash in a coord name is illegal in netCDF)
+            # Quasi-1D stores (nt, nv). The 2-D tracker stores the same global
+            # projected distribution at n_angles oriented axes: (nt, angle, nv).
             hpe = cfg["terms"]["hpe"]
             edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
             centers = 0.5 * (edges[1:] + edges[:-1])
-            data[k] = xr.DataArray(v, coords=(("t (ps)", this_t), ("v (c)", centers)))
+            if v.ndim == 3:
+                angles = 2.0 * np.pi * np.arange(hpe["n_angles"]) / hpe["n_angles"]
+                data[k] = xr.DataArray(
+                    v,
+                    coords=(("t (ps)", this_t), ("projection angle (rad)", angles), ("v (c)", centers)),
+                )
+            else:
+                data[k] = xr.DataArray(v, coords=(("t (ps)", this_t), ("v (c)", centers)))
         else:
             data[k] = xr.DataArray(v, coords=(("t (ps)", this_t),))
     series_xr = xr.Dataset(data)
@@ -1287,11 +1294,14 @@ def get_default_save_func(cfg):
         w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
         c_light = derived["c"]
         nu_coll_arr = derived.get("nu_coll", 0.0) * zero_mask
-        gamma_an_1d = np.array(hpe_arrays["gamma_analytic"][:, 0])
+        gamma_an = np.array(hpe_arrays["gamma_analytic"])
+        mask_res = np.array(hpe_arrays["mask_res"])
+        if mask_res.ndim == 1:
+            mask_res = mask_res[:, None]
         # damping-reduction band: resonant modes where the analytic rate is non-negligible
-        ratio_band = np.array(hpe_arrays["mask_res"]) & (gamma_an_1d > 1.0e-4 * derived["wp0"])
+        ratio_band = mask_res & (gamma_an > 1.0e-4 * derived["wp0"])
         have_ratio_band = bool(np.any(ratio_band))
-        gamma_an_safe = np.where(ratio_band, gamma_an_1d, 1.0)
+        gamma_an_safe = np.where(ratio_band, gamma_an, 1.0)
 
     if srs_on or pump_evolved:
         # Flux probes for the dynamic-light laser budget. They are also retained for
@@ -1396,24 +1406,28 @@ def get_default_save_func(cfg):
 
         if hpe_on:
             u = y["u_e"]
-            gamma_rel = jnp.sqrt(1.0 + (u / c_light) ** 2)
+            if u.ndim == 2:
+                gamma_rel = jnp.sqrt(1.0 + jnp.sum((u / c_light) ** 2, axis=-1))
+            else:
+                gamma_rel = jnp.sqrt(1.0 + (u / c_light) ** 2)
             ke_kev = 510.999 * (gamma_rel - 1.0)
             out["fhot_50keV"] = w_tail * jnp.sum(ke_kev > 50.0)
             out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
             out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
             out["hpe_hist"] = y["epw_hist"]
             if have_ratio_band:
-                ratio = y["gamma_L"][:, 0] / gamma_an_safe
+                ratio = y["gamma_L"] / gamma_an_safe
                 # inflation-o-meters: worst-case reduction across the resonant band
                 # (noisy at low n_particles -- one clamped mode reads 0), and the
                 # reduction at the band mode carrying the most EPW energy (robust,
                 # and the physically relevant one)
                 out["hpe_gamma_ratio_min"] = jnp.min(jnp.where(ratio_band, ratio, jnp.inf))
-                phi_amp = jnp.where(ratio_band, jnp.abs(phi_k[:, 0]), 0.0)
+                phi_amp = jnp.where(ratio_band, jnp.abs(phi_k), 0.0)
                 # before the EPW has any energy in the band (e.g. the zero-initialized
                 # first steps) argmax lands on index 0 where the ratio is meaningless;
                 # emit NaN so the reduction metrics (nanmin / windowed means) skip it
-                out["hpe_gamma_ratio_kpeak"] = jnp.where(jnp.any(phi_amp > 0.0), ratio[jnp.argmax(phi_amp)], jnp.nan)
+                peak_index = jnp.argmax(jnp.ravel(phi_amp))
+                out["hpe_gamma_ratio_kpeak"] = jnp.where(jnp.any(phi_amp > 0.0), jnp.ravel(ratio)[peak_index], jnp.nan)
 
         if srs_on or pump_evolved:
             e0 = y["E0"].view(jnp.complex128)

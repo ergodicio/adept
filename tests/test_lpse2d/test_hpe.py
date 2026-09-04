@@ -60,6 +60,20 @@ def _make_cfg(hpe_overrides=None, cfg_overrides=None):
     return cfg
 
 
+def _make_cfg_2d(hpe_overrides=None):
+    """Small periodic 2-D box using the same plasma parameters as the 1-D tests."""
+    overrides = {"n_particles": 20000, "n_angles": 16, "gather_refine": 2}
+    if hpe_overrides:
+        overrides.update(hpe_overrides)
+    return _make_cfg(
+        overrides,
+        {
+            "grid.ymin": "-0.4um",
+            "grid.ymax": "0.4um",
+        },
+    )
+
+
 def _single_mode_phi_k(cfg, k_target, e_amp):
     """phi_k with one +k mode such that ex_envelope(x) = e_amp * exp(i k x).
 
@@ -98,6 +112,38 @@ def test_free_streaming():
 
     np.testing.assert_allclose(np.array(u_new), np.array(u), rtol=0, atol=1e-12)
     np.testing.assert_allclose(np.array(x_new), x_expected, rtol=0, atol=1e-9)
+
+
+def test_2d_free_streaming_and_both_field_components():
+    """The 2D2V pusher advances both coordinates and gathers the full grad(phi)."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    cfg = _make_cfg_2d({"n_particles": 256})
+    hpe = HybridParticleEvolution(cfg)
+    rng = np.random.default_rng(7402)
+    x = jnp.asarray(rng.uniform(cfg["grid"]["xmin"], cfg["grid"]["xmax"], hpe.n_p))
+    y = jnp.asarray(rng.uniform(cfg["grid"]["ymin"], cfg["grid"]["ymax"], hpe.n_p))
+    u = jnp.asarray(rng.normal(0.0, 100.0, (hpe.n_p, 2)))
+    zero_field = jnp.zeros((hpe.nx_f, hpe.ny_f, 2), dtype=jnp.complex128)
+
+    x_new, y_new, u_new = hpe.push_2d(x, y, u, zero_field, 0.0)
+    gamma = np.sqrt(1.0 + np.sum((np.asarray(u) / hpe.c) ** 2, axis=-1))
+    x_expected = np.mod(np.asarray(x) + hpe.dt * np.asarray(u)[:, 0] / gamma - hpe.xmin, hpe.Lx) + hpe.xmin
+    y_expected = np.mod(np.asarray(y) + hpe.dt * np.asarray(u)[:, 1] / gamma - hpe.ymin, hpe.Ly) + hpe.ymin
+    np.testing.assert_allclose(u_new, u, rtol=0.0, atol=1.0e-12)
+    np.testing.assert_allclose(x_new, x_expected, rtol=0.0, atol=1.0e-9)
+    np.testing.assert_allclose(y_new, y_expected, rtol=0.0, atol=1.0e-9)
+
+    # A single oblique potential mode has Ey/Ex = ky/kx everywhere. This pins the
+    # transverse spectral reconstruction and the bilinear gather convention.
+    phi_k = np.zeros((hpe.nx, hpe.ny), dtype=np.complex128)
+    mx, my = 3, 2
+    phi_k[mx, my] = 1.0e-4 * hpe.nx * hpe.ny
+    e_env = hpe.refine_e(jnp.asarray(phi_k))
+    acceleration = np.asarray(hpe._accel_2d(x, y, e_env, 0.0))
+    k_ratio = float(np.asarray(hpe.ky)[my] / np.asarray(hpe.kx)[mx])
+    active = np.abs(acceleration[:, 0]) > 1.0e-12 * np.max(np.abs(acceleration[:, 0]))
+    np.testing.assert_allclose(acceleration[active, 1], k_ratio * acceleration[active, 0], rtol=2.0e-6, atol=1.0e-8)
 
 
 def test_bounce_frequency_and_carrier_sign():
@@ -199,6 +245,65 @@ def test_loading_and_histogram_normalization():
 
     # initial gamma_L is exactly the analytic array
     np.testing.assert_allclose(state["gamma_L"], np.array(arrays["gamma_analytic"]), rtol=1e-12)
+
+
+def test_2d_loading_is_one_box_averaged_ensemble():
+    from adept._lpse2d.core.hpe import load_particles, resonance_arrays
+
+    cfg = _make_cfg_2d({"n_particles": 50000})
+    state = load_particles(cfg)
+    arrays = resonance_arrays(cfg)
+
+    assert state["x_e"].shape == (50000,)
+    assert state["y_e"].shape == (50000,)
+    assert state["u_e"].shape == (50000, 2)
+    assert state["epw_hist"].shape == (16, cfg["terms"]["hpe"]["nv"])
+    np.testing.assert_allclose(np.sum(state["epw_hist"], axis=1) * arrays["dv"], 1.0, rtol=2.0e-4)
+
+    c = cfg["units"]["derived"]["c"]
+    vte = np.sqrt(cfg["units"]["derived"]["vte_sq"])
+    gamma = np.sqrt(1.0 + np.sum((state["u_e"] / c) ** 2, axis=-1))
+    speed = np.linalg.norm(state["u_e"] / gamma[:, None], axis=-1)
+    assert np.all(speed > cfg["terms"]["hpe"]["v_min"] * vte - 1.0e-9)
+    assert np.all(speed < c)
+    assert arrays["mask_res"].shape == (cfg["grid"]["nx"], cfg["grid"]["ny"])
+    assert np.any(arrays["mask_res"] & (np.abs(np.asarray(cfg["grid"]["ky"]))[None, :] > 0.0))
+
+
+def test_2d_expected_tail_calibrates_every_oblique_mode():
+    """The global directional marginals reproduce analytic damping over the 2-D band."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, resonance_arrays
+
+    cfg = _make_cfg_2d({"n_particles": 64})
+    hpe = HybridParticleEvolution(cfg)
+    arrays = resonance_arrays(cfg)
+    expected = jnp.broadcast_to(jnp.asarray(arrays["f0_expected"]), (hpe.n_angles, hpe.nv))
+    gamma = np.asarray(hpe.damping(expected))
+    analytic = np.asarray(hpe.gamma_analytic)
+    mask = np.asarray(hpe.mask_res)
+    assert np.any(mask)
+    np.testing.assert_allclose(gamma[mask], analytic[mask], rtol=2.0e-6, atol=1.0e-10)
+
+
+def test_2d_damping_is_directional_not_broadcast_over_ky():
+    """Flattening one global projection only undamps modes in that direction."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, resonance_arrays
+
+    cfg = _make_cfg_2d({"n_particles": 64})
+    hpe = HybridParticleEvolution(cfg)
+    arrays = resonance_arrays(cfg)
+    expected = jnp.broadcast_to(jnp.asarray(arrays["f0_expected"]), (hpe.n_angles, hpe.nv))
+    flat = jnp.full((hpe.nv,), 1.0 / (hpe.nv * hpe.dv))
+    gamma = np.asarray(hpe.damping(expected.at[0].set(flat)))
+    analytic = np.asarray(hpe.gamma_analytic)
+    mask = np.asarray(hpe.mask_res)
+    kx, ky = np.asarray(cfg["grid"]["kx"]), np.asarray(cfg["grid"]["ky"])
+
+    plus_x = mask[:, 0] & (kx > 0.0)
+    plus_y = mask[0, :] & (ky > 0.0)
+    assert np.any(plus_x) and np.any(plus_y)
+    assert np.all(gamma[plus_x, 0] < 1.0e-10 * analytic[plus_x, 0])
+    np.testing.assert_allclose(gamma[0, plus_y], analytic[0, plus_y], rtol=2.0e-6, atol=1.0e-10)
 
 
 def test_damping_calibration():

@@ -46,7 +46,7 @@ class SplitStep:
             self.iaw = IonAcousticWave(cfg)
         else:
             self.iaw = None
-        # the HPE keys (x_e, u_e, epw_hist, gamma_L) are real and stay out of this list
+        # HPE particle/histogram keys are real and stay out of this list
         self.complex_state_vars = ["E0", "epw", "E1"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]

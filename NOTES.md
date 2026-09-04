@@ -39,3 +39,28 @@ Append-only checkpoints for scientific model development and validation.
 - **Evidence or artifacts:** Pull request https://github.com/ergodicio/adept/pull/363; `adept/_lpse2d/core/iaw.py`; `tests/test_lpse2d/test_iaw.py`; `tests/test_lpse2d/test_tpd_depletion.py`; `configs/envelope-2d/tpd-srs-iaw.yaml`.
 - **Interpretation:** The 2D fluid model now composes TPD, SRS, pump feedback, and IAWs. The existing quasi-1D HPE tracker composes with SRS and IAWs, but a genuinely combined TPD+HPE model remains blocked on a multidimensional particle/feedback formulation and is rejected explicitly.
 - **Next:** Review and merge PR #363; design `(x, y, p_x, p_y)` HPE and an angle-resolved damping estimator as a separate follow-up if TPD kinetic feedback is required.
+
+## 2026-09-04 07:32:05 PDT — Expand HPE to a global 2D particle ensemble
+
+- **Checkpoint ID:** 20260904T143205Z-6b54cbe1
+- **State:** PLANNED
+- **Objective:** Extend the HPE tracker on PR #363 from `(x, p_x)` to `(x, y, p_x, p_y)` so TPD and SRS can use kinetic damping feedback in a 2D box.
+- **USER (verbatim):** "let's make the particle tracker 2D. i thought the particles are box averaged and not at each point?"
+- **Action or change:** Reopened the kinetic-model scope. The planned design keeps one global macro-particle ensemble; particle positions exist only for field gathering, while the feedback distribution remains box averaged. Direction-dependent damping will be derived from projections of the global 2D velocity distribution along each retained wavevector rather than from per-cell particle populations.
+- **Provenance:** Commit `8f9ff7690fff915a3146f74e4dd68551b5c5ef37`; branch `codex/lpse2d-iaw-parity`; PR https://github.com/ergodicio/adept/pull/363.
+- **Observation:** No result yet. Current HPE stores one position and momentum component per particle, gathers only `Ex`, and forms one global `f(vx)` histogram that is broadcast across `ky`.
+- **Evidence or artifacts:** `adept/_lpse2d/core/hpe.py`; vault mirror `Notes/adept/2026-09-03-222949-codex-lpse2d-iaw-parity-92eb82df.md`.
+- **Interpretation:** The user's box-averaging point removes the need for a particle population at every spatial point, but oblique TPD modes still require 2D particle orbits and a directional velocity-space projection.
+- **Next:** Design the directional damping estimator and state layout, implement the 2D gather/push/feedback path with quasi-1D compatibility, and validate isotropic initialization plus oblique-mode response.
+
+## 2026-09-04 08:02:48 PDT — Box-averaged 2D2V HPE completed
+
+- **Checkpoint ID:** 20260904T150248Z-2d2f0e6d
+- **State:** COMPLETED
+- **Objective:** Make the HPE particle tracker genuinely 2-D while retaining one spatially averaged ensemble for TPD and SRS damping feedback.
+- **Action or change:** Rewrote the HPE core as a dual 1D1V/2D2V implementation. In a 2-D box each macro-particle carries `(x, y, p_x, p_y)`, gathers spectrally refined `Ex` and `Ey` by bilinear interpolation, and contributes to one bank of box-wide projected velocity histograms. Thirty-two oriented projections over `[0, 2 pi)` are interpolated onto every `(kx, ky)` resonance; opposite directions remain distinct. Removed the HPE+TPD setup rejection, generalized hot-electron/damping diagnostics, and enabled HPE in the full TPD+SRS+IAW example deck.
+- **Provenance:** Branch `codex/lpse2d-iaw-parity`; PR https://github.com/ergodicio/adept/pull/363; implementation in `adept/_lpse2d/core/hpe.py`.
+- **Observation:** The complete non-slow Envelope-2D suite passes with isolated local tracking and a headless plot backend: 60 passed, 1 skipped, 3 deselected in 261.85 s. Focused HPE/TPD/IAW verification passed 20 tests before the final directional test was added; the final full suite includes that test. Ruff lint/format and Python compilation pass. A combined one-step test advances TPD, SRS, reciprocal pump depletion, IAWs, and 2D2V HPE together with finite state and diagnostics.
+- **Evidence or artifacts:** `tests/test_lpse2d/test_hpe.py`; `tests/test_lpse2d/test_tpd_depletion.py`; `configs/envelope-2d/tpd-srs-iaw.yaml`; `docs/source/solvers/lpse2d/config.md`.
+- **Interpretation:** The user's box-averaging understanding is correct: positions are retained only for local force gathering, not to form a particle population per mesh point. Directional Landau feedback comes from Radon-like projections of the single global distribution, so histogram state scales as `n_angles * nv`, independent of `nx * ny`. The remaining HPE limitation is Im-only feedback (no trapping-induced nonlinear frequency shift), not transverse dimensionality.
+- **Next:** Push the update to PR #363 and use production TPD runs to converge `n_particles`, `n_angles`, gather refinement, and the damping EMA window on GPU.
