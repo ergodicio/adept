@@ -60,16 +60,10 @@ def _validate_no_embedded_secrets(value: Any, *, path: str = "plan") -> None:
             key
             for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
             if _normalized_field_name(key) in _SENSITIVE_FIELD_PARTS
-            or any(
-                _normalized_field_name(key).endswith(f"-{part}")
-                for part in _SENSITIVE_FIELD_PARTS
-            )
+            or any(_normalized_field_name(key).endswith(f"-{part}") for part in _SENSITIVE_FIELD_PARTS)
         ]
         if parsed.username is not None or parsed.password is not None or sensitive_query_fields:
-            raise ValueError(
-                f"{path} contains credential material in a URI; "
-                "store credentials outside the RunPlan"
-            )
+            raise ValueError(f"{path} contains credential material in a URI; store credentials outside the RunPlan")
 
 
 def _json_mapping(value: Mapping[str, Any], *, name: str) -> dict[str, Any]:

@@ -257,17 +257,11 @@ class LocalExecutor:
             errors.append(f"placement {resources.placement.value!r} is not supported")
         if resources.precision not in executor.precisions:
             errors.append(f"precision {resources.precision.value!r} is not supported")
-        if (
-            resources.accelerator is not AcceleratorKind.ANY
-            and resources.accelerator not in executor.accelerators
-        ):
+        if resources.accelerator is not AcceleratorKind.ANY and resources.accelerator not in executor.accelerators:
             errors.append(f"accelerator {resources.accelerator.value!r} is not supported")
         if executor.max_hosts is not None and resources.hosts > executor.max_hosts:
             errors.append(f"requested {resources.hosts} hosts but the executor supports at most {executor.max_hosts}")
-        if (
-            executor.max_devices_per_host is not None
-            and resources.devices_per_host > executor.max_devices_per_host
-        ):
+        if executor.max_devices_per_host is not None and resources.devices_per_host > executor.max_devices_per_host:
             errors.append(
                 f"requested {resources.devices_per_host} devices per host but the executor supports at most "
                 f"{executor.max_devices_per_host}"
@@ -289,10 +283,7 @@ class LocalExecutor:
                 errors.append(f"solver does not support placement {resources.placement.value!r}")
             if solver_capabilities.precision is Precision.X64 and Precision.X64 not in executor.precisions:
                 errors.append("solver requires x64 but the executor does not support it")
-            if (
-                ExecutionFeature.DIFFERENTIABLE in plan.required_features
-                and not solver_capabilities.differentiable
-            ):
+            if ExecutionFeature.DIFFERENTIABLE in plan.required_features and not solver_capabilities.differentiable:
                 errors.append("solver is not differentiable")
             if ExecutionFeature.BATCHING in plan.required_features and not solver_capabilities.batchable:
                 errors.append("solver is not batchable")
@@ -323,9 +314,7 @@ class LocalExecutor:
 
     def _required_precision(self, plan: RunPlan) -> Precision:
         declared = self.registry.capabilities(plan.simulation.solver)
-        if plan.resources.precision is Precision.X64 or (
-            declared is not None and declared.precision is Precision.X64
-        ):
+        if plan.resources.precision is Precision.X64 or (declared is not None and declared.precision is Precision.X64):
             return Precision.X64
         return Precision.DEFAULT
 
@@ -359,8 +348,7 @@ class LocalExecutor:
             )
         if int(jax.process_count()) != resources.hosts:
             raise CapabilityMismatchError(
-                f"RunPlan requests {resources.hosts} host process(es), but JAX initialized "
-                f"{jax.process_count()}"
+                f"RunPlan requests {resources.hosts} host process(es), but JAX initialized {jax.process_count()}"
             )
 
     def _execute_plan(self, plan: RunPlan) -> HostRunResult:
