@@ -406,9 +406,30 @@ Physics terms configuration.
 
 ### hpe (optional)
 
-Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field $\tilde{E}_x = \mathrm{Re}[E_x e^{-i\omega_{p0}t}]$, their spatially-averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). Quasi-1D only (`ny == 1`), and requires `terms.epw.damping.landau: true`. The particle push dominates the runtime, so HPE runs want a GPU.
+Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field $\tilde{\mathbf{E}} = \mathrm{Re}[\mathbf{E} e^{-i\omega_{p0}t}]$, their spatially-averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). Requires `terms.epw.damping.landau: true`. The particle push dominates the runtime, so HPE runs want a GPU.
 
-The damping extraction is calibrated per k-mode so that the freshly loaded Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and the tail histogram `hpe_hist`; MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`, named for one-to-one comparison with the OSIRIS scan2 runs.
+**Geometry.** Runs in quasi-1D (`ny == 1`, push uses $E_x$ only, particles carry $u_x$) and in 2D (`ny > 1`, push uses $(E_x, E_y)$, particles carry $(u_x, u_y)$). Follett's Eq. 4 integrates $\partial \langle F\rangle/\partial v$ over the resonance surface $\omega = \mathbf{k}\cdot\mathbf{v}$, which is a point in 1D but a *line* in 2D. The line integral is exactly the 1D formula applied to the projection of $f$ onto the mode's own direction,
+
+$$P_{\hat k}(v) = \int d^2v'\, f(\mathbf{v}')\,\delta(\mathbf{v}'\cdot\hat k - v), \qquad \gamma_L(\mathbf{k}) = -\frac{\pi}{2}\frac{\omega_{p0}^3}{|k|^2} \left.\frac{\partial P_{\hat k}}{\partial v}\right|_{v = \omega_\mathrm{res}/|k|}$$
+
+so the 2D extraction bins the particles along `n_angles` directions spanning $[0,\pi)$ and interpolates between the two bracketing directions for each mode. Opposite half-plane directions are mirror images of each other, which is what the 1D $\mathrm{sgn}(k_x)$ already encoded; setting `ny == 1` forces `n_angles = 1` and every expression collapses to the original quasi-1D code. Because each projection consumes *every* particle, per-angle statistics match the 1D case at the same `n_particles` — 2D needs no particle-count increase, only more arithmetic.
+
+The damping extraction is calibrated per k-mode so that the freshly loaded Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and the tail histogram `hpe_hist` — shape `(nt, nv)` in quasi-1D and `(nt, n_angles, nv)` in 2D. MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`, named for one-to-one comparison with the OSIRIS scan2 runs.
+
+**Shot-noise clamping (why `hist_smooth` defaults on in 2D).** The rate is read from `df/dv` at a *single* velocity bin per mode. With a finite particle count some modes draw a slope steep enough that the `gamma >= 0` clamp sends them to exactly zero — and a mode pinned at zero is **undamped**, so it grows relative to the rest of the band instead of the error averaging away. The clamp selects for its own errors. A 2D box carries ~10x the resonant-band modes of a quasi-1D one (6644 vs 668 in the shipped smoke configs), so it meets this far more often; in a 0.1 ps test run an unsmoothed 2D case had the peak-energy band mode sitting at exactly zero damping.
+
+Smoothing the histogram before differentiating fixes it, and is bias-free by construction: the per-k calibration `C(k)` is derived by applying the *same* operator to the expected Maxwellian, so any linear filter divides back out and only the variance reduction survives. Measured on the 2D smoke grid, fraction of band modes clamped to zero:
+
+| `n_particles` | `hist_smooth` 0 | 1 | 2 | 4 |
+|---|---|---|---|---|
+| 20,000 | 0.061 | 0.035 | 0.019 | 0.004 |
+| 200,000 | 0.0075 | 0.0021 | 0.0000 | 0.0000 |
+
+with the band-mean ratio to the analytic rate staying at 1.02–1.06 throughout. Raising `n_particles` works too (it is the same variance); smoothing is the cheaper lever. Quasi-1D keeps `hist_smooth: 0` so existing 1D results stay reproducible.
+
+**Cost.** The push and the extraction are both $O(N_p)$ per step and independent of grid size. Measured on CPU (400x120 box, `n_particles = 5e5`, 54 substeps): the 1D HPE add-on is 49 ms/step and the 2D add-on is 357-402 ms/step, i.e. **~8x the 1D add-on** and ~20x the 2D fluid step. Scaled by the measured GPU 1D add-on this lands at roughly **2-4x** the cost of the same run without HPE, the fluid step there being launch-latency-bound.
+
+The add-on is nearly *flat* in `n_angles` (386 / 357 / 402 ms at 16 / 32 / 64 — the spread is run-to-run noise): all angles are binned in one fused scatter, so the extraction is dominated by the single `(Np, n_angles)` projection and stays far below the push. Raise `n_angles` for angular resolution rather than treating it as the cost knob; `n_particles` and `substep_courant` are what actually move the runtime.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -418,7 +439,10 @@ The damping extraction is calibrated per k-mode so that the freshly loaded Maxwe
 | `v_max` | float | Histogram half-span in units of `c` (default `1.0`) |
 | `nv` | int | Velocity bins spanning `(-v_max, v_max)` (default `512`) |
 | `v_blend_buffer` | float | Buffer above `v_min` (units of `vte`) below which modes keep the analytic rate (default `0.5`) |
-| `gather_refine` | int | Spectral upsampling factor for `Ex` before the particle gather (default `4`). Linear interpolation of a wave with `k dx ~ 1-2` rad/cell attenuates the gathered field by `sinc^2(k dx / 2)` (15-30%); upsampling makes this ~1% |
+| `n_angles` | int | **2D only** (forced to `1` when `ny == 1`). Projection directions spanning `[0, pi)` onto which `f` is binned to build each mode's resonance integral (default `64`). Sets the angular resolution of the extraction *and* its cost, which is linear in `n_angles` |
+| `y_thermal_frac` | float | **2D only.** Fraction of transverse wall crossings re-thermalized isotropically to mimic a finite plasma (default `0.0` = particles stay periodic in `y`, matching `terms.epw.boundary.y: periodic`; Follett used `0.2`) |
+| `hist_smooth` | int | Passes of a `[1,2,1]/4` binomial filter over the projected histograms before `df/dv` is taken. **Defaults to 2 in 2D, 0 in quasi-1D**; an explicit setting always wins. See the clamping note below |
+| `gather_refine` | int | Spectral upsampling factor for the field before the particle gather (default `4`). Linear interpolation of a wave with `k dx ~ 1-2` rad/cell attenuates the gathered field by `sinc^2(k dx / 2)` (15-30%); upsampling makes this ~1%. Applied in both directions in 2D, so the refined field is `(refine*nx, refine*ny)` complex per component — check the memory at large grids |
 | `substep_courant` | float | `wp0 * dt_particle` for the sub-cycled push (default `0.05`; Follett used 0.035) |
 | `tau_damping` | string | EMA time constant for the velocity histogram (default `"100fs"`, Follett's update interval) |
 | `t_start` | string | Push/feedback disabled before this time (default `"0ps"`); use to let the fluid run reach steady state first |
@@ -435,6 +459,9 @@ terms:
     substep_courant: 0.05
     tau_damping: 100fs
     t_start: 2ps
+    # 2D only (ignored when ny == 1)
+    n_angles: 64
+    y_thermal_frac: 0.0
 ```
 
 ### Example: TPD Simulation

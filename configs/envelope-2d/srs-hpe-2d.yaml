@@ -1,0 +1,104 @@
+# Backward SRS on a linear density ramp with Follett-style hybrid particle
+# evolution (terms.hpe) in a genuinely 2-D box. Tail test electrons carry both
+# momentum components, feel Ex and Ey, and their distribution is projected onto
+# terms.hpe.n_angles directions to build the resonance integral for every (kx, ky)
+# mode -- so off-axis EPWs damp on the tail they actually resonate with, which the
+# quasi-1D configuration (srs-hpe.yaml) cannot represent.
+#
+# Cost: the push and the extraction are both O(n_particles) and grid-independent.
+# Relative to the same box without HPE expect ~2-4x; n_angles scales the extraction
+# linearly and is the first knob to turn if that is too slow. Run this on a GPU.
+density:
+  basis: linear
+  gradient scale length: 50um
+  max: 0.28
+  min: 0.18
+  noise:
+    max: 1.0e-09
+    min: 1.0e-10
+    type: uniform
+drivers:
+  E0:
+    params:
+      phases:
+        seed: 42
+    shape: uniform
+    delta_omega_max: 0.015
+    num_colors: 1
+    envelope:
+      tw: 40ps
+      tr: 0.1ps
+      tc: 20.25ps
+      xr: 0.2um
+      xw: 1000um
+      xc: 50um
+      yr: 0.2um
+      yw: 1000um
+      yc: 50um
+grid:
+  boundary_abs_coeff: 1.0e4
+  boundary_width: 3um
+  low_pass_filter: 0.6
+  dt: 1fs
+  dx: 50nm
+  tmax: 10.0ps
+  tmin: 0.0ns
+  # 6 um transverse extent (ny = 120 at dx = 50 nm) -- wide enough to resolve the
+  # angular spread of the resonant EPW spectrum, which is the whole point of 2-D
+  ymax: 3um
+  ymin: -3um
+mlflow:
+  experiment: srs
+  run: srs-hpe-2d
+save:
+  fields:
+    t:
+      dt: 0.5ps
+      tmax: 10ps
+      tmin: 0ps
+    x:
+      dx: 80nm
+    y:
+      dy: 128nm
+solver: envelope-2d
+terms:
+  epw:
+    boundary:
+      x: absorbing
+      y: periodic
+    damping:
+      collisions: 0.1
+      landau: true
+    density_gradient: true
+    linear: true
+    source:
+      noise: true
+      tpd: false
+      srs: true
+  hpe:
+    active: true
+    n_particles: 500000
+    v_min: 2.5
+    substep_courant: 0.05
+    tau_damping: 100fs
+    t_start: 0ps
+    # projection directions spanning [0, pi). Each one consumes every particle, so
+    # the per-angle statistics match a quasi-1D run at the same n_particles; this
+    # sets angular resolution and cost, not noise.
+    n_angles: 64
+    # particles stay periodic in y, matching terms.epw.boundary.y. Follett used 0.2
+    # to mimic a finite plasma; his result was insensitive to the exact value.
+    y_thermal_frac: 0.0
+  # pump depletion is the physical saturation channel: with HPE quenching the
+  # Landau damping, a prescribed (fixed-amplitude) pump would feed unbounded SRS
+  light:
+    pump_depletion: true
+  zero_mask: true
+units:
+  atomic number: 1
+  envelope density: 0.25
+  ionization state: 1
+  laser intensity: 1.5e+15W/cm^2
+  laser_wavelength: 351nm
+  reference electron temperature: 2000.0eV
+  reference ion temperature: 1000eV

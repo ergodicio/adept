@@ -313,9 +313,11 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
         # one-particle resolution of the hot fraction; "first hot electrons" means a
         # sustained signal of at least a few particles above threshold
         try:
-            from scipy import special
+            from adept._lpse2d.core.hpe import tail_fraction
 
-            f_tail = float(special.erfc(float(hpe["v_min"]) / np.sqrt(2.0)))
+            # the tail cut is one-sided in |vx| (1D) but on the speed (2D), so the
+            # fraction of the full Maxwellian it carries differs between them
+            f_tail = tail_fraction(float(hpe["v_min"]), 1 if cfg["grid"]["ny"] == 1 else 2)
         except Exception:
             f_tail = 1.0
         min_frac = 3.0 * f_tail / float(hpe["n_particles"])

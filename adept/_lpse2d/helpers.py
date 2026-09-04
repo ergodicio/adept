@@ -302,25 +302,50 @@ def get_derived_quantities(cfg: dict) -> dict:
     # units, and derive the substep count here so everything lands in MLflow params
     hpe = cfg["terms"].get("hpe", {})
     if hpe.get("active", False):
-        if cfg_grid["ny"] != 1:
-            raise NotImplementedError("terms.hpe requires a quasi-1D box (ny == 1); shrink the y extent")
         if not cfg["terms"]["epw"]["damping"].get("landau", True):
             raise ValueError("terms.hpe requires terms.epw.damping.landau: true (it replaces the static rate)")
         # defaults and type coercion come from the datamodel's HPEModel so they are
         # defined in exactly one place; unknown keys are passed through untouched
         from adept._lpse2d.datamodel import HPEModel
 
+        smoothing_was_set = "hist_smooth" in hpe
         hpe = {**hpe, **HPEModel(**hpe).model_dump()}
         if hpe["omega_res"] not in ("bohm_gross", "wp0"):
             raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
+        # the damping extraction projects f onto each mode's own direction; a quasi-1D
+        # box has exactly one such direction, so the angle set collapses to {0}
+        if cfg_grid["ny"] == 1:
+            hpe["n_angles"] = 1
+        else:
+            if int(hpe["n_angles"]) < 2:
+                raise ValueError("terms.hpe.n_angles must be >= 2 in 2D (projections span [0, pi))")
+            # particles wrap in y, which only matches an equally periodic field solver.
+            # An absorbing transverse boundary would need thermalizing particle walls
+            # in y as well -- fail loudly rather than silently recirculating them.
+            if cfg["terms"]["epw"]["boundary"]["y"] != "periodic":
+                raise NotImplementedError(
+                    "terms.hpe in 2D requires terms.epw.boundary.y: periodic "
+                    "(particles wrap transversely; absorbing-y particle walls are not implemented)"
+                )
+            # A 2D box carries ~10x the resonant-band modes of a quasi-1D one, so the
+            # chance that at least one draws a shot-noise slope steep enough to clamp
+            # its damping to exactly zero is correspondingly higher -- and a mode pinned
+            # at zero is *undamped*, so it grows relative to the band instead of the
+            # error averaging away. Smooth the histogram by default in 2D; the per-k
+            # calibration is derived through the same filter, so the rate is unbiased.
+            if not smoothing_was_set:
+                hpe["hist_smooth"] = 2
+        if not 0.0 <= float(hpe["y_thermal_frac"]) <= 1.0:
+            raise ValueError("terms.hpe.y_thermal_frac must be in [0, 1]")
         hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
         hpe["t_start_ps"] = _Q(hpe["t_start"]).to("ps").value
         wp0 = cfg["units"]["derived"]["wp0"]
         hpe["substeps"] = int(np.ceil(wp0 * cfg_grid["dt"] / float(hpe["substep_courant"])))
         cfg["terms"]["hpe"] = hpe
+        geometry = "quasi-1D" if cfg_grid["ny"] == 1 else f"2D with {hpe['n_angles']} projection angles"
         print(
             f"HPE is on -- {hpe['n_particles']} tail particles (|v| > {hpe['v_min']} vte), "
-            f"{hpe['substeps']} particle substeps per EPW step"
+            f"{hpe['substeps']} particle substeps per EPW step, {geometry}"
         )
 
     pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
@@ -906,6 +931,13 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
         # high-energy shoulder are the HPE signatures
         hist = np.asarray(series["hpe_hist"].values, dtype=float)
         v = np.asarray(series["v (c)"].values, dtype=float)
+        if hist.ndim == 3:
+            # 2D: one projection per angle. Plot the angle mean here (the tail
+            # flattening signature) and the per-angle spread separately below.
+            hist_angles, angles = hist, np.asarray(series["angle (deg)"].values, dtype=float)
+            hist = hist_angles.mean(axis=1)
+        else:
+            hist_angles, angles = None, None
         fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
         with np.errstate(divide="ignore"):
             log_h = np.log10(np.where(hist > 0, hist, np.nan))
@@ -920,6 +952,27 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
         ax[1].legend(fontsize=7)
         fig.savefig(os.path.join(td, "plots", "hpe_distribution.png"), bbox_inches="tight")
         plt.close(fig)
+
+        if hist_angles is not None:
+            # angular structure of the tail at the final time: an isotropic tail plots
+            # as flat lines, and any anisotropy is the resonant modes digging in
+            fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
+            with np.errstate(divide="ignore"):
+                log_h = np.log10(np.where(hist_angles[-1] > 0, hist_angles[-1], np.nan))
+            pcm = ax[0].pcolormesh(angles, v, log_h.T, shading="auto")
+            fig.colorbar(pcm, ax=ax[0], label="log10 f(v)")
+            ax[0].set_xlabel("projection angle (deg)")
+            ax[0].set_ylabel("v (c)")
+            ax[0].set_title("final projected f, by angle")
+            for ia in np.linspace(0, len(angles) - 1, min(5, len(angles))).astype(int):
+                ax[1].semilogy(
+                    v, np.where(hist_angles[-1, ia] > 0, hist_angles[-1, ia], np.nan), label=f"{angles[ia]:.0f} deg"
+                )
+            ax[1].set_xlabel("v (c)")
+            ax[1].set_ylabel("f(v)")
+            ax[1].legend(fontsize=7)
+            fig.savefig(os.path.join(td, "plots", "hpe_distribution_by_angle.png"), bbox_inches="tight")
+            plt.close(fig)
 
     if "hpe_gamma_ratio_min" in series:
         fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
@@ -949,12 +1002,19 @@ def make_series_xarrays(cfg, this_t, state, td):
     for k, v in state.items():
         v = np.asarray(v)
         if k == "hpe_hist":
-            # (nt, nv) velocity histogram from the HPE module; the axis is v/c
-            # (a slash in a coord name is illegal in netCDF)
+            # velocity histogram(s) from the HPE module; the axis is v/c (a slash in a
+            # coord name is illegal in netCDF). Quasi-1D is (nt, nv); 2D carries one
+            # projection per angle, (nt, n_angles, nv).
             hpe = cfg["terms"]["hpe"]
             edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
             centers = 0.5 * (edges[1:] + edges[:-1])
-            data[k] = xr.DataArray(v, coords=(("t (ps)", this_t), ("v (c)", centers)))
+            if v.ndim == 3:
+                n_angles = v.shape[1]
+                angles = np.arange(n_angles) * (180.0 / n_angles)
+                coords = (("t (ps)", this_t), ("angle (deg)", angles), ("v (c)", centers))
+            else:
+                coords = (("t (ps)", this_t), ("v (c)", centers))
+            data[k] = xr.DataArray(v, coords=coords)
         else:
             data[k] = xr.DataArray(v, coords=(("t (ps)", this_t),))
     series_xr = xr.Dataset(data)
@@ -1212,14 +1272,15 @@ def get_default_save_func(cfg):
 
         hpe_arrays = resonance_arrays(cfg)
         n_p = int(cfg["terms"]["hpe"]["n_particles"])
+        n_angles = hpe_arrays["n_angles"]
         w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
         c_light = derived["c"]
         nu_coll_arr = derived.get("nu_coll", 0.0) * zero_mask
-        gamma_an_1d = np.array(hpe_arrays["gamma_analytic"][:, 0])
+        gamma_an_k = np.array(hpe_arrays["gamma_analytic"])
         # damping-reduction band: resonant modes where the analytic rate is non-negligible
-        ratio_band = np.array(hpe_arrays["mask_res"]) & (gamma_an_1d > 1.0e-4 * derived["wp0"])
+        ratio_band = np.array(hpe_arrays["mask_res"]) & (gamma_an_k > 1.0e-4 * derived["wp0"])
         have_ratio_band = bool(np.any(ratio_band))
-        gamma_an_safe = np.where(ratio_band, gamma_an_1d, 1.0)
+        gamma_an_safe = np.where(ratio_band, gamma_an_k, 1.0)
 
     if srs_on:
         # Legacy reflectivity probe: sample |E1_y|^2 on the low-density side, just inside
@@ -1319,25 +1380,29 @@ def get_default_save_func(cfg):
         )
 
         if hpe_on:
+            # u is (Np, ndim): the kinetic energy needs |u|, not the per-component value
             u = y["u_e"]
-            gamma_rel = jnp.sqrt(1.0 + (u / c_light) ** 2)
+            gamma_rel = jnp.sqrt(1.0 + jnp.sum((u / c_light) ** 2, axis=-1))
             ke_kev = 510.999 * (gamma_rel - 1.0)
             out["fhot_50keV"] = w_tail * jnp.sum(ke_kev > 50.0)
             out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
             out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
-            out["hpe_hist"] = y["epw_hist"]
+            # (n_angles, nv) projected distributions; quasi-1D keeps the historical (nv,)
+            out["hpe_hist"] = y["epw_hist"][0] if n_angles == 1 else y["epw_hist"]
             if have_ratio_band:
-                ratio = y["gamma_L"][:, 0] / gamma_an_safe
+                ratio = y["gamma_L"] / gamma_an_safe
                 # inflation-o-meters: worst-case reduction across the resonant band
                 # (noisy at low n_particles -- one clamped mode reads 0), and the
                 # reduction at the band mode carrying the most EPW energy (robust,
                 # and the physically relevant one)
                 out["hpe_gamma_ratio_min"] = jnp.min(jnp.where(ratio_band, ratio, jnp.inf))
-                phi_amp = jnp.where(ratio_band, jnp.abs(phi_k[:, 0]), 0.0)
+                phi_amp = jnp.where(ratio_band, jnp.abs(phi_k), 0.0)
                 # before the EPW has any energy in the band (e.g. the zero-initialized
                 # first steps) argmax lands on index 0 where the ratio is meaningless;
                 # emit NaN so the reduction metrics (nanmin / windowed means) skip it
-                out["hpe_gamma_ratio_kpeak"] = jnp.where(jnp.any(phi_amp > 0.0), ratio[jnp.argmax(phi_amp)], jnp.nan)
+                out["hpe_gamma_ratio_kpeak"] = jnp.where(
+                    jnp.any(phi_amp > 0.0), ratio.ravel()[jnp.argmax(phi_amp.ravel())], jnp.nan
+                )
 
         if srs_on:
             e1 = y["E1"].view(jnp.complex128)

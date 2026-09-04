@@ -193,7 +193,7 @@ class LightModel(BaseModel):
 class HPEModel(BaseModel):
     """Hybrid particle evolution (Follett et al. 2017): test electrons pushed in the
     de-enveloped EPW field feed an evolving Landau damping rate back to the wave
-    solver (kinetic inflation + hot electrons). Quasi-1D (ny == 1) only, and
+    solver (kinetic inflation + hot electrons). Runs in quasi-1D (ny == 1) and in 2D;
     requires terms.epw.damping.landau: true."""
 
     active: bool = False
@@ -202,7 +202,18 @@ class HPEModel(BaseModel):
     v_max: float = 1.0  # histogram half-span, units of c
     v_blend_buffer: float = 0.5  # analytic/HPE blend buffer above v_min, units of vte
     nv: int = 512  # velocity bins spanning (-v_max, v_max)
-    gather_refine: int = 4  # spectral upsampling of Ex before the particle gather
+    # 2D only: projection directions spanning [0, pi) onto which f is binned to build
+    # the per-mode resonance integral. Forced to 1 when ny == 1.
+    n_angles: int = 64
+    # 2D only: fraction of transverse wall crossings re-thermalized isotropically to
+    # mimic a finite plasma (Follett used 0.2); 0 keeps the particles fully periodic in y
+    y_thermal_frac: float = 0.0
+    # passes of a [1,2,1]/4 binomial filter applied to the projected histograms
+    # before df/dv is taken. Cuts the per-mode slope noise that can clamp a mode's
+    # damping to exactly zero (an unphysically undamped mode then grows). Bias-free:
+    # the per-k calibration is derived through the same filter. 0 = off.
+    hist_smooth: int = 0
+    gather_refine: int = 4  # spectral upsampling of E before the particle gather
     substep_courant: float = 0.05  # wp0 * particle substep
     tau_damping: str = "100fs"  # EMA window for the velocity histogram
     t_start: str = "0ps"  # push/feedback disabled before this time

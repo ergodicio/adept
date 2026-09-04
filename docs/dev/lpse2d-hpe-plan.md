@@ -1,5 +1,10 @@
 # Plan: Follett-style Hybrid Particle Evolution (HPE) for lpse2d
 
+> **Status update (2026-09-04): 2-D implemented.** The `ny == 1` restriction assumed
+> throughout Secs. 1-6 below is gone — see **Sec. 7** for the 2-D generalization
+> (line resonance via per-direction projections), its validation and its measured cost.
+> Sections 1-6 remain the quasi-1D design record.
+>
 > **Status update (2026-07-30): implemented** through M3 in `adept/_lpse2d/core/hpe.py`
 > (+ integration per Sec. 3). Notable deviations/findings from implementation:
 >
@@ -164,3 +169,141 @@ Per field step: $n_{\rm sub}\times N_p$ gather+kick ≈ $54 \times 5\times10^5 \
 3. **Spatially uniform $\langle f\rangle$ in a gradient**: box-averaged distribution mixes regions with different resonant $k$. Same approximation as the paper (accepted there over 0.19–0.27 $n_c$); our boxes are narrower in density.
 4. **Missing frequency-shift physics** (Im-only feedback): if M4 shows onset comes alive but saturation amplitudes still disagree with OSIRIS, the Tran 2020 real-part closure is the designed follow-on, not a rewrite.
 5. **diffrax memory** with particle state at $10^4$ steps — use forward-only solve for production HPE runs.
+
+## 7. 2-D generalization — implemented 2026-09-04 (`lpse2d/hpe-2d`)
+
+The `ny == 1` restriction is gone. `terms.hpe` now runs in a genuinely 2-D box; quasi-1D
+is the `n_angles == 1` special case of the same code path, not a separate branch.
+
+### 7.1 The one piece of new physics: a line resonance instead of a point
+
+Follett's Eq. 4 integrates $\partial\langle F\rangle/\partial\mathbf{v}$ over the surface
+$\omega = \mathbf{k}\cdot\mathbf{v}$. In 1-D that surface is the point $v_\phi = \omega/k$
+and the rate is one `jnp.interp` of $\partial f/\partial v$. In 2-D it is a *line* in
+$(v_x, v_y)$ — every velocity with $\mathbf{v}\cdot\hat k = \omega/|k|$ contributes.
+
+The line integral is not new machinery: it is exactly the 1-D formula applied to the
+**projection of $f$ onto the mode's own direction**,
+
+$$P_{\hat k}(v) = \int d^2v'\, f(\mathbf{v}')\,\delta(\mathbf{v}'\cdot\hat k - v), \qquad \int P_{\hat k}\,dv = 1$$
+$$\gamma_L(\mathbf{k}) = -\frac{\pi}{2}\frac{\omega_{p0}^3}{|k|^2}\left.\frac{\partial P_{\hat k}}{\partial v}\right|_{v = \omega_{\rm res}(|k|)/|k|}$$
+
+so the implementation bins particles along `n_angles` directions spanning $[0,\pi)$ and
+reads each mode's slope off the two bracketing directions (bilinear in angle and $v$).
+
+**Why $[0,\pi)$ and not $[0,2\pi)$:** $P_{-\hat k}(v) = P_{\hat k}(-v)$, so the opposite
+half-plane is reached by a sign $s = \pm 1$ on both the evaluation velocity and the
+prefactor. That $s$ *is* the $\mathrm{sgn}(k_x)$ the 1-D code already carried — the 1-D
+sign convention was the $d=1$ shadow of the projection-direction bookkeeping. Concretely
+$\phi = \mathrm{atan2}(k_y,k_x)$, $\theta = \phi \bmod \pi$, $s = +1$ if
+$\phi \bmod 2\pi < \pi$ else $-1$, and $v_\phi^{\rm signed} = s\,\omega_{\rm res}/|k|$.
+For `ny == 1` this gives $\theta \equiv 0$, $s = \mathrm{sgn}(k_x)$, $v_\phi = \omega/k_x$ —
+the original expressions, unchanged.
+
+### 7.2 Implementation notes
+
+- **Gather indices are static.** $v_\phi$ and each mode's angle come from the $k$-grid, so
+  the angle index/weight and the velocity bin index/weight are all precomputed in
+  `resonance_arrays`. Per step the extraction is 4 gathers per mode from the flattened
+  `(n_angles+1, nv)` $\partial f/\partial v$ table — no `(n_modes, nv)` intermediate
+  (which would be 100 MB on a 400x120 grid). The extra table row is the mirror of row 0
+  ($\theta = \pi$), which closes the angular wrap without a special case.
+- **One fused scatter for the histogram.** All angles are binned in a single
+  `.at[].add()` over `Np * n_angles` samples with the bin index offset by `a * nv`,
+  rather than `n_angles` separate histograms. This is what makes the cost nearly flat in
+  `n_angles` (see 7.4) — the earlier `vmap(jnp.histogram)` prototype scaled linearly and
+  cost as much as the push.
+- **Tail cut is on the speed in 2-D** ($|v| > v_{\min}v_{te}$), not on $|v_x|$. The
+  projection of that speed-truncated Maxwellian onto any axis equals the *true* 1-D
+  Maxwellian exactly for $|v_\parallel| > v_{\min}v_{te}$ — i.e. everywhere the resonance
+  reads it — and falls below it only inside the cutoff. The tail fraction changes
+  accordingly: $\mathrm{erfc}(v_{\min}/\sqrt2)$ in 1-D, $\exp(-v_{\min}^2/2)$ in 2-D
+  (`hpe.tail_fraction`, also used by `diagnostics.py` for the `fhot` weights).
+- **Thermalizing wall.** The 2-D flux-weighted emission speed goes as
+  $s^2 e^{-s^2/2v_{te}^2}$ (the polar area element adds a power of $s$ over the 1-D
+  $s\,e^{-\ldots}$) and has no closed-form inverse CDF, so it is tabulated once at init.
+  Direction is cosine-weighted about the inward normal, $\alpha = \arcsin(2U-1)$. The 1-D
+  path keeps its exact closed form untouched.
+- **Transverse boundary** is periodic (matching `terms.epw.boundary.y: periodic`, which
+  is now enforced), with `y_thermal_frac` available for Follett's 20% re-thermalization.
+- **State shapes**: `x_e`, `u_e` are `(Np, ndim)`; `epw_hist` is `(n_angles, nv)`. The
+  `fhot` diagnostics now use $|u|$ rather than a per-component value — that was a real
+  bug waiting for 2-D, harmless while `ndim == 1`.
+
+### 7.3 Validation
+
+`tests/test_lpse2d/test_hpe_2d.py`, 7 tests. The two load-bearing ones:
+
+- **`test_2d_damping_is_isotropic_and_matches_analytic`** — an isotropic loaded tail must
+  give a rate that (a) matches the analytic Landau rate over the band and (b) depends on
+  $|k|$ alone. Binning the band by the direction of $\mathbf{k}$ and comparing per-angle
+  means catches any error in the projection axis or the sign convention. Holds to 5% and
+  12% respectively.
+- **`test_2d_reduces_to_1d_for_axial_modes`** — the $k_y = 0$ column of a 2-D box equals
+  the quasi-1D result (ratio 1.00 ± 0.05), i.e. this is a strict generalization.
+
+Plus: `test_2d_projection_matches_direct_line_integral` compares the angle-interpolated
+$\partial P/\partial v$ against a directly binned projection along the mode's own $\hat k$
+for off-axis modes (15%); isotropic loading; 2-D free streaming with transverse wrap; a
+$k_y$-only mode accelerating particles in $y$ and not $x$ (pins the $E_y$ gather branch);
+and a 2-D end-to-end SRS smoke run through the save/plot/metrics path.
+
+The 5 quasi-1D tests in `test_hpe.py` pass unchanged, as does the M3a linear closure and
+the M3b O'Neil flattening.
+
+### 7.4 Measured cost (CPU, 400x120 box, $N_p = 5\times10^5$, 54 substeps)
+
+| | step |
+|---|---|
+| 1-D fluid | 0.47 ms |
+| 1-D HPE | 49.3 ms (add-on 48.8) |
+| 2-D fluid | 20.4 ms |
+| 2-D HPE, `n_angles` 16 / 32 / 64 | 406 / 378 / 422 ms (add-on 385 / 357 / 402) |
+
+So the 2-D add-on is **~8x the 1-D add-on** and ~20x the 2-D fluid step, and it is
+**flat in `n_angles`** (the 10% spread is run-to-run noise) thanks to the fused scatter.
+Scaling the 8x by the measured 3090 1-D add-on (+2.3 ms/step at $5\times10^5$, +8.2 at
+$2\times10^6$) against a 15–50 ms/step 2-D fluid step puts a production 2-D HPE run at
+roughly **2–4x** the cost of the same run without HPE.
+
+Two consequences worth stating plainly: `n_angles` is an accuracy knob, not the cost knob
+($N_p$ and `substep_courant` are); and because every projection consumes every particle,
+**2-D needs no particle-count increase** over 1-D — the per-angle statistics are identical
+at fixed $N_p$. The cost of 2-D is arithmetic, not statistical.
+
+### 7.5 Still open
+
+1. The box-averaged $\langle f\rangle$ limitation (risk 3 above) is untouched and is still
+   the top follow-on — in 2-D it is now *two* averages (over $x$ and over $y$).
+2. `gather_refine` applies in both directions, so the upsampled field is
+   `(refine*nx, refine*ny)` complex per component. At `refine = 4` on a 2400x360 TPD grid
+   that is ~220 MB; a per-direction refine would fix it if that ever binds.
+3. TPD has not been exercised with HPE — the 2-D path is validated on SRS geometry, and
+   TPD's off-axis resonance is exactly the case 2-D was built for, so it is the obvious
+   first production target.
+4. **Shot-noise clamping selects for itself** (found while validating the 2-D smoke
+   run; mitigated, not eliminated). The rate is read from `df/dv` at one velocity bin
+   per mode, and with finite particles some modes draw a slope steep enough that the
+   `gamma >= 0` clamp sends them to exactly zero. A mode pinned at zero is *undamped*,
+   so it grows relative to the band -- the error does not average out, it selects for
+   itself. 2-D meets this far more often (6644 band modes vs 668 in the shipped smoke
+   configs); in a 0.1 ps unsmoothed 2-D run the peak-energy band mode sat at exactly
+   zero. `terms.hpe.hist_smooth` (binomial filter over the histogram before the slope,
+   default 2 in 2-D, 0 in quasi-1D) is the mitigation, and is bias-free because `C(k)`
+   is derived through the same operator. Measured frac of band modes clamped to zero,
+   `hist_smooth` 0/1/2/4: 0.061/0.035/0.019/0.004 at 20k particles and
+   0.0075/0.0021/0/0 at 200k, band-mean ratio 1.02-1.06 throughout. Worth revisiting
+   whether the clamp itself should be softened (a floor at some small fraction of the
+   analytic rate) rather than papered over with a filter.
+5. **`hpe_gamma_ratio_kpeak` is noisier in 2-D**, and this is a diagnostic issue rather
+   than a physics one. It reads a *single* mode (the band mode holding the most EPW
+   energy), so it inherits that mode's shot noise — and a 2-D box has far more band modes
+   than a quasi-1D one (6644 vs a few hundred in the smoke config), so the chance of
+   landing on a mode whose noisy slope clamps to zero goes up. Measured at t = 0 on a
+   freshly loaded Maxwellian in that box: the band-mean ratio converges correctly
+   (1.058 / 1.050 / 1.002 at $N_p$ = 20k / 200k / 2M) while the fraction of band modes
+   reading exactly zero falls 0.061 / 0.008 / 0.000. The *extraction* is unbiased; only
+   the single-mode readout is fragile. An energy-weighted mean over the band would be a
+   better headline metric, but changing it breaks one-to-one comparability with the
+   logged 1-D scan2 runs, so it is left alone here. Production 2-D runs should use
+   $N_p \gtrsim 5\times10^5$ (the default) and read the band statistics, not one mode.
