@@ -217,7 +217,7 @@ def get_derived_quantities(cfg: dict) -> dict:
     # Explicit nulls mean "absent". The datamodel advertises `X | None = None` for these
     # fields, so normalize them here -- before anything reads them -- to keep every
     # spelling of "not set" (missing key, or `key: null` in the YAML) equivalent.
-    for term_key in ("hpe", "light"):
+    for term_key in ("hpe", "iaw", "light"):
         if term_key in cfg["terms"] and cfg["terms"][term_key] is None:
             cfg["terms"][term_key] = {}
     if "light_substeps" in cfg_grid and cfg_grid["light_substeps"] is None:
@@ -298,10 +298,46 @@ def get_derived_quantities(cfg: dict) -> dict:
         if epw_source.get("noise_seed") is None:
             epw_source["noise_seed"] = int(np.random.randint(2**20))
 
+    # Ion-acoustic waves: resolve defaults before parameter logging. The MATLAB
+    # split step is a symplectic-Euler update of (div u_i, delta n_i/n0), whose
+    # acoustic branch is stable for omega_max * dt < 2.
+    iaw = cfg["terms"].get("iaw", {})
+    if iaw.get("active", False):
+        from adept._lpse2d.datamodel import IAWModel
+
+        iaw = {**iaw, **IAWModel(**iaw).model_dump()}
+        if iaw["boundary"] is None:
+            iaw["boundary"] = dict(cfg["terms"]["epw"]["boundary"])
+        if iaw["damping"]["collisions"] < 0.0:
+            raise ValueError("terms.iaw.damping.collisions must be non-negative")
+        if iaw["damping"]["landau"] < 0.0:
+            raise ValueError("terms.iaw.damping.landau must be non-negative")
+        max_dn = iaw["max_density_perturbation"]
+        if max_dn is not None and max_dn <= 0.0:
+            raise ValueError("terms.iaw.max_density_perturbation must be positive or null")
+
+        inv_dy_sq = 0.0 if cfg_grid["ny"] == 1 else 1.0 / cfg_grid["dy"] ** 2
+        omega_max = 2.0 * cfg["units"]["derived"]["cs"] * np.sqrt(1.0 / cfg_grid["dx"] ** 2 + inv_dy_sq)
+        if omega_max * cfg_grid["dt"] >= 2.0:
+            raise ValueError(
+                "The ion-acoustic update is unstable: omega_iaw,max * grid.dt must be < 2 "
+                f"(got {omega_max * cfg_grid['dt']:.3g}). Reduce grid.dt or increase grid.dx."
+            )
+        cfg["terms"]["iaw"] = iaw
+        print(
+            "IAWs are on -- evolving density and velocity divergence with "
+            f"omega_iaw,max * dt = {omega_max * cfg_grid['dt']:.3g}"
+        )
+
     # HPE (Follett-style test-particle Landau damping): resolve defaults, convert
     # units, and derive the substep count here so everything lands in MLflow params
     hpe = cfg["terms"].get("hpe", {})
     if hpe.get("active", False):
+        if cfg["terms"]["epw"]["source"].get("tpd", False):
+            raise NotImplementedError(
+                "terms.hpe cannot be combined with TPD yet: TPD requires transverse modes, "
+                "while the current particle tracker evolves only (x, p_x) in a ny == 1 box"
+            )
         if cfg_grid["ny"] != 1:
             raise NotImplementedError("terms.hpe requires a quasi-1D box (ny == 1); shrink the y extent")
         if not cfg["terms"]["epw"]["damping"].get("landau", True):
@@ -324,9 +360,12 @@ def get_derived_quantities(cfg: dict) -> dict:
         )
 
     pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
+    source_terms = cfg["terms"]["epw"]["source"]
+    srs_on = bool(source_terms.get("srs", False))
+    tpd_on = bool(source_terms.get("tpd", False))
     if pump_depletion:
-        if not cfg["terms"]["epw"]["source"].get("srs", False):
-            raise ValueError("terms.light.pump_depletion requires terms.epw.source.srs: true")
+        if not (srs_on or tpd_on):
+            raise ValueError("terms.light.pump_depletion requires at least one of terms.epw.source.srs/tpd")
         if "E0" not in cfg["drivers"]:
             raise ValueError(
                 "terms.light.pump_depletion requires drivers.E0 (the evolved pump is launched "
@@ -340,7 +379,7 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(the pump is launched by a boundary injector and must exit the box)"
             )
 
-    if cfg["terms"]["epw"]["source"].get("srs", False):
+    if srs_on:
         derived = cfg["units"]["derived"]
 
         # The SRS source filter only passes wavenumbers up to the local Raman light
@@ -364,10 +403,11 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(or the envelope density) if you want SRS."
             )
 
-        # The detuning term's operator norm is set by the density endpoint FARTHEST
-        # from each carrier's critical density, not the largest density -- and uniform
-        # boxes carry their density in `val`, which the old max(max, min) fallback
-        # silently replaced with 1.0 (an underestimate at low envelope density).
+    if srs_on or pump_depletion:
+        derived = cfg["units"]["derived"]
+
+        # The detuning term's operator norm is set by the density endpoint farthest
+        # from each evolved carrier's critical density, not the largest density.
         if cfg["density"]["basis"] == "uniform":
             n_endpoints = [float(cfg["density"].get("val", 1.0))]
         else:
@@ -376,29 +416,39 @@ def get_derived_quantities(cfg: dict) -> dict:
         def _worst_detuning_sq(w_carrier: float) -> float:
             return max(abs(w_carrier**2 - derived["w0"] ** 2 * n) for n in n_endpoints)
 
-        dt_max = 1.0 / (
-            2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
-            + _worst_detuning_sq(derived["w1"]) / (4.0 * derived["w1"])
-        )
-        if pump_depletion:
-            # the evolved pump has its own (looser, but not guaranteed) stability limit;
-            # sub-cycle to the tighter of the two carriers
-            dt_max_pump = 1.0 / (
-                2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
-                + _worst_detuning_sq(derived["w0"]) / (4.0 * derived["w0"])
+        dt_limits = []
+        evolved_carriers = []
+        if srs_on:
+            dt_limits.append(
+                1.0
+                / (
+                    2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
+                    + _worst_detuning_sq(derived["w1"]) / (4.0 * derived["w1"])
+                )
             )
-            dt_max = min(dt_max, dt_max_pump)
+            evolved_carriers.append("Raman")
+        if pump_depletion:
+            dt_limits.append(
+                1.0
+                / (
+                    2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
+                    + _worst_detuning_sq(derived["w0"]) / (4.0 * derived["w0"])
+                )
+            )
+            evolved_carriers.append("pump")
+        dt_max = min(dt_limits)
         if "light_substeps" in cfg_grid:
             n_sub = int(cfg_grid["light_substeps"])
             if cfg_grid["dt"] / n_sub > dt_max:
                 raise ValueError(
                     f"grid.light_substeps = {n_sub} gives a light step of {cfg_grid['dt'] / n_sub:.2e} ps "
-                    f"which exceeds the Raman stability limit of {dt_max:.2e} ps"
+                    f"which exceeds the dynamic-light stability limit of {dt_max:.2e} ps"
                 )
         else:
             n_sub = int(np.ceil(cfg_grid["dt"] / (0.9 * dt_max)))
         cfg_grid["light_substeps"] = n_sub
-        print(f"SRS is on -- the Raman light is sub-cycled {n_sub}x per EPW step (dt_light limit {dt_max:.2e} ps)")
+        carriers = " + ".join(evolved_carriers)
+        print(f"{carriers} light is sub-cycled {n_sub}x per EPW step (dt_light limit {dt_max:.2e} ps)")
 
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
@@ -556,24 +606,27 @@ def get_solver_quantities(cfg: dict) -> dict:
     boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
     rise = boundary_width / 5
 
-    if cfg["terms"]["epw"]["boundary"]["x"] == "absorbing":
-        left = cfg["grid"]["xmin"] + boundary_width
-        right = cfg["grid"]["xmax"] - boundary_width
+    def absorbing_boundary(boundary):
+        if boundary["x"] == "absorbing":
+            left = cfg_grid["xmin"] + boundary_width
+            right = cfg_grid["xmax"] - boundary_width
+            envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
+        else:
+            envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
 
-        envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
-    else:
-        envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+        if boundary["y"] == "absorbing":
+            left = cfg_grid["ymin"] + boundary_width
+            right = cfg_grid["ymax"] - boundary_width
+            envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
+        else:
+            envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
 
-    if cfg["terms"]["epw"]["boundary"]["y"] == "absorbing":
-        left = cfg["grid"]["ymin"] + boundary_width
-        right = cfg["grid"]["ymax"] - boundary_width
-        envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
-    else:
-        envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+        return np.exp(-float(cfg_grid["boundary_abs_coeff"]) * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y))
 
-    cfg_grid["absorbing_boundaries"] = np.exp(
-        -float(cfg_grid["boundary_abs_coeff"]) * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y)
-    )
+    cfg_grid["absorbing_boundaries"] = absorbing_boundary(cfg["terms"]["epw"]["boundary"])
+    iaw = cfg["terms"].get("iaw", {})
+    if iaw.get("active", False):
+        cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"])
 
     cfg_grid["zero_mask"] = (
         np.where(np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) == 0, 0, 1)
@@ -1044,19 +1097,36 @@ def make_field_xarrays(cfg, this_t, state, td):
         coords=(tax_tuple, xax_tuple, yax_tuple),
     )
 
-    kfields = xr.Dataset({"phi": phi_k, "ex": ex_k, "ey": ey_k})
-    fields = xr.Dataset(
-        {
-            "phi": phi_x,
-            "ex": ex,
-            "ey": ey,
-            "e0_x": e0x,
-            "e0_y": e0y,
-            "e1_x": e1x,
-            "e1_y": e1y,
-            "background_density": background_density,
-        }
-    )
+    kfield_data = {"phi": phi_k, "ex": ex_k, "ey": ey_k}
+    field_data = {
+        "phi": phi_x,
+        "ex": ex,
+        "ey": ey,
+        "e0_x": e0x,
+        "e0_y": e0y,
+        "e1_x": e1x,
+        "e1_y": e1y,
+        "background_density": background_density,
+    }
+    if "iaw_density" in state:
+        iaw_density_np = np.asarray(state["iaw_density"])
+        iaw_velocity_np = np.asarray(state["iaw_velocity_divergence"])
+        field_data["iaw_density"] = xr.DataArray(iaw_density_np, coords=(tax_tuple, xax_tuple, yax_tuple))
+        field_data["iaw_velocity_divergence"] = xr.DataArray(iaw_velocity_np, coords=(tax_tuple, xax_tuple, yax_tuple))
+        k_coords = (
+            tax_tuple,
+            (r"kx ($kc\omega_0^{-1}$)", shift_kx),
+            (r"ky ($kc\omega_0^{-1}$)", shift_ky),
+        )
+        kfield_data["iaw_density"] = xr.DataArray(
+            np.fft.fftshift(np.fft.fft2(iaw_density_np, axes=(1, 2)), axes=(1, 2)), coords=k_coords
+        )
+        kfield_data["iaw_velocity_divergence"] = xr.DataArray(
+            np.fft.fftshift(np.fft.fft2(iaw_velocity_np, axes=(1, 2)), axes=(1, 2)), coords=k_coords
+        )
+
+    kfields = xr.Dataset(kfield_data)
+    fields = xr.Dataset(field_data)
     kfields.to_netcdf(os.path.join(td, "binary", "k-fields.xr"), engine="h5netcdf", invalid_netcdf=True)
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
@@ -1168,6 +1238,8 @@ def get_default_save_func(cfg):
     from adept._lpse2d.core.epw import landau_damping_rate
 
     srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
+    pump_evolved = cfg["terms"].get("light", {}).get("pump_depletion", False)
+    iaw_on = cfg["terms"].get("iaw", {}).get("active", False)
     derived = cfg["units"]["derived"]
     dt = cfg["grid"]["dt"]
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
@@ -1221,17 +1293,16 @@ def get_default_save_func(cfg):
         have_ratio_band = bool(np.any(ratio_band))
         gamma_an_safe = np.where(ratio_band, gamma_an_1d, 1.0)
 
-    if srs_on:
-        # Legacy reflectivity probe: sample |E1_y|^2 on the low-density side, just inside
-        # the absorber. R = sqrt(eps1) * <|E1_y|^2>_y / E0_source^2. Kept unchanged for
-        # backward comparability; it sits in the absorber's tanh skirt and reads ~10% low.
+    if srs_on or pump_evolved:
+        # Flux probes for the dynamic-light laser budget. They are also retained for
+        # prescribed-pump SRS so the legacy one-way Raman reflectivity remains available.
         boundary_width = _Q(cfg["grid"]["boundary_width"]).to("um").value
         x_probe = cfg["grid"]["xmin"] + 1.6 * boundary_width
         ix_probe = int(np.argmin(np.abs(np.array(cfg["grid"]["x"]) - x_probe)))
         w0 = derived["w0"]
         w1 = derived["w1"]
         n_probe = float(np.mean(np.array(cfg["grid"]["background_density"])[ix_probe, :]))
-        sqrt_eps1 = np.sqrt(max(1.0 - n_probe * w0**2 / w1**2, 0.0))
+        sqrt_eps1 = np.sqrt(max(1.0 - n_probe * w0**2 / w1**2, 0.0)) if srs_on else 0.0
         E0_source_sq = derived["E0_source"] ** 2
 
         # Flux probes for the OSIRIS-style laser budget. F_j = c^2/(w dx) * Im(E_j* E_j+1)
@@ -1249,7 +1320,7 @@ def get_default_save_func(cfg):
         # with an evolved pump, the incident probe must sit downstream (+x) of the pump
         # injector rows or it reads the near-field of the two-point source
         ix_left_e0 = ix_left
-        if cfg["terms"].get("light", {}).get("pump_depletion", False):
+        if pump_evolved:
             pump_offset = cfg["drivers"]["E0"]["derived"]["offset"]
             ix_inject = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + pump_offset))))
             ix_left_e0 = max(ix_left, ix_inject + 4)
@@ -1318,6 +1389,11 @@ def get_default_save_func(cfg):
             jnp.mean(energy_total_factor * e_sq * boundary_sq_loss, axis=1)
         )
 
+        if iaw_on:
+            iaw_density = y["iaw_density"]
+            out["iaw_density_sq"] = jnp.mean(iaw_density**2)
+            out["iaw_density_abs_max"] = jnp.max(jnp.abs(iaw_density))
+
         if hpe_on:
             u = y["u_e"]
             gamma_rel = jnp.sqrt(1.0 + (u / c_light) ** 2)
@@ -1339,17 +1415,21 @@ def get_default_save_func(cfg):
                 # emit NaN so the reduction metrics (nanmin / windowed means) skip it
                 out["hpe_gamma_ratio_kpeak"] = jnp.where(jnp.any(phi_amp > 0.0), ratio[jnp.argmax(phi_amp)], jnp.nan)
 
-        if srs_on:
-            e1 = y["E1"].view(jnp.complex128)
+        if srs_on or pump_evolved:
             e0 = y["E0"].view(jnp.complex128)
-            out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))
-            out["reflectivity"] = sqrt_eps1 * jnp.mean(jnp.abs(e1[ix_probe, :, 1]) ** 2) / E0_source_sq
-            # laser budget channels: physical fluxes (discrete fluxes converted via the
-            # local group-velocity factor), normalized to the nominal incident flux
             out["incident_flux"] = discrete_flux(e0, ix_left_e0, flux_coeff_w0) / corr_e0_left / I0_code
             out["transmitted_flux"] = discrete_flux(e0, ix_right, flux_coeff_w0) / corr_e0_right / I0_code
-            out["reflected_flux"] = -discrete_flux(e1, ix_left, flux_coeff_w1) / corr_e1_left / I0_code
-            out["backrefl_flux"] = discrete_flux(e1, ix_right, flux_coeff_w1) / corr_e1_right / I0_code
+            if srs_on:
+                e1 = y["E1"].view(jnp.complex128)
+                out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))
+                out["reflectivity"] = sqrt_eps1 * jnp.mean(jnp.abs(e1[ix_probe, :, 1]) ** 2) / E0_source_sq
+                out["reflected_flux"] = -discrete_flux(e1, ix_left, flux_coeff_w1) / corr_e1_left / I0_code
+                out["backrefl_flux"] = discrete_flux(e1, ix_right, flux_coeff_w1) / corr_e1_right / I0_code
+            else:
+                # TPD-only: any backward pump content is already included in the signed
+                # net E0 flux. Keep the four-channel budget schema with zero Raman flux.
+                out["reflected_flux"] = jnp.asarray(0.0)
+                out["backrefl_flux"] = jnp.asarray(0.0)
 
         return out
 

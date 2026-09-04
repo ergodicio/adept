@@ -112,7 +112,7 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `tmin` | string | Start time with unit |
 | `ymax` | string | Domain maximum y with unit |
 | `ymin` | string | Domain minimum y with unit |
-| `light_substeps` | int | (SRS only, optional) Raman-light sub-steps per EPW step. Computed from the explicit-scheme stability limit `dt_light < 1 / (2c^2/(dx^2 w1) + \|w1^2 - wpe_max^2\|/(4 w1))` if omitted (with `terms.light.pump_depletion` the limit is the tighter of the `w0` and `w1` carriers); a `ValueError` is raised if a user-supplied value violates it |
+| `light_substeps` | int | (dynamic light only, optional) Light-wave sub-steps per EPW step. Computed from the explicit-scheme stability limit for every evolved carrier (`w1` when SRS is on, `w0` when pump depletion is on); a `ValueError` is raised if a user-supplied value violates the tightest limit |
 | `probe_offset` | string | (SRS only, optional) Distance of the laser-budget flux probes from each box edge, with unit. Default `2 * boundary_width`, which is clear of the absorber's tanh skirt (the legacy `reflectivity` probe at `1.6 * boundary_width` sits inside it and reads ~10% low) |
 
 Note: `nx` and `ny` are computed automatically from the grid parameters. The grid is optimized for FFT performance (sizes with small prime factors).
@@ -352,6 +352,7 @@ Physics terms configuration.
 |-------|------|-------------|
 | `epw` | object | Electron plasma wave configuration |
 | `light` | object | (optional) Light-wave evolution configuration |
+| `iaw` | object | (optional) Ion-acoustic density evolution and ponderomotive feedback |
 | `hpe` | object | (optional) Hybrid particle evolution: test-particle Landau damping feedback (Follett et al. 2017) |
 | `zero_mask` | bool | Whether to zero out k=0 mode |
 
@@ -359,7 +360,7 @@ Physics terms configuration.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `pump_depletion` | bool | (default `false`) Evolve the pump `E0` with the same staggered FD envelope solver as the Raman light instead of prescribing it analytically. The pump is launched by a two-point boundary injector at `x = xmin + drivers.E0.offset` and is depleted by the EPW through `-i e/(4 w1 me) (laplacian phi) E1`. Requires `terms.epw.source.srs: true` and `terms.epw.boundary.x: absorbing`; incompatible with `drivers.E0.speckle`. Enables the true net-flux `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics and lets above-threshold runs saturate |
+| `pump_depletion` | bool | (default `false`) Evolve the pump `E0` with the staggered FD envelope solver instead of prescribing it analytically. The pump is launched at `x = xmin + drivers.E0.offset`; active SRS and TPD terms each add their reciprocal pump coupling, and both act when both instabilities are enabled. Requires at least one of `terms.epw.source.srs`/`tpd` and `terms.epw.boundary.x: absorbing`; incompatible with `drivers.E0.speckle`. Enables true net-flux `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics and above-threshold saturation |
 
 ### epw
 
@@ -394,7 +395,7 @@ Physics terms configuration.
 | `noise` | bool | Add random noise source |
 | `noise_amplitude` | float | (optional) Amplitude of the per-step EPW noise source. Default `1.0e-10` (the MATLAB `noiseAmp`) |
 | `noise_seed` | int | (optional) Seed for the EPW noise source. Default `null`, which draws a random seed once and pins it into the config before parameters are logged, so every run is exactly reproducible from its logged `noise_seed` |
-| `tpd` | bool | Include two-plasmon decay source |
+| `tpd` | bool | Include the two-plasmon-decay source. With `terms.light.pump_depletion`, also include its energy-reciprocal feedback on the y-polarized pump |
 | `srs` | bool | Include stimulated Raman scattering (optional, default false). Turning this on also evolves the Raman scattered-light field `E1` with a finite-difference paraxial solver, sub-cycled `grid.light_substeps` times per EPW step, and adds the SRS source `i e wp0/(4 me w0 w1) (n/n_env) E0 . conj(E1)` to the EPW potential. The default time series then also records `e1_sq` and `reflectivity` (Poynting-corrected `|E1_y|^2/E0^2` at a probe on the low-density side, `x = 1.6 * boundary_width`) |
 
 #### hyperviscosity (optional)
@@ -404,9 +405,34 @@ Physics terms configuration.
 | `coeff` | float | Hyperviscosity coefficient |
 | `order` | int | Order of hyperviscosity (must be even) |
 
+### iaw (optional)
+
+The IAW state follows the MATLAB LPSE split update for fractional ion-density perturbation `Nelf` and ion-velocity divergence `W`. Its pressure combines the acoustic restoring term with ponderomotive drive from the EPW, pump, and Raman fields. `Nelf` feeds back into the EPW, pump, and Raman detuning terms on the next outer step.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `active` | bool | Enable ion-acoustic evolution (default `false`) |
+| `boundary` | object or null | Per-axis `x`/`y` boundary modes. Defaults to `terms.epw.boundary` |
+| `damping.collisions` | float | Density damping rate in `1/ps` (default `1.0e-5`) |
+| `damping.landau` | float | Dimensionless coefficient in `gamma_iaw(k) = landau * cs * |k|` (default `0.1`); the velocity-divergence equation is damped at `2 gamma_iaw` |
+| `max_density_perturbation` | float or null | Optional symmetric limiter on `|delta n_i/n_0|`; unlimited by default |
+
+The setup validates the explicit acoustic stability condition `omega_iaw,max * grid.dt < 2`.
+
+```yaml
+terms:
+  iaw:
+    active: true
+    boundary: null
+    damping:
+      collisions: 1.0e-5
+      landau: 0.1
+    max_density_perturbation: 0.1
+```
+
 ### hpe (optional)
 
-Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field $\tilde{E}_x = \mathrm{Re}[E_x e^{-i\omega_{p0}t}]$, their spatially-averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). Quasi-1D only (`ny == 1`), and requires `terms.epw.damping.landau: true`. The particle push dominates the runtime, so HPE runs want a GPU.
+Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field $\tilde{E}_x = \mathrm{Re}[E_x e^{-i\omega_{p0}t}]$, their spatially-averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). Quasi-1D only (`ny == 1`), and requires `terms.epw.damping.landau: true`. Because TPD requires transverse modes, setup explicitly rejects `hpe.active: true` together with `source.tpd: true`; angle-resolved TPD kinetic feedback needs a future multidimensional tracker. The particle push dominates the runtime, so HPE runs want a GPU.
 
 The damping extraction is calibrated per k-mode so that the freshly loaded Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and the tail histogram `hpe_hist`; MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`, named for one-to-one comparison with the OSIRIS scan2 runs.
 
@@ -579,3 +605,10 @@ See `configs/envelope-2d/srs.yaml` - Noise-seeded backward SRS on a linear densi
 (the lpse-matlab `srs_1D` case), with a reflectivity time series recorded at a probe on
 the low-density side. Also see `configs/envelope-2d/reflection.yaml` - SRS simulation
 with kinetic corrections.
+
+### Coupled TPD + SRS + IAW
+
+See `configs/envelope-2d/tpd-srs-iaw.yaml` for the maximal 2D fluid model: both
+parametric instabilities, reciprocal pump depletion, ion-acoustic evolution, and
+shifted-band de-aliasing. See `configs/envelope-2d/srs-hpe.yaml` for the quasi-1D
+particle-feedback model; HPE cannot yet represent transverse TPD modes.

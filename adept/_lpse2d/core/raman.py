@@ -117,12 +117,24 @@ class RamanLight:
         row_i1p1 = 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[self.i1] - 1j * self.w1 * dw1 * t)
         return row_i1, row_i1p1
 
-    def rhs(self, t: float, E1: Array, E0: Array, laplacian_phi: Array, seed_args: dict | None) -> Array:
+    def rhs(
+        self,
+        t: float,
+        E1: Array,
+        E0: Array,
+        laplacian_phi: Array,
+        seed_args: dict | None,
+        iaw_density: Array | None = None,
+    ) -> Array:
         e1x, e1y = E1[..., 0], E1[..., 1]
+        linear_coeff = self.linear_coeff
+        if iaw_density is not None:
+            # MATLAB: i*w1/2 * [1 - wp0^2/w1^2 * (n_b/n_env + Nelf)] E1
+            linear_coeff = linear_coeff - 1j * self.wp0**2 / (2.0 * self.w1) * iaw_density
 
         # paraxial propagation with cross-derivative terms (MATLAB lines 1663-1671)
-        k_e1x = self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + self.linear_coeff * e1x
-        k_e1y = self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + self.linear_coeff * e1y
+        k_e1x = self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + linear_coeff * e1x
+        k_e1y = self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + linear_coeff * e1y
 
         # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation)
         k_e1x += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 0]
@@ -135,7 +147,15 @@ class RamanLight:
 
         return jnp.stack([k_e1x, k_e1y], axis=-1)
 
-    def __call__(self, t: float, E1: Array, E0_fn, phi_k: Array, seed_args: dict | None) -> Array:
+    def __call__(
+        self,
+        t: float,
+        E1: Array,
+        E0_fn,
+        phi_k: Array,
+        seed_args: dict | None,
+        iaw_density: Array | None = None,
+    ) -> Array:
         """
         Advance E1 over one EPW step (self.n_sub staggered light sub-steps).
 
@@ -151,10 +171,17 @@ class RamanLight:
         def substep(i, E1):
             t_i = t + i * self.dt_l
             # real-part update with the RHS at t_i (MATLAB lines 1380-1397)
-            k1 = self.rhs(t_i, E1, E0_fn(t_i), laplacian_phi, seed_args)
+            k1 = self.rhs(t_i, E1, E0_fn(t_i), laplacian_phi, seed_args, iaw_density)
             E1 = E1 + self.dt_l * jnp.real(k1)
             # imaginary-part update with the RHS at t_i + dt/2 (MATLAB lines 1400-1421)
-            k2 = self.rhs(t_i + self.dt_l / 2.0, E1, E0_fn(t_i + self.dt_l / 2.0), laplacian_phi, seed_args)
+            k2 = self.rhs(
+                t_i + self.dt_l / 2.0,
+                E1,
+                E0_fn(t_i + self.dt_l / 2.0),
+                laplacian_phi,
+                seed_args,
+                iaw_density,
+            )
             E1 = E1 + 1j * self.dt_l * jnp.imag(k2)
             # absorbing boundaries (MATLAB lines 977-983)
             E1 = E1 * self.sub_boundary[..., None]
