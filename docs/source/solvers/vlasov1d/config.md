@@ -323,6 +323,28 @@ Each named save contains a `t` sub-key with:
 | `tmax` | float | End time for saving |
 | `nt` | int | Number of save points |
 
+### Save axis conventions
+
+A save with an `x`/`v` block is **interpolated** off the solver grid (bilinear); a save
+with only `t` is dumped at full resolution and is not interpolated at all.
+
+The two axes do not use the same convention. The save `x` axis is cell-centered like the
+solver's, but the save `v` axis is *endpoint-inclusive* — it includes `vmin` and `vmax`
+exactly. Because the solver's own v axis is cell-centered (spanning `vmin + dv/2` to
+`vmax - dv/2`), a save configured over the solver's full velocity range asks for points
+half a solver cell beyond the outermost cell centre at each end. That overhang is half a
+*solver* cell wide regardless of either resolution, so it does not shrink as the grid is
+refined.
+
+Query points outside the solver grid are clamped to it, so those edge cells take the
+nearest solver-cell value rather than becoming NaN. The saved coordinate still reports
+the configured `vmin`/`vmax`. The same clamping applies in `x`, which matters when a
+save's `nx` exceeds the solver's `grid.nx`.
+
+If you would rather the edge cells carry interpolated values than clamped ones, give the
+save a slightly narrower range than the solver grid (e.g. `vmax: 15.8` against a solver
+`vmax: 16.0`), which keeps every sample point strictly inside.
+
 ## mlflow
 
 Experiment tracking configuration.
