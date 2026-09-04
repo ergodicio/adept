@@ -1,4 +1,4 @@
-"""Scalar diagnostics for lpse2d SRS runs, mirroring the OSIRIS scan2 metrics.
+"""Scalar diagnostics for lpse2d dynamic-light runs, mirroring OSIRIS scan2 metrics.
 
 The point of this module is one-to-one MLflow comparability with the OSIRIS PIC
 post-processing in the ``osiris-lpi`` repo: metric *names and definitions* here

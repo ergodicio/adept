@@ -132,8 +132,8 @@ class GridModel(BaseModel):
     tmin: str
     ymax: str
     ymin: str
-    # number of Raman-light sub-steps per EPW step (SRS only); computed from the
-    # stability limit if omitted
+    # number of dynamic-light sub-steps per EPW step; computed from the tightest
+    # evolved-carrier stability limit if omitted
     light_substeps: int | None = None
 
 
@@ -185,16 +185,33 @@ class EPWModel(BaseModel):
 
 class LightModel(BaseModel):
     """Light-wave evolution options. pump_depletion evolves E0 with the FD envelope
-    solver (boundary injector + EPW coupling) instead of prescribing it analytically."""
+    solver and reciprocal coupling from every active TPD/SRS source."""
 
     pump_depletion: bool = False
+
+
+class IAWDampingModel(BaseModel):
+    """Ion-acoustic damping parameters from the MATLAB LPSE model."""
+
+    collisions: float = 1.0e-5  # density damping rate, 1/ps
+    landau: float = 0.1  # gamma_iaw = landau * cs * |k|
+
+
+class IAWModel(BaseModel):
+    """Ion-acoustic density/velocity-divergence evolution and ponderomotive drive."""
+
+    active: bool = False
+    boundary: BoundaryModel | None = None  # defaults to terms.epw.boundary
+    damping: IAWDampingModel = IAWDampingModel()
+    max_density_perturbation: float | None = None
 
 
 class HPEModel(BaseModel):
     """Hybrid particle evolution (Follett et al. 2017): test electrons pushed in the
     de-enveloped EPW field feed an evolving Landau damping rate back to the wave
-    solver (kinetic inflation + hot electrons). Quasi-1D (ny == 1) only, and
-    requires terms.epw.damping.landau: true."""
+    solver (kinetic inflation + hot electrons). The tracker is 1D1V for ny == 1
+    and 2D2V otherwise; both use one box-averaged ensemble. Requires
+    terms.epw.damping.landau: true."""
 
     active: bool = False
     n_particles: int = 500000
@@ -202,7 +219,8 @@ class HPEModel(BaseModel):
     v_max: float = 1.0  # histogram half-span, units of c
     v_blend_buffer: float = 0.5  # analytic/HPE blend buffer above v_min, units of vte
     nv: int = 512  # velocity bins spanning (-v_max, v_max)
-    gather_refine: int = 4  # spectral upsampling of Ex before the particle gather
+    n_angles: int = 32  # oriented velocity projections spanning 2pi in 2-D
+    gather_refine: int = 4  # spectral upsampling of Ex/Ey before the particle gather
     substep_courant: float = 0.05  # wp0 * particle substep
     tau_damping: str = "100fs"  # EMA window for the velocity histogram
     t_start: str = "0ps"  # push/feedback disabled before this time
@@ -214,6 +232,7 @@ class HPEModel(BaseModel):
 class TermsModel(BaseModel):
     epw: EPWModel
     light: LightModel = LightModel()
+    iaw: IAWModel | None = None
     hpe: HPEModel | None = None
     zero_mask: bool
 

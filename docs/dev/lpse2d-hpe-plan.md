@@ -1,6 +1,6 @@
 # Plan: Follett-style Hybrid Particle Evolution (HPE) for lpse2d
 
-> **Status update (2026-07-30): implemented** through M3 in `adept/_lpse2d/core/hpe.py`
+> **Status update (2026-09-04): implemented in 1D1V and 2D2V** through M3 in `adept/_lpse2d/core/hpe.py`
 > (+ integration per Sec. 3). Notable deviations/findings from implementation:
 >
 > 1. **Signed-k damping formula**: Eq. in Sec. 2.2 needs a $\mathrm{sgn}(k_x)$:
@@ -29,10 +29,15 @@
 >    frequency/carrier sign, M1 calibration, M3a linear closure, M3b O'Neil
 >    flattening, end-to-end SRS smoke). Production config:
 >    `configs/envelope-2d/srs-hpe.yaml`.
+> 8. **2-D extension**: one box-wide `(x,y,p_x,p_y)` ensemble gathers both EPW
+>    field components. Its spatially averaged distribution is retained as 32
+>    oriented projections `f(v . k_hat)`, then interpolated in angle and resonant
+>    velocity for every `(kx,ky)` mode. This composes with oblique TPD in
+>    `configs/envelope-2d/tpd-srs-iaw.yaml`; there is no per-cell particle ensemble.
 
 **Goal:** add the test-particle / self-consistent Landau damping module of Follett et al., *Phys. Plasmas* **24**, 102134 (2017) to the JAX lpse2d SRS solver, so that kinetic inflation (trapping-induced damping reduction) and hot-electron generation are captured. This targets the one remaining fluid-vs-PIC gap in the scan2 replication: all 63 LPSE-dead-but-OSIRIS-active points sit in the marginal-threshold / high-$T_e$ band where trapping physics decides the outcome (`srs-campaign/sims/lpse-srs-scan-test/NOTES.md`).
 
-Status: **plan only — nothing implemented.** Branch context: `lpse2d/srs` @ `d3f8321` (clean).
+Historical planning context follows; the status block above records the implemented result.
 
 ---
 
