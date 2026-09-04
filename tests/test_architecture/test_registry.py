@@ -68,6 +68,21 @@ def test_lazy_registration_loads_once_and_names_do_not_trigger_loading():
     assert calls == ["loaded"]
 
 
+def test_declared_capabilities_do_not_load_a_lazy_builder():
+    calls = []
+    capabilities = SolverCapabilities(ExecutionKind.DISCRETE)
+    registry = SolverRegistry()
+
+    def load_builder():
+        calls.append("loaded")
+        return FakeBuilder([])
+
+    registry.register_lazy("pic-1d", load_builder, capabilities=capabilities)
+
+    assert registry.capabilities("pic-1d") == capabilities
+    assert calls == []
+
+
 def test_registration_collision_is_actionable():
     registry = SolverRegistry()
     registry.register("tf-1d", FakeBuilder([]))

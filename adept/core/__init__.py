@@ -8,6 +8,7 @@ only when a simulation is prepared or executed.
 from importlib import import_module
 from typing import Any
 
+from .builtin_solvers import PIC1D_CAPABILITIES, TF1D_CAPABILITIES
 from .contracts import (
     Analyzer,
     ContinuousSystem,
@@ -26,6 +27,14 @@ from .contracts import (
     SimulationSpec,
     SolverBuilder,
     SolverCapabilities,
+)
+from .executors import (
+    CapabilityMismatchError,
+    ExecutionHandle,
+    ExecutionState,
+    Executor,
+    ExecutorCapabilities,
+    LocalExecutor,
 )
 from .observations import (
     MaterializationTarget,
@@ -47,6 +56,13 @@ from .registry import (
     SolverRegistry,
     UnknownSolverError,
     solver_registry,
+)
+from .run_plans import (
+    AcceleratorKind,
+    ExecutionFeature,
+    ResourceRequirements,
+    RunPlan,
+    ServiceReference,
 )
 from .runtime import HostRunResult, run_prepared
 from .tracking import (
@@ -78,8 +94,16 @@ def _load_pic_1d_builder():
     return PIC1DBuilder()
 
 
-solver_registry.register_lazy("tf-1d", _load_two_fluid_1d_builder)
-solver_registry.register_lazy("pic-1d", _load_pic_1d_builder)
+solver_registry.register_lazy(
+    "tf-1d",
+    _load_two_fluid_1d_builder,
+    capabilities=TF1D_CAPABILITIES,
+)
+solver_registry.register_lazy(
+    "pic-1d",
+    _load_pic_1d_builder,
+    capabilities=PIC1D_CAPABILITIES,
+)
 
 _LAZY_ATTRIBUTES = {
     "CallableObjective": (".objectives", "CallableObjective"),
@@ -98,21 +122,29 @@ _LAZY_ATTRIBUTES = {
 }
 
 __all__ = [
+    "AcceleratorKind",
     "Analyzer",
     "Artifact",
     "ArtifactReceipt",
     "ArtifactSink",
     "CallableObjective",
+    "CapabilityMismatchError",
     "ContinuousSystem",
     "DirectoryArtifactSink",
     "DiscreteSystem",
+    "ExecutionFeature",
+    "ExecutionHandle",
     "ExecutionKind",
+    "ExecutionState",
+    "Executor",
+    "ExecutorCapabilities",
     "FailurePolicy",
     "HostRunResult",
     "InvalidSolverNameError",
     "JaxProgram",
     "L2Penalty",
     "LegacyVGAdapter",
+    "LocalExecutor",
     "MLflowArtifactSink",
     "MLflowTracker",
     "MaterializationTarget",
@@ -140,11 +172,14 @@ __all__ = [
     "PreparedSimulation",
     "RawResult",
     "Report",
+    "ResourceRequirements",
     "RunHandle",
     "RunManifest",
+    "RunPlan",
     "RunRequest",
     "RunStatus",
     "ScheduleKind",
+    "ServiceReference",
     "SimulationSpec",
     "SolverAlreadyRegisteredError",
     "SolverBuilder",

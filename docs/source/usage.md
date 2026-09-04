@@ -55,6 +55,7 @@ once:
 
 usage/explicit_programs
 usage/observations
+usage/run_plans
 usage/host_runtime
 usage/initialization
 ```
