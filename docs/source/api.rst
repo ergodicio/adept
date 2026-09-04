@@ -2,8 +2,9 @@ API Guide
 ----------
 
 The explicit logging-free program and objective API is described in
-:doc:`usage/explicit_programs`. It is currently opt-in for the ``tf-1d`` and
-electrostatic ``pic-1d`` pilots.
+:doc:`usage/explicit_programs`. Its tracker, artifact, report, and host execution
+services are described in :doc:`usage/host_runtime`. The new path is currently opt-in
+for the ``tf-1d`` and electrostatic ``pic-1d`` pilots.
 
 The established API has two primary high level classes.
 

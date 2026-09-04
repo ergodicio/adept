@@ -18,7 +18,17 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         import sys
 
         import adept
-        from adept.core import Objective, ObjectiveResult, SimulationSpec, SolverRegistry
+        from adept.core import (
+            Artifact,
+            DirectoryArtifactSink,
+            Objective,
+            ObjectiveResult,
+            Report,
+            RunRequest,
+            SimulationSpec,
+            SolverRegistry,
+            run_prepared,
+        )
 
         forbidden = ("jax", "equinox", "mlflow", "diffrax")
         loaded = sorted(
@@ -30,6 +40,11 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert adept.SolverRegistry is SolverRegistry
         assert adept.Objective is Objective
         assert adept.ObjectiveResult is ObjectiveResult
+        assert adept.Artifact is Artifact
+        assert adept.Report is Report
+        assert adept.RunRequest is RunRequest
+        assert adept.DirectoryArtifactSink is DirectoryArtifactSink
+        assert adept.run_prepared is run_prepared
         assert "adept.core.objectives" not in sys.modules
         assert adept.solver_registry.names() == ("pic-1d", "tf-1d")
         """
@@ -65,6 +80,96 @@ def test_loading_objective_helpers_does_not_load_mlflow():
         assert CallableObjective.__name__ == "CallableObjective"
         assert WeightedSumObjective.__name__ == "WeightedSumObjective"
         assert callable(value_and_grad)
+        assert "mlflow" not in sys.modules
+        """
+    )
+
+    assert process.returncode == 0, process.stderr
+
+
+def test_loading_mlflow_adapter_classes_does_not_import_mlflow_until_used():
+    process = run_isolated_python(
+        """
+        import sys
+
+        from adept import MLflowArtifactSink, MLflowTracker
+
+        assert MLflowTracker.__name__ == "MLflowTracker"
+        assert MLflowArtifactSink.__name__ == "MLflowArtifactSink"
+        assert "mlflow" not in sys.modules
+        """
+    )
+
+    assert process.returncode == 0, process.stderr
+
+
+def test_untracked_host_runtime_operates_when_mlflow_import_is_blocked():
+    process = run_isolated_python(
+        """
+        import sys
+        import tempfile
+
+
+        class BlockMLflow:
+            def find_spec(self, fullname, path, target=None):
+                del path, target
+                if fullname == "mlflow" or fullname.startswith("mlflow."):
+                    raise AssertionError(f"unexpected MLflow import: {fullname}")
+                return None
+
+
+        sys.meta_path.insert(0, BlockMLflow())
+
+        from adept import (
+            DirectoryArtifactSink,
+            ExecutionKind,
+            PreparedSimulation,
+            RawResult,
+            RunManifest,
+            SolverCapabilities,
+            run_prepared,
+        )
+
+
+        class Program:
+            def __call__(self, params, state, inputs, key):
+                del params, state, inputs, key
+                return RawResult(1, (), (), "ok", {})
+
+
+        class Analyzer:
+            def analyze(self, result, manifest):
+                del manifest
+                from adept import Report
+                return Report(result=result)
+
+
+        prepared = PreparedSimulation(
+            program=Program(),
+            params={},
+            state={},
+            inputs={},
+            manifest=RunManifest(
+                raw_config={},
+                resolved_config={},
+                structural_fingerprint="sha256:test",
+            ),
+            analyzer=Analyzer(),
+            capabilities=SolverCapabilities(ExecutionKind.DISCRETE),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            completed = run_prepared(
+                prepared,
+                key="key",
+                artifact_sink=DirectoryArtifactSink(directory),
+                execute=lambda simulation, key: simulation.program(
+                    simulation.params,
+                    simulation.state,
+                    simulation.inputs,
+                    key,
+                ),
+            )
+        assert completed.raw_result.final_state == 1
         assert "mlflow" not in sys.modules
         """
     )
