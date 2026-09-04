@@ -49,13 +49,33 @@ def test_run_plan_round_trips_as_canonical_json_and_has_a_stable_fingerprint():
     assert ExecutionFeature.ARTIFACT_ACCESS in plan.required_features
 
 
-def test_run_plan_rejects_non_json_values_and_embedded_credentials():
+def test_run_plan_rejects_non_json_values():
     with pytest.raises(TypeError, match="finite JSON"):
         RunPlan(SimulationSpec("tf-1d", {"value": object()}))
 
-    with pytest.raises(ValueError, match="credential material"):
-        RunPlan(SimulationSpec("tf-1d", {"api_token": "do-not-serialize"}))
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "apikey",
+        "api-key",
+        "api_key",
+        "OpenAIAPIKey",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "client_secret_id",
+        "databasePassword",
+        "auth_token",
+        "credential_value",
+        "ssh_private_key",
+    ],
+)
+def test_run_plan_rejects_common_separator_insensitive_credential_fields(field):
+    with pytest.raises(ValueError, match="credential material"):
+        RunPlan(SimulationSpec("tf-1d", {field: "do-not-serialize"}))
+
+
+def test_service_references_reject_credentials_but_allow_external_profiles():
     with pytest.raises(ValueError, match="credential material"):
         ServiceReference("mlflow", {"password": "do-not-serialize"})
 

@@ -18,23 +18,33 @@ from .tracking import FailurePolicy, RunRequest
 
 _STABLE_NAME = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _RUN_PLAN_SCHEMA_VERSION = "1"
-_SENSITIVE_FIELD_PARTS = frozenset(
+_SENSITIVE_FIELD_STEMS = frozenset(
     {
-        "access-key",
-        "api-key",
+        "accesskey",
+        "apikey",
+        "authorization",
         "credential",
         "credentials",
         "password",
-        "private-key",
+        "passwd",
+        "privatekey",
         "secret",
-        "secret-key",
+        "secretkey",
         "token",
     }
 )
+_SENSITIVE_FIELD_SUFFIXES = ("", "id", "value")
 
 
-def _normalized_field_name(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+def _compact_field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
+def _looks_like_credential_field(value: str) -> bool:
+    compact = _compact_field_name(value)
+    return any(
+        compact.endswith(f"{stem}{suffix}") for stem in _SENSITIVE_FIELD_STEMS for suffix in _SENSITIVE_FIELD_SUFFIXES
+    )
 
 
 def _validate_no_embedded_secrets(value: Any, *, path: str = "plan") -> None:
@@ -42,10 +52,7 @@ def _validate_no_embedded_secrets(value: Any, *, path: str = "plan") -> None:
         for key, child in value.items():
             if not isinstance(key, str):
                 raise TypeError(f"{path} keys must be strings")
-            normalized = _normalized_field_name(key)
-            if normalized in _SENSITIVE_FIELD_PARTS or any(
-                normalized.endswith(f"-{part}") for part in _SENSITIVE_FIELD_PARTS
-            ):
+            if _looks_like_credential_field(key):
                 raise ValueError(
                     f"{path}.{key} looks like embedded credential material; "
                     "store credentials outside the RunPlan and reference a configured profile instead"
@@ -57,10 +64,7 @@ def _validate_no_embedded_secrets(value: Any, *, path: str = "plan") -> None:
     elif isinstance(value, str) and "://" in value:
         parsed = urlsplit(value)
         sensitive_query_fields = [
-            key
-            for key, _ in parse_qsl(parsed.query, keep_blank_values=True)
-            if _normalized_field_name(key) in _SENSITIVE_FIELD_PARTS
-            or any(_normalized_field_name(key).endswith(f"-{part}") for part in _SENSITIVE_FIELD_PARTS)
+            key for key, _ in parse_qsl(parsed.query, keep_blank_values=True) if _looks_like_credential_field(key)
         ]
         if parsed.username is not None or parsed.password is not None or sensitive_query_fields:
             raise ValueError(f"{path} contains credential material in a URI; store credentials outside the RunPlan")
