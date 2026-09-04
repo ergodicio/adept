@@ -27,3 +27,15 @@ Append-only checkpoints for scientific model development and validation.
 - **Evidence or artifacts:** `tests/test_lpse2d/test_tpd_depletion.py`; `tests/test_lpse2d/test_iaw.py`; `configs/envelope-2d/tpd-srs-iaw.yaml`.
 - **Interpretation:** Reciprocal TPD feedback closes the above-threshold fluid energy path. It does not make the existing quasi-1D HPE tracker angle-resolved; 2D kinetic feedback remains a separate model extension.
 - **Next:** Run the full Envelope-2D regression suite, finalize documentation and mirrored notes, then open the PR.
+
+## 2026-09-03 23:09:13 PDT — Envelope-2D parity implementation completed
+
+- **Checkpoint ID:** 20260904T060913Z-1cea910a
+- **State:** COMPLETED
+- **Objective:** Deliver verified IAW evolution and reciprocal TPD pump depletion on top of the merged TPD/SRS/HPE feature set.
+- **Action or change:** Added IAW state/evolution, MATLAB-order damping and boundaries, ponderomotive drive, EPW/pump/Raman density feedback, IAW diagnostics, clean reciprocal TPD pump feedback, TPD-only flux diagnostics, dynamic-light stability setup, a combined 2D example deck, and an explicit TPD/HPE dimensionality guard.
+- **Provenance:** Commit `1cea910`; branch `codex/lpse2d-iaw-parity`; MATLAB IAW reference `m201805_matlabLpse_v11.m` at repository commit `3bf8b0b`.
+- **Observation:** Full non-slow Envelope-2D regression: 53 passed, 1 skipped, 3 deselected in 938.91 s. Final focused IAW/TPD suite: 12 passed in 4.76 s. Ruff and compile checks passed.
+- **Evidence or artifacts:** Pull request https://github.com/ergodicio/adept/pull/363; `adept/_lpse2d/core/iaw.py`; `tests/test_lpse2d/test_iaw.py`; `tests/test_lpse2d/test_tpd_depletion.py`; `configs/envelope-2d/tpd-srs-iaw.yaml`.
+- **Interpretation:** The 2D fluid model now composes TPD, SRS, pump feedback, and IAWs. The existing quasi-1D HPE tracker composes with SRS and IAWs, but a genuinely combined TPD+HPE model remains blocked on a multidimensional particle/feedback formulation and is rejected explicitly.
+- **Next:** Review and merge PR #363; design `(x, y, p_x, p_y)` HPE and an angle-resolved damping estimator as a separate follow-up if TPD kinetic feedback is required.
