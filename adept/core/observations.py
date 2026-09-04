@@ -11,6 +11,7 @@ import math
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
+from itertools import pairwise
 from numbers import Integral, Real
 from typing import Any, Protocol, runtime_checkable
 
@@ -87,7 +88,7 @@ class ObservationSchedule:
 
         if not normalized:
             raise ValueError("an observation schedule must contain at least one point")
-        if any(right <= left for left, right in zip(normalized, normalized[1:], strict=False)):
+        if any(right <= left for left, right in pairwise(normalized)):
             raise ValueError("observation points must be strictly increasing")
         object.__setattr__(self, "kind", normalized_kind)
         object.__setattr__(self, "points", tuple(normalized))
@@ -164,14 +165,12 @@ class ObservationSchedule:
             for point in self.points:
                 coordinate = (float(point) - t0) / dt
                 step = round(coordinate)
-                if not math.isclose(coordinate, step, rel_tol=tolerance, abs_tol=tolerance):
+                if not math.isclose(coordinate, step, rel_tol=0.0, abs_tol=tolerance):
                     raise ValueError(f"observation time {point} does not align with the discrete step grid")
                 steps_list.append(step)
             steps = tuple(steps_list)
         if steps[-1] > num_steps:
-            raise ValueError(
-                f"observation step {steps[-1]} exceeds the program's final step {num_steps}"
-            )
+            raise ValueError(f"observation step {steps[-1]} exceeds the program's final step {num_steps}")
         return ObservationSchedule.at_steps(steps)
 
     def retained_points(self, retention: ObservationRetention) -> tuple[int | float, ...]:
@@ -311,9 +310,7 @@ class ObservationPlan:
         if len(names) != len(set(names)):
             raise ValueError("observation names must be unique within a plan")
         if max_retained_bytes is not None and (
-            isinstance(max_retained_bytes, bool)
-            or not isinstance(max_retained_bytes, int)
-            or max_retained_bytes < 0
+            isinstance(max_retained_bytes, bool) or not isinstance(max_retained_bytes, int) or max_retained_bytes < 0
         ):
             raise ValueError("max_retained_bytes must be a non-negative integer or None")
         object.__setattr__(self, "observations", normalized)

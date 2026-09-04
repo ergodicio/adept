@@ -57,6 +57,12 @@ def test_schedule_requires_finite_bounded_normalized_points():
         ObservationSchedule.at_times((0.0, 0.5, 0.5))
     with pytest.raises(ValueError, match="does not align"):
         ObservationSchedule.at_times((0.25,)).as_steps(t0=0.0, dt=1.0, num_steps=1)
+    with pytest.raises(ValueError, match="does not align"):
+        ObservationSchedule.at_times((10_000_000.25,)).as_steps(
+            t0=0.0,
+            dt=1.0,
+            num_steps=10_000_001,
+        )
 
 
 def test_plan_reports_schema_and_rejects_excess_retention_before_execution():
