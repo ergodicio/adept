@@ -16,7 +16,7 @@ from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from types import MappingProxyType
 from typing import Any, Protocol, runtime_checkable
 from uuid import uuid4
@@ -163,7 +163,8 @@ def _artifact_parent(value: str | None) -> str | None:
     if value is None or value == "":
         return None
     path = PurePosixPath(value)
-    if path.is_absolute() or ".." in path.parts or "." in path.parts:
+    windows_path = PureWindowsPath(value)
+    if value != path.as_posix() or path.is_absolute() or ".." in path.parts or "\\" in value or windows_path.drive:
         raise ValueError("artifact_path must be a normalized relative POSIX path")
     return str(path)
 
@@ -332,10 +333,16 @@ class DirectoryArtifactSink:
         self._run_root(handle)
 
     def _destination(self, handle: RunHandle, artifact: Artifact) -> Path:
-        parent = self._run_root(handle)
-        if artifact.artifact_path is not None:
-            parent = parent.joinpath(*PurePosixPath(artifact.artifact_path).parts)
-        return parent / Path(artifact.source).name
+        run_root = self._run_root(handle).resolve()
+        if not run_root.is_relative_to(self.root):
+            raise ValueError("artifact run directory resolves outside the configured root")
+
+        relative = PurePosixPath(artifact.artifact_path or "") / Path(artifact.source).name
+        _artifact_parent(relative.as_posix())
+        destination = run_root.joinpath(*relative.parts).resolve()
+        if not destination.is_relative_to(run_root):
+            raise ValueError("artifact destination resolves outside its run directory")
+        return destination
 
     def put(self, handle: RunHandle, artifact: Artifact) -> ArtifactReceipt:
         source = Path(artifact.source).expanduser()
@@ -370,10 +377,16 @@ class DirectoryArtifactSink:
         )
 
     def verify(self, handle: RunHandle, receipt: ArtifactReceipt) -> None:
-        relative = PurePosixPath(receipt.path)
-        if relative.is_absolute() or ".." in relative.parts:
+        try:
+            normalized = _artifact_parent(receipt.path)
+        except ValueError as exc:
+            raise ValueError("artifact receipt contains an unsafe path") from exc
+        if normalized is None:
             raise ValueError("artifact receipt contains an unsafe path")
+        relative = PurePosixPath(normalized)
         run_root = self._run_root(handle).resolve()
+        if not run_root.is_relative_to(self.root):
+            raise ValueError("artifact run directory resolves outside the configured root")
         destination = run_root.joinpath(*relative.parts)
         resolved_destination = destination.resolve()
         if not resolved_destination.is_relative_to(run_root):

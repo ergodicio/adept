@@ -286,17 +286,60 @@ def test_directory_sink_round_trips_and_detects_corruption(tmp_path):
         sink.verify(handle, receipt)
 
 
-def test_directory_sink_rejects_unsafe_destination_paths(tmp_path):
+@pytest.mark.parametrize(
+    "artifact_path",
+    [
+        "../escape",
+        r"..\escape",
+        r"nested\..\escape",
+        r"C:\escape",
+        "C:/escape",
+        "C:escape",
+        r"\escape",
+        "nested//escape",
+        "nested/./escape",
+        "nested/escape/",
+    ],
+)
+def test_artifact_rejects_non_normalized_cross_platform_paths(tmp_path, artifact_path):
     source = tmp_path / "output.txt"
     source.write_text("result")
 
     with pytest.raises(ValueError, match="relative POSIX"):
-        Artifact(source, artifact_path="../escape")
+        Artifact(source, artifact_path=artifact_path)
+
+
+def test_directory_sink_rejects_unsafe_destination_paths(tmp_path):
+    source = tmp_path / "output.txt"
+    source.write_text("result")
+
     with pytest.raises(ValueError, match="filesystem-safe"):
         DirectoryArtifactSink(tmp_path / "artifacts").put(
             RunHandle("../escape", "null"),
             Artifact(source),
         )
+
+
+def test_directory_sink_checks_resolved_containment_before_writing(tmp_path):
+    source = tmp_path / "output.txt"
+    source.write_text("result")
+    artifact_root = tmp_path / "artifacts"
+    run_root = artifact_root / "run-1"
+    outside = tmp_path / "outside"
+    run_root.mkdir(parents=True)
+    outside.mkdir()
+    try:
+        (run_root / "reports").symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"directory symlinks are unavailable: {exc}")
+
+    with pytest.raises(ValueError, match="outside its run directory"):
+        DirectoryArtifactSink(artifact_root).put(
+            RunHandle("run-1", "null"),
+            Artifact(source, artifact_path="reports"),
+        )
+
+    assert not (outside / source.name).exists()
 
 
 def test_mlflow_experiment_creation_race_resolves_explicit_winning_id():
