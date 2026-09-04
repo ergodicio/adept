@@ -17,17 +17,14 @@ from adept._pic1d.simulation import sim_from_config
 from adept._pic1d.solvers.pushers.shape import deposit
 from adept._pic1d.solvers.vector_field import PIC1DVectorField
 from adept.core import (
-    ExecutionKind,
     ObservationPlan,
     ObservationSchedule,
     PassthroughAnalyzer,
-    Placement,
-    Precision,
     PreparedSimulation,
     RunManifest,
     SimulationSpec,
-    SolverCapabilities,
 )
+from adept.core.builtin_solvers import PIC1D_CAPABILITIES
 from adept.core.observations_jax import infer_observation_spec, with_step_schedule
 from adept.core.preparation import normalize_key, structural_fingerprint
 from adept.core.programs import ScanProgram
@@ -318,13 +315,6 @@ class PIC1DBuilder:
             dt=simulation.grid.dt,
             num_steps=simulation.grid.nt,
         )
-        capabilities = SolverCapabilities(
-            execution_kind=ExecutionKind.DISCRETE,
-            precision=Precision.X64,
-            differentiable=True,
-            batchable=False,
-            placements=frozenset({Placement.SINGLE_DEVICE}),
-        )
         manifest = RunManifest(
             raw_config=raw_config,
             resolved_config=resolved,
@@ -340,7 +330,7 @@ class PIC1DBuilder:
             inputs=inputs,
             manifest=manifest,
             analyzer=PassthroughAnalyzer(),
-            capabilities=capabilities,
+            capabilities=PIC1D_CAPABILITIES,
             observation_plan=observation_plan,
         )
 

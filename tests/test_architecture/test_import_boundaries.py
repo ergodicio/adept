@@ -19,6 +19,8 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
 
         import adept
         from adept.core import (
+            Executor,
+            LocalExecutor,
             Artifact,
             DirectoryArtifactSink,
             MaterializedResult,
@@ -28,6 +30,7 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
             ObservationSchedule,
             Report,
             RunRequest,
+            RunPlan,
             SimulationSpec,
             SolverRegistry,
             run_prepared,
@@ -47,13 +50,100 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert adept.ObservationSchedule is ObservationSchedule
         assert adept.MaterializedResult is MaterializedResult
         assert adept.Artifact is Artifact
+        assert adept.Executor is Executor
+        assert adept.LocalExecutor is LocalExecutor
         assert adept.Report is Report
         assert adept.RunRequest is RunRequest
+        assert adept.RunPlan is RunPlan
         assert adept.DirectoryArtifactSink is DirectoryArtifactSink
         assert adept.run_prepared is run_prepared
         assert "adept.core.objectives" not in sys.modules
         assert "adept.core.materialization" not in sys.modules
         assert adept.solver_registry.names() == ("pic-1d", "tf-1d")
+        """
+    )
+
+    assert process.returncode == 0, process.stderr
+
+
+def test_local_executor_bootstraps_x64_before_loading_a_solver_builder():
+    process = run_isolated_python(
+        """
+        import os
+        import sys
+
+        os.environ.pop("JAX_ENABLE_X64", None)
+
+        from adept import (
+            ExecutionKind,
+            LocalExecutor,
+            Placement,
+            Precision,
+            PreparedSimulation,
+            RawResult,
+            Report,
+            RunManifest,
+            RunPlan,
+            SimulationSpec,
+            SolverCapabilities,
+            SolverRegistry,
+        )
+
+        assert "jax" not in sys.modules
+        capabilities = SolverCapabilities(
+            ExecutionKind.DISCRETE,
+            precision=Precision.X64,
+            placements={Placement.SINGLE_DEVICE},
+        )
+
+
+        class Program:
+            def __call__(self, params, state, inputs, key):
+                del params, inputs, key
+                return RawResult(state, {}, {}, "ok", {})
+
+
+        class Analyzer:
+            def analyze(self, result, manifest):
+                del manifest
+                return Report(result=result.final_state)
+
+
+        class Builder:
+            def prepare(self, spec, *, key):
+                del spec, key
+                assert "jax" in sys.modules
+                import jax
+                assert jax.config.read("jax_enable_x64")
+                return PreparedSimulation(
+                    program=Program(),
+                    params={},
+                    state=1,
+                    inputs={},
+                    manifest=RunManifest(
+                        raw_config={},
+                        resolved_config={},
+                        structural_fingerprint="sha256:test",
+                    ),
+                    analyzer=Analyzer(),
+                    capabilities=capabilities,
+                )
+
+
+        registry = SolverRegistry()
+        registry.register_lazy("fake", Builder, capabilities=capabilities)
+
+        def direct(prepared, key):
+            return prepared.program(prepared.params, prepared.state, prepared.inputs, key)
+
+        with LocalExecutor(registry=registry, execute_prepared=direct) as executor:
+            plan = RunPlan(SimulationSpec("fake", {}))
+            executor.validate(plan)
+            assert "jax" not in sys.modules
+            completed = executor.execute(plan)
+
+        assert completed.report.result == 1
+        assert os.environ["JAX_ENABLE_X64"] == "true"
         """
     )
 

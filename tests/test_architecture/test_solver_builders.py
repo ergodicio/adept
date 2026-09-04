@@ -14,8 +14,12 @@ from adept.core import (
     CallableObjective,
     DirectoryArtifactSink,
     ExecutionKind,
+    LocalExecutor,
     NullTracker,
     Report,
+    RunPlan,
+    RunRequest,
+    ServiceReference,
     SimulationSpec,
     partition_parameters,
     run_prepared,
@@ -257,6 +261,22 @@ def test_pic1d_prepared_run_completes_without_mlflow(tmp_path):
     assert set(result.raw_result.observations) == {"fields", "default"}
     assert all(isinstance(leaf, np.ndarray) for leaf in jax.tree.leaves(result.materialized_result.final_state))
     assert_trees_allclose(result.raw_result.final_state, result.report.result.final_state)
+
+
+def test_pic1d_run_plan_executes_through_the_local_executor(tmp_path):
+    plan = RunPlan(
+        simulation=SimulationSpec.from_legacy_config(pic1d_config()),
+        seed=42,
+        run=RunRequest(experiment="local", run_id="pic-plan"),
+        artifact_sink=ServiceReference("directory", {"root": str(tmp_path / "artifacts")}),
+    )
+
+    with LocalExecutor() as executor:
+        result = executor.execute(plan)
+
+    assert result.handle.run_id == "pic-plan"
+    assert result.report.result is result.materialized_result
+    assert set(result.raw_result.observations) == {"fields", "default"}
 
 
 def test_pic1d_builder_rejects_off_grid_observation_times_before_execution():

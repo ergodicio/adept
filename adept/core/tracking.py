@@ -47,6 +47,10 @@ class RunHandle:
     parent_run_id: str | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.run_id, str) or not isinstance(self.backend, str):
+            raise TypeError("run_id and backend must be strings")
+        if self.parent_run_id is not None and not isinstance(self.parent_run_id, str):
+            raise TypeError("parent_run_id must be a string or None")
         run_id = self.run_id.strip()
         backend = self.backend.strip()
         if not run_id:
@@ -55,6 +59,30 @@ class RunHandle:
             raise ValueError("backend must be non-empty")
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "backend", backend)
+
+    def to_dict(self) -> dict[str, str | None]:
+        """Return a JSON-friendly tracker handle."""
+
+        return {
+            "run_id": self.run_id,
+            "backend": self.backend,
+            "parent_run_id": self.parent_run_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> RunHandle:
+        """Restore a tracker handle from :meth:`to_dict` output."""
+
+        copied = dict(value)
+        try:
+            run_id = copied.pop("run_id")
+            backend = copied.pop("backend")
+        except KeyError as exc:
+            raise ValueError(f"Serialized run handle is missing required {exc.args[0]!r} field") from exc
+        parent_run_id = copied.pop("parent_run_id", None)
+        if copied:
+            raise ValueError(f"Serialized run handle contains unknown fields: {sorted(copied)!r}")
+        return cls(run_id=str(run_id), backend=str(backend), parent_run_id=parent_run_id)
 
 
 @dataclass(frozen=True, slots=True, init=False)
@@ -76,6 +104,14 @@ class RunRequest:
         parent: RunHandle | None = None,
         tags: Mapping[str, str] | None = None,
     ) -> None:
+        if not isinstance(experiment, str):
+            raise TypeError("experiment must be a string")
+        if name is not None and not isinstance(name, str):
+            raise TypeError("name must be a string or None")
+        if run_id is not None and not isinstance(run_id, str):
+            raise TypeError("run_id must be a string or None")
+        if parent is not None and not isinstance(parent, RunHandle):
+            raise TypeError("parent must be a RunHandle or None")
         experiment = experiment.strip()
         name = name.strip() if name is not None else None
         run_id = run_id.strip() if run_id is not None else None
@@ -114,6 +150,41 @@ class RunRequest:
             run_id=self.run_id,
             parent=self.parent,
             tags=combined,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly tracked-run request."""
+
+        return {
+            "experiment": self.experiment,
+            "name": self.name,
+            "run_id": self.run_id,
+            "parent": self.parent.to_dict() if self.parent is not None else None,
+            "tags": dict(self._tags),
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> RunRequest:
+        """Restore a tracked-run request from :meth:`to_dict` output."""
+
+        copied = dict(value)
+        experiment = copied.pop("experiment", "adept")
+        name = copied.pop("name", None)
+        run_id = copied.pop("run_id", None)
+        parent = copied.pop("parent", None)
+        tags = copied.pop("tags", None)
+        if copied:
+            raise ValueError(f"Serialized run request contains unknown fields: {sorted(copied)!r}")
+        if parent is not None and not isinstance(parent, Mapping):
+            raise TypeError("Serialized run request parent must be a mapping or null")
+        if tags is not None and not isinstance(tags, Mapping):
+            raise TypeError("Serialized run request tags must be a mapping or null")
+        return cls(
+            experiment=str(experiment),
+            name=name,
+            run_id=run_id,
+            parent=RunHandle.from_dict(parent) if parent is not None else None,
+            tags=tags,
         )
 
 

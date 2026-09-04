@@ -15,17 +15,14 @@ import pint
 from adept._tf1d.datamodel import ConfigModel
 from adept._tf1d.solvers.vector_field import VF
 from adept.core import (
-    ExecutionKind,
     ObservationPlan,
     ObservationSchedule,
     PassthroughAnalyzer,
-    Placement,
-    Precision,
     PreparedSimulation,
     RunManifest,
     SimulationSpec,
-    SolverCapabilities,
 )
+from adept.core.builtin_solvers import TF1D_CAPABILITIES
 from adept.core.observations_jax import infer_observation_spec
 from adept.core.preparation import normalize_key, structural_fingerprint
 from adept.core.programs import DiffraxProgram
@@ -237,13 +234,6 @@ class TwoFluid1DBuilder:
             dt0=grid["dt"],
             max_steps=grid["max_steps"],
         )
-        capabilities = SolverCapabilities(
-            execution_kind=ExecutionKind.CONTINUOUS,
-            precision=Precision.X64,
-            differentiable=True,
-            batchable=False,
-            placements=frozenset({Placement.SINGLE_DEVICE}),
-        )
         manifest = RunManifest(
             raw_config=raw_config,
             resolved_config=resolved,
@@ -259,7 +249,7 @@ class TwoFluid1DBuilder:
             inputs=inputs,
             manifest=manifest,
             analyzer=PassthroughAnalyzer(),
-            capabilities=capabilities,
+            capabilities=TF1D_CAPABILITIES,
             observation_plan=observation_plan,
         )
 

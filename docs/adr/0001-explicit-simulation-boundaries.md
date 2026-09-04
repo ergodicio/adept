@@ -2,7 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-09-02
-- Issues: [#349](https://github.com/ergodicio/adept/issues/349), [#350](https://github.com/ergodicio/adept/issues/350), [#352](https://github.com/ergodicio/adept/issues/352), [#353](https://github.com/ergodicio/adept/issues/353)
+- Issues: [#349](https://github.com/ergodicio/adept/issues/349), [#350](https://github.com/ergodicio/adept/issues/350), [#352](https://github.com/ergodicio/adept/issues/352), [#353](https://github.com/ergodicio/adept/issues/353), [#357](https://github.com/ergodicio/adept/issues/357)
 
 ## Context
 

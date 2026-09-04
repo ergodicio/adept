@@ -67,6 +67,13 @@ pilot uses the discrete `ScanProgram`. Both are parity-tested against their lega
 numerical maps. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
 closures, still produce an actionable error directing callers to `ergoExo`.
 
+`RunPlan` carries JSON-safe solver intent, seed, resources, run identity, and service
+references across an executor boundary. The initial `LocalExecutor` validates declared
+solver and executor capabilities before loading a builder, bootstraps x64 before JAX
+import, and exposes explicit submission, status, cancellation, and result retrieval.
+See the [run-plan guide](source/usage/run_plans.md) for the supported local adapters
+and the incremental scope.
+
 ## Legacy lifecycle
 
 - ADEPT solvers are packaged into `ADEPTModule`s and run via the `ergoExo`
