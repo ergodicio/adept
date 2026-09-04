@@ -14,9 +14,12 @@ import numpy as np
 from adept._pic1d.datamodel import PIC1DConfig
 from adept._pic1d.helpers import _initialize_particles_
 from adept._pic1d.simulation import sim_from_config
+from adept._pic1d.solvers.pushers.shape import deposit
 from adept._pic1d.solvers.vector_field import PIC1DVectorField
 from adept.core import (
     ExecutionKind,
+    ObservationPlan,
+    ObservationSchedule,
     PassthroughAnalyzer,
     Placement,
     Precision,
@@ -25,6 +28,7 @@ from adept.core import (
     SimulationSpec,
     SolverCapabilities,
 )
+from adept.core.observations_jax import infer_observation_spec, with_step_schedule
 from adept.core.preparation import normalize_key, structural_fingerprint
 from adept.core.programs import ScanProgram
 
@@ -39,6 +43,85 @@ class PIC1DSystem(eqx.Module):
     def step(self, step: Any, state: Any, params: Any, inputs: Any, key: jax.Array) -> Any:
         del key
         return self.vector_field(self.t0 + step * self.dt, state, eqx.combine(params, inputs))
+
+
+class PICFieldsObservation(eqx.Module):
+    """Grid fields and deposited particle moments for every species."""
+
+    species_names: tuple[str, ...] = eqx.field(static=True)
+    particle_shape: str = eqx.field(static=True)
+    nx: int = eqx.field(static=True)
+    dx: float = eqx.field(static=True)
+    xmin: float = eqx.field(static=True)
+
+    def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, Any]:
+        del t, inputs
+        result = {}
+        for species_name in self.species_names:
+            position = state[f"x_{species_name}"]
+            velocity = state[f"v_{species_name}"]
+            weight = state[f"w_{species_name}"]
+            result[species_name] = {
+                "n": deposit(position, weight, self.nx, self.dx, self.xmin, self.particle_shape),
+                "j": deposit(
+                    position,
+                    weight * velocity,
+                    self.nx,
+                    self.dx,
+                    self.xmin,
+                    self.particle_shape,
+                ),
+                "P": deposit(
+                    position,
+                    weight * velocity * velocity,
+                    self.nx,
+                    self.dx,
+                    self.xmin,
+                    self.particle_shape,
+                ),
+            }
+        result.update(
+            e=state["e"],
+            de=state["de"],
+            a=state["a"],
+            prev_a=state["prev_a"],
+            pond=-0.5 * cast(jax.Array, jnp.gradient(state["a"] ** 2, self.dx))[1:-1],
+        )
+        return result
+
+
+class PICScalarsObservation(eqx.Module):
+    """Reduced field and per-species particle invariants."""
+
+    species_names: tuple[str, ...] = eqx.field(static=True)
+    masses: tuple[float, ...] = eqx.field(static=True)
+
+    def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, Any]:
+        del t, inputs
+        result = {}
+        for species_name, mass in zip(self.species_names, self.masses, strict=True):
+            velocity = state[f"v_{species_name}"]
+            weight = state[f"w_{species_name}"]
+            result[f"mean_KE_{species_name}"] = 0.5 * mass * jnp.sum(weight * velocity * velocity)
+            result[f"mean_p_{species_name}"] = mass * jnp.sum(weight * velocity)
+            result[f"sum_w_{species_name}"] = jnp.sum(weight)
+        result["mean_e2"] = jnp.mean(state["e"] ** 2)
+        result["mean_de2"] = jnp.mean(state["de"] ** 2)
+        result["mean_a2"] = jnp.mean(state["a"][1:-1] ** 2)
+        return result
+
+
+class PICDistributionObservation(eqx.Module):
+    """Particle phase-space coordinates for one species."""
+
+    species_name: str = eqx.field(static=True)
+
+    def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, Any]:
+        del t, inputs
+        return {
+            "x": state[f"x_{self.species_name}"],
+            "v": state[f"v_{self.species_name}"],
+        }
 
 
 def _write_units(resolved: dict[str, Any], simulation) -> dict[str, str]:
@@ -123,6 +206,64 @@ def _runtime_drivers(drivers):
     )
 
 
+def _pic_observation_plan(resolved: dict[str, Any], simulation, state: Any, inputs: Any) -> ObservationPlan:
+    grid = simulation.grid
+    species_names = tuple(species.name for species in simulation.species)
+    fields = PICFieldsObservation(
+        species_names=species_names,
+        particle_shape=simulation.particle_shape,
+        nx=grid.nx,
+        dx=grid.dx,
+        xmin=grid.xmin,
+    )
+    specs = []
+    for save_name, save_config in resolved.get("save", {}).items():
+        if save_name.startswith("fields"):
+            function = fields
+            entries = ((save_name, save_config),)
+        elif save_name in species_names:
+            function = PICDistributionObservation(save_name)
+            entries = tuple((f"{save_name}.{label}", label_config) for label, label_config in save_config.items())
+        else:
+            raise ValueError(f"unsupported PIC1D legacy save type: {save_name}")
+
+        for observation_name, observation_config in entries:
+            schedule = ObservationSchedule.from_legacy_time_config(observation_config["t"])
+            spec = infer_observation_spec(
+                observation_name,
+                function,
+                schedule,
+                t=grid.tmin,
+                state=state,
+                inputs=inputs,
+            )
+            specs.append(
+                with_step_schedule(
+                    spec,
+                    t0=grid.tmin,
+                    dt=grid.dt,
+                    num_steps=grid.nt,
+                )
+            )
+
+    default_schedule = ObservationSchedule.every_steps(1, stop=max(0, grid.nt - 1))
+    default_function = PICScalarsObservation(
+        species_names=species_names,
+        masses=tuple(species.mass for species in simulation.species),
+    )
+    specs.append(
+        infer_observation_spec(
+            "default",
+            default_function,
+            default_schedule,
+            t=grid.tmin,
+            state=state,
+            inputs=inputs,
+        )
+    )
+    return ObservationPlan(specs)
+
+
 class PIC1DBuilder:
     """Prepare the electrostatic PIC1D program without an ADEPTModule."""
 
@@ -167,8 +308,12 @@ class PIC1DBuilder:
             "terms": resolved["terms"],
         }
         vector_field = PIC1DVectorField(program_config, simulation.grid, simulation.drivers)
-        program = ScanProgram(
+        observation_plan = _pic_observation_plan(resolved, simulation, state, inputs)
+        program = ScanProgram.from_observation_plan(
             system=PIC1DSystem(vector_field, t0=simulation.grid.tmin, dt=simulation.grid.dt),
+            plan=observation_plan,
+            state=state,
+            inputs=inputs,
             t0=simulation.grid.tmin,
             dt=simulation.grid.dt,
             num_steps=simulation.grid.nt,
@@ -196,7 +341,14 @@ class PIC1DBuilder:
             manifest=manifest,
             analyzer=PassthroughAnalyzer(),
             capabilities=capabilities,
+            observation_plan=observation_plan,
         )
 
 
-__all__ = ["PIC1DBuilder", "PIC1DSystem"]
+__all__ = [
+    "PIC1DBuilder",
+    "PIC1DSystem",
+    "PICDistributionObservation",
+    "PICFieldsObservation",
+    "PICScalarsObservation",
+]

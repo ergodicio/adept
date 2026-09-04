@@ -54,6 +54,7 @@ once:
 :maxdepth: 2
 
 usage/explicit_programs
+usage/observations
 usage/host_runtime
 usage/initialization
 ```

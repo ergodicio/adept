@@ -35,8 +35,14 @@ completed = run_prepared(
 )
 
 raw_result = completed.raw_result
+host_result = completed.materialized_result
 report = completed.report
 ```
+
+When the builder supplies an `ObservationPlan`, `raw_result` retains device arrays
+for transformed numerical use and `host_result` contains explicitly materialized
+NumPy arrays. The analyzer receives `host_result`; it never decides implicitly when
+to gather a device or sharded value.
 
 This path does not import or contact MLflow. Artifact destinations are preflighted
 before numerical execution. Files and directories are copied through a staging path,

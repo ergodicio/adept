@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from .contracts import PreparedSimulation
+from .contracts import MaterializedResult, PreparedSimulation
 from .tracking import (
     ArtifactReceipt,
     ArtifactSink,
@@ -69,6 +69,7 @@ class HostRunResult:
     """Computed and analyzed result plus explicit persistence outcomes."""
 
     raw_result: Any
+    materialized_result: MaterializedResult | None
     report: Report
     handle: RunHandle
     artifacts: tuple[ArtifactReceipt, ...]
@@ -144,7 +145,14 @@ def run_prepared(
         run_time_seconds = time.perf_counter() - started
 
         started = time.perf_counter()
-        report = prepared.analyzer.analyze(raw_result, prepared.manifest)
+        materialized_result = None
+        analysis_input = raw_result
+        if prepared.observation_plan is not None:
+            materialized_result = raw_result.materialize(prepared.observation_plan.materialization)
+            if materialized_result is None:
+                raise RuntimeError("run_prepared must run analysis on the selected materialization host")
+            analysis_input = materialized_result
+        report = prepared.analyzer.analyze(analysis_input, prepared.manifest)
         analysis_time_seconds = time.perf_counter() - started
         if not isinstance(report, Report):
             raise TypeError("Prepared analyzers must return adept.Report")
@@ -189,6 +197,7 @@ def run_prepared(
 
     return HostRunResult(
         raw_result=raw_result,
+        materialized_result=materialized_result,
         report=report,
         handle=handle,
         artifacts=tuple(receipts),

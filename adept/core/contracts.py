@@ -14,6 +14,8 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Generic, NamedTuple, Protocol, TypeVar, runtime_checkable
 
+from .observations import MaterializationTarget, ObservationPlan
+
 
 class ExecutionKind(StrEnum):
     """Kind of state transition implemented by a solver program."""
@@ -269,6 +271,28 @@ class RawResult(NamedTuple):
     status: Any
     stats: Any
 
+    def materialize(
+        self,
+        target: MaterializationTarget | str = MaterializationTarget.ALL_HOSTS,
+        *,
+        process_index: int | None = None,
+    ) -> MaterializedResult | None:
+        """Explicitly transfer this result to host memory on the selected hosts."""
+
+        from .materialization import materialize_result
+
+        return materialize_result(self, target, process_index=process_index)
+
+
+class MaterializedResult(NamedTuple):
+    """Host-resident counterpart of :class:`RawResult`."""
+
+    final_state: Any
+    observations: Any
+    times: Any
+    status: Any
+    stats: Any
+
 
 class ObjectiveResult(NamedTuple):
     """Pure objective output kept inside the JAX transform boundary."""
@@ -282,7 +306,7 @@ class ObjectiveResult(NamedTuple):
 class PassthroughAnalyzer:
     """Side-effect-free analyzer used until a solver has a structured report."""
 
-    def analyze(self, result: RawResult, manifest: RunManifest) -> Any:
+    def analyze(self, result: RawResult | MaterializedResult, manifest: RunManifest) -> Any:
         del manifest
         from .tracking import Report
 
@@ -322,6 +346,7 @@ class PreparedSimulation(Generic[ProgramT, ParamsT, StateT, InputsT, AnalyzerT])
     manifest: RunManifest
     analyzer: AnalyzerT
     capabilities: SolverCapabilities
+    observation_plan: ObservationPlan | None = None
 
 
 @runtime_checkable

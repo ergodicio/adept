@@ -8,7 +8,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from adept.core import ObjectiveResult, RawResult
+from adept.core import ObjectiveResult, ObservationPlan, ObservationSchedule, RawResult
+from adept.core.observations_jax import infer_observation_spec
 from adept.core.programs import DiffraxProgram, ScanProgram
 
 
@@ -36,13 +37,25 @@ def run_program(program, params, state, inputs, key):
 
 
 def _continuous_program() -> DiffraxProgram:
+    state = jnp.array(1.0)
+    inputs = {"forcing": jnp.array(0.25)}
+    observation = StateObservation()
+    spec = infer_observation_spec(
+        "state",
+        observation,
+        ObservationSchedule.at_times((0.0, 0.5, 1.0)),
+        t=0.0,
+        state=state,
+        inputs=inputs,
+    )
     return cast(
         DiffraxProgram,
-        DiffraxProgram(
+        DiffraxProgram.from_observation_plan(
             system=LinearSystem(),
             solver=diffrax.Tsit5(),
-            observation=StateObservation(),
-            save_times=jnp.array([0.0, 0.5, 1.0]),
+            plan=ObservationPlan((spec,)),
+            state=state,
+            inputs=inputs,
             t0=0.0,
             t1=1.0,
             dt0=0.05,

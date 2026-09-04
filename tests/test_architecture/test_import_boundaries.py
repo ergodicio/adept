@@ -21,8 +21,11 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         from adept.core import (
             Artifact,
             DirectoryArtifactSink,
+            MaterializedResult,
             Objective,
             ObjectiveResult,
+            ObservationPlan,
+            ObservationSchedule,
             Report,
             RunRequest,
             SimulationSpec,
@@ -40,12 +43,16 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert adept.SolverRegistry is SolverRegistry
         assert adept.Objective is Objective
         assert adept.ObjectiveResult is ObjectiveResult
+        assert adept.ObservationPlan is ObservationPlan
+        assert adept.ObservationSchedule is ObservationSchedule
+        assert adept.MaterializedResult is MaterializedResult
         assert adept.Artifact is Artifact
         assert adept.Report is Report
         assert adept.RunRequest is RunRequest
         assert adept.DirectoryArtifactSink is DirectoryArtifactSink
         assert adept.run_prepared is run_prepared
         assert "adept.core.objectives" not in sys.modules
+        assert "adept.core.materialization" not in sys.modules
         assert adept.solver_registry.names() == ("pic-1d", "tf-1d")
         """
     )

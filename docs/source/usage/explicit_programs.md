@@ -14,7 +14,9 @@ program(params, state, inputs, key) -> RawResult
 - `state` is the evolving initial state.
 - `inputs` contains fixed runtime forcing, scenarios, and targets.
 - `key` is the PRNG key for this run.
-- `RawResult` contains the final state, observations, times, status, and solver statistics.
+- `RawResult` contains the final state, named device observations, their named
+  coordinates, status, and solver statistics. See [Observation planning and result
+  materialization](observations.md) for bounded retention and explicit host transfer.
 
 Keeping fixed arrays in `state` or `inputs` prevents them from becoming accidental
 gradient targets. None of these calls start MLflow, write files, or mutate their
