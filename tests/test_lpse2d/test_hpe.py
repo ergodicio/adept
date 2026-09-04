@@ -60,17 +60,20 @@ def _make_cfg(hpe_overrides=None, cfg_overrides=None):
     return cfg
 
 
-def _make_cfg_2d(hpe_overrides=None):
+def _make_cfg_2d(hpe_overrides=None, cfg_overrides=None):
     """Small periodic 2-D box using the same plasma parameters as the 1-D tests."""
     overrides = {"n_particles": 20000, "n_angles": 16, "gather_refine": 2}
     if hpe_overrides:
         overrides.update(hpe_overrides)
+    config = {
+        "grid.ymin": "-0.4um",
+        "grid.ymax": "0.4um",
+    }
+    if cfg_overrides:
+        config.update(cfg_overrides)
     return _make_cfg(
         overrides,
-        {
-            "grid.ymin": "-0.4um",
-            "grid.ymax": "0.4um",
-        },
+        config,
     )
 
 
@@ -144,6 +147,66 @@ def test_2d_free_streaming_and_both_field_components():
     k_ratio = float(np.asarray(hpe.ky)[my] / np.asarray(hpe.kx)[mx])
     active = np.abs(acceleration[:, 0]) > 1.0e-12 * np.max(np.abs(acceleration[:, 0]))
     np.testing.assert_allclose(acceleration[active, 1], k_ratio * acceleration[active, 0], rtol=2.0e-6, atol=1.0e-8)
+
+
+def test_2d_wall_reinjection_is_flux_weighted():
+    """Incoming wall particles follow the truncated Maxwell-flux radial/angular law."""
+    import jax
+    from scipy import stats
+
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    n_particles = 100000
+    cfg = _make_cfg_2d(
+        {"n_particles": n_particles},
+        {
+            "terms.epw.boundary.x": "absorbing",
+            "terms.epw.boundary.y": "absorbing",
+        },
+    )
+    hpe = HybridParticleEvolution(cfg)
+    normal, tangent = hpe._sample_flux_weighted_tail(jax.random.PRNGKey(7403))
+    normal, tangent = np.asarray(normal), np.asarray(tangent)
+    speed = np.sqrt(normal**2 + tangent**2)
+
+    assert np.all(normal >= 0.0)
+    assert np.all(speed >= hpe.v_min)
+    assert np.all(speed <= 0.99 * hpe.c)
+
+    # Radial probability integral transform for the Maxwell speed law truncated
+    # to [v_min, 0.99c] must be uniform.
+    cdf_min = stats.maxwell.cdf(hpe.v_min, scale=hpe.vte)
+    cdf_max = stats.maxwell.cdf(0.99 * hpe.c, scale=hpe.vte)
+    radial_quantile = (stats.maxwell.cdf(speed, scale=hpe.vte) - cdf_min) / (cdf_max - cdf_min)
+    np.testing.assert_allclose(np.mean(radial_quantile), 0.5, atol=4.0e-3)
+    np.testing.assert_allclose(np.var(radial_quantile), 1.0 / 12.0, atol=2.0e-3)
+
+    # p(theta)=cos(theta)/2 is equivalent to sin(theta) uniform on [-1,1].
+    sin_theta = tangent / speed
+    np.testing.assert_allclose(np.mean(sin_theta), 0.0, atol=5.0e-3)
+    np.testing.assert_allclose(np.var(sin_theta), 1.0 / 3.0, atol=4.0e-3)
+
+    # The boundary mapping rotates the sampled wall frame correctly for all four
+    # faces. Each quarter of the ensemble exits through a different wall.
+    quarter = n_particles // 4
+    x = np.full(n_particles, 0.5 * (hpe.xmin + hpe.xmax))
+    y = np.full(n_particles, 0.5 * (hpe.ymin + hpe.ymax))
+    x[:quarter] = hpe.xmin - hpe.dx
+    x[quarter : 2 * quarter] = hpe.xmax + hpe.dx
+    y[2 * quarter : 3 * quarter] = hpe.ymin - hpe.dy
+    y[3 * quarter :] = hpe.ymax + hpe.dy
+    u = jnp.zeros((n_particles, 2))
+    x_new, y_new, u_new = hpe._apply_boundaries_2d(jnp.asarray(x), jnp.asarray(y), u, 0.0)
+    gamma_rel = np.sqrt(1.0 + np.sum((np.asarray(u_new) / hpe.c) ** 2, axis=-1))
+    velocity = np.asarray(u_new) / gamma_rel[:, None]
+    np.testing.assert_allclose(x_new[:quarter], hpe.xmin, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(x_new[quarter : 2 * quarter], hpe.xmax, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(y_new[2 * quarter : 3 * quarter], hpe.ymin, rtol=0.0, atol=0.0)
+    np.testing.assert_allclose(y_new[3 * quarter :], hpe.ymax, rtol=0.0, atol=0.0)
+    assert np.all(velocity[:quarter, 0] > 0.0)
+    assert np.all(velocity[quarter : 2 * quarter, 0] < 0.0)
+    assert np.all(velocity[2 * quarter : 3 * quarter, 1] > 0.0)
+    assert np.all(velocity[3 * quarter :, 1] < 0.0)
 
 
 def test_bounce_frequency_and_carrier_sign():

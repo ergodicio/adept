@@ -436,6 +436,8 @@ Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102
 
 In 2-D the box-wide distribution is represented by `n_angles` oriented projections $f(\mathbf{v}\cdot\hat{\mathbf{k}})$ over $[0,2\pi)$. Opposite directions remain distinct, and the two neighboring angular histograms are interpolated for every `(kx, ky)` mode. This is the Radon-projection form of the resonance integral: its memory is `n_angles * nv`, independent of the spatial mesh. The damping extraction is calibrated per k-mode so that a freshly loaded isotropic Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and `hpe_hist` (one velocity histogram in 1-D or an angle-by-velocity array in 2-D); MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`.
 
+At an absorbing particle wall, outgoing particles are thermalized and reinjected from the flux-weighted retained-tail law. In 2-D wall coordinates this is $p(r,\theta) \propto r^2\exp[-r^2/(2v_{te}^2)]\cos\theta$ for $r > v_{\min}$ and inward $-\pi/2 < \theta < \pi/2$. This distinction is required to keep repeated wall crossings from biasing the global directional distribution.
+
 | Field | Type | Description |
 |-------|------|-------------|
 | `active` | bool | Enable HPE (default `false`) |

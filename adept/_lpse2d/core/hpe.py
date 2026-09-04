@@ -21,6 +21,7 @@ import jax
 import numpy as np
 from jax import Array
 from jax import numpy as jnp
+from jax.scipy import special as jax_special
 from scipy import special
 
 from adept._lpse2d.core.epw import landau_damping_rate
@@ -152,10 +153,14 @@ def load_particles(cfg: dict) -> dict:
 
     if is_2d:
         # Conditional Rayleigh draw for an isotropic 2-D Maxwellian with
-        # |v| > v_min*vte. The relativistic cap only removes a negligible tail.
-        uni = rng.uniform(np.finfo(float).tiny, 1.0, size=n_p)
-        speed = np.sqrt((float(hpe["v_min"]) * vte) ** 2 - 2.0 * vte**2 * np.log(uni))
-        speed = np.minimum(speed, 0.99 * c)
+        # v_min*vte < |v| < 0.99c. Inverting the doubly truncated Rayleigh
+        # survival avoids a point mass at the relativistic cap.
+        v_min = float(hpe["v_min"]) * vte
+        v_max = 0.99 * c
+        survival_min = np.exp(-0.5 * (v_min / vte) ** 2)
+        survival_max = np.exp(-0.5 * (v_max / vte) ** 2)
+        target_survival = survival_min + rng.uniform(size=n_p) * (survival_max - survival_min)
+        speed = np.sqrt(-2.0 * vte**2 * np.log(target_survival))
         velocity_angle = rng.uniform(0.0, 2.0 * np.pi, size=n_p)
         velocity = speed[:, None] * np.stack((np.cos(velocity_angle), np.sin(velocity_angle)), axis=-1)
         gamma_rel = 1.0 / np.sqrt(1.0 - (speed / c) ** 2)
@@ -375,23 +380,70 @@ class HybridParticleEvolution:
         u = jnp.where(out_left, u_new, jnp.where(out_right, -u_new, u))
         return x, u
 
+    def _maxwell_survival(self, speed: Array) -> Array:
+        """Survival function of the 3-D Maxwell speed law with scale ``vte``.
+
+        The extra radial power relative to the loaded 2-D box distribution comes
+        from flux weighting at a planar wall: in wall polar coordinates,
+        ``v_normal * f(v) * r dr dtheta`` is proportional to
+        ``r^2 exp(-r^2 / 2vte^2) cos(theta) dr dtheta``.
+        """
+        scaled = speed / self.vte
+        return jax_special.erfc(scaled / np.sqrt(2.0)) + np.sqrt(2.0 / np.pi) * scaled * jnp.exp(-0.5 * scaled**2)
+
+    def _sample_flux_weighted_tail(self, key: Array) -> tuple[Array, Array]:
+        """Sample inward normal/tangential velocities at a thermalizing wall.
+
+        This is the exact planar-flux law for the retained isotropic 2-D Maxwellian
+        tail ``|v| > v_min``. The radius follows a truncated Maxwell distribution
+        and ``sin(theta)`` is uniform on ``[-1, 1]`` (equivalently,
+        ``p(theta) = cos(theta)/2`` on the inward half-plane).
+        """
+        radial_key, angle_key = jax.random.split(key)
+        uniform_radius = jax.random.uniform(radial_key, (self.n_p,), minval=0.0, maxval=1.0)
+        lower = jnp.full((self.n_p,), self.v_min)
+        upper = jnp.full((self.n_p,), 0.99 * self.c)
+        survival_lower = self._maxwell_survival(lower)
+        survival_upper = self._maxwell_survival(upper)
+        target_survival = survival_lower + uniform_radius * (survival_upper - survival_lower)
+
+        def bisect(_, bracket):
+            lo, hi = bracket
+            midpoint = 0.5 * (lo + hi)
+            move_lower = self._maxwell_survival(midpoint) > target_survival
+            return jnp.where(move_lower, midpoint, lo), jnp.where(move_lower, hi, midpoint)
+
+        lower, upper = jax.lax.fori_loop(0, 32, bisect, (lower, upper))
+        speed = 0.5 * (lower + upper)
+        sin_theta = jax.random.uniform(angle_key, (self.n_p,), minval=-1.0, maxval=1.0)
+        normal_velocity = speed * jnp.sqrt(jnp.maximum(1.0 - sin_theta**2, 0.0))
+        tangential_velocity = speed * sin_theta
+        return normal_velocity, tangential_velocity
+
     def _apply_boundaries_2d(self, x, y, u, t):
+        if self.periodic_x and self.periodic_y:
+            return x, y, u
         out_left, out_right = x < self.xmin, x > self.xmax
         out_bottom, out_top = y < self.ymin, y > self.ymax
-        any_out = (out_left | out_right) if self.periodic_y else (out_left | out_right | out_bottom | out_top)
-        if self.periodic_x:
-            any_out = (out_bottom | out_top) if not self.periodic_y else jnp.zeros_like(out_left)
+        cross_x = (out_left | out_right) if not self.periodic_x else jnp.zeros_like(out_left)
+        cross_y = (out_bottom | out_top) if not self.periodic_y else jnp.zeros_like(out_bottom)
+        any_out = cross_x | cross_y
 
         step_key = jax.random.fold_in(self.wall_key, jnp.asarray(t / self.dt).astype(jnp.int32))
-        radial_key, angle_key = jax.random.split(step_key)
-        uni = jax.random.uniform(radial_key, (self.n_p,), minval=1.0e-12, maxval=1.0)
-        speed = jnp.minimum(jnp.sqrt(self.v_min**2 - 2.0 * self.vte**2 * jnp.log(uni)), 0.99 * self.c)
-        angle = jax.random.uniform(angle_key, (self.n_p,), minval=0.0, maxval=2.0 * np.pi)
-        velocity = speed[:, None] * jnp.stack((jnp.cos(angle), jnp.sin(angle)), axis=-1)
-        velocity = velocity.at[:, 0].set(jnp.where(out_left, jnp.abs(velocity[:, 0]), velocity[:, 0]))
-        velocity = velocity.at[:, 0].set(jnp.where(out_right, -jnp.abs(velocity[:, 0]), velocity[:, 0]))
-        velocity = velocity.at[:, 1].set(jnp.where(out_bottom, jnp.abs(velocity[:, 1]), velocity[:, 1]))
-        velocity = velocity.at[:, 1].set(jnp.where(out_top, -jnp.abs(velocity[:, 1]), velocity[:, 1]))
+        normal_velocity, tangential_velocity = self._sample_flux_weighted_tail(step_key)
+        x_sign = jnp.where(out_left, 1.0, -1.0)
+        y_sign = jnp.where(out_bottom, 1.0, -1.0)
+
+        # For an x wall, x is normal and y tangential; for a y-only crossing the
+        # roles swap. A finite-step corner crossing is mapped into the inward
+        # quadrant without changing the sampled speed.
+        velocity_x = jnp.where(cross_x, x_sign * normal_velocity, tangential_velocity)
+        velocity_y = jnp.where(cross_x, tangential_velocity, y_sign * normal_velocity)
+        corner = cross_x & cross_y
+        velocity_x = jnp.where(corner, x_sign * jnp.abs(velocity_x), velocity_x)
+        velocity_y = jnp.where(corner, y_sign * jnp.abs(velocity_y), velocity_y)
+        velocity = jnp.stack((velocity_x, velocity_y), axis=-1)
+        speed = jnp.sqrt(normal_velocity**2 + tangential_velocity**2)
         gamma_rel = 1.0 / jnp.sqrt(1.0 - (speed / self.c) ** 2)
         u_new = gamma_rel[:, None] * velocity
 

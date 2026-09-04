@@ -344,6 +344,11 @@ def get_derived_quantities(cfg: dict) -> dict:
             raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
         if hpe["n_angles"] < 4:
             raise ValueError("terms.hpe.n_angles must be at least 4")
+        if hpe["v_min"] < 0.0:
+            raise ValueError("terms.hpe.v_min must be non-negative")
+        vte = np.sqrt(cfg["units"]["derived"]["vte_sq"])
+        if hpe["v_min"] * vte >= 0.99 * cfg["units"]["derived"]["c"]:
+            raise ValueError("terms.hpe.v_min * vte must be below the 0.99c particle-speed cap")
         hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
         hpe["t_start_ps"] = _Q(hpe["t_start"]).to("ps").value
         wp0 = cfg["units"]["derived"]["wp0"]

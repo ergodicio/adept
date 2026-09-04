@@ -64,3 +64,30 @@ Append-only checkpoints for scientific model development and validation.
 - **Evidence or artifacts:** `tests/test_lpse2d/test_hpe.py`; `tests/test_lpse2d/test_tpd_depletion.py`; `configs/envelope-2d/tpd-srs-iaw.yaml`; `docs/source/solvers/lpse2d/config.md`.
 - **Interpretation:** The user's box-averaging understanding is correct: positions are retained only for local force gathering, not to form a particle population per mesh point. Directional Landau feedback comes from Radon-like projections of the single global distribution, so histogram state scales as `n_angles * nv`, independent of `nx * ny`. The remaining HPE limitation is Im-only feedback (no trapping-induced nonlinear frequency shift), not transverse dimensionality.
 - **Next:** Push the update to PR #363 and use production TPD runs to converge `n_particles`, `n_angles`, gather refinement, and the damping EMA window on GPU.
+
+## 2026-09-04 09:18:28 PDT — Correct 2D absorbing-wall reinjection
+
+- **Checkpoint ID:** 20260904T161828Z-f10c2eed
+- **State:** PLANNED
+- **Objective:** Remove the review-blocking bias in the 2D HPE thermal-wall sampler before declaring the combined kinetic model ready.
+- **USER (verbatim):** "ok can you fix"
+- **Action or change:** Accepted the review finding on PR #363. The current 2D boundary code draws the radially truncated box distribution isotropically and flips the normal sign; that is not the incoming flux distribution. The replacement will sample wall-frame velocities from `p(r, theta) proportional to r^2 exp(-r^2 / (2 vte^2)) cos(theta)` for `r > v_min`, using an exact truncated-Maxwell inverse CDF and `sin(theta)` uniform on `[-1, 1]`.
+- **Provenance:** Commit `b7787b84321d7391d5d3a1fab7304a0987810ed0`; branch `codex/lpse2d-iaw-parity`; PR https://github.com/ergodicio/adept/pull/363; review state `CHANGES_REQUESTED` by `ergodic-ludwig` at 2026-09-04 08:07:29 PDT.
+- **Observation:** No corrected result yet. The existing sampler preserves inward direction and radial-tail support but omits the normal-velocity flux weighting, so repeated absorbing-wall crossings can bias the global directional histograms.
+- **Evidence or artifacts:** `adept/_lpse2d/core/hpe.py`; PR review on #363; vault mirror `Notes/adept/2026-09-03-222949-codex-lpse2d-iaw-parity-92eb82df.md`.
+- **Interpretation:** For an isotropic 2D Maxwellian at a planar wall, multiplying by inward normal speed and transforming to polar wall coordinates gives a separable radial truncated-Maxwell law and angular `cos(theta)` law. A stationarity/distribution test should lock both factors.
+- **Corrects:** Checkpoint `20260904T150248Z-2d2f0e6d`, which marked the 2D HPE implementation complete before independent boundary-law review.
+- **Next:** Implement the exact flux sampler, test its radial CDF and angular moments plus inward wall mapping, rerun focused/full regressions, and push a review correction.
+
+## 2026-09-04 09:29:09 PDT — Flux-weighted HPE wall correction completed
+
+- **Checkpoint ID:** 20260904T162909Z-cbd107a4
+- **State:** COMPLETED
+- **Objective:** Correct 2D HPE thermal-wall reinjection so absorbing boundaries preserve the intended box-averaged tail distribution.
+- **Action or change:** Replaced isotropic sign-flip reinjection with the exact planar-flux sampler. The radial speed is drawn from the Maxwell law `p(r) proportional to r^2 exp(-r^2/(2 vte^2))` truncated to `[v_min, 0.99c]` by inverse-survival bisection; the wall angle uses `sin(theta)` uniform on `[-1,1]`, equivalent to `p(theta)=cos(theta)/2`. The wall-frame sample is rotated onto all four faces with inward normal velocity. The initial 2D tail loader now also uses the exact doubly truncated Rayleigh inverse rather than clipping an unbounded draw at `0.99c`, and configuration rejects a cutoff at or above that cap.
+- **Provenance:** Based on commit `b7787b84321d7391d5d3a1fab7304a0987810ed0`; branch `codex/lpse2d-iaw-parity`; PR https://github.com/ergodicio/adept/pull/363.
+- **Observation:** The boundary-law test verifies the radial probability-integral transform has uniform mean/variance within tolerances `0.004`/`0.002`, verifies `mean(sin(theta))=0` and `var(sin(theta))=1/3` within `0.005`/`0.004`, enforces radial support, and checks inward mapping on all four faces. Focused HPE/TPD/IAW suite: 22 passed, 3 deselected in 20.05 s. Full non-slow Envelope-2D suite with local MLflow and `MPLBACKEND=Agg`: 61 passed, 1 skipped, 3 deselected in 257.71 s. Ruff lint/format and Python compilation pass.
+- **Evidence or artifacts:** `adept/_lpse2d/core/hpe.py`; `tests/test_lpse2d/test_hpe.py::test_2d_wall_reinjection_is_flux_weighted`; `docs/source/solvers/lpse2d/config.md`.
+- **Interpretation:** The review-blocking distribution bias is removed and its separable radial/angular law is locked by a statistical test. Repeated planar-wall reinjection now samples the flux distribution associated with the same retained 2D Maxwellian tail used at initialization.
+- **Corrects:** Checkpoint `20260904T150248Z-2d2f0e6d`; completes planned correction `20260904T161828Z-f10c2eed`.
+- **Next:** Commit and push the correction to PR #363, report the derivation/test to the reviewer, and wait for re-review.
