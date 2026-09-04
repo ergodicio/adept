@@ -16,6 +16,8 @@ from adept._tf1d.datamodel import ConfigModel
 from adept._tf1d.solvers.vector_field import VF
 from adept.core import (
     ExecutionKind,
+    ObservationPlan,
+    ObservationSchedule,
     PassthroughAnalyzer,
     Placement,
     Precision,
@@ -24,6 +26,7 @@ from adept.core import (
     SimulationSpec,
     SolverCapabilities,
 )
+from adept.core.observations_jax import infer_observation_spec
 from adept.core.preparation import normalize_key, structural_fingerprint
 from adept.core.programs import DiffraxProgram
 
@@ -37,34 +40,36 @@ class TwoFluid1DSystem(eqx.Module):
         return self.vector_field(t, state, eqx.combine(params, inputs))
 
 
-class TwoFluid1DObservation(eqx.Module):
-    """Legacy-compatible TF1D in-memory observations."""
+class TwoFluid1DXObservation(eqx.Module):
+    """TF1D state interpolated onto the configured spatial save grid."""
 
     x_input: jax.Array
-    x_output: jax.Array | None
+    x_output: jax.Array
+
+    def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, Any]:
+        del t, inputs
+        return jax.tree.map(
+            lambda field: jnp.interp(self.x_output, self.x_input, field),
+            state,
+        )
+
+
+class TwoFluid1DKXObservation(eqx.Module):
+    """TF1D state transformed and interpolated onto the save wavenumbers."""
+
     kxr_input: jax.Array
-    kx_output: jax.Array | None
+    kx_output: jax.Array
     nx: int = eqx.field(static=True)
 
     def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, Any]:
         del t, inputs
-        observations = {}
-        x_output = self.x_output
-        if x_output is not None:
-            observations["x"] = jax.tree.map(
-                lambda field: jnp.interp(x_output, self.x_input, field),
-                state,
-            )
-        kx_output = self.kx_output
-        if kx_output is not None:
 
-            def save_kx(field):
-                transformed = jnp.fft.rfft(field, axis=0) * 2.0 / self.nx
-                interpolated = jnp.interp(kx_output, self.kxr_input, transformed)
-                return {"mag": jnp.abs(interpolated), "ang": jnp.angle(interpolated)}
+        def save_kx(field):
+            transformed = jnp.fft.rfft(field, axis=0) * 2.0 / self.nx
+            interpolated = jnp.interp(self.kx_output, self.kxr_input, transformed)
+            return {"mag": jnp.abs(interpolated), "ang": jnp.angle(interpolated)}
 
-            observations["kx"] = jax.tree.map(save_kx, state)
-        return observations
+        return jax.tree.map(save_kx, state)
 
 
 def _write_units(cfg: dict[str, Any]) -> dict[str, str]:
@@ -188,19 +193,45 @@ class TwoFluid1DBuilder:
             for species in ("ion", "electron")
         }
         params, inputs = eqx.partition(_runtime_inputs(cast(dict[str, Any], resolved["drivers"])), False)
+        schedule = ObservationSchedule.from_legacy_time_config(save["t"])
+        observation_specs = []
+        save_x = save.get("x")
+        if save_x is not None:
+            x_observation = TwoFluid1DXObservation(x_input=grid["x"], x_output=save_x["ax"])
+            observation_specs.append(
+                infer_observation_spec(
+                    "x",
+                    x_observation,
+                    schedule,
+                    t=0.0,
+                    state=state,
+                    inputs=inputs,
+                )
+            )
         save_kx = save.get("kx")
-        observation = TwoFluid1DObservation(
-            x_input=grid["x"],
-            x_output=save.get("x", {}).get("ax"),
-            kxr_input=grid["kxr"],
-            kx_output=save_kx.get("ax") if save_kx is not None else None,
-            nx=grid["nx"],
-        )
-        program = DiffraxProgram(
+        if save_kx is not None:
+            kx_observation = TwoFluid1DKXObservation(
+                kxr_input=grid["kxr"],
+                kx_output=save_kx["ax"],
+                nx=grid["nx"],
+            )
+            observation_specs.append(
+                infer_observation_spec(
+                    "kx",
+                    kx_observation,
+                    schedule,
+                    t=0.0,
+                    state=state,
+                    inputs=inputs,
+                )
+            )
+        observation_plan = ObservationPlan(observation_specs)
+        program = DiffraxProgram.from_observation_plan(
             system=TwoFluid1DSystem(VF(resolved)),
             solver=diffrax.Tsit5(),
-            observation=observation,
-            save_times=save["t"]["ax"],
+            plan=observation_plan,
+            state=state,
+            inputs=inputs,
             t0=0.0,
             t1=grid["tmax"],
             dt0=grid["dt"],
@@ -229,7 +260,13 @@ class TwoFluid1DBuilder:
             manifest=manifest,
             analyzer=PassthroughAnalyzer(),
             capabilities=capabilities,
+            observation_plan=observation_plan,
         )
 
 
-__all__ = ["TwoFluid1DBuilder", "TwoFluid1DObservation", "TwoFluid1DSystem"]
+__all__ = [
+    "TwoFluid1DBuilder",
+    "TwoFluid1DKXObservation",
+    "TwoFluid1DSystem",
+    "TwoFluid1DXObservation",
+]

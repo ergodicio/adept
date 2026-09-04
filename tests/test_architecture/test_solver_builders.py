@@ -151,10 +151,12 @@ def test_tf1d_builder_matches_the_legacy_continuous_path():
 
     assert config == original
     assert prepared.capabilities.execution_kind is ExecutionKind.CONTINUOUS
+    assert [spec.name for spec in prepared.observation_plan.observations] == ["x"]
+    assert prepared.observation_plan.estimated_retained_bytes > 0
     assert_transform_boundary_is_numerical(prepared)
     assert_trees_allclose(result.final_state, jax.tree.map(lambda leaf: leaf[-1], legacy_result.ys["x"]))
     assert_trees_allclose(result.observations, legacy_result.ys)
-    np.testing.assert_allclose(result.times, legacy_result.ts)
+    assert_trees_allclose(result.times, {"x": legacy_result.ts})
     assert not np.allclose(result.final_state["electron"]["u"], prepared.state["electron"]["u"])
 
 
@@ -249,10 +251,20 @@ def test_pic1d_prepared_run_completes_without_mlflow(tmp_path):
     )
 
     assert isinstance(result.report, Report)
-    assert result.report.result is result.raw_result
+    assert result.report.result is result.materialized_result
     assert result.handle.backend == "null"
     assert result.tracking_errors == ()
+    assert set(result.raw_result.observations) == {"fields", "default"}
+    assert all(isinstance(leaf, np.ndarray) for leaf in jax.tree.leaves(result.materialized_result.final_state))
     assert_trees_allclose(result.raw_result.final_state, result.report.result.final_state)
+
+
+def test_pic1d_builder_rejects_off_grid_observation_times_before_execution():
+    config = pic1d_config()
+    config["save"]["fields"]["t"] = {"tmin": 0.0, "tmax": 0.075, "nt": 2}
+
+    with pytest.raises(ValueError, match="does not align with the discrete step grid"):
+        solver_registry.prepare(SimulationSpec.from_legacy_config(config), key=42)
 
 
 def test_pic1d_preparation_is_seeded_and_structurally_reproducible():
