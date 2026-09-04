@@ -87,7 +87,7 @@ box and receives the reciprocal TPD and/or SRS feedback described above.
 
 ### Hybrid particles and the 2D boundary
 
-The HPE particle tracker supplies self-consistent Landau-damping feedback and hot-electron diagnostics for quasi-1D runs (`ny == 1`). It can be combined with SRS, pump depletion, and IAWs. It is not yet a 2D kinetic model: angle-resolved TPD feedback would require particles carrying at least `(x, y, p_x, p_y)` and a multidimensional resonant-distribution estimator. Consequently, `configs/envelope-2d/tpd-srs-iaw.yaml` demonstrates the complete 2D fluid coupling, while `srs-hpe.yaml` remains the kinetic-feedback example.
+The HPE particle tracker supplies self-consistent Landau-damping feedback and hot-electron diagnostics in both quasi-1D and 2D runs. For `ny > 1`, a single box-wide ensemble carries `(x, y, p_x, p_y)` and samples both electric-field components; angle-resolved projected-velocity histograms provide the resonant distribution for every `(k_x, k_y)` mode without assigning particles to individual grid cells. Periodic boundaries wrap particles, while reservoir walls use flux-weighted thermal-tail reinjection. HPE can be combined with TPD, SRS, pump depletion, and IAWs, as demonstrated by `configs/envelope-2d/tpd-srs-iaw.yaml`; `srs-hpe.yaml` remains the smaller quasi-1D example.
 
 ## What Gets Saved
 
