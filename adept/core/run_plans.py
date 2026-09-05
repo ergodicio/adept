@@ -17,7 +17,7 @@ from .contracts import Placement, Precision, SimulationSpec
 from .tracking import FailurePolicy, RunRequest
 
 _STABLE_NAME = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
-_RUN_PLAN_SCHEMA_VERSION = "1"
+_RUN_PLAN_SCHEMA_VERSION = "2"
 _SENSITIVE_FIELD_STEMS = frozenset(
     {
         "accesskey",
@@ -203,6 +203,54 @@ class ServiceReference:
 
 
 @dataclass(frozen=True, slots=True)
+class CheckpointPolicy:
+    """Serializable checkpoint cadence and restore intent.
+
+    Executors that accept an enabled policy must implement it completely. The policy
+    deliberately contains no live store, callbacks, or checkpoint state.
+    """
+
+    every_steps: int | None = None
+    save_on_completion: bool = False
+    resume_from: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.every_steps is not None and (
+            isinstance(self.every_steps, bool) or not isinstance(self.every_steps, int) or self.every_steps < 1
+        ):
+            raise ValueError("checkpoint every_steps must be a positive integer or None")
+        if not isinstance(self.save_on_completion, bool):
+            raise TypeError("checkpoint save_on_completion must be a boolean")
+        if self.resume_from is not None:
+            if not isinstance(self.resume_from, str):
+                raise TypeError("checkpoint resume_from must be a string or None")
+            resume_from = self.resume_from.strip()
+            if not resume_from:
+                raise ValueError("checkpoint resume_from must be non-empty when provided")
+            object.__setattr__(self, "resume_from", resume_from)
+
+    @property
+    def enabled(self) -> bool:
+        return self.every_steps is not None or self.save_on_completion or self.resume_from is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "every_steps": self.every_steps,
+            "save_on_completion": self.save_on_completion,
+            "resume_from": self.resume_from,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> CheckpointPolicy:
+        copied = dict(value)
+        known = {"every_steps", "save_on_completion", "resume_from"}
+        unknown = sorted(set(copied).difference(known))
+        if unknown:
+            raise ValueError(f"Serialized checkpoint policy contains unknown fields: {unknown!r}")
+        return cls(**copied)
+
+
+@dataclass(frozen=True, slots=True)
 class RunPlan:
     """Complete serializable intent for one executor-owned solver run."""
 
@@ -212,6 +260,8 @@ class RunPlan:
     run: RunRequest = field(default_factory=RunRequest)
     tracker: ServiceReference = field(default_factory=lambda: ServiceReference("null"))
     artifact_sink: ServiceReference = field(default_factory=lambda: ServiceReference("null"))
+    checkpoint_store: ServiceReference = field(default_factory=lambda: ServiceReference("null"))
+    checkpoint_policy: CheckpointPolicy = field(default_factory=CheckpointPolicy)
     tracking_failure_policy: FailurePolicy = FailurePolicy.STRICT
     schema_version: str = _RUN_PLAN_SCHEMA_VERSION
 
@@ -228,6 +278,14 @@ class RunPlan:
             raise TypeError("tracker must be ServiceReference")
         if not isinstance(self.artifact_sink, ServiceReference):
             raise TypeError("artifact_sink must be ServiceReference")
+        if not isinstance(self.checkpoint_store, ServiceReference):
+            raise TypeError("checkpoint_store must be ServiceReference")
+        if not isinstance(self.checkpoint_policy, CheckpointPolicy):
+            raise TypeError("checkpoint_policy must be CheckpointPolicy")
+        if self.checkpoint_policy.enabled and self.checkpoint_store.kind == "null":
+            raise ValueError("an enabled checkpoint policy requires a non-null checkpoint_store")
+        if not self.checkpoint_policy.enabled and self.checkpoint_store.kind != "null":
+            raise ValueError("a non-null checkpoint_store requires an enabled checkpoint policy")
         object.__setattr__(self, "tracking_failure_policy", FailurePolicy(self.tracking_failure_policy))
         schema_version = str(self.schema_version).strip()
         if not schema_version:
@@ -251,6 +309,15 @@ class RunPlan:
         required = set(self.resources.required_features)
         if self.artifact_sink.kind != "null":
             required.add(ExecutionFeature.ARTIFACT_ACCESS)
+        if self.checkpoint_policy.enabled:
+            required.add(ExecutionFeature.CHECKPOINTING)
+            if self.resources.placement is Placement.MULTI_HOST:
+                required.update(
+                    {
+                        ExecutionFeature.RANK_ZERO_IO,
+                        ExecutionFeature.SHARED_DURABLE_STORAGE,
+                    }
+                )
         return frozenset(required)
 
     @property
@@ -269,6 +336,8 @@ class RunPlan:
             "run": self.run.to_dict(),
             "tracker": self.tracker.to_dict(),
             "artifact_sink": self.artifact_sink.to_dict(),
+            "checkpoint_store": self.checkpoint_store.to_dict(),
+            "checkpoint_policy": self.checkpoint_policy.to_dict(),
             "tracking_failure_policy": self.tracking_failure_policy.value,
         }
 
@@ -288,9 +357,13 @@ class RunPlan:
         run = copied.pop("run", {})
         tracker = copied.pop("tracker", {"kind": "null"})
         artifact_sink = copied.pop("artifact_sink", {"kind": "null"})
+        checkpoint_store = copied.pop("checkpoint_store", {"kind": "null"})
+        checkpoint_policy = copied.pop("checkpoint_policy", {})
         seed = copied.pop("seed", 0)
         tracking_failure_policy = copied.pop("tracking_failure_policy", FailurePolicy.STRICT)
         schema_version = copied.pop("schema_version", "1")
+        if str(schema_version) == "1":
+            schema_version = _RUN_PLAN_SCHEMA_VERSION
         if copied:
             raise ValueError(f"Serialized RunPlan contains unknown fields: {sorted(copied)!r}")
         for name, item in (
@@ -299,6 +372,8 @@ class RunPlan:
             ("run", run),
             ("tracker", tracker),
             ("artifact_sink", artifact_sink),
+            ("checkpoint_store", checkpoint_store),
+            ("checkpoint_policy", checkpoint_policy),
         ):
             if not isinstance(item, Mapping):
                 raise TypeError(f"Serialized RunPlan {name} must be a mapping")
@@ -309,6 +384,8 @@ class RunPlan:
             run=RunRequest.from_dict(run),
             tracker=ServiceReference.from_dict(tracker),
             artifact_sink=ServiceReference.from_dict(artifact_sink),
+            checkpoint_store=ServiceReference.from_dict(checkpoint_store),
+            checkpoint_policy=CheckpointPolicy.from_dict(checkpoint_policy),
             tracking_failure_policy=tracking_failure_policy,
             schema_version=str(schema_version),
         )
@@ -325,6 +402,7 @@ class RunPlan:
 
 __all__ = [
     "AcceleratorKind",
+    "CheckpointPolicy",
     "ExecutionFeature",
     "ResourceRequirements",
     "RunPlan",

@@ -19,8 +19,11 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
 
         import adept
         from adept.core import (
+            CheckpointStore,
             Executor,
+            LocalCheckpointStore,
             LocalExecutor,
+            NullCheckpointStore,
             Artifact,
             DirectoryArtifactSink,
             MaterializedResult,
@@ -51,7 +54,10 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert adept.MaterializedResult is MaterializedResult
         assert adept.Artifact is Artifact
         assert adept.Executor is Executor
+        assert adept.CheckpointStore is CheckpointStore
+        assert adept.LocalCheckpointStore is LocalCheckpointStore
         assert adept.LocalExecutor is LocalExecutor
+        assert adept.NullCheckpointStore is NullCheckpointStore
         assert adept.Report is Report
         assert adept.RunRequest is RunRequest
         assert adept.RunPlan is RunPlan

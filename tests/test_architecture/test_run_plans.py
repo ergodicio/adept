@@ -6,6 +6,7 @@ import pytest
 
 from adept.core import (
     AcceleratorKind,
+    CheckpointPolicy,
     ExecutionFeature,
     FailurePolicy,
     Placement,
@@ -37,6 +38,8 @@ def test_run_plan_round_trips_as_canonical_json_and_has_a_stable_fingerprint():
         ),
         tracker=ServiceReference("mlflow", {"tracking_uri": "https://tracking.example"}),
         artifact_sink=ServiceReference("directory", {"root": "./results"}),
+        checkpoint_store=ServiceReference("directory", {"root": "./checkpoints"}),
+        checkpoint_policy=CheckpointPolicy(every_steps=100, save_on_completion=True, resume_from="latest"),
         tracking_failure_policy=FailurePolicy.BEST_EFFORT,
     )
 
@@ -47,6 +50,7 @@ def test_run_plan_round_trips_as_canonical_json_and_has_a_stable_fingerprint():
     assert restored == plan
     assert restored.fingerprint == plan.fingerprint
     assert ExecutionFeature.ARTIFACT_ACCESS in plan.required_features
+    assert ExecutionFeature.CHECKPOINTING in plan.required_features
 
 
 def test_run_plan_rejects_non_json_values():
@@ -124,13 +128,52 @@ def test_resource_topologies_are_validated(requirements, message):
 
 
 def test_multi_host_topology_implies_distributed_jax():
-    requirements = ResourceRequirements(
-        placement=Placement.MULTI_HOST,
-        hosts=2,
-        devices_per_host=4,
+    plan = RunPlan(
+        SimulationSpec("tf-1d", {}),
+        resources=ResourceRequirements(
+            placement=Placement.MULTI_HOST,
+            hosts=2,
+            devices_per_host=4,
+        ),
+        checkpoint_store=ServiceReference("directory", {"root": "/shared/checkpoints"}),
+        checkpoint_policy=CheckpointPolicy(every_steps=100),
     )
 
-    assert requirements.required_features == frozenset({ExecutionFeature.DISTRIBUTED_JAX})
+    assert plan.required_features == frozenset(
+        {
+            ExecutionFeature.CHECKPOINTING,
+            ExecutionFeature.DISTRIBUTED_JAX,
+            ExecutionFeature.RANK_ZERO_IO,
+            ExecutionFeature.SHARED_DURABLE_STORAGE,
+        }
+    )
+
+
+def test_checkpoint_policy_requires_a_store_and_valid_cadence():
+    with pytest.raises(ValueError, match="requires a non-null checkpoint_store"):
+        RunPlan(SimulationSpec("tf-1d", {}), checkpoint_policy=CheckpointPolicy(save_on_completion=True))
+
+    with pytest.raises(ValueError, match="requires an enabled checkpoint policy"):
+        RunPlan(
+            SimulationSpec("tf-1d", {}),
+            checkpoint_store=ServiceReference("directory", {"root": "./checkpoints"}),
+        )
+
+    with pytest.raises(ValueError, match="positive integer"):
+        CheckpointPolicy(every_steps=0)
+
+
+def test_version_one_run_plan_migrates_to_checkpoint_aware_schema():
+    current = RunPlan(SimulationSpec("tf-1d", {})).to_dict()
+    current["schema_version"] = "1"
+    current.pop("checkpoint_store")
+    current.pop("checkpoint_policy")
+
+    restored = RunPlan.from_dict(current)
+
+    assert restored.schema_version == "2"
+    assert restored.checkpoint_store.kind == "null"
+    assert not restored.checkpoint_policy.enabled
 
 
 def test_serialized_plan_rejects_unknown_fields():
