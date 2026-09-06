@@ -179,6 +179,30 @@ def test_failed_save_keeps_prior_latest_and_excludes_partial_checkpoint(tmp_path
     assert not (store.root / "step-2").exists()
 
 
+def test_latest_update_failure_rolls_back_commit_and_allows_retry(tmp_path, monkeypatch):
+    store = LocalCheckpointStore(tmp_path / "checkpoints")
+    first = store.save({"value": np.array([1.0])}, _metadata("step-1", step=1)).wait()
+    original_write_latest = store._write_latest
+
+    def fail_latest_update(checkpoint_id):
+        original_write_latest(checkpoint_id)
+        raise RuntimeError(f"injected latest failure for {checkpoint_id}")
+
+    monkeypatch.setattr(store, "_write_latest", fail_latest_update)
+    with pytest.raises(RuntimeError, match="injected latest failure"):
+        store.save({"value": np.array([2.0])}, _metadata("step-2", step=2))
+
+    assert first is not None
+    assert store.latest() == first
+    assert [item.checkpoint_id for item in store.list()] == ["step-1"]
+    assert not (store.root / "step-2").exists()
+
+    monkeypatch.setattr(store, "_write_latest", original_write_latest)
+    retried = store.save({"value": np.array([2.0])}, _metadata("step-2", step=2)).wait()
+    assert retried is not None
+    assert store.latest() == retried
+
+
 def test_restore_rejects_incompatible_programs_and_state_trees(tmp_path):
     store = LocalCheckpointStore(tmp_path / "checkpoints")
     reference = store.save({"value": np.ones(2)}, _metadata("step-1", step=1)).wait()

@@ -601,6 +601,34 @@ class LocalCheckpointStore:
             temporary.unlink(missing_ok=True)
             raise
 
+    def _latest_snapshot(self) -> bytes | None:
+        path = self.root / _LATEST_FILE
+        if not path.exists():
+            return None
+        if path.is_symlink():
+            raise CheckpointCorruptionError("latest checkpoint pointer must not be a symlink")
+        return path.read_bytes()
+
+    def _restore_latest_snapshot(self, snapshot: bytes | None) -> None:
+        path = self.root / _LATEST_FILE
+        if snapshot is None:
+            path.unlink(missing_ok=True)
+            _fsync_directory(self.root)
+            return
+
+        descriptor, temporary_name = tempfile.mkstemp(prefix=".latest-rollback-", suffix=".tmp", dir=self.root)
+        temporary = Path(temporary_name)
+        try:
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(snapshot)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, path)
+            _fsync_directory(self.root)
+        except Exception:
+            temporary.unlink(missing_ok=True)
+            raise
+
     def save(self, state: Any, metadata: CheckpointMetadata) -> CheckpointSave:
         if not isinstance(metadata, CheckpointMetadata):
             raise TypeError("metadata must be CheckpointMetadata")
@@ -614,7 +642,10 @@ class LocalCheckpointStore:
             if metadata.leaves and metadata.leaves != captured_leaves:
                 raise IncompatibleCheckpointError("checkpoint metadata leaves do not match the supplied state")
             committed_metadata = metadata.with_leaves(captured_leaves)
+            previous_latest = self._latest_snapshot()
             temporary_directory = Path(tempfile.mkdtemp(prefix=f".{metadata.checkpoint_id}-", dir=self.root))
+            committed = False
+            latest_update_started = False
             try:
                 self._write_arrays(temporary_directory / _STATE_FILE, arrays)
                 self._write_metadata(temporary_directory / _METADATA_FILE, committed_metadata)
@@ -623,10 +654,26 @@ class LocalCheckpointStore:
                 _fsync_file(marker)
                 _fsync_directory(temporary_directory)
                 os.replace(temporary_directory, final_directory)
+                committed = True
                 _fsync_directory(self.root)
+                latest_update_started = True
                 self._write_latest(committed_metadata.checkpoint_id)
-            except Exception:
-                shutil.rmtree(temporary_directory, ignore_errors=True)
+            except Exception as error:
+                rollback_errors = []
+                checkpoint_path = final_directory if committed or final_directory.exists() else temporary_directory
+                try:
+                    if checkpoint_path.exists():
+                        shutil.rmtree(checkpoint_path)
+                    _fsync_directory(self.root)
+                except Exception as rollback_error:
+                    rollback_errors.append(f"checkpoint data rollback failed: {rollback_error}")
+                if latest_update_started:
+                    try:
+                        self._restore_latest_snapshot(previous_latest)
+                    except Exception as rollback_error:
+                        rollback_errors.append(f"latest pointer rollback failed: {rollback_error}")
+                for message in rollback_errors:
+                    error.add_note(message)
                 raise
 
         reference = CheckpointRef(committed_metadata.checkpoint_id, committed_metadata)
@@ -714,7 +761,9 @@ class LocalCheckpointStore:
                     )
         if mismatches:
             details = "\n".join(f"- {message}" for message in mismatches)
-            raise IncompatibleCheckpointError(f"checkpoint state tree is incompatible with the restore target:\n{details}")
+            raise IncompatibleCheckpointError(
+                f"checkpoint state tree is incompatible with the restore target:\n{details}"
+            )
         return tree, target_values
 
     def _validated_contents(
@@ -782,8 +831,7 @@ class LocalCheckpointStore:
         )
         assert tree is not None and target_values is not None
         restored = [
-            self._restore_leaf(array, target_leaf)
-            for array, target_leaf in zip(arrays, target_values, strict=True)
+            self._restore_leaf(array, target_leaf) for array, target_leaf in zip(arrays, target_values, strict=True)
         ]
         import jax.tree_util as tree_util
 
