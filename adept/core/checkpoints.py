@@ -28,6 +28,26 @@ _STATE_FILE = "state.npz"
 _COMMIT_MARKER = "COMMITTED"
 _LATEST_FILE = "latest.json"
 _LOCK_FILE = ".adept-checkpoint.lock"
+_NUMPY_ENCODING = "numpy"
+_RAW_BYTES_ENCODING = "raw-bytes-v1"
+_EXTENDED_NUMERIC_DTYPE_SIZES = {
+    "bfloat16": 2,
+    "float4_e2m1fn": 1,
+    "float6_e2m3fn": 1,
+    "float6_e3m2fn": 1,
+    "float8_e3m4": 1,
+    "float8_e4m3": 1,
+    "float8_e4m3b11fnuz": 1,
+    "float8_e4m3fn": 1,
+    "float8_e4m3fnuz": 1,
+    "float8_e5m2": 1,
+    "float8_e5m2fnuz": 1,
+    "float8_e8m0fnu": 1,
+    "int2": 1,
+    "int4": 1,
+    "uint2": 1,
+    "uint4": 1,
+}
 
 
 class CheckpointError(RuntimeError):
@@ -94,6 +114,7 @@ class CheckpointLeaf:
     dtype: str
     checksum: str
     logical_sharding: tuple[str, ...] | None = None
+    encoding: str = _NUMPY_ENCODING
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "path", _non_empty(self.path, name="checkpoint leaf path"))
@@ -109,6 +130,11 @@ class CheckpointLeaf:
         if self.logical_sharding is not None:
             sharding = tuple(str(axis) for axis in self.logical_sharding)
             object.__setattr__(self, "logical_sharding", sharding)
+        encoding = _non_empty(self.encoding, name="checkpoint leaf encoding")
+        expected_encoding = _RAW_BYTES_ENCODING if self.dtype in _EXTENDED_NUMERIC_DTYPE_SIZES else _NUMPY_ENCODING
+        if encoding != expected_encoding:
+            raise ValueError(f"checkpoint leaf dtype {self.dtype!r} requires {expected_encoding!r} encoding")
+        object.__setattr__(self, "encoding", encoding)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,12 +143,13 @@ class CheckpointLeaf:
             "dtype": self.dtype,
             "checksum": self.checksum,
             "logical_sharding": list(self.logical_sharding) if self.logical_sharding is not None else None,
+            "encoding": self.encoding,
         }
 
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> CheckpointLeaf:
         copied = dict(value)
-        known = {"path", "shape", "dtype", "checksum", "logical_sharding"}
+        known = {"path", "shape", "dtype", "checksum", "logical_sharding", "encoding"}
         unknown = sorted(set(copied).difference(known))
         if unknown:
             raise ValueError(f"Checkpoint leaf contains unknown fields: {unknown!r}")
@@ -146,6 +173,7 @@ class CheckpointLeaf:
             dtype=str(dtype),
             checksum=str(checksum),
             logical_sharding=None if logical_sharding is None else tuple(str(axis) for axis in logical_sharding),
+            encoding=str(copied.get("encoding", _NUMPY_ENCODING)),
         )
 
 
@@ -511,6 +539,38 @@ def _array_checksum(array: Any) -> str:
     return "sha256:" + hashlib.sha256(array.tobytes(order="C")).hexdigest()
 
 
+def _encode_array(array: Any) -> Any:
+    """Return a pickle-free NumPy payload for one logical checkpoint array."""
+
+    import numpy as np
+
+    if str(array.dtype) not in _EXTENDED_NUMERIC_DTYPE_SIZES:
+        return array
+    return np.frombuffer(array.tobytes(order="C"), dtype=np.uint8).copy()
+
+
+def _decode_array(array: Any, schema: CheckpointLeaf) -> Any:
+    """Reconstruct a logical array from its declared on-disk encoding."""
+
+    import numpy as np
+
+    if schema.encoding == _NUMPY_ENCODING:
+        return array
+
+    import ml_dtypes
+
+    dtype = np.dtype(getattr(ml_dtypes, schema.dtype))
+    itemsize = _EXTENDED_NUMERIC_DTYPE_SIZES[schema.dtype]
+    if str(dtype) != schema.dtype or dtype.itemsize != itemsize:
+        raise CheckpointCorruptionError(f"checkpoint dtype {schema.dtype!r} has an unsupported runtime definition")
+    expected_size = math.prod(schema.shape) * itemsize
+    if array.dtype != np.dtype(np.uint8) or array.shape != (expected_size,):
+        raise CheckpointCorruptionError(
+            f"checkpoint leaf {schema.path} does not match its {schema.encoding!r} storage encoding"
+        )
+    return np.frombuffer(array.tobytes(order="C"), dtype=dtype).reshape(schema.shape).copy()
+
+
 def _flatten_state(state: Any) -> tuple[list[Any], tuple[CheckpointLeaf, ...], Any, list[Any]]:
     import jax.tree_util as tree_util
     import numpy as np
@@ -524,18 +584,23 @@ def _flatten_state(state: Any) -> tuple[list[Any], tuple[CheckpointLeaf, ...], A
             array = np.array(leaf, copy=True, order="C")
         except Exception as exc:
             raise TypeError(f"checkpoint state leaf {tree_util.keystr(path) or '<root>'} is not array-like") from exc
-        if array.dtype.kind not in "biufc":
+        dtype = str(array.dtype)
+        extended_itemsize = _EXTENDED_NUMERIC_DTYPE_SIZES.get(dtype)
+        if array.dtype.kind not in "biufc" and extended_itemsize is None:
             raise TypeError(
                 f"checkpoint state leaf {tree_util.keystr(path) or '<root>'} has unsupported dtype {array.dtype}"
             )
+        if extended_itemsize is not None and array.dtype.itemsize != extended_itemsize:
+            raise TypeError(f"checkpoint state leaf {tree_util.keystr(path) or '<root>'} has invalid dtype {dtype}")
         leaf_path = tree_util.keystr(path) or "<root>"
         schemas.append(
             CheckpointLeaf(
                 path=leaf_path,
                 shape=tuple(int(size) for size in array.shape),
-                dtype=str(array.dtype),
+                dtype=dtype,
                 checksum=_array_checksum(array),
                 logical_sharding=_logical_sharding(leaf),
+                encoding=_RAW_BYTES_ENCODING if extended_itemsize is not None else _NUMPY_ENCODING,
             )
         )
         arrays.append(array)
@@ -604,7 +669,7 @@ class LocalCheckpointStore:
     def _write_arrays(self, path: Path, arrays: Sequence[Any]) -> None:
         import numpy as np
 
-        np.savez(path, **{f"leaf_{index:06d}": array for index, array in enumerate(arrays)})
+        np.savez(path, **{f"leaf_{index:06d}": _encode_array(array) for index, array in enumerate(arrays)})
         _fsync_file(path)
 
     @staticmethod
@@ -750,13 +815,14 @@ class LocalCheckpointStore:
                     raise CheckpointCorruptionError(
                         f"checkpoint {metadata.checkpoint_id!r} state leaves do not match its metadata"
                     )
-                arrays = [np.array(archive[name], copy=True) for name in expected]
+                stored_arrays = [np.array(archive[name], copy=True) for name in expected]
         except CheckpointCorruptionError:
             raise
         except Exception as exc:
             raise CheckpointCorruptionError(
                 f"checkpoint {metadata.checkpoint_id!r} state archive cannot be read: {exc}"
             ) from exc
+        arrays = [_decode_array(array, schema) for schema, array in zip(metadata.leaves, stored_arrays, strict=True)]
         for schema, array in zip(metadata.leaves, arrays, strict=True):
             if tuple(array.shape) != schema.shape or str(array.dtype) != schema.dtype:
                 raise CheckpointCorruptionError(

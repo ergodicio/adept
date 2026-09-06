@@ -48,6 +48,11 @@ Metadata also records simulation time, step and chunk identity, original logical
 sharding, per-leaf checksums, and code and package versions copied from the run
 manifest. Unknown metadata versions fail explicitly.
 
+Standard NumPy numeric dtypes are stored natively. Explicitly supported reduced-width
+JAX numeric dtypes, including `bfloat16` and float8, are stored as raw bytes with a
+versioned encoding marker and reconstructed through `ml_dtypes`; arbitrary NumPy void
+records remain rejected. Both paths are checksum validated without pickle.
+
 ## Atomic local commits
 
 The local store writes state and canonical JSON metadata into a private temporary

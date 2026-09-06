@@ -163,6 +163,44 @@ def test_restore_places_arrays_like_the_jax_target(tmp_path):
     np.testing.assert_array_equal(restored["value"], np.arange(3, dtype=np.float32))
 
 
+@pytest.mark.parametrize("dtype_name", ["bfloat16", "float8_e4m3fn"])
+def test_local_store_round_trips_extended_jax_dtypes_with_checksum_validation(tmp_path, dtype_name):
+    import jax.numpy as jnp
+
+    dtype = getattr(jnp, dtype_name)
+    store = LocalCheckpointStore(tmp_path / "checkpoints")
+    state = {"value": jnp.asarray([1.0, -2.0], dtype=dtype)}
+
+    reference = store.save(state, _metadata("step-1", step=1)).wait()
+
+    assert reference is not None
+    leaf = reference.metadata.leaves[0]
+    assert leaf.dtype == dtype_name
+    assert leaf.encoding == "raw-bytes-v1"
+    state_path = store.root / reference.checkpoint_id / "state.npz"
+    with np.load(state_path, allow_pickle=False) as archive:
+        stored = np.array(archive["leaf_000000"], copy=True)
+    assert stored.dtype == np.uint8
+    assert stored.shape == (state["value"].size * np.dtype(dtype).itemsize,)
+
+    restored = store.restore(reference, {"value": jnp.zeros_like(state["value"])})
+
+    assert restored["value"].dtype == dtype
+    np.testing.assert_array_equal(np.asarray(restored["value"]), np.asarray(state["value"]))
+
+    stored[0] ^= np.uint8(1)
+    np.savez(state_path, leaf_000000=stored)
+    with pytest.raises(CheckpointCorruptionError, match="checksum"):
+        store.restore(reference, {"value": jnp.zeros_like(state["value"])})
+
+
+def test_checkpoint_rejects_arbitrary_void_records(tmp_path):
+    state = {"record": np.zeros(1, dtype=[("value", np.int32)])}
+
+    with pytest.raises(TypeError, match="unsupported dtype"):
+        LocalCheckpointStore(tmp_path / "checkpoints").save(state, _metadata("step-1", step=1))
+
+
 def test_failed_save_keeps_prior_latest_and_excludes_partial_checkpoint(tmp_path, monkeypatch):
     store = LocalCheckpointStore(tmp_path / "checkpoints")
     first = store.save({"value": np.array([1.0])}, _metadata("step-1", step=1)).wait()
