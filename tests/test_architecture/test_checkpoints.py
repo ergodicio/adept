@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 
 import numpy as np
 import pytest
@@ -201,6 +203,42 @@ def test_latest_update_failure_rolls_back_commit_and_allows_retry(tmp_path, monk
     retried = store.save({"value": np.array([2.0])}, _metadata("step-2", step=2)).wait()
     assert retried is not None
     assert store.latest() == retried
+
+
+def test_concurrent_same_id_loser_cannot_remove_winner(tmp_path):
+    barrier = Barrier(2)
+
+    class RacingStore(LocalCheckpointStore):
+        def _write_metadata(self, path, metadata):
+            super()._write_metadata(path, metadata)
+            barrier.wait(timeout=5)
+
+    root = tmp_path / "checkpoints"
+    stores = (RacingStore(root), RacingStore(root))
+
+    def save(store, value):
+        reference = store.save({"value": np.array([value])}, _metadata("step-1", step=1)).wait()
+        assert reference is not None
+        return value, reference
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(save, store, value) for store, value in zip(stores, (1.0, 2.0), strict=True)]
+
+    successes = []
+    failures = []
+    for future in futures:
+        try:
+            successes.append(future.result())
+        except OSError as error:
+            failures.append(error)
+
+    assert len(successes) == 1
+    assert len(failures) == 1
+    winning_value, winning_reference = successes[0]
+    assert stores[0].latest() == winning_reference
+    assert stores[0].list() == (winning_reference,)
+    restored = stores[0].restore(winning_reference, {"value": np.zeros(1)})
+    np.testing.assert_array_equal(restored["value"], np.array([winning_value]))
 
 
 def test_restore_rejects_incompatible_programs_and_state_trees(tmp_path):

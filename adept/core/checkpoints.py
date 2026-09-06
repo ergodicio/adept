@@ -660,7 +660,7 @@ class LocalCheckpointStore:
                 self._write_latest(committed_metadata.checkpoint_id)
             except Exception as error:
                 rollback_errors = []
-                checkpoint_path = final_directory if committed or final_directory.exists() else temporary_directory
+                checkpoint_path = final_directory if committed else temporary_directory
                 try:
                     if checkpoint_path.exists():
                         shutil.rmtree(checkpoint_path)
