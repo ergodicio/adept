@@ -7,6 +7,7 @@ import pytest
 from adept.core import (
     AcceleratorKind,
     CapabilityMismatchError,
+    CheckpointPolicy,
     ExecutionFeature,
     ExecutionKind,
     ExecutionState,
@@ -144,6 +145,19 @@ def test_preflight_rejects_solver_and_service_mismatches():
 
     assert "solver is not differentiable" in str(caught.value)
     assert "MLflow artifact sink requires an MLflow tracker" in str(caught.value)
+
+
+def test_local_executor_does_not_silently_ignore_checkpoint_policy():
+    registry, _ = _registry()
+    plan = RunPlan(
+        SimulationSpec("fake", {"initial": 0}),
+        checkpoint_store=ServiceReference("directory", {"root": "./checkpoints"}),
+        checkpoint_policy=CheckpointPolicy(save_on_completion=True),
+    )
+
+    with LocalExecutor(registry=registry, execute_prepared=_direct) as executor:
+        with pytest.raises(CapabilityMismatchError, match="checkpointing"):
+            executor.validate(plan)
 
 
 def test_failed_local_execution_is_retrievable_by_status():

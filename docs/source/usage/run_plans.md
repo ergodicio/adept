@@ -68,6 +68,11 @@ that explicit handle; `execute` is the blocking submit-and-result convenience. A
 local run can be cancelled while queued, but an already-running JAX call is not
 interruptible.
 
+Checkpoint store references and policies are serialized in schema version 2. Active
+policies request the `checkpointing` capability; multi-host checkpointing also
+requests shared durable storage and rank-zero I/O. See [Versioned checkpoints](checkpoints.md)
+for the initial store contract and current executor-integration boundary.
+
 This is the first executor slice. Parsl submission, collective multi-host JAX,
-external-process execution, retry/chunk policy, and checkpoint integration will use
-the same serialized plan and executor lifecycle in follow-up work.
+external-process execution, retry/chunk policy, and managed checkpoint scheduling
+will use the same serialized plan and executor lifecycle in follow-up work.
