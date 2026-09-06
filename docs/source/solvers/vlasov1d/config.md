@@ -486,13 +486,47 @@ Solver algorithm configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `field` | string | Electric field solver: `"poisson"`, `"poisson-boltzmann"`, `"ampere"`, or `"hampere"` |
-| `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
-| `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
+| `edfdv` | string | Velocity advection scheme: `"exponential"`, `"cubic-spline"`, or `"lagrange7"` |
+| `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian), `"leapfrog"`, or `"strang"` (explicit second-order electrostatic splitting) |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
 | `hou_li_filter` | object | Hou-Li spectral filter (optional, default off) |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
 | `boltzmann_electrons` | object | (Optional) Linearized Boltzmann electron closure parameters, used with `field: poisson-boltzmann` |
+
+### Strang splitting with degree-7 velocity interpolation
+
+Select these options in an existing Vlasov-1D configuration:
+
+```yaml
+terms:
+  field: poisson  # poisson-boltzmann is also supported
+  time: strang
+  edfdv: lagrange7
+  # Retain the configuration's species, collision, and other term settings.
+```
+
+`strang` streams in space for half a timestep, evaluates the self-consistent field,
+pushes velocity for a full timestep using midpoint external forcing, then streams
+for the remaining half timestep. There is one velocity remap per full timestep.
+Saved self-consistent and external electric fields are evaluated at the end of
+the step. This option supports `poisson` and `poisson-boltzmann`; `ampere` and
+`hampere` retain their existing `leapfrog` requirement.
+
+The second-order description applies to the collisionless electrostatic step.
+The existing collision, filter, and transverse-wave coupling is unchanged; choosing
+`strang` does not raise the order of those separate updates.
+
+`lagrange7` uses eight velocity samples to interpolate a degree-7 polynomial. It
+supports species-specific uniform grids (including asymmetric bounds), requires
+at least eight velocity cells per species, and works with the existing `grid.parallel`
+options. It can also be selected independently with the other time integrators.
+The stencil uses `1e-30` for samples outside the velocity grid and returns `1e-30`
+for departure points outside the first/last cell centers, without periodic wraparound.
+Keep populated structures clear of the velocity edges. The interpolation is unlimited:
+it can produce negative values near unresolved structure and does not renormalize
+mass lost through the boundaries. Gradients with respect to displacement are
+piecewise smooth as the stencil changes between cells.
 
 ### species (Multispecies Configuration)
 

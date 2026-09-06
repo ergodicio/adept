@@ -148,11 +148,46 @@ def _uniform_cubic_interp(f: jnp.ndarray, shift: jnp.ndarray, dv: float) -> jnp.
     return jnp.where(outside, jnp.asarray(1.0e-30, dtype=f.dtype), interpolated)
 
 
-class VelocityCubicSpline:
-    """Cubic-spline velocity-space advection under electric and ponderomotive forces."""
+def _uniform_lagrange7_interp(f: jnp.ndarray, shift: jnp.ndarray, dv: float) -> jnp.ndarray:
+    """Translate uniform-grid rows with an eight-point, degree-7 Lagrange stencil.
+
+    Weights depend only on the row's fractional displacement. The stencil is
+    centered around the departure cell, with exterior samples and exterior
+    queries set to 1e-30 (no velocity wraparound). This is an unlimited
+    interpolant: it does not enforce positivity or renormalize escaped mass.
+    """
+    _, nv = f.shape
+    if nv < 8:
+        raise ValueError("lagrange7 interpolation requires at least eight velocity cells")
+
+    # Once a displacement exceeds the domain plus the stencil width, every
+    # query is exterior. Bound it before conversion to avoid integer overflow.
+    displacement = jnp.clip(-shift / jnp.asarray(dv, dtype=f.dtype), -nv - 8, nv + 8)
+    offset = jnp.floor(displacement).astype(jnp.int32)
+    fraction = displacement - offset
+    cell = jnp.arange(nv, dtype=jnp.int32)[None, :] + offset[:, None]
+    floor = jnp.asarray(1.0e-30, dtype=f.dtype)
+    interpolated = jnp.zeros_like(f)
+
+    for node in range(-3, 5):
+        weight = jnp.ones_like(fraction)
+        for other in range(-3, 5):
+            if other != node:
+                weight = weight * (fraction - other) / (node - other)
+        index = cell + node
+        samples = jnp.take_along_axis(f, jnp.clip(index, 0, nv - 1), axis=1)
+        samples = jnp.where((index >= 0) & (index < nv), samples, floor)
+        interpolated = interpolated + weight[:, None] * samples
+
+    query = cell + fraction[:, None]
+    return jnp.where((query >= 0) & (query <= nv - 1), interpolated, floor)
+
+
+class _VelocityInterpolation:
+    """Shared force calculation and sharding for velocity interpolation pushers."""
 
     def __init__(self, species_grids, species_params, parallel=False):
-        """Store per-species velocity grids, interpolation kernel, and sharding metadata."""
+        """Store per-species velocity grids and optional sharding metadata."""
         self.species_grids = species_grids
         self.species_params = species_params
         self.parallel = parallel
@@ -160,7 +195,7 @@ class VelocityCubicSpline:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
     def push(self, f_dict, e, pond, dt):
-        """Apply the unsharded cubic-spline velocity push to each species."""
+        """Apply the unsharded interpolation push to each species."""
         result = {}
         for species_name, f in f_dict.items():
             dv = self.species_grids[species_name]["dv"]
@@ -168,11 +203,11 @@ class VelocityCubicSpline:
             m = self.species_params[species_name]["mass"]
             force = q * e + (q**2 / m) * pond
             accel = force / m
-            result[species_name] = _uniform_cubic_interp(f, accel * dt, dv)
+            result[species_name] = self.interpolate(f, accel * dt, dv)
         return result
 
     def __call__(self, f_dict, e, pond, dt):
-        """Dispatch the cubic-spline velocity push, optionally through shard_map."""
+        """Dispatch the velocity push, optionally through shard_map."""
         if self.parallel:
             return shard_map(
                 self.push,
@@ -182,6 +217,18 @@ class VelocityCubicSpline:
             )(f_dict, e, pond, dt)
         else:
             return self.push(f_dict, e, pond, dt)
+
+
+class VelocityCubicSpline(_VelocityInterpolation):
+    """Local cubic-spline velocity advection under electric and ponderomotive forces."""
+
+    interpolate = staticmethod(_uniform_cubic_interp)
+
+
+class VelocityLagrange7(_VelocityInterpolation):
+    """Degree-7 Lagrange velocity advection under electric and ponderomotive forces."""
+
+    interpolate = staticmethod(_uniform_lagrange7_interp)
 
 
 class HouLiFilter:

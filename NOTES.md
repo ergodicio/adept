@@ -91,3 +91,30 @@ Append-only checkpoints for scientific model development and validation.
 - **Interpretation:** The review-blocking distribution bias is removed and its separable radial/angular law is locked by a statistical test. Repeated planar-wall reinjection now samples the flux distribution associated with the same retained 2D Maxwellian tail used at initialization.
 - **Corrects:** Checkpoint `20260904T150248Z-2d2f0e6d`; completes planned correction `20260904T161828Z-f10c2eed`.
 - **Next:** Commit and push the correction to PR #363, report the derivation/test to the reviewer, and wait for re-review.
+
+## 2026-09-05 21:48:02 PDT — Vlasov-1D Strang and degree-7 remap
+
+- **Checkpoint ID:** 20260906T044802Z-79ad3623
+- **State:** PLANNED
+- **Objective:** Add opt-in `time: strang` and `edfdv: lagrange7` to upstream Vlasov-1D and open a PR.
+- **USER (verbatim):** "okay can you make a PR for bullet 1. im not too worried about bullet 2 or 3. we dont need to get into the weeds of the numerics. i'm trying to improve the modeling of the turbulence problem"
+- **USER (verbatim), scope clarification:** "dont need to address turbulence in this repo at all. i menat in the ../vp-turbulence project, but that is downstream and this is upstream and you dont need to worry about it"
+- **Action or change:** Implement spectral half-streaming, midpoint-field full velocity push, and spectral half-streaming; add an eight-point degree-7 Lagrange velocity interpolation with nonperiodic boundaries, multispecies support, and the existing sharding interface. Keep legacy options and all production configs unchanged.
+- **Provenance:** Base `origin/main` commit `4c49e93`; branch `codex/vlasov1d-strang-lagrange7`; isolated worktree `/private/tmp/adept-strang-lagrange7`.
+- **Observation:** No implementation result yet. Validation will cover interpolation, midpoint forcing, field diagnostics, and solver integration; no turbulence campaign or broad convergence study is in scope.
+- **Evidence or artifacts:** Vault mirror `Notes/adept/2026-09-05-214802-codex-strang-lagrange7-79ad3623.md`.
+- **Interpretation:** The requested modeling outcome remains unmeasured; this task delivers upstream capabilities only.
+- **Next:** Implement, run focused tests and formatting checks, and open the PR.
+
+## 2026-09-05 21:56:51 PDT — Upstream Strang and degree-7 implementation verified
+
+- **Checkpoint ID:** 20260906T045651Z-7a5c55d3
+- **State:** COMPLETED
+- **Objective:** Deliver opt-in upstream Vlasov-1D time stepping and velocity remapping.
+- **Action or change:** Added `time: strang` for Poisson/Poisson-Boltzmann with midpoint forcing, one velocity remap, and endpoint field diagnostics. Added `edfdv: lagrange7` using an eight-point stencil, floor-filled nonperiodic boundaries, per-species grids/forces, and shared interpolation-pusher sharding. Added focused tests and API documentation. Existing production configs and downstream projects were not changed.
+- **Provenance:** Base `4c49e93`; branch `codex/vlasov1d-strang-lagrange7`; Python 3.14 / JAX 0.9.0.1 on local CPU with `XLA_FLAGS=--xla_force_host_platform_device_count=4`.
+- **Observation:** 35 tests passed across `test_velocity_lagrange7.py`, `test_strang.py`, `test_velocity_cubic_spline.py`, `test_multispecies_pushers.py`, and `test_asymmetric_velocity_grid.py`. Checks include interpolation/boundaries, gradients, multispecies forces, midpoint impulse, final-field synchronization, all three velocity pushers with both Strang field solvers, and combined x/v sharding. Pre-commit hooks and `git diff --check` passed before final notebook update.
+- **Material commands:** `python -m pytest tests/test_vlasov1d/test_velocity_lagrange7.py tests/test_vlasov1d/test_strang.py tests/test_vlasov1d/test_velocity_cubic_spline.py -q` (26 passed); `python -m pytest tests/test_vlasov1d/test_multispecies_pushers.py tests/test_vlasov1d/test_asymmetric_velocity_grid.py -q` (8 passed); after adding the combined sharding check, `python -m pytest tests/test_vlasov1d/test_strang.py::test_strang_sharded_matches_serial -q` (1 passed). All used the shared ADEPT development environment, `MPLBACKEND=Agg`, and the four-device setting above.
+- **Evidence or artifacts:** `tests/test_vlasov1d/test_velocity_lagrange7.py`; `tests/test_vlasov1d/test_strang.py`; vault mirror `Notes/adept/2026-09-05-214802-codex-strang-lagrange7-79ad3623.md`.
+- **Interpretation:** These are implementation checks, not a turbulence result or an extensive convergence study. The new interpolation is unlimited and does not renormalize boundary losses. Strang's second-order scope is the collisionless electrostatic update; existing collision/filter/transverse coupling is unchanged.
+- **Next:** Publish the branch and open the requested upstream PR. Downstream adoption is outside this task.
