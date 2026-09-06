@@ -185,9 +185,20 @@ class EPWModel(BaseModel):
 
 class LightModel(BaseModel):
     """Light-wave evolution options. pump_depletion evolves E0 with the FD envelope
-    solver (boundary injector + EPW coupling) instead of prescribing it analytically."""
+    solver (boundary injector + EPW coupling) instead of prescribing it analytically.
+    coupling selects how that EPW coupling is integrated inside the light sub-step:
+    "explicit" (the MATLAB staggered update, which grows the light fields at a rate
+    ~Omega^2 dt_l/4 once the EPW is finite -- see CoupledLight) or "rotation" (exact,
+    action-conserving local rotation, Strang-split around the propagation)."""
 
     pump_depletion: bool = False
+    coupling: str = "explicit"
+    # deplete the evolved pump by the TPD source as well (the MATLAB original and the
+    # default here deplete it through SRS only, so TPD draws on an infinite pump)
+    tpd_depletion: bool = False
+    # optional isotropic low-pass filter on E0/E1 once per EPW step, as a fraction of
+    # the grid Nyquist wavenumber (None = off)
+    filter: float | None = None
 
 
 class HPEModel(BaseModel):

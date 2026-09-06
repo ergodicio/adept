@@ -117,16 +117,20 @@ class RamanLight:
         row_i1p1 = 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[self.i1] - 1j * self.w1 * dw1 * t)
         return row_i1, row_i1p1
 
-    def rhs(self, t: float, E1: Array, E0: Array, laplacian_phi: Array, seed_args: dict | None) -> Array:
+    def rhs(
+        self, t: float, E1: Array, E0: Array, laplacian_phi: Array, seed_args: dict | None, couple: bool = True
+    ) -> Array:
         e1x, e1y = E1[..., 0], E1[..., 1]
 
         # paraxial propagation with cross-derivative terms (MATLAB lines 1663-1671)
         k_e1x = self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + self.linear_coeff * e1x
         k_e1y = self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + self.linear_coeff * e1y
 
-        # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation)
-        k_e1x += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 0]
-        k_e1y += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 1]
+        # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation);
+        # CoupledLight switches it off here when it integrates the coupling exactly
+        if couple:
+            k_e1x += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 0]
+            k_e1y += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 1]
 
         if seed_args is not None:
             row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)
