@@ -179,9 +179,10 @@ adapter = LegacyVGAdapter(
 
 The adapter emits a migration warning and returns `output["solver result"]` alongside
 the structured objective. It does not create an MLflow run or emulate mutation of
-captured module attributes. New code should call `value_and_grad` directly. A later
-compatibility façade will route supported `ergoExo` behavior through these contracts;
-until then, existing `ergoExo` and `ADEPTModule` callers continue on the legacy path.
+captured module attributes. New code should call `value_and_grad` directly. The first
+compatibility-façade slice now routes supported `ergoExo` forward runs through these
+contracts. See [Legacy API compatibility](legacy_compatibility.md) for the current
+routing and fallback rules.
 
 For host-side execution, tracking, failure policies, and verified artifact storage, see
 [Host-side tracking and artifacts](host_runtime.md).

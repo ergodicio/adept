@@ -151,5 +151,6 @@ strict because a run with missing declared outputs must not appear successfully
 archived.
 
 The existing `ergoExo` and `ADEPTModule` entry points retain their current MLflow
-behavior during this phase. They will move onto these services through the later
-compatibility façade rather than changing behavior in place.
+behavior during this phase. Eligible TF1D and PIC1D forward solves now use this host
+runtime underneath the compatibility façade; legacy MLflow and post-processing remain
+the public boundary. See [Legacy API compatibility](legacy_compatibility.md).
