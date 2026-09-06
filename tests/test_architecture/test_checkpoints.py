@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
+from concurrent.futures import TimeoutError as FutureTimeoutError
+from threading import Barrier, Event
 
 import numpy as np
 import pytest
@@ -206,17 +207,12 @@ def test_latest_update_failure_rolls_back_commit_and_allows_retry(tmp_path, monk
 
 
 def test_concurrent_same_id_loser_cannot_remove_winner(tmp_path):
-    barrier = Barrier(2)
-
-    class RacingStore(LocalCheckpointStore):
-        def _write_metadata(self, path, metadata):
-            super()._write_metadata(path, metadata)
-            barrier.wait(timeout=5)
-
+    start = Barrier(2)
     root = tmp_path / "checkpoints"
-    stores = (RacingStore(root), RacingStore(root))
+    stores = (LocalCheckpointStore(root), LocalCheckpointStore(root))
 
     def save(store, value):
+        start.wait(timeout=5)
         reference = store.save({"value": np.array([value])}, _metadata("step-1", step=1)).wait()
         assert reference is not None
         return value, reference
@@ -239,6 +235,53 @@ def test_concurrent_same_id_loser_cannot_remove_winner(tmp_path):
     assert stores[0].list() == (winning_reference,)
     restored = stores[0].restore(winning_reference, {"value": np.zeros(1)})
     np.testing.assert_array_equal(restored["value"], np.array([winning_value]))
+
+
+def test_concurrent_failed_save_cannot_restore_latest_over_a_successful_writer(tmp_path):
+    failed_pointer_written = Event()
+    release_failure = Event()
+    root = tmp_path / "checkpoints"
+    initial_store = LocalCheckpointStore(root)
+    initial = initial_store.save({"value": np.array([0.0])}, _metadata("step-0", step=0)).wait()
+    assert initial is not None
+
+    class FailingStore(LocalCheckpointStore):
+        def _write_latest(self, checkpoint_id):
+            super()._write_latest(checkpoint_id)
+            failed_pointer_written.set()
+            if not release_failure.wait(timeout=5):
+                raise AssertionError("test did not release injected latest failure")
+            raise RuntimeError("injected post-replace failure")
+
+    failing_store = FailingStore(root)
+    successful_store = LocalCheckpointStore(root)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        failed_future = executor.submit(
+            failing_store.save,
+            {"value": np.array([2.0])},
+            _metadata("step-2", step=2),
+        )
+        assert failed_pointer_written.wait(timeout=5)
+        successful_future = executor.submit(
+            successful_store.save,
+            {"value": np.array([1.0])},
+            _metadata("step-1", step=1),
+        )
+        try:
+            with pytest.raises(FutureTimeoutError):
+                successful_future.result(timeout=0.1)
+        finally:
+            release_failure.set()
+
+        with pytest.raises(RuntimeError, match="injected post-replace failure"):
+            failed_future.result()
+        successful = successful_future.result().wait()
+
+    assert successful is not None
+    assert successful_store.latest() == successful
+    assert [item.checkpoint_id for item in successful_store.list()] == ["step-0", "step-1"]
+    assert not (root / "step-2").exists()
 
 
 def test_restore_rejects_incompatible_programs_and_state_trees(tmp_path):
@@ -280,3 +323,12 @@ def test_preflight_reports_an_unusable_root(tmp_path):
 def test_checkpoint_ids_cannot_collide_with_the_latest_pointer():
     with pytest.raises(ValueError, match="reserved"):
         _metadata("latest.json", step=0)
+
+
+@pytest.mark.parametrize("checkpoint_id", [".", ".."])
+def test_checkpoint_ids_reject_special_path_components(tmp_path, checkpoint_id):
+    with pytest.raises(ValueError, match="checkpoint_id"):
+        _metadata(checkpoint_id, step=0)
+
+    with pytest.raises(ValueError, match="checkpoint_id"):
+        LocalCheckpointStore(tmp_path / "checkpoints").restore(checkpoint_id, {"value": np.zeros(1)})

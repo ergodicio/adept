@@ -10,7 +10,8 @@ import os
 import re
 import shutil
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +27,7 @@ _METADATA_FILE = "metadata.json"
 _STATE_FILE = "state.npz"
 _COMMIT_MARKER = "COMMITTED"
 _LATEST_FILE = "latest.json"
+_LOCK_FILE = ".adept-checkpoint.lock"
 
 
 class CheckpointError(RuntimeError):
@@ -571,8 +573,33 @@ class LocalCheckpointStore:
             descriptor, probe = tempfile.mkstemp(prefix=".adept-checkpoint-probe-", dir=self.root)
             os.close(descriptor)
             Path(probe).unlink()
+            with self._filesystem_lock():
+                pass
         except OSError as exc:
             raise CheckpointPreflightError(f"checkpoint directory {self.root} is not writable: {exc}") from exc
+
+    @contextmanager
+    def _filesystem_lock(self, *, shared: bool = False) -> Iterator[None]:
+        try:
+            import fcntl
+        except ImportError as exc:
+            raise CheckpointPreflightError("LocalCheckpointStore requires POSIX advisory file locking") from exc
+
+        path = self.root / _LOCK_FILE
+        if path.is_symlink():
+            raise CheckpointPreflightError(f"checkpoint lock {path} must not be a symlink")
+        flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags, 0o600)
+        locked = False
+        try:
+            operation = fcntl.LOCK_SH if shared else fcntl.LOCK_EX
+            fcntl.flock(descriptor, operation)
+            locked = True
+            yield
+        finally:
+            if locked:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
 
     def _write_arrays(self, path: Path, arrays: Sequence[Any]) -> None:
         import numpy as np
@@ -629,54 +656,57 @@ class LocalCheckpointStore:
             temporary.unlink(missing_ok=True)
             raise
 
+    def _commit_checkpoint(self, arrays: Sequence[Any], metadata: CheckpointMetadata) -> CheckpointRef:
+        final_directory = self.root / metadata.checkpoint_id
+        if final_directory.exists():
+            raise FileExistsError(f"checkpoint {metadata.checkpoint_id!r} already exists")
+        previous_latest = self._latest_snapshot()
+        temporary_directory = Path(tempfile.mkdtemp(prefix=f".{metadata.checkpoint_id}-", dir=self.root))
+        committed = False
+        latest_update_started = False
+        try:
+            self._write_arrays(temporary_directory / _STATE_FILE, arrays)
+            self._write_metadata(temporary_directory / _METADATA_FILE, metadata)
+            marker = temporary_directory / _COMMIT_MARKER
+            marker.touch()
+            _fsync_file(marker)
+            _fsync_directory(temporary_directory)
+            os.replace(temporary_directory, final_directory)
+            committed = True
+            _fsync_directory(self.root)
+            latest_update_started = True
+            self._write_latest(metadata.checkpoint_id)
+        except Exception as error:
+            rollback_errors = []
+            checkpoint_path = final_directory if committed else temporary_directory
+            try:
+                if checkpoint_path.exists():
+                    shutil.rmtree(checkpoint_path)
+                _fsync_directory(self.root)
+            except Exception as rollback_error:
+                rollback_errors.append(f"checkpoint data rollback failed: {rollback_error}")
+            if latest_update_started:
+                try:
+                    self._restore_latest_snapshot(previous_latest)
+                except Exception as rollback_error:
+                    rollback_errors.append(f"latest pointer rollback failed: {rollback_error}")
+            for message in rollback_errors:
+                error.add_note(message)
+            raise
+        return CheckpointRef(metadata.checkpoint_id, metadata)
+
     def save(self, state: Any, metadata: CheckpointMetadata) -> CheckpointSave:
         if not isinstance(metadata, CheckpointMetadata):
             raise TypeError("metadata must be CheckpointMetadata")
 
         with self._lock:
             self.preflight()
-            final_directory = self.root / metadata.checkpoint_id
-            if final_directory.exists():
-                raise FileExistsError(f"checkpoint {metadata.checkpoint_id!r} already exists")
             arrays, captured_leaves, _, _ = _flatten_state(state)
             if metadata.leaves and metadata.leaves != captured_leaves:
                 raise IncompatibleCheckpointError("checkpoint metadata leaves do not match the supplied state")
             committed_metadata = metadata.with_leaves(captured_leaves)
-            previous_latest = self._latest_snapshot()
-            temporary_directory = Path(tempfile.mkdtemp(prefix=f".{metadata.checkpoint_id}-", dir=self.root))
-            committed = False
-            latest_update_started = False
-            try:
-                self._write_arrays(temporary_directory / _STATE_FILE, arrays)
-                self._write_metadata(temporary_directory / _METADATA_FILE, committed_metadata)
-                marker = temporary_directory / _COMMIT_MARKER
-                marker.touch()
-                _fsync_file(marker)
-                _fsync_directory(temporary_directory)
-                os.replace(temporary_directory, final_directory)
-                committed = True
-                _fsync_directory(self.root)
-                latest_update_started = True
-                self._write_latest(committed_metadata.checkpoint_id)
-            except Exception as error:
-                rollback_errors = []
-                checkpoint_path = final_directory if committed else temporary_directory
-                try:
-                    if checkpoint_path.exists():
-                        shutil.rmtree(checkpoint_path)
-                    _fsync_directory(self.root)
-                except Exception as rollback_error:
-                    rollback_errors.append(f"checkpoint data rollback failed: {rollback_error}")
-                if latest_update_started:
-                    try:
-                        self._restore_latest_snapshot(previous_latest)
-                    except Exception as rollback_error:
-                        rollback_errors.append(f"latest pointer rollback failed: {rollback_error}")
-                for message in rollback_errors:
-                    error.add_note(message)
-                raise
-
-        reference = CheckpointRef(committed_metadata.checkpoint_id, committed_metadata)
+            with self._filesystem_lock():
+                reference = self._commit_checkpoint(arrays, committed_metadata)
         return _CompletedCheckpointSave(reference)
 
     def _checkpoint_directory(self, checkpoint_id: str) -> Path:
@@ -792,11 +822,19 @@ class LocalCheckpointStore:
         target: Any | None = None,
         compatibility: CheckpointCompatibility | None = None,
     ) -> CheckpointMetadata:
-        metadata, _, _, _ = self._validated_contents(
-            checkpoint,
-            target=target,
-            compatibility=compatibility,
-        )
+        if not self.root.exists():
+            metadata, _, _, _ = self._validated_contents(
+                checkpoint,
+                target=target,
+                compatibility=compatibility,
+            )
+            return metadata
+        with self._lock, self._filesystem_lock(shared=True):
+            metadata, _, _, _ = self._validated_contents(
+                checkpoint,
+                target=target,
+                compatibility=compatibility,
+            )
         return metadata
 
     @staticmethod
@@ -824,11 +862,14 @@ class LocalCheckpointStore:
         *,
         compatibility: CheckpointCompatibility | None = None,
     ) -> Any:
-        _, arrays, tree, target_values = self._validated_contents(
-            checkpoint,
-            target=target,
-            compatibility=compatibility,
-        )
+        if not self.root.exists():
+            self._checkpoint_directory(self._checkpoint_name(checkpoint))
+        with self._lock, self._filesystem_lock(shared=True):
+            _, arrays, tree, target_values = self._validated_contents(
+                checkpoint,
+                target=target,
+                compatibility=compatibility,
+            )
         assert tree is not None and target_values is not None
         restored = [
             self._restore_leaf(array, target_leaf) for array, target_leaf in zip(arrays, target_values, strict=True)
@@ -841,11 +882,15 @@ class LocalCheckpointStore:
         if not self.root.exists():
             return ()
         references = []
-        with self._lock:
+        with self._lock, self._filesystem_lock(shared=True):
             for path in self.root.iterdir():
                 if path.name.startswith(".") or not path.is_dir() or not (path / _COMMIT_MARKER).is_file():
                     continue
-                metadata = self.validate(path.name)
+                metadata, _, _, _ = self._validated_contents(
+                    path.name,
+                    target=None,
+                    compatibility=None,
+                )
                 references.append(CheckpointRef(path.name, metadata))
         return tuple(
             sorted(
@@ -859,20 +904,27 @@ class LocalCheckpointStore:
         )
 
     def latest(self) -> CheckpointRef | None:
-        path = self.root / _LATEST_FILE
-        if not path.exists():
+        if not self.root.exists():
             return None
-        if path.is_symlink():
-            raise CheckpointCorruptionError("latest checkpoint pointer must not be a symlink")
-        try:
-            with path.open(encoding="utf-8") as stream:
-                payload = json.load(stream)
-            if not isinstance(payload, Mapping) or set(payload) != {"checkpoint_id"}:
-                raise ValueError("latest pointer must contain only checkpoint_id")
-            checkpoint_id = _checkpoint_id(payload["checkpoint_id"])
-            metadata = self.validate(checkpoint_id)
-        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise CheckpointCorruptionError(f"latest checkpoint pointer is invalid: {exc}") from exc
+        with self._lock, self._filesystem_lock(shared=True):
+            path = self.root / _LATEST_FILE
+            if not path.exists():
+                return None
+            if path.is_symlink():
+                raise CheckpointCorruptionError("latest checkpoint pointer must not be a symlink")
+            try:
+                with path.open(encoding="utf-8") as stream:
+                    payload = json.load(stream)
+                if not isinstance(payload, Mapping) or set(payload) != {"checkpoint_id"}:
+                    raise ValueError("latest pointer must contain only checkpoint_id")
+                checkpoint_id = _checkpoint_id(payload["checkpoint_id"])
+                metadata, _, _, _ = self._validated_contents(
+                    checkpoint_id,
+                    target=None,
+                    compatibility=None,
+                )
+            except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise CheckpointCorruptionError(f"latest checkpoint pointer is invalid: {exc}") from exc
         return CheckpointRef(checkpoint_id, metadata)
 
 

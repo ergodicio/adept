@@ -57,6 +57,10 @@ save therefore cannot replace the previous latest checkpoint, and incomplete
 temporary directories are neither listed nor restorable. Committed state is checksum
 validated with NumPy pickle loading disabled.
 
+A POSIX advisory lock in the store root serializes commit/pointer transactions across
+store instances and processes. Readers take a shared lock, so they cannot observe a
+checkpoint while a failed transaction is rolling it back.
+
 `preflight` probes the selected directory before numerical work so missing or
 unwritable storage fails with a checkpoint-specific error.
 
