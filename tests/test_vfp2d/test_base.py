@@ -84,6 +84,91 @@ def test_uniform_collisionless_state_is_stationary_and_uses_real_diffrax_storage
     np.testing.assert_array_equal(dataset.m, [0, 0, 1, 0, 1, 2])
 
 
+def test_stationary_alternative_field_solvers_run_and_save_their_acceptance_diagnostics():
+    cases = (
+        ({"mode": "ampere", "relative_permittivity": 1.0e6}, "ampere"),
+        ({"mode": "oshun-implicit"}, "oshun-implicit"),
+    )
+    for field_solver, expected_mode in cases:
+        cfg = _config(collisions=False)
+        cfg["terms"]["field_solver"] = field_solver
+        module, output = _setup_and_run(cfg)
+        dataset = module.post_process(output, "")["vfp2d"]
+
+        assert module.field_mode == expected_mode
+        assert dataset.attrs["field_solver_mode"] == expected_mode
+        assert jnp.all(jnp.isfinite(output["solver result"].ys["flm"]))
+        assert dataset.ampere_residual.dims == ("t", "x", "y", "component")
+        np.testing.assert_allclose(dataset.ampere_residual_linf, 0.0, atol=2e-12)
+        if expected_mode == "ampere":
+            assert dataset.attrs["relative_permittivity"] == 1.0e6
+            assert "electromagnetic_field_energy" in dataset
+        else:
+            assert "electromagnetic_field_energy" not in dataset
+
+
+def test_gate2b_uniform_coupled_run_saves_ion_state_and_invariants():
+    cfg = _config(collisions=False)
+    cfg["terms"].update(
+        {
+            "field_solver": {"mode": "kinetic-ohm"},
+            "ion_fluid": {
+                "active": True,
+                "mass_ratio": 100.0,
+                "gamma": 5.0 / 3.0,
+                "boundaries": ["periodic", "periodic"],
+                "momentum_relaxation_rate": 0.25,
+            },
+        }
+    )
+    module, output = _setup_and_run(cfg)
+    saved = output["solver result"].ys
+    assert saved["ions"].shape == (3, 2, 2, 5)
+    np.testing.assert_allclose(saved["ions"][0], saved["ions"][-1], rtol=2e-12, atol=2e-12)
+
+    dataset = module.post_process(output, "")["vfp2d"]
+    for name in (
+        "ions",
+        "ni",
+        "ion_velocity",
+        "ion_pressure",
+        "ion_temperature",
+        "electron_number",
+        "ion_number",
+        "quasineutrality_linf",
+        "total_momentum",
+        "electron_energy",
+        "ion_energy",
+        "magnetic_energy",
+        "total_energy",
+        "current_projection_energy",
+        "accounted_total_energy",
+        "div_b_linf",
+        "negative_f00_mass",
+        "harmonic_free_energy",
+        "ohm_bulk",
+    ):
+        assert name in dataset
+    np.testing.assert_allclose(dataset.quasineutrality_linf, 0.0, atol=2e-13)
+    np.testing.assert_allclose(dataset.total_energy, dataset.total_energy[0], rtol=2e-12, atol=2e-12)
+    np.testing.assert_allclose(dataset.total_momentum, 0.0, atol=2e-13)
+    np.testing.assert_allclose(dataset.div_b_linf, 0.0, atol=2e-13)
+    np.testing.assert_allclose(dataset.negative_f00_mass, 0.0, atol=0.0)
+    np.testing.assert_allclose(dataset.ohm_bulk, 0.0, atol=2e-13)
+    reconstructed_e = sum(
+        dataset[name]
+        for name in (
+            "ohm_bulk",
+            "ohm_resistive",
+            "ohm_hall",
+            "ohm_nernst",
+            "ohm_scalar_pressure",
+            "ohm_tensor_pressure",
+        )
+    )
+    np.testing.assert_allclose(reconstructed_e, dataset.e, rtol=2e-12, atol=2e-12)
+
+
 def test_collisional_end_to_end_step_is_finite():
     _module, output = _setup_and_run(_config(collisions=True))
     for value in output["solver result"].ys.values():

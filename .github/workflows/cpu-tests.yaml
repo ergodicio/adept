@@ -30,6 +30,7 @@ jobs:
       lpse2d: ${{ steps.filter.outputs.lpse2d }}
       vlasov1d: ${{ steps.filter.outputs.vlasov1d }}
       vfp1d: ${{ steps.filter.outputs.vfp1d }}
+      vfp2d: ${{ steps.filter.outputs.vfp2d }}
       spectrax1d: ${{ steps.filter.outputs.spectrax1d }}
       pic1d: ${{ steps.filter.outputs.pic1d }}
       osiris: ${{ steps.filter.outputs.osiris }}
@@ -84,6 +85,11 @@ jobs:
             - 'adept/vfp1d/**'
             - 'tests/test_vfp1d/**'
             - 'tests/fp_relaxation/**'
+          vfp2d:
+            - *shared
+            - 'adept/vfp2d/**'
+            - 'configs/vfp-2d/**'
+            - 'tests/test_vfp2d/**'
           spectrax1d:
             - *shared
             - 'adept/_spectrax1d/**'
@@ -146,6 +152,18 @@ jobs:
         python-version: '3.11'
     - name: Test with pytest
       run: uv run --locked pytest tests/test_vfp1d
+
+  test-vfp2d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.vfp2d == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_vfp2d
 
   test-spectrax1d:
     needs: changes
