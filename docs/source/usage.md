@@ -58,5 +58,6 @@ usage/observations
 usage/checkpoints
 usage/run_plans
 usage/host_runtime
+usage/legacy_compatibility
 usage/initialization
 ```

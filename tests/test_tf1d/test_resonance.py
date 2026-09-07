@@ -43,9 +43,7 @@ def test_single_resonance(gamma):
     result = result["solver result"]
 
     kx = (
-        np.fft.fftfreq(
-            mod_defaults["save"]["x"]["nx"], d=mod_defaults["save"]["x"]["ax"][2] - mod_defaults["save"]["x"]["ax"][1]
-        )
+        np.fft.fftfreq(mod_defaults["save"]["x"]["nx"], d=exo.cfg["save"]["x"]["ax"][2] - exo.cfg["save"]["x"]["ax"][1])
         * 2.0
         * np.pi
     )
