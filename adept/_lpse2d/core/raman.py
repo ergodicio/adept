@@ -125,6 +125,7 @@ class RamanLight:
         laplacian_phi: Array,
         seed_args: dict | None,
         iaw_density: Array | None = None,
+        couple: bool = True,
     ) -> Array:
         e1x, e1y = E1[..., 0], E1[..., 1]
         linear_coeff = self.linear_coeff
@@ -136,9 +137,11 @@ class RamanLight:
         k_e1x = self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + linear_coeff * e1x
         k_e1y = self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + linear_coeff * e1y
 
-        # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation)
-        k_e1x += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 0]
-        k_e1y += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 1]
+        # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation);
+        # CoupledLight switches it off here when it integrates the exchange exactly
+        if couple:
+            k_e1x += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 0]
+            k_e1y += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 1]
 
         if seed_args is not None:
             row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)
