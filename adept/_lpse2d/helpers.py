@@ -361,7 +361,20 @@ def get_derived_quantities(cfg: dict) -> dict:
             f"{hpe['substeps']} particle substeps per EPW step"
         )
 
-    pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
+    # light-wave options: defaults and validation (coupling scheme, filter) come from
+    # the datamodel's LightModel; unknown keys are passed through untouched
+    light = cfg["terms"].get("light", {})
+    if light:
+        from adept._lpse2d.datamodel import LightModel
+
+        light = {**light, **LightModel(**light).model_dump()}
+        cfg["terms"]["light"] = light
+    pump_depletion = light.get("pump_depletion", False)
+    if not pump_depletion and (light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None):
+        raise ValueError(
+            "terms.light.coupling and terms.light.filter act on the coupled (pump-depletion) light solver "
+            "and require terms.light.pump_depletion: true"
+        )
     source_terms = cfg["terms"]["epw"]["source"]
     srs_on = bool(source_terms.get("srs", False))
     tpd_on = bool(source_terms.get("tpd", False))

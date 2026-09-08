@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -185,9 +187,17 @@ class EPWModel(BaseModel):
 
 class LightModel(BaseModel):
     """Light-wave evolution options. pump_depletion evolves E0 with the FD envelope
-    solver and reciprocal coupling from every active TPD/SRS source."""
+    solver and reciprocal coupling from every active TPD/SRS source. coupling selects
+    how the SRS exchange between E0 and E1 is integrated inside the light sub-step:
+    "explicit" (the MATLAB staggered update, which grows the light fields at a rate
+    ~Omega^2 dt_l/4 once the EPW is finite -- see CoupledLight) or "rotation" (exact,
+    action-conserving local rotation, Strang-split around the propagation)."""
 
     pump_depletion: bool = False
+    coupling: Literal["explicit", "rotation"] = "explicit"
+    # optional isotropic low-pass filter on E0/E1 once per EPW step, as a fraction of
+    # the grid Nyquist wavenumber pi/dx (None = off)
+    filter: float | None = None
 
 
 class IAWDampingModel(BaseModel):
