@@ -6,19 +6,23 @@ takes the charge density already deposited from particles so that the same
 spectral solve produces the self-consistent ``E`` for 1:1 comparison.
 """
 
+import equinox as eqx
 from jax import numpy as jnp
 
 from adept._pic1d.solvers.pushers.shape import deposit
 from adept._vlasov1d.simulation import EMDriver
 
 
-class SpectralPoissonSolver:
+class SpectralPoissonSolver(eqx.Module):
     """Spectral Poisson solve from a pre-computed charge density.
 
     ``E_k = -i / k * rho_k``, real-valued ``E(x)`` recovered via inverse FFT.
     The k=0 mode is set to zero (no DC field), consistent with periodic BCs and
     a neutralizing static background.
     """
+
+    one_over_kx: jnp.ndarray
+    static_charge_density: jnp.ndarray | None
 
     def __init__(self, one_over_kx: jnp.ndarray, static_charge_density: jnp.ndarray | None = None):
         self.one_over_kx = one_over_kx
@@ -30,8 +34,14 @@ class SpectralPoissonSolver:
         return jnp.real(jnp.fft.ifft(-1j * self.one_over_kx * jnp.fft.fft(rho)))
 
 
-class ParticleChargeDensity:
+class ParticleChargeDensity(eqx.Module):
     """Sum charge density contributions from all species via shape deposition."""
+
+    nx: int
+    dx: float
+    xmin: float
+    species_params: dict
+    shape: str
 
     def __init__(
         self,
@@ -57,13 +67,19 @@ class ParticleChargeDensity:
         return rho
 
 
-class ElectronChargeDensity:
+class ElectronChargeDensity(eqx.Module):
     """Electron-only charge density q_e * n_e for the transverse wave equation.
 
     Matches Vlasov-1D's ``compute_electron_charge_density``: deposits only the
     ``electron`` species so that the same ``-0.5 * (cd_n + cd_np1)`` convention
     used by ``WaveSolver`` reproduces the ``n_e * a`` (= ω_pe² * a) term.
     """
+
+    nx: int
+    dx: float
+    xmin: float
+    shape: str
+    electron_charge: float
 
     def __init__(
         self,
@@ -87,10 +103,13 @@ class ElectronChargeDensity:
         return self.electron_charge * n_e
 
 
-class LongitudinalElectricFieldDriver:
+class LongitudinalElectricFieldDriver(eqx.Module):
     """E_drive(x, t) = Σ_d ω * a0 * envelope * sin(k x − ω t). Identical to
     Vlasov-1D's :class:`LongitudinalElectricFieldDriver`, redefined here so we
     don't depend on Vlasov-1D's grid object directly."""
+
+    xax: jnp.ndarray
+    drivers: list[EMDriver]
 
     def __init__(self, xax: jnp.ndarray, drivers: list[EMDriver]):
         self.xax = xax
@@ -103,8 +122,9 @@ class LongitudinalElectricFieldDriver:
         factor = driver.envelope(self.xax, t)
         return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * t)
 
-    def __call__(self, t, args=None) -> jnp.ndarray:
+    def __call__(self, t, drivers: list[EMDriver] | None = None) -> jnp.ndarray:
+        drivers = self.drivers if drivers is None else drivers
         total = jnp.zeros_like(self.xax)
-        for d in self.drivers:
+        for d in drivers:
             total = total + self._single(d, t)
         return total

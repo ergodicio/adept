@@ -15,6 +15,7 @@ from equinox import Module, filter_jit
 from jax import numpy as jnp
 
 from . import patched_mlflow as mlflow
+from ._jax_helpers import get_envelope as _get_envelope
 from .utils import robust_log_artifacts
 
 
@@ -24,7 +25,7 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
         DeprecationWarning,
         stacklevel=2,
     )
-    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
+    return _get_envelope(p_wL, p_wR, p_L, p_R, ax)
 
 
 class Stepper(Euler):
@@ -222,6 +223,9 @@ class ergoExo:
 
         self.ran_setup = False
         self.cfg = None
+        self._compat_execution = None
+        self.execution_backend = "legacy"
+        self.compatibility_fallback_reason = "setup has not completed"
 
     def setup(self, cfg: dict, adept_module: ADEPTModule = None) -> dict[str, Module]:
         """
@@ -348,6 +352,7 @@ class ergoExo:
         return this_module(cfg)
 
     def _setup_(self, cfg: dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> dict[str, Module]:
+        from adept._compat import LegacyPreparedExecution
         from adept.utils import log_params
 
         # Snapshot the config as provided, before the module mutates it in
@@ -355,6 +360,9 @@ class ergoExo:
         # is the original config; the processed cfg lands in derived_config.yaml
         # and the logged params.
         original_cfg = deepcopy(cfg)
+        self._compat_execution = None
+        self.execution_backend = "legacy"
+        self.compatibility_fallback_reason = "setup did not complete"
 
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
@@ -390,9 +398,34 @@ class ergoExo:
         self.adept_module.init_diffeqsolve()
         modules = self.adept_module.init_modules()
 
+        self._compat_execution, self.compatibility_fallback_reason = LegacyPreparedExecution.try_create(
+            original_cfg,
+            legacy_module=self.adept_module,
+            custom_module=adept_module is not None,
+        )
+        if self._compat_execution is not None:
+            self.execution_backend = "prepared"
+
         self.ran_setup = True
 
         return modules
+
+    def _execute_simulation(self, modules: dict | None, args: dict | None) -> dict:
+        if self._compat_execution is not None:
+            reason = self._compat_execution.fallback_reason(
+                state=self.adept_module.state,
+                legacy_args=self.adept_module.args,
+                modules=modules,
+                args=args,
+            )
+            if reason is None:
+                self.execution_backend = "prepared"
+                self.compatibility_fallback_reason = None
+                return self._compat_execution.execute()
+            self.compatibility_fallback_reason = reason
+
+        self.execution_backend = "legacy"
+        return filter_jit(self.adept_module.__call__)(modules, args)
 
     def __call__(
         self, modules: dict | None = None, args: dict | None = None, export=True
@@ -425,7 +458,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            run_output = filter_jit(self.adept_module.__call__)(modules, args)
+            run_output = self._execute_simulation(modules, args)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
@@ -466,6 +499,8 @@ class ergoExo:
             or passed in during the initialization
         """
         assert self.ran_setup, "You must run self.setup() before running the simulation"
+        self.execution_backend = "legacy"
+        self.compatibility_fallback_reason = "val_and_grad remains on ADEPTModule.vg during the transition"
         with mlflow.start_run(
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:

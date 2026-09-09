@@ -23,6 +23,7 @@ source = { editable = "." }
 dependencies = [
     { name = "boto3" },
     { name = "diffrax" },
+    { name = "equinox" },
     { name = "h5netcdf" },
     { name = "interpax" },
     { name = "jax" },
@@ -76,6 +77,7 @@ requires-dist = [
     { name = "adept", extras = ["docs"], marker = "extra == 'dev'" },
     { name = "boto3" },
     { name = "diffrax" },
+    { name = "equinox" },
     { name = "h5netcdf" },
     { name = "interpax", git = "https://github.com/f0uriest/interpax.git" },
     { name = "jax" },

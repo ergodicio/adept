@@ -68,6 +68,23 @@ where $A$ is the advection operator. This is a much faster solver than the cubic
 
 2. **`cubic-spline`** - This is a semi-Lagrangian solver that uses a cubic-spline interpolator to advect the distribution function in velocity space. Use this if you have trouble with the exponential solver.
 
+3. **`lagrange7`** - An eight-point, degree-7 semi-Lagrangian velocity interpolator
+   for reducing interpolation error in resolved structures. It uses nonperiodic
+   velocity boundaries, supports multispecies grids and sharding, and requires at
+   least eight velocity cells per species. It does not enforce positivity.
+
+### Time Integration
+
+**`strang`** provides explicit spatial-half / velocity-full / spatial-half splitting,
+with the self-consistent field computed after the first half-stream and external
+forcing evaluated at the midpoint. It uses one velocity remap per timestep and
+returns the distribution and electric field at the same final time. Select it with
+`poisson` or `poisson-boltzmann`; it can be paired with any velocity pusher.
+
+The existing `leapfrog` and `sixth` options remain available. See the
+[configuration reference](config.md#strang-splitting-with-degree-7-velocity-interpolation)
+for the scope of the second-order update and boundary behavior.
+
 ### Spatial Advection
 
 1. **`exponential`** - This is the only solver that is available. We only have periodic boundaries implemented in space (for the plasma) so this is perfectly fine. It is also very fast.
@@ -91,6 +108,7 @@ where $A$ is the advection operator. This is a much faster solver than the cubic
 | $x$ (distribution and electrostatic field) | **Periodic** | Spatial advection and the Poisson/Ampère solves are spectral, so periodicity is structural rather than a choice. |
 | $v$ (`edfdv: exponential`) | **Periodic** | An artifact of doing the velocity push spectrally. It wraps the forward tail onto the $-v$ edge, so it is only safe when $f \approx 0$ at both velocity edges. |
 | $v$ (`edfdv: cubic-spline`) | Semi-Lagrangian interpolation | Does not assume periodicity; use it when the tails are populated. |
+| $v$ (`edfdv: lagrange7`) | Semi-Lagrangian interpolation | Exterior stencil samples and departure points use `1e-30`; no wraparound or mass renormalization. |
 | $v$ (collision operator) | **Zero-flux** | Applied at both velocity edges, which is what makes the Fokker-Planck operators conserve density exactly. |
 | $x$ (transverse vector potential $a$) | **Absorbing**, 2nd order | The transverse wave equation is solved by finite differences on a grid with two boundary cells, independently of the periodic plasma domain. |
 
@@ -158,7 +176,7 @@ Each pusher is wrapped in `jax.shard_map` over a one-dimensional mesh of `jax.de
 
 | Axis | Operators | Why no halo is needed |
 |---|---|---|
-| `"x"` | `edfdv` (`exponential` and `cubic-spline`) and the collision operator (Fokker-Planck + Krook) | Both are pointwise in $x$ — an independent velocity-space solve per spatial cell |
+| `"x"` | `edfdv` (`exponential`, `cubic-spline`, and `lagrange7`) and the collision operator (Fokker-Planck + Krook) | Both are pointwise in $x$ — an independent velocity-space solve per spatial cell |
 | `"v"` | `vdfdx` (`exponential`) | The spectral $x$-advection is an independent phase rotation per velocity |
 
 Because the two axes are different, `["x", "v"]` makes XLA insert an all-to-all between the velocity

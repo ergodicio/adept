@@ -137,6 +137,7 @@ class SpectralEPWSolver:
 
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
+        self.iaw_enabled = cfg["terms"].get("iaw", {}).get("active", False)
 
         # Landau damping flag (previously ignored -- damping was unconditionally on)
         self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
@@ -427,13 +428,17 @@ class SpectralEPWSolver:
             srs_source = self.calc_srs_source(E0, y["E1"])
 
         # ========================================================================
-        # STEP 7: Apply density gradient to E fields (in REAL space)
+        # STEP 7: Apply background and ion-acoustic density detuning (in REAL space)
         # ========================================================================
-        if self.density_gradient_enabled:
+        if self.density_gradient_enabled or self.iaw_enabled:
             # MATLAB line 2081-2082:
-            # Ex = Ex .* exp(-1i * wp0/2 * (n/n0 - 1) * DT)
-            # Ey = Ey .* exp(-1i * wp0/2 * (n/n0 - 1) * DT)
-            density_perturbation = background_density / self.envelope_density - 1.0
+            # Ex = Ex .* exp(-1i * wp0/2 * (n/n0 - 1 + Nelf) * DT)
+            # Ey = Ey .* exp(-1i * wp0/2 * (n/n0 - 1 + Nelf) * DT)
+            density_perturbation = (
+                background_density / self.envelope_density - 1.0 if self.density_gradient_enabled else 0.0
+            )
+            if self.iaw_enabled:
+                density_perturbation = density_perturbation + y["iaw_density"]
             density_phase = jnp.exp(-1j * self.wp0 / 2.0 * density_perturbation * self.dt)
             ex = ex * density_phase
             ey = ey * density_phase

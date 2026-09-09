@@ -1,7 +1,14 @@
 API Guide
 ----------
 
-There are two primary high level classes.
+The explicit logging-free program and objective API is described in
+:doc:`usage/explicit_programs`. Serializable execution intent and local executor
+preflight are described in :doc:`usage/run_plans`; versioned durable solver state is
+described in :doc:`usage/checkpoints`; tracker, artifact, report, and host execution
+services are described in :doc:`usage/host_runtime`. The new path is currently opt-in
+for the ``tf-1d`` and electrostatic ``pic-1d`` pilots.
+
+The established API has two primary high level classes.
 
 1. `ergoExo` houses the solver and handles the mlflow logging and experiment management
 2. `ADEPTModule` is base class for the solver

@@ -21,7 +21,7 @@ class TimeIntegrator:
     This is the base class for all time integrators. This makes it so that we dont have to
     load the electric field solver and the Vlasov pushers in every time integrator
 
-    The available solvers for E df/dv are "exponential" and "cubic-spline"
+    The available solvers for E df/dv are "exponential", "cubic-spline", and "lagrange7"
     The only solver for v df/dx is "exponential"
 
     :param cfg: Dict
@@ -46,6 +46,10 @@ class TimeIntegrator:
             )
         elif cfg["terms"]["edfdv"] == "cubic-spline":
             return vlasov.VelocityCubicSpline(
+                self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
+            )
+        elif cfg["terms"]["edfdv"] == "lagrange7":
+            return vlasov.VelocityLagrange7(
                 self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
             )
         else:
@@ -93,6 +97,34 @@ class LeapfrogIntegrator(TimeIntegrator):
         f_dict = self.edfdv(f_after_v, e=e + dex_array[0], pond=pond, dt=self.dt)
 
         return e, f_dict
+
+
+class StrangIntegrator(TimeIntegrator):
+    """Explicit x-half / v-full / x-half splitting for electrostatic field solves.
+
+    The velocity kick uses the field from the intermediate distribution and
+    external forcing at the midpoint. Returned distributions and self-consistent
+    fields are synchronized at the end of the step.
+    """
+
+    def __init__(self, cfg: dict, grid: Grid):
+        """Build a Strang step for Poisson or Poisson-Boltzmann fields."""
+        if cfg["terms"]["field"] not in {"poisson", "poisson-boltzmann"}:
+            raise NotImplementedError("time: strang requires field: poisson or poisson-boltzmann")
+        super().__init__(cfg, grid)
+        self.dt = grid.dt
+        # The kick uses the midpoint; saved driver diagnostics use the endpoint.
+        # Entry 1 also retains the wrapper's endpoint transverse-driver timing.
+        self.dt_array = self.dt * jnp.array([0.5, 1.0])
+
+    def __call__(self, f_dict: dict, a: Array, dex_array: Array, prev_ex: Array) -> tuple[Array, dict]:
+        """Advance every species with one velocity interpolation per full step."""
+        f_half = self.vdfdx(f_dict, dt=0.5 * self.dt)
+        pond, e_half = self.field_solve(f_dict=f_half, a=a, prev_ex=None, dt=None)
+        f_kicked = self.edfdv(f_half, e=e_half + dex_array[0], pond=pond, dt=self.dt)
+        f_new = self.vdfdx(f_kicked, dt=0.5 * self.dt)
+        _, e_new = self.field_solve(f_dict=f_new, a=a, prev_ex=None, dt=None)
+        return e_new, f_new
 
 
 class SixthOrderHamIntegrator(TimeIntegrator):
@@ -189,7 +221,7 @@ class SixthOrderHamIntegrator(TimeIntegrator):
 class VlasovPoissonFokkerPlanck:
     """Vlasov-Poisson + Fokker-Planck timestep for multi-species simulations.
 
-    Combines a Vlasov-Poisson integrator (leapfrog or 6th-order Hamiltonian)
+    Combines a Vlasov-Poisson integrator (leapfrog, Strang, or 6th-order Hamiltonian)
     with optional Fokker-Planck collisions. Handles dict-based multi-species
     distributions where each species evolves under the same self-consistent
     electric field.
@@ -211,6 +243,9 @@ class VlasovPoissonFokkerPlanck:
         elif cfg["terms"]["time"] == "leapfrog":
             self.vlasov_poisson = LeapfrogIntegrator(cfg, grid)
             self.dex_save = 0
+        elif cfg["terms"]["time"] == "strang":
+            self.vlasov_poisson = StrangIntegrator(cfg, grid)
+            self.dex_save = 1
         else:
             raise NotImplementedError
         self.fp = fokker_planck.Collisions(cfg=cfg)

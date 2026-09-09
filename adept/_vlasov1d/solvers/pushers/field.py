@@ -6,7 +6,7 @@
 from jax import numpy as jnp
 from jaxtyping import Array
 
-from adept._base_ import get_envelope
+from adept._jax_helpers import get_envelope
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.simulation import BroadbandDriver, EMDriver
 

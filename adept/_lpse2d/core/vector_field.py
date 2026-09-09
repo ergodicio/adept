@@ -40,7 +40,13 @@ class SplitStep:
             self.hpe = HybridParticleEvolution(cfg)
         else:
             self.hpe = None
-        # the HPE keys (x_e, u_e, epw_hist, gamma_L) are real and stay out of this list
+        if cfg["terms"].get("iaw", {}).get("active", False):
+            from adept._lpse2d.core.iaw import IonAcousticWave
+
+            self.iaw = IonAcousticWave(cfg)
+        else:
+            self.iaw = None
+        # HPE particle/histogram keys are real and stay out of this list
         self.complex_state_vars = ["E0", "epw", "E1"]
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
@@ -82,11 +88,18 @@ class SplitStep:
         )
 
     def light_split_step(self, t, y, driver_args):
+        iaw_density = y.get("iaw_density")
         if self.pump_depletion:
             # the pump is a dynamic field sourced by its boundary injector; both light
             # waves advance inside one staggered update (absorbers applied per sub-step)
             y["E0"], y["E1"] = self.coupled_light(
-                t, y["E0"], y["E1"], y["epw"], driver_args["E0"], driver_args.get("E1")
+                t,
+                y["E0"],
+                y["E1"],
+                y["epw"],
+                driver_args["E0"],
+                driver_args.get("E1"),
+                iaw_density,
             )
             return y
 
@@ -105,7 +118,7 @@ class SplitStep:
 
         if self.raman is not None:
             # evolve the Raman light; absorbing boundaries are applied per light sub-step inside
-            y["E1"] = self.raman(t, y["E1"], E0_fn, y["epw"], driver_args.get("E1"))
+            y["E1"] = self.raman(t, y["E1"], E0_fn, y["epw"], driver_args.get("E1"), iaw_density)
         else:
             y["E1"] *= self.boundary_envelope[..., None]
 
@@ -122,6 +135,11 @@ class SplitStep:
             new_y["epw"] += jnp.fft.fft2(self.dt * self.epw.driver(args["drivers"]["E2"], t))
         # epw split step
         new_y["epw"] = self.epw(t, new_y, args)
+
+        # ion-acoustic split step: the updated density is seen by the light and EPW
+        # detuning terms on the next outer step, matching the MATLAB ordering
+        if self.iaw is not None:
+            new_y = self.iaw(new_y)
 
         # particle push + Landau-damping feedback; the gamma_L written here is the
         # rate the EPW update applies on the next step (one-step lag)

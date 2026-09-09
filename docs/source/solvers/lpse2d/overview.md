@@ -14,7 +14,12 @@ These equations model the evolution and interaction of the complex envelopes of 
 
 One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. By default the pump is prescribed analytically (an external driver for the plasma waves), which is adequate below the absolute instability threshold; above it the plasma-wave and Raman fields grow without bound because nothing depletes the pump.
 
-For SRS, setting `terms.light.pump_depletion: true` evolves the pump `E0` with the same finite-difference envelope solver as the Raman light, sourced by a two-point boundary injector at the low-density side and coupled to the EPW through $-i e/(4 \omega_1 m_e) (\nabla^2 \phi) \mathbf{E}_1$ (the conjugate partner of the Raman coupling; the pair conserves $\int |E_0|^2 + |E_1|^2 + |\nabla\phi|^2$ together with the EPW source). This enables true transmission/absorption diagnostics and saturation of above-threshold runs.
+Setting `terms.light.pump_depletion: true` evolves the pump `E0` with the finite-difference envelope solver and a two-point boundary injector at the low-density side. Every active instability contributes its reciprocal pump term:
+
+- SRS contributes $-i e/(4 \omega_1 m_e) (\nabla^2 \phi) \mathbf{E}_1$.
+- TPD contributes $i e/(4 \omega_0 m_e) e^{i(\omega_0-2\omega_{p0})t} E_{h,y}\nabla\!\cdot\!\mathbf{E}_h$ to the y-polarized pump. This is the discrete reciprocal of the existing TPD source and conserves $\int[|E_0|^2+(\omega_{p0}/\omega_0)|\mathbf{E}_h|^2]$ for the coupling terms alone.
+
+Both terms are included when TPD and SRS are enabled together. Dynamic pump evolution enables true transmission/absorption diagnostics and provides the physical saturation channel needed above threshold.
 
 ### SRS diagnostics
 
@@ -65,9 +70,9 @@ density gradient, periodic transverse to it. The $k=0$ mode is masked out of the
 
 ## Forcing and Drivers
 
-Because pump depletion is not implemented, **the laser is pure forcing** — it drives the plasma waves
-and is never itself depleted. That is the central approximation of this solver and the reason it is
-only valid below the absolute instability threshold.
+With `terms.light.pump_depletion: false`, the laser is prescribed forcing and is therefore appropriate
+only while depletion is negligible. With depletion enabled, the injected pump propagates through the
+box and receives the reciprocal TPD and/or SRS feedback described above.
 
 | Term | Role |
 |---|---|
@@ -75,6 +80,14 @@ only valid below the absolute instability threshold.
 | $S_\text{TPD}$ | The two-plasmon-decay source coupling $E_0$ to the plasma-wave envelope. |
 | $S_h$ | A noise/seed source for the plasma waves. |
 | $\nu_e^\circ$ | Landau damping of the plasma-wave envelope. |
+
+### Ion-acoustic waves
+
+`terms.iaw.active: true` evolves the fractional ion-density perturbation and ion-velocity divergence using the MATLAB LPSE split step. The pressure contains acoustic restoring force plus ponderomotive drive from the EPW, pump, and Raman fields. The resulting density perturbation feeds back into the detuning of all three envelope equations. IAW boundary damping defaults to the EPW boundary configuration; collisional and Landau damping are independently configurable.
+
+### Hybrid particles and the 2D boundary
+
+The HPE particle tracker supplies self-consistent Landau-damping feedback and hot-electron diagnostics in both quasi-1D and 2D runs. For `ny > 1`, a single box-wide ensemble carries `(x, y, p_x, p_y)` and samples both electric-field components; angle-resolved projected-velocity histograms provide the resonant distribution for every `(k_x, k_y)` mode without assigning particles to individual grid cells. Periodic boundaries wrap particles, while reservoir walls use flux-weighted thermal-tail reinjection. HPE can be combined with TPD, SRS, pump depletion, and IAWs, as demonstrated by `configs/envelope-2d/tpd-srs-iaw.yaml`; `srs-hpe.yaml` remains the smaller quasi-1D example.
 
 ## What Gets Saved
 
@@ -85,6 +98,8 @@ only valid below the absolute instability threshold.
 | `fields.xr` | The real-space envelope fields over time |
 | `k-fields.xr` | The same in wavenumber space — this is where TPD growth is measured |
 | `series.xr` | Scalar time series |
+
+When IAWs are active, `fields.xr` and `k-fields.xr` also contain `iaw_density` and `iaw_velocity_divergence`; `series.xr` includes `iaw_density_sq` and `iaw_density_abs_max`.
 
 **`plots/`**, per field `k`:
 
