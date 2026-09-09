@@ -152,6 +152,18 @@ class BroadbandIntensitiesConfig(BaseModel):
             raise ValueError("intensities.init == 'random' requires intensities.seed")
         return self
 
+    @model_validator(mode="after")
+    def check_range(self) -> "BroadbandIntensitiesConfig":
+        """Weights feed ``a_j = a0 * sqrt(w_j / sum(w))``: the draw range must be
+        ordered and non-negative with positive support, or amplitudes go NaN."""
+        lo, hi = self.range
+        if not (0.0 <= lo < hi):
+            raise ValueError(
+                f"intensities.range must satisfy 0 <= lo < hi (got ({lo}, {hi})): weights are "
+                "square-rooted after normalization, so negative or zero-support ranges produce NaN amplitudes"
+            )
+        return self
+
 
 class BroadbandPhasesConfig(BaseModel):
     """Per-line spectral phases of a broadband (multi-color) driver."""
@@ -257,6 +269,19 @@ class EMDriverSetConfig(BaseModel):
     ex: dict[str, EMDriverConfig]
     ey: dict[str, EMDriverConfig]
     ex_stochastic: StochasticDriverConfig | None = None
+
+    @field_validator("ex")
+    @classmethod
+    def no_broadband_ex(cls, ex: dict[str, EMDriverConfig]) -> dict[str, EMDriverConfig]:
+        """The broadband (multi-color) driver is an ey feature: the longitudinal
+        pusher evaluates scalar per-driver parameters and cannot evaluate a comb,
+        so reject it at validation instead of failing at runtime."""
+        for key, drv in ex.items():
+            if isinstance(drv.params, BroadbandConfig):
+                raise ValueError(
+                    f"drivers.ex['{key}']: broadband (multi-color) params are only supported for ey drivers"
+                )
+        return ex
 
 
 class HouLiFilterConfig(BaseModel):

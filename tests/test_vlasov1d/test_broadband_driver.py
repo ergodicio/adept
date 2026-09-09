@@ -32,7 +32,7 @@ import jax
 from jax import numpy as jnp
 from pydantic import ValidationError
 
-from adept._vlasov1d.datamodel import EMDriverConfig
+from adept._vlasov1d.datamodel import EMDriverConfig, EMDriverSetConfig
 from adept._vlasov1d.simulation import BroadbandDriver, EMDriver, EMDriverSet
 from adept._vlasov1d.solvers.pushers.field import TransverseCurrentSourceDriver
 from adept.normalization import electron_debye_normalization
@@ -171,3 +171,43 @@ def test_gradients_flow_through_args_route(source_type):
         assert g.shape == (8,)
         assert np.all(np.isfinite(np.asarray(g)))
         assert np.max(np.abs(np.asarray(g))) > 0.0
+
+
+def test_intensity_range_must_be_ordered_nonnegative():
+    """Weights are square-rooted after normalization: mixed-sign, all-zero, and
+    inverted ranges must be rejected at validation, not surface as NaN amplitudes."""
+    for bad in [(-1.0, 1.0), (0.0, 0.0), (2.0, 1.0), (-2.0, -1.0)]:
+        with pytest.raises(ValidationError, match="intensities.range"):
+            _comb(4, 0.001, intensities={
+                "base_intensity": BASE_INTENSITY, "init": "random", "seed": 0, "range": bad,
+            })
+    # a valid non-default range still builds, with finite amplitudes
+    bb = _comb(4, 0.001, intensities={
+        "base_intensity": BASE_INTENSITY, "init": "random", "seed": 0, "range": (0.5, 1.5),
+    })
+    assert np.all(np.isfinite(np.asarray(bb.amplitudes)))
+
+
+def test_broadband_rejected_under_ex():
+    """The broadband comb is an ey-only feature: the longitudinal pusher evaluates
+    scalar per-driver parameters, so an ex broadband deck must fail validation."""
+    bb_params = {
+        "num_colors": 4,
+        "delta_omega": 0.001,
+        "wavelength": WAVELENGTH,
+        "intensities": {"base_intensity": BASE_INTENSITY, "init": "uniform"},
+        "phases": {"init": "random", "seed": 1},
+    }
+    driver = {"params": bb_params, "envelope": _envelope("point"), "source_type": "point"}
+    with pytest.raises(ValidationError, match="only supported for ey"):
+        EMDriverSetConfig(ex={"0": driver}, ey={})
+    # the same driver under ey validates
+    EMDriverSetConfig(ex={}, ey={"0": driver})
+
+
+def test_driverless_pusher_needs_no_args_entry():
+    """A pusher constructed with no ey drivers returns zeros without reading args
+    (regression: upstream driverless configs call the vector field with bare args)."""
+    pusher = TransverseCurrentSourceDriver(XAX, drivers=[], c=C_NORM)
+    out = pusher(0.7, {})
+    np.testing.assert_array_equal(np.asarray(out), 0.0)

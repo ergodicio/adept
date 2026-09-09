@@ -93,10 +93,15 @@ class TransverseCurrentSourceDriver:
     def __call__(self, t, args):
         """Evaluate the summed transverse current source at time t."""
         total = jnp.zeros_like(self.xax)
-        # Drivers are read from args unconditionally: args is the differentiable route
-        # (BaseVlasov1D.__call__ guarantees args["drivers"] is present). No fallback to
-        # self.drivers -- a silent fallback would zero the driver gradients instead of
-        # erroring if the args plumbing ever broke.
+        # A pusher constructed with no ey drivers returns zeros without touching
+        # args, so driverless configs (and tests that call the vector field with
+        # bare args) need no "drivers" entry.
+        if not self.drivers:
+            return total
+        # With drivers present, they are read from args unconditionally
+        # (BaseVlasov1D.__call__ guarantees args["drivers"] is present). No fallback
+        # to self.drivers -- a silent fallback would mask broken args plumbing
+        # instead of erroring.
         ey_list = args["drivers"].ey
         for driver in ey_list:
             amplitudes = driver.amplitudes if isinstance(driver, BroadbandDriver) else jnp.atleast_1d(driver.a0)
