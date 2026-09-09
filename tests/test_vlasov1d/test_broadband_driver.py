@@ -7,8 +7,8 @@ reads drivers from ``args["drivers"].ey`` and evaluates all lines vectorized. No
 solve is run here.
 
 Covered:
-  * a uniform N-line comb carries the same time-averaged power as the monochromatic
-    driver at ``base_intensity`` (``sum_j a_j^2 == a0^2``),
+  * a uniform N-line comb carries the same time-averaged physical power as the
+    monochromatic driver at ``base_intensity`` (``sum_j (w_j a_j)^2 == (w0 a0)^2``),
   * ``delta_omega`` is the comb HALF-width; ``num_colors: 1`` sits exactly at ``w0``
     and reproduces the monochromatic driver's source to machine precision at the
     ``TransverseCurrentSourceDriver`` level,
@@ -88,25 +88,35 @@ def _source(driver, t, xax):
 XAX = jnp.linspace(0.0, 50.0 * 213.0, 1024)  # ~50 um in Debye-length units, coarse
 
 
+def _physical_power(bb):
+    """sum_j (w_j a_j)^2 -- line j's physical field has amplitude w_j * a_j."""
+    return float(jnp.sum(((bb.w0 + bb.delta_omega) * bb.amplitudes) ** 2))
+
+
 def test_uniform_comb_has_monochromatic_power():
-    """sum_j a_j^2 == a0^2 for a uniform comb (a_j = a0 sqrt(w_j / sum w))."""
+    """sum_j (w_j a_j)^2 == (w0 a0)^2 for a uniform comb, at small AND large bandwidth
+    (regression: sum_j a_j^2 == a0^2 alone overshoots physical power by O(delta^2),
+    e.g. x1.25 for two lines at +/-0.5)."""
     mono = _mono()
-    bb = _comb(50, 0.0025)
-    assert bb.amplitudes.shape == (50,)
-    assert np.allclose(np.asarray(bb.amplitudes), float(bb.amplitudes[0]))  # uniform weights
-    assert math.isclose(float(jnp.sum(bb.amplitudes**2)), float(mono.a0) ** 2, rel_tol=1e-12)
-    # the comb shares the monochromatic carrier
-    assert float(bb.k0) == float(mono.k0) and float(bb.w0) == float(mono.w0)
+    for delta in (0.0025, 0.5):
+        bb = _comb(50, delta)
+        assert bb.amplitudes.shape == (50,)
+        assert math.isclose(_physical_power(bb), (float(mono.w0) * float(mono.a0)) ** 2, rel_tol=1e-12)
+        # the comb shares the monochromatic carrier
+        assert float(bb.k0) == float(mono.k0) and float(bb.w0) == float(mono.w0)
 
 
 def test_delta_omega_is_half_width():
-    """delta_omega (N,) spans [-d, +d] * w0 uniformly (full width 2d)."""
+    """delta_omega (N,) spans [-d, +d] * w0 uniformly (full width 2d); d >= 1 is
+    rejected (a line frequency would reach zero or below)."""
     bb = _comb(3, 0.0025)
     rel = np.asarray(bb.delta_omega) / float(bb.w0)
     assert np.allclose(rel, [-0.0025, 0.0, 0.0025], atol=1e-15)
     bb = _comb(2, 0.0025)
     rel = np.asarray(bb.delta_omega) / float(bb.w0)
     assert np.allclose(rel, [-0.0025, 0.0025], atol=1e-15)
+    with pytest.raises(ValidationError):
+        _comb(3, 1.0)
 
 
 @pytest.mark.parametrize("source_type", ["point", "extended"])
@@ -136,8 +146,9 @@ def test_seeded_line_sets_are_reproducible():
     c = _comb(20, 0.001, intensities=kw["intensities"], phases={"init": "random", "seed": 4})
     np.testing.assert_array_equal(np.asarray(a.amplitudes), np.asarray(c.amplitudes))
     assert np.any(np.asarray(a.phases) != np.asarray(c.phases))
-    # random weights still carry the monochromatic power
-    assert math.isclose(float(jnp.sum(a.amplitudes**2)), float(_mono().a0) ** 2, rel_tol=1e-12)
+    # random weights still carry the monochromatic physical power
+    mono = _mono()
+    assert math.isclose(_physical_power(a), (float(mono.w0) * float(mono.a0)) ** 2, rel_tol=1e-12)
 
 
 def test_random_init_requires_seed():
@@ -177,14 +188,28 @@ def test_intensity_range_must_be_ordered_nonnegative():
     """Weights are square-rooted after normalization: mixed-sign, all-zero, and
     inverted ranges must be rejected at validation, not surface as NaN amplitudes."""
     for bad in [(-1.0, 1.0), (0.0, 0.0), (2.0, 1.0), (-2.0, -1.0)]:
-        with pytest.raises(ValidationError, match="intensities.range"):
-            _comb(4, 0.001, intensities={
-                "base_intensity": BASE_INTENSITY, "init": "random", "seed": 0, "range": bad,
-            })
+        with pytest.raises(ValidationError, match=r"intensities\.range"):
+            _comb(
+                4,
+                0.001,
+                intensities={
+                    "base_intensity": BASE_INTENSITY,
+                    "init": "random",
+                    "seed": 0,
+                    "range": bad,
+                },
+            )
     # a valid non-default range still builds, with finite amplitudes
-    bb = _comb(4, 0.001, intensities={
-        "base_intensity": BASE_INTENSITY, "init": "random", "seed": 0, "range": (0.5, 1.5),
-    })
+    bb = _comb(
+        4,
+        0.001,
+        intensities={
+            "base_intensity": BASE_INTENSITY,
+            "init": "random",
+            "seed": 0,
+            "range": (0.5, 1.5),
+        },
+    )
     assert np.all(np.isfinite(np.asarray(bb.amplitudes)))
 
 

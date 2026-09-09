@@ -92,11 +92,15 @@ class BroadbandDriver(eqx.Module):
 
     Given the monochromatic amplitude ``a0`` for ``intensities.base_intensity`` and
     per-line weights ``w_j`` (uniform or seeded-random), the line amplitudes are
-    ``a_j = a0 * sqrt(w_j / sum_k w_k)`` so that ``sum_j a_j^2 = a0^2`` -- the comb
-    carries the same *time-averaged* power as the single line (a phase-locked comb
-    still peaks at ``a0 * sqrt(N)`` at recurrence). Line frequencies are
-    ``w_j = w0 * (1 + d_j)``, ``d_j`` uniform on ``[-delta_omega, +delta_omega]``
-    (``delta_omega`` is the half-width; ``num_colors == 1`` sits exactly at ``w0``).
+    ``a_j = a0 * (w0 / w_j) * sqrt(w_j / sum_k w_k)``. The physical field of line j
+    has amplitude ``w_j * a_j`` (E = -dA/dt), so this normalization conserves the
+    *physical* intensity partition exactly at any bandwidth:
+    ``sum_j (w_j a_j)^2 = (w0 a0)^2`` and ``I_j / I_base = w_j / sum_k w_k`` -- the
+    comb carries the same *time-averaged* power as the single line (a phase-locked
+    comb still peaks at ~sqrt(N) times the single-line field at recurrence). Line
+    frequencies are ``w_j = w0 * (1 + d_j)``, ``d_j`` uniform on
+    ``[-delta_omega, +delta_omega]`` (``delta_omega`` is the half-width, required
+    < 1 so every ``w_j`` stays positive; ``num_colors == 1`` sits exactly at ``w0``).
 
     All lines share the carrier ``k0``: the source is
     ``-env * w_j^2 * a_j * sin(k0 x - w_j t + phi_j)``, so an off-center line is not
@@ -110,7 +114,7 @@ class BroadbandDriver(eqx.Module):
     k0: float
     w0: float
     intensity_weights: Array  # raw per-line weights w_j (dimensionless)
-    amplitudes: Array  # per-line a_j = a0 * sqrt(w_j / sum w)
+    amplitudes: Array  # per-line a_j = a0 * (w0 / w_j) * sqrt(w_j / sum w)
     delta_omega: Array
     phases: Array
     envelope: SpaceTimeEnvelopeFunction
@@ -135,16 +139,19 @@ class BroadbandDriver(eqx.Module):
             self.intensity_weights = jnp.ones(n_colors)
         else:
             raise NotImplementedError(f"Initialization type -- {self.params['intensities']['init']} -- not implemented")
-        # amplitudes: sqrt normalization so sum_j a_j^2 = a0^2 (same time-averaged power as
-        # the monochromatic line; otherwise a uniform comb would carry N x the power)
-        self.amplitudes = self.a0 * jnp.sqrt(self.intensity_weights / jnp.sum(self.intensity_weights))
-
         # frequency shifts:
         if n_colors == 1:
             # a single line must sit exactly at w0 (this is what makes num_colors: 1 the monochromatic driver)
             self.delta_omega = jnp.zeros(1)
         else:
             self.delta_omega = jnp.linspace(-self.params["delta_omega"], self.params["delta_omega"], n_colors) * self.w0
+
+        # amplitudes: line j's physical field is w_j * a_j, so the (w0 / w_j) factor
+        # conserves physical intensity exactly: sum_j (w_j a_j)^2 = (w0 a0)^2
+        w_total = self.w0 + self.delta_omega
+        self.amplitudes = (
+            self.a0 * (self.w0 / w_total) * jnp.sqrt(self.intensity_weights / jnp.sum(self.intensity_weights))
+        )
 
         if self.params["phases"]["init"] == "random":
             # Spectral phases drawn uniformly over (0, 2*pi) -- the default;

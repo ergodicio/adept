@@ -134,10 +134,11 @@ class IntensityWavelengthDriverConfig(BaseModel):
 class BroadbandIntensitiesConfig(BaseModel):
     """Per-line intensity weights of a broadband (multi-color) driver.
 
-    The weights ``w_j`` set the line *amplitudes* as ``a_j = a0 * sqrt(w_j / sum_k w_k)``,
-    where ``a0`` is the monochromatic amplitude for ``base_intensity``; hence
-    ``sum_j a_j^2 = a0^2`` (same time-averaged power as a single line at
-    ``base_intensity``) and the per-line intensity is ``I_j = base_intensity * w_j / sum_k w_k``.
+    The weights ``w_j`` set the line *amplitudes* as
+    ``a_j = a0 * (w0 / w_j) * sqrt(w_j / sum_k w_k)``, where ``a0`` is the monochromatic
+    amplitude for ``base_intensity``; hence ``sum_j (w_j a_j)^2 = (w0 a0)^2`` (same
+    time-averaged physical power as a single line at ``base_intensity``) and the
+    per-line intensity is ``I_j = base_intensity * w_j / sum_k w_k``.
     """
 
     base_intensity: str  # e.g. "2.378e+14 W/cm^2"; the total (monochromatic-equivalent) intensity
@@ -195,7 +196,7 @@ class BroadbandConfig(BaseModel):
     """
 
     num_colors: int = Field(ge=1)
-    delta_omega: float = Field(ge=0.0)  # half-width, fraction of w0
+    delta_omega: float = Field(ge=0.0, lt=1.0)  # half-width, fraction of w0; < 1 keeps every line frequency positive
     wavelength: str
     intensities: BroadbandIntensitiesConfig
     phases: BroadbandPhasesConfig

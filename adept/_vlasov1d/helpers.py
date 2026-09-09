@@ -215,10 +215,10 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
     `phases`); plain `EMDriver`s contribute their scalars, so a hand-built list of
     mono drivers still plots.
 
-    Per-line intensity needs no normalization constant. The driver builds amplitudes as
-    A_j = a0 * sqrt(w_j / sum_k w_k), so
+    Per-line intensity needs no normalization constant. Line j's physical field has
+    amplitude w_j * A_j, so
 
-        I_j / I_base = A_j^2 / sum_k A_k^2
+        I_j / I_base = (w_j A_j)^2 / sum_k (w_k A_k)^2
 
     exactly, independent of a0 and of the plasma normalization. `base_intensity` is
     read from the config only to put an absolute scale on the axis.
@@ -254,7 +254,8 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
         dw = np.asarray(dw_list)  # dw_j/w0
         phases = np.asarray(phase_list)
 
-        power = amp**2
+        # physical per-line power goes as (w_j * a_j)^2, i.e. (1 + dw_j/w0)^2 * a_j^2
+        power = ((1.0 + dw) * amp) ** 2
         frac = power / power.sum() if power.sum() > 0 else power
         # absolute scale: base_intensity of the broadband driver in this field (whichever
         # key it was given under -- a driver keyed '1' must not lose the axis scale)

@@ -510,11 +510,13 @@ drivers:
 How the lines are built (`BroadbandDriver` in `simulation.py`):
 
 - **Amplitudes.** With `a0` the monochromatic amplitude for `base_intensity`, line `j` gets
-  `a_j = a0 · sqrt(w_j / Σ_k w_k)`, so `Σ_j a_j² = a0²` — the comb has the **same
-  time-averaged power** as one line at `base_intensity`, and the per-line intensity is
-  `I_j = base_intensity · w_j / Σ_k w_k` (`base_intensity / N` for a uniform comb). A
-  phase-locked comb still reaches `a0·√N` at its recurrence time, which is the correct
-  coherent-sum physics; "same intensity" here means time-averaged, not peak.
+  `a_j = a0 · (w0 / w_j) · sqrt(w_j / Σ_k w_k)`. The physical field of line `j` has
+  amplitude `w_j · a_j` (E = −∂A/∂t), so `Σ_j (w_j a_j)² = (w0 a0)²` — the comb has the
+  **same time-averaged physical power** as one line at `base_intensity`, and the per-line
+  intensity is exactly `I_j = base_intensity · w_j / Σ_k w_k` (`base_intensity / N` for a
+  uniform comb) at any bandwidth. A phase-locked comb still reaches ~√N times the
+  single-line field at its recurrence time, which is the correct coherent-sum physics;
+  "same intensity" here means time-averaged, not peak.
 - **Frequencies.** `w_j = w0 (1 + d_j)`. The driver is a single `BroadbandDriver` module
   carrying per-line arrays (`amplitudes`, `delta_omega`, `phases`, each shape `(N,)`);
   the transverse source evaluates all lines vectorized. The line parameters are read
