@@ -370,6 +370,10 @@ class LightModel(BaseModel):
     # profile (LPSE {laser|raman}.evolution.abc.maxDampingRate, default 5e3); None = 5e3 for the
     # exp profile and the EPW absorber (boundary_abs_coeff) for the tanh profile
     boundary_max_rate: float | None = None
+    # diagnostic: keep only kx >= 0 in the PUMP spectrum once per EPW step. The pump
+    # operator is even in kx, so -k0 is a degenerate freely-propagating mode that the
+    # real-space SRS source drives resonantly; this removes it. E1 is untouched.
+    one_way: bool = False
 
 
 class QLEModel(BaseModel):

@@ -299,3 +299,66 @@ def test_config_validation_of_light_options():
     cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
     cfg = _finish_cfg(cfg)
     assert {"pump_depletion": True, "coupling": "rotation", "filter": 0.7}.items() <= cfg["terms"]["light"].items()
+
+
+def _coupled_light_one_way(one_way=True):
+    from adept import ergoExo
+    from adept._lpse2d.core.light import CoupledLight
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = yaml.safe_load(fi)
+    cfg["terms"]["light"] = {"pump_depletion": True, "coupling": "rotation", "one_way": one_way}
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    cfg["mlflow"]["experiment"] = "test-lpse2d-light-coupling"
+    exo = ergoExo()
+    exo.setup(cfg)
+    return CoupledLight(exo.cfg), exo.cfg
+
+
+def test_one_way_mask_removes_backward_pump_only():
+    """terms.light.one_way must delete kx < 0 from E0 and leave E1 untouched: the pump
+    operator is even in kx, so -k0 is a degenerate propagating mode, while the SRS
+    backscatter E1 is legitimately kx < 0."""
+    import jax.numpy as jnp
+    import numpy as np
+
+    light, cfg = _coupled_light_one_way()
+    assert light.one_way_mask is not None
+    nx, ny = light.k_sq.shape
+    kx = np.asarray(cfg["grid"]["kx"])
+    rng = np.random.default_rng(3)
+
+    # a forward (+k0) and a backward (-k0) pump component, plus a backward E1
+    ikp = int(np.argmin(np.abs(kx - kx[kx > 0].max() / 3)))
+    ikm = int(np.argmin(np.abs(kx + kx[kx > 0].max() / 3)))
+    spec0 = np.zeros((nx, ny, 2), dtype=complex)
+    spec0[ikp, 0, 1] = 1.0
+    spec0[ikm, 0, 1] = 1.0
+    E0 = jnp.asarray(np.fft.ifft2(spec0, axes=(0, 1)))
+    E1 = jnp.asarray(np.fft.ifft2(spec0, axes=(0, 1)))
+
+    masked0 = jnp.fft.fft2(jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * light.one_way_mask, axes=(0, 1)), axes=(0, 1))
+    m0 = np.asarray(masked0)
+    assert abs(m0[ikp, 0, 1]) == pytest.approx(1.0, rel=1e-10)  # forward kept
+    assert abs(m0[ikm, 0, 1]) == pytest.approx(0.0, abs=1e-12)  # backward removed
+    # the mask is built for the pump only -- E1 has no mask applied in __call__
+    assert light.one_way_mask.shape == (nx, 1, 1)
+
+
+def test_one_way_defaults_off_and_requires_pump_depletion():
+    import pytest as _pytest
+
+    from adept._lpse2d.datamodel import LightModel
+
+    light, _ = _coupled_light_one_way(one_way=False)
+    assert light.one_way_mask is None
+    assert LightModel(pump_depletion=True).model_dump()["one_way"] is False
+
+    from adept import ergoExo
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = yaml.safe_load(fi)
+    cfg["terms"]["light"] = {"pump_depletion": False, "one_way": True}
+    cfg["mlflow"]["experiment"] = "test-lpse2d-light-coupling"
+    with _pytest.raises(ValueError, match=r"terms\.light\.one_way"):
+        ergoExo().setup(cfg)
