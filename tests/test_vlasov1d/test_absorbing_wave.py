@@ -1,7 +1,6 @@
 import equinox as eqx
 import numpy as np
 from diffrax import ODETerm, diffeqsolve
-from jax import jit
 
 from adept._base_ import Stepper
 from adept._vlasov1d.simulation import EMDriver, EMDriverSet
@@ -52,14 +51,12 @@ def test_absorbing_boundaries():
     ey_driver = EMDriver(a0=1.0e-4, k0=-1.4, w0=15.82, phase=0.0, dw0=0.0, envelope=envelope)
     drivers = [ey_driver]
 
-    # The transverse source pusher reads drivers from args (the differentiable
-    # route); standalone use must supply them the same way the solver does.
+    # The transverse source pusher reads drivers from args; standalone use must
+    # supply them the same way the solver does.
     args = {"drivers": EMDriverSet(ex=[], ey=drivers)}
 
-    # filter_jit (not plain jit): args carries the EMDriverSet, whose non-array
-    # leaves (is_point_source bool, scalar params) must stay static -- the same
-    # filtering diffrax applies on the solver path.
-    @eqx.filter_jit
+    # No outer jit: diffeqsolve compiles internally (with filtered tracing, keeping
+    # the EMDriverSet's non-array leaves static), same as the solver path.
     def _run_(y, args):
         return diffeqsolve(
             terms=ODETerm(VectorField(c_light, dx, dt, xax, drivers)),
