@@ -371,15 +371,22 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     # light-wave options: defaults and validation (coupling scheme, filter) come from
     # the datamodel's LightModel; unknown keys are passed through untouched
+    from adept._lpse2d.datamodel import LightModel
+
     light = cfg["terms"].get("light", {})
     if light:
-        from adept._lpse2d.datamodel import LightModel
-
         light = {**light, **LightModel(**light).model_dump()}
         cfg["terms"]["light"] = light
     pump_depletion = light.get("pump_depletion", False)
     light_solver = light.get("solver", "fd")
-    if not pump_depletion and (light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None):
+    combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    if combined and not light:
+        cfg["terms"]["light"] = light = {**LightModel().model_dump()}
+    if (
+        not pump_depletion
+        and not combined
+        and (light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None)
+    ):
         raise ValueError(
             "terms.light.coupling and terms.light.filter act on the coupled (pump-depletion) light solver "
             "and require terms.light.pump_depletion: true"
@@ -387,6 +394,28 @@ def get_derived_quantities(cfg: dict) -> dict:
     source_terms = cfg["terms"]["epw"]["source"]
     srs_on = bool(source_terms.get("srs", False))
     tpd_on = bool(source_terms.get("tpd", False))
+    epw_solver = cfg["terms"]["epw"].get("solver", "separate")
+    if epw_solver == "combined":
+        if srs_on != tpd_on:
+            raise ValueError(
+                "terms.epw.solver: combined needs terms.epw.source.tpd and srs both on or both off "
+                "(LPSE: 'When lw.solver=combined, both SRS and TPD must be enabled or neither')"
+            )
+        if light_solver != "spectral":
+            raise ValueError("terms.epw.solver: combined requires terms.light.solver: spectral")
+        if "E2" in cfg["drivers"]:
+            raise ValueError("terms.epw.solver: combined does not support the direct EPW driver drivers.E2")
+        if cfg["terms"]["epw"].get("energy_ledger", False):
+            raise ValueError("terms.epw.energy_ledger is only available with terms.epw.solver: separate")
+        if light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None:
+            raise ValueError("terms.light.coupling / filter are options of the separate solver's FD light path")
+    elif srs_on and tpd_on:
+        print(
+            "WARNING: terms.epw.source.tpd and srs are both on with terms.epw.solver: separate. The original "
+            "LPSE refuses this ('Must use lw.solver=combined when both SRS and TPD are enabled'): the four "
+            "separate envelope equations are not valid for simultaneous TPD and SRS. Use terms.epw.solver: "
+            "combined for the LPSE formulation."
+        )
     if pump_depletion:
         if not (srs_on or tpd_on):
             raise ValueError("terms.light.pump_depletion requires at least one of terms.epw.source.srs/tpd")
@@ -1463,6 +1492,13 @@ def get_default_save_func(cfg):
         # sum_k k^2 |phi_k|^2 -> the epw_energy normalization (Parseval, see above)
         ledger_prefactor = epw_energy_prefactor / (nx * ny**2)
 
+    combined_solver = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    if combined_solver:
+        from adept._lpse2d.core.combined import transverse_part
+
+        one_over_k_sq_c = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
+        kx_c, ky_c = jnp.asarray(kx), jnp.asarray(ky)
+
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
         ex = -1j * kx[:, None] * phi_k
@@ -1470,6 +1506,12 @@ def get_default_save_func(cfg):
         ex = jnp.fft.ifft2(ex)
         ey = jnp.fft.ifft2(ey)
         e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
+        if combined_solver:
+            # the Raman-light diagnostics see the transverse part of the combined field only
+            y = {
+                **y,
+                "E1": transverse_part(y["E1"].view(jnp.complex128), kx_c, ky_c, one_over_k_sq_c).view(jnp.float64),
+            }
 
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 

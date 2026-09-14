@@ -218,6 +218,11 @@ class EPWModel(BaseModel):
     # per-operation EPW energy ledger accumulated in the state and reported in the default
     # series (epw_ledger_<channel>, epw_ledger_closure); LPSE asserts the same closure
     energy_ledger: bool = False
+    # "separate": the four envelope equations (MATLAB / LPSE spectral path); "combined":
+    # LPSE lw.solver = combined, one wp0-enveloped field carrying the Raman light
+    # (transverse part) and the EPW (longitudinal part), required by LPSE when TPD and
+    # SRS are both on (see core/combined.py)
+    solver: Literal["separate", "combined"] = "separate"
 
 
 class LightModel(BaseModel):

@@ -26,6 +26,16 @@ class SplitStep:
         self.wp0 = cfg["units"]["derived"]["wp0"]
         self.epw = epw.SpectralEPWSolver(cfg)
         self.light = laser.Light(cfg)
+        # terms.epw.solver: "separate" (the four envelope equations, MATLAB / LPSE spectral)
+        # or "combined" (LPSE lw.solver = combined: one wp0-enveloped field for Raman light
+        # and EPW, required by LPSE whenever TPD and SRS are both on)
+        self.epw_solver = str(cfg["terms"]["epw"].get("solver", "separate"))
+        if self.epw_solver == "combined":
+            from adept._lpse2d.core.combined import CombinedSolver
+
+            self.combined = CombinedSolver(cfg)
+        elif self.epw_solver != "separate":
+            raise ValueError(f"terms.epw.solver must be 'separate' or 'combined', got {self.epw_solver!r}")
         # the Raman scattered light is evolved iff the SRS source term is on; with
         # terms.light.pump_depletion the pump is evolved too (one coupled solver)
         self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
@@ -138,9 +148,47 @@ class SplitStep:
 
         return y
 
+    def combined_step(self, t, y, driver_args):
+        """One EPW step of the combined solver: pump (prescribed or evolved), the combined
+        Raman + EPW field, and the derived potential."""
+        if self.pump_depletion:
+            E0_fn = None
+        elif "E0" in driver_args:
+
+            def E0_fn(this_t):
+                t_coeff = self.get_envelope_coefficient(driver_args["E0"], this_t)
+                return t_coeff * self.light.laser_update(this_t, y, driver_args["E0"])
+
+        else:
+            E0_now = y["E0"]
+
+            def E0_fn(this_t):
+                return E0_now
+
+        y["E0"], y["E1"], y["epw"] = self.combined(t, y, driver_args, E0_fn)
+        return y
+
     def __call__(self, t, y, args):
         # unpack y into complex128
         new_y = self._unpack_y_(y)
+
+        if self.epw_solver == "combined":
+            new_y = self.combined_step(t, new_y, args["drivers"])
+            if self.iaw is not None:
+                # the IAW ponderomotive drive sees the Raman light (transverse part) and the
+                # EPW (through the derived potential) separately, not the combined field
+                iaw_in = {**new_y, "E1": self.combined.transverse(new_y["E1"])}
+                if self.iaw.stride == 1:
+                    iaw_out = self.iaw(iaw_in, t)
+                else:
+                    step = jnp.round(t / self.dt).astype(int)
+                    iaw_out = lax.cond(step % self.iaw.stride == 0, lambda yy: self.iaw(yy, t), lambda yy: yy, iaw_in)
+                new_y["iaw_density"] = iaw_out["iaw_density"]
+                new_y["iaw_velocity_divergence"] = iaw_out["iaw_velocity_divergence"]
+            if self.hpe is not None:
+                new_y = self.hpe(t, new_y)
+            y, new_y = self._pack_y_(y, new_y)
+            return new_y
 
         # light split step
         new_y = self.light_split_step(t, new_y, args["drivers"])
