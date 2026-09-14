@@ -5,36 +5,237 @@ from jax import numpy as jnp
 
 from adept._lpse2d.core.driver import Driver
 
+LANDAU_FORMS = ("matlab", "lpse", "relativistic")
+NOISE_MODELS = ("flat", "thermal")
+TPD_FORMS = ("lpse", "matlab")
 
-def landau_damping_rate(k_sq: Array, wp0: float, vte_sq: float, zero_mask: Array) -> Array:
+
+def landau_damping_rate(k_sq: Array, wp0: float, vte_sq: float, zero_mask: Array, form: str = "matlab") -> Array:
     """
-    Landau damping rate for each k mode (amplitude rate, 1/ps).
+    Non-relativistic Landau damping rate for each k mode (amplitude rate, 1/ps).
 
-    Matches MATLAB line 913:
-    gammaLandauEpw = sqrt(pi/8) * (1 + 3/2*k^2*vte^2/wp^2) * wp^4/(k^3*vte^3) * exp(...)
+    ``form="matlab"`` is m201805_matlabLpse_v11.m line 913:
 
-    Module-level so the solver (`SpectralEPWSolver`) and the dissipation
-    diagnostic (`helpers.get_default_save_func`) use the *same* rates and can
-    never drift apart.
+        gammaLandauEpw = sqrt(pi/8) * (1 + 3/2*k^2*vte^2/wp^2) * wp^4/(k^3*vte^3) * exp(...)
+
+    ``form="lpse"`` is the LPSE C++ expression (ZakharovSolver.cpp landauDamping_nonRel):
+
+        gamma = sqrt(pi/8) (kde/k)^3 w_k exp(-w_k^2 / (2 k^2 vte^2)),  w_k = wp sqrt(1 + 3 k^2/kde^2)
+
+    The exponents are identical (w_k^2/(2 k^2 vte^2) = wp^2/(2 k^2 vte^2) + 3/2 exactly); the
+    prefactors differ by sqrt(1 + 3 x^2) vs (1 + 1.5 x^2), x = k lambda_D -- 0.7% at x = 0.3,
+    3.9% at x = 0.5.
+
+    Module-level so the solver (`SpectralEPWSolver`), the HPE calibration and the dissipation
+    diagnostic (`helpers.get_default_save_func`) use the *same* rates and can never drift apart.
     """
     k_sq_safe = jnp.where(k_sq > 0, k_sq, 1.0)
 
-    damping = (
-        jnp.sqrt(np.pi / 8.0)
-        * (1.0 + 1.5 * k_sq * vte_sq / wp0**2)
-        * wp0**4
-        / (k_sq_safe**1.5 * vte_sq**1.5)
-        * jnp.exp(-(1.5 + 0.5 * wp0**2 / (k_sq_safe * vte_sq)))
-    )
+    if form == "lpse":
+        kde_sq = wp0**2 / vte_sq
+        w_k = wp0 * jnp.sqrt(1.0 + 3.0 * k_sq / kde_sq)
+        damping = (
+            jnp.sqrt(np.pi / 8.0) * (kde_sq / k_sq_safe) ** 1.5 * w_k * jnp.exp(-0.5 * w_k**2 / (k_sq_safe * vte_sq))
+        )
+    elif form == "matlab":
+        damping = (
+            jnp.sqrt(np.pi / 8.0)
+            * (1.0 + 1.5 * k_sq * vte_sq / wp0**2)
+            * wp0**4
+            / (k_sq_safe**1.5 * vte_sq**1.5)
+            * jnp.exp(-(1.5 + 0.5 * wp0**2 / (k_sq_safe * vte_sq)))
+        )
+    else:
+        raise ValueError(f"landau_damping_rate: form must be 'matlab' or 'lpse', got {form!r}")
 
     return damping * zero_mask
+
+
+def landau_damping_rate_relativistic(
+    k_sq: np.ndarray, wp0: float, vte_sq: float, c: float, ndim: int = 2
+) -> np.ndarray:
+    """
+    Relativistic (Maxwell-Juettner) Landau damping rate, ported from LPSE
+    ``ZakharovSolver::landauDamping_rel_2D`` / ``landauDamping_rel_3D`` (Bessel-function
+    forms after Vu / Russell). ``ndim`` selects the 2-D or 3-D velocity-space integral;
+    modes whose phase velocity exceeds c (``arg <= 0``) are undamped, as in LPSE.
+
+    Evaluated with numpy/scipy once at setup (the rate is a static k-array).
+    """
+    from scipy import special
+
+    k_sq = np.asarray(k_sq, dtype=np.float64)
+    vte = np.sqrt(vte_sq)
+    kde = wp0 / vte
+    k = np.sqrt(np.where(k_sq > 0.0, k_sq, 1.0))
+    x = k / kde
+    beta_sq = vte_sq / c**2  # (Ve/C)^2
+    omega = 1.0 + 1.5 * x**2
+    arg = 1.0 - beta_sq * omega**2 / x**2
+    ok = (k_sq > 0.0) & (arg > 0.0)
+    A = 1.0 / np.sqrt(np.where(ok, arg, 1.0))
+    a = A / beta_sq  # (C/Ve)^2 A
+    # e_bessel_kN in LPSE's Bessel.h are the exponentially scaled K_N: e^a K_N(a)
+    if ndim == 2:
+        gamma = (
+            0.25
+            * (kde / k) ** 3
+            * wp0
+            * omega
+            * np.exp(1.0 / beta_sq - a)
+            * (1.0 / np.sqrt(beta_sq))
+            * A**3
+            * 2.0
+            * (special.k0e(a) + special.k1e(a) / a)
+            / (1.0 + beta_sq)
+        )
+    elif ndim == 3:
+        b = 1.0 / beta_sq
+        gamma = (
+            0.25
+            * np.pi
+            * (kde / k) ** 3
+            * wp0
+            * omega
+            * np.exp(b - a)
+            * b ** (-2.5)
+            * (2.0 + a * (2.0 + a))
+            / (special.k0e(b) + 2.0 * special.k1e(b) / b)
+        )
+    else:
+        raise ValueError("landau_damping_rate_relativistic: ndim must be 2 or 3")
+    return np.where(ok, gamma, 0.0)
+
+
+def analytic_landau_rate(cfg: dict) -> Array:
+    """
+    The static Landau damping rate array (nx, ny) selected by ``terms.epw.damping``:
+
+    - ``landau_form``: ``matlab`` (default), ``lpse`` or ``relativistic`` (LPSE 2-D Bessel form;
+      ``relativistic_3d`` for the 3-D velocity-space integral)
+    - ``landau_lower_threshold`` (1/ps): modes damped below it are treated as undamped
+      (LPSE ``lw.landauDamping.lowerThreshold``)
+    - ``landau_multiplier``: static scalar on the rate (LPSE ``LD_multiplier``)
+
+    Returns zeros when ``terms.epw.damping.landau`` is off.
+    """
+    derived = cfg["units"]["derived"]
+    damping = cfg["terms"]["epw"]["damping"]
+    kx = jnp.asarray(cfg["grid"]["kx"])
+    ky = jnp.asarray(cfg["grid"]["ky"])
+    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
+    zero_mask = jnp.where(k_sq > 0, 1.0, 0.0)
+    if not damping.get("landau", True):
+        return jnp.zeros_like(k_sq)
+    form = str(damping.get("landau_form", "matlab"))
+    if form in ("relativistic", "relativistic_2d"):
+        rate = jnp.asarray(
+            landau_damping_rate_relativistic(np.asarray(k_sq), derived["wp0"], derived["vte_sq"], derived["c"], ndim=2)
+        )
+    elif form == "relativistic_3d":
+        rate = jnp.asarray(
+            landau_damping_rate_relativistic(np.asarray(k_sq), derived["wp0"], derived["vte_sq"], derived["c"], ndim=3)
+        )
+    elif form in ("matlab", "lpse"):
+        rate = landau_damping_rate(k_sq, derived["wp0"], derived["vte_sq"], zero_mask, form=form)
+    else:
+        raise ValueError(
+            f"terms.epw.damping.landau_form must be one of matlab, lpse, relativistic, relativistic_3d; got {form!r}"
+        )
+    threshold = float(damping.get("landau_lower_threshold", 0.0) or 0.0)
+    if threshold > 0.0:
+        rate = jnp.where(rate > threshold, rate, 0.0)
+    multiplier = float(damping.get("landau_multiplier", 1.0) if damping.get("landau_multiplier") is not None else 1.0)
+    return rate * multiplier
+
+
+def noise_kick_spectrum(cfg: dict) -> np.ndarray:
+    """
+    Per-step, per-mode EPW noise kick amplitude ``D_k`` (k-space potential units), for both
+    noise models. ``get_noise`` multiplies it by a random phase every step; the diagnostics
+    (``diagnostics.expected_noise_energy``) integrate the same array, so the two never drift.
+
+    ``noise_model: flat`` (default; the MATLAB source): ``D_k = dt * noise_amplitude`` on
+    every retained mode.
+
+    ``noise_model: thermal`` (LPSE ``lw.noise``, ZakharovSolver::addNoiseToPotential_fft):
+    a fluctuation-dissipation source balanced against the *frozen* analytic Landau +
+    collisional rate ``gamma_k``:
+
+        D_k = N A / sqrt(1 + k^2 lambda_D^2) * sqrt(1 - exp(-2 gamma_k dt)) / |k|
+
+    ``N = nx*ny`` converts an x-space amplitude to this code's unnormalized-FFT k-space
+    convention, and the ``1/|k|`` converts field to potential, so the steady state of
+    ``phi_k *= exp(-gamma_k dt); phi_k += D_k e^{i theta}`` is the Cerenkov spectrum
+    ``<|E_k|^2> = A^2 / (1 + k^2 lambda_D^2)`` per mode (x-space envelope amplitude
+    squared), independent of dt. With ``noise_calibrate: true`` the amplitude is set from
+    the electron temperature by equipartition -- electric energy ``kT/2`` per mode over
+    the box volume ``V`` (``Lz = Ly`` for the 2-D box, ``V = Lx^3`` when ny = 1, following
+    LPSE's ``deltaK3``): ``A_thermal = sqrt(8 pi kT / V)``, and ``noise_amplitude`` then
+    multiplies it (LPSE's ``isCalculated`` convention, amplitude 1 = thermal). Modes with
+    no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere is refused,
+    as in LPSE ("Cannot add LW noise without damping").
+    """
+    grid = cfg["grid"]
+    source = cfg["terms"]["epw"]["source"]
+    derived = cfg["units"]["derived"]
+    kx = np.asarray(grid["kx"])
+    ky = np.asarray(grid["ky"])
+    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
+    zero_mask = np.where(k_sq > 0, 1.0, 0.0)
+    band = np.asarray(grid["low_pass_filter_grid"]) * zero_mask
+    max_k = source.get("noise_max_wavenumber")
+    if max_k is not None:
+        k0 = derived["w0"] / derived["c"]
+        band = band * np.where(np.sqrt(k_sq) < float(max_k) * k0, 1.0, 0.0)
+
+    model = str(source.get("noise_model", "flat"))
+    amplitude = float(source.get("noise_amplitude", 1e-10))
+    dt = grid["dt"]
+    if model == "flat":
+        return dt * amplitude * band
+    if model != "thermal":
+        raise ValueError(f"terms.epw.source.noise_model must be 'flat' or 'thermal', got {model!r}")
+
+    gamma = np.asarray(analytic_landau_rate(cfg)) + derived.get("nu_coll", 0.0) * zero_mask
+    retained = band > 0.0
+    if not np.any(retained):
+        return np.zeros_like(k_sq)
+    if np.all(gamma[retained] <= 0.0):
+        raise ValueError(
+            "terms.epw.source.noise_model: thermal needs EPW damping (Landau and/or collisions) on the "
+            "retained band -- LPSE refuses noise without damping and so does this model"
+        )
+    if source.get("noise_calibrate", False):
+        # kT in this code's energy unit (massScale * spatialScale^2 / timeScale^2, cgs)
+        from astropy.units import Quantity as _Q
+
+        te_kev = _Q(cfg["units"]["reference electron temperature"]).to("keV").value
+        energy_scale = derived["massScale"] * derived["spatialScale"] ** 2 / derived["timeScale"] ** 2
+        kT = te_kev * 1.602176634e-9 / energy_scale
+        nx, ny = int(grid["nx"]), int(grid["ny"])
+        lx = nx * grid["dx"]
+        ly = ny * grid["dy"]
+        volume = lx**3 if ny == 1 else lx * ly * ly
+        amplitude = amplitude * np.sqrt(8.0 * np.pi * kT / volume)
+
+    lambda_d_sq = derived["vte_sq"] / derived["wp0"] ** 2
+    n_total = float(grid["nx"] * grid["ny"])
+    k_safe = np.sqrt(np.where(k_sq > 0, k_sq, 1.0))
+    two_g_dt = 2.0 * gamma * dt
+    # LPSE switches to the small-argument form below 1e-4 to avoid a float32 cancellation;
+    # in float64 -expm1 is exact enough everywhere
+    fd_factor = np.sqrt(np.maximum(-np.expm1(-two_g_dt), 0.0))
+    kick = n_total * amplitude / np.sqrt(1.0 + k_sq * lambda_d_sq) * fd_factor / k_safe
+    return np.where(retained, kick, 0.0)
 
 
 class SpectralEPWSolver:
     """
     Spectral solver for electrostatic plasma waves in k-space.
 
-    Matches MATLAB's spectralEpwUpdate() function (lines 1966-2118).
+    Matches MATLAB's spectralEpwUpdate() function (lines 1966-2118), which is the same
+    split-step as LPSE's default ``lw.solver = spectral`` path (ZakharovSolver.cpp).
 
     State variable: phi_k (electrostatic potential in k-space)
     - MATLAB convention: uses fftshift, so DC is in center
@@ -44,6 +245,19 @@ class SpectralEPWSolver:
     1. Filter applied at exactly 2 points per timestep
     2. Clear separation between operations (no combined expressions)
     3. Explicit comments matching MATLAB line numbers
+
+    LPSE-parity options (all default to the MATLAB behaviour unless stated):
+
+    - ``terms.epw.damping.landau_form / landau_lower_threshold / landau_multiplier``
+      (see ``analytic_landau_rate``)
+    - ``terms.epw.source.tpd_form``: ``lpse`` (default) keeps LPSE's exact coefficient
+      ``i e/(4 me w0)`` and the ``(w0/wp0 - 1)`` factor on the charge-density term, and uses
+      every pump component; ``matlab`` is the prototype's ``w0 -> 2 wp0`` form. The two are
+      identical at envelope density n_c/4.
+    - ``terms.epw.source.noise_model``: ``flat`` (default) or ``thermal`` (see
+      ``noise_kick_spectrum``)
+    - ``terms.epw.max_wavenumber``: LPSE ``lw.maxWavenumber`` (units of k0), folded into
+      the retained band by ``helpers.get_solver_quantities``
     """
 
     def __init__(self, cfg: dict):
@@ -93,12 +307,25 @@ class SpectralEPWSolver:
         self.low_pass_filter = cfg["grid"]["low_pass_filter_grid"]
 
         # TPD parameters
-        self.tpd_enabled = cfg["terms"]["epw"]["source"]["tpd"]
+        source_cfg = cfg["terms"]["epw"]["source"]
+        self.tpd_enabled = source_cfg["tpd"]
+        self.tpd_form = str(source_cfg.get("tpd_form", "lpse"))
+        if self.tpd_form not in TPD_FORMS:
+            raise ValueError(f"terms.epw.source.tpd_form must be one of {TPD_FORMS}, got {self.tpd_form!r}")
         if self.tpd_enabled:
-            self.tpd_prefactor = 1j * self.e / (8.0 * self.wp0 * self.me)
+            if self.tpd_form == "lpse":
+                # LPSE ZakharovSolver::updatePotentialWithTpdSource_fft:
+                #   TPD_srcFactor = i (q/m)/(4 W0) exp(-i (W0 - 2 wpe) t)
+                #   TPD_src = TPD1 - (1 - W0/wpe) i k.TPD2 / k^2
+                self.tpd_prefactor = 1j * self.e / (4.0 * self.w0 * self.me)
+                self.tpd_rho_factor = self.w0 / self.wp0 - 1.0
+            else:
+                # MATLAB line 2024: w0 -> 2 wp0 inside the coefficients
+                self.tpd_prefactor = 1j * self.e / (8.0 * self.wp0 * self.me)
+                self.tpd_rho_factor = 1.0
 
         # SRS parameters
-        self.srs_enabled = cfg["terms"]["epw"]["source"].get("srs", False)
+        self.srs_enabled = source_cfg.get("srs", False)
         if self.srs_enabled:
             self.w1 = cfg["units"]["derived"]["w1"]
             self.c = cfg["units"]["derived"]["c"]
@@ -125,15 +352,24 @@ class SpectralEPWSolver:
         # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
         # the cfg, so MLflow logs it) in helpers.get_derived_quantities; the fallback
         # here only fires if that step was skipped.
-        self.noise_enabled = cfg["terms"]["epw"]["source"]["noise"]
-        self.noise_amplitude = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
-        cfg_seed = cfg["terms"]["epw"]["source"].get("noise_seed")
+        self.noise_enabled = source_cfg["noise"]
+        self.noise_model = str(source_cfg.get("noise_model", "flat"))
+        if self.noise_model not in NOISE_MODELS:
+            raise ValueError(f"terms.epw.source.noise_model must be one of {NOISE_MODELS}, got {self.noise_model!r}")
+        self.noise_amplitude = float(source_cfg.get("noise_amplitude", 1e-10))
+        cfg_seed = source_cfg.get("noise_seed")
         self.noise_seed = int(cfg_seed) if cfg_seed is not None else np.random.randint(2**20)
         # per-step keys are derived with fold_in rather than PRNGKey(step + seed):
         # additive seeds made nearby seeds share the same noise trajectory merely
         # time-shifted by a few steps, so a seed-sweep ensemble was one realization.
         # fold_in streams are still fully deterministic per (seed, step).
         self.noise_key = jax.random.PRNGKey(self.noise_seed)
+        if self.noise_enabled:
+            # per-mode kick amplitude, already including dt (flat) or the
+            # fluctuation-dissipation factor (thermal) and the retained-band mask
+            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg))
+        else:
+            self.noise_kick = None
 
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
@@ -141,6 +377,8 @@ class SpectralEPWSolver:
 
         # Landau damping flag (previously ignored -- damping was unconditionally on)
         self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
+        # static analytic rate with the configured form / threshold / multiplier applied
+        self.landau_rate = analytic_landau_rate(cfg)
         # HPE (Follett-style particle feedback): the damping rate is read from the
         # state (y["gamma_L"], written by HybridParticleEvolution) instead of the
         # static analytic array
@@ -154,15 +392,13 @@ class SpectralEPWSolver:
 
     def calc_landau_damping_rate(self) -> Array:
         """
-        Calculate Landau damping rate for each k mode.
-
-        Matches MATLAB line 913:
-        gammaLandauEpw = sqrt(pi/8) * (1 + 3/2*k^2*vte^2/wp^2) * wp^4/(k^3*vte^3) * exp(...)
+        Landau damping rate for each k mode with the configured form, threshold and
+        multiplier (``analytic_landau_rate``).
 
         Returns:
             Landau damping rate array (shape: nx, ny)
         """
-        return landau_damping_rate(self.k_sq, self.wp0, self.vte_sq, self.zero_mask)
+        return self.landau_rate
 
     def phi_k_to_e_fields(self, phi_k: Array) -> tuple[Array, Array]:
         """
@@ -239,43 +475,42 @@ class SpectralEPWSolver:
 
         return phi_k
 
-    def calc_tpd_source(self, t: float, phi_k: Array, ey: Array, E0_y: Array) -> Array:
+    def calc_tpd_source(self, t: float, phi_k: Array, ex: Array, ey: Array, E0: Array) -> Array:
         """
-        Calculate Two Plasmon Decay source term.
+        Calculate the Two Plasmon Decay source term.
 
-        Matches MATLAB lines 1996-2049 for isSolveForPotential=true.
+        LPSE (ZakharovSolver.cpp, makeTpdSource / updatePotentialWithTpdSource_fft):
 
-        TPD source has two components:
-          TPD1 = FFT(E0_y * conj(Ey))
-          TPD2 = 1i * KY/K_sq * FFT(E0_y * conj(divE_true))
-          where divE_true = IFFT(K_sq * phi_k)
+          S_k = i (q/m)/(4 w0) e^{-i (w0 - 2 wp0) t} [ F(E0 . E*) - (1 - w0/wp0) i k . F(E0 rho*) / k^2 ]
+
+        with rho = div E = F^-1(k^2 phi_k) and every pump component in the dot product and
+        the vector term. MATLAB lines 1996-2049 are the ``tpd_form: matlab`` special case
+        (w0 -> 2 wp0 in the coefficients, y-polarized pump only in the prototype; here
+        the x component is always carried, which is exact for the prototype's E0x = 0).
 
         Args:
             t: Current time
             phi_k: Potential in k-space
-            ey: Electric field y-component in real space
-            E0_y: Laser field y-component in real space
+            ex, ey: Electric field components in real space
+            E0: Pump field in real space, shape (nx, ny, 2)
 
         Returns:
             TPD source term in k-space
         """
-        # Component 1: E0 * conj(Ey)
-        # MATLAB line 2011-2012
-        product1 = E0_y * jnp.conj(ey)
-        tpd1 = jnp.fft.fft2(product1)
+        e0x, e0y = E0[..., 0], E0[..., 1]
 
-        # Component 2: E0 * conj(divE_true)
-        # MATLAB line 2014-2018
-        # divE_true is the actual charge density (4π times Poisson)
-        div_e_true = jnp.fft.ifft2(self.k_sq * phi_k)
-        product2 = E0_y * jnp.conj(div_e_true)
-        product2_k = jnp.fft.fft2(product2)
-        tpd2 = 1j * self.ky[None, :] * self.one_over_k_sq * product2_k
+        # Component 1: F(E0 . conj(E))  (MATLAB line 2011-2012 with E0x = 0)
+        tpd1 = jnp.fft.fft2(e0x * jnp.conj(ex) + e0y * jnp.conj(ey))
 
-        # Combine with prefactor
-        # MATLAB line 2024
+        # Component 2: i k . F(E0 conj(rho)) / k^2  (MATLAB line 2014-2018)
+        rho = jnp.fft.ifft2(self.k_sq * phi_k)
+        tpd2_x = jnp.fft.fft2(e0x * jnp.conj(rho))
+        tpd2_y = jnp.fft.fft2(e0y * jnp.conj(rho))
+        tpd2 = 1j * (self.kx[:, None] * tpd2_x + self.ky[None, :] * tpd2_y) * self.one_over_k_sq
+
+        # Combine with prefactor (MATLAB line 2024; LPSE TPD_srcFactor)
         phase = jnp.exp(-1j * (self.w0 - 2.0 * self.wp0) * t)
-        source = self.tpd_prefactor * phase * (tpd1 + tpd2)
+        source = self.tpd_prefactor * phase * (tpd1 + self.tpd_rho_factor * tpd2)
 
         # Apply filter to source (MATLAB line 2032-2033)
         source = source * self.low_pass_filter
@@ -316,7 +551,10 @@ class SpectralEPWSolver:
 
     def get_noise(self, t: float) -> Array:
         """
-        Generate random noise for plasma waves.
+        Generate the random-phase noise kick for the plasma waves at this step.
+
+        The returned array is added to phi_k directly: it already carries dt (flat model)
+        or the fluctuation-dissipation factor (thermal model) from ``noise_kick_spectrum``.
 
         Args:
             t: Current time
@@ -332,16 +570,9 @@ class SpectralEPWSolver:
         # Random phases
         phases = 2.0 * np.pi * jax.random.uniform(key, (self.nx, self.ny))
 
-        # Uniform amplitude with random phase
-        noise = self.noise_amplitude * jnp.exp(1j * phases)
-
-        # Suppress high-wavenumber modes (MATLAB epwNoise: phi_noise(isHighWavenumberMode) = 0)
-        noise = noise * self.low_pass_filter
-
-        # Zero out k=0
-        noise = noise * self.zero_mask
-
-        return noise
+        # per-mode amplitude with random phase; the kick spectrum is already masked to
+        # the retained band (MATLAB epwNoise: phi_noise(isHighWavenumberMode) = 0) and k = 0
+        return self.noise_kick * jnp.exp(1j * phases)
 
     def __call__(self, t: float, y, args) -> Array:
         """
@@ -387,7 +618,7 @@ class SpectralEPWSolver:
         if self.hpe_enabled:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
-            gamma_landau = self.calc_landau_damping_rate()
+            gamma_landau = self.landau_rate
         else:
             gamma_landau = 0.0
         damping_factor = jnp.exp(-(gamma_landau + self.nu_coll) * self.dt)
@@ -400,12 +631,12 @@ class SpectralEPWSolver:
         phi_k = phi_k * self.low_pass_filter
 
         # ========================================================================
-        # STEP 4: Add noise
+        # STEP 4: Add noise (after the damping sub-step, as LPSE does for the
+        # energetics of the fluctuation-dissipation balance)
         # ========================================================================
         if self.noise_enabled:
-            # MATLAB line 1988: divE = divE + epwNoise * DT
-            noise = self.get_noise(t)
-            phi_k = phi_k + self.dt * noise
+            # MATLAB line 1988: divE = divE + epwNoise * DT (dt is inside noise_kick)
+            phi_k = phi_k + self.get_noise(t)
 
         # ========================================================================
         # STEP 5: Calculate electric fields
@@ -419,8 +650,7 @@ class SpectralEPWSolver:
         tpd_source = None
         if self.tpd_enabled:
             # MATLAB lines 1996-2035
-            E0_y = E0[..., 1]  # y-component of laser field
-            tpd_source = self.calc_tpd_source(t, phi_k, ey, E0_y)
+            tpd_source = self.calc_tpd_source(t, phi_k, ex, ey, E0)
 
         srs_source = None
         if self.srs_enabled:

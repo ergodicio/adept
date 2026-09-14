@@ -298,4 +298,4 @@ def test_config_validation_of_light_options():
     cfg["terms"]["light"] = {"pump_depletion": True, "coupling": "rotation", "filter": 0.7}
     cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
     cfg = _finish_cfg(cfg)
-    assert cfg["terms"]["light"] == {"pump_depletion": True, "coupling": "rotation", "filter": 0.7}
+    assert {"pump_depletion": True, "coupling": "rotation", "filter": 0.7}.items() <= cfg["terms"]["light"].items()

@@ -318,15 +318,23 @@ def get_derived_quantities(cfg: dict) -> dict:
 
         inv_dy_sq = 0.0 if cfg_grid["ny"] == 1 else 1.0 / cfg_grid["dy"] ** 2
         omega_max = 2.0 * cfg["units"]["derived"]["cs"] * np.sqrt(1.0 / cfg_grid["dx"] ** 2 + inv_dy_sq)
-        if omega_max * cfg_grid["dt"] >= 2.0:
-            raise ValueError(
-                "The ion-acoustic update is unstable: omega_iaw,max * grid.dt must be < 2 "
-                f"(got {omega_max * cfg_grid['dt']:.3g}). Reduce grid.dt or increase grid.dx."
-            )
+        if iaw["stride"] < 1:
+            raise ValueError("terms.iaw.stride must be a positive integer")
+        if iaw["solver"] == "explicit":
+            if iaw["stride"] != 1:
+                raise ValueError("terms.iaw.stride > 1 requires terms.iaw.solver: spectral")
+            if iaw["flow"] is not None:
+                raise ValueError("terms.iaw.flow requires terms.iaw.solver: spectral")
+            if omega_max * cfg_grid["dt"] >= 2.0:
+                raise ValueError(
+                    "The ion-acoustic update is unstable: omega_iaw,max * grid.dt must be < 2 "
+                    f"(got {omega_max * cfg_grid['dt']:.3g}). Reduce grid.dt or increase grid.dx, "
+                    "or use terms.iaw.solver: spectral (unconditionally stable)."
+                )
         cfg["terms"]["iaw"] = iaw
         print(
-            "IAWs are on -- evolving density and velocity divergence with "
-            f"omega_iaw,max * dt = {omega_max * cfg_grid['dt']:.3g}"
+            f"IAWs are on ({iaw['solver']} solver, every {iaw['stride']} EPW step(s)) -- evolving density and "
+            f"velocity divergence with omega_iaw,max * dt = {omega_max * cfg_grid['dt'] * iaw['stride']:.3g}"
         )
 
     # HPE (Follett-style test-particle Landau damping): resolve defaults, convert
@@ -620,28 +628,71 @@ def get_solver_quantities(cfg: dict) -> dict:
 
     boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
     rise = boundary_width / 5
+    boundary_profile = str(cfg_grid.get("boundary_profile", "tanh"))
+    if boundary_profile not in ("tanh", "exp"):
+        raise ValueError(f"grid.boundary_profile must be 'tanh' or 'exp', got {boundary_profile!r}")
 
-    def absorbing_boundary(boundary):
+    def absorbing_rate(boundary, max_rate=None):
+        """Amplitude damping rate (1/ps) of the absorbing layers, shape (nx, ny).
+
+        ``tanh``: MATLAB's envelope, ``boundary_abs_coeff * (1 - tanh-envelope)``.
+        ``exp``: LPSE absorbingBoundaries.cpp, ``rate = max_rate (e^{lambda s/L} - 1)/(e^lambda - 1)``
+        with s the distance into the layer of width L, per axis, the two axes combined by max.
+        """
+        if boundary_profile == "tanh":
+            if boundary["x"] == "absorbing":
+                left = cfg_grid["xmin"] + boundary_width
+                right = cfg_grid["xmax"] - boundary_width
+                envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
+            else:
+                envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+
+            if boundary["y"] == "absorbing":
+                left = cfg_grid["ymin"] + boundary_width
+                right = cfg_grid["ymax"] - boundary_width
+                envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
+            else:
+                envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+
+            return float(cfg_grid["boundary_abs_coeff"]) * (1.0 - envelope_x * envelope_y)
+
+        lam = float(cfg_grid.get("boundary_lambda", 7.0))
+        gamma_max = float(cfg_grid.get("boundary_max_rate", 200.0)) if max_rate is None else float(max_rate)
+        coeff = gamma_max / np.expm1(lam)
+
+        def axis_rate(ax, lo, hi):
+            # LPSE measures the distance into the layer in whole cells from the edge cell
+            # (absorbingBoundaries.cpp), so the first/last cell carries the full rate and
+            # the layer spans boundary_width / dx cells
+            half = 0.5 * (ax[1] - ax[0]) if ax.size > 1 else 0.0
+            s = np.maximum(lo + boundary_width + half - ax, ax - (hi - boundary_width - half))
+            s = np.clip(s, 0.0, boundary_width)
+            return coeff * np.expm1(lam * s / boundary_width)
+
+        rate_x = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
+        rate_y = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
         if boundary["x"] == "absorbing":
-            left = cfg_grid["xmin"] + boundary_width
-            right = cfg_grid["xmax"] - boundary_width
-            envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
-        else:
-            envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
-
+            rate_x = axis_rate(cfg_grid["x"], cfg_grid["xmin"], cfg_grid["xmax"])[:, None] * np.ones(
+                (1, cfg_grid["ny"])
+            )
         if boundary["y"] == "absorbing":
-            left = cfg_grid["ymin"] + boundary_width
-            right = cfg_grid["ymax"] - boundary_width
-            envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
-        else:
-            envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+            rate_y = axis_rate(cfg_grid["y"], cfg_grid["ymin"], cfg_grid["ymax"])[None, :] * np.ones(
+                (cfg_grid["nx"], 1)
+            )
+        return np.maximum(rate_x, rate_y)
 
-        return np.exp(-float(cfg_grid["boundary_abs_coeff"]) * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y))
+    def absorbing_boundary(boundary, max_rate=None):
+        return np.exp(-absorbing_rate(boundary, max_rate) * cfg_grid["dt"])
 
-    cfg_grid["absorbing_boundaries"] = absorbing_boundary(cfg["terms"]["epw"]["boundary"])
+    cfg_grid["absorbing_rate"] = absorbing_rate(cfg["terms"]["epw"]["boundary"])
+    cfg_grid["absorbing_boundaries"] = np.exp(-cfg_grid["absorbing_rate"] * cfg_grid["dt"])
     iaw = cfg["terms"].get("iaw", {})
     if iaw.get("active", False):
-        cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"])
+        # LPSE's IAW absorber default is half the EPW one (IawSolver.cpp abc.maxDampingRate = 100)
+        iaw_max_rate = iaw.get("boundary_max_rate")
+        if iaw_max_rate is None and boundary_profile == "exp":
+            iaw_max_rate = 0.5 * float(cfg_grid.get("boundary_max_rate", 200.0))
+        cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"], iaw_max_rate)
 
     cfg_grid["zero_mask"] = (
         np.where(np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) == 0, 0, 1)
@@ -698,6 +749,15 @@ def get_solver_quantities(cfg: dict) -> dict:
         )
     elif dealias != "isotropic":
         raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic' or 'shifted-band'.")
+
+    # LPSE lw.maxWavenumber: an additional hard cap on the retained EPW band, in units
+    # of the vacuum laser wavenumber k0 = w0/c
+    max_wavenumber = cfg["terms"]["epw"].get("max_wavenumber")
+    if max_wavenumber is not None:
+        k0_vac = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"]
+        cfg_grid["low_pass_filter_grid"] = cfg_grid["low_pass_filter_grid"] * np.where(
+            k_mag < float(max_wavenumber) * k0_vac, 1.0, 0.0
+        )
 
     retained = float(np.mean(cfg_grid["low_pass_filter_grid"] > 0))
     debye_length = np.sqrt(cfg["units"]["derived"]["vte_sq"]) / cfg["units"]["derived"]["wp0"]
@@ -1260,7 +1320,7 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate
 
     srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
     pump_evolved = cfg["terms"].get("light", {}).get("pump_depletion", False)
@@ -1282,13 +1342,8 @@ def get_default_save_func(cfg):
     # Parseval: sum_x <.>_y |E|^2 = (1/(nx*ny^2)) * sum_k k^2 |phi_k|^2.
     k_sq = np.array(kx[:, None] ** 2 + ky[None, :] ** 2)
     zero_mask = np.where(k_sq > 0, 1.0, 0.0)
-    if cfg["terms"]["epw"]["damping"].get("landau", True):
-        gamma_total = np.array(
-            landau_damping_rate(jnp.array(k_sq), derived["wp0"], derived["vte_sq"], jnp.array(zero_mask))
-        )
-    else:
-        gamma_total = np.zeros_like(k_sq)
-    gamma_total = gamma_total + derived.get("nu_coll", 0.0) * zero_mask
+    # the same static rate (form, threshold, multiplier) the solver applies
+    gamma_total = np.array(analytic_landau_rate(cfg)) + derived.get("nu_coll", 0.0) * zero_mask
     energy_loss_factor = (1.0 - np.exp(-2.0 * gamma_total * dt)) / dt  # 1/ps, per k mode
     boundary_sq_loss = (1.0 - np.array(cfg["grid"]["absorbing_boundaries"]) ** 2) / dt  # 1/ps, per cell
 

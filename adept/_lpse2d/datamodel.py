@@ -126,6 +126,12 @@ class GridModel(BaseModel):
 
     boundary_abs_coeff: float
     boundary_width: str
+    # absorbing-layer profile: "tanh" (the MATLAB envelope, rate boundary_abs_coeff on the
+    # plateau) or "exp" (LPSE absorbingBoundaries.cpp: rate = boundary_max_rate *
+    # (exp(lambda s/L) - 1)/(exp(lambda) - 1) over the layer, per axis combined by max)
+    boundary_profile: Literal["tanh", "exp"] = "tanh"
+    boundary_max_rate: float = 200.0  # 1/ps, LPSE lw.abc.maxDampingRate default
+    boundary_lambda: float = 7.0  # LPSE abc.lambda default
     low_pass_filter: float
     dealias: str = "isotropic"
     dt: str
@@ -165,15 +171,37 @@ class BoundaryModel(BaseModel):
 
 
 class DampingModel(BaseModel):
-    collisions: bool
+    """EPW damping. ``landau_form`` selects the static Landau rate: ``matlab`` (the
+    prototype's prefactor), ``lpse`` (the C++ non-relativistic form) or
+    ``relativistic`` / ``relativistic_3d`` (LPSE's Maxwell-Juettner Bessel forms).
+    ``landau_lower_threshold`` (1/ps) zeroes the rate below it (LPSE
+    ``lw.landauDamping.lowerThreshold``); ``landau_multiplier`` is LPSE's static
+    ``LD_multiplier``."""
+
+    collisions: bool | float
     landau: bool
+    landau_form: Literal["matlab", "lpse", "relativistic", "relativistic_2d", "relativistic_3d"] = "matlab"
+    landau_lower_threshold: float = 0.0
+    landau_multiplier: float = 1.0
 
 
 class SourceModel(BaseModel):
+    """EPW sources. ``noise_model: flat`` is the MATLAB per-step source ``dt * amplitude``
+    with a random phase on every retained mode; ``thermal`` is LPSE's fluctuation-
+    dissipation source (see ``epw.noise_kick_spectrum``), optionally calibrated to the
+    electron temperature with ``noise_calibrate``. ``noise_max_wavenumber`` (units of k0)
+    is LPSE ``lw.noise.maxWavenumber``. ``tpd_form: lpse`` keeps LPSE's exact TPD
+    coefficient and its ``(w0/wp0 - 1)`` charge-density factor; ``matlab`` is the
+    prototype's ``w0 -> 2 wp0`` form (identical at envelope density 0.25)."""
+
     noise: bool
+    noise_model: Literal["flat", "thermal"] = "flat"
     noise_amplitude: float = 1e-10
     noise_seed: int | None = None
+    noise_calibrate: bool = False
+    noise_max_wavenumber: float | None = None
     tpd: bool
+    tpd_form: Literal["lpse", "matlab"] = "lpse"
     srs: bool = False
 
 
@@ -183,6 +211,8 @@ class EPWModel(BaseModel):
     density_gradient: bool
     linear: bool
     source: SourceModel
+    # LPSE lw.maxWavenumber: hard cap |k| < max_wavenumber * k0 on the retained EPW band
+    max_wavenumber: float | None = None
 
 
 class LightModel(BaseModel):
@@ -198,22 +228,45 @@ class LightModel(BaseModel):
     # optional isotropic low-pass filter on E0/E1 once per EPW step, as a fraction of
     # the grid Nyquist wavenumber pi/dx (None = off)
     filter: float | None = None
+    # TPD pump depletion: transverse (divergence-free) projection of E_h div(E_h) in
+    # k-space (LPSE LwSolver::makeExyzDivE) and the optional LPSE lw.kFilter
+    # (|k| < 1.2 k0 sqrt(1 - n_min)) on the same term
+    tpd_projection: bool = True
+    tpd_k_filter: bool = False
 
 
 class IAWDampingModel(BaseModel):
-    """Ion-acoustic damping parameters from the MATLAB LPSE model."""
+    """Ion-acoustic damping. ``landau_form: simplified`` is ``gamma = landau * cs * |k|``
+    (LPSE ``isSimplified``); ``full`` is the Z-generalized Krall-Trivelpiece rate with its
+    ``k lambda_D`` and ``Z Te/Ti`` dependence (``iaw.ion_landau_rate``), in which case
+    ``landau`` is ignored. ``collisions`` (1/ps) damps ``n`` as ``(1 - nu dt)`` in the
+    explicit solver and ``div v`` as ``exp(-2 nu dt)`` in the spectral one (LPSE)."""
 
     collisions: float = 1.0e-5  # density damping rate, 1/ps
     landau: float = 0.1  # gamma_iaw = landau * cs * |k|
+    landau_form: Literal["simplified", "full"] = "simplified"
 
 
 class IAWModel(BaseModel):
-    """Ion-acoustic density/velocity-divergence evolution and ponderomotive drive."""
+    """Ion-acoustic density/velocity-divergence evolution and ponderomotive drive.
+
+    ``solver: explicit`` is the MATLAB kick/drift split step (stable for
+    ``omega_max dt < 2``); ``spectral`` is LPSE's exact per-mode damped-oscillator
+    propagator (unconditionally stable), which also supports a uniform background
+    ``flow`` ([Mach_x, Mach_y], Doppler phase), advancing the IAW only every ``stride``
+    EPW steps, and the LPSE fluctuation-dissipation ``noise`` source on ``div v``."""
 
     active: bool = False
+    solver: Literal["explicit", "spectral"] = "explicit"
     boundary: BoundaryModel | None = None  # defaults to terms.epw.boundary
+    boundary_max_rate: float | None = None  # exp absorber peak rate (1/ps); default half the EPW one
     damping: IAWDampingModel = IAWDampingModel()
     max_density_perturbation: float | None = None
+    flow: list[float] | None = None
+    stride: int = 1
+    noise: bool = False
+    noise_amplitude: float = 1.0
+    noise_seed: int | None = None
 
 
 class HPEModel(BaseModel):

@@ -41,16 +41,20 @@ class CoupledLight(RamanLight):
     paths. This class adds the pump: its coefficients, boundary injector, reciprocal
     TPD/SRS couplings, and the coupled staggered loop.
 
-    The TPD pump term is constructed directly as the discrete reciprocal of
-    ``SpectralEPWSolver.calc_tpd_source`` (rather than using the abandoned historical
-    Pump2D prototype):
+    The TPD pump term is LPSE's (LightSolver.cpp, ``Sc_tpd``; LwSolver.cpp, the
+    transverse projection; Follett's equation document Eqs 53/55):
 
-        dE0_y/dt |_TPD = i e/(4 w0 me) exp(+i (w0 - 2 wp0)t)
-                          * Ehy * div(Eh)
+        dE0/dt |_TPD = i e/(2 w0 me) exp(+i (w0 - 2 wp0)t) * [Eh div(Eh)]_T
 
-    The pair conserves ``|E0|^2 + (wp0/w0)|Eh|^2`` for coupling terms alone. Only
-    the y-polarized pump participates because the existing TPD operator is written
-    for that polarization.
+    for every pump component, with ``[.]_T`` the transverse (divergence-free) part taken
+    in k-space (``terms.light.tpd_projection``, default on) so that a longitudinal
+    component is never injected into the light field; ``terms.light.tpd_k_filter``
+    additionally restricts the term to ``|k| < 1.2 k0 sqrt(1 - n_min)`` (LPSE
+    ``lw.kFilter``). The coefficient is exactly twice the EPW-side TPD source coefficient
+    ``i e/(4 me w0)``: with that ratio the pair conserves ``|E0|^2 + (2 wp0/w0)|Eh|^2``
+    for the coupling terms alone, i.e. the total wave energy at envelope density n_c/4
+    (settled against the equation document on 2026-09-14; adept main previously carried
+    half this coefficient).
 
     The pump injector amplitude is divided by sinc(k0 dx) so the launched amplitude is
     exactly E0_source * sqrt(intensity) / eps^(1/4) despite the two-point discrete
@@ -92,6 +96,7 @@ class CoupledLight(RamanLight):
         source_cfg = cfg["terms"]["epw"]["source"]
         self.srs_enabled = bool(source_cfg.get("srs", False))
         self.tpd_enabled = bool(source_cfg.get("tpd", False))
+        self.kx = cfg["grid"]["kx"]
         self.ky = cfg["grid"]["ky"]
 
         # pump detuning/diffraction (MATLAB lines 1616-1626); with wp0^2 = w0^2 * n_env
@@ -101,10 +106,27 @@ class CoupledLight(RamanLight):
         )
         self.diffraction_coeff0 = 1j * self.c**2 / (2.0 * self.w0)
         self.srs_depletion_coeff0 = -1j * self.e / (4.0 * self.w1 * self.me)
-        self.tpd_depletion_coeff0 = 1j * self.e / (4.0 * self.w0 * self.me)
+        self.tpd_depletion_coeff0 = 1j * self.e / (2.0 * self.w0 * self.me)
+
+        light_cfg = cfg["terms"].get("light", {})
+        # transverse projection of E div(E) (LPSE LwSolver::makeExyzDivE, k-space
+        # P_T = I - k k / k^2) and the optional LPSE lw.kFilter on the same term
+        self.tpd_projection = bool(light_cfg.get("tpd_projection", True))
+        self.tpd_k_filter = bool(light_cfg.get("tpd_k_filter", False))
+        kx_arr = np.asarray(cfg["grid"]["kx"])
+        ky_arr = np.asarray(cfg["grid"]["ky"])
+        k_sq_np = kx_arr[:, None] ** 2 + ky_arr[None, :] ** 2
+        k_sq_safe = np.where(k_sq_np > 0, k_sq_np, 1.0)
+        self.kx_over_k_sq = jnp.asarray(np.where(k_sq_np > 0, kx_arr[:, None] / k_sq_safe, 0.0))
+        self.ky_over_k_sq = jnp.asarray(np.where(k_sq_np > 0, ky_arr[None, :] / k_sq_safe, 0.0))
+        if self.tpd_k_filter:
+            n_min = float(np.min(np.asarray(background_density)))
+            k0_max_sq = (1.2 * self.w0 / self.c) ** 2 * max(1.0 - n_min, 0.0)
+            self.tpd_k_mask = jnp.asarray(np.where((k_sq_np > 0) & (k_sq_np < k0_max_sq), 1.0, 0.0))
+        else:
+            self.tpd_k_mask = None
 
         # how the SRS E0 <-> E1 exchange enters the light sub-step (see the class docstring)
-        light_cfg = cfg["terms"].get("light", {})
         self.coupling = str(light_cfg.get("coupling", "explicit"))
         if self.coupling not in ("explicit", "rotation"):
             raise ValueError(f"terms.light.coupling must be 'explicit' or 'rotation', got {self.coupling!r}")
@@ -207,23 +229,43 @@ class CoupledLight(RamanLight):
         if self.tpd_enabled:
             if phi_k is None:
                 raise ValueError("phi_k is required for TPD pump depletion")
-            k_e0y += self.calc_tpd_depletion(t, phi_k)
+            tpd_dep = self.calc_tpd_depletion(t, phi_k)
+            k_e0x += tpd_dep[..., 0]
+            k_e0y += tpd_dep[..., 1]
         row_i0, row_i0p1 = self.calc_pump_source(t, pump_args)
         k_e0y = k_e0y.at[self.i0, :].add(row_i0)
         k_e0y = k_e0y.at[self.i0 + 1, :].add(row_i0p1)
 
         return jnp.stack([k_e0x, k_e0y], axis=-1)
 
-    def calc_tpd_depletion(self, t: float, phi_k: Array) -> Array:
-        """Return the clean reciprocal TPD source for the y-polarized pump.
+    def tpd_depletion_vector(self, phi_k: Array) -> Array:
+        """``[E_h div(E_h)]_T`` in real space, shape (nx, ny, 2), from the frozen potential.
 
         ``div_e`` uses the same potential convention as the EPW TPD source:
-        ``div_e = ifft2(k^2 phi_k)``.
+        ``div_e = ifft2(k^2 phi_k)``. The transverse projection and the optional k-filter
+        are LPSE's ``LwSolver::makeExyzDivE``: ``F_T = F - k (k . F) / k^2`` mode by mode.
         """
+        ex = jnp.fft.ifft2(-1j * self.kx[:, None] * phi_k)
         ey = jnp.fft.ifft2(-1j * self.ky[None, :] * phi_k)
         div_e = jnp.fft.ifft2(self.k_sq * phi_k)
+        fx, fy = ex * div_e, ey * div_e
+        if self.tpd_projection or self.tpd_k_mask is not None:
+            fx_k = jnp.fft.fft2(fx)
+            fy_k = jnp.fft.fft2(fy)
+            if self.tpd_projection:
+                longitudinal = self.kx[:, None] * fx_k + self.ky[None, :] * fy_k
+                fx_k = fx_k - self.kx_over_k_sq * longitudinal
+                fy_k = fy_k - self.ky_over_k_sq * longitudinal
+            if self.tpd_k_mask is not None:
+                fx_k = fx_k * self.tpd_k_mask
+                fy_k = fy_k * self.tpd_k_mask
+            fx, fy = jnp.fft.ifft2(fx_k), jnp.fft.ifft2(fy_k)
+        return jnp.stack([fx, fy], axis=-1)
+
+    def calc_tpd_depletion(self, t: float, phi_k: Array) -> Array:
+        """Return the reciprocal TPD term for both pump components, shape (nx, ny, 2)."""
         phase = jnp.exp(1j * (self.w0 - 2.0 * self.wp0) * t)
-        return self.tpd_depletion_coeff0 * phase * ey * div_e
+        return self.tpd_depletion_coeff0 * phase * self.tpd_depletion_vector(phi_k)
 
     def coupled_rhs(
         self,

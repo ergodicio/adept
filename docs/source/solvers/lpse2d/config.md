@@ -102,8 +102,11 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `boundary_abs_coeff` | float | Absorbing boundary coefficient |
+| `boundary_abs_coeff` | float | Absorbing boundary coefficient (`tanh` profile: the amplitude damping rate, 1/ps, on the layer plateau) |
 | `boundary_width` | string | Width of absorbing boundary layer with unit |
+| `boundary_profile` | string | (optional, default `tanh`) Shape of the absorbing layers. `tanh` is the MATLAB envelope (rise `boundary_width / 5`). `exp` is the original LPSE profile (`absorbingBoundaries.cpp`): rate `boundary_max_rate * (e^{lambda s/L} - 1) / (e^lambda - 1)` with `s` the distance into the layer measured from the edge cell (so the edge cell carries the full rate and the layer spans `boundary_width / dx` cells); with both axes absorbing the two rates combine by `max`, as in LPSE |
+| `boundary_max_rate` | float | (`exp` profile) Peak amplitude damping rate in 1/ps (default `200`, LPSE `lw.abc.maxDampingRate`). The IAW absorber uses half of it unless `terms.iaw.boundary_max_rate` is set (LPSE `IawSolver` default 100) |
+| `boundary_lambda` | float | (`exp` profile) Exponential steepness (default `7`, LPSE `abc.lambda`) |
 | `low_pass_filter` | float | Low-pass filter cutoff as fraction of kmax (0-1) |
 | `dealias` | string | Shape of the anti-aliasing mask: `isotropic` (default) or `shifted-band` |
 | `dt` | string | Timestep with unit |
@@ -363,6 +366,8 @@ Physics terms configuration.
 | `pump_depletion` | bool | (default `false`) Evolve the pump `E0` with the staggered FD envelope solver instead of prescribing it analytically. The pump is launched at `x = xmin + drivers.E0.offset`; active SRS and TPD terms each add their reciprocal pump coupling, and both act when both instabilities are enabled. Requires at least one of `terms.epw.source.srs`/`tpd` and `terms.epw.boundary.x: absorbing`; incompatible with `drivers.E0.speckle`. Enables true net-flux `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics and above-threshold saturation |
 | `coupling` | str | (default `explicit`; `pump_depletion` with `terms.epw.source.srs` only) How the SRS exchange between `E0` and `E1` is integrated inside each light sub-step. `explicit` keeps the MATLAB staggered real/imaginary update, which treats the part of the exchange proportional to `Im(laplacian phi)` with an explicit Euler step: the light pair grows by `1 + sin^2(arg laplacian phi) (Omega dt_l)^2 / 2` per sub-step, `Omega = e \|laplacian phi\| / (4 me sqrt(w0 w1))`, for any `dt_l`. That is invisible at small EPW amplitude but manufactures light (and, through the SRS/TPD sources, EPW) energy once the pump is depleted and `Omega dt_l` reaches ~0.005, ending in a one-step NaN. `rotation` Strang-splits each sub-step as [exact exchange rotation over `dt_l/2`] [staggered propagation with the exchange off] [rotation over `dt_l/2`]; the rotation `exp(tau M) = cos(Omega tau) I + sin(Omega tau)/Omega M` conserves the light action `w1 \|E0\|^2 + w0 \|E1\|^2` pointwise and is stable for any `dt_l`. The TPD pump term and the IAW detuning stay in the staggered update under both settings. See `tests/test_lpse2d/test_light_coupling.py` |
 | `filter` | float | (default off; `pump_depletion` only) Isotropic low-pass filter applied to both light fields once per EPW step, keeping `\|k\| <= filter * pi/dx`. The physical light content lies below ~1.2 k0; grid-scale light modes have FD group velocity `c^2 sin(k dx)/(w dx) -> 0`. Diagnostic/numerical-hygiene option |
+| `tpd_projection` | bool | (default `true`; `pump_depletion` with `terms.epw.source.tpd`) Take the transverse (divergence-free) part of `E_h div(E_h)` in k-space before it acts on the pump, `F_T = F - k (k . F)/k^2` mode by mode (LPSE `LwSolver::makeExyzDivE`), so the TPD pump term never injects a longitudinal component into the light field. Both pump components receive the term |
+| `tpd_k_filter` | bool | (default `false`) LPSE `lw.kFilter`: restrict the TPD pump term to `\|k\| < 1.2 k0 sqrt(1 - n_min)` |
 
 ### epw
 
@@ -375,6 +380,7 @@ Physics terms configuration.
 | `source` | object | Source terms |
 | `hyperviscosity` | object | Optional hyperviscosity for numerical stability |
 | `kinetic real part` | bool | Include kinetic correction to real frequency |
+| `max_wavenumber` | float | (optional) LPSE `lw.maxWavenumber`: hard cap `\|k\| < max_wavenumber * k0` (vacuum laser wavenumber) on the retained EPW band, applied on top of `grid.low_pass_filter` / `grid.dealias` |
 
 #### boundary
 
@@ -389,6 +395,11 @@ Physics terms configuration.
 |-------|------|-------------|
 | `collisions` | bool or float | Collisional damping. `true` computes from plasma parameters, or specify rate directly |
 | `landau` | bool | Include Landau damping |
+| `landau_form` | string | (default `matlab`) Static Landau rate. `matlab`: the prototype's `sqrt(pi/8) (1 + 1.5 x^2) wp^4/(k^3 vte^3) exp(-3/2 - 1/(2x^2))`, `x = k lambda_D`. `lpse`: the C++ `landauDamping_nonRel`, `sqrt(pi/8) (kde/k)^3 w_k exp(-w_k^2/(2 k^2 vte^2))` with `w_k = wp sqrt(1 + 3x^2)` -- identical exponent, prefactor `sqrt(1 + 3x^2)` vs `(1 + 1.5x^2)` (0.7% at x = 0.3, 3.8% at x = 0.5). `relativistic` (= `relativistic_2d`) / `relativistic_3d`: LPSE's Maxwell-Juettner Bessel-function rates (`landauDamping_rel_2D/3D`); modes with phase velocity above `c` are undamped |
+| `landau_lower_threshold` | float | (default `0`, 1/ps) LPSE `lw.landauDamping.lowerThreshold`: modes whose Landau rate is below it are treated as undamped (also in the thermal-noise balance) |
+| `landau_multiplier` | float | (default `1`) Static multiplier on the Landau rate (LPSE `LD_multiplier`) |
+
+The same rate array (form, threshold, multiplier) is used by the EPW step, the HPE calibration, the dissipation diagnostic and the thermal noise source.
 
 #### source
 
@@ -397,7 +408,11 @@ Physics terms configuration.
 | `noise` | bool | Add random noise source |
 | `noise_amplitude` | float | (optional) Amplitude of the per-step EPW noise source. Default `1.0e-10` (the MATLAB `noiseAmp`) |
 | `noise_seed` | int | (optional) Seed for the EPW noise source. Default `null`, which draws a random seed once and pins it into the config before parameters are logged, so every run is exactly reproducible from its logged `noise_seed` |
-| `tpd` | bool | Include the two-plasmon-decay source. With `terms.light.pump_depletion`, also include its energy-reciprocal feedback on the y-polarized pump |
+| `noise_model` | string | (default `flat`) `flat`: the MATLAB source, a kick `dt * noise_amplitude` with a random phase on every retained mode each step. `thermal`: the original LPSE `lw.noise` source (`ZakharovSolver::addNoiseToPotential_fft`), a fluctuation-dissipation kick `D_k = N A / sqrt(1 + k^2 lambda_D^2) * sqrt(1 - exp(-2 gamma_k dt)) / \|k\|` balanced against the frozen analytic Landau + collisional rate `gamma_k` and added after the damping sub-step, so every mode relaxes to the Cerenkov spectrum `<\|E_k\|^2> = A^2/(1 + k^2 lambda_D^2)` (x-space envelope amplitude squared) independently of `dt`; `A = noise_amplitude`. Undamped modes receive no noise; a band with no damping at all is refused, as in LPSE. Switching an existing deck to `thermal` changes its seed level -- the srs-2d-testbed calibration was done with `flat` |
+| `noise_calibrate` | bool | (default `false`; `thermal` only) Set `A` from the electron temperature by equipartition -- electric energy `kT/2` per mode over the box volume `V` (`Lz = Ly` for the 2-D box, `V = Lx^3` when `ny = 1`, following LPSE's `deltaK3`): `A = noise_amplitude * sqrt(8 pi kT / V)`, so `noise_amplitude: 1` is the thermal level (LPSE `lw.noise.isCalculated` convention). LPSE's own constant carries an unexplained extra factor in its source; this calibration is the equipartition value and has not been matched to LPSE's number |
+| `noise_max_wavenumber` | float | (optional, units of `k0`) LPSE `lw.noise.maxWavenumber`: no noise above `noise_max_wavenumber * k0` |
+| `tpd_form` | string | (default `lpse`) `lpse`: the C++ TPD source `i e/(4 me w0) e^{-i(w0 - 2wp0)t} [F(E0 . E*) + (w0/wp0 - 1) i k . F(E0 rho*)/k^2]` with every pump component (`ZakharovSolver::updatePotentialWithTpdSource_fft`). `matlab`: the prototype's `w0 -> 2 wp0` form, `i e/(8 me wp0)` and factor 1. The two are identical at envelope density 0.25 (`w0 = 2 wp0`); at 0.23 the LPSE coefficient is 4% smaller and the charge-density factor is 1.085 |
+| `tpd` | bool | Include the two-plasmon-decay source. With `terms.light.pump_depletion`, also include LPSE's pump-depletion term `i e/(2 me w0) e^{+i(w0 - 2wp0)t} [E_h div E_h]_T` on both pump components (twice the EPW-side coefficient, so the pair conserves the total wave energy at envelope density n_c/4; see `terms.light.tpd_projection`) |
 | `srs` | bool | Include stimulated Raman scattering (optional, default false). Turning this on also evolves the Raman scattered-light field `E1` with a finite-difference paraxial solver, sub-cycled `grid.light_substeps` times per EPW step, and adds the SRS source `i e wp0/(4 me w0 w1) (n/n_env) E0 . conj(E1)` to the EPW potential. The default time series then also records `e1_sq` and `reflectivity` (Poynting-corrected `|E1_y|^2/E0^2` at a probe on the low-density side, `x = 1.6 * boundary_width`) |
 
 #### hyperviscosity (optional)
@@ -414,12 +429,20 @@ The IAW state follows the MATLAB LPSE split update for fractional ion-density pe
 | Field | Type | Description |
 |-------|------|-------------|
 | `active` | bool | Enable ion-acoustic evolution (default `false`) |
+| `solver` | string | (default `explicit`) `explicit`: the MATLAB kick/drift split step (FD Laplacian, stable for `omega_iaw,max * grid.dt < 2`, validated at setup). `spectral`: the original LPSE `iaw.solver = spectral` path -- per k-mode the exact solution of the damped oscillator `dn/dt = -w, dw/dt = cs^2 k^2 n - 2 gamma_k w` (`e^{-gamma dt}` times a `cos/sin(beta dt)` rotation, `beta = sqrt(cs^2 k^2 - gamma^2)`), then collisional damping `e^{-2 nu dt}` on `w`, the ponderomotive kick `dt k^2 PP_k`, and the noise. Unconditionally stable and exact for the acoustic part at any `dt` |
 | `boundary` | object or null | Per-axis `x`/`y` boundary modes. Defaults to `terms.epw.boundary` |
-| `damping.collisions` | float | Density damping rate in `1/ps` (default `1.0e-5`) |
+| `boundary_max_rate` | float or null | (`grid.boundary_profile: exp` only) Peak absorber rate for the IAW layer, 1/ps; default half of `grid.boundary_max_rate` (LPSE `IawSolver` default 100 vs 200) |
+| `damping.collisions` | float | Collisional damping rate in `1/ps` (default `1.0e-5`): on `n` as `(1 - nu dt)` in the explicit solver, on `div v` as `exp(-2 nu dt)` in the spectral one (LPSE) |
 | `damping.landau` | float | Dimensionless coefficient in `gamma_iaw(k) = landau * cs * |k|` (default `0.1`); the velocity-divergence equation is damped at `2 gamma_iaw` |
+| `damping.landau_form` | string | (default `simplified`) `simplified`: the rate above (LPSE `isSimplified`). `full`: the Z-generalized Krall-Trivelpiece expression used by LPSE's IAW solver, `W_i = W_r sqrt(pi/8) L^{-3/2} [(3/(eta-1))^{3/2} exp(-(3/(eta-1))/(2L)) + sqrt(1/(eta M))]`, `W_r = cs |k|/sqrt(L)`, `L = 1 + k^2 lambda_D^2`, `eta = 1 + 3 Ti/(Z Te)`, `M = (mi/me)/(eta Z)`, with `gamma_iaw = W_i/2`; `damping.landau` is then ignored. The real frequency in the spectral propagator stays `cs |k|`, as in LPSE's spectral branch |
 | `max_density_perturbation` | float or null | Optional symmetric limiter on `|delta n_i/n_0|`; unlimited by default |
+| `flow` | list or null | (`spectral` only) Uniform background flow `[Mach_x, Mach_y]` in units of `cs`: every mode acquires the Doppler phase `e^{-i k . V0 dt}` (LPSE `fluid.velocity`) |
+| `stride` | int | (default `1`; `spectral` only) Advance the IAW every `stride` EPW steps with `dt_iaw = stride * grid.dt` (LPSE steps its IAW solver less often than the EPW) |
+| `noise` | bool | (default `false`) LPSE `iaw.noise`: a random-phase source on `div v` every IAW step with the fluctuation-dissipation amplitude `noise_amplitude * nx * ny * sqrt(exp(2 dt (gamma_k + nu)) - 1)` on the retained band; requires IAW damping |
+| `noise_amplitude` | float | (default `1.0`) Amplitude of the IAW noise (x-space `div v` units per mode) |
+| `noise_seed` | int or null | Seed of the IAW noise stream |
 
-The setup validates the explicit acoustic stability condition `omega_iaw,max * grid.dt < 2`.
+The setup validates the explicit acoustic stability condition `omega_iaw,max * grid.dt < 2` for `solver: explicit`.
 
 ```yaml
 terms:

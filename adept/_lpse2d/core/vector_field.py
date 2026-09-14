@@ -1,5 +1,5 @@
 import numpy as np
-from jax import Array
+from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
@@ -139,7 +139,12 @@ class SplitStep:
         # ion-acoustic split step: the updated density is seen by the light and EPW
         # detuning terms on the next outer step, matching the MATLAB ordering
         if self.iaw is not None:
-            new_y = self.iaw(new_y)
+            if self.iaw.stride == 1:
+                new_y = self.iaw(new_y, t)
+            else:
+                # LPSE strides the IAW solver: advance by stride*dt every stride-th EPW step
+                step = jnp.round(t / self.dt).astype(int)
+                new_y = lax.cond(step % self.iaw.stride == 0, lambda yy: self.iaw(yy, t), lambda yy: yy, new_y)
 
         # particle push + Landau-damping feedback; the gamma_L written here is the
         # rate the EPW update applies on the next step (one-step lag)

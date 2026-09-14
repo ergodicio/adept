@@ -151,7 +151,7 @@ def expected_noise_energy(cfg: dict, t_ps: float) -> float:
     detuning-induced mode mixing are neglected, so on absorbing/ramped boxes this is a
     mild overestimate -- conservative for use as a growth-fit noise floor.
     """
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
 
     grid = cfg["grid"]
     derived = cfg["units"]["derived"]
@@ -159,15 +159,12 @@ def expected_noise_energy(cfg: dict, t_ps: float) -> float:
     ky = np.array(grid["ky"])
     k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
     zero_mask = np.where(k_sq > 0, 1.0, 0.0)
-    if cfg["terms"]["epw"]["damping"].get("landau", True):
-        gamma = np.array(landau_damping_rate(k_sq, derived["wp0"], derived["vte_sq"], zero_mask))
-    else:
-        gamma = np.zeros_like(k_sq)
-    g = gamma + derived.get("nu_coll", 0.0) * zero_mask
+    g = np.asarray(analytic_landau_rate(cfg)) + derived.get("nu_coll", 0.0) * zero_mask
 
     dt = grid["dt"]
-    amp = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
-    mode_amp_sq = (dt * amp) ** 2 * np.array(grid["low_pass_filter_grid"]) ** 2 * zero_mask
+    # per-step kick amplitude of the configured noise model (flat: dt * amplitude on the
+    # retained band; thermal: the fluctuation-dissipation kick), squared
+    mode_amp_sq = np.asarray(noise_kick_spectrum(cfg)) ** 2
 
     small = 2.0 * g * dt < 1.0e-12  # undamped modes: plain random walk, variance ~ t
     denom = np.where(small, 1.0, 1.0 - np.exp(-2.0 * g * dt))

@@ -24,7 +24,7 @@ from jax import numpy as jnp
 from jax.scipy import special as jax_special
 from scipy import special
 
-from adept._lpse2d.core.epw import landau_damping_rate
+from adept._lpse2d.core.epw import analytic_landau_rate
 
 PARTICLE_KEYS = ("x_e", "y_e", "u_e", "epw_hist", "gamma_L")
 
@@ -34,15 +34,8 @@ def _hpe_cfg(cfg: dict) -> dict:
 
 
 def _analytic_rate(cfg: dict) -> np.ndarray:
-    derived = cfg["units"]["derived"]
-    kx = np.asarray(cfg["grid"]["kx"])
-    ky = np.asarray(cfg["grid"]["ky"])
-    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
-    zero_mask = np.where(k_sq > 0.0, 1.0, 0.0)
-    return np.asarray(
-        landau_damping_rate(jnp.asarray(k_sq), derived["wp0"], derived["vte_sq"], jnp.asarray(zero_mask)),
-        dtype=np.float64,
-    )
+    # the same static rate (form, threshold, multiplier) the fluid solver would apply
+    return np.asarray(analytic_landau_rate(cfg), dtype=np.float64)
 
 
 def resonance_arrays(cfg: dict) -> dict:
