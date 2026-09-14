@@ -4,6 +4,7 @@ from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._lpse2d.core import epw, laser
+from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
 from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.raman import RamanLight
 
@@ -48,6 +49,8 @@ class SplitStep:
             self.iaw = None
         # HPE particle/histogram keys are real and stay out of this list
         self.complex_state_vars = ["E0", "epw", "E1"]
+        # terms.epw.energy_ledger: accumulate the per-operation EPW energy changes in the state
+        self.energy_ledger = bool(cfg["terms"]["epw"].get("energy_ledger", False))
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
         self.zero_mask = cfg["grid"]["zero_mask"]
@@ -131,10 +134,16 @@ class SplitStep:
         # light split step
         new_y = self.light_split_step(t, new_y, args["drivers"])
 
+        driver_delta = 0.0
         if "E2" in args["drivers"]:
+            w_before = self.epw.energy(new_y["epw"])
             new_y["epw"] += jnp.fft.fft2(self.dt * self.epw.driver(args["drivers"]["E2"], t))
-        # epw split step
-        new_y["epw"] = self.epw(t, new_y, args)
+            driver_delta = self.epw.energy(new_y["epw"]) - w_before
+        # epw split step (with the per-operation energy deltas for the ledger)
+        new_y["epw"], deltas = self.epw.advance(t, new_y, args)
+        if self.energy_ledger:
+            deltas = deltas.at[LEDGER_CHANNELS.index("driver")].set(driver_delta)
+            new_y[LEDGER_KEY] = new_y[LEDGER_KEY] + deltas
 
         # ion-acoustic split step: the updated density is seen by the light and EPW
         # detuning terms on the next outer step, matching the MATLAB ordering

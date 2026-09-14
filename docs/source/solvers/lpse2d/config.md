@@ -381,6 +381,7 @@ Physics terms configuration.
 | `hyperviscosity` | object | Optional hyperviscosity for numerical stability |
 | `kinetic real part` | bool | Include kinetic correction to real frequency |
 | `max_wavenumber` | float | (optional) LPSE `lw.maxWavenumber`: hard cap `\|k\| < max_wavenumber * k0` (vacuum laser wavenumber) on the retained EPW band, applied on top of `grid.low_pass_filter` / `grid.dealias` |
+| `energy_ledger` | bool | (default `false`) Accumulate, in the state, the change of the EPW energy attributed to every operation of the split step -- `dispersion`, `damping`, `dealias`, `noise`, `detuning`, `boundary`, `reprojection`, `tpd`, `srs`, `driver` -- and report the cumulative values in the default series as `epw_ledger_<channel>` (in `epw_energy` units) together with `epw_ledger_closure = epw_energy - sum(channels)`, which stays at `epw_energy(0)` to round-off. This is the per-step energy-budget check LPSE asserts to 0.1 % (`ZakharovSolver.cpp:1700-1712`); here it is exact by construction and the channels are the diagnostic |
 
 #### boundary
 

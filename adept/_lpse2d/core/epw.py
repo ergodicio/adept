@@ -9,6 +9,23 @@ LANDAU_FORMS = ("matlab", "lpse", "relativistic")
 NOISE_MODELS = ("flat", "thermal")
 TPD_FORMS = ("lpse", "matlab")
 
+# EPW energy ledger (terms.epw.energy_ledger): cumulative change of the EPW energy
+# measure sum_k k^2 |phi_k|^2 attributed to each operation of the split step, in this
+# order. LPSE asserts the same closure to 0.1 % per step (ZakharovSolver.cpp:1700-1712).
+LEDGER_KEY = "epw_ledger"
+LEDGER_CHANNELS = (
+    "dispersion",  # k-space Bohm-Gross phase (exactly 0)
+    "damping",  # Landau + collisional (<= 0)
+    "dealias",  # band mask after the damping (<= 0)
+    "noise",  # random-phase source (>= 0 on average)
+    "detuning",  # density / IAW phase in x-space (exactly 0)
+    "boundary",  # absorbing layers (<= 0)
+    "reprojection",  # E -> phi_k round trip with the band mask (<= 0)
+    "tpd",  # TPD source
+    "srs",  # SRS source
+    "driver",  # direct EPW driver (drivers.E2)
+)
+
 
 def landau_damping_rate(k_sq: Array, wp0: float, vte_sq: float, zero_mask: Array, form: str = "matlab") -> Array:
     """
@@ -574,9 +591,22 @@ class SpectralEPWSolver:
         # the retained band (MATLAB epwNoise: phi_noise(isHighWavenumberMode) = 0) and k = 0
         return self.noise_kick * jnp.exp(1j * phases)
 
+    def energy(self, phi_k: Array) -> Array:
+        """The ledger's energy measure sum_k k^2 |phi_k|^2 (= N sum_x |E|^2, Parseval)."""
+        return jnp.sum(self.k_sq * jnp.abs(phi_k) ** 2)
+
+    def energy_x(self, ex: Array, ey: Array) -> Array:
+        """The same measure evaluated on the real-space fields."""
+        return (self.nx * self.ny) * jnp.sum(jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2)
+
     def __call__(self, t: float, y, args) -> Array:
+        """Advance EPW by one timestep; see ``advance``."""
+        return self.advance(t, y, args)[0]
+
+    def advance(self, t: float, y, args) -> tuple[Array, Array]:
         """
-        Advance EPW by one timestep using spectral method.
+        Advance EPW by one timestep using spectral method, returning the new potential
+        and the energy change of each operation (``LEDGER_CHANNELS`` order).
 
         This matches MATLAB's spectralEpwUpdate() lines 1966-2118.
 
@@ -606,6 +636,13 @@ class SpectralEPWSolver:
         phi_k = y["epw"]
         E0 = y["E0"]
         background_density = self.background_density
+        deltas = {}
+        w_prev = self.energy(phi_k)
+
+        def book(name, w_now):
+            nonlocal w_prev
+            deltas[name] = w_now - w_prev
+            w_prev = w_now
 
         # ========================================================================
         # STEP 1-2: Thermal dispersion and Landau damping
@@ -613,6 +650,7 @@ class SpectralEPWSolver:
         # MATLAB line 1975: divE_k = divE_k .* exp(-1i*3/2*vte_sq/wp0 .* K_sq * DT)
         thermal_phase = jnp.exp(-1j * 1.5 * self.vte_sq / self.wp0 * self.k_sq * self.dt)
         phi_k = phi_k * thermal_phase
+        book("dispersion", self.energy(phi_k))
 
         # MATLAB line 1981: divE = divE .* exp(-(gammaLandau + nu_coll) * DT)
         if self.hpe_enabled:
@@ -623,12 +661,14 @@ class SpectralEPWSolver:
             gamma_landau = 0.0
         damping_factor = jnp.exp(-(gamma_landau + self.nu_coll) * self.dt)
         phi_k = phi_k * damping_factor
+        book("damping", self.energy(phi_k))
 
         # ========================================================================
         # STEP 3: Apply filter ONCE after thermal + damping
         # ========================================================================
         # MATLAB line 1976: divE_k(isHighWavenumberMode) = 0
         phi_k = phi_k * self.low_pass_filter
+        book("dealias", self.energy(phi_k))
 
         # ========================================================================
         # STEP 4: Add noise (after the damping sub-step, as LPSE does for the
@@ -637,12 +677,15 @@ class SpectralEPWSolver:
         if self.noise_enabled:
             # MATLAB line 1988: divE = divE + epwNoise * DT (dt is inside noise_kick)
             phi_k = phi_k + self.get_noise(t)
+        book("noise", self.energy(phi_k))
 
         # ========================================================================
         # STEP 5: Calculate electric fields
         # ========================================================================
         # MATLAB line 1992: [Ex, Ey] = calculateFieldsFromDivE(...)
         ex, ey = self.phi_k_to_e_fields(phi_k)
+        # from here to the re-projection the ledger follows the x-space fields
+        w_prev = self.energy_x(ex, ey)
 
         # ========================================================================
         # STEP 6: Calculate TPD source (in k-space, before applying density gradient)
@@ -672,6 +715,7 @@ class SpectralEPWSolver:
             density_phase = jnp.exp(-1j * self.wp0 / 2.0 * density_perturbation * self.dt)
             ex = ex * density_phase
             ey = ey * density_phase
+        book("detuning", self.energy_x(ex, ey))
 
         # ========================================================================
         # STEP 8: Apply absorbing boundaries to E fields (in REAL space)
@@ -681,6 +725,7 @@ class SpectralEPWSolver:
         # Ey = Ey .* exp(-DT * boundaryDampingRate)
         ex = ex * self.boundary_envelope
         ey = ey * self.boundary_envelope
+        book("boundary", self.energy_x(ex, ey))
 
         # ========================================================================
         # STEP 9: Convert E fields back to phi_k
@@ -688,6 +733,7 @@ class SpectralEPWSolver:
         # MATLAB line 2103: divE = convertFieldsToDivE(Ex, Ey, ...)
         # This function applies filter at line 2523
         phi_k = self.e_fields_to_phi_k(ex, ey)
+        book("reprojection", self.energy(phi_k))
 
         # ========================================================================
         # STEP 10: Add TPD source
@@ -695,6 +741,7 @@ class SpectralEPWSolver:
         if self.tpd_enabled and tpd_source is not None:
             # MATLAB line 2109: divE = divE + tpdSourceTerm * DT
             phi_k = phi_k + self.dt * tpd_source
+        book("tpd", self.energy(phi_k))
 
         # ========================================================================
         # STEP 11: Add SRS source
@@ -702,5 +749,7 @@ class SpectralEPWSolver:
         if self.srs_enabled and srs_source is not None:
             # MATLAB line 2113: divE = divE + srsSourceTerm * DT
             phi_k = phi_k + self.dt * srs_source
+        book("srs", self.energy(phi_k))
+        deltas["driver"] = jnp.zeros(())  # filled by the split step (drivers.E2 acts before this call)
 
-        return phi_k
+        return phi_k, jnp.stack([deltas[name] for name in LEDGER_CHANNELS])

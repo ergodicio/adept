@@ -1282,7 +1282,7 @@ def get_save_quantities(cfg: dict) -> dict:
 
             save_y = {}
             for k, v in y.items():
-                if k in PARTICLE_KEYS:
+                if k in PARTICLE_KEYS or k == "epw_ledger":
                     # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
                     # none of them fit the spatial interpolator; the histogram and the
                     # damping-reduction scalars are saved through the default series
@@ -1310,7 +1310,7 @@ def get_save_quantities(cfg: dict) -> dict:
         def save_func(t, y, args):
             from adept._lpse2d.core.hpe import PARTICLE_KEYS
 
-            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS}
+            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS and k != "epw_ledger"}
 
     cfg["save"]["fields"]["func"] = save_func
 
@@ -1438,6 +1438,13 @@ def get_default_save_func(cfg):
             cross = jnp.sum(jnp.conj(E[ix, :, :]) * E[ix + 1, :, :], axis=-1)
             return coeff * jnp.mean(jnp.imag(cross))
 
+    ledger_on = bool(cfg["terms"]["epw"].get("energy_ledger", False))
+    if ledger_on:
+        from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
+
+        # sum_k k^2 |phi_k|^2 -> the epw_energy normalization (Parseval, see above)
+        ledger_prefactor = epw_energy_prefactor / (nx * ny**2)
+
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
         ex = -1j * kx[:, None] * phi_k
@@ -1449,6 +1456,13 @@ def get_default_save_func(cfg):
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 
         out["epw_energy"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq, axis=1))
+        if ledger_on:
+            # cumulative energy attributed to each split-step operation, in epw_energy units;
+            # epw_energy(t) - epw_energy(0) - sum of the channels closes to round-off
+            ledger = y[LEDGER_KEY] * ledger_prefactor
+            for i, name in enumerate(LEDGER_CHANNELS):
+                out[f"epw_ledger_{name}"] = ledger[i]
+            out["epw_ledger_closure"] = out["epw_energy"] - jnp.sum(ledger)
         # dissipation/boundary channels are TOTAL EPW-energy rates: epw_energy counts
         # only the electric part (the OSIRIS field-only convention), so the energy
         # actually handed to electrons -- and the budget sink -- carries the local

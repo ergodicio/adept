@@ -213,6 +213,9 @@ class EPWModel(BaseModel):
     source: SourceModel
     # LPSE lw.maxWavenumber: hard cap |k| < max_wavenumber * k0 on the retained EPW band
     max_wavenumber: float | None = None
+    # per-operation EPW energy ledger accumulated in the state and reported in the default
+    # series (epw_ledger_<channel>, epw_ledger_closure); LPSE asserts the same closure
+    energy_ledger: bool = False
 
 
 class LightModel(BaseModel):

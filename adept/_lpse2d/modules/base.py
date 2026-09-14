@@ -86,6 +86,11 @@ class BaseLPSE2D(ADEPTModule):
         E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
         state = {"epw": epw, "E0": E0, "E1": E1}
 
+        if self.cfg["terms"]["epw"].get("energy_ledger", False):
+            from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
+
+            state[LEDGER_KEY] = np.zeros(len(LEDGER_CHANNELS), dtype=np.float64)
+
         if self.cfg["terms"].get("iaw", {}).get("active", False):
             iaw_shape = (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"])
             state["iaw_density"] = np.zeros(iaw_shape, dtype=np.float64)
