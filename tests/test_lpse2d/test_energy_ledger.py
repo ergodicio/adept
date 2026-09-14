@@ -108,7 +108,7 @@ def test_ledger_closes_to_round_off(make_cfg):
 
     w0 = float(SplitStep(cfg).epw.energy(state0["epw"].view(jnp.complex128)))
     step, state = _run(cfg, state0, 30)
-    ledger = dict(zip(LEDGER_CHANNELS, np.asarray(state["epw_ledger"])))
+    ledger = dict(zip(LEDGER_CHANNELS, np.asarray(state["epw_ledger"]), strict=False))
     w_end = _energy(step, state)
     total_flow = sum(abs(v) for v in ledger.values()) + abs(w0) + abs(w_end)
     assert abs(w_end - w0 - sum(ledger.values())) < 1e-11 * total_flow, ledger

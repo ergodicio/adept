@@ -3,6 +3,40 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 
+def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
+    """Amplitude absorption rates (1/ps) at the critical density of the pump and of the
+    Raman light, from ``terms.light.absorption``: ``false`` (none), ``true`` (NRL plasma
+    formulary as coded in LPSE ``LightSolver.cpp``: ``nu = 5.11e10 Z logLambda /
+    (lambda_um^2 Te_keV^1.5) * 1e-12``, ``logLambda = 6.68 + ln(lambda_um Te)`` for
+    ``Te > 0.01 Z^2`` else ``9.13 + ln(lambda_um Te^1.5 / Z)``, evaluated with each wave's
+    own wavelength), or a number (rate at nc for the pump; the Raman value is scaled by
+    ``(lambda_1/lambda_0)^-2 = (w1/w0)^2`` as the formula's leading dependence)."""
+    from astropy.units import Quantity as _Q
+
+    absorption = cfg["terms"].get("light", {}).get("absorption", False)
+    if absorption is None or absorption is False:
+        return None, None
+    derived = cfg["units"]["derived"]
+    z = float(cfg["units"]["ionization state"])
+    te = _Q(cfg["units"]["reference electron temperature"]).to("keV").value
+    lambda0 = _Q(cfg["units"]["laser_wavelength"]).to("um").value
+    lambda1 = lambda0 * derived["w0"] / derived["w1"]
+
+    def nrl(lam_um):
+        if te > 0.01 * z**2:
+            log_lambda = 6.68 + np.log(lam_um * te)
+        else:
+            log_lambda = 9.13 + np.log(lam_um * te**1.5 / z)
+        return 5.11e10 * z * log_lambda / (lam_um**2 * te**1.5) * 1.0e-12
+
+    if absorption is True:
+        return float(nrl(lambda0)), float(nrl(lambda1))
+    rate0 = float(absorption)
+    if rate0 < 0.0:
+        raise ValueError("terms.light.absorption must be false, true or a non-negative rate in 1/ps")
+    return rate0, rate0 * (derived["w1"] / derived["w0"]) ** 2
+
+
 class RamanLight:
     """
     Evolves the Raman scattered-light envelope E1.
@@ -60,6 +94,18 @@ class RamanLight:
         # cannot cross the absorber between damping applications
         self.sub_boundary = cfg["grid"]["absorbing_boundaries"] ** (1.0 / self.n_sub)
 
+        # collisional (inverse-bremsstrahlung) absorption, terms.light.absorption: the
+        # amplitude decays at nu_abs (n/nc_w)^2 per wave, nc_w its own critical density
+        # (LPSE calculateScatteringPotential; nu_abs from the NRL formula at nc_w with
+        # the wave's wavelength, or a user rate in 1/ps at nc_w)
+        self.n_over_env = background_density / self.envelope_density
+        self.n_over_nc0 = background_density  # n / nc (w0)
+        self.n_over_nc1 = background_density * (self.w0 / self.w1) ** 2  # n / nc (w1)
+        self.absorption_rate0, self.absorption_rate1 = light_absorption_rates(cfg)
+        self.absorption_factor1 = (
+            None if self.absorption_rate1 is None else jnp.exp(-self.absorption_rate1 * self.dt_l * self.n_over_nc1**2)
+        )
+
         # seed injection (MATLAB lines 1757-1769): a two-point antisymmetric source that
         # launches a leftward-propagating (-x) wave at x = xmax - offset
         if "E1" in cfg["drivers"]:
@@ -77,6 +123,7 @@ class RamanLight:
                     "or move the injector with drivers.E1.offset, or remove drivers.E1 to run noise-seeded."
                 )
             self.source_prefactor = self.c**2 / (2.0 * self.w1) / permittivity1**0.25 / self.dx**2
+            self.k1_inject = float(np.sqrt(self.w1**2 - self.wpe_sq_i1) / self.c)
             self.seed_enabled = True
         else:
             self.seed_enabled = False
@@ -186,8 +233,16 @@ class RamanLight:
                 iaw_density,
             )
             E1 = E1 + 1j * self.dt_l * jnp.imag(k2)
-            # absorbing boundaries (MATLAB lines 977-983)
+            # absorbing boundaries (MATLAB lines 977-983) and collisional absorption
             E1 = E1 * self.sub_boundary[..., None]
+            if absorb is not None:
+                E1 = E1 * absorb
             return E1
 
+        absorb = None
+        if self.absorption_rate1 is not None:
+            n_over_nc = (
+                self.n_over_nc1 if iaw_density is None else self.n_over_nc1 * (1.0 + iaw_density / self.n_over_env)
+            )
+            absorb = jnp.exp(-self.absorption_rate1 * self.dt_l * n_over_nc**2)[..., None]
         return lax.fori_loop(0, self.n_sub, substep, E1)

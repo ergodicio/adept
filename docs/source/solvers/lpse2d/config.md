@@ -253,6 +253,7 @@ The main laser pump for TPD/SRS simulations.
 | `shape` | string | Amplitude shape: `"uniform"` (optional) |
 | `offset` | string | (pump depletion only, optional) Distance of the pump boundary injector from `xmin`, with unit. Default `2 * boundary_width` |
 | `turn_on_time` | string | (pump depletion only, optional) Gaussian turn-on time of the injector. Default `10fs` |
+| `injector_width` | string | (pump depletion with `terms.light.solver: spectral`, optional) Gaussian width of the smooth pump injector, with unit. Default one local wavelength `2 pi / k0(n_inject)` |
 
 #### envelope
 
@@ -333,6 +334,7 @@ propagates toward the low-density side while backscatter growth amplifies it aga
 | `turn_on_time` | string | Ramp-up time of the injector (default `10fs`) |
 | `offset` | string | Distance of the injector from the right boundary. Defaults to `1.6 * boundary_width`, just inside the absorbing boundary's tanh skirt; a warning is printed for smaller values because the seed would be damped at the source |
 | `yw` | string | Super-Gaussian (4th order) width of the seed in y; omit for uniform in y |
+| `injector_width` | string | (`terms.light.solver: spectral`, optional) Gaussian width of the smooth seed injector, with unit. Default one local wavelength `2 pi / k1(n_inject)` |
 
 The density at the injector must be below the `w1` critical density (`n < 0.25 n_c` for
 envelope density 0.25), otherwise the seed is evanescent and setup raises an error. Without
@@ -368,6 +370,9 @@ Physics terms configuration.
 | `filter` | float | (default off; `pump_depletion` only) Isotropic low-pass filter applied to both light fields once per EPW step, keeping `\|k\| <= filter * pi/dx`. The physical light content lies below ~1.2 k0; grid-scale light modes have FD group velocity `c^2 sin(k dx)/(w dx) -> 0`. Diagnostic/numerical-hygiene option |
 | `tpd_projection` | bool | (default `true`; `pump_depletion` with `terms.epw.source.tpd`) Take the transverse (divergence-free) part of `E_h div(E_h)` in k-space before it acts on the pump, `F_T = F - k (k . F)/k^2` mode by mode (LPSE `LwSolver::makeExyzDivE`), so the TPD pump term never injects a longitudinal component into the light field. Both pump components receive the term |
 | `tpd_k_filter` | bool | (default `false`) LPSE `lw.kFilter`: restrict the TPD pump term to `\|k\| < 1.2 k0 sqrt(1 - n_min)` |
+| `solver` | string | (default `fd`) Light propagator for the evolved fields (`E1`, and `E0` with `pump_depletion`). `fd`: the MATLAB staggered real/imaginary finite-difference scheme, sub-cycled to its CFL limit. `spectral`: the original LPSE `{laser\|raman}.solver = spectral` path -- per sub-step the x-space scattering potential `exp(i dt Vo)` (detuning + absorption), the coupling sources with forward Euler, and the exact k-space propagator `exp(-i dt c^2 k^2/(2 w))` on the transverse part of the field (the longitudinal part is left unpropagated, as in LPSE), modes outside the retained band zeroed. No CFL limit (`grid.light_substeps` defaults to 1), no grid dispersion, and with `pump_depletion` the SRS exchange is the exact local rotation of `coupling: rotation` Strang-split around the propagation. The injectors become smooth Gaussian sources (`drivers.E0/E1.injector_width`, one local wavelength by default) that launch exactly the requested amplitude with negligible leakage in the wrong direction |
+| `max_wavenumber` | float | (optional; `spectral` only) Cap the retained light band at `max_wavenumber * k0` (LPSE `{laser\|raman}.maxWavenumber`) |
+| `absorption` | bool or float | (default `false`) Collisional (inverse-bremsstrahlung) absorption of the evolved light: the amplitude decays at `nu (n/nc_w)^2` per wave, `nc_w` its own critical density and `n` including the IAW perturbation (LPSE `calculateScatteringPotential`). `true` takes `nu` from the NRL formula as coded in LPSE, `5.11e10 Z logLambda / (lambda_um^2 Te_keV^1.5) * 1e-12` 1/ps with each wave's own wavelength (`logLambda = 6.68 + ln(lambda_um Te)` for `Te > 0.01 Z^2`, else `9.13 + ln(lambda_um Te^1.5/Z)`); a number is the pump rate at `nc` in 1/ps, the Raman rate scaled by `(w1/w0)^2`. Works with both light solvers (applied per sub-step). LPSE's `resonanceAbsorption` is not implemented |
 
 ### epw
 

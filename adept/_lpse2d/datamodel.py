@@ -106,6 +106,8 @@ class E1DriverModel(BaseModel):
     # which places it just inside the absorbing boundary's tanh skirt
     offset: str | None = None
     yw: str | None = None  # super-Gaussian width of the seed in y; omit for uniform in y
+    # spectral light solver: Gaussian width of the smooth injector (default one local wavelength)
+    injector_width: str | None = None
 
 
 class DriversModel(BaseModel):
@@ -236,6 +238,14 @@ class LightModel(BaseModel):
     # (|k| < 1.2 k0 sqrt(1 - n_min)) on the same term
     tpd_projection: bool = True
     tpd_k_filter: bool = False
+    # light propagator: "fd" (MATLAB staggered scheme, sub-cycled to its CFL limit) or
+    # "spectral" (LPSE exact k-space propagator with L/T projection, no CFL limit)
+    solver: Literal["fd", "spectral"] = "fd"
+    # retained light band cap |k| < max_wavenumber * k0 (spectral solver; LPSE maxWavenumber)
+    max_wavenumber: float | None = None
+    # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
+    # or the amplitude rate at nc in 1/ps
+    absorption: bool | float = False
 
 
 class IAWDampingModel(BaseModel):

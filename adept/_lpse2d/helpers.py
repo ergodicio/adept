@@ -378,6 +378,7 @@ def get_derived_quantities(cfg: dict) -> dict:
         light = {**light, **LightModel(**light).model_dump()}
         cfg["terms"]["light"] = light
     pump_depletion = light.get("pump_depletion", False)
+    light_solver = light.get("solver", "fd")
     if not pump_depletion and (light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None):
         raise ValueError(
             "terms.light.coupling and terms.light.filter act on the coupled (pump-depletion) light solver "
@@ -460,7 +461,12 @@ def get_derived_quantities(cfg: dict) -> dict:
             )
             evolved_carriers.append("pump")
         dt_max = min(dt_limits)
-        if "light_substeps" in cfg_grid:
+        if light_solver == "spectral":
+            # the exact k-space propagator has no CFL limit: one sub-step unless asked for more
+            n_sub = int(cfg_grid.get("light_substeps", 1))
+            if n_sub < 1:
+                raise ValueError("grid.light_substeps must be a positive integer")
+        elif "light_substeps" in cfg_grid:
             n_sub = int(cfg_grid["light_substeps"])
             if cfg_grid["dt"] / n_sub > dt_max:
                 raise ValueError(
@@ -471,7 +477,10 @@ def get_derived_quantities(cfg: dict) -> dict:
             n_sub = int(np.ceil(cfg_grid["dt"] / (0.9 * dt_max)))
         cfg_grid["light_substeps"] = n_sub
         carriers = " + ".join(evolved_carriers)
-        print(f"{carriers} light is sub-cycled {n_sub}x per EPW step (dt_light limit {dt_max:.2e} ps)")
+        print(
+            f"{carriers} light ({light_solver} solver) is sub-cycled {n_sub}x per EPW step "
+            f"(FD dt_light limit {dt_max:.2e} ps)"
+        )
 
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
@@ -500,6 +509,8 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "offset": offset,
                 "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
             }
+            if cfg["drivers"][k].get("injector_width") is not None:
+                cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
             continue
         if k == "E0" and pump_depletion:
             # boundary-injector parameters for the evolved pump: the injector sits at
@@ -512,6 +523,8 @@ def get_derived_quantities(cfg: dict) -> dict:
             cfg["drivers"][k]["derived"]["turn_on_time"] = (
                 _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value
             )
+            if cfg["drivers"][k].get("injector_width") is not None:
+                cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
@@ -1411,17 +1424,22 @@ def get_default_save_func(cfg):
         flux_coeff_w1 = derived["c"] ** 2 / (derived["w1"] * cfg["grid"]["dx"])
         I0_code = derived["I0_code"]
 
+        spectral_light = cfg["terms"].get("light", {}).get("solver", "fd") == "spectral"
+
         def flux_correction(w, ix):
             # The discrete two-point flux of the FD mode at local wavenumber k is
             # |E|^2 * v_g,discrete with v_g,disc = (c^2/w) sin(k_grid dx)/dx, where
             # k_grid satisfies the FD dispersion (2/dx^2)(1 - cos k_grid dx) = k^2.
             # Dividing by sin(k_grid dx)/(k dx) converts it to the physical flux
             # |E|^2 * c * sqrt(eps). Evanescent probes get 1 (their flux is ~0 anyway).
+            # The spectral solver has no grid dispersion: k_grid = k.
             n_loc = float(np.mean(np.array(cfg["grid"]["background_density"])[ix, :]))
             eps = 1.0 - n_loc * w0**2 / w**2
             if eps <= 0:
                 return 1.0
             k_dx = w / derived["c"] * np.sqrt(eps) * cfg["grid"]["dx"]
+            if spectral_light:
+                return float(np.sin(k_dx) / k_dx)
             cos_kg = 1.0 - k_dx**2 / 2.0
             if cos_kg <= -1.0:
                 return 1.0

@@ -30,11 +30,22 @@ class SplitStep:
         # terms.light.pump_depletion the pump is evolved too (one coupled solver)
         self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
         srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
+        # terms.light.solver: the MATLAB staggered finite-difference scheme (fd) or the
+        # LPSE spectral propagator (spectral, spectral_light.py)
+        self.light_solver = str(cfg["terms"].get("light", {}).get("solver", "fd"))
+        if self.light_solver == "spectral":
+            from adept._lpse2d.core.spectral_light import SpectralCoupledLight, SpectralRamanLight
+
+            coupled_cls, raman_cls = SpectralCoupledLight, SpectralRamanLight
+        elif self.light_solver == "fd":
+            coupled_cls, raman_cls = CoupledLight, RamanLight
+        else:
+            raise ValueError(f"terms.light.solver must be 'fd' or 'spectral', got {self.light_solver!r}")
         if self.pump_depletion:
-            self.coupled_light = CoupledLight(cfg)
+            self.coupled_light = coupled_cls(cfg)
             self.raman = None
         else:
-            self.raman = RamanLight(cfg) if srs_on else None
+            self.raman = raman_cls(cfg) if srs_on else None
         if cfg["terms"].get("hpe", {}).get("active", False):
             from adept._lpse2d.core.hpe import HybridParticleEvolution
 

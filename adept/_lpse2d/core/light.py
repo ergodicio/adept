@@ -362,8 +362,17 @@ class CoupledLight(RamanLight):
                 E0, E1 = propagate(t_i, E0, E1)
             E0 = E0 * self.sub_boundary[..., None]
             E1 = E1 * self.sub_boundary[..., None]
+            if absorb0 is not None:
+                E0 = E0 * absorb0
+                E1 = E1 * absorb1
             return (E0, E1)
 
+        absorb0 = absorb1 = None
+        if self.absorption_rate0 is not None:
+            n0 = self.n_over_nc0 if iaw_density is None else self.n_over_nc0 * (1.0 + iaw_density / self.n_over_env)
+            n1 = self.n_over_nc1 if iaw_density is None else self.n_over_nc1 * (1.0 + iaw_density / self.n_over_env)
+            absorb0 = jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)[..., None]
+            absorb1 = jnp.exp(-self.absorption_rate1 * self.dt_l * n1**2)[..., None]
         E0, E1 = lax.fori_loop(0, self.n_sub, substep, (E0, E1))
         if self.light_filter is not None:
             E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.light_filter, axes=(0, 1))
