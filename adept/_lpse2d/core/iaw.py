@@ -48,6 +48,12 @@ IAW_SOLVERS = ("explicit", "spectral")
 ION_LANDAU_FORMS = ("simplified", "full")
 
 
+def _Q_kev(value) -> float:
+    from adept._lpse2d.helpers import _Q
+
+    return float(_Q(value).to("keV").value)
+
+
 def ion_landau_rate(cfg: dict, k_sq: np.ndarray) -> np.ndarray:
     """Amplitude ion Landau damping rate ``gamma_k`` (1/ps) for every k mode.
 
@@ -132,6 +138,7 @@ class IonAcousticWave:
         self.ponderomotive_prefactor = (
             cfg["units"]["ionization state"] * derived["e"] ** 2 / (4.0 * derived["me"] * derived["mi"])
         )
+        self._init_thermal_filamentation(cfg)
 
         damping = iaw["damping"]
         k_sq_np = np.asarray(self.k_sq)
@@ -191,6 +198,97 @@ class IonAcousticWave:
         else:
             self.noise_kick = None
 
+    def _init_thermal_filamentation(self, cfg: dict) -> None:
+        """LPSE ``thermalFil.{laser,raman,lw}`` (``ZakharovSolver::getThermalFilamentationSource``):
+        inverse-bremsstrahlung heating by the spatially varying part of each wave's intensity,
+        balanced by Spitzer heat conduction, drives the ion flow through the electron pressure:
+
+            d(div v)/dt += Z Q_w / (m_i kappa'),   Q_w = nu_w(n) (|E_w|^2 - <|E_w|^2>) / (8 pi)
+
+        with ``kappa'`` the Spitzer conductivity over k_B (1/(cm s)), ``nu_w`` the wave's energy
+        damping rate (light: 2 nu_abs(n_c) (n/n_c)^2; EPW: 2 nu_coll n/n_env), ``<.>`` the box
+        average. ``nonlocal: true`` adds LPSE's k^(4/3) correction: the source's k-space content is
+        multiplied by ``1 + (k lambda_nl)^(4/3)`` with ``lambda_nl = 30 (k_B T_e)^2 / (4 pi e^4
+        sqrt(Z+1) ln Lambda n_e)``. The LPSE form is kept; the normalization is adept's own
+        (derived from the heat and momentum equations, not LPSE's ZAK constants)."""
+        tf = cfg["terms"]["iaw"].get("thermal_filamentation") or {}
+        self.thermal_waves = [w for w in ("laser", "raman", "lw") if tf.get(w, False)]
+        if not self.thermal_waves:
+            return
+        derived = cfg["units"]["derived"]
+        units = cfg["units"]
+        from adept._lpse2d.core.raman import light_absorption_rates
+
+        rate0, rate1 = light_absorption_rates(cfg)
+        z = float(units["ionization state"])
+        te_kev = float(derived.get("Te", 0.0)) or float(_Q_kev(units["reference electron temperature"]))
+        # cgs constants
+        e_cgs, me_cgs, mp_cgs, kb_cgs = 4.8032068e-10, 9.10938291e-28, 1.6726219e-24, 1.380649e-16
+        te_k = te_kev * 1.0e3 * 1.16045e4
+        lambda_um = 2.0 * np.pi * derived["c"] / derived["w0"]
+        nc_cgs = 1.1148e21 / lambda_um**2
+        n_cgs = np.asarray(cfg["grid"]["background_density"]) * nc_cgs
+        n_mean = float(np.mean(n_cgs))
+        log_lambda = max(
+            23.5 - np.log(np.sqrt(n_mean) * te_kev**-1.25 * 1e3**-1.25 * 1e3)
+            if False
+            else 6.68 + np.log(lambda_um * te_kev),
+            2.0,
+        )
+        g_factor = 1.0 / (1.0 + 3.3 / z)
+        kappa = (8.0 / np.pi) ** 1.5 * g_factor * (kb_cgs * te_k) ** 2.5 / (z * e_cgs**4 * np.sqrt(me_cgs) * log_lambda)
+        kappa *= float(tf.get("conductivity_multiplier", 1.0))
+        mi_cgs = mp_cgs * float(units["atomic number"])
+        field_scale = float(derived["fieldScale"])  # statV/cm per code field unit
+        # d(div v)/dt [1/s^2] = Z nu(n)[1/s] |E|^2_cgs / (8 pi m_i kappa'); -> 1/ps^2 per code |E|^2
+        base = z * field_scale**2 / (8.0 * np.pi * mi_cgs * kappa) * 1.0e-24 * 1.0e12  # per (1/ps rate)
+        n_over_nc = np.asarray(cfg["grid"]["background_density"])
+        self.thermal_coeff = {}
+        if "laser" in self.thermal_waves:
+            if rate0 is None:
+                raise ValueError("terms.iaw.thermal_filamentation.laser needs terms.light.absorption")
+            self.thermal_coeff["laser"] = jnp.asarray(base * 2.0 * rate0 * n_over_nc**2)
+        if "raman" in self.thermal_waves:
+            if rate1 is None:
+                raise ValueError("terms.iaw.thermal_filamentation.raman needs terms.light.absorption")
+            nc1 = (derived["w1"] / derived["w0"]) ** 2
+            self.thermal_coeff["raman"] = jnp.asarray(base * 2.0 * rate1 * (n_over_nc / nc1) ** 2)
+        if "lw" in self.thermal_waves:
+            nu_coll = float(derived.get("nu_coll", 0.0))
+            if nu_coll <= 0.0:
+                raise ValueError("terms.iaw.thermal_filamentation.lw needs terms.epw.damping.collisions")
+            self.thermal_coeff["lw"] = jnp.asarray(base * 2.0 * nu_coll * n_over_nc / float(units["envelope density"]))
+        self.thermal_nonlocal = bool(tf.get("nonlocal", tf.get("nonlocal_", False)))
+        if self.thermal_nonlocal:
+            lambda_nl_cm = (
+                30.0 * (kb_cgs * te_k) ** 2 / (4.0 * np.pi * e_cgs**4 * np.sqrt(z + 1.0) * log_lambda * n_cgs)
+            )
+            lambda_nl_um = lambda_nl_cm * 1.0e4
+            k_mag = np.sqrt(self.k_sq)
+            # (k lambda_nl(n))^(4/3): k^(4/3) in k-space, lambda^(4/3)(x) in x-space
+            self.thermal_k_factor = jnp.asarray(k_mag ** (4.0 / 3.0))
+            self.thermal_lambda_factor = jnp.asarray(lambda_nl_um ** (4.0 / 3.0))
+        print(f"IAW thermal filamentation on ({', '.join(self.thermal_waves)}, nonlocal={self.thermal_nonlocal})")
+
+    def thermal_filamentation_source(self, phi_k: Array, E0: Array, E1: Array) -> Array:
+        """The heating source on the velocity divergence (1/ps^2), x-space; zero when off."""
+        if not self.thermal_waves:
+            return jnp.zeros((self.nx, self.ny))
+        source = jnp.zeros((self.nx, self.ny))
+        for wave, coeff in self.thermal_coeff.items():
+            if wave == "laser":
+                e_sq = jnp.sum(jnp.abs(E0) ** 2, axis=-1)
+            elif wave == "raman":
+                e_sq = jnp.sum(jnp.abs(E1) ** 2, axis=-1)
+            else:
+                ex, ey = self.epw_fields(phi_k)
+                e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
+            source = source + coeff * (e_sq - jnp.mean(e_sq))
+        if self.thermal_nonlocal:
+            nonlocal_part = jnp.real(jnp.fft.ifft2(self.thermal_k_factor * jnp.fft.fft2(source)))
+            source = source + self.thermal_lambda_factor * nonlocal_part
+        return source
+
     def laplacian(self, field: Array) -> Array:
         """Second-order periodic finite-difference Laplacian used by MATLAB."""
         lap = (jnp.roll(field, -1, axis=0) - 2.0 * field + jnp.roll(field, 1, axis=0)) / self.dx**2
@@ -228,6 +326,10 @@ class IonAcousticWave:
         potential = self.ponderomotive_potential(y["epw"], y["E0"], y["E1"], y["iaw_density"])
 
         velocity_divergence = y["iaw_velocity_divergence"] - self.dt * self.laplacian(potential)
+        if self.thermal_waves:
+            velocity_divergence = velocity_divergence + self.dt * self.thermal_filamentation_source(
+                y["epw"], y["E0"], y["E1"]
+            )
         velocity_k = jnp.fft.fft2(velocity_divergence)
         velocity_k = velocity_k * jnp.exp(-2.0 * self.landau_rate * self.dt) * self.filter
         if self.noise_enabled:
@@ -249,6 +351,8 @@ class IonAcousticWave:
         w_new = w_new * self.collisional_w_factor
         drive_k = jnp.fft.fft2(self.ponderomotive_drive(y["epw"], y["E0"], y["E1"]))
         w_new = w_new + self.dt * self.k_sq * drive_k
+        if self.thermal_waves:
+            w_new = w_new + self.dt * jnp.fft.fft2(self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"]))
         if self.noise_enabled:
             w_new = w_new + self.get_noise(t)
 

@@ -1386,6 +1386,27 @@ def make_field_xarrays(cfg, this_t, state, td):
     )
 
     kfield_data = {"phi": phi_k, "ex": ex_k, "ey": ey_k}
+    poynting = {}
+    if cfg["save"]["fields"].get("poynting", False):
+        # LPSE {laser|raman}.save.S0: the envelope energy-flux density S_j = (c^2/w) Im(E* . d_j E)
+        # (v_g |E|^2 for a plane wave), in field^2 * um/ps, on the save grid
+        derived = cfg["units"]["derived"]
+        for name, arr, w in (
+            ("s0", np.array(state["E0"]).view(_complex), derived["w0"]),
+            ("s1", np.array(state["E1"]).view(_complex), derived["w1"]),
+        ):
+            dxs = float(xax[1] - xax[0]) if len(xax) > 1 else 1.0
+            dys = float(yax[1] - yax[0]) if len(yax) > 1 else 1.0
+            sx = np.zeros(arr.shape[:-1])
+            sy = np.zeros(arr.shape[:-1])
+            for comp in range(2):
+                e = arr[..., comp]
+                sx += np.imag(np.conj(e) * np.gradient(e, dxs, axis=1))
+                if arr.shape[2] > 1:
+                    sy += np.imag(np.conj(e) * np.gradient(e, dys, axis=2))
+            factor = derived["c"] ** 2 / w
+            poynting[f"{name}_x"] = xr.DataArray(factor * sx, coords=(tax_tuple, xax_tuple, yax_tuple))
+            poynting[f"{name}_y"] = xr.DataArray(factor * sy, coords=(tax_tuple, xax_tuple, yax_tuple))
     field_data = {
         "phi": phi_x,
         "ex": ex,
@@ -1395,6 +1416,7 @@ def make_field_xarrays(cfg, this_t, state, td):
         "e1_x": e1x,
         "e1_y": e1y,
         "background_density": background_density,
+        **poynting,
     }
     if "iaw_density" in state:
         iaw_density_np = np.asarray(state["iaw_density"])
@@ -1532,6 +1554,16 @@ def get_default_save_func(cfg):
     dt = cfg["grid"]["dt"]
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
     kx, ky = cfg["grid"]["kx"], cfg["grid"]["ky"]
+    thomson_probes = list(cfg["save"].get("thomson") or [])
+    thomson_masks = []
+    k0_vac = derived["w0"] / derived["c"]
+    for probe in thomson_probes:
+        if probe.get("field", "epw") == "iaw" and not iaw_on:
+            raise ValueError("save.thomson probe on the IAW density needs terms.iaw.active")
+        kxp, kyp = (float(v) * k0_vac for v in probe["k"])
+        band = float(probe.get("bandwidth", 0.1)) * k0_vac
+        dist = np.sqrt((np.asarray(kx)[:, None] - kxp) ** 2 + (np.asarray(ky)[None, :] - kyp) ** 2)
+        thomson_masks.append(jnp.asarray(dist < band))
 
     # OSIRIS-normalized EPW energy: W = 1/2 * dx * sum_x <e^2>_cycle with fields in
     # me*c*w0/e and lengths in c/w0 (osiris_lpi/epw_growth.py convention). The complex
@@ -1711,6 +1743,17 @@ def get_default_save_func(cfg):
             iaw_density = y["iaw_density"]
             out["iaw_density_sq"] = jnp.mean(iaw_density**2)
             out["iaw_density_abs_max"] = jnp.max(jnp.abs(iaw_density))
+
+        # Thomson-scattering probes (LPSE thomsonScattering.N: wavevector.lw / .iaw, bandwidth):
+        # the complex amplitude and the power of the EPW potential (or the IAW density) in the
+        # k-window |k - k_probe| < bandwidth k0, as a time series for later spectral analysis
+        for i_probe, mask in enumerate(thomson_masks):
+            field = "iaw" if thomson_probes[i_probe].get("field", "epw") == "iaw" else "epw"
+            spectrum = jnp.fft.fft2(y["iaw_density"]) if field == "iaw" else phi_k
+            amplitude = jnp.sum(jnp.where(mask, spectrum, 0.0))
+            out[f"thomson_{i_probe}_re"] = jnp.real(amplitude)
+            out[f"thomson_{i_probe}_im"] = jnp.imag(amplitude)
+            out[f"thomson_{i_probe}_power"] = jnp.sum(jnp.where(mask, jnp.abs(spectrum) ** 2, 0.0))
 
         if hpe_on:
             u = y["u_e"]

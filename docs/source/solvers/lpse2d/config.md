@@ -469,6 +469,10 @@ terms:
     max_density_perturbation: 0.1
 ```
 
+#### thermal_filamentation (optional, LPSE `thermalFil.*`)
+
+`terms.iaw.thermal_filamentation: {laser: bool, raman: bool, lw: bool, nonlocal: bool, conductivity_multiplier: 1.0}` adds the thermal-filamentation source to the ion velocity-divergence equation: inverse-bremsstrahlung heating by the spatially varying part of each enabled wave's intensity (`|E_w|^2 - <|E_w|^2>`), balanced by Spitzer heat conduction, drives the flow through the electron pressure, `d(div v)/dt += Z nu_w(n) (|E_w|^2 - <|E_w|^2>) / (8 pi m_i kappa')` with `kappa'` the Spitzer conductivity over k_B (times `conductivity_multiplier`) and `nu_w` the wave's energy damping rate (light: `2 nu_abs(n_c) (n/n_c)^2`, requires `terms.light.absorption`; EPW: `2 nu_coll n/n_env`, requires `terms.epw.damping.collisions`). `nonlocal: true` adds LPSE's `k^(4/3)` correction (`1 + (k lambda_nl)^(4/3)`, `lambda_nl = 30 (k_B T_e)^2 / (4 pi e^4 sqrt(Z+1) ln Lambda n_e)`). The source form follows `ZakharovSolver::getThermalFilamentationSource`; the normalization is adept's own.
+
 ### hpe (optional)
 
 Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field, their spatially averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). For `ny == 1` the tracker uses `(x, p_x)`; in a 2-D box it uses `(x, y, p_x, p_y)` and gathers both $E_x$ and $E_y$. In both cases there is one box-wide ensemble, not a particle population at each grid point. HPE requires `terms.epw.damping.landau: true`. The particle push dominates runtime, so HPE runs want a GPU.
@@ -514,6 +518,10 @@ terms:
     tau_damping: 100fs
     t_start: 2ps
 ```
+
+## Diagnostics: Poynting flux and Thomson probes
+
+`save.fields.poynting: true` adds the light energy-flux density maps `s0_x`, `s0_y` (pump) and `s1_x`, `s1_y` (Raman) to the fields output, `S_j = (c^2/omega) Im(E* . d_j E)` in field-squared times um/ps (`v_g |E|^2` for a plane wave; LPSE `laser.save.S0` / `raman.save.S0`). `save.thomson: [{k: [kx, ky], bandwidth: 0.1, field: epw}]` adds synthetic Thomson-scattering probes to the default series (LPSE `thomsonScattering.N.wavevector.lw/.iaw` and `bandwidth`): for probe `i`, `thomson_i_re` / `thomson_i_im` are the summed complex amplitude of the EPW potential (or, with `field: iaw`, of the IAW density) over the k-window `|k - k_probe| < bandwidth k0`, and `thomson_i_power` the summed spectral power there; `k` and `bandwidth` are in units of the vacuum laser wavenumber.
 
 ## Checkpoint and restart
 

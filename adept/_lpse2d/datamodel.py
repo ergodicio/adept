@@ -189,6 +189,11 @@ class SaveModel(BaseModel):
     # write the full solver state at grid.tmax to this path (or into the run's binary/ folder
     # when true); `restart.file` resumes from it (LPSE checkpoint / --restart)
     checkpoint: str | bool | None = None
+    # Thomson-scattering probes (LPSE thomsonScattering.N): [{k: [kx, ky] in units of k0,
+    # bandwidth: 0.1 (k0), field: epw | iaw}] -> series thomson_<i>_re/_im/_power
+    thomson: list[dict] | None = None
+    # save.fields.poynting: true adds s0_x, s0_y, s1_x, s1_y (LPSE laser/raman.save.S0)
+    poynting: bool = False
 
 
 class RestartModel(BaseModel):
@@ -309,6 +314,20 @@ class IAWDampingModel(BaseModel):
     landau_form: Literal["simplified", "full"] = "simplified"
 
 
+class ThermalFilamentationModel(BaseModel):
+    """LPSE thermalFil.*: inverse-bremsstrahlung heating of the spatially varying part of each
+    wave's intensity, balanced by Spitzer conduction, driving the ion flow through the electron
+    pressure (see IonAcousticWave._init_thermal_filamentation)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    laser: bool = False
+    raman: bool = False
+    lw: bool = False
+    nonlocal_: bool = Field(default=False, alias="nonlocal")  # k^(4/3) correction
+    conductivity_multiplier: float = 1.0
+
+
 class IAWModel(BaseModel):
     """Ion-acoustic density/velocity-divergence evolution and ponderomotive drive.
 
@@ -329,6 +348,7 @@ class IAWModel(BaseModel):
     noise: bool = False
     noise_amplitude: float = 1.0
     noise_seed: int | None = None
+    thermal_filamentation: ThermalFilamentationModel | None = None
 
 
 class HPEModel(BaseModel):

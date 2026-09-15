@@ -398,6 +398,14 @@ def translate_parms(
             stride = max(1, int(np.floor(iaw_step * 1.0001 / dt)))
             if stride > 1:
                 iaw["stride"] = stride
+        tf = {w: _bool(g(f"thermalFil.{w}.enable")) for w in ("laser", "raman", "lw")}
+        if any(tf.values()):
+            tf["nonlocal"] = _bool(g("thermalFil.isNonlocal"))
+            tf["conductivity_multiplier"] = float(g("thermalFil.conductivityMultiplier", "1"))
+            iaw["thermal_filamentation"] = tf
+            report["notes"].append(
+                "thermalFil: LPSE's source form with adept's own normalization (heat + momentum equations)"
+            )
         if "fluid.velocity" in parms:
             vel = _floats(parms["fluid.velocity"])
             iaw["flow"] = [vel[0], vel[1] if len(vel) > 1 else 0.0]
@@ -451,8 +459,6 @@ def translate_parms(
         )
 
     for key in parms:
-        if key.startswith("thermalFil") and _bool(parms[key]):
-            report["unsupported"].append(f"{key} (thermal filamentation)")
         if key.startswith("qle") and _bool(parms[key]):
             report["unsupported"].append(f"{key} (quasilinear module)")
 
