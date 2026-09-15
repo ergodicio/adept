@@ -3,6 +3,15 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 
+def transverse_part(field: Array, kx: Array, ky: Array, one_over_k_sq: Array) -> Array:
+    """The transverse (divergence-free) part of an (nx, ny, 2) x-space vector field, via the
+    k-space projector ``F - k (k . F) / k^2`` (LPSE ``LightSolver::getTransversePartOfSourceTerm``)."""
+    fx_k = jnp.fft.fft2(field[..., 0])
+    fy_k = jnp.fft.fft2(field[..., 1])
+    kdote = (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq
+    return jnp.stack([jnp.fft.ifft2(fx_k - kx[:, None] * kdote), jnp.fft.ifft2(fy_k - ky[None, :] * kdote)], axis=-1)
+
+
 def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
     """Amplitude absorption rates (1/ps) at the critical density of the pump and of the
     Raman light, from ``terms.light.absorption``: ``false`` (none), ``true`` (NRL plasma
@@ -81,6 +90,15 @@ class RamanLight:
         self.x = cfg["grid"]["x"]
         self.y = cfg["grid"]["y"]
         self.k_sq = cfg["grid"]["kx"][:, None] ** 2 + cfg["grid"]["ky"][None, :] ** 2
+        self.kx_arr = jnp.asarray(cfg["grid"]["kx"])
+        self.ky_arr = jnp.asarray(cfg["grid"]["ky"])
+        self.one_over_k_sq = jnp.asarray(np.where(self.k_sq > 0, 1.0 / np.where(self.k_sq > 0, self.k_sq, 1.0), 0.0))
+        # terms.light.transverse_source (LPSE takeTransversePartOfSourceTerms): the SRS
+        # source is projected onto its transverse part. The longitudinal part of E1 is not
+        # moved by any light propagator, so without the projection it accumulates the
+        # source and pairs with the EPW in a spurious two-wave instability (in the test_006
+        # cross-check: 41/ps energy growth against LPSE's 5.8/ps)
+        self.transverse_source = bool(cfg["terms"].get("light", {}).get("transverse_source", True))
 
         background_density = cfg["grid"]["background_density"]
         # local detuning of the Raman envelope (MATLAB line 1668-1670)
@@ -187,8 +205,11 @@ class RamanLight:
         # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation);
         # CoupledLight switches it off here when it integrates the exchange exactly
         if couple:
-            k_e1x += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 0]
-            k_e1y += self.srs_coeff * jnp.conj(laplacian_phi) * E0[..., 1]
+            source = (self.srs_coeff * jnp.conj(laplacian_phi))[..., None] * E0
+            if self.transverse_source:
+                source = transverse_part(source, self.kx_arr, self.ky_arr, self.one_over_k_sq)
+            k_e1x += source[..., 0]
+            k_e1y += source[..., 1]
 
         if seed_args is not None:
             row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)

@@ -257,6 +257,12 @@ class LightModel(BaseModel):
     solver: Literal["fd", "spectral"] = "fd"
     # retained light band cap |k| < max_wavenumber * k0 (spectral solver; LPSE maxWavenumber)
     max_wavenumber: float | None = None
+    # project the SRS light sources onto their transverse part every sub-step (LPSE
+    # takeTransversePartOfSourceTerms; for the coupled spectral solver the fields are kept
+    # transverse instead). No light propagator moves the longitudinal part of E1, so
+    # without this it accumulates the source and pairs with the EPW in a spurious
+    # two-wave instability (41/ps energy growth against LPSE's 5.8/ps in test_006)
+    transverse_source: bool = True
     # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
     # or the amplitude rate at nc in 1/ps
     absorption: bool | float = False

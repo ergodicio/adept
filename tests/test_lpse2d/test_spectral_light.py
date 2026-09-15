@@ -233,3 +233,64 @@ def test_light_solver_option_is_validated():
 
     with pytest.raises(pydantic.ValidationError):
         _srs_cfg("implicit", periodic=True, xmax="8um")
+
+
+def _srs_cfg_2d(solver="spectral", transverse_source=True):
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = yaml.safe_load(fi)
+    cfg = deepcopy(cfg)
+    cfg["grid"].update({"xmax": "6.4um", "tmax": "10fs", "ymax": "3.2um", "ymin": "-3.2um", "dx": "0.1um"})
+    cfg["terms"]["light"] = {"solver": solver, "transverse_source": transverse_source}
+    cfg["terms"]["epw"]["source"]["noise"] = False
+    cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
+    return _finish(cfg)
+
+
+def test_longitudinal_light_is_kept_only_inside_the_band():
+    """LPSE zeroes every component of the light field outside the retained band; adept's
+    propagator does the same to the longitudinal part it does not move."""
+    from adept._lpse2d.core.spectral_light import SpectralRamanLight, transverse_propagate
+
+    cfg = _srs_cfg_2d()
+    solver = SpectralRamanLight(cfg)
+    ky = np.asarray(cfg["grid"]["ky"])
+    y = np.asarray(cfg["grid"]["y"])
+    band = np.asarray(solver.light_band)
+    j_in = int(np.flatnonzero(band[0] > 0)[1])
+    j_out = int(np.flatnonzero(band[0] == 0)[0])
+    ones = jnp.ones_like(solver.propagator1)
+    for j, kept in ((j_in, True), (j_out, False)):
+        wave = np.exp(1j * ky[j] * y)[None, :] * np.ones((len(cfg["grid"]["x"]), 1))
+        field = jnp.stack([jnp.zeros_like(wave), jnp.asarray(wave)], axis=-1)  # E || y, k || y: longitudinal
+        out = transverse_propagate(field, solver.kx_arr, solver.ky_arr, solver.one_over_k_sq, ones, solver.light_band)
+        if kept:
+            np.testing.assert_allclose(np.asarray(out), np.asarray(field), atol=1e-12)
+        else:
+            assert float(jnp.max(jnp.abs(out))) < 1e-12
+        dropped = transverse_propagate(
+            field, solver.kx_arr, solver.ky_arr, solver.one_over_k_sq, ones, solver.light_band, keep_longitudinal=False
+        )
+        assert float(jnp.max(jnp.abs(dropped))) < 1e-12
+
+
+@pytest.mark.parametrize("solver", ["spectral", "fd"])
+def test_transverse_source_removes_the_longitudinal_srs_source(solver):
+    """An EPW with k along y under a y-polarised pump drives a purely longitudinal E1 source;
+    with transverse_source (LPSE takeTransversePartOfSourceTerms) no E1 is produced."""
+    from adept._lpse2d.core.raman import RamanLight
+    from adept._lpse2d.core.spectral_light import SpectralRamanLight
+
+    cls = SpectralRamanLight if solver == "spectral" else RamanLight
+    out = {}
+    for transverse_source in (False, True):
+        cfg = _srs_cfg_2d(solver, transverse_source)
+        light = cls(cfg)
+        nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        band = np.asarray(cfg["grid"]["low_pass_filter_grid"]) > 0
+        j = int(np.flatnonzero(band[0])[2])
+        phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128).at[0, j].set(1.0e-6 * nx * ny)
+        E0 = jnp.stack([jnp.zeros((nx, ny)), 1.0e-3 * jnp.ones((nx, ny))], axis=-1).astype(jnp.complex128)
+        E1 = light(0.0, jnp.zeros((nx, ny, 2), dtype=jnp.complex128), lambda t, E0=E0: E0, phi_k, None)
+        out[transverse_source] = float(jnp.max(jnp.abs(E1)))
+    assert out[False] > 0.0
+    assert out[True] < 1e-10 * out[False]

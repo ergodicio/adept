@@ -3,7 +3,7 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
-from adept._lpse2d.core.raman import RamanLight
+from adept._lpse2d.core.raman import RamanLight, transverse_part
 
 
 class CoupledLight(RamanLight):
@@ -224,8 +224,11 @@ class CoupledLight(RamanLight):
         k_e0x = self.diffraction_coeff0 * (self._d2y(e0x) - self._dxdy(e0y)) + linear_coeff0 * e0x
         k_e0y = self.diffraction_coeff0 * (self._d2x(e0y) - self._dxdy(e0x)) + linear_coeff0 * e0y
         if self.srs_enabled and couple:
-            k_e0x += self.srs_depletion_coeff0 * laplacian_phi * e1x
-            k_e0y += self.srs_depletion_coeff0 * laplacian_phi * e1y
+            depletion = (self.srs_depletion_coeff0 * laplacian_phi)[..., None] * E1
+            if self.transverse_source:
+                depletion = transverse_part(depletion, self.kx_arr, self.ky_arr, self.one_over_k_sq)
+            k_e0x += depletion[..., 0]
+            k_e0y += depletion[..., 1]
         if self.tpd_enabled:
             if phi_k is None:
                 raise ValueError("phi_k is required for TPD pump depletion")

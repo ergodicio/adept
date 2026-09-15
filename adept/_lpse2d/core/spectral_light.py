@@ -41,7 +41,7 @@ from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._lpse2d.core.light import CoupledLight
-from adept._lpse2d.core.raman import RamanLight
+from adept._lpse2d.core.raman import RamanLight, transverse_part
 
 
 def gaussian_injector_profile(x: np.ndarray, x_inject: float, width: float, dx: float) -> np.ndarray:
@@ -50,16 +50,28 @@ def gaussian_injector_profile(x: np.ndarray, x_inject: float, width: float, dx: 
     return g / (np.sum(g) * dx)
 
 
-def transverse_propagate(field: Array, kx: Array, ky: Array, one_over_k_sq: Array, propagator: Array) -> Array:
-    """Apply ``propagator`` (nx, ny) to the transverse part of ``field`` (nx, ny, 2) in k-space,
-    leaving the longitudinal part as it is, and return the result in x-space."""
+def transverse_propagate(
+    field: Array,
+    kx: Array,
+    ky: Array,
+    one_over_k_sq: Array,
+    propagator: Array,
+    band: Array | float = 1.0,
+    keep_longitudinal: bool = True,
+) -> Array:
+    """Apply ``propagator`` (nx, ny) to the transverse part of ``field`` (nx, ny, 2) in k-space
+    and return the result in x-space. The longitudinal part is not propagated; it is kept
+    inside the retained light ``band`` (LPSE zeroes every component outside the band and the
+    anti-aliasing region, ``LightSolver.cpp:3720-3735``) or dropped altogether when
+    ``keep_longitudinal`` is False."""
     fx_k = jnp.fft.fft2(field[..., 0])
     fy_k = jnp.fft.fft2(field[..., 1])
     kdote = (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq
     lx_k, ly_k = kx[:, None] * kdote, ky[None, :] * kdote
     tx_k, ty_k = fx_k - lx_k, fy_k - ly_k
-    fx_k = lx_k + propagator * tx_k
-    fy_k = ly_k + propagator * ty_k
+    l_factor = band if keep_longitudinal else 0.0
+    fx_k = l_factor * lx_k + propagator * tx_k
+    fy_k = l_factor * ly_k + propagator * ty_k
     return jnp.stack([jnp.fft.ifft2(fx_k), jnp.fft.ifft2(fy_k)], axis=-1)
 
 
@@ -132,11 +144,16 @@ class SpectralRamanLight(RamanLight):
             E1 = E1 * detune[..., None] * absorb
             E0 = E0_fn(t_i)
             coupling = self.srs_coeff * jnp.conj(laplacian_phi)[..., None] * E0
+            if self.transverse_source:
+                coupling = transverse_part(coupling, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             E1 = E1 + self.dt_l * coupling
             if seed_args is not None:
                 E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
-            # k-space: exact transverse propagation
-            E1 = transverse_propagate(E1, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator1)
+            # k-space: exact transverse propagation; the longitudinal part is kept only
+            # inside the light band
+            E1 = transverse_propagate(
+                E1, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator1, self.light_band
+            )
             return E1 * self.sub_boundary[..., None]
 
         return lax.fori_loop(0, self.n_sub, substep, E1)
@@ -221,10 +238,17 @@ class SpectralCoupledLight(CoupledLight):
             E0 = E0.at[..., 1].add(self.dt_l * self.calc_pump_source(t_i, pump_args))
             if seed_args is not None:
                 E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
-            # k-space: exact transverse propagation
-            E0 = transverse_propagate(E0, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator0)
+            # k-space: exact transverse propagation. The exchange is an exact local rotation
+            # that cannot be projected term by term, so with transverse_source the fields
+            # themselves are kept transverse here (equivalent to projecting every source)
+            keep_l = not self.transverse_source
+            E0 = transverse_propagate(
+                E0, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator0, self.light_band, keep_l
+            )
             if exchange:
-                E1 = transverse_propagate(E1, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator1)
+                E1 = transverse_propagate(
+                    E1, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator1, self.light_band, keep_l
+                )
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
             E0 = E0 * self.sub_boundary[..., None]
             E1 = E1 * self.sub_boundary[..., None]

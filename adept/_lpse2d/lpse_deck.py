@@ -287,6 +287,10 @@ def translate_parms(
         light["absorption"] = True
     if "raman.spectral.maxWavenumber" in parms:
         light["max_wavenumber"] = float(parms["raman.spectral.maxWavenumber"])
+    # LPSE default is false; the reference decks set it true
+    light["transverse_source"] = _bool(
+        g("raman.takeTransversePartOfSourceTerms", g("laser.takeTransversePartOfSourceTerms", "false"))
+    )
     if _bool(g("laser.pumpDepletion.TPD.enable")) or _bool(g("laser.pumpDepletion.SRS.enable")):
         light["pump_depletion"] = True
     if _bool(g("lw.kFilter.enable")):
