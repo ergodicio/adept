@@ -29,7 +29,10 @@ def _inverse_cdf_supergaussian(
     sampling that exactly reproduces the requested moments in expectation.
     """
     v_thermal = np.sqrt(T0 / mass)
-    alpha = np.sqrt(3.0 * gamma(3.0 / supergaussian_order) / gamma(5.0 / supergaussian_order))
+    # 1D width normalization: variance = T0/mass for every order m (matches the
+    # vlasov1d initializer; the 3D-isotropic sqrt(3*G(3/m)/G(5/m)) inflates the
+    # 1D variance by F(m), e.g. x1.24 at m=3)
+    alpha = np.sqrt(gamma(1.0 / supergaussian_order) / gamma(3.0 / supergaussian_order))
 
     nv = max(8192, 8 * n_particles)
     v_grid = np.linspace(-vmax, vmax, nv)
@@ -53,7 +56,10 @@ def _random_supergaussian(
 ) -> np.ndarray:
     """Random velocity sampling via rejection on a bounded supergaussian."""
     v_thermal = np.sqrt(T0 / mass)
-    alpha = np.sqrt(3.0 * gamma(3.0 / supergaussian_order) / gamma(5.0 / supergaussian_order))
+    # 1D width normalization: variance = T0/mass for every order m (matches the
+    # vlasov1d initializer; the 3D-isotropic sqrt(3*G(3/m)/G(5/m)) inflates the
+    # 1D variance by F(m), e.g. x1.24 at m=3)
+    alpha = np.sqrt(gamma(1.0 / supergaussian_order) / gamma(3.0 / supergaussian_order))
 
     out = np.empty(n_particles)
     filled = 0
