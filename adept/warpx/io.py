@@ -1679,7 +1679,7 @@ def save_s1_lineouts(
     x1v = np.asarray(e2.coords["x1"].values, dtype=float)
     dx1 = float(x1v[1] - x1v[0]) if n_x1 > 1 else 1.0
     lam = _laser_wavelength_code(deck, units)
-    win = int(round(window_wavelengths * lam / dx1)) if lam and dx1 > 0 else 16
+    win = round(window_wavelengths * lam / dx1) if lam and dx1 > 0 else 16
     win = max(4, min(win, max(4, n_x1 // 8)))
     guard = max(0, int(guard_cells))
     if 2 * (guard + win) > n_x1:
@@ -1712,11 +1712,7 @@ def save_s1_lineouts(
                 "long_name": "s_1",
                 "units": r"m_e c^3 n_0" if units is not None else "SI",
                 "time_units": e2.attrs.get("time_units", r"1/\omega_p"),
-                "axis_units": {
-                    "x2": e2.coords["x2"].attrs.get(
-                        "units", "m" if units is None else r"c / \omega_p"
-                    )
-                },
+                "axis_units": {"x2": e2.coords["x2"].attrs.get("units", "m" if units is None else r"c / \omega_p")},
                 "axis_long_names": {"x2": "x_2"},
                 "derived_from": "e2*b3 - e3*b2" if len(pairs) == 2 else "e2*b3",
                 "x1_slab_cells": [int(sl.start), int(sl.stop)],

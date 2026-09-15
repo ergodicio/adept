@@ -765,9 +765,7 @@ def test_mirrored_dump_is_followed_not_quarantined(tmp_path: Path) -> None:
     persist = tmp_path / "persist"
     diag = _write_field(stage, "e1", n_steps=6, nx=8)
 
-    core = ostream._DrainCore(
-        persist / "binary", persist_dir=persist, discard_grid_h5=True, logger=lambda _m: None
-    )
+    core = ostream._DrainCore(persist / "binary", persist_dir=persist, discard_grid_h5=True, logger=lambda _m: None)
     # The other sweep mirrors + reaps this dump after the listing, while the
     # drain is working through the batch — so the load hits a vanished path.
     victim = diag / "e1-000030.h5"
@@ -802,9 +800,7 @@ def test_unreadable_dump_still_quarantined(tmp_path: Path) -> None:
     diag = _write_field(stage, "e1", n_steps=5, nx=8)
     (diag / "e1-000020.h5").write_bytes(b"\x00" * 2048)
 
-    core = ostream._DrainCore(
-        persist / "binary", persist_dir=persist, discard_grid_h5=True, logger=lambda _m: None
-    )
+    core = ostream._DrainCore(persist / "binary", persist_dir=persist, discard_grid_h5=True, logger=lambda _m: None)
     core.drain_rel("FLD/e1", diag, final=True, force_spill=False)
     core.close_all()
 

@@ -74,7 +74,7 @@ def units() -> wio.CodeUnits:
 
 
 class TestMomentumAbscissa:
-    def _load(self, tmp_path: Path, units) -> "object":
+    def _load(self, tmp_path: Path, units) -> object:
         diag = tmp_path / "p1p2"
         _write_hist2d(diag, (-5.0, 5.0), (-5.0, 5.0))
         deck = _deck("p1p2", "uz", "ux", (-5.0, 5.0), (-5.0, 5.0))
@@ -99,7 +99,7 @@ class TestMomentumAbscissa:
 
 
 class TestSpatialAbscissa2D:
-    def _load(self, tmp_path: Path, units) -> "object":
+    def _load(self, tmp_path: Path, units) -> object:
         diag = tmp_path / "p1x1"
         _write_hist2d(diag, (0.0, LZ), (-5.0, 5.0))
         deck = _deck("p1x1", "z", "uz", (0.0, LZ), (-5.0, 5.0))

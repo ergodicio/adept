@@ -67,18 +67,14 @@ def write_run_2d(run_dir: Path) -> Path:
                     d = mg.create_dataset(cname, data=arr)
                     d.attrs["unitSI"] = 1.0
                     d.attrs["position"] = np.array([0.0, 0.0])
-            rho = fields.create_dataset(
-                "rho_electrons", data=np.full((NX, NZ), -1.602176634e-19 * N_E)
-            )
+            rho = fields.create_dataset("rho_electrons", data=np.full((NX, NZ), -1.602176634e-19 * N_E))
             rho.attrs["unitSI"] = 1.0
             rho.attrs["position"] = np.array([0.0, 0.0])
             for k, v in _mesh_attrs().items():
                 rho.attrs[k] = v
     # deck: n0 for units discovery + laser wavelength for the s1 slab width
     (run_dir / "inputs").write_text(
-        f"my_constants.n0 = {N0_REF}\n"
-        "lasers.names = laser1\n"
-        f"laser1.wavelength = {4.0 * DZ}\n"
+        f"my_constants.n0 = {N0_REF}\nlasers.names = laser1\nlaser1.wavelength = {4.0 * DZ}\n"
     )
     return diag
 
@@ -109,12 +105,8 @@ class TestFieldMapping2D:
         assert tuple(da.dims) == ("t", "x2", "x1")
         assert da.sizes["x1"] == NZ and da.sizes["x2"] == NX
         # axes renamed and converted: x1 is the (longitudinal) z axis
-        np.testing.assert_allclose(
-            da.coords["x1"].values[0], Z_OFF / units.x0, rtol=1e-12
-        )
-        np.testing.assert_allclose(
-            da.coords["x2"].values[0], X_OFF / units.x0, rtol=1e-12
-        )
+        np.testing.assert_allclose(da.coords["x1"].values[0], Z_OFF / units.x0, rtol=1e-12)
+        np.testing.assert_allclose(da.coords["x2"].values[0], X_OFF / units.x0, rtol=1e-12)
 
     def test_box_attrs_ordered_x1_first(self, run_dir: Path, units: wio.CodeUnits) -> None:
         da = wio.load_field_series(run_dir / "diags" / "diag1", "B", "y", units=units)
@@ -128,7 +120,10 @@ class TestFieldMapping2D:
 
     def test_all_components_map(self, run_dir: Path, units: wio.CodeUnits) -> None:
         for mesh, comp, name in [
-            ("E", "x", "e2"), ("E", "y", "e3"), ("B", "x", "b2"), ("B", "z", "b1"),
+            ("E", "x", "e2"),
+            ("E", "y", "e3"),
+            ("B", "x", "b2"),
+            ("B", "z", "b1"),
         ]:
             da = wio.load_field_series(run_dir / "diags" / "diag1", mesh, comp, units=units)
             assert da.name == name, f"{mesh}/{comp} -> {da.name}, wanted {name}"
@@ -137,9 +132,15 @@ class TestFieldMapping2D:
 class TestSaveRunDatasets2D:
     def test_contract_keys(self, binary: Path) -> None:
         for rel in [
-            "FLD/e1", "FLD/e2", "FLD/e3", "FLD/b1", "FLD/b2", "FLD/b3",
+            "FLD/e1",
+            "FLD/e2",
+            "FLD/e3",
+            "FLD/b1",
+            "FLD/b2",
+            "FLD/b3",
             "DENSITY/electrons/charge",
-            "FLD/s1-line-x2-0001", "FLD/s1-line-x2-0002",
+            "FLD/s1-line-x2-0001",
+            "FLD/s1-line-x2-0002",
         ]:
             assert (binary / f"{rel}.nc").is_file(), f"missing {rel}"
 
@@ -150,9 +151,7 @@ class TestSaveRunDatasets2D:
         da = ds["charge"]
         assert tuple(da.dims) == ("t", "x2", "x1")
         # rho = -e n_e -> charge density in units of e n0 is -n_e/n0
-        np.testing.assert_allclose(
-            float(da.values.mean()), -N_E / N0_REF, rtol=1e-6
-        )
+        np.testing.assert_allclose(float(da.values.mean()), -N_E / N0_REF, rtol=1e-6)
 
     def test_s1_lineouts_flux_value(self, binary: Path, units: wio.CodeUnits) -> None:
         import xarray as xr
@@ -167,9 +166,7 @@ class TestSaveRunDatasets2D:
             start, stop = (int(v) for v in np.asarray(da.attrs["x1_slab_cells"]))
             assert stop - start == 8
             # vacuum traveling wave: <e2 b3> over full periods = a^2/2 exactly
-            np.testing.assert_allclose(
-                da.values, a_code**2 / 2.0, rtol=2e-4
-            )
+            np.testing.assert_allclose(da.values, a_code**2 / 2.0, rtol=2e-4)
         # entrance slab starts at the guard, exit slab ends guard cells short
         ds1 = xr.load_dataset(binary / "FLD/s1-line-x2-0001.nc", engine="h5netcdf")
         assert int(np.asarray(ds1["s1"].attrs["x1_slab_cells"])[0]) == 2
