@@ -341,6 +341,17 @@ class HPEModel(BaseModel):
     feedback: bool = True  # False = control run: particles evolve, damping stays analytic
     seed: int = 42
     omega_res: str = "bohm_gross"  # resonance v_phi convention: "bohm_gross" or "wp0"
+    # ---- LPSE HPE controls and instruments (ElectronTracker.cu readParameters)
+    gamma_limit_damping: float = 1500.0  # hpe.gammaLimit.damping, 1/ps: applied rate <= this
+    gamma_limit_growth: float = 1500.0  # hpe.gammaLimit.growth, 1/ps: applied rate >= -this when allow_growth
+    allow_growth: bool = False  # hpe.allowGrowth: negative (inverse Landau) rates allowed
+    thermalization_probability: list[float] = [1.0, 1.0]  # hpe.thermalizationProbability (x, y walls)
+    magnetic_field: float = 0.0  # hpe.magneticField, tesla, out of plane (2-D push only)
+    energy_conservation: bool = False  # hpe.enforceEnergyConservation: LD multiplier
+    energy_conservation_steps: float = 1.0  # hpe.numStepsToAverageEnergyChange
+    flux_bins: list[float] | None = None  # keV edges of the wall-flux instrument (default 0, 50, 100, inf)
+    cone_angle: float | None = None  # hpe.metrics.power: acceptance half-angle in degrees (None = off)
+    cone_direction: list[float] = [1.0, 0.0]  # hpe.metrics.power direction
 
 
 class TermsModel(BaseModel):

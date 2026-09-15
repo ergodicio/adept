@@ -397,10 +397,49 @@ def translate_parms(
     hpe = None
     if _bool(g("hpe.enable")):
         hpe = {"active": True}
-        for lpse_key, adept_key in (("hpe.numParticles", "n_particles"), ("hpe.nParticles", "n_particles")):
+        for lpse_key, adept_key in (
+            ("hpe.numParticles", "n_particles"),
+            ("hpe.nParticles", "n_particles"),
+            ("hpe.nElectrons", "n_particles"),
+        ):
             if lpse_key in parms:
                 hpe[adept_key] = int(float(parms[lpse_key]))
-        report["notes"].append("hpe: LPSE tracker controls beyond n_particles are not translated")
+        if "hpe.velocityGrid" in parms:
+            hpe["nv"] = int(float(parms["hpe.velocityGrid"]))
+        if "hpe.startEvolutionAt" in parms:
+            hpe["t_start"] = f"{float(parms['hpe.startEvolutionAt'])}ps"
+        if "hpe.thermalizationProbability" in parms:
+            tp = _floats(parms["hpe.thermalizationProbability"])
+            hpe["thermalization_probability"] = [tp[0], tp[1] if len(tp) > 1 else tp[0]]
+        if "hpe.magneticField" in parms:
+            b = _floats(parms["hpe.magneticField"])
+            hpe["magnetic_field"] = b[2] if len(b) > 2 else 0.0
+            if any(abs(v) > 0 for v in b[:2]):
+                report["unsupported"].append("hpe.magneticField in-plane components (only B_z acts on the 2-D push)")
+        if "hpe.gammaLimit.damping" in parms:
+            hpe["gamma_limit_damping"] = float(parms["hpe.gammaLimit.damping"])
+        if "hpe.gammaLimit.growth" in parms:
+            hpe["gamma_limit_growth"] = float(parms["hpe.gammaLimit.growth"])
+        if _bool(g("hpe.allowGrowth")):
+            hpe["allow_growth"] = True
+        if _bool(g("hpe.enforceEnergyConservation")):
+            hpe["energy_conservation"] = True
+            hpe["energy_conservation_steps"] = float(g("hpe.numStepsToAverageEnergyChange", "1"))
+        n_flux = int(float(g("hpe.metrics.nFluxMetrics", "0")))
+        if n_flux > 0:
+            edges = sorted(
+                {float(g(f"hpe.metrics.flux.{i}.energy.min", "0")) for i in range(1, n_flux + 1)}
+                | {float(g(f"hpe.metrics.flux.{i}.energy.max", "1e9")) for i in range(1, n_flux + 1)}
+            )
+            hpe["flux_bins"] = edges
+        if int(float(g("hpe.metrics.nPowerMetrics", "0"))) > 0:
+            hpe["cone_angle"] = float(g("hpe.metrics.power.1.angle", "30"))
+            direction = _floats(g("hpe.metrics.power.1.direction", "1 0 0"))
+            hpe["cone_direction"] = [direction[0], direction[1] if len(direction) > 1 else 0.0]
+        report["notes"].append(
+            "hpe: dt/dtFields/stepsPerLandauUpdate/vdf.*/blend.gamma are LPSE tracker internals without an adept "
+            "equivalent (adept sub-cycles at substep_courant and blends with v_blend_buffer)"
+        )
 
     for key in parms:
         if key.startswith("thermalFil") and _bool(parms[key]):

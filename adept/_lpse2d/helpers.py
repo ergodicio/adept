@@ -1704,6 +1704,16 @@ def get_default_save_func(cfg):
             out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
             out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
             out["hpe_hist"] = y["epw_hist"]
+            # LPSE-style instruments: cumulative energy (keV, per real electron via w_tail) out of
+            # each wall per energy bin, inside the acceptance cone, and the LD multiplier
+            from adept._lpse2d.core.hpe import WALLS
+
+            wall_flux = y["hpe_wall_flux"]
+            for i_wall, wall in enumerate(WALLS):
+                for i_bin in range(wall_flux.shape[1]):
+                    out[f"hpe_wall_energy_{wall}_bin{i_bin}"] = w_tail * wall_flux[i_wall, i_bin]
+            out["hpe_cone_energy"] = w_tail * y["hpe_cone_energy"][0]
+            out["hpe_ld_multiplier"] = y["hpe_ld_multiplier"][0]
             if have_ratio_band:
                 ratio = y["gamma_L"] / gamma_an_safe
                 # inflation-o-meters: worst-case reduction across the resonant band

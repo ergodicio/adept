@@ -492,6 +492,16 @@ At an absorbing particle wall, outgoing particles are thermalized and reinjected
 | `feedback` | bool | (default `true`) `false` = control run: particles evolve but the damping stays analytic (Follett's control experiment) |
 | `seed` | int | RNG seed for particle loading and wall re-injection (default `42`) |
 | `omega_res` | string | Resonance convention for `v_phi(k)`: `"bohm_gross"` (default, matches the analytic rate) or `"wp0"` (bare carrier, as in the paper) |
+| `gamma_limit_damping` | float | (default `1500`, 1/ps) upper clip on the applied kinetic rate (LPSE `hpe.gammaLimit.damping`) |
+| `gamma_limit_growth` | float | (default `1500`, 1/ps) lower clip `-gamma_limit_growth` on the applied rate when `allow_growth` is on (LPSE `hpe.gammaLimit.growth`) |
+| `allow_growth` | bool | (default `false`) allow negative (inverse-Landau) rates from an inverted tail; otherwise the rate is clipped at 0 (LPSE `hpe.allowGrowth`) |
+| `thermalization_probability` | list | (default `[1, 1]`) probability that a particle leaving through an x / y wall is thermalized and re-injected from the tail; otherwise it is reflected specularly (LPSE `hpe.thermalizationProbability`) |
+| `magnetic_field` | float | (default `0`, tesla) uniform out-of-plane B: the 2-D push rotates the momentum by the cyclotron angle each sub-step (LPSE `hpe.magneticField`, z component) |
+| `energy_conservation` | bool | (default `false`) scale the applied Landau rate every step by a global multiplier in [0.1, 10] so that the expected EPW energy loss equals the particles' kinetic-energy gain (LPSE `hpe.enforceEnergyConservation`; adept linearises the per-mode loss as `2 gamma dt`). Reported as `hpe_ld_multiplier` |
+| `energy_conservation_steps` | float | (default `1`) running-average length of the multiplier (LPSE `hpe.numStepsToAverageEnergyChange`) |
+| `flux_bins` | list | keV edges of the wall-flux instrument (default `[0, 50, 100, 1e9]`): the series `hpe_wall_energy_<left|right|bottom|top>_bin<i>` accumulate the energy (keV per real electron) leaving through each wall in each bin (LPSE `hpe.metrics.flux`) |
+| `cone_angle` | float | acceptance half-angle in degrees of the cone-power instrument (`hpe_cone_energy`: cumulative energy leaving inside the cone about `cone_direction`; LPSE `hpe.metrics.power`). `null` = off |
+| `cone_direction` | list | (default `[1, 0]`) axis of the acceptance cone |
 
 ```yaml
 terms:
