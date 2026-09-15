@@ -928,31 +928,126 @@ def get_density_profile(cfg: dict) -> Array:
         kk = cfg["density"]["wavenumber"]
         nprof = baseline * (1.0 + amp * np.sin(kk * cfg["grid"]["x"]))
 
-    elif cfg["density"]["basis"] in ("lpse-linear", "lpse-exp"):
-        # the original LPSE cartesian profiles (users guide, densityProfile.shape): with r the
-        # distance from the N_max location down the gradient, dr the min-max distance,
-        # linear: N = N_max + (N_min - N_max) r/dr; exp: N = N_max exp(-r/L_n), L_n = dr/ln(Nmax/Nmin);
-        # both clipped to [N_min, N_max] (and LPSE clips every profile at 1.25 n_c)
-        n_min, n_max = float(cfg["density"]["min"]), float(cfg["density"]["max"])
-        x_min_loc = _Q(cfg["density"]["min_location"]).to("um").value
-        x_max_loc = _Q(cfg["density"]["max_location"]).to("um").value
-        dr = abs(x_min_loc - x_max_loc)
-        direction = np.sign(x_min_loc - x_max_loc) if dr > 0 else 1.0
-        r = (cfg["grid"]["x"] - x_max_loc) * direction
-        if dr == 0.0 or n_min == n_max:
-            nprof = np.full_like(cfg["grid"]["x"], n_max, dtype=np.float64)
-        elif cfg["density"]["basis"] == "lpse-linear":
-            nprof = n_max + (n_min - n_max) * r / dr
-        else:
-            ln = dr / np.log(n_max / n_min)
-            nprof = n_max * np.exp(-r / ln)
-        nprof = np.clip(nprof, min(n_min, n_max), max(n_min, n_max))
-        nprof = np.minimum(nprof, 1.25)
-        nprof = np.repeat(nprof[:, None], cfg["grid"]["ny"], axis=-1)
+    elif str(cfg["density"]["basis"]).startswith("lpse-"):
+        nprof = _lpse_density_profile(cfg)
     else:
         raise NotImplementedError
 
     return nprof
+
+
+LPSE_DENSITY_SHAPES = ("linear", "exp", "gaussian", "inverse-power", "quadratic", "qd", "gd", "file")
+
+
+def _lpse_density_profile(cfg: dict) -> np.ndarray:
+    """The original LPSE density profiles (``ZakharovSolver::backgroundDensityShape``),
+    ``density.basis: lpse-<shape>`` with shape in ``LPSE_DENSITY_SHAPES``.
+
+    With ``r`` the distance from the N_max location along the unit vector towards the N_min
+    location (``geometry: cartesian``) or the radial distance from it (``spherical``), ``dr``
+    the min-max separation and ``p = sg_order`` (default 2):
+
+    - ``linear``: ``N_max + (N_min - N_max) r/dr``, clipped to [N_min, N_max]
+    - ``exp``: ``N_max exp(-r/L)``, ``L = dr/ln(N_max/N_min)``, clipped to [N_min, N_max]
+    - ``gaussian``: ``N_max exp(-|r/s|^p)``, ``s = dr / ln(N_max/N_min)^(1/p)`` (not clipped below)
+    - ``inverse-power``: ``N_min (dr/|r|)^p`` for ``|r| > r_c = dr (N_min/N_max)^(1/p)``, else ``N_max``
+    - ``quadratic``: ``A0 + A1 x + A2 x^2`` through ``(0, central_density)``, ``(x_min, N_min)``,
+      ``(x_max, N_max)`` with x measured from ``origin`` (LPSE's box centre)
+    - ``qd`` / ``gd``: linear plus a parabolic / super-Gaussian dip of depth ``dip_depth``, full
+      width ``dip_width`` at ``dip_offset`` from ``origin``
+    - ``file``: a (nx, ny) or (nx,) array from ``file`` (``.npy``, a text table, or an LPSE
+      grid file read with ``lpse_deck.read_frames``)
+
+    Every profile is clipped at ``max_density`` (LPSE ``maxBackgroundDensity``, 1.25 n_c here)."""
+    d = cfg["density"]
+    shape = str(d["basis"])[5:]
+    if shape not in LPSE_DENSITY_SHAPES:
+        raise ValueError(f"density.basis lpse-{shape}: shape must be one of {LPSE_DENSITY_SHAPES}")
+    x = np.asarray(cfg["grid"]["x"], dtype=np.float64)
+    y = np.asarray(cfg["grid"]["y"], dtype=np.float64)
+    nx, ny = len(x), cfg["grid"]["ny"]
+    max_density = float(d.get("max_density", 1.25))
+
+    if shape == "file":
+        path = str(d["file"])
+        if path.endswith(".npy"):
+            arr = np.load(path)
+        elif path.endswith((".txt", ".csv", ".dat")):
+            arr = np.loadtxt(path)
+        else:
+            from adept._lpse2d.lpse_deck import read_frames
+
+            arr = np.real(read_frames(path)[-1][1]).T  # LPSE stores x fastest: (ny, nx) -> (nx, ny)
+        arr = np.asarray(arr, dtype=np.float64)
+        if arr.ndim == 1:
+            arr = np.repeat(arr[:, None], ny, axis=-1)
+        if arr.shape != (nx, ny):
+            raise ValueError(f"density.file {path} has shape {arr.shape}, the grid is {(nx, ny)}")
+        return np.minimum(arr, max_density)
+
+    n_min, n_max = float(d["min"]), float(d["max"])
+    p = float(d.get("sg_order", 2.0))
+    loc_min = np.array([_Q(d["min_location"]).to("um").value, _Q(d.get("min_location_y", "0um")).to("um").value])
+    loc_max = np.array([_Q(d["max_location"]).to("um").value, _Q(d.get("max_location_y", "0um")).to("um").value])
+    X, Y = np.meshgrid(x, y, indexing="ij")
+    dr = float(np.linalg.norm(loc_min - loc_max))
+    if dr == 0.0 and n_min != n_max and shape not in ("quadratic",):
+        raise ValueError("density: min_location and max_location coincide but min != max")
+    if str(d.get("geometry", "cartesian")) == "spherical":
+        r = np.hypot(X - loc_max[0], Y - loc_max[1])
+    else:
+        direction = (loc_min - loc_max) / dr if dr > 0 else np.array([1.0, 0.0])
+        r = (X - loc_max[0]) * direction[0] + (Y - loc_max[1]) * direction[1]
+    lo, hi = min(n_min, n_max), max(n_min, n_max)
+
+    def _linear():
+        if dr == 0.0 or n_min == n_max:
+            return np.full_like(X, n_max)
+        return np.clip(n_max + (n_min - n_max) * r / dr, lo, hi)
+
+    # the quadratic and the dips use LPSE's box-centred x; ``origin`` is that point here
+    origin = _Q(d["origin"]).to("um").value if d.get("origin") is not None else 0.5 * (x[0] + x[-1])
+    xc = X - origin
+
+    if shape == "linear":
+        nprof = _linear()
+    elif shape == "exp":
+        if n_min == n_max:
+            nprof = np.full_like(X, n_max)
+        else:
+            nprof = np.clip(n_max * np.exp(-r / (dr / np.log(n_max / n_min))), lo, hi)
+    elif shape == "gaussian":
+        if n_max <= n_min:
+            raise ValueError("density lpse-gaussian needs max > min")
+        sd = dr / np.log(n_max / n_min) ** (1.0 / p)
+        nprof = n_max * np.exp(-(np.abs(r / sd) ** p))
+    elif shape == "inverse-power":
+        if n_max <= n_min:
+            raise ValueError("density lpse-inverse-power needs max > min")
+        rc = dr * (n_min / n_max) ** (1.0 / p)
+        safe = np.where(np.abs(r) > 0, np.abs(r), 1.0)
+        nprof = np.where(np.abs(r) > rc, n_min * (dr / safe) ** p, n_max)
+    elif shape == "quadratic":
+        a0 = float(d["central_density"])
+        x1, x2 = loc_min[0] - origin, loc_max[0] - origin
+        if x1 == 0.0 or x2 == 0.0 or x1 == x2:
+            raise ValueError("density lpse-quadratic: min/max locations must differ from each other and from origin")
+        a2 = (n_max - n_min * x2 / x1 + a0 * (x2 / x1 - 1.0)) / (x2**2 - x1 * x2)
+        a1 = (n_min - a0 - a2 * x1**2) / x1
+        nprof = a0 + a1 * xc + a2 * xc**2
+    elif shape in ("qd", "gd"):
+        dn = float(d["dip_depth"])
+        wd = 0.5 * _Q(d["dip_width"]).to("um").value
+        xd = _Q(d.get("dip_offset", "0um")).to("um").value
+        nprof = _linear()
+        if shape == "qd":
+            inside = np.abs(xc - xd) <= wd
+            nprof = nprof + np.where(inside, dn * (((xc - xd) / wd) ** 2 - 1.0), 0.0)
+        else:
+            nprof = nprof - dn * np.exp(-(np.abs((xc - xd) / wd) ** p))
+    if np.any(nprof < 0):
+        raise ValueError("density: the LPSE profile is negative somewhere")
+    return np.minimum(nprof, max_density)
 
 
 def plot_fields(fields, td):

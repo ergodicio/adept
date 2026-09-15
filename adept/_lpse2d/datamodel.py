@@ -31,9 +31,21 @@ class DensityModel(BaseModel):
     gradient_scale_length: str | None = Field(default=None, alias="gradient scale length")
     max: float | None = None
     min: float | None = None
-    # lpse-linear / lpse-exp: the original LPSE cartesian profiles between two locations
+    # lpse-<shape> (linear, exp, gaussian, inverse-power, quadratic, qd, gd, file): the original
+    # LPSE profiles between the N_min and N_max locations (helpers._lpse_density_profile)
     min_location: str | None = None
     max_location: str | None = None
+    min_location_y: str | None = None
+    max_location_y: str | None = None
+    geometry: Literal["cartesian", "spherical"] = "cartesian"
+    sg_order: float = 2.0  # LPSE sgOrder (gaussian, inverse-power, gd)
+    central_density: float | None = None  # LPSE quadratic.centralDensity
+    dip_depth: float | None = None  # LPSE dip.depth (qd, gd)
+    dip_width: str | None = None  # LPSE dip.width (full width)
+    dip_offset: str | None = None  # LPSE dip.offset from origin
+    origin: str | None = None  # x of LPSE's box centre (default: the box centre)
+    max_density: float = 1.25  # LPSE maxBackgroundDensity clip
+    file: str | None = None  # lpse-file: .npy / text table / LPSE grid file
     noise: NoiseModel | None = None
 
 

@@ -66,6 +66,7 @@ Density profile configuration.
 | `gradient scale length` | string | Scale length with unit (for `linear` basis) |
 | `max` | float | Maximum density fraction (for `linear` basis) |
 | `min` | float | Minimum density fraction (for `linear` basis) |
+| `lpse-<shape>` bases | | The original LPSE profiles (`ZakharovSolver::backgroundDensityShape`), shape in `linear`, `exp`, `gaussian`, `inverse-power`, `quadratic`, `qd`, `gd`, `file`: `min`/`max` at `min_location`/`max_location` (x; `min_location_y`/`max_location_y` optional, `geometry: cartesian|spherical`), `sg_order` (LPSE `sgOrder`, default 2) for `gaussian`/`inverse-power`/`gd`, `central_density` for `quadratic`, `dip_depth`/`dip_width`/`dip_offset` for the `qd` (parabolic) and `gd` (super-Gaussian) dips on a linear ramp, `origin` (x of LPSE's box centre for the quadratic and the dips, default the box centre), `max_density` clip (default 1.25), `file` (`.npy`, text table, or LPSE grid file) for `lpse-file`. See `helpers._lpse_density_profile` for the formulas |
 | `noise` | object | Ignored (legacy). The initial EPW is identically zero; noise-seeded runs use the per-step `terms.epw.source.noise` source instead |
 
 ### Example: Uniform Density

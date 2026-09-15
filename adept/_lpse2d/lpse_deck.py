@@ -188,25 +188,49 @@ def translate_parms(
     n_max = float(g("densityProfile.NmaxOverNc", str(n_env)))
     x_min_loc = _floats(g("densityProfile.NminLocation", f"{-lx / 2}"))[0] + lx / 2.0
     x_max_loc = _floats(g("densityProfile.NmaxLocation", f"{lx / 2}"))[0] + lx / 2.0
-    if g("densityProfile.geometry", "cartesian").lower() != "cartesian":
-        report["unsupported"].append("densityProfile.geometry != cartesian")
-    if shape in ("linear", "exp"):
-        density = {
-            "basis": f"lpse-{shape}",
-            "min": n_min,
-            "max": n_max,
-            "min_location": f"{x_min_loc}um",
-            "max_location": f"{x_max_loc}um",
-        }
-    else:
+    shape_map = {
+        "linear": "linear",
+        "exp": "exp",
+        "exponential": "exp",
+        "gaussian": "gaussian",
+        "inversesquare": "inverse-power",
+        "inversepower": "inverse-power",
+        "quadratic": "quadratic",
+        "qd": "qd",
+        "gd": "gd",
+        "file": "file",
+    }
+    if shape not in shape_map:
         report["unsupported"].append(f"densityProfile.shape = {shape} (translated as linear)")
-        density = {
-            "basis": "lpse-linear",
-            "min": n_min,
-            "max": n_max,
-            "min_location": f"{x_min_loc}um",
-            "max_location": f"{x_max_loc}um",
-        }
+    adept_shape = shape_map.get(shape, "linear")
+    y_min_loc = _floats(g("densityProfile.NminLocation", "0 0"))
+    y_max_loc = _floats(g("densityProfile.NmaxLocation", "0 0"))
+    density = {
+        "basis": f"lpse-{adept_shape}",
+        "min": n_min,
+        "max": n_max,
+        "min_location": f"{x_min_loc}um",
+        "max_location": f"{x_max_loc}um",
+        "min_location_y": f"{y_min_loc[1] if len(y_min_loc) > 1 else 0.0}um",
+        "max_location_y": f"{y_max_loc[1] if len(y_max_loc) > 1 else 0.0}um",
+        "geometry": "spherical" if g("densityProfile.geometry", "cartesian").lower() == "spherical" else "cartesian",
+        "origin": f"{lx / 2.0}um",
+        "max_density": min(float(g("densityProfile.maxBackgroundDensity", "1.25")), 1.25),
+    }
+    sg = g("densityProfile.sgOrder", g("densityProfile.sgPower", g("densityProfile.power")))
+    if shape == "inversesquare":
+        density["sg_order"] = 2.0
+    elif sg is not None:
+        density["sg_order"] = float(sg)
+    if adept_shape == "quadratic":
+        density["central_density"] = float(g("densityProfile.quadratic.centralDensity", "0"))
+    if adept_shape in ("qd", "gd"):
+        density["dip_depth"] = float(g("densityProfile.dip.depth", "0"))
+        density["dip_width"] = f"{float(g('densityProfile.dip.width', '0'))}um"
+        density["dip_offset"] = f"{float(g('densityProfile.dip.offset', '0'))}um"
+    if adept_shape == "file":
+        density["file"] = g("densityProfile.loadFilename", "")
+        report["notes"].append("densityProfile.shape = file: density.file must point at the LPSE grid file")
 
     # ---- EPW terms
     labc_x = float(g("lw.Labc.min.x", g("lw.Labc", "0")))
