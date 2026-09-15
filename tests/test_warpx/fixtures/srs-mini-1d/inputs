@@ -1,0 +1,125 @@
+# Miniature SRS-diagnostics fixture deck (M3). Same structure as the real
+# warpx-lpi srs-Ln100-Te4-1d deck -- laser via parse_field_function with an
+# off gap, linear density ramp, thermal walls, and one of every diagnostic
+# the M3 conversion layer handles (openPMD fields, ParticleHistogram2D,
+# ParticleHistogram, FieldPoyntingFlux, FieldReduction, BoundaryScraping,
+# Field/ParticleEnergy) -- shrunk to fixture size: 256 cells, 64 ppc,
+# 300 steps, small bin counts. The committed outputs under this directory
+# are the real WarpX run of this deck (Perlmutter, dev @ 72280884a).
+# Physics scales match the real deck (351 nm, n_crit reference, 4 keV)
+# but the laser-off gap is shortened to 10/omega0 so the pump crosses the
+# tiny box within the run.
+
+my_constants.n0      = 9.05e27
+my_constants.Lz      = 2.564746104429896e-06
+my_constants.Emax    = 2.1167188826288962e11
+my_constants.omega0  = 5.366528681791604e15
+my_constants.t_delay = 1.863401948065527e-15
+my_constants.t_rise  = 9.317009740327635e-16
+
+max_step                                  = 300
+amr.n_cell                                = 256
+amr.max_level                             = 0
+geometry.dims                             = 1
+geometry.prob_lo                          = 0.0
+geometry.prob_hi                          = 2.564746104429896e-06
+
+boundary.field_lo                         = absorbing_silver_mueller
+boundary.field_hi                         = absorbing_silver_mueller
+boundary.particle_lo                      = thermal
+boundary.particle_hi                      = thermal
+boundary.electrons.u_th                   = 0.08847488193965977
+
+warpx.cfl                                 = 0.9925281588045054
+warpx.verbose                             = 1
+warpx.use_filter                          = 1
+
+algo.particle_shape                       = 2
+
+particles.species_names                   = electrons
+electrons.charge                          = -q_e
+electrons.mass                            = m_e
+electrons.injection_style                 = NUniformPerCell
+electrons.num_particles_per_cell_each_dim = 64
+electrons.profile                         = parse_density_function
+electrons.density_function(x,y,z)         = n0*(0.18+0.09*z/Lz)
+electrons.momentum_distribution_type      = maxwellian
+electrons.ux_std                          = 0.08847488193965977
+electrons.uy_std                          = 0.08847488193965977
+electrons.uz_std                          = 0.08847488193965977
+electrons.save_particles_at_zlo           = 1
+electrons.save_particles_at_zhi           = 1
+
+lasers.names                              = laser1
+laser1.profile                            = parse_field_function
+laser1.position                           = 0.0 0.0 5.00926973521464e-09
+laser1.direction                          = 0.0 0.0 1.0
+laser1.polarization                       = 1.0 0.0 0.0
+laser1.wavelength                         = 3.51e-07
+laser1.e_max                              = 2.1167188826288962e11
+laser1.field_function(X,Y,t)              = if(t<t_delay,0.0,if(t<t_delay+t_rise,0.5*(1.0-cos(pi*(t-t_delay)/t_rise)),1.0)*Emax*cos(omega0*(t-t_delay)))
+
+diagnostics.diags_names                   = diag1 scraping
+diag1.diag_type                           = Full
+diag1.format                              = openpmd
+diag1.openpmd_backend                     = h5
+diag1.intervals                           = 30
+diag1.dump_last_timestep                  = 0
+diag1.fields_to_plot                      = Ex Ey Ez Bx By Bz rho_electrons
+diag1.write_species                       = 0
+
+scraping.diag_type                        = BoundaryScraping
+scraping.format                           = openpmd
+scraping.openpmd_backend                  = h5
+scraping.intervals                        = 100
+
+warpx.reduced_diags_names                 = fieldenergy particleenergy poyntingflux epw_w p1x1 x1log_gamma_q1 log_gamma
+
+fieldenergy.type                          = FieldEnergy
+fieldenergy.intervals                     = 30
+particleenergy.type                       = ParticleEnergy
+particleenergy.intervals                  = 30
+
+poyntingflux.type                         = FieldPoyntingFlux
+poyntingflux.intervals                    = 10
+
+epw_w.type                                = FieldReduction
+epw_w.intervals                           = 10
+epw_w.reduction_type                      = integral
+epw_w.reduced_function(x,y,z,Ex,Ey,Ez,Bx,By,Bz,jx,jy,jz) = Ez*Ez
+
+p1x1.type                                 = ParticleHistogram2D
+p1x1.intervals                            = 30
+p1x1.openpmd_backend                      = h5
+p1x1.species                              = electrons
+p1x1.bin_number_abs                       = 128
+p1x1.bin_min_abs                          = 0.0
+p1x1.bin_max_abs                          = 2.564746104429896e-06
+p1x1.bin_number_ord                       = 32
+p1x1.bin_min_ord                          = -0.5
+p1x1.bin_max_ord                          = 2.4
+p1x1.histogram_function_abs(t,x,y,z,ux,uy,uz,w) = z
+p1x1.histogram_function_ord(t,x,y,z,ux,uy,uz,w) = uz
+p1x1.value_function(t,x,y,z,ux,uy,uz,w)   = w
+
+x1log_gamma_q1.type                       = ParticleHistogram2D
+x1log_gamma_q1.intervals                  = 30
+x1log_gamma_q1.openpmd_backend            = h5
+x1log_gamma_q1.species                    = electrons
+x1log_gamma_q1.bin_number_abs             = 128
+x1log_gamma_q1.bin_min_abs                = 0.0
+x1log_gamma_q1.bin_max_abs                = 2.564746104429896e-06
+x1log_gamma_q1.bin_number_ord             = 48
+x1log_gamma_q1.bin_min_ord                = 0.0
+x1log_gamma_q1.bin_max_ord                = 2.3010299956639813
+x1log_gamma_q1.histogram_function_abs(t,x,y,z,ux,uy,uz,w) = z
+x1log_gamma_q1.histogram_function_ord(t,x,y,z,ux,uy,uz,w) = log10(sqrt(1.0+ux*ux+uy*uy+uz*uz))
+x1log_gamma_q1.value_function(t,x,y,z,ux,uy,uz,w) = w*(sqrt(1.0+ux*ux+uy*uy+uz*uz)-1.0)*uz/sqrt(1.0+ux*ux+uy*uy+uz*uz)
+
+log_gamma.type                            = ParticleHistogram
+log_gamma.intervals                       = 30
+log_gamma.species                         = electrons
+log_gamma.bin_number                      = 48
+log_gamma.bin_min                         = 0.0
+log_gamma.bin_max                         = 2.3010299956639813
+log_gamma.histogram_function(t,x,y,z,ux,uy,uz) = log10(sqrt(1.0+ux*ux+uy*uy+uz*uz))

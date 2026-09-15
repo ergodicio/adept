@@ -1,0 +1,1700 @@
+Initializing AMReX (26.08-4-gcb098067c32e)...
+MPI initialized with 1 MPI processes
+MPI initialized with thread support level 3
+Initializing CUDA...
+CUDA initialized with 1 device.
+AMReX (26.08-4-gcb098067c32e) initialized
+PICSAR (26.05)
+WarpX (26.08-18-g72280884aee1)
+
+                                   ___
+    __        __             ___  /  /
+    \ \      / /_ _ _ __ _ __\  \/  /
+     \ \ /\ / / _` | '__| '_ \\    /
+      \ V  V / (_| | |  | |_) /    \
+       \_/\_/ \__,_|_|  | .__/__/\  \
+                        |_|       \__\
+
+Level 0: dt = 3.316855468e-17 ; dz = 1.001853947e-08
+
+Grids Summary:
+  Level 0   2 grids  256 cells  100 % of domain
+            smallest grid: 128  biggest grid: 128
+
+-------------------------------------------------------------------------------
+--------------------------- MAIN EM PIC PARAMETERS ----------------------------
+-------------------------------------------------------------------------------
+Precision:            | DOUBLE
+Particle precision:   | DOUBLE
+Geometry:             | 1D (Z)
+Operation mode:       | Electromagnetic
+                      | - vacuum
+-------------------------------------------------------------------------------
+Current Deposition:   | Esirkepov 
+Guard cells           | - ng_alloc_J  = (4)
+ (allocated for J)    | 
+Particle Pusher:      | Boris 
+Charge Deposition:    | standard 
+Field Gathering:      | energy-conserving 
+Particle Shape Factor:| 2
+-------------------------------------------------------------------------------
+Maxwell Solver:       | Yee 
+                      | - staggered grid 
+Guard cells           | - ng_alloc_EB = (2)
+ (allocated for E/B)  | 
+-------------------------------------------------------------------------------
+For full input parameters, see the file: warpx_used_inputs
+
+--- INFO    : Writing openPMD file diags/diag1000000
+STEP 1 starts ...
+
+
+**** WARNINGS ******************************************************************
+* GLOBAL warning list  after  [ FIRST STEP ]
+*
+* No recorded warnings.
+********************************************************************************
+
+STEP 1 ends. TIME = 3.316855468e-17 DT = 3.316855468e-17
+Evolve time = 0.067526293 s; This step = 0.067526293 s; Avg. per step = 0.067526293 s
+
+STEP 2 starts ...
+STEP 2 ends. TIME = 6.633710935e-17 DT = 3.316855468e-17
+Evolve time = 0.069207053 s; This step = 0.00168076 s; Avg. per step = 0.0346035265 s
+
+STEP 3 starts ...
+STEP 3 ends. TIME = 9.950566403e-17 DT = 3.316855468e-17
+Evolve time = 0.070851202 s; This step = 0.001644149 s; Avg. per step = 0.02361706733 s
+
+STEP 4 starts ...
+--- INFO    : re-sorting particles
+STEP 4 ends. TIME = 1.326742187e-16 DT = 3.316855468e-17
+Evolve time = 0.111662889 s; This step = 0.040811687 s; Avg. per step = 0.02791572225 s
+
+STEP 5 starts ...
+STEP 5 ends. TIME = 1.658427734e-16 DT = 3.316855468e-17
+Evolve time = 0.113336405 s; This step = 0.001673516 s; Avg. per step = 0.022667281 s
+
+STEP 6 starts ...
+STEP 6 ends. TIME = 1.990113281e-16 DT = 3.316855468e-17
+Evolve time = 0.114975364 s; This step = 0.001638959 s; Avg. per step = 0.01916256067 s
+
+STEP 7 starts ...
+STEP 7 ends. TIME = 2.321798827e-16 DT = 3.316855468e-17
+Evolve time = 0.116616568 s; This step = 0.001641204 s; Avg. per step = 0.01665950971 s
+
+STEP 8 starts ...
+--- INFO    : re-sorting particles
+STEP 8 ends. TIME = 2.653484374e-16 DT = 3.316855468e-17
+Evolve time = 0.118947108 s; This step = 0.00233054 s; Avg. per step = 0.0148683885 s
+
+STEP 9 starts ...
+STEP 9 ends. TIME = 2.985169921e-16 DT = 3.316855468e-17
+Evolve time = 0.120590375 s; This step = 0.001643267 s; Avg. per step = 0.01339893056 s
+
+STEP 10 starts ...
+STEP 10 ends. TIME = 3.316855468e-16 DT = 3.316855468e-17
+Evolve time = 0.122616384 s; This step = 0.002026009 s; Avg. per step = 0.0122616384 s
+
+STEP 11 starts ...
+STEP 11 ends. TIME = 3.648541014e-16 DT = 3.316855468e-17
+Evolve time = 0.124294629 s; This step = 0.001678245 s; Avg. per step = 0.01129951173 s
+
+STEP 12 starts ...
+--- INFO    : re-sorting particles
+STEP 12 ends. TIME = 3.980226561e-16 DT = 3.316855468e-17
+Evolve time = 0.126738269 s; This step = 0.00244364 s; Avg. per step = 0.01056152242 s
+
+STEP 13 starts ...
+STEP 13 ends. TIME = 4.311912108e-16 DT = 3.316855468e-17
+Evolve time = 0.128422666 s; This step = 0.001684397 s; Avg. per step = 0.009878666615 s
+
+STEP 14 starts ...
+STEP 14 ends. TIME = 4.643597655e-16 DT = 3.316855468e-17
+Evolve time = 0.130047287 s; This step = 0.001624621 s; Avg. per step = 0.009289091929 s
+
+STEP 15 starts ...
+STEP 15 ends. TIME = 4.975283201e-16 DT = 3.316855468e-17
+Evolve time = 0.131650456 s; This step = 0.001603169 s; Avg. per step = 0.008776697067 s
+
+STEP 16 starts ...
+--- INFO    : re-sorting particles
+STEP 16 ends. TIME = 5.306968748e-16 DT = 3.316855468e-17
+Evolve time = 0.13394659 s; This step = 0.002296134 s; Avg. per step = 0.008371661875 s
+
+STEP 17 starts ...
+STEP 17 ends. TIME = 5.638654295e-16 DT = 3.316855468e-17
+Evolve time = 0.135593154 s; This step = 0.001646564 s; Avg. per step = 0.007976067882 s
+
+STEP 18 starts ...
+STEP 18 ends. TIME = 5.970339842e-16 DT = 3.316855468e-17
+Evolve time = 0.1372204 s; This step = 0.001627246 s; Avg. per step = 0.007623355556 s
+
+STEP 19 starts ...
+STEP 19 ends. TIME = 6.302025388e-16 DT = 3.316855468e-17
+Evolve time = 0.138848238 s; This step = 0.001627838 s; Avg. per step = 0.007307802 s
+
+STEP 20 starts ...
+--- INFO    : re-sorting particles
+STEP 20 ends. TIME = 6.633710935e-16 DT = 3.316855468e-17
+Evolve time = 0.141477758 s; This step = 0.00262952 s; Avg. per step = 0.0070738879 s
+
+STEP 21 starts ...
+STEP 21 ends. TIME = 6.965396482e-16 DT = 3.316855468e-17
+Evolve time = 0.143159951 s; This step = 0.001682193 s; Avg. per step = 0.006817140524 s
+
+STEP 22 starts ...
+STEP 22 ends. TIME = 7.297082029e-16 DT = 3.316855468e-17
+Evolve time = 0.144791746 s; This step = 0.001631795 s; Avg. per step = 0.006581443 s
+
+STEP 23 starts ...
+STEP 23 ends. TIME = 7.628767575e-16 DT = 3.316855468e-17
+Evolve time = 0.146415075 s; This step = 0.001623329 s; Avg. per step = 0.006365872826 s
+
+STEP 24 starts ...
+--- INFO    : re-sorting particles
+STEP 24 ends. TIME = 7.960453122e-16 DT = 3.316855468e-17
+Evolve time = 0.148711259 s; This step = 0.002296184 s; Avg. per step = 0.006196302458 s
+
+STEP 25 starts ...
+STEP 25 ends. TIME = 8.292138669e-16 DT = 3.316855468e-17
+Evolve time = 0.150318046 s; This step = 0.001606787 s; Avg. per step = 0.00601272184 s
+
+STEP 26 starts ...
+STEP 26 ends. TIME = 8.623824216e-16 DT = 3.316855468e-17
+Evolve time = 0.151869295 s; This step = 0.001551249 s; Avg. per step = 0.005841126731 s
+
+STEP 27 starts ...
+STEP 27 ends. TIME = 8.955509762e-16 DT = 3.316855468e-17
+Evolve time = 0.1534854 s; This step = 0.001616105 s; Avg. per step = 0.005684644444 s
+
+STEP 28 starts ...
+--- INFO    : re-sorting particles
+STEP 28 ends. TIME = 9.287195309e-16 DT = 3.316855468e-17
+Evolve time = 0.155717379 s; This step = 0.002231979 s; Avg. per step = 0.005561334964 s
+
+STEP 29 starts ...
+STEP 29 ends. TIME = 9.618880856e-16 DT = 3.316855468e-17
+Evolve time = 0.157255743 s; This step = 0.001538364 s; Avg. per step = 0.005422611828 s
+
+STEP 30 starts ...
+--- INFO    : Writing openPMD file diags/diag1000030
+STEP 30 ends. TIME = 9.950566403e-16 DT = 3.316855468e-17
+Evolve time = 0.171270525 s; This step = 0.014014782 s; Avg. per step = 0.0057090175 s
+
+STEP 31 starts ...
+STEP 31 ends. TIME = 1.028225195e-15 DT = 3.316855468e-17
+Evolve time = 0.172977505 s; This step = 0.00170698 s; Avg. per step = 0.005579919516 s
+
+STEP 32 starts ...
+--- INFO    : re-sorting particles
+STEP 32 ends. TIME = 1.06139375e-15 DT = 3.316855468e-17
+Evolve time = 0.175275052 s; This step = 0.002297547 s; Avg. per step = 0.005477345375 s
+
+STEP 33 starts ...
+STEP 33 ends. TIME = 1.094562304e-15 DT = 3.316855468e-17
+Evolve time = 0.17690833 s; This step = 0.001633278 s; Avg. per step = 0.005360858485 s
+
+STEP 34 starts ...
+STEP 34 ends. TIME = 1.127730859e-15 DT = 3.316855468e-17
+Evolve time = 0.178532591 s; This step = 0.001624261 s; Avg. per step = 0.005250958559 s
+
+STEP 35 starts ...
+STEP 35 ends. TIME = 1.160899414e-15 DT = 3.316855468e-17
+Evolve time = 0.180182471 s; This step = 0.00164988 s; Avg. per step = 0.0051480706 s
+
+STEP 36 starts ...
+--- INFO    : re-sorting particles
+STEP 36 ends. TIME = 1.194067968e-15 DT = 3.316855468e-17
+Evolve time = 0.182506799 s; This step = 0.002324328 s; Avg. per step = 0.005069633306 s
+
+STEP 37 starts ...
+STEP 37 ends. TIME = 1.227236523e-15 DT = 3.316855468e-17
+Evolve time = 0.18414712 s; This step = 0.001640321 s; Avg. per step = 0.004976949189 s
+
+STEP 38 starts ...
+STEP 38 ends. TIME = 1.260405078e-15 DT = 3.316855468e-17
+Evolve time = 0.185816317 s; This step = 0.001669197 s; Avg. per step = 0.004889903079 s
+
+STEP 39 starts ...
+STEP 39 ends. TIME = 1.293573632e-15 DT = 3.316855468e-17
+Evolve time = 0.18743163 s; This step = 0.001615313 s; Avg. per step = 0.004805939231 s
+
+STEP 40 starts ...
+--- INFO    : re-sorting particles
+STEP 40 ends. TIME = 1.326742187e-15 DT = 3.316855468e-17
+Evolve time = 0.190053375 s; This step = 0.002621745 s; Avg. per step = 0.004751334375 s
+
+STEP 41 starts ...
+STEP 41 ends. TIME = 1.359910742e-15 DT = 3.316855468e-17
+Evolve time = 0.19169536 s; This step = 0.001641985 s; Avg. per step = 0.004675496585 s
+
+STEP 42 starts ...
+STEP 42 ends. TIME = 1.393079296e-15 DT = 3.316855468e-17
+Evolve time = 0.193290043 s; This step = 0.001594683 s; Avg. per step = 0.004602143881 s
+
+STEP 43 starts ...
+STEP 43 ends. TIME = 1.426247851e-15 DT = 3.316855468e-17
+Evolve time = 0.194918021 s; This step = 0.001627978 s; Avg. per step = 0.004532977233 s
+
+STEP 44 starts ...
+--- INFO    : re-sorting particles
+STEP 44 ends. TIME = 1.459416406e-15 DT = 3.316855468e-17
+Evolve time = 0.197184006 s; This step = 0.002265985 s; Avg. per step = 0.004481454682 s
+
+STEP 45 starts ...
+STEP 45 ends. TIME = 1.49258496e-15 DT = 3.316855468e-17
+Evolve time = 0.198747499 s; This step = 0.001563493 s; Avg. per step = 0.004416611089 s
+
+STEP 46 starts ...
+STEP 46 ends. TIME = 1.525753515e-15 DT = 3.316855468e-17
+Evolve time = 0.200352412 s; This step = 0.001604913 s; Avg. per step = 0.004355487217 s
+
+STEP 47 starts ...
+STEP 47 ends. TIME = 1.55892207e-15 DT = 3.316855468e-17
+Evolve time = 0.201878712 s; This step = 0.0015263 s; Avg. per step = 0.004295291745 s
+
+STEP 48 starts ...
+--- INFO    : re-sorting particles
+STEP 48 ends. TIME = 1.592090624e-15 DT = 3.316855468e-17
+Evolve time = 0.204217007 s; This step = 0.002338295 s; Avg. per step = 0.004254520979 s
+
+STEP 49 starts ...
+STEP 49 ends. TIME = 1.625259179e-15 DT = 3.316855468e-17
+Evolve time = 0.205921814 s; This step = 0.001704807 s; Avg. per step = 0.004202486 s
+
+STEP 50 starts ...
+STEP 50 ends. TIME = 1.658427734e-15 DT = 3.316855468e-17
+Evolve time = 0.207882076 s; This step = 0.001960262 s; Avg. per step = 0.00415764152 s
+
+STEP 51 starts ...
+STEP 51 ends. TIME = 1.691596288e-15 DT = 3.316855468e-17
+Evolve time = 0.209543999 s; This step = 0.001661923 s; Avg. per step = 0.004108705863 s
+
+STEP 52 starts ...
+--- INFO    : re-sorting particles
+STEP 52 ends. TIME = 1.724764843e-15 DT = 3.316855468e-17
+Evolve time = 0.211834692 s; This step = 0.002290693 s; Avg. per step = 0.004073744077 s
+
+STEP 53 starts ...
+STEP 53 ends. TIME = 1.757933398e-15 DT = 3.316855468e-17
+Evolve time = 0.213455346 s; This step = 0.001620654 s; Avg. per step = 0.004027459358 s
+
+STEP 54 starts ...
+STEP 54 ends. TIME = 1.791101952e-15 DT = 3.316855468e-17
+Evolve time = 0.215056933 s; This step = 0.001601587 s; Avg. per step = 0.003982535796 s
+
+STEP 55 starts ...
+STEP 55 ends. TIME = 1.824270507e-15 DT = 3.316855468e-17
+Evolve time = 0.21664838 s; This step = 0.001591447 s; Avg. per step = 0.003939061455 s
+
+STEP 56 starts ...
+--- INFO    : re-sorting particles
+STEP 56 ends. TIME = 1.857439062e-15 DT = 3.316855468e-17
+Evolve time = 0.218835812 s; This step = 0.002187432 s; Avg. per step = 0.003907782357 s
+
+STEP 57 starts ...
+STEP 57 ends. TIME = 1.890607617e-15 DT = 3.316855468e-17
+Evolve time = 0.220389706 s; This step = 0.001553894 s; Avg. per step = 0.00386648607 s
+
+STEP 58 starts ...
+STEP 58 ends. TIME = 1.923776171e-15 DT = 3.316855468e-17
+Evolve time = 0.221942067 s; This step = 0.001552361 s; Avg. per step = 0.003826587362 s
+
+STEP 59 starts ...
+STEP 59 ends. TIME = 1.956944726e-15 DT = 3.316855468e-17
+Evolve time = 0.223493676 s; This step = 0.001551609 s; Avg. per step = 0.003788028407 s
+
+STEP 60 starts ...
+--- INFO    : re-sorting particles
+--- INFO    : Writing openPMD file diags/diag1000060
+STEP 60 ends. TIME = 1.990113281e-15 DT = 3.316855468e-17
+Evolve time = 0.237850192 s; This step = 0.014356516 s; Avg. per step = 0.003964169867 s
+
+STEP 61 starts ...
+STEP 61 ends. TIME = 2.023281835e-15 DT = 3.316855468e-17
+Evolve time = 0.23952474 s; This step = 0.001674548 s; Avg. per step = 0.003926635082 s
+
+STEP 62 starts ...
+STEP 62 ends. TIME = 2.05645039e-15 DT = 3.316855468e-17
+Evolve time = 0.241152978 s; This step = 0.001628238 s; Avg. per step = 0.003889564161 s
+
+STEP 63 starts ...
+STEP 63 ends. TIME = 2.089618945e-15 DT = 3.316855468e-17
+Evolve time = 0.24276285 s; This step = 0.001609872 s; Avg. per step = 0.003853378571 s
+
+STEP 64 starts ...
+--- INFO    : re-sorting particles
+STEP 64 ends. TIME = 2.122787499e-15 DT = 3.316855468e-17
+Evolve time = 0.245062451 s; This step = 0.002299601 s; Avg. per step = 0.003829100797 s
+
+STEP 65 starts ...
+STEP 65 ends. TIME = 2.155956054e-15 DT = 3.316855468e-17
+Evolve time = 0.246679077 s; This step = 0.001616626 s; Avg. per step = 0.003795062723 s
+
+STEP 66 starts ...
+STEP 66 ends. TIME = 2.189124609e-15 DT = 3.316855468e-17
+Evolve time = 0.24825851 s; This step = 0.001579433 s; Avg. per step = 0.003761492576 s
+
+STEP 67 starts ...
+STEP 67 ends. TIME = 2.222293163e-15 DT = 3.316855468e-17
+Evolve time = 0.249873762 s; This step = 0.001615252 s; Avg. per step = 0.003729459134 s
+
+STEP 68 starts ...
+--- INFO    : re-sorting particles
+STEP 68 ends. TIME = 2.255461718e-15 DT = 3.316855468e-17
+Evolve time = 0.252174324 s; This step = 0.002300562 s; Avg. per step = 0.003708445941 s
+
+STEP 69 starts ...
+STEP 69 ends. TIME = 2.288630273e-15 DT = 3.316855468e-17
+Evolve time = 0.25380705 s; This step = 0.001632726 s; Avg. per step = 0.003678363043 s
+
+STEP 70 starts ...
+STEP 70 ends. TIME = 2.321798827e-15 DT = 3.316855468e-17
+Evolve time = 0.255770708 s; This step = 0.001963658 s; Avg. per step = 0.003653867257 s
+
+STEP 71 starts ...
+STEP 71 ends. TIME = 2.354967382e-15 DT = 3.316855468e-17
+Evolve time = 0.257363848 s; This step = 0.00159314 s; Avg. per step = 0.00362484293 s
+
+STEP 72 starts ...
+--- INFO    : re-sorting particles
+STEP 72 ends. TIME = 2.388135937e-15 DT = 3.316855468e-17
+Evolve time = 0.259589445 s; This step = 0.002225597 s; Avg. per step = 0.003605408958 s
+
+STEP 73 starts ...
+STEP 73 ends. TIME = 2.421304491e-15 DT = 3.316855468e-17
+Evolve time = 0.261165332 s; This step = 0.001575887 s; Avg. per step = 0.003577607288 s
+
+STEP 74 starts ...
+STEP 74 ends. TIME = 2.454473046e-15 DT = 3.316855468e-17
+Evolve time = 0.262729285 s; This step = 0.001563953 s; Avg. per step = 0.003550395743 s
+
+STEP 75 starts ...
+STEP 75 ends. TIME = 2.487641601e-15 DT = 3.316855468e-17
+Evolve time = 0.264297187 s; This step = 0.001567902 s; Avg. per step = 0.003523962493 s
+
+STEP 76 starts ...
+--- INFO    : re-sorting particles
+STEP 76 ends. TIME = 2.520810155e-15 DT = 3.316855468e-17
+Evolve time = 0.266622588 s; This step = 0.002325401 s; Avg. per step = 0.003508191947 s
+
+STEP 77 starts ...
+STEP 77 ends. TIME = 2.55397871e-15 DT = 3.316855468e-17
+Evolve time = 0.2682376 s; This step = 0.001615012 s; Avg. per step = 0.003483605195 s
+
+STEP 78 starts ...
+STEP 78 ends. TIME = 2.587147265e-15 DT = 3.316855468e-17
+Evolve time = 0.269805782 s; This step = 0.001568182 s; Avg. per step = 0.003459048487 s
+
+STEP 79 starts ...
+STEP 79 ends. TIME = 2.620315819e-15 DT = 3.316855468e-17
+Evolve time = 0.271358443 s; This step = 0.001552661 s; Avg. per step = 0.003434917 s
+
+STEP 80 starts ...
+--- INFO    : re-sorting particles
+STEP 80 ends. TIME = 2.653484374e-15 DT = 3.316855468e-17
+Evolve time = 0.273878491 s; This step = 0.002520048 s; Avg. per step = 0.003423481138 s
+
+STEP 81 starts ...
+STEP 81 ends. TIME = 2.686652929e-15 DT = 3.316855468e-17
+Evolve time = 0.275540785 s; This step = 0.001662294 s; Avg. per step = 0.003401738086 s
+
+STEP 82 starts ...
+STEP 82 ends. TIME = 2.719821483e-15 DT = 3.316855468e-17
+Evolve time = 0.277093156 s; This step = 0.001552371 s; Avg. per step = 0.003379184829 s
+
+STEP 83 starts ...
+STEP 83 ends. TIME = 2.752990038e-15 DT = 3.316855468e-17
+Evolve time = 0.278618264 s; This step = 0.001525108 s; Avg. per step = 0.003356846554 s
+
+STEP 84 starts ...
+--- INFO    : re-sorting particles
+STEP 84 ends. TIME = 2.786158593e-15 DT = 3.316855468e-17
+Evolve time = 0.280836908 s; This step = 0.002218644 s; Avg. per step = 0.003343296524 s
+
+STEP 85 starts ...
+STEP 85 ends. TIME = 2.819327147e-15 DT = 3.316855468e-17
+Evolve time = 0.282407034 s; This step = 0.001570126 s; Avg. per step = 0.003322435694 s
+
+STEP 86 starts ...
+STEP 86 ends. TIME = 2.852495702e-15 DT = 3.316855468e-17
+Evolve time = 0.283954224 s; This step = 0.00154719 s; Avg. per step = 0.003301793302 s
+
+STEP 87 starts ...
+STEP 87 ends. TIME = 2.885664257e-15 DT = 3.316855468e-17
+Evolve time = 0.285563956 s; This step = 0.001609732 s; Avg. per step = 0.003282344322 s
+
+STEP 88 starts ...
+--- INFO    : re-sorting particles
+STEP 88 ends. TIME = 2.918832811e-15 DT = 3.316855468e-17
+Evolve time = 0.2877882 s; This step = 0.002224244 s; Avg. per step = 0.003270320455 s
+
+STEP 89 starts ...
+STEP 89 ends. TIME = 2.952001366e-15 DT = 3.316855468e-17
+Evolve time = 0.289332304 s; This step = 0.001544104 s; Avg. per step = 0.003250924764 s
+
+STEP 90 starts ...
+--- INFO    : Writing openPMD file diags/diag1000090
+STEP 90 ends. TIME = 2.985169921e-15 DT = 3.316855468e-17
+Evolve time = 0.303229238 s; This step = 0.013896934 s; Avg. per step = 0.003369213756 s
+
+STEP 91 starts ...
+STEP 91 ends. TIME = 3.018338475e-15 DT = 3.316855468e-17
+Evolve time = 0.304974022 s; This step = 0.001744784 s; Avg. per step = 0.003351362879 s
+
+STEP 92 starts ...
+--- INFO    : re-sorting particles
+STEP 92 ends. TIME = 3.05150703e-15 DT = 3.316855468e-17
+Evolve time = 0.307331746 s; This step = 0.002357724 s; Avg. per step = 0.003340562457 s
+
+STEP 93 starts ...
+STEP 93 ends. TIME = 3.084675585e-15 DT = 3.316855468e-17
+Evolve time = 0.308959894 s; This step = 0.001628148 s; Avg. per step = 0.003322149398 s
+
+STEP 94 starts ...
+STEP 94 ends. TIME = 3.11784414e-15 DT = 3.316855468e-17
+Evolve time = 0.310595607 s; This step = 0.001635713 s; Avg. per step = 0.003304208585 s
+
+STEP 95 starts ...
+STEP 95 ends. TIME = 3.151012694e-15 DT = 3.316855468e-17
+Evolve time = 0.312211512 s; This step = 0.001615905 s; Avg. per step = 0.003286436968 s
+
+STEP 96 starts ...
+--- INFO    : re-sorting particles
+STEP 96 ends. TIME = 3.184181249e-15 DT = 3.316855468e-17
+Evolve time = 0.314441828 s; This step = 0.002230316 s; Avg. per step = 0.003275435708 s
+
+STEP 97 starts ...
+STEP 97 ends. TIME = 3.217349804e-15 DT = 3.316855468e-17
+Evolve time = 0.316058253 s; This step = 0.001616425 s; Avg. per step = 0.003258332505 s
+
+STEP 98 starts ...
+STEP 98 ends. TIME = 3.250518358e-15 DT = 3.316855468e-17
+Evolve time = 0.31770163 s; This step = 0.001643377 s; Avg. per step = 0.003241853367 s
+
+STEP 99 starts ...
+STEP 99 ends. TIME = 3.283686913e-15 DT = 3.316855468e-17
+Evolve time = 0.319329708 s; This step = 0.001628078 s; Avg. per step = 0.003225552606 s
+
+STEP 100 starts ...
+--- INFO    : re-sorting particles
+STEP 100 ends. TIME = 3.316855468e-15 DT = 3.316855468e-17
+Evolve time = 0.321917688 s; This step = 0.00258798 s; Avg. per step = 0.00321917688 s
+
+STEP 101 starts ...
+STEP 101 ends. TIME = 3.350024022e-15 DT = 3.316855468e-17
+Evolve time = 0.323574431 s; This step = 0.001656743 s; Avg. per step = 0.003203707238 s
+
+STEP 102 starts ...
+STEP 102 ends. TIME = 3.383192577e-15 DT = 3.316855468e-17
+Evolve time = 0.325124968 s; This step = 0.001550537 s; Avg. per step = 0.003187499686 s
+
+STEP 103 starts ...
+STEP 103 ends. TIME = 3.416361132e-15 DT = 3.316855468e-17
+Evolve time = 0.326794476 s; This step = 0.001669508 s; Avg. per step = 0.003172761903 s
+
+STEP 104 starts ...
+--- INFO    : re-sorting particles
+STEP 104 ends. TIME = 3.449529686e-15 DT = 3.316855468e-17
+Evolve time = 0.329099988 s; This step = 0.002305512 s; Avg. per step = 0.003164422962 s
+
+STEP 105 starts ...
+STEP 105 ends. TIME = 3.482698241e-15 DT = 3.316855468e-17
+Evolve time = 0.33062718 s; This step = 0.001527192 s; Avg. per step = 0.003148830286 s
+
+STEP 106 starts ...
+STEP 106 ends. TIME = 3.515866796e-15 DT = 3.316855468e-17
+Evolve time = 0.332180924 s; This step = 0.001553744 s; Avg. per step = 0.003133782302 s
+
+STEP 107 starts ...
+STEP 107 ends. TIME = 3.54903535e-15 DT = 3.316855468e-17
+Evolve time = 0.333735289 s; This step = 0.001554365 s; Avg. per step = 0.003119021393 s
+
+STEP 108 starts ...
+--- INFO    : re-sorting particles
+STEP 108 ends. TIME = 3.582203905e-15 DT = 3.316855468e-17
+Evolve time = 0.335956336 s; This step = 0.002221047 s; Avg. per step = 0.003110706815 s
+
+STEP 109 starts ...
+STEP 109 ends. TIME = 3.61537246e-15 DT = 3.316855468e-17
+Evolve time = 0.337512214 s; This step = 0.001555878 s; Avg. per step = 0.00309644233 s
+
+STEP 110 starts ...
+STEP 110 ends. TIME = 3.648541014e-15 DT = 3.316855468e-17
+Evolve time = 0.339371751 s; This step = 0.001859537 s; Avg. per step = 0.003085197736 s
+
+STEP 111 starts ...
+STEP 111 ends. TIME = 3.681709569e-15 DT = 3.316855468e-17
+Evolve time = 0.340951515 s; This step = 0.001579764 s; Avg. per step = 0.00307163527 s
+
+STEP 112 starts ...
+--- INFO    : re-sorting particles
+STEP 112 ends. TIME = 3.714878124e-15 DT = 3.316855468e-17
+Evolve time = 0.343178615 s; This step = 0.0022271 s; Avg. per step = 0.003064094777 s
+
+STEP 113 starts ...
+STEP 113 ends. TIME = 3.748046678e-15 DT = 3.316855468e-17
+Evolve time = 0.344754351 s; This step = 0.001575736 s; Avg. per step = 0.00305092346 s
+
+STEP 114 starts ...
+STEP 114 ends. TIME = 3.781215233e-15 DT = 3.316855468e-17
+Evolve time = 0.346356058 s; This step = 0.001601707 s; Avg. per step = 0.003038211035 s
+
+STEP 115 starts ...
+STEP 115 ends. TIME = 3.814383788e-15 DT = 3.316855468e-17
+Evolve time = 0.347901927 s; This step = 0.001545869 s; Avg. per step = 0.003025234148 s
+
+STEP 116 starts ...
+--- INFO    : re-sorting particles
+STEP 116 ends. TIME = 3.847552342e-15 DT = 3.316855468e-17
+Evolve time = 0.350124247 s; This step = 0.00222232 s; Avg. per step = 0.003018312474 s
+
+STEP 117 starts ...
+STEP 117 ends. TIME = 3.880720897e-15 DT = 3.316855468e-17
+Evolve time = 0.35166746 s; This step = 0.001543213 s; Avg. per step = 0.003005704786 s
+
+STEP 118 starts ...
+STEP 118 ends. TIME = 3.913889452e-15 DT = 3.316855468e-17
+Evolve time = 0.35321448 s; This step = 0.00154702 s; Avg. per step = 0.002993343051 s
+
+STEP 119 starts ...
+STEP 119 ends. TIME = 3.947058006e-15 DT = 3.316855468e-17
+Evolve time = 0.35476652 s; This step = 0.00155204 s; Avg. per step = 0.002981231261 s
+
+STEP 120 starts ...
+--- INFO    : re-sorting particles
+--- INFO    : Writing openPMD file diags/diag1000120
+STEP 120 ends. TIME = 3.980226561e-15 DT = 3.316855468e-17
+Evolve time = 0.368773939 s; This step = 0.014007419 s; Avg. per step = 0.003073116158 s
+
+STEP 121 starts ...
+STEP 121 ends. TIME = 4.013395116e-15 DT = 3.316855468e-17
+Evolve time = 0.370487913 s; This step = 0.001713974 s; Avg. per step = 0.003061883579 s
+
+STEP 122 starts ...
+STEP 122 ends. TIME = 4.04656367e-15 DT = 3.316855468e-17
+Evolve time = 0.372128094 s; This step = 0.001640181 s; Avg. per step = 0.003050230279 s
+
+STEP 123 starts ...
+STEP 123 ends. TIME = 4.079732225e-15 DT = 3.316855468e-17
+Evolve time = 0.373759849 s; This step = 0.001631755 s; Avg. per step = 0.003038697959 s
+
+STEP 124 starts ...
+--- INFO    : re-sorting particles
+STEP 124 ends. TIME = 4.11290078e-15 DT = 3.316855468e-17
+Evolve time = 0.376042556 s; This step = 0.002282707 s; Avg. per step = 0.003032601258 s
+
+STEP 125 starts ...
+STEP 125 ends. TIME = 4.146069334e-15 DT = 3.316855468e-17
+Evolve time = 0.377685402 s; This step = 0.001642846 s; Avg. per step = 0.003021483216 s
+
+STEP 126 starts ...
+STEP 126 ends. TIME = 4.179237889e-15 DT = 3.316855468e-17
+Evolve time = 0.379275056 s; This step = 0.001589654 s; Avg. per step = 0.003010119492 s
+
+STEP 127 starts ...
+STEP 127 ends. TIME = 4.212406444e-15 DT = 3.316855468e-17
+Evolve time = 0.380894457 s; This step = 0.001619401 s; Avg. per step = 0.002999168953 s
+
+STEP 128 starts ...
+--- INFO    : re-sorting particles
+STEP 128 ends. TIME = 4.245574998e-15 DT = 3.316855468e-17
+Evolve time = 0.383239014 s; This step = 0.002344557 s; Avg. per step = 0.002994054797 s
+
+STEP 129 starts ...
+STEP 129 ends. TIME = 4.278743553e-15 DT = 3.316855468e-17
+Evolve time = 0.384856841 s; This step = 0.001617827 s; Avg. per step = 0.002983386364 s
+
+STEP 130 starts ...
+STEP 130 ends. TIME = 4.311912108e-15 DT = 3.316855468e-17
+Evolve time = 0.386752808 s; This step = 0.001895967 s; Avg. per step = 0.0029750216 s
+
+STEP 131 starts ...
+STEP 131 ends. TIME = 4.345080662e-15 DT = 3.316855468e-17
+Evolve time = 0.388343373 s; This step = 0.001590565 s; Avg. per step = 0.002964453229 s
+
+STEP 132 starts ...
+--- INFO    : re-sorting particles
+STEP 132 ends. TIME = 4.378249217e-15 DT = 3.316855468e-17
+Evolve time = 0.390545044 s; This step = 0.002201671 s; Avg. per step = 0.002958674576 s
+
+STEP 133 starts ...
+STEP 133 ends. TIME = 4.411417772e-15 DT = 3.316855468e-17
+Evolve time = 0.392115651 s; This step = 0.001570607 s; Avg. per step = 0.002948237977 s
+
+STEP 134 starts ...
+STEP 134 ends. TIME = 4.444586327e-15 DT = 3.316855468e-17
+Evolve time = 0.393674013 s; This step = 0.001558362 s; Avg. per step = 0.002937865769 s
+
+STEP 135 starts ...
+STEP 135 ends. TIME = 4.477754881e-15 DT = 3.316855468e-17
+Evolve time = 0.395222617 s; This step = 0.001548604 s; Avg. per step = 0.002927574941 s
+
+STEP 136 starts ...
+--- INFO    : re-sorting particles
+STEP 136 ends. TIME = 4.510923436e-15 DT = 3.316855468e-17
+Evolve time = 0.397432093 s; This step = 0.002209476 s; Avg. per step = 0.002922294801 s
+
+STEP 137 starts ...
+STEP 137 ends. TIME = 4.544091991e-15 DT = 3.316855468e-17
+Evolve time = 0.398975186 s; This step = 0.001543093 s; Avg. per step = 0.002912227635 s
+
+STEP 138 starts ...
+STEP 138 ends. TIME = 4.577260545e-15 DT = 3.316855468e-17
+Evolve time = 0.400507498 s; This step = 0.001532312 s; Avg. per step = 0.002902228246 s
+
+STEP 139 starts ...
+STEP 139 ends. TIME = 4.6104291e-15 DT = 3.316855468e-17
+Evolve time = 0.402061643 s; This step = 0.001554145 s; Avg. per step = 0.002892529806 s
+
+STEP 140 starts ...
+--- INFO    : re-sorting particles
+STEP 140 ends. TIME = 4.643597655e-15 DT = 3.316855468e-17
+Evolve time = 0.404596519 s; This step = 0.002534876 s; Avg. per step = 0.002889975136 s
+
+STEP 141 starts ...
+STEP 141 ends. TIME = 4.676766209e-15 DT = 3.316855468e-17
+Evolve time = 0.406234786 s; This step = 0.001638267 s; Avg. per step = 0.002881097773 s
+
+STEP 142 starts ...
+STEP 142 ends. TIME = 4.709934764e-15 DT = 3.316855468e-17
+Evolve time = 0.407784422 s; This step = 0.001549636 s; Avg. per step = 0.002871721282 s
+
+STEP 143 starts ...
+STEP 143 ends. TIME = 4.743103319e-15 DT = 3.316855468e-17
+Evolve time = 0.409331824 s; This step = 0.001547402 s; Avg. per step = 0.002862460308 s
+
+STEP 144 starts ...
+--- INFO    : re-sorting particles
+STEP 144 ends. TIME = 4.776271873e-15 DT = 3.316855468e-17
+Evolve time = 0.411524707 s; This step = 0.002192883 s; Avg. per step = 0.002857810465 s
+
+STEP 145 starts ...
+STEP 145 ends. TIME = 4.809440428e-15 DT = 3.316855468e-17
+Evolve time = 0.413085424 s; This step = 0.001560717 s; Avg. per step = 0.002848864993 s
+
+STEP 146 starts ...
+STEP 146 ends. TIME = 4.842608983e-15 DT = 3.316855468e-17
+Evolve time = 0.414629468 s; This step = 0.001544044 s; Avg. per step = 0.002839927863 s
+
+STEP 147 starts ...
+STEP 147 ends. TIME = 4.875777537e-15 DT = 3.316855468e-17
+Evolve time = 0.416176759 s; This step = 0.001547291 s; Avg. per step = 0.002831134415 s
+
+STEP 148 starts ...
+--- INFO    : re-sorting particles
+STEP 148 ends. TIME = 4.908946092e-15 DT = 3.316855468e-17
+Evolve time = 0.418382568 s; This step = 0.002205809 s; Avg. per step = 0.002826909243 s
+
+STEP 149 starts ...
+STEP 149 ends. TIME = 4.942114647e-15 DT = 3.316855468e-17
+Evolve time = 0.419888549 s; This step = 0.001505981 s; Avg. per step = 0.002818043953 s
+
+STEP 150 starts ...
+--- INFO    : Writing openPMD file diags/diag1000150
+STEP 150 ends. TIME = 4.975283201e-15 DT = 3.316855468e-17
+Evolve time = 0.433600054 s; This step = 0.013711505 s; Avg. per step = 0.002890667027 s
+
+STEP 151 starts ...
+STEP 151 ends. TIME = 5.008451756e-15 DT = 3.316855468e-17
+Evolve time = 0.435307757 s; This step = 0.001707703 s; Avg. per step = 0.002882832828 s
+
+STEP 152 starts ...
+--- INFO    : re-sorting particles
+STEP 152 ends. TIME = 5.041620311e-15 DT = 3.316855468e-17
+Evolve time = 0.437661954 s; This step = 0.002354197 s; Avg. per step = 0.002879354961 s
+
+STEP 153 starts ...
+STEP 153 ends. TIME = 5.074788865e-15 DT = 3.316855468e-17
+Evolve time = 0.439300182 s; This step = 0.001638228 s; Avg. per step = 0.00287124302 s
+
+STEP 154 starts ...
+STEP 154 ends. TIME = 5.10795742e-15 DT = 3.316855468e-17
+Evolve time = 0.440949621 s; This step = 0.001649439 s; Avg. per step = 0.002863309227 s
+
+STEP 155 starts ...
+STEP 155 ends. TIME = 5.141125975e-15 DT = 3.316855468e-17
+Evolve time = 0.442579994 s; This step = 0.001630373 s; Avg. per step = 0.0028553548 s
+
+STEP 156 starts ...
+--- INFO    : re-sorting particles
+STEP 156 ends. TIME = 5.174294529e-15 DT = 3.316855468e-17
+Evolve time = 0.444887299 s; This step = 0.002307305 s; Avg. per step = 0.00285184166 s
+
+STEP 157 starts ...
+STEP 157 ends. TIME = 5.207463084e-15 DT = 3.316855468e-17
+Evolve time = 0.446552919 s; This step = 0.00166562 s; Avg. per step = 0.002844286108 s
+
+STEP 158 starts ...
+STEP 158 ends. TIME = 5.240631639e-15 DT = 3.316855468e-17
+Evolve time = 0.448183822 s; This step = 0.001630903 s; Avg. per step = 0.002836606468 s
+
+STEP 159 starts ...
+STEP 159 ends. TIME = 5.273800193e-15 DT = 3.316855468e-17
+Evolve time = 0.449783455 s; This step = 0.001599633 s; Avg. per step = 0.002828826761 s
+
+STEP 160 starts ...
+--- INFO    : re-sorting particles
+STEP 160 ends. TIME = 5.306968748e-15 DT = 3.316855468e-17
+Evolve time = 0.452329924 s; This step = 0.002546469 s; Avg. per step = 0.002827062025 s
+
+STEP 161 starts ...
+STEP 161 ends. TIME = 5.340137303e-15 DT = 3.316855468e-17
+Evolve time = 0.453943523 s; This step = 0.001613599 s; Avg. per step = 0.002819524988 s
+
+STEP 162 starts ...
+STEP 162 ends. TIME = 5.373305857e-15 DT = 3.316855468e-17
+Evolve time = 0.455534799 s; This step = 0.001591276 s; Avg. per step = 0.002811943204 s
+
+STEP 163 starts ...
+STEP 163 ends. TIME = 5.406474412e-15 DT = 3.316855468e-17
+Evolve time = 0.457093352 s; This step = 0.001558553 s; Avg. per step = 0.002804253693 s
+
+STEP 164 starts ...
+--- INFO    : re-sorting particles
+STEP 164 ends. TIME = 5.439642967e-15 DT = 3.316855468e-17
+Evolve time = 0.459292427 s; This step = 0.002199075 s; Avg. per step = 0.002800563579 s
+
+STEP 165 starts ...
+STEP 165 ends. TIME = 5.472811521e-15 DT = 3.316855468e-17
+Evolve time = 0.460868273 s; This step = 0.001575846 s; Avg. per step = 0.002793141048 s
+
+STEP 166 starts ...
+STEP 166 ends. TIME = 5.505980076e-15 DT = 3.316855468e-17
+Evolve time = 0.462447576 s; This step = 0.001579303 s; Avg. per step = 0.002785828771 s
+
+STEP 167 starts ...
+STEP 167 ends. TIME = 5.539148631e-15 DT = 3.316855468e-17
+Evolve time = 0.463995919 s; This step = 0.001548343 s; Avg. per step = 0.002778418677 s
+
+STEP 168 starts ...
+--- INFO    : re-sorting particles
+STEP 168 ends. TIME = 5.572317185e-15 DT = 3.316855468e-17
+Evolve time = 0.466268016 s; This step = 0.002272097 s; Avg. per step = 0.002775404857 s
+
+STEP 169 starts ...
+STEP 169 ends. TIME = 5.60548574e-15 DT = 3.316855468e-17
+Evolve time = 0.467819515 s; This step = 0.001551499 s; Avg. per step = 0.002768162811 s
+
+STEP 170 starts ...
+STEP 170 ends. TIME = 5.638654295e-15 DT = 3.316855468e-17
+Evolve time = 0.469633584 s; This step = 0.001814069 s; Avg. per step = 0.002762550494 s
+
+STEP 171 starts ...
+STEP 171 ends. TIME = 5.67182285e-15 DT = 3.316855468e-17
+Evolve time = 0.471218939 s; This step = 0.001585355 s; Avg. per step = 0.00275566631 s
+
+STEP 172 starts ...
+--- INFO    : re-sorting particles
+STEP 172 ends. TIME = 5.704991404e-15 DT = 3.316855468e-17
+Evolve time = 0.473431461 s; This step = 0.002212522 s; Avg. per step = 0.002752508494 s
+
+STEP 173 starts ...
+STEP 173 ends. TIME = 5.738159959e-15 DT = 3.316855468e-17
+Evolve time = 0.474896553 s; This step = 0.001465092 s; Avg. per step = 0.00274506678 s
+
+STEP 174 starts ...
+STEP 174 ends. TIME = 5.771328514e-15 DT = 3.316855468e-17
+Evolve time = 0.476498971 s; This step = 0.001602418 s; Avg. per step = 0.002738499833 s
+
+STEP 175 starts ...
+STEP 175 ends. TIME = 5.804497068e-15 DT = 3.316855468e-17
+Evolve time = 0.478048175 s; This step = 0.001549204 s; Avg. per step = 0.002731703857 s
+
+STEP 176 starts ...
+--- INFO    : re-sorting particles
+STEP 176 ends. TIME = 5.837665623e-15 DT = 3.316855468e-17
+Evolve time = 0.480270125 s; This step = 0.00222195 s; Avg. per step = 0.002728807528 s
+
+STEP 177 starts ...
+STEP 177 ends. TIME = 5.870834178e-15 DT = 3.316855468e-17
+Evolve time = 0.481833477 s; This step = 0.001563352 s; Avg. per step = 0.002722223034 s
+
+STEP 178 starts ...
+STEP 178 ends. TIME = 5.904002732e-15 DT = 3.316855468e-17
+Evolve time = 0.483383904 s; This step = 0.001550427 s; Avg. per step = 0.00271563991 s
+
+STEP 179 starts ...
+STEP 179 ends. TIME = 5.937171287e-15 DT = 3.316855468e-17
+Evolve time = 0.484974178 s; This step = 0.001590274 s; Avg. per step = 0.00270935295 s
+
+STEP 180 starts ...
+--- INFO    : re-sorting particles
+--- INFO    : Writing openPMD file diags/diag1000180
+STEP 180 ends. TIME = 5.970339842e-15 DT = 3.316855468e-17
+Evolve time = 0.499295846 s; This step = 0.014321668 s; Avg. per step = 0.002773865811 s
+
+STEP 181 starts ...
+STEP 181 ends. TIME = 6.003508396e-15 DT = 3.316855468e-17
+Evolve time = 0.501020832 s; This step = 0.001724986 s; Avg. per step = 0.002768070895 s
+
+STEP 182 starts ...
+STEP 182 ends. TIME = 6.036676951e-15 DT = 3.316855468e-17
+Evolve time = 0.502666153 s; This step = 0.001645321 s; Avg. per step = 0.00276190194 s
+
+STEP 183 starts ...
+STEP 183 ends. TIME = 6.069845506e-15 DT = 3.316855468e-17
+Evolve time = 0.504331623 s; This step = 0.00166547 s; Avg. per step = 0.002755910508 s
+
+STEP 184 starts ...
+--- INFO    : re-sorting particles
+STEP 184 ends. TIME = 6.10301406e-15 DT = 3.316855468e-17
+Evolve time = 0.506672503 s; This step = 0.00234088 s; Avg. per step = 0.002753654908 s
+
+STEP 185 starts ...
+STEP 185 ends. TIME = 6.136182615e-15 DT = 3.316855468e-17
+Evolve time = 0.508324647 s; This step = 0.001652144 s; Avg. per step = 0.002747700795 s
+
+STEP 186 starts ...
+STEP 186 ends. TIME = 6.16935117e-15 DT = 3.316855468e-17
+Evolve time = 0.509976051 s; This step = 0.001651404 s; Avg. per step = 0.002741806726 s
+
+STEP 187 starts ...
+STEP 187 ends. TIME = 6.202519724e-15 DT = 3.316855468e-17
+Evolve time = 0.511643225 s; This step = 0.001667174 s; Avg. per step = 0.002736060027 s
+
+STEP 188 starts ...
+--- INFO    : re-sorting particles
+STEP 188 ends. TIME = 6.235688279e-15 DT = 3.316855468e-17
+Evolve time = 0.514023502 s; This step = 0.002380277 s; Avg. per step = 0.002734167564 s
+
+STEP 189 starts ...
+STEP 189 ends. TIME = 6.268856834e-15 DT = 3.316855468e-17
+Evolve time = 0.51574956 s; This step = 0.001726058 s; Avg. per step = 0.002728833651 s
+
+STEP 190 starts ...
+STEP 190 ends. TIME = 6.302025388e-15 DT = 3.316855468e-17
+Evolve time = 0.517781852 s; This step = 0.002032292 s; Avg. per step = 0.002725167642 s
+
+STEP 191 starts ...
+STEP 191 ends. TIME = 6.335193943e-15 DT = 3.316855468e-17
+Evolve time = 0.519445358 s; This step = 0.001663506 s; Avg. per step = 0.002719609204 s
+
+STEP 192 starts ...
+--- INFO    : re-sorting particles
+STEP 192 ends. TIME = 6.368362498e-15 DT = 3.316855468e-17
+Evolve time = 0.521729789 s; This step = 0.002284431 s; Avg. per step = 0.002717342651 s
+
+STEP 193 starts ...
+STEP 193 ends. TIME = 6.401531052e-15 DT = 3.316855468e-17
+Evolve time = 0.523319172 s; This step = 0.001589383 s; Avg. per step = 0.002711498301 s
+
+STEP 194 starts ...
+STEP 194 ends. TIME = 6.434699607e-15 DT = 3.316855468e-17
+Evolve time = 0.524842957 s; This step = 0.001523785 s; Avg. per step = 0.002705376067 s
+
+STEP 195 starts ...
+STEP 195 ends. TIME = 6.467868162e-15 DT = 3.316855468e-17
+Evolve time = 0.526446577 s; This step = 0.00160362 s; Avg. per step = 0.002699726036 s
+
+STEP 196 starts ...
+--- INFO    : re-sorting particles
+STEP 196 ends. TIME = 6.501036716e-15 DT = 3.316855468e-17
+Evolve time = 0.528723313 s; This step = 0.002276736 s; Avg. per step = 0.002697567923 s
+
+STEP 197 starts ...
+STEP 197 ends. TIME = 6.534205271e-15 DT = 3.316855468e-17
+Evolve time = 0.53028917 s; This step = 0.001565857 s; Avg. per step = 0.002691823198 s
+
+STEP 198 starts ...
+STEP 198 ends. TIME = 6.567373826e-15 DT = 3.316855468e-17
+Evolve time = 0.531844296 s; This step = 0.001555126 s; Avg. per step = 0.002686082303 s
+
+STEP 199 starts ...
+STEP 199 ends. TIME = 6.60054238e-15 DT = 3.316855468e-17
+Evolve time = 0.533368973 s; This step = 0.001524677 s; Avg. per step = 0.002680246095 s
+
+STEP 200 starts ...
+--- INFO    : re-sorting particles
+STEP 200 ends. TIME = 6.633710935e-15 DT = 3.316855468e-17
+Evolve time = 0.535904982 s; This step = 0.002536009 s; Avg. per step = 0.00267952491 s
+
+STEP 201 starts ...
+STEP 201 ends. TIME = 6.66687949e-15 DT = 3.316855468e-17
+Evolve time = 0.537510205 s; This step = 0.001605223 s; Avg. per step = 0.002674180124 s
+
+STEP 202 starts ...
+STEP 202 ends. TIME = 6.700048044e-15 DT = 3.316855468e-17
+Evolve time = 0.539068738 s; This step = 0.001558533 s; Avg. per step = 0.002668657119 s
+
+STEP 203 starts ...
+STEP 203 ends. TIME = 6.733216599e-15 DT = 3.316855468e-17
+Evolve time = 0.540592694 s; This step = 0.001523956 s; Avg. per step = 0.002663018197 s
+
+STEP 204 starts ...
+--- INFO    : re-sorting particles
+STEP 204 ends. TIME = 6.766385154e-15 DT = 3.316855468e-17
+Evolve time = 0.542842498 s; This step = 0.002249804 s; Avg. per step = 0.002660992637 s
+
+STEP 205 starts ...
+STEP 205 ends. TIME = 6.799553708e-15 DT = 3.316855468e-17
+Evolve time = 0.544420298 s; This step = 0.0015778 s; Avg. per step = 0.002655708771 s
+
+STEP 206 starts ...
+STEP 206 ends. TIME = 6.832722263e-15 DT = 3.316855468e-17
+Evolve time = 0.546018227 s; This step = 0.001597929 s; Avg. per step = 0.002650573917 s
+
+STEP 207 starts ...
+STEP 207 ends. TIME = 6.865890818e-15 DT = 3.316855468e-17
+Evolve time = 0.547566751 s; This step = 0.001548524 s; Avg. per step = 0.002645250005 s
+
+STEP 208 starts ...
+--- INFO    : re-sorting particles
+STEP 208 ends. TIME = 6.899059373e-15 DT = 3.316855468e-17
+Evolve time = 0.549765034 s; This step = 0.002198283 s; Avg. per step = 0.002643101125 s
+
+STEP 209 starts ...
+STEP 209 ends. TIME = 6.932227927e-15 DT = 3.316855468e-17
+Evolve time = 0.551232841 s; This step = 0.001467807 s; Avg. per step = 0.002637477708 s
+
+STEP 210 starts ...
+--- INFO    : Writing openPMD file diags/diag1000210
+STEP 210 ends. TIME = 6.965396482e-15 DT = 3.316855468e-17
+Evolve time = 0.564970847 s; This step = 0.013738006 s; Avg. per step = 0.002690337367 s
+
+STEP 211 starts ...
+STEP 211 ends. TIME = 6.998565037e-15 DT = 3.316855468e-17
+Evolve time = 0.566667367 s; This step = 0.00169652 s; Avg. per step = 0.002685627332 s
+
+STEP 212 starts ...
+--- INFO    : re-sorting particles
+STEP 212 ends. TIME = 7.031733591e-15 DT = 3.316855468e-17
+Evolve time = 0.56901488 s; This step = 0.002347513 s; Avg. per step = 0.002684032453 s
+
+STEP 213 starts ...
+STEP 213 ends. TIME = 7.064902146e-15 DT = 3.316855468e-17
+Evolve time = 0.570666274 s; This step = 0.001651394 s; Avg. per step = 0.002679184385 s
+
+STEP 214 starts ...
+STEP 214 ends. TIME = 7.098070701e-15 DT = 3.316855468e-17
+Evolve time = 0.572265265 s; This step = 0.001598991 s; Avg. per step = 0.002674136752 s
+
+STEP 215 starts ...
+STEP 215 ends. TIME = 7.131239255e-15 DT = 3.316855468e-17
+Evolve time = 0.573890517 s; This step = 0.001625252 s; Avg. per step = 0.002669258219 s
+
+STEP 216 starts ...
+--- INFO    : re-sorting particles
+STEP 216 ends. TIME = 7.16440781e-15 DT = 3.316855468e-17
+Evolve time = 0.576193424 s; This step = 0.002302907 s; Avg. per step = 0.002667562148 s
+
+STEP 217 starts ...
+STEP 217 ends. TIME = 7.197576365e-15 DT = 3.316855468e-17
+Evolve time = 0.577788518 s; This step = 0.001595094 s; Avg. per step = 0.002662619899 s
+
+STEP 218 starts ...
+STEP 218 ends. TIME = 7.230744919e-15 DT = 3.316855468e-17
+Evolve time = 0.57943416 s; This step = 0.001645642 s; Avg. per step = 0.002657954862 s
+
+STEP 219 starts ...
+STEP 219 ends. TIME = 7.263913474e-15 DT = 3.316855468e-17
+Evolve time = 0.581069762 s; This step = 0.001635602 s; Avg. per step = 0.002653286584 s
+
+STEP 220 starts ...
+--- INFO    : re-sorting particles
+STEP 220 ends. TIME = 7.297082029e-15 DT = 3.316855468e-17
+Evolve time = 0.583679835 s; This step = 0.002610073 s; Avg. per step = 0.002653090159 s
+
+STEP 221 starts ...
+STEP 221 ends. TIME = 7.330250583e-15 DT = 3.316855468e-17
+Evolve time = 0.585422976 s; This step = 0.001743141 s; Avg. per step = 0.002648972742 s
+
+STEP 222 starts ...
+STEP 222 ends. TIME = 7.363419138e-15 DT = 3.316855468e-17
+Evolve time = 0.587055191 s; This step = 0.001632215 s; Avg. per step = 0.002644392752 s
+
+STEP 223 starts ...
+STEP 223 ends. TIME = 7.396587693e-15 DT = 3.316855468e-17
+Evolve time = 0.588584998 s; This step = 0.001529807 s; Avg. per step = 0.00263939461 s
+
+STEP 224 starts ...
+--- INFO    : re-sorting particles
+STEP 224 ends. TIME = 7.429756247e-15 DT = 3.316855468e-17
+Evolve time = 0.590813791 s; This step = 0.002228793 s; Avg. per step = 0.002637561567 s
+
+STEP 225 starts ...
+STEP 225 ends. TIME = 7.462924802e-15 DT = 3.316855468e-17
+Evolve time = 0.592412272 s; This step = 0.001598481 s; Avg. per step = 0.002632943431 s
+
+STEP 226 starts ...
+STEP 226 ends. TIME = 7.496093357e-15 DT = 3.316855468e-17
+Evolve time = 0.593990433 s; This step = 0.001578161 s; Avg. per step = 0.002628276252 s
+
+STEP 227 starts ...
+STEP 227 ends. TIME = 7.529261911e-15 DT = 3.316855468e-17
+Evolve time = 0.595505872 s; This step = 0.001515439 s; Avg. per step = 0.002623373885 s
+
+STEP 228 starts ...
+--- INFO    : re-sorting particles
+STEP 228 ends. TIME = 7.562430466e-15 DT = 3.316855468e-17
+Evolve time = 0.597696942 s; This step = 0.00219107 s; Avg. per step = 0.002621477816 s
+
+STEP 229 starts ...
+STEP 229 ends. TIME = 7.595599021e-15 DT = 3.316855468e-17
+Evolve time = 0.599257689 s; This step = 0.001560747 s; Avg. per step = 0.002616845803 s
+
+STEP 230 starts ...
+STEP 230 ends. TIME = 7.628767575e-15 DT = 3.316855468e-17
+Evolve time = 0.601172453 s; This step = 0.001914764 s; Avg. per step = 0.002613793274 s
+
+STEP 231 starts ...
+STEP 231 ends. TIME = 7.66193613e-15 DT = 3.316855468e-17
+Evolve time = 0.602760514 s; This step = 0.001588061 s; Avg. per step = 0.002609352874 s
+
+STEP 232 starts ...
+--- INFO    : re-sorting particles
+STEP 232 ends. TIME = 7.695104685e-15 DT = 3.316855468e-17
+Evolve time = 0.605021239 s; This step = 0.002260725 s; Avg. per step = 0.002607850168 s
+
+STEP 233 starts ...
+STEP 233 ends. TIME = 7.728273239e-15 DT = 3.316855468e-17
+Evolve time = 0.606549984 s; This step = 0.001528745 s; Avg. per step = 0.002603218815 s
+
+STEP 234 starts ...
+STEP 234 ends. TIME = 7.761441794e-15 DT = 3.316855468e-17
+Evolve time = 0.608114178 s; This step = 0.001564194 s; Avg. per step = 0.002598778538 s
+
+STEP 235 starts ...
+STEP 235 ends. TIME = 7.794610349e-15 DT = 3.316855468e-17
+Evolve time = 0.609665026 s; This step = 0.001550848 s; Avg. per step = 0.00259431926 s
+
+STEP 236 starts ...
+--- INFO    : re-sorting particles
+STEP 236 ends. TIME = 7.827778903e-15 DT = 3.316855468e-17
+Evolve time = 0.611873289 s; This step = 0.002208263 s; Avg. per step = 0.002592683428 s
+
+STEP 237 starts ...
+STEP 237 ends. TIME = 7.860947458e-15 DT = 3.316855468e-17
+Evolve time = 0.613429558 s; This step = 0.001556269 s; Avg. per step = 0.002588310371 s
+
+STEP 238 starts ...
+STEP 238 ends. TIME = 7.894116013e-15 DT = 3.316855468e-17
+Evolve time = 0.614983593 s; This step = 0.001554035 s; Avg. per step = 0.002583964676 s
+
+STEP 239 starts ...
+STEP 239 ends. TIME = 7.927284567e-15 DT = 3.316855468e-17
+Evolve time = 0.618667939 s; This step = 0.003684346 s; Avg. per step = 0.002588568782 s
+
+STEP 240 starts ...
+--- INFO    : re-sorting particles
+--- INFO    : Writing openPMD file diags/diag1000240
+STEP 240 ends. TIME = 7.960453122e-15 DT = 3.316855468e-17
+Evolve time = 0.634289949 s; This step = 0.01562201 s; Avg. per step = 0.002642874788 s
+
+STEP 241 starts ...
+STEP 241 ends. TIME = 7.993621677e-15 DT = 3.316855468e-17
+Evolve time = 0.636122102 s; This step = 0.001832153 s; Avg. per step = 0.002639510797 s
+
+STEP 242 starts ...
+STEP 242 ends. TIME = 8.026790231e-15 DT = 3.316855468e-17
+Evolve time = 0.637779387 s; This step = 0.001657285 s; Avg. per step = 0.002635452012 s
+
+STEP 243 starts ...
+STEP 243 ends. TIME = 8.059958786e-15 DT = 3.316855468e-17
+Evolve time = 0.639442522 s; This step = 0.001663135 s; Avg. per step = 0.002631450708 s
+
+STEP 244 starts ...
+--- INFO    : re-sorting particles
+STEP 244 ends. TIME = 8.093127341e-15 DT = 3.316855468e-17
+Evolve time = 0.641802089 s; This step = 0.002359567 s; Avg. per step = 0.00263033643 s
+
+STEP 245 starts ...
+STEP 245 ends. TIME = 8.126295896e-15 DT = 3.316855468e-17
+Evolve time = 0.643450366 s; This step = 0.001648277 s; Avg. per step = 0.002626328024 s
+
+STEP 246 starts ...
+STEP 246 ends. TIME = 8.15946445e-15 DT = 3.316855468e-17
+Evolve time = 0.645175562 s; This step = 0.001725196 s; Avg. per step = 0.002622664886 s
+
+STEP 247 starts ...
+STEP 247 ends. TIME = 8.192633005e-15 DT = 3.316855468e-17
+Evolve time = 0.646805414 s; This step = 0.001629852 s; Avg. per step = 0.002618645401 s
+
+STEP 248 starts ...
+--- INFO    : re-sorting particles
+STEP 248 ends. TIME = 8.22580156e-15 DT = 3.316855468e-17
+Evolve time = 0.649107049 s; This step = 0.002301635 s; Avg. per step = 0.002617367133 s
+
+STEP 249 starts ...
+STEP 249 ends. TIME = 8.258970114e-15 DT = 3.316855468e-17
+Evolve time = 0.650739575 s; This step = 0.001632526 s; Avg. per step = 0.002613411948 s
+
+STEP 250 starts ...
+STEP 250 ends. TIME = 8.292138669e-15 DT = 3.316855468e-17
+Evolve time = 0.652720177 s; This step = 0.001980602 s; Avg. per step = 0.002610880708 s
+
+STEP 251 starts ...
+STEP 251 ends. TIME = 8.325307224e-15 DT = 3.316855468e-17
+Evolve time = 0.654387651 s; This step = 0.001667474 s; Avg. per step = 0.002607122116 s
+
+STEP 252 starts ...
+--- INFO    : re-sorting particles
+STEP 252 ends. TIME = 8.358475778e-15 DT = 3.316855468e-17
+Evolve time = 0.656666741 s; This step = 0.00227909 s; Avg. per step = 0.002605820401 s
+
+STEP 253 starts ...
+STEP 253 ends. TIME = 8.391644333e-15 DT = 3.316855468e-17
+Evolve time = 0.658339706 s; This step = 0.001672965 s; Avg. per step = 0.002602133225 s
+
+STEP 254 starts ...
+STEP 254 ends. TIME = 8.424812888e-15 DT = 3.316855468e-17
+Evolve time = 0.659927185 s; This step = 0.001587479 s; Avg. per step = 0.002598138524 s
+
+STEP 255 starts ...
+STEP 255 ends. TIME = 8.457981442e-15 DT = 3.316855468e-17
+Evolve time = 0.661515376 s; This step = 0.001588191 s; Avg. per step = 0.002594177945 s
+
+STEP 256 starts ...
+--- INFO    : re-sorting particles
+STEP 256 ends. TIME = 8.491149997e-15 DT = 3.316855468e-17
+Evolve time = 0.663759048 s; This step = 0.002243672 s; Avg. per step = 0.002592808781 s
+
+STEP 257 starts ...
+STEP 257 ends. TIME = 8.524318552e-15 DT = 3.316855468e-17
+Evolve time = 0.665411493 s; This step = 0.001652445 s; Avg. per step = 0.002589149778 s
+
+STEP 258 starts ...
+STEP 258 ends. TIME = 8.557487106e-15 DT = 3.316855468e-17
+Evolve time = 0.666974485 s; This step = 0.001562992 s; Avg. per step = 0.002585172422 s
+
+STEP 259 starts ...
+STEP 259 ends. TIME = 8.590655661e-15 DT = 3.316855468e-17
+Evolve time = 0.668582113 s; This step = 0.001607628 s; Avg. per step = 0.00258139812 s
+
+STEP 260 starts ...
+--- INFO    : re-sorting particles
+STEP 260 ends. TIME = 8.623824216e-15 DT = 3.316855468e-17
+Evolve time = 0.67109173 s; This step = 0.002509617 s; Avg. per step = 0.002581122038 s
+
+STEP 261 starts ...
+STEP 261 ends. TIME = 8.65699277e-15 DT = 3.316855468e-17
+Evolve time = 0.672706312 s; This step = 0.001614582 s; Avg. per step = 0.00257741882 s
+
+STEP 262 starts ...
+STEP 262 ends. TIME = 8.690161325e-15 DT = 3.316855468e-17
+Evolve time = 0.674284503 s; This step = 0.001578191 s; Avg. per step = 0.002573604973 s
+
+STEP 263 starts ...
+STEP 263 ends. TIME = 8.72332988e-15 DT = 3.316855468e-17
+Evolve time = 0.675879827 s; This step = 0.001595324 s; Avg. per step = 0.002569885274 s
+
+STEP 264 starts ...
+--- INFO    : re-sorting particles
+STEP 264 ends. TIME = 8.756498434e-15 DT = 3.316855468e-17
+Evolve time = 0.678096847 s; This step = 0.00221702 s; Avg. per step = 0.002568548663 s
+
+STEP 265 starts ...
+STEP 265 ends. TIME = 8.789666989e-15 DT = 3.316855468e-17
+Evolve time = 0.679657815 s; This step = 0.001560968 s; Avg. per step = 0.002564746472 s
+
+STEP 266 starts ...
+STEP 266 ends. TIME = 8.822835544e-15 DT = 3.316855468e-17
+Evolve time = 0.681257317 s; This step = 0.001599502 s; Avg. per step = 0.002561117733 s
+
+STEP 267 starts ...
+STEP 267 ends. TIME = 8.856004098e-15 DT = 3.316855468e-17
+Evolve time = 0.682776454 s; This step = 0.001519137 s; Avg. per step = 0.002557215184 s
+
+STEP 268 starts ...
+--- INFO    : re-sorting particles
+STEP 268 ends. TIME = 8.889172653e-15 DT = 3.316855468e-17
+Evolve time = 0.684990969 s; This step = 0.002214515 s; Avg. per step = 0.002555936451 s
+
+STEP 269 starts ...
+STEP 269 ends. TIME = 8.922341208e-15 DT = 3.316855468e-17
+Evolve time = 0.686546777 s; This step = 0.001555808 s; Avg. per step = 0.002552218502 s
+
+STEP 270 starts ...
+--- INFO    : Writing openPMD file diags/diag1000270
+STEP 270 ends. TIME = 8.955509762e-15 DT = 3.316855468e-17
+Evolve time = 0.700569035 s; This step = 0.014022258 s; Avg. per step = 0.00259470013 s
+
+STEP 271 starts ...
+STEP 271 ends. TIME = 8.988678317e-15 DT = 3.316855468e-17
+Evolve time = 0.702235587 s; This step = 0.001666552 s; Avg. per step = 0.002591275229 s
+
+STEP 272 starts ...
+--- INFO    : re-sorting particles
+STEP 272 ends. TIME = 9.021846872e-15 DT = 3.316855468e-17
+Evolve time = 0.704582108 s; This step = 0.002346521 s; Avg. per step = 0.002590375397 s
+
+STEP 273 starts ...
+STEP 273 ends. TIME = 9.055015426e-15 DT = 3.316855468e-17
+Evolve time = 0.706251956 s; This step = 0.001669848 s; Avg. per step = 0.002587003502 s
+
+STEP 274 starts ...
+STEP 274 ends. TIME = 9.088183981e-15 DT = 3.316855468e-17
+Evolve time = 0.707891927 s; This step = 0.001639971 s; Avg. per step = 0.002583547179 s
+
+STEP 275 starts ...
+STEP 275 ends. TIME = 9.121352536e-15 DT = 3.316855468e-17
+Evolve time = 0.709479507 s; This step = 0.00158758 s; Avg. per step = 0.00257992548 s
+
+STEP 276 starts ...
+--- INFO    : re-sorting particles
+STEP 276 ends. TIME = 9.15452109e-15 DT = 3.316855468e-17
+Evolve time = 0.711752916 s; This step = 0.002273409 s; Avg. per step = 0.002578814913 s
+
+STEP 277 starts ...
+STEP 277 ends. TIME = 9.187689645e-15 DT = 3.316855468e-17
+Evolve time = 0.713388569 s; This step = 0.001635653 s; Avg. per step = 0.002575409996 s
+
+STEP 278 starts ...
+STEP 278 ends. TIME = 9.2208582e-15 DT = 3.316855468e-17
+Evolve time = 0.715003992 s; This step = 0.001615423 s; Avg. per step = 0.002571956806 s
+
+STEP 279 starts ...
+STEP 279 ends. TIME = 9.254026754e-15 DT = 3.316855468e-17
+Evolve time = 0.71663182 s; This step = 0.001627828 s; Avg. per step = 0.002568572832 s
+
+STEP 280 starts ...
+--- INFO    : re-sorting particles
+STEP 280 ends. TIME = 9.287195309e-15 DT = 3.316855468e-17
+Evolve time = 0.719239107 s; This step = 0.002607287 s; Avg. per step = 0.002568711096 s
+
+STEP 281 starts ...
+STEP 281 ends. TIME = 9.320363864e-15 DT = 3.316855468e-17
+Evolve time = 0.720880701 s; This step = 0.001641594 s; Avg. per step = 0.002565411747 s
+
+STEP 282 starts ...
+STEP 282 ends. TIME = 9.353532419e-15 DT = 3.316855468e-17
+Evolve time = 0.722474773 s; This step = 0.001594072 s; Avg. per step = 0.00256196728 s
+
+STEP 283 starts ...
+STEP 283 ends. TIME = 9.386700973e-15 DT = 3.316855468e-17
+Evolve time = 0.724109173 s; This step = 0.0016344 s; Avg. per step = 0.002558689657 s
+
+STEP 284 starts ...
+--- INFO    : re-sorting particles
+STEP 284 ends. TIME = 9.419869528e-15 DT = 3.316855468e-17
+Evolve time = 0.726356101 s; This step = 0.002246928 s; Avg. per step = 0.002557591905 s
+
+STEP 285 starts ...
+STEP 285 ends. TIME = 9.453038083e-15 DT = 3.316855468e-17
+Evolve time = 0.727996242 s; This step = 0.001640141 s; Avg. per step = 0.002554372779 s
+
+STEP 286 starts ...
+STEP 286 ends. TIME = 9.486206637e-15 DT = 3.316855468e-17
+Evolve time = 0.729550016 s; This step = 0.001553774 s; Avg. per step = 0.002550874182 s
+
+STEP 287 starts ...
+STEP 287 ends. TIME = 9.519375192e-15 DT = 3.316855468e-17
+Evolve time = 0.731065124 s; This step = 0.001515108 s; Avg. per step = 0.00254726524 s
+
+STEP 288 starts ...
+--- INFO    : re-sorting particles
+STEP 288 ends. TIME = 9.552543747e-15 DT = 3.316855468e-17
+Evolve time = 0.733254611 s; This step = 0.002189487 s; Avg. per step = 0.002546022955 s
+
+STEP 289 starts ...
+STEP 289 ends. TIME = 9.585712301e-15 DT = 3.316855468e-17
+Evolve time = 0.734823294 s; This step = 0.001568683 s; Avg. per step = 0.002542641156 s
+
+STEP 290 starts ...
+STEP 290 ends. TIME = 9.618880856e-15 DT = 3.316855468e-17
+Evolve time = 0.736673432 s; This step = 0.001850138 s; Avg. per step = 0.002540253214 s
+
+STEP 291 starts ...
+STEP 291 ends. TIME = 9.652049411e-15 DT = 3.316855468e-17
+Evolve time = 0.7382601 s; This step = 0.001586668 s; Avg. per step = 0.002536976289 s
+
+STEP 292 starts ...
+--- INFO    : re-sorting particles
+STEP 292 ends. TIME = 9.685217965e-15 DT = 3.316855468e-17
+Evolve time = 0.740479044 s; This step = 0.002218944 s; Avg. per step = 0.002535887137 s
+
+STEP 293 starts ...
+STEP 293 ends. TIME = 9.71838652e-15 DT = 3.316855468e-17
+Evolve time = 0.742035813 s; This step = 0.001556769 s; Avg. per step = 0.002532545437 s
+
+STEP 294 starts ...
+STEP 294 ends. TIME = 9.751555075e-15 DT = 3.316855468e-17
+Evolve time = 0.743593475 s; This step = 0.001557662 s; Avg. per step = 0.002529229507 s
+
+STEP 295 starts ...
+STEP 295 ends. TIME = 9.784723629e-15 DT = 3.316855468e-17
+Evolve time = 0.745174511 s; This step = 0.001581036 s; Avg. per step = 0.002526015292 s
+
+STEP 296 starts ...
+--- INFO    : re-sorting particles
+STEP 296 ends. TIME = 9.817892184e-15 DT = 3.316855468e-17
+Evolve time = 0.747423232 s; This step = 0.002248721 s; Avg. per step = 0.002525078486 s
+
+STEP 297 starts ...
+STEP 297 ends. TIME = 9.851060739e-15 DT = 3.316855468e-17
+Evolve time = 0.749049998 s; This step = 0.001626766 s; Avg. per step = 0.002522053865 s
+
+STEP 298 starts ...
+STEP 298 ends. TIME = 9.884229293e-15 DT = 3.316855468e-17
+Evolve time = 0.75063355 s; This step = 0.001583552 s; Avg. per step = 0.00251890453 s
+
+STEP 299 starts ...
+STEP 299 ends. TIME = 9.917397848e-15 DT = 3.316855468e-17
+Evolve time = 0.752210549 s; This step = 0.001576999 s; Avg. per step = 0.002515754344 s
+
+STEP 300 starts ...
+--- INFO    : re-sorting particles
+--- INFO    : Writing openPMD file diags/diag1000300
+STEP 300 ends. TIME = 9.950566403e-15 DT = 3.316855468e-17
+Evolve time = 0.766443685 s; This step = 0.014233136 s; Avg. per step = 0.002554812283 s
+
+
+**** WARNINGS ******************************************************************
+* GLOBAL warning list  after  [ THE END ]
+*
+* No recorded warnings.
+********************************************************************************
+
+Total Time                     : 1.20389584
+
+
+TinyProfiler total time across processes [min...avg...max]: 1.204 ... 1.204 ... 1.204
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Excl. Min  Excl. Avg  Excl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+MultiReducedDiags::ComputeDiags()                                        301     0.1253     0.1253     0.1253  10.41%
+WarpX::InitData()                                                          1    0.09005    0.09005    0.09005   7.48%
+WarpX::Evolve::step                                                      300    0.07701    0.07701    0.07701   6.40%
+PermutationForDeposition()                                               300    0.07522    0.07522    0.07522   6.25%
+FlushFormatOpenPMD::WriteToFile()                                         11    0.07186    0.07186    0.07186   5.97%
+FillBoundary_nowait()                                                   4746    0.06394    0.06394    0.06394   5.31%
+PhysicalParticleContainer::AddPlasma()                                     1    0.05963    0.05963    0.05963   4.95%
+ParticleBoundaryBuffer::gatherParticles::filterAndTransform             1200    0.05763    0.05763    0.05763   4.79%
+FabArray::setVal()                                                       937    0.05719    0.05719    0.05719   4.75%
+Redistribute_partition                                                   602    0.04648    0.04648    0.04648   3.86%
+WarpX::EvolveB()                                                         600    0.04356    0.04356    0.04356   3.62%
+WarpXOpenPMDPlot::SeriesFlush()()                                         11    0.02908    0.02908    0.02908   2.41%
+Filter::ApplyStencil(MultiFab)                                           911    0.02779    0.02779    0.02779   2.31%
+ParticleCopyPlan::build                                                  602     0.0245     0.0245     0.0245   2.04%
+LaserParticleContainer::Evolve::ParticlePush                             300     0.0222     0.0222     0.0222   1.84%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                    11    0.02014    0.02014    0.02014   1.67%
+amrex::Copy()                                                           2946     0.0184     0.0184     0.0184   1.53%
+Diagnostics::FilterComputePackFlush()                                    603    0.01746    0.01746    0.01746   1.45%
+ParticleBoundaryBuffer::gatherParticles::count_out_of_bounds            1200    0.01595    0.01595    0.01595   1.32%
+ParticleContainer::Redistribute_impl()                                   602    0.01534    0.01534    0.01534   1.27%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                900      0.015      0.015      0.015   1.25%
+sample::Coarsen()                                                         77    0.01499    0.01499    0.01499   1.24%
+WarpXParticleContainer::ApplyBoundaryConditions()                        600    0.01402    0.01402    0.01402   1.16%
+ParticleBoundaryBuffer::gatherParticles::resize                         1200    0.01263    0.01263    0.01263   1.05%
+WarpXOpenPMDPlot::CloseStep()                                             11    0.01239    0.01239    0.01239   1.03%
+ParticleContainer::SortParticlesForDeposition()                          150    0.01239    0.01239    0.01239   1.03%
+ParticleBoundaryBuffer::gatherParticles                                  300    0.01218    0.01218    0.01218   1.01%
+amrex::packBuffer                                                        602    0.01042    0.01042    0.01042   0.87%
+WarpX::SyncCurrent()                                                     300   0.008283   0.008283   0.008283   0.69%
+WarpX::OneStep_nosub()                                                   300   0.008267   0.008267   0.008267   0.69%
+PhysicalParticleContainer::Evolve::GatherAndPush                         600   0.008058   0.008058   0.008058   0.67%
+amrex::unpackBuffer                                                      602   0.007949   0.007949   0.007949   0.66%
+WarpX::EvolveE()                                                         300   0.007196   0.007196   0.007196   0.60%
+MultiFab::Copy()                                                        2946   0.007179   0.007179   0.007179   0.60%
+WarpX::ApplyJfieldBoundary()                                             300   0.006861   0.006861   0.006861   0.57%
+FabArrayBase::getFB()                                                   4746   0.006697   0.006697   0.006697   0.56%
+PhysicalParticleContainer::Evolve()                                      300   0.006428   0.006428   0.006428   0.53%
+FillBoundary_finish()                                                   4746   0.006155   0.006155   0.006155   0.51%
+WarpX::UpdateAuxiliaryData()                                             341   0.004435   0.004435   0.004435   0.37%
+FillBoundaryAndSync_nowait()                                            1800   0.004426   0.004426   0.004426   0.37%
+FillBoundaryAndSync_finish()                                            1800   0.004263   0.004263   0.004263   0.35%
+ParticleCopyPlan::buildCopiesAtomicScatter                               602   0.004051   0.004051   0.004051   0.34%
+amrex::computeNeighborProcs                                              600   0.003957   0.003957   0.003957   0.33%
+ParticleContainer::ReserveForRedistribute()                              602    0.00362    0.00362    0.00362   0.30%
+LaserParticleContainer::Evolve()                                         300   0.003446   0.003446   0.003446   0.29%
+FillBoundary_nowait(Vector)                                              682   0.003412   0.003412   0.003412   0.28%
+FabArray<FAB>::SumBoundary()                                             900   0.003327   0.003327   0.003327   0.28%
+FillBoundary_finish(Vector)                                              682   0.003233   0.003233   0.003233   0.27%
+FillBoundaryAndSync_nowait(Vector)                                       600   0.002945   0.002945   0.002945   0.24%
+FillBoundaryAndSync_finish(Vector)                                       600   0.002859   0.002859   0.002859   0.24%
+ablastr::utils::communication::SumBoundary                               900     0.0023     0.0023     0.0023   0.19%
+FabArray<FAB>::SumBoundary_finish()                                      900   0.002293   0.002293   0.002293   0.19%
+FabArray<FAB>::SumBoundary_nowait()                                      900   0.002287   0.002287   0.002287   0.19%
+WarpXOpenPMDPlot::WriteOpenPMDFields::D2H()                              154   0.001411   0.001411   0.001411   0.12%
+MultiParticleContainer::RedistributeLocal                                300   0.001195   0.001195   0.001195   0.10%
+MultiParticleContainer::doQedEvents()                                    300   0.001118   0.001118   0.001118   0.09%
+main()                                                                     1   0.001077   0.001077   0.001077   0.09%
+WarpX::OneStep()                                                         300  0.0008086  0.0008086  0.0008086   0.07%
+MultiParticleContainer::doCollisions()                                   300  0.0007859  0.0007859  0.0007859   0.07%
+WarpX::Evolve()                                                            1  0.0003874  0.0003874  0.0003874   0.03%
+PhysicalParticleContainer::AddParticles()                                  1   5.24e-06   5.24e-06   5.24e-06   0.00%
+REG::WarpX::Evolve()                                                       1   4.81e-06   4.81e-06   4.81e-06   0.00%
+Other                                                                   5869    0.01046    0.01046    0.01046   0.87%
+---------------------------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Incl. Min  Incl. Avg  Incl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+main()                                                                     1      1.204      1.204      1.204  99.99%
+REG::WarpX::Evolve()                                                       1     0.7714     0.7714     0.7714  64.07%
+WarpX::Evolve()                                                            1     0.7714     0.7714     0.7714  64.07%
+WarpX::Evolve::step                                                      300      0.771      0.771      0.771  64.03%
+WarpX::InitData()                                                          1     0.4314     0.4314     0.4314  35.83%
+WarpX::OneStep()                                                         300     0.2437     0.2437     0.2437  20.24%
+WarpX::OneStep_nosub()                                                   300     0.2429     0.2429     0.2429  20.17%
+Diagnostics::FilterComputePackFlush()                                    603     0.1866     0.1866     0.1866  15.49%
+FlushFormatOpenPMD::WriteToFile()                                         11     0.1349     0.1349     0.1349  11.20%
+MultiReducedDiags::ComputeDiags()                                        301     0.1253     0.1253     0.1253  10.41%
+MultiParticleContainer::RedistributeLocal                                300     0.1221     0.1221     0.1221  10.14%
+ParticleContainer::Redistribute_impl()                                   602     0.1217     0.1217     0.1217  10.11%
+ParticleBoundaryBuffer::gatherParticles                                  300    0.09839    0.09839    0.09839   8.17%
+ParticleContainer::SortParticlesForDeposition()                          150    0.08761    0.08761    0.08761   7.28%
+PermutationForDeposition()                                               300    0.07522    0.07522    0.07522   6.25%
+WarpX::SyncCurrent()                                                     300    0.07332    0.07332    0.07332   6.09%
+FillBoundary_nowait()                                                   4746    0.07068    0.07068    0.07068   5.87%
+PhysicalParticleContainer::AddParticles()                                  1    0.05964    0.05964    0.05964   4.95%
+PhysicalParticleContainer::AddPlasma()                                     1    0.05963    0.05963    0.05963   4.95%
+ParticleBoundaryBuffer::gatherParticles::filterAndTransform             1200    0.05763    0.05763    0.05763   4.79%
+FabArray::setVal()                                                       937    0.05719    0.05719    0.05719   4.75%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                    11    0.05062    0.05062    0.05062   4.20%
+Redistribute_partition                                                   602    0.04648    0.04648    0.04648   3.86%
+WarpX::EvolveB()                                                         600    0.04356    0.04356    0.04356   3.62%
+ablastr::utils::communication::SumBoundary                               900    0.03575    0.03575    0.03575   2.97%
+FabArray<FAB>::SumBoundary()                                             900    0.03345    0.03345    0.03345   2.78%
+ParticleCopyPlan::build                                                  602    0.03344    0.03344    0.03344   2.78%
+WarpXOpenPMDPlot::SeriesFlush()()                                         11    0.02908    0.02908    0.02908   2.41%
+FillBoundaryAndSync_nowait(Vector)                                       600    0.02884    0.02884    0.02884   2.40%
+LaserParticleContainer::Evolve()                                         300    0.02847    0.02847    0.02847   2.36%
+FillBoundary_nowait(Vector)                                              682    0.02832    0.02832    0.02832   2.35%
+Filter::ApplyStencil(MultiFab)                                           911    0.02779    0.02779    0.02779   2.31%
+PhysicalParticleContainer::Evolve()                                      300    0.02666    0.02666    0.02666   2.21%
+FabArray<FAB>::SumBoundary_nowait()                                      900    0.02659    0.02659    0.02659   2.21%
+FillBoundaryAndSync_nowait()                                            1800     0.0259     0.0259     0.0259   2.15%
+MultiFab::Copy()                                                        2946    0.02558    0.02558    0.02558   2.12%
+LaserParticleContainer::Evolve::ParticlePush                             300     0.0222     0.0222     0.0222   1.84%
+amrex::Copy()                                                           2946     0.0184     0.0184     0.0184   1.53%
+ParticleBoundaryBuffer::gatherParticles::count_out_of_bounds            1200    0.01595    0.01595    0.01595   1.32%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                900      0.015      0.015      0.015   1.25%
+sample::Coarsen()                                                         77    0.01499    0.01499    0.01499   1.24%
+WarpXParticleContainer::ApplyBoundaryConditions()                        600    0.01402    0.01402    0.01402   1.16%
+ParticleBoundaryBuffer::gatherParticles::resize                         1200    0.01263    0.01263    0.01263   1.05%
+WarpXOpenPMDPlot::CloseStep()                                             11    0.01239    0.01239    0.01239   1.03%
+WarpX::UpdateAuxiliaryData()                                             341    0.01207    0.01207    0.01207   1.00%
+amrex::packBuffer                                                        602    0.01042    0.01042    0.01042   0.87%
+FillBoundaryAndSync_finish(Vector)                                       600    0.00943    0.00943    0.00943   0.78%
+PhysicalParticleContainer::Evolve::GatherAndPush                         600   0.008058   0.008058   0.008058   0.67%
+amrex::unpackBuffer                                                      602   0.007949   0.007949   0.007949   0.66%
+WarpX::EvolveE()                                                         300   0.007196   0.007196   0.007196   0.60%
+WarpX::ApplyJfieldBoundary()                                             300   0.006861   0.006861   0.006861   0.57%
+FabArrayBase::getFB()                                                   4746   0.006743   0.006743   0.006743   0.56%
+FillBoundaryAndSync_finish()                                            1800   0.006571   0.006571   0.006571   0.55%
+FillBoundary_finish()                                                   4746   0.006155   0.006155   0.006155   0.51%
+FillBoundary_finish(Vector)                                              682   0.005843   0.005843   0.005843   0.49%
+ParticleCopyPlan::buildCopiesAtomicScatter                               602   0.004051   0.004051   0.004051   0.34%
+amrex::computeNeighborProcs                                              600   0.003957   0.003957   0.003957   0.33%
+ParticleContainer::ReserveForRedistribute()                              602    0.00362    0.00362    0.00362   0.30%
+FabArray<FAB>::SumBoundary_finish()                                      900    0.00353    0.00353    0.00353   0.29%
+MultiParticleContainer::doQedEvents()                                    300      0.002      0.002      0.002   0.17%
+WarpXOpenPMDPlot::WriteOpenPMDFields::D2H()                              154   0.001411   0.001411   0.001411   0.12%
+MultiParticleContainer::doCollisions()                                   300   0.001251   0.001251   0.001251   0.10%
+Other                                                                   5869    0.01092    0.01092    0.01092   0.91%
+---------------------------------------------------------------------------------------------------------------------
+
+
+
+BEGIN REGION WarpX::Evolve()
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Excl. Min  Excl. Avg  Excl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+WarpX::Evolve::step                                                      300    0.07701    0.07701    0.07701   6.40%
+PermutationForDeposition()                                               300    0.07522    0.07522    0.07522   6.25%
+FillBoundary_nowait()                                                   4740    0.06381    0.06381    0.06381   5.30%
+ParticleBoundaryBuffer::gatherParticles::filterAndTransform             1200    0.05763    0.05763    0.05763   4.79%
+Redistribute_partition                                                   600    0.04632    0.04632    0.04632   3.85%
+WarpX::EvolveB()                                                         600    0.04356    0.04356    0.04356   3.62%
+WarpXOpenPMDPlot::SeriesFlush()()                                         10    0.02591    0.02591    0.02591   2.15%
+ParticleCopyPlan::build                                                  600    0.02435    0.02435    0.02435   2.02%
+LaserParticleContainer::Evolve::ParticlePush                             300     0.0222     0.0222     0.0222   1.84%
+amrex::Copy()                                                           2940     0.0184     0.0184     0.0184   1.53%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                    10    0.01672    0.01672    0.01672   1.39%
+MultiReducedDiags::ComputeDiags()                                        300    0.01632    0.01632    0.01632   1.36%
+ParticleBoundaryBuffer::gatherParticles::count_out_of_bounds            1200    0.01595    0.01595    0.01595   1.32%
+ParticleContainer::Redistribute_impl()                                   600    0.01513    0.01513    0.01513   1.26%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                900      0.015      0.015      0.015   1.25%
+WarpXParticleContainer::ApplyBoundaryConditions()                        600    0.01402    0.01402    0.01402   1.16%
+ParticleBoundaryBuffer::gatherParticles::resize                         1200    0.01263    0.01263    0.01263   1.05%
+ParticleContainer::SortParticlesForDeposition()                          150    0.01239    0.01239    0.01239   1.03%
+ParticleBoundaryBuffer::gatherParticles                                  300    0.01218    0.01218    0.01218   1.01%
+Filter::ApplyStencil(MultiFab)                                           910    0.01148    0.01148    0.01148   0.95%
+WarpXOpenPMDPlot::CloseStep()                                             10    0.01123    0.01123    0.01123   0.93%
+amrex::packBuffer                                                        600     0.0104     0.0104     0.0104   0.86%
+FabArray::setVal()                                                       920   0.008877   0.008877   0.008877   0.74%
+WarpX::SyncCurrent()                                                     300   0.008283   0.008283   0.008283   0.69%
+WarpX::OneStep_nosub()                                                   300   0.008267   0.008267   0.008267   0.69%
+PhysicalParticleContainer::Evolve::GatherAndPush                         600   0.008058   0.008058   0.008058   0.67%
+amrex::unpackBuffer                                                      600   0.007929   0.007929   0.007929   0.66%
+WarpX::EvolveE()                                                         300   0.007196   0.007196   0.007196   0.60%
+MultiFab::Copy()                                                        2940   0.007162   0.007162   0.007162   0.59%
+WarpX::ApplyJfieldBoundary()                                             300   0.006861   0.006861   0.006861   0.57%
+FabArrayBase::getFB()                                                   4740   0.006683   0.006683   0.006683   0.56%
+PhysicalParticleContainer::Evolve()                                      300   0.006428   0.006428   0.006428   0.53%
+FillBoundary_finish()                                                   4740   0.006147   0.006147   0.006147   0.51%
+FillBoundaryAndSync_nowait()                                            1800   0.004426   0.004426   0.004426   0.37%
+WarpX::UpdateAuxiliaryData()                                             340   0.004413   0.004413   0.004413   0.37%
+FillBoundaryAndSync_finish()                                            1800   0.004263   0.004263   0.004263   0.35%
+ParticleCopyPlan::buildCopiesAtomicScatter                               600   0.004048   0.004048   0.004048   0.34%
+amrex::computeNeighborProcs                                              600   0.003957   0.003957   0.003957   0.33%
+ParticleContainer::ReserveForRedistribute()                              600   0.003602   0.003602   0.003602   0.30%
+LaserParticleContainer::Evolve()                                         300   0.003446   0.003446   0.003446   0.29%
+Diagnostics::FilterComputePackFlush()                                    601    0.00342    0.00342    0.00342   0.28%
+FillBoundary_nowait(Vector)                                              680   0.003399   0.003399   0.003399   0.28%
+FabArray<FAB>::SumBoundary()                                             900   0.003327   0.003327   0.003327   0.28%
+FillBoundary_finish(Vector)                                              680    0.00322    0.00322    0.00322   0.27%
+FillBoundaryAndSync_nowait(Vector)                                       600   0.002945   0.002945   0.002945   0.24%
+FillBoundaryAndSync_finish(Vector)                                       600   0.002859   0.002859   0.002859   0.24%
+ablastr::utils::communication::SumBoundary                               900     0.0023     0.0023     0.0023   0.19%
+FabArray<FAB>::SumBoundary_finish()                                      900   0.002293   0.002293   0.002293   0.19%
+FabArray<FAB>::SumBoundary_nowait()                                      900   0.002287   0.002287   0.002287   0.19%
+WarpXOpenPMDPlot::WriteOpenPMDFields::D2H()                              140   0.001272   0.001272   0.001272   0.11%
+MultiParticleContainer::RedistributeLocal                                300   0.001195   0.001195   0.001195   0.10%
+MultiParticleContainer::doQedEvents()                                    300   0.001118   0.001118   0.001118   0.09%
+FlushFormatOpenPMD::WriteToFile()                                         10   0.001003   0.001003   0.001003   0.08%
+WarpX::OneStep()                                                         300  0.0008086  0.0008086  0.0008086   0.07%
+MultiParticleContainer::doCollisions()                                   300  0.0007859  0.0007859  0.0007859   0.07%
+WarpX::Evolve()                                                            1  0.0003874  0.0003874  0.0003874   0.03%
+REG::WarpX::Evolve()                                                       1   4.81e-06   4.81e-06   4.81e-06   0.00%
+Other                                                                   5904    0.01087    0.01087    0.01087   0.90%
+---------------------------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Incl. Min  Incl. Avg  Incl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+REG::WarpX::Evolve()                                                       1     0.7714     0.7714     0.7714  64.07%
+WarpX::Evolve()                                                            1     0.7714     0.7714     0.7714  64.07%
+WarpX::Evolve::step                                                      300      0.771      0.771      0.771  64.03%
+WarpX::OneStep()                                                         300     0.2437     0.2437     0.2437  20.24%
+WarpX::OneStep_nosub()                                                   300     0.2429     0.2429     0.2429  20.17%
+MultiParticleContainer::RedistributeLocal                                300     0.1221     0.1221     0.1221  10.14%
+ParticleContainer::Redistribute_impl()                                   600     0.1209     0.1209     0.1209  10.04%
+ParticleBoundaryBuffer::gatherParticles                                  300    0.09839    0.09839    0.09839   8.17%
+ParticleContainer::SortParticlesForDeposition()                          150    0.08761    0.08761    0.08761   7.28%
+PermutationForDeposition()                                               300    0.07522    0.07522    0.07522   6.25%
+WarpX::SyncCurrent()                                                     300    0.07332    0.07332    0.07332   6.09%
+FillBoundary_nowait()                                                   4740    0.07051    0.07051    0.07051   5.86%
+Diagnostics::FilterComputePackFlush()                                    601    0.06296    0.06296    0.06296   5.23%
+ParticleBoundaryBuffer::gatherParticles::filterAndTransform             1200    0.05763    0.05763    0.05763   4.79%
+FlushFormatOpenPMD::WriteToFile()                                         10    0.05616    0.05616    0.05616   4.66%
+Redistribute_partition                                                   600    0.04632    0.04632    0.04632   3.85%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                    10     0.0439     0.0439     0.0439   3.65%
+WarpX::EvolveB()                                                         600    0.04356    0.04356    0.04356   3.62%
+ablastr::utils::communication::SumBoundary                               900    0.03575    0.03575    0.03575   2.97%
+FabArray<FAB>::SumBoundary()                                             900    0.03345    0.03345    0.03345   2.78%
+ParticleCopyPlan::build                                                  600    0.03328    0.03328    0.03328   2.76%
+FillBoundaryAndSync_nowait(Vector)                                       600    0.02884    0.02884    0.02884   2.40%
+LaserParticleContainer::Evolve()                                         300    0.02847    0.02847    0.02847   2.36%
+FillBoundary_nowait(Vector)                                              680    0.02814    0.02814    0.02814   2.34%
+PhysicalParticleContainer::Evolve()                                      300    0.02666    0.02666    0.02666   2.21%
+FabArray<FAB>::SumBoundary_nowait()                                      900    0.02659    0.02659    0.02659   2.21%
+WarpXOpenPMDPlot::SeriesFlush()()                                         10    0.02591    0.02591    0.02591   2.15%
+FillBoundaryAndSync_nowait()                                            1800     0.0259     0.0259     0.0259   2.15%
+MultiFab::Copy()                                                        2940    0.02556    0.02556    0.02556   2.12%
+LaserParticleContainer::Evolve::ParticlePush                             300     0.0222     0.0222     0.0222   1.84%
+amrex::Copy()                                                           2940     0.0184     0.0184     0.0184   1.53%
+MultiReducedDiags::ComputeDiags()                                        300    0.01632    0.01632    0.01632   1.36%
+ParticleBoundaryBuffer::gatherParticles::count_out_of_bounds            1200    0.01595    0.01595    0.01595   1.32%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                900      0.015      0.015      0.015   1.25%
+WarpXParticleContainer::ApplyBoundaryConditions()                        600    0.01402    0.01402    0.01402   1.16%
+ParticleBoundaryBuffer::gatherParticles::resize                         1200    0.01263    0.01263    0.01263   1.05%
+WarpX::UpdateAuxiliaryData()                                             340    0.01203    0.01203    0.01203   1.00%
+Filter::ApplyStencil(MultiFab)                                           910    0.01148    0.01148    0.01148   0.95%
+WarpXOpenPMDPlot::CloseStep()                                             10    0.01123    0.01123    0.01123   0.93%
+amrex::packBuffer                                                        600     0.0104     0.0104     0.0104   0.86%
+FillBoundaryAndSync_finish(Vector)                                       600    0.00943    0.00943    0.00943   0.78%
+FabArray::setVal()                                                       920   0.008877   0.008877   0.008877   0.74%
+PhysicalParticleContainer::Evolve::GatherAndPush                         600   0.008058   0.008058   0.008058   0.67%
+amrex::unpackBuffer                                                      600   0.007929   0.007929   0.007929   0.66%
+WarpX::EvolveE()                                                         300   0.007196   0.007196   0.007196   0.60%
+WarpX::ApplyJfieldBoundary()                                             300   0.006861   0.006861   0.006861   0.57%
+FabArrayBase::getFB()                                                   4740   0.006704   0.006704   0.006704   0.56%
+FillBoundaryAndSync_finish()                                            1800   0.006571   0.006571   0.006571   0.55%
+FillBoundary_finish()                                                   4740   0.006147   0.006147   0.006147   0.51%
+FillBoundary_finish(Vector)                                              680   0.005823   0.005823   0.005823   0.48%
+ParticleCopyPlan::buildCopiesAtomicScatter                               600   0.004048   0.004048   0.004048   0.34%
+amrex::computeNeighborProcs                                              600   0.003957   0.003957   0.003957   0.33%
+ParticleContainer::ReserveForRedistribute()                              600   0.003602   0.003602   0.003602   0.30%
+FabArray<FAB>::SumBoundary_finish()                                      900    0.00353    0.00353    0.00353   0.29%
+MultiParticleContainer::doQedEvents()                                    300      0.002      0.002      0.002   0.17%
+WarpXOpenPMDPlot::WriteOpenPMDFields::D2H()                              140   0.001272   0.001272   0.001272   0.11%
+MultiParticleContainer::doCollisions()                                   300   0.001251   0.001251   0.001251   0.10%
+Other                                                                   5904    0.01109    0.01109    0.01109   0.92%
+---------------------------------------------------------------------------------------------------------------------
+
+END REGION WarpX::Evolve()
+Device Memory Usage:
+---------------------------------------------------------------------------------------
+Name                                                         Nalloc    AvgMem    MaxMem
+---------------------------------------------------------------------------------------
+The_Arena::Initialize()                                           1   176 KiB    59 GiB
+ResizeRandomSeed                                                  1    40 MiB    40 MiB
+ParticleContainer::SortParticlesForDeposition()                 450   418 KiB   863 KiB
+PhysicalParticleContainer::AddPlasma()                           18   287 KiB   797 KiB
+MultiReducedDiags::ComputeDiags()                               751    13 KiB   434 KiB
+ParticleContainer::Redistribute_impl()                            6   950   B   325 KiB
+WarpX::InitData()                                                30    40 KiB   240 KiB
+Redistribute_partition                                         6142  1540   B   117 KiB
+ParticleBoundaryBuffer::gatherParticles                        1216    10 KiB   112 KiB
+Diagnostics::FilterComputePackFlush()                            66   133   B   110 KiB
+PermutationForDeposition()                                     1050  4327   B    71 KiB
+ParticleBoundaryBuffer::gatherParticles::filterAndTransform    3600  2780   B    67 KiB
+FillBoundary_nowait()                                          3612  6502   B    10 KiB
+main()                                                           33  7492   B  7680   B
+FabArray::setVal()                                               30  4545   B  5120   B
+DenseBins<T>::buildGPU                                           12  2216   B  3328   B
+WarpX::SyncCurrent()                                           1800    66   B  2560   B
+ParticleBufferMap::define                                         8  1773   B  2048   B
+ParticleCopyPlan::build                                        3612    52   B  1280   B
+FabArray::ParallelCopy_nowait()                                  11     0   B  1024   B
+LaserParticleContainer::Evolve()                                900    17   B   768   B
+amrex::packBuffer                                               298     5   B   768   B
+ParticleCopyPlan::buildCopiesAtomicScatter                      542    12   B   512   B
+LaserParticleContainer::Evolve::ParticlePush                      1   159   B   256   B
+amrex::Copy()                                                   900     3   B   256   B
+BilinearFilter::ComputeStencils()                                 1   247   B   256   B
+---------------------------------------------------------------------------------------
+
+Managed Memory Usage:
+---------------------------------------------------------
+Name                             Nalloc  AvgMem    MaxMem
+---------------------------------------------------------
+The_Managed_Arena::Initialize()       1   2   B  8192 KiB
+---------------------------------------------------------
+
+Pinned Memory Usage:
+---------------------------------------------------------------------------------------
+Name                                                         Nalloc    AvgMem    MaxMem
+---------------------------------------------------------------------------------------
+The_Pinned_Arena::Initialize()                                    1     5   B  8192 KiB
+MultiReducedDiags::ComputeDiags()                               720    54 KiB    82 KiB
+WarpXOpenPMDPlot::WriteOpenPMDFields::D2H()                     154   185   B    14 KiB
+FillBoundary_nowait()                                          1812  6493   B  9984   B
+main()                                                           64  6493   B  6656   B
+FabArray::setVal()                                               30  4545   B  5120   B
+ParticleBoundaryBuffer::gatherParticles::filterAndTransform       8  1193   B  2048   B
+WarpX::InitData()                                                31    52   B  1536   B
+ParticleContainer::Redistribute_impl()                          608   444   B  1024   B
+FabArray::ParallelCopy_nowait()                                  11     0   B  1024   B
+ParticleCopyPlan::build                                         602     8   B   256   B
+Redistribute_partition                                          903     3   B   256   B
+Diagnostics::FilterComputePackFlush()                            22     0   B   256   B
+Unprofiled                                                        3     0   B   256   B
+ParticleBoundaryBuffer::gatherParticles                        1200    18   B   256   B
+LaserParticleContainer::Evolve::ParticlePush                      1   159   B   256   B
+amrex::Copy()                                                   900     3   B   256   B
+---------------------------------------------------------------------------------------
+
+Comms Memory Usage:
+-------------------------------------------------------
+Name                           Nalloc  AvgMem    MaxMem
+-------------------------------------------------------
+The_Comms_Arena::Initialize()       1   3   B  8192 KiB
+-------------------------------------------------------
+
+Total GPU global memory (MB) spread across MPI: [81151 ... 81151]
+Free  GPU global memory (MB) spread across MPI: [19739 ... 19739]
+[The         Arena] max space (MB) allocated spread across MPI: [60863 ... 60863]
+[The         Arena] max space (MB) used      spread across MPI: [41 ... 41]
+[The Managed Arena] max space (MB) allocated spread across MPI: [8 ... 8]
+[The Managed Arena] max space (MB) used      spread across MPI: [0 ... 0]
+[The  Pinned Arena] max space (MB) allocated spread across MPI: [8 ... 8]
+[The  Pinned Arena] max space (MB) used      spread across MPI: [0 ... 0]
+[The   Comms Arena] max space (MB) allocated spread across MPI: [8 ... 8]
+[The   Comms Arena] max space (MB) used      spread across MPI: [0 ... 0]
+AMReX (26.08-4-gcb098067c32e) finalized

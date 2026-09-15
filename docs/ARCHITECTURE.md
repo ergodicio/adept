@@ -98,3 +98,4 @@ Quick links to configuration references:
 - [PIC-1D Config](source/solvers/pic1d/config.md)
 - [Two-Fluid-1D Config](source/solvers/tf1d/config.md)
 - [OSIRIS Wrapper Config](source/solvers/osiris/config.md)
+- [WarpX Wrapper Config](source/solvers/warpx/config.md)
