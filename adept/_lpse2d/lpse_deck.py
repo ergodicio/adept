@@ -389,7 +389,13 @@ def translate_parms(
         if g("iaw.solver", "spectral").lower() != "spectral":
             report["notes"].append("iaw.solver = fd translated as spectral (adept has no PPM IAW solver)")
         if "iaw.spectral.dt" in parms:
-            stride = max(1, round(float(parms["iaw.spectral.dt"]) / dt))
+            # LPSE (Lpse.cpp:1264-1291): the IAW step is its own dt capped by maxLightStepsPerStep
+            # light steps (when light evolves) and by maxLwStepsPerStep (default 2) EPW steps
+            iaw_step = float(parms["iaw.spectral.dt"])
+            if light_dt is not None and (laser_evolves or raman_on):
+                iaw_step = min(iaw_step, int(float(g("iaw.maxLightStepsPerStep", "10"))) * light_dt)
+            iaw_step = min(iaw_step, int(float(g("iaw.maxLwStepsPerStep", "2"))) * dt)
+            stride = max(1, int(np.floor(iaw_step * 1.0001 / dt)))
             if stride > 1:
                 iaw["stride"] = stride
         if "fluid.velocity" in parms:

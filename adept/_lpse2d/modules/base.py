@@ -9,6 +9,7 @@ from adept import ADEPTModule
 from adept._base_ import Stepper
 from adept._lpse2d.core.vector_field import SplitStep
 from adept._lpse2d.helpers import (
+    _Q,
     get_density_profile,
     get_derived_quantities,
     get_save_quantities,
@@ -55,24 +56,26 @@ class BaseLPSE2D(ADEPTModule):
 
     def init_diffeqsolve(self):
         self.cfg = get_save_quantities(self.cfg)
+        t0 = float(getattr(self, "restart_t0", 0.0))
         self.time_quantities = {
-            "t0": 0.0,
+            "t0": t0,
             "t1": self.cfg["grid"]["tmax"],
             "max_steps": self.cfg["grid"]["max_steps"],
-            "save_t0": 0.0,
+            "save_t0": t0,
             "save_t1": self.cfg["grid"]["tmax"],
             "save_nt": self.cfg["grid"]["tmax"],
         }
 
-        self.diffeqsolve_quants = dict(
-            terms=ODETerm(SplitStep(self.cfg)),
-            solver=Stepper(),
-            saveat=dict(
-                subs={
-                    k: SubSaveAt(ts=subsave["t"]["ax"], fn=subsave["func"]) for k, subsave in self.cfg["save"].items()
-                }
-            ),
-        )
+        subs = {
+            k: SubSaveAt(ts=subsave["t"]["ax"], fn=subsave["func"])
+            for k, subsave in self.cfg["save"].items()
+            if isinstance(subsave, dict) and "func" in subsave
+        }
+        if self.cfg["save"].get("checkpoint"):
+            # the full state at the final time (save.checkpoint: true | path), written by
+            # post_process as an .npz that `restart.file` accepts
+            subs["checkpoint"] = SubSaveAt(ts=np.array([self.cfg["grid"]["tmax"]]), fn=lambda t, y, args: y)
+        self.diffeqsolve_quants = dict(terms=ODETerm(SplitStep(self.cfg)), solver=Stepper(), saveat=dict(subs=subs))
 
     def init_state_and_args(self) -> dict:
         # The initial EPW is identically zero; noise-seeded runs get their seeding from
@@ -104,6 +107,38 @@ class BaseLPSE2D(ADEPTModule):
             state = state | load_particles(self.cfg)
 
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
+        # ---- restart (LPSE --restart): replace the freshly built state by a checkpoint and
+        # continue from its time; the per-step noise / wall keys are folded in from the
+        # time index, so a resumed run reproduces the unbroken one to round-off
+        self.restart_t0 = 0.0
+        restart = self.cfg.get("restart")
+        if restart and restart.get("file"):
+            loaded = np.load(restart["file"], allow_pickle=False)
+            self.restart_t0 = float(loaded["t"])
+            # the saved time carries the solver's float precision; snap it to the step grid so the
+            # resumed step times coincide with the unbroken run's
+            dt = float(self.cfg["grid"]["dt"])
+            n_steps = round(self.restart_t0 / dt)
+            if abs(self.restart_t0 - n_steps * dt) < 1.0e-5 * dt:
+                self.restart_t0 = n_steps * dt
+            if self.restart_t0 >= self.cfg["grid"]["tmax"]:
+                raise ValueError(f"restart time {self.restart_t0} ps is not before grid.tmax")
+            missing = [k for k in self.state if k not in loaded.files]
+            if missing:
+                raise ValueError(f"checkpoint {restart['file']} lacks state entries {missing}")
+            for k, v in self.state.items():
+                if loaded[k].shape != v.shape:
+                    raise ValueError(f"checkpoint entry {k} has shape {loaded[k].shape}, expected {v.shape}")
+            self.state = {k: np.asarray(loaded[k], dtype=np.float64) for k in self.state}
+            for sub in self.cfg["save"].values():
+                if isinstance(sub, dict) and isinstance(sub.get("t"), dict) and "tmin" in sub["t"]:
+                    if _Q(sub["t"]["tmin"]).to("ps").value < self.restart_t0:
+                        sub["t"]["tmin"] = f"{self.restart_t0:.9g}ps"
+            # the default series samples the grid's time axis: keep only the resumed interval
+            t_axis = np.asarray(self.cfg["grid"]["t"])
+            kept = t_axis[t_axis >= self.restart_t0 - 1.0e-12]
+            self.cfg["grid"]["t"] = kept if kept.size else np.asarray([self.cfg["grid"]["tmax"]])
+            print(f"restarting from {restart['file']} at t = {self.restart_t0:.6g} ps")
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
 
     @filter_jit

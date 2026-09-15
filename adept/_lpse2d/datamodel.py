@@ -186,6 +186,13 @@ class SaveModel(BaseModel):
     t: TimeSaveModel
     x: XSaveModel
     y: YSaveModel
+    # write the full solver state at grid.tmax to this path (or into the run's binary/ folder
+    # when true); `restart.file` resumes from it (LPSE checkpoint / --restart)
+    checkpoint: str | bool | None = None
+
+
+class RestartModel(BaseModel):
+    file: str
 
 
 class BoundaryModel(BaseModel):
@@ -390,3 +397,4 @@ class ConfigModel(BaseModel):
     solver: str
     terms: TermsModel
     units: UnitsModel
+    restart: RestartModel | None = None

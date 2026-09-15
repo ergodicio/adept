@@ -239,7 +239,7 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     # Default save.*.t.tmin/tmax to grid values (preserves unit strings)
     for save_type in cfg.get("save", {}).keys():
-        if "t" in cfg["save"][save_type]:
+        if isinstance(cfg["save"][save_type], dict) and "t" in cfg["save"][save_type]:
             t_cfg = cfg["save"][save_type]["t"]
             t_cfg.setdefault("tmin", cfg_grid.get("tmin", "0ps"))
             t_cfg.setdefault("tmax", cfg_grid["tmax"])
@@ -1160,6 +1160,16 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     t0 = time.time()
     kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
     series = make_series_xarrays(cfg, result.ts["default"], result.ys["default"], td)
+    if "checkpoint" in result.ys:
+        target = cfg["save"]["checkpoint"]
+        path = target if isinstance(target, str) else os.path.join(td, "binary", "checkpoint.npz")
+        np.savez(
+            path,
+            t=np.asarray(result.ts["checkpoint"][-1]),
+            **{k: np.asarray(v[-1]) for k, v in result.ys["checkpoint"].items()},
+        )
+        cfg["save"]["checkpoint_file"] = path
+        print(f"checkpoint written to {path}")
     metrics["write_time"] = time.time() - t0
     os.makedirs(os.path.join(td, "plots"))
 
