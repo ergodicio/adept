@@ -9,13 +9,18 @@ import yaml
 from jax import numpy as jnp
 
 from adept._vlasov1d.modules import BaseVlasov1D
-from adept._vlasov1d.solvers.vector_field import StrangIntegrator, VlasovMaxwell
+from adept._vlasov1d.solvers.vector_field import (
+    SixthOrderHamIntegrator,
+    StrangIntegrator,
+    TimeIntegrator,
+    VlasovMaxwell,
+)
 
 
-def _build(field="poisson", edfdv="lagrange7"):
+def _build(field="poisson", edfdv="lagrange7", vdfdx="exponential"):
     filename = "boltzmann_iaw.yaml" if field == "poisson-boltzmann" else "resonance.yaml"
     cfg = yaml.safe_load((Path(__file__).parent / "configs" / filename).read_text())
-    cfg["terms"].update(time="strang", field=field, edfdv=edfdv)
+    cfg["terms"].update(time="strang", field=field, edfdv=edfdv, vdfdx=vdfdx)
     cfg["terms"]["fokker_planck"]["is_on"] = False
     cfg["terms"]["krook"]["is_on"] = False
     cfg["drivers"] = {"ex": {}, "ey": {}}
@@ -125,3 +130,60 @@ def test_strang_sharded_matches_serial():
     actual = jax.jit(sharded)(*args)
     for a, b in zip(jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True):
         np.testing.assert_allclose(a, b, atol=2e-12, rtol=2e-12)
+
+
+@pytest.mark.parametrize("method", ["pfc3", "sl-weno5"])
+@pytest.mark.parametrize("field", ["poisson", "poisson-boltzmann"])
+def test_positive_pushers_public_solver_lifecycle(method, field):
+    """Both selections survive config parsing, initialization and the solve."""
+    module = _build(field, method, method)
+    assert module.config_model.terms.vdfdx == method
+    module.init_diffeqsolve()
+    result = module({})["solver result"]
+    assert int(result.stats["num_steps"]) > 0
+    for values in jax.tree.leaves(result.ys):
+        assert np.all(np.isfinite(values))
+
+
+@pytest.mark.parametrize("method", ["pfc3", "sl-weno5"])
+@pytest.mark.parametrize("integrator", [StrangIntegrator, SixthOrderHamIntegrator])
+def test_positive_split_steps_and_combined_sharding(method, integrator):
+    """Cold beams stay positive at every kick/stream, including negative stages."""
+    module = _build(edfdv=method, vdfdx=method)
+    grid = module.simulation.grid
+    v = module.cfg["grid"]["species_grids"]["electron"]["v"]
+    f = {"electron": ((abs(v - 1) < 0.15) | (abs(v + 1) < 0.15)).astype(jnp.float64)[None, :] * jnp.ones((grid.nx, 1))}
+    serial = integrator(module.cfg, grid)
+    cfg = {**module.cfg, "grid": {**module.cfg["grid"], "parallel": ("x", "v")}}
+    sharded = integrator(cfg, grid)
+    zeros = jnp.zeros(grid.nx)
+    # A kick larger than one velocity cell at this test's dt, plus varying x.
+    forcing = [2 + jnp.sin(2 * jnp.pi * grid.x / (grid.xmax - grid.xmin))] * 6
+    args = (f, jnp.zeros(grid.nx + 2), forcing, zeros)
+    expected = jax.jit(serial)(*args)
+    actual = jax.jit(sharded)(*args)
+    for a, b in zip(jax.tree.leaves(actual), jax.tree.leaves(expected), strict=True):
+        np.testing.assert_allclose(a, b, atol=3e-12, rtol=3e-12)
+    stages = []
+
+    def checked(push):
+        def wrapped(*args, **kwargs):
+            result = push(*args, **kwargs)
+            stages.append(result["electron"])
+            return result
+
+        return wrapped
+
+    serial.edfdv = checked(serial.edfdv)
+    serial.vdfdx = checked(serial.vdfdx)
+    serial(*args)
+    assert len(stages) == (3 if integrator is StrangIntegrator else 11)
+    for values in stages:
+        assert float(values.min()) >= 0
+        np.testing.assert_allclose(values.sum(), f["electron"].sum(), atol=2e-12, rtol=2e-13)
+
+
+def test_conservative_space_rejects_hamiltonian_ampere():
+    """The exact spectral current update cannot be paired with a remapped drift."""
+    with pytest.raises(ValueError, match="hampere requires vdfdx: exponential"):
+        TimeIntegrator.get_vdfdx(None, {"terms": {"field": "hampere", "vdfdx": "pfc3"}}, None, False)

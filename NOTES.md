@@ -118,3 +118,27 @@ Append-only checkpoints for scientific model development and validation.
 - **Evidence or artifacts:** `tests/test_vlasov1d/test_velocity_lagrange7.py`; `tests/test_vlasov1d/test_strang.py`; vault mirror `Notes/adept/2026-09-05-214802-codex-strang-lagrange7-79ad3623.md`.
 - **Interpretation:** These are implementation checks, not a turbulence result or an extensive convergence study. The new interpolation is unlimited and does not renormalize boundary losses. Strang's second-order scope is the collisionless electrostatic update; existing collision/filter/transverse coupling is unchanged.
 - **Next:** Publish the branch and open the requested upstream PR. Downstream adoption is outside this task.
+
+## 2026-09-15 11:26:29 EDT — Positive conservative Vlasov remaps
+
+- **Checkpoint ID:** 20260915T152629Z-a93c6e28
+- **State:** PLANNED
+- **USER (verbatim):** "ok can you make a PR with these two new integrators for ADEPT?"
+- **Objective:** Add opt-in PFC3 and conservative SL-WENO5 positivity-preserving pushers in x and v, compatible with existing time splitting and large signed displacements, and open an upstream PR.
+- **Provenance:** Base origin/main 265d51d; branch codex/vlasov1d-positive-remaps; Python 3.14.3 / JAX 0.9.0.1 on local CPU.
+- **Design:** Cell-average remapping with integer shifts, bounded outgoing fractional cell mass, periodic x and zero-inflow/open v; retain existing default pushers. Validate positivity, conservation/boundary loss, spatial convergence, signed Courant numbers above one, gradients, multispecies forces and sharding.
+- **Observation:** No new numerical result yet. Turbulence notes record dt=0.02 and sixth-order splitting as the later production choice. New-remap accuracy at that timestep and A100 performance remain unmeasured.
+- **Evidence:** Vault mirror Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md; downstream context Notes/vp-turbulence/2026-09-06-071913-codex-cascade-resolution-ad70be43.md.
+- **Next:** Implement, run numerical and integration checks, document limitations, and submit the PR. No turbulence production run is part of this implementation task.
+
+## 2026-09-15 11:42:02 EDT — Positive remap implementation and focused checks
+
+- **Checkpoint ID:** 20260915T154202Z-c3b71a92
+- **State:** PARTIAL; implementation complete, full regression suite running.
+- **Action:** Added pfc3/sl-weno5 in both terms.vdfdx and terms.edfdv, preserving defaults. PFC3 limits a mean-preserving quadratic using its full-cell minimum; SL-WENO5 uses fractional-integral optimal weights, WENO-Z weights and a donor-mass positivity limiter. This is not the full Xiong MPP construction. Whole-cell offsets avoid CFL subcycling; open velocity boundaries have zero inflow.
+- **Observation:** 36 remap tests pass, including repeated discontinuous/cold-beam transport, analytic spatial convergence at signed CFL 2.37, vacuum, mass/outflow, float32/float64, gradients and multispecies sharding. 55 integration/legacy-pusher/config checks pass, including every stage of sixth-order splitting and public Strang lifecycle. All use four logical CPU devices. Ruff 0.15.22 lint/format and whitespace checks pass.
+- **Correction during development:** Initial vacuum normalization produced nonfinite reverse-mode gradients; a sqrt(tiny) scale bound fixed the tested case. Float64 grid spacing initially promoted float32 distributions; spacing now follows distribution dtype. Half precision is rejected after observing nonfinite float16 WENO weights.
+- **Provenance:** Python 3.14.3 / JAX 0.9.0.1; local MLflow sqlite database /tmp/adept-positive-tests.db for the broader existing suite. No NERSC or production turbulence runs.
+- **Limitations:** Existing initialization and moment quadrature are not upgraded to high-order cell integrals. Energy/Casimir conservation, full-scheme temporal order, production timestep adequacy and A100 performance remain unestablished.
+- **Evidence:** tests/test_vlasov1d/test_positive_remap.py; tests/test_vlasov1d/test_strang.py; docs/source/solvers/vlasov1d/config.md; vault Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md.
+- **Next:** Finish broader regressions and submit the reviewed PR.
