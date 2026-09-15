@@ -140,10 +140,15 @@ class CombinedSolver:
         # unified source coefficient (LightSolver.cpp Sc_srs for the Raman class = (q/m)/(4 W0))
         self.source_coeff = -1j * self.e / (4.0 * self.me * self.w0)
         self.rho_factor = 1.0 - self.w0 / self.wp0
-        # k-filter on the light entering the source (MATLAB / LPSE lw.kFilter, 1.2 k0)
-        n_min = float(np.min(np.asarray(self.background_density)))
-        max_k0_sq = 1.2**2 * (self.w0 / self.c) ** 2 * max(1.0 - n_min, 0.0)
-        self.E0_filter = jnp.asarray(np.where(k_sq_np > max_k0_sq, 0.0, 1.0))
+        # k-filter on the pump entering the source (LPSE lw.kFilter, off by default there;
+        # terms.epw.source.srs_k_filter / srs_k_filter_scale, see SpectralEPWSolver)
+        if bool(source_cfg.get("srs_k_filter", True)):
+            n_min = float(np.min(np.asarray(self.background_density)))
+            scale = float(source_cfg.get("srs_k_filter_scale", 1.2))
+            max_k0_sq = scale**2 * (self.w0 / self.c) ** 2 * max(1.0 - n_min, 0.0)
+            self.E0_filter = jnp.asarray(np.where(k_sq_np > max_k0_sq, 0.0, 1.0))
+        else:
+            self.E0_filter = jnp.ones_like(self.k_sq)
 
         # noise on the longitudinal part, in field form: E_k += -i k kick e^{i theta}
         self.noise_enabled = bool(source_cfg.get("noise", False))

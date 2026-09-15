@@ -465,3 +465,34 @@ def test_max_wavenumber_caps_the_retained_band():
     band = np.asarray(cfg["grid"]["low_pass_filter_grid"])
     assert np.all(band[k >= 1.5 * k0] == 0.0)
     assert np.any(band[k < 1.5 * k0] > 0.0)
+
+
+def test_srs_k_filter_is_optional_and_masks_the_detuned_resonance():
+    """The SRS source k-filter cuts at ``scale * k1(n_min)`` for zero detuning. At 0.2 nc
+    with envelope density 0.25 the resonant back-scattered Raman wavenumber lies above
+    that cutoff, so the default filter removes the SRS mode; ``srs_k_filter: false``
+    (LPSE's ``lw.kFilter`` default) passes everything and a larger scale passes it too."""
+    from adept._lpse2d.core.epw import SpectralEPWSolver
+
+    def cfg_with(**source):
+        cfg = _base_cfg(envelope_density=0.25, box_density=0.2)
+        cfg["terms"]["epw"]["source"].update({"tpd": False, "srs": True, **source})
+        return _finish_cfg(cfg)
+
+    cfg = cfg_with(srs_k_filter=True)
+    d = cfg["units"]["derived"]
+    wp = d["w0"] * np.sqrt(0.2)
+    k_s = np.sqrt((d["w0"] - wp) ** 2 - wp**2) / d["c"]  # resonant Raman wavenumber at 0.2 nc
+    kx = np.asarray(cfg["grid"]["kx"])
+    ix = int(np.argmin(np.abs(kx - k_s)))
+    assert abs(kx[ix] - k_s) < 0.1 * k_s
+
+    default = SpectralEPWSolver(cfg)
+    assert float(default.E1_filter[0, 0, 0]) == 1.0
+    assert float(default.E1_filter[ix, 0, 0]) == 0.0, "resonant mode should be masked by the zero-detuning cutoff"
+
+    off = SpectralEPWSolver(cfg_with(srs_k_filter=False))
+    assert bool(jnp.all(off.E1_filter == 1.0))
+
+    wide = SpectralEPWSolver(cfg_with(srs_k_filter=True, srs_k_filter_scale=1.5))
+    assert float(wide.E1_filter[ix, 0, 0]) == 1.0

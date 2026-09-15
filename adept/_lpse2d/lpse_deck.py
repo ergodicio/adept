@@ -243,6 +243,10 @@ def translate_parms(
         "tpd": tpd_on,
         "tpd_form": "lpse",
         "srs": srs_on,
+        # LPSE lw.kFilter is off unless enabled; adept's default (on) would zero the SRS
+        # source at densities detuned from the envelope density
+        "srs_k_filter": _bool(g("lw.kFilter.enable")),
+        "srs_k_filter_scale": float(g("lw.kFilter.scale", "1.2")),
     }
     epw_solver = "combined" if g("lw.solver", "spectral").lower() == "combined" else "separate"
     if g("lw.solver", "spectral").lower() == "fd":

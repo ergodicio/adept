@@ -432,7 +432,7 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(the pump is launched by a boundary injector and must exit the box)"
             )
 
-    if srs_on:
+    if srs_on and cfg["terms"]["epw"]["source"].get("srs_k_filter", True):
         derived = cfg["units"]["derived"]
 
         # The SRS source filter only passes wavenumbers up to the local Raman light

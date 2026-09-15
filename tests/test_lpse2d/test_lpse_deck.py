@@ -73,6 +73,8 @@ def test_translate_test_006_builds_a_runnable_config():
         "tpd": False,
         "tpd_form": "lpse",
         "srs": True,
+        "srs_k_filter": False,  # LPSE lw.kFilter is off by default
+        "srs_k_filter_scale": 1.2,
     }
     assert cfg["terms"]["light"]["solver"] == "spectral" and cfg["terms"]["light"]["pump_depletion"] is False
     assert cfg["terms"]["light"]["max_wavenumber"] == 1.0

@@ -209,6 +209,11 @@ class SourceModel(BaseModel):
     tpd: bool
     tpd_form: Literal["lpse", "matlab"] = "lpse"
     srs: bool = False
+    # high-k filter on the light entering the SRS source (LPSE lw.kFilter.enable / .scale).
+    # The cutoff assumes zero detuning, so it removes the resonant mode in boxes below the
+    # envelope density; LPSE leaves it off by default and translated decks follow suit.
+    srs_k_filter: bool = True
+    srs_k_filter_scale: float = Field(default=1.2, ge=1.0, le=10.0)
 
 
 class EPWModel(BaseModel):

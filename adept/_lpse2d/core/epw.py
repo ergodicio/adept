@@ -352,21 +352,32 @@ class SpectralEPWSolver:
             # MATLAB line 2073: srsSourceTerm = 1i * e * wp0/(4*me*w0*w1) .* (1 + dn) .* E0_dot_E1
             self.srs_prefactor = 1j * self.e * self.wp0 / (4.0 * self.me * self.w0 * self.w1)
             # high-k filter for the light fields entering the source product
-            # (MATLAB isSuppressHighKSource, lines 637-645): only wavevectors near the
-            # light-wave envelope produce physically-realistic SRS
-            max_source_k_multiplier = 1.2
+            # (MATLAB isSuppressHighKSource, lines 637-645; LPSE ``lw.kFilter``, which
+            # is *disabled* by default there). The cutoff ``scale * k1(n_min)`` assumes
+            # the scattered light sits exactly at the envelope frequency w1; in a box
+            # detuned from the envelope density the resonant Raman wavenumber can lie
+            # above it and the filter then removes the SRS mode altogether (no growth
+            # at all at 0.2 nc with envelope density 0.25), so translated LPSE decks
+            # turn it off.
+            self.srs_k_filter = bool(source_cfg.get("srs_k_filter", True))
+            max_source_k_multiplier = float(source_cfg.get("srs_k_filter_scale", 1.2))
             n_min = float(np.min(np.array(self.background_density)))
-            max_k1_sq = max_source_k_multiplier**2 * max(1.0 - n_min * self.w0**2 / self.w1**2, 0.0)
-            is_outside_max_k1 = self.k_sq * (self.c / self.w1) ** 2 > max_k1_sq
-            self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
-            # when the pump is evolved (terms.light.pump_depletion) it is filtered too,
-            # exactly as MATLAB's evaluate_E0_dot_E1 (lines 2302-2354) does on the
-            # dynamic-laser path and skips on the static path (line 2307-2308)
             self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
-            if self.pump_depletion:
-                max_k0_sq = max_source_k_multiplier**2 * max(1.0 - n_min, 0.0)
-                is_outside_max_k0 = self.k_sq * (self.c / self.w0) ** 2 > max_k0_sq
-                self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
+            if self.srs_k_filter:
+                max_k1_sq = max_source_k_multiplier**2 * max(1.0 - n_min * self.w0**2 / self.w1**2, 0.0)
+                is_outside_max_k1 = self.k_sq * (self.c / self.w1) ** 2 > max_k1_sq
+                self.E1_filter = jnp.where(is_outside_max_k1, 0.0, 1.0)[..., None]
+                # when the pump is evolved (terms.light.pump_depletion) it is filtered too,
+                # exactly as MATLAB's evaluate_E0_dot_E1 (lines 2302-2354) does on the
+                # dynamic-laser path and skips on the static path (line 2307-2308)
+                if self.pump_depletion:
+                    max_k0_sq = max_source_k_multiplier**2 * max(1.0 - n_min, 0.0)
+                    is_outside_max_k0 = self.k_sq * (self.c / self.w0) ** 2 > max_k0_sq
+                    self.E0_filter = jnp.where(is_outside_max_k0, 0.0, 1.0)[..., None]
+            else:
+                self.E1_filter = jnp.ones_like(self.k_sq)[..., None]
+                if self.pump_depletion:
+                    self.E0_filter = jnp.ones_like(self.k_sq)[..., None]
 
         # Noise parameters. Amplitude default matches MATLAB noiseAmp
         # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
