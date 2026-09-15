@@ -311,6 +311,9 @@ def translate_parms(
         light["absorption"] = True
     if "raman.spectral.maxWavenumber" in parms:
         light["max_wavenumber"] = float(parms["raman.spectral.maxWavenumber"])
+    light["boundary_max_rate"] = float(
+        g("raman.evolution.abc.maxDampingRate", g("laser.evolution.abc.maxDampingRate", "5000"))
+    )
     # LPSE default is false; the reference decks set it true
     light["transverse_source"] = _bool(
         g("raman.takeTransversePartOfSourceTerms", g("laser.takeTransversePartOfSourceTerms", "false"))

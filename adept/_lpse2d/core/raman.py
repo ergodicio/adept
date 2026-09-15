@@ -110,7 +110,7 @@ class RamanLight:
 
         # absorbing boundaries are applied every sub-step so that light (group velocity ~ c)
         # cannot cross the absorber between damping applications
-        self.sub_boundary = cfg["grid"]["absorbing_boundaries"] ** (1.0 / self.n_sub)
+        self.sub_boundary = cfg["grid"]["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
 
         # collisional (inverse-bremsstrahlung) absorption, terms.light.absorption: the
         # amplitude decays at nu_abs (n/nc_w)^2 per wave, nc_w its own critical density

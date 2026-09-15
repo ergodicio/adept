@@ -496,3 +496,31 @@ def test_srs_k_filter_is_optional_and_masks_the_detuned_resonance():
 
     wide = SpectralEPWSolver(cfg_with(srs_k_filter=True, srs_k_filter_scale=1.5))
     assert float(wide.E1_filter[ix, 0, 0]) == 1.0
+
+
+def test_light_absorber_has_its_own_peak_rate_with_the_exp_profile():
+    """LPSE damps the light fields at 5e3/ps in the exp layers (200/ps for the EPW); at the EPW
+    rate a 3 um layer reflects most of a light wave and an injected pump builds a standing wave."""
+    cfg = _base_cfg()
+    cfg["grid"].update({"boundary_profile": "exp", "boundary_max_rate": 200.0, "boundary_width": "3um", "xmax": "12um"})
+    cfg = _finish_cfg(cfg)
+    dt = cfg["grid"]["dt"]
+    epw_rate = -np.log(np.asarray(cfg["grid"]["absorbing_boundaries"])) / dt
+    light_rate = -np.log(np.asarray(cfg["grid"]["light_absorbing_boundaries"])) / dt
+    np.testing.assert_allclose(epw_rate.max(), 200.0, rtol=1e-6)
+    np.testing.assert_allclose(light_rate.max(), 5.0e3, rtol=1e-6)
+    np.testing.assert_allclose(light_rate, epw_rate * 25.0, rtol=1e-6, atol=1e-9)
+    # the transit-integrated attenuation of light through the layer: strong with 5e3, weak with 200
+    c = cfg["units"]["derived"]["c"]
+    x = np.asarray(cfg["grid"]["x"])
+    layer = x < cfg["grid"]["xmin"] + 3.0
+    assert np.exp(-np.trapezoid(light_rate[layer, 0], x[layer]) / c) < 0.01
+    assert np.exp(-np.trapezoid(epw_rate[layer, 0], x[layer]) / c) > 0.5
+    cfg2 = _base_cfg()
+    cfg2["grid"].update(
+        {"boundary_profile": "exp", "boundary_max_rate": 200.0, "boundary_width": "3um", "xmax": "12um"}
+    )
+    cfg2["terms"]["light"] = {"boundary_max_rate": 1.0e3}
+    cfg2 = _finish_cfg(cfg2)
+    light_rate2 = -np.log(np.asarray(cfg2["grid"]["light_absorbing_boundaries"])) / dt
+    np.testing.assert_allclose(light_rate2.max(), 1.0e3, rtol=1e-6)

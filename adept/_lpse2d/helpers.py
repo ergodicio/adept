@@ -743,6 +743,15 @@ def get_solver_quantities(cfg: dict) -> dict:
 
     cfg_grid["absorbing_rate"] = absorbing_rate(cfg["terms"]["epw"]["boundary"])
     cfg_grid["absorbing_boundaries"] = np.exp(-cfg_grid["absorbing_rate"] * cfg_grid["dt"])
+    # the light fields get their own absorber strength (LPSE {laser|raman}.evolution.abc.maxDampingRate,
+    # default 5e3/ps against 200/ps for the EPW): light crosses a 3 um layer in 0.01 ps, so at the
+    # EPW rate the exp profile removes only ~25 % per crossing and the pump builds a coherent
+    # standing wave between the walls (1.45x the launched amplitude on the LPSE test_010 deck).
+    # The tanh profile keeps boundary_abs_coeff for both (no change for existing configs).
+    light_max_rate = cfg["terms"].get("light", {}).get("boundary_max_rate")
+    if light_max_rate is None and boundary_profile == "exp":
+        light_max_rate = 5.0e3
+    cfg_grid["light_absorbing_boundaries"] = absorbing_boundary(cfg["terms"]["epw"]["boundary"], light_max_rate)
     iaw = cfg["terms"].get("iaw", {})
     if iaw.get("active", False):
         # LPSE's IAW absorber default is half the EPW one (IawSolver.cpp abc.maxDampingRate = 100)

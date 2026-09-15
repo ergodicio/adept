@@ -284,6 +284,10 @@ class LightModel(BaseModel):
     # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
     # or the amplitude rate at nc in 1/ps
     absorption: bool | float = False
+    # peak amplitude damping rate (1/ps) of the light fields' absorbing layers with the exp
+    # profile (LPSE {laser|raman}.evolution.abc.maxDampingRate, default 5e3); None = 5e3 for the
+    # exp profile and the EPW absorber (boundary_abs_coeff) for the tanh profile
+    boundary_max_rate: float | None = None
 
 
 class IAWDampingModel(BaseModel):
