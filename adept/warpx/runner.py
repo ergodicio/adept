@@ -12,10 +12,10 @@ loudly (``amrex::Abort`` and failed assertions exit non-zero), so the exit
 code is the primary signal and there is no exit-0 stderr fuzzing. The
 salvage-if-output-exists behavior is kept: a crash after diagnostics were
 written still lets post-processing run on the partial data. "Output" means
-non-empty files under the diagnostic paths the deck configures — WarpX
-archives ``warpx_used_inputs`` before it validates the deck and AMReX drops
-``Backtrace.<rank>`` on an abort, so a run that never left startup leaves
-files behind without leaving anything to post-process.
+diagnostic payload at the locations the deck configures — a dump or a
+table row, not the series metadata, table headers, archived
+``warpx_used_inputs`` or AMReX ``Backtrace.<rank>`` that a run which never
+reached its first sample leaves behind.
 """
 
 from __future__ import annotations
@@ -72,59 +72,113 @@ def _as_list(v: Any) -> list:
     return [] if v is None else (v if isinstance(v, list) else [v])
 
 
-def _diagnostic_prefixes(deck: _deck.Deck, run_dir: Path) -> list[Path]:
-    """Output prefixes the deck configures, resolved against ``run_dir``.
+def _full_diag_prefixes(deck: _deck.Deck, run_dir: Path) -> list[Path]:
+    """``<diag_name>.file_prefix`` (default ``diags/<diag_name>``) of every
+    full diagnostic whose output post-processing can consume, resolved against
+    ``run_dir``. Checkpoints are restart state, not output, and are skipped.
 
-    Full diagnostics write under ``<diag_name>.file_prefix`` (default
-    ``diags/<diag_name>``); reduced diagnostics under
-    ``<reduced_diags_name>.path``, else ``reduced_diags.path`` (default
-    ``diags/reducedfiles``). ``file_prefix`` is a *name* prefix: the openPMD
-    writer uses it as a directory (``diags/diag1/openpmd_000100.h5``) while
-    the plotfile writer appends the step (``diags/diag100100/``), so callers
-    match ``prefix.parent`` entries whose name starts with ``prefix.name``.
+    ``file_prefix`` is a *name* prefix: the openPMD writer uses it as a
+    directory (``diags/diag1/openpmd_000100.h5``) while the plotfile writer
+    appends the step (``diags/diag100100/``), so callers match
+    ``prefix.parent`` entries whose name starts with ``prefix.name``.
     """
     prefixes: list[Path] = []
     for name in _as_list(deck.get("diagnostics.diags_names")):
+        if str(deck.get(f"{name}.format") or "plotfile").lower() == "checkpoint":
+            continue
         prefixes.append(run_dir / str(deck.get(f"{name}.file_prefix") or f"diags/{name}"))
-    reduced_default = str(deck.get("reduced_diags.path") or "diags/reducedfiles")
-    for name in _as_list(deck.get("warpx.reduced_diags_names")):
-        prefixes.append(run_dir / str(deck.get(f"{name}.path") or reduced_default))
     return prefixes
 
 
-def _diagnostic_files(run_dir: Path, deck: _deck.Deck) -> Iterator[Path]:
-    """Regular files under the deck's diagnostic prefixes (see above)."""
-    seen: set[Path] = set()
-    for prefix in _diagnostic_prefixes(deck, run_dir):
-        if not prefix.parent.is_dir():
-            continue
-        for entry in prefix.parent.iterdir():
-            if not entry.name.startswith(prefix.name) or entry in seen:
-                continue
-            seen.add(entry)
-            if entry.is_file():
-                yield entry
-            elif entry.is_dir():
-                yield from (p for p in entry.rglob("*") if p.is_file())
+def _reduced_diag_outputs(deck: _deck.Deck, run_dir: Path) -> list[tuple[Path, Path]]:
+    """``(table, openpmd_dir)`` for every reduced diagnostic: the text table
+    ``<path>/<name>.<extension>`` every reduced diagnostic opens, and the
+    ``<path>/<name>/`` openPMD directory the ParticleHistogram2D type writes
+    its histories to instead (its table stays empty). ``<name>.path`` /
+    ``<name>.extension`` override ``reduced_diags.path`` / ``.extension``
+    (defaults ``diags/reducedfiles`` / ``txt``).
+    """
+    default_path = str(deck.get("reduced_diags.path") or "diags/reducedfiles")
+    default_ext = str(deck.get("reduced_diags.extension") or "txt")
+    outputs: list[tuple[Path, Path]] = []
+    for name in _as_list(deck.get("warpx.reduced_diags_names")):
+        base = run_dir / str(deck.get(f"{name}.path") or default_path)
+        ext = str(deck.get(f"{name}.extension") or default_ext)
+        outputs.append((base / f"{name}.{ext}", base / name))
+    return outputs
+
+
+def _prefix_entries(prefix: Path) -> Iterator[Path]:
+    """Directory entries next to ``prefix`` whose name starts with its name."""
+    if prefix.parent.is_dir():
+        yield from (e for e in prefix.parent.iterdir() if e.name.startswith(prefix.name))
+
+
+def _files_under(entry: Path) -> Iterator[Path]:
+    if entry.is_file():
+        yield entry
+    elif entry.is_dir():
+        yield from (p for p in entry.rglob("*") if p.is_file())
+
+
+def _is_openpmd_payload(p: Path, root: Path) -> bool:
+    """A dump, not series metadata. openPMD-api writes ``paraview.pmd`` (the
+    file pattern) when the series is created, before any iteration is
+    flushed; the data is ``openpmd_<iter>.h5`` / ``openpmd.h5`` for the h5
+    backend, ``openpmd_<iter>.bp{,4,5}/data.<rank>`` for ADIOS, or ``.json``.
+    """
+    if p.suffix in (".h5", ".json"):
+        return True
+    return any(part.endswith((".bp", ".bp4", ".bp5")) for part in p.relative_to(root).parts[:-1])
+
+
+def _is_plotfile_payload(p: Path) -> bool:
+    """An AMReX plotfile data chunk (``Level_<n>/Cell_D_<k>``, particle
+    ``<species>/Level_<n>/DATA_<k>``) rather than the ``Header`` /
+    ``Cell_H`` / ``warpx_job_info`` metadata written alongside it."""
+    return p.parent.name.startswith("Level_") and p.name.startswith(("Cell_D", "DATA_"))
+
+
+def _table_has_data_row(p: Path) -> bool:
+    """A reduced-diagnostic table with at least one sample. WarpX writes the
+    ``#[0]step() [1]time(s) ...`` header when the diagnostic is initialized,
+    which is before the first sample."""
+    with p.open(errors="replace") as fh:
+        return any(ln.strip() and not ln.lstrip().startswith("#") for ln in fh)
 
 
 def _run_produced_output(run_dir: Path, deck: _deck.Deck) -> bool:
-    """True if the run wrote diagnostic data worth post-processing.
+    """True if the run wrote diagnostic *data* worth post-processing.
 
-    Only non-empty files under the deck's configured diagnostic paths count.
-    Provenance and crash artifacts are excluded wherever they land: the
-    archived inputs copy (``warpx.used_inputs_file``), AMReX's per-rank
-    ``Backtrace.<rank>`` dumps, and the files this runner wrote itself. A deck
-    that aborts in ReadParameters produces exactly those and nothing else, and
-    must be reported as a failure rather than salvaged.
+    A run that dies before its first sample still leaves diagnostic files:
+    the openPMD series metadata, a reduced table's header row, empty tables,
+    plotfile headers. Only payload counts — an openPMD dump or plotfile data
+    chunk under a full diagnostic's configured prefix, a reduced table with
+    a data row, or a ParticleHistogram2D dump under the reduced path.
+    Provenance and crash artifacts are excluded by name wherever they land:
+    the archived inputs copy (``warpx.used_inputs_file``), AMReX's per-rank
+    ``Backtrace.<rank>`` dumps, and the files this runner wrote itself. A
+    deck that aborts in ReadParameters produces exactly those and nothing
+    else, and must be reported as a failure rather than salvaged.
     """
     used_inputs = Path(str(deck.get("warpx.used_inputs_file") or USED_INPUTS_DEFAULT)).name
     ours = {INPUTS_FILENAME, "stdout.log", "stderr.log", used_inputs}
-    for p in _diagnostic_files(run_dir, deck):
-        if p.name in ours or p.name.startswith("Backtrace."):
-            continue
-        if p.stat().st_size > 0:
+
+    def candidate(p: Path) -> bool:
+        return p.is_file() and p.name not in ours and not p.name.startswith("Backtrace.") and p.stat().st_size > 0
+
+    for prefix in _full_diag_prefixes(deck, run_dir):
+        for entry in _prefix_entries(prefix):
+            root = entry if entry.is_dir() else entry.parent
+            for p in _files_under(entry):
+                if candidate(p) and (_is_openpmd_payload(p, root) or _is_plotfile_payload(p)):
+                    return True
+    for table, openpmd_dir in _reduced_diag_outputs(deck, run_dir):
+        if candidate(table) and _table_has_data_row(table):
             return True
+        for p in _files_under(openpmd_dir):
+            if candidate(p) and _is_openpmd_payload(p, openpmd_dir):
+                return True
     return False
 
 

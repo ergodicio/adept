@@ -76,6 +76,10 @@ _DECK_WITH_DIAGS = "max_step = 1\nwarpx.reduced_diags_names = fieldenergy\ndiagn
 # Backtrace per rank from the abort handler. Never diagnostic output.
 _STARTUP_ARTIFACTS = "echo 'warpx.foo = 1' > warpx_used_inputs && echo '=== backtrace ===' > Backtrace.0"
 
+# A reduced table with its header and one sample, the way WarpX writes it
+# (header at diagnostic init, first row at the step-0 flush).
+_REDUCED_ROW = "printf '#[0]step() [1]time(s) [2]total(J)\\n0 0.0 1.5e3\\n'"
+
 
 def test_run_warpx_crash_with_output_is_salvaged(tmp_path: Path) -> None:
     # A binary that writes a diagnostic then dies (e.g. an abort partway
@@ -83,7 +87,7 @@ def test_run_warpx_crash_with_output_is_salvaged(tmp_path: Path) -> None:
     # salvages it and lets the caller post-process what was written.
     fake = _write_fake_binary(
         tmp_path / "fake-warpx",
-        "mkdir -p diags/reducedfiles && echo '#step time' > diags/reducedfiles/fieldenergy.txt"
+        f"mkdir -p diags/reducedfiles && {_REDUCED_ROW} > diags/reducedfiles/fieldenergy.txt"
         " && echo 'amrex::Abort::0::boom' >&2 && exit 6",
     )
     result = runner.run_warpx(_DECK_WITH_DIAGS, binary=str(fake), mpi_ranks=1, run_root=tmp_path)
@@ -120,17 +124,67 @@ def test_run_warpx_startup_abort_is_not_salvaged(tmp_path: Path) -> None:
 
 def test_run_warpx_startup_artifacts_inside_diag_dirs_do_not_count(tmp_path: Path) -> None:
     # The exclusion is by identity, not location: if warpx.used_inputs_file
-    # points into a diagnostic directory (and if a Backtrace lands there), they
-    # still do not make the run salvageable. Empty files do not count either —
-    # WarpX creates directories and touches files before it fills them.
-    deck = _DECK_WITH_DIAGS + "warpx.used_inputs_file = diags/reducedfiles/used_inputs\n"
+    # lands on a reduced table's path (its content is non-comment lines, which
+    # would read as data rows) and a Backtrace lands in a diagnostic
+    # directory, they still do not make the run salvageable. Empty dumps do
+    # not count either — files are created before they are filled.
+    deck = _DECK_WITH_DIAGS + "warpx.used_inputs_file = diags/reducedfiles/fieldenergy.txt\n"
     fake = _write_fake_binary(
         tmp_path / "fake-warpx",
         "mkdir -p diags/reducedfiles diags/diag1"
-        " && echo 'warpx.foo = 1' > diags/reducedfiles/used_inputs"
-        " && echo '=== backtrace ===' > diags/reducedfiles/Backtrace.0"
+        " && echo 'warpx.foo = 1' > diags/reducedfiles/fieldenergy.txt"
+        " && echo '=== backtrace ===' > diags/diag1/Backtrace.0"
         " && : > diags/diag1/openpmd_000000.h5"
         " && echo 'amrex::Abort::0::boom' >&2 && exit 1",
+    )
+    with pytest.raises(RuntimeError, match="nothing to salvage"):
+        runner.run_warpx(deck, binary=str(fake), mpi_ranks=1, run_root=tmp_path)
+
+
+def test_run_warpx_metadata_only_diagnostics_do_not_count(tmp_path: Path) -> None:
+    # A run that aborts after diagnostics are initialized but before the first
+    # sample leaves non-empty diagnostic files with no data in them: the
+    # openPMD series pattern file (paraview.pmd), a reduced table holding only
+    # its header, the empty companion table of a ParticleHistogram2D, and a
+    # plotfile directory with only its headers. None of it is salvage.
+    deck = (
+        "max_step = 1\n"
+        "diagnostics.diags_names = diag1 plt\n"
+        "diag1.format = openpmd\n"
+        "plt.format = plotfile\n"
+        "warpx.reduced_diags_names = fieldenergy p1x1\n"
+    )
+    metadata_only = (
+        f"{_STARTUP_ARTIFACTS}"
+        " && mkdir -p diags/diag1 diags/plt00000/Level_0 diags/reducedfiles/p1x1"
+        " && echo 'openpmd_%06T.h5' > diags/diag1/paraview.pmd"
+        " && echo 'HyperCLaw-V1.1' > diags/plt00000/Header"
+        " && echo 'hdr' > diags/plt00000/Level_0/Cell_H"
+        " && printf '#[0]step() [1]time(s) [2]total(J)\\n' > diags/reducedfiles/fieldenergy.txt"
+        " && : > diags/reducedfiles/p1x1.txt"
+    )
+    fake = _write_fake_binary(tmp_path / "fake-warpx", f"{metadata_only} && echo 'amrex::Abort::0::boom' >&2 && exit 1")
+    with pytest.raises(RuntimeError, match="nothing to salvage"):
+        runner.run_warpx(deck, binary=str(fake), mpi_ranks=1, run_root=tmp_path)
+    # ... and one sample in any of them is.
+    payloads = {
+        "openpmd-dump": "echo x > diags/diag1/openpmd_000000.h5",
+        "plotfile-chunk": "echo x > diags/plt00000/Level_0/Cell_D_00000",
+        "table-row": "echo '0 0.0 1.5e3' >> diags/reducedfiles/fieldenergy.txt",
+        "histogram2d-dump": "echo x > diags/reducedfiles/p1x1/openpmd_000000.h5",
+    }
+    for label, write in payloads.items():
+        fake_ok = _write_fake_binary(tmp_path / f"fake-{label}", f"{metadata_only} && {write} && exit 1")
+        result = runner.run_warpx(deck, binary=str(fake_ok), mpi_ranks=1, run_root=tmp_path / label)
+        assert result["crashed"] is True, label
+
+
+def test_run_warpx_checkpoint_diagnostic_is_not_salvage(tmp_path: Path) -> None:
+    # A checkpoint is restart state, not output post-processing can consume.
+    deck = "max_step = 1\ndiagnostics.diags_names = chk\nchk.format = checkpoint\n"
+    fake = _write_fake_binary(
+        tmp_path / "fake-warpx",
+        "mkdir -p diags/chk00000/Level_0 && echo x > diags/chk00000/Level_0/Cell_D_00000 && exit 1",
     )
     with pytest.raises(RuntimeError, match="nothing to salvage"):
         runner.run_warpx(deck, binary=str(fake), mpi_ranks=1, run_root=tmp_path)
@@ -141,7 +195,7 @@ def test_run_warpx_undeclared_files_do_not_count(tmp_path: Path) -> None:
     # file under diags/ that no diagnostic would have written is not salvage.
     fake = _write_fake_binary(
         tmp_path / "fake-warpx",
-        "mkdir -p diags/reducedfiles && echo '#step time' > diags/reducedfiles/fieldenergy.txt"
+        f"mkdir -p diags/reducedfiles && {_REDUCED_ROW} > diags/reducedfiles/fieldenergy.txt"
         " && echo 'amrex::Abort::0::boom' >&2 && exit 1",
     )
     with pytest.raises(RuntimeError, match="nothing to salvage"):
@@ -159,13 +213,15 @@ def test_run_warpx_salvage_honors_configured_paths(tmp_path: Path) -> None:
         "chk.file_prefix = out/chk_\n"
         "warpx.reduced_diags_names = fe pe\n"
         "reduced_diags.path = out/reduced\n"
+        "reduced_diags.extension = dat\n"
         "pe.path = out/pe_only\n"
+        "pe.extension = csv\n"
     )
     cases = {
         "openpmd-dir": "mkdir -p out/fields && echo x > out/fields/openpmd_000000.h5",
         "plotfile-prefix": "mkdir -p out/chk_00000/Level_0 && echo x > out/chk_00000/Level_0/Cell_D_00000",
-        "reduced-default": "mkdir -p out/reduced && echo '#hdr' > out/reduced/fe.txt",
-        "reduced-per-diag": "mkdir -p out/pe_only && echo '#hdr' > out/pe_only/pe.txt",
+        "reduced-default": f"mkdir -p out/reduced && {_REDUCED_ROW} > out/reduced/fe.dat",
+        "reduced-per-diag": f"mkdir -p out/pe_only && {_REDUCED_ROW} > out/pe_only/pe.csv",
     }
     for label, writes in cases.items():
         fake = _write_fake_binary(tmp_path / f"fake-{label}", f"{_STARTUP_ARTIFACTS} && {writes} && exit 3")
@@ -175,7 +231,7 @@ def test_run_warpx_salvage_honors_configured_paths(tmp_path: Path) -> None:
     # failure: nothing was written where this deck says diagnostics go.
     fake = _write_fake_binary(
         tmp_path / "fake-default-layout",
-        f"{_STARTUP_ARTIFACTS} && mkdir -p diags/reducedfiles && echo '#hdr' > diags/reducedfiles/fe.txt && exit 3",
+        f"{_STARTUP_ARTIFACTS} && mkdir -p diags/reducedfiles && {_REDUCED_ROW} > diags/reducedfiles/fe.txt && exit 3",
     )
     with pytest.raises(RuntimeError, match="nothing to salvage"):
         runner.run_warpx(deck, binary=str(fake), mpi_ranks=1, run_root=tmp_path / "default-layout")
