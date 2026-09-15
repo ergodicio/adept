@@ -180,7 +180,8 @@ def translate_parms(
     sample_period = float(g("simulation.samplePeriod", str(tmax)))
 
     # ---- anti-aliasing: outer fraction of each axis zeroed
-    aa_range = float(g("grid.antiAliasing.range", "0.334"))
+    # LPSE: no anti-aliasing unless grid.antiAliasing.range is given (ParameterManager.cpp:237-240)
+    aa_range = float(g("grid.antiAliasing.range", "0"))
 
     # ---- density profile
     shape = g("densityProfile.shape", "linear").lower()
