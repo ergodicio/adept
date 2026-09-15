@@ -247,7 +247,7 @@ def get_derived_quantities(cfg: dict) -> dict:
     # cfg_grid["xmax"] = _Q(cfg_grid["xmax"]).to("um").value
     # cfg_grid["xmin"] = _Q(cfg_grid["xmin"]).to("um").value
 
-    if "linear" in cfg["density"]["basis"]:
+    if cfg["density"]["basis"] == "linear":
         L = _Q(cfg["density"]["gradient scale length"]).to("um").value
         nmax = cfg["density"]["max"]
         nmin = cfg["density"]["min"]
@@ -789,8 +789,18 @@ def get_solver_quantities(cfg: dict) -> dict:
             f"dealias='shifted-band': alias-free band is |kx| <= {kx_limit:.2f}, |ky| <= {ky_limit:.2f} 1/um "
             f"(Nyquist {kx_nyquist:.2f}, {ky_nyquist:.2f}); low_pass_filter caps |k| <= {cutoff:.2f}"
         )
+    elif dealias == "rectangular":
+        # the original LPSE mask (grid.antiAliasing.range): the outer fraction of *each* k axis
+        # is zeroed, i.e. |kx| < low_pass_filter * kmax_x and |ky| < low_pass_filter * kmax_y
+        kx_nyquist = float(np.abs(cfg_grid["kx"]).max())
+        ky_nyquist = float(np.abs(cfg_grid["ky"]).max())
+        frac = float(cfg_grid["low_pass_filter"])
+        band = (np.abs(cfg_grid["kx"])[:, None] < frac * kx_nyquist) & (
+            (np.abs(cfg_grid["ky"])[None, :] < frac * ky_nyquist) | (cfg_grid["ny"] == 1)
+        )
+        cfg_grid["low_pass_filter_grid"] = np.where(band, 1.0, 0.0)
     elif dealias != "isotropic":
-        raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic' or 'shifted-band'.")
+        raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic', 'shifted-band' or 'rectangular'.")
 
     # LPSE lw.maxWavenumber: an additional hard cap on the retained EPW band, in units
     # of the vacuum laser wavenumber k0 = w0/c
@@ -902,6 +912,28 @@ def get_density_profile(cfg: dict) -> Array:
         amp = cfg["density"]["amplitude"]
         kk = cfg["density"]["wavenumber"]
         nprof = baseline * (1.0 + amp * np.sin(kk * cfg["grid"]["x"]))
+
+    elif cfg["density"]["basis"] in ("lpse-linear", "lpse-exp"):
+        # the original LPSE cartesian profiles (users guide, densityProfile.shape): with r the
+        # distance from the N_max location down the gradient, dr the min-max distance,
+        # linear: N = N_max + (N_min - N_max) r/dr; exp: N = N_max exp(-r/L_n), L_n = dr/ln(Nmax/Nmin);
+        # both clipped to [N_min, N_max] (and LPSE clips every profile at 1.25 n_c)
+        n_min, n_max = float(cfg["density"]["min"]), float(cfg["density"]["max"])
+        x_min_loc = _Q(cfg["density"]["min_location"]).to("um").value
+        x_max_loc = _Q(cfg["density"]["max_location"]).to("um").value
+        dr = abs(x_min_loc - x_max_loc)
+        direction = np.sign(x_min_loc - x_max_loc) if dr > 0 else 1.0
+        r = (cfg["grid"]["x"] - x_max_loc) * direction
+        if dr == 0.0 or n_min == n_max:
+            nprof = np.full_like(cfg["grid"]["x"], n_max, dtype=np.float64)
+        elif cfg["density"]["basis"] == "lpse-linear":
+            nprof = n_max + (n_min - n_max) * r / dr
+        else:
+            ln = dr / np.log(n_max / n_min)
+            nprof = n_max * np.exp(-r / ln)
+        nprof = np.clip(nprof, min(n_min, n_max), max(n_min, n_max))
+        nprof = np.minimum(nprof, 1.25)
+        nprof = np.repeat(nprof[:, None], cfg["grid"]["ny"], axis=-1)
     else:
         raise NotImplementedError
 

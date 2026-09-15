@@ -31,6 +31,9 @@ class DensityModel(BaseModel):
     gradient_scale_length: str | None = Field(default=None, alias="gradient scale length")
     max: float | None = None
     min: float | None = None
+    # lpse-linear / lpse-exp: the original LPSE cartesian profiles between two locations
+    min_location: str | None = None
+    max_location: str | None = None
     noise: NoiseModel | None = None
 
 
@@ -201,6 +204,7 @@ class SourceModel(BaseModel):
     noise_amplitude: float = 1e-10
     noise_seed: int | None = None
     noise_calibrate: bool = False
+    noise_debye_factor: bool = True  # thermal model: keep the 1/sqrt(1 + k^2 lambda_D^2) spectrum shape
     noise_max_wavenumber: float | None = None
     tpd: bool
     tpd_form: Literal["lpse", "matlab"] = "lpse"

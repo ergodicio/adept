@@ -243,7 +243,10 @@ def noise_kick_spectrum(cfg: dict) -> np.ndarray:
     # LPSE switches to the small-argument form below 1e-4 to avoid a float32 cancellation;
     # in float64 -expm1 is exact enough everywhere
     fd_factor = np.sqrt(np.maximum(-np.expm1(-two_g_dt), 0.0))
-    kick = n_total * amplitude / np.sqrt(1.0 + k_sq * lambda_d_sq) * fd_factor / k_safe
+    # LPSE carries the 1/sqrt(1 + k^2 lambda_D^2) Debye factor only on its isCalculated
+    # branch; noise_debye_factor: false reproduces its plain lw.noise.amplitude source
+    debye = np.sqrt(1.0 + k_sq * lambda_d_sq) if source.get("noise_debye_factor", True) else 1.0
+    kick = n_total * amplitude / debye * fd_factor / k_safe
     return np.where(retained, kick, 0.0)
 
 
