@@ -136,6 +136,9 @@ class CombinedSolver:
         self.detune = jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * (self.n_over_env - 1.0))
         self.collisional = jnp.exp(-self.nu_coll * self.dt_l * self.n_over_env**2)
         self.boundary = grid["absorbing_boundaries"] ** (1.0 / self.n_sub)
+        # the pump is LPSE's laser class: its own (5e3/ps) absorber, not the EPW one -- at the EPW
+        # rate the injected pump reflects off both walls into a standing wave (see helpers)
+        self.light_boundary = grid["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
 
         # unified source coefficient (LightSolver.cpp Sc_srs for the Raman class = (q/m)/(4 W0))
         self.source_coeff = -1j * self.e / (4.0 * self.me * self.w0)
@@ -307,7 +310,7 @@ class CombinedSolver:
             # 5. absorbing layers
             E1 = E1 * self.boundary[..., None]
             if self.pump_depletion:
-                E0 = E0 * self.boundary[..., None]
+                E0 = E0 * self.light_boundary[..., None]
             return (E0, E1)
 
         E0, E1 = lax.fori_loop(0, self.n_sub, substep, (E0, E1))
