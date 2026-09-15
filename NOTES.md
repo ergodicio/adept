@@ -142,3 +142,14 @@ Append-only checkpoints for scientific model development and validation.
 - **Limitations:** Existing initialization and moment quadrature are not upgraded to high-order cell integrals. Energy/Casimir conservation, full-scheme temporal order, production timestep adequacy and A100 performance remain unestablished.
 - **Evidence:** tests/test_vlasov1d/test_positive_remap.py; tests/test_vlasov1d/test_strang.py; docs/source/solvers/vlasov1d/config.md; vault Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md.
 - **Next:** Finish broader regressions and submit the reviewed PR.
+
+## 2026-09-15 11:46:51 EDT — Positive remap PR and local regression results
+
+- **Checkpoint ID:** 20260915T154651Z-4fd95a71
+- **State:** COMPLETED implementation and local validation; GitHub CI pending.
+- **Provenance:** Implementation commit 9374dfa; PR https://github.com/ergodicio/adept/pull/370; branch codex/vlasov1d-positive-remaps.
+- **Observation:** The broader Vlasov1D run completed with 173 passed, 7 deselected and 1 XPASS in 663.35 s, excluding test_config_regression.py as in CI. The final 36 remap checks passed separately after the dtype-preservation/unsupported-precision checks were finalized; the focused remap plus Strang run passed 52 checks before the six precision-rejection cases were added. Ruff lint/format and whitespace checks pass. Tests used local CPU JAX 0.9.0.1 with four logical devices, with MLflow redirected to a local sqlite database.
+- **GitHub status at checkpoint:** Pre-commit, package-install and Hermite-Poisson checks passed on implementation commit 9374dfa; Vlasov1D and Hermite-Legendre jobs were still running. These are not final-head CI claims for the subsequent notes-only commit.
+- **Evidence:** adept/_vlasov1d/solvers/pushers/conservative.py; tests/test_vlasov1d/test_positive_remap.py; tests/test_vlasov1d/test_strang.py; docs/source/solvers/vlasov1d/config.md; vault Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md.
+- **Scope:** Existing defaults and time splitters are retained. The implemented positivity-only SL-WENO5 limiter is distinct from a full MPP limiter. No GPU performance, turbulence accuracy, energy/Casimir conservation or full-scheme temporal-order result is claimed.
+- **Next:** Review PR #370 and complete CI. A production-shape A100 benchmark and matched turbulence comparison at dt=0.02 are separate follow-up work.
