@@ -442,6 +442,9 @@ def translate_parms(
             hpe["nv"] = int(float(parms["hpe.velocityGrid"]))
         if "hpe.startEvolutionAt" in parms:
             hpe["t_start"] = f"{float(parms['hpe.startEvolutionAt'])}ps"
+        if "hpe.VminOverVminPhase" in parms and float(parms["hpe.VminOverVminPhase"]) == 0.0:
+            # the whole Maxwellian is tracked (LPSE default); adept's tail cutoff is in units of vte
+            hpe["v_min"] = 0.05
         if "hpe.thermalizationProbability" in parms:
             tp = _floats(parms["hpe.thermalizationProbability"])
             hpe["thermalization_probability"] = [tp[0], tp[1] if len(tp) > 1 else tp[0]]
@@ -461,14 +464,14 @@ def translate_parms(
             hpe["energy_conservation_steps"] = float(g("hpe.numStepsToAverageEnergyChange", "1"))
         n_flux = int(float(g("hpe.metrics.nFluxMetrics", "0")))
         if n_flux > 0:
-            # LPSE hpe.metrics.fluxMetric.N.energy.{min,max} (MeV in the decks: 0.010 = 10 keV); the
-            # adept instrument bins on one sorted edge list (keV)
+            # LPSE hpe.metrics.fluxMetric.N.energy.{min,max} in keV (the decks bin a 2 keV plasma at
+            # 0.01, 0.5, 1, 2, 4, 6, 8, 20); the adept instrument bins on one sorted edge list (keV)
             edges = set()
             for i in range(1, n_flux + 1):
-                for end, default in (("min", "0"), ("max", "1e6")):
+                for end, default in (("min", "0"), ("max", "1e9")):
                     key = f"hpe.metrics.fluxMetric.{i}.energy.{end}"
                     key = key if key in parms else f"hpe.metrics.flux.{i}.energy.{end}"
-                    edges.add(1.0e3 * float(g(key, default)))
+                    edges.add(float(g(key, default)))
             hpe["flux_bins"] = sorted(edges)
         if int(float(g("hpe.metrics.nPowerMetrics", "0"))) > 0:
             prefix = "hpe.metrics.powerMetric.1"

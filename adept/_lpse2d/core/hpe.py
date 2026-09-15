@@ -275,7 +275,12 @@ class HybridParticleEvolution:
         self.gamma_limit_growth = (
             float(hpe.get("gamma_limit_growth", 1500.0)) if bool(hpe.get("allow_growth", False)) else 0.0
         )
-        p_therm = list(hpe.get("thermalization_probability", [1.0, 1.0]))
+        # LPSE particle walls (ElectronTracker.cu): every crossing of a box side is counted by the
+        # instruments, then the particle is thermalized (re-injected from the tail) with the
+        # per-direction probability or else passes through periodically. The default keeps
+        # adept's earlier behaviour: thermalize at absorbing field boundaries, wrap at periodic ones.
+        p_default = [0.0 if self.periodic_x else 1.0, 0.0 if self.periodic_y else 1.0]
+        p_therm = list(hpe.get("thermalization_probability") or p_default)
         self.p_therm_x, self.p_therm_y = float(p_therm[0]), float(p_therm[1] if len(p_therm) > 1 else p_therm[0])
         # uniform out-of-plane B (tesla): electron cyclotron frequency e B / m_e = 0.17588 rad/ps per tesla
         self.omega_c = 0.175882 * float(hpe.get("magnetic_field", 0.0))
@@ -398,7 +403,7 @@ class HybridParticleEvolution:
         gamma_rel = jnp.sqrt(1.0 + (u_half / self.c) ** 2)
         x = x + self.dtp * u_half / gamma_rel
         if self.periodic_x:
-            x = jnp.mod(x - self.xmin, self.Lx) + self.xmin
+            x = jnp.mod(x - self.xmin, self.Lx) + self.xmin  # sub-step gather needs in-box positions
         acceleration = self._accel(x, ex_env, t_i + self.dtp)
         u = u_half + 0.5 * self.dtp * acceleration
         return x, u, acceleration
@@ -418,11 +423,11 @@ class HybridParticleEvolution:
             )
         x = x + self.dtp * u_half[:, 0] / gamma_rel
         y = y + self.dtp * u_half[:, 1] / gamma_rel
-        if self.periodic_x:
-            x = jnp.mod(x - self.xmin, self.Lx) + self.xmin
-        if self.periodic_y:
-            y = jnp.mod(y - self.ymin, self.Ly) + self.ymin
-        acceleration = self._accel_2d(x, y, e_env, t_i + self.dtp)
+        # the gather needs in-box positions; a crossing at a periodic side is remembered as an
+        # offset so that the wall routine still sees (and counts) it at the end of the step
+        x_in = jnp.mod(x - self.xmin, self.Lx) + self.xmin if self.periodic_x else x
+        y_in = jnp.mod(y - self.ymin, self.Ly) + self.ymin if self.periodic_y else y
+        acceleration = self._accel_2d(x_in, y_in, e_env, t_i + self.dtp)
         u = u_half + 0.5 * self.dtp * acceleration
         return x, y, u, acceleration
 
@@ -445,9 +450,6 @@ class HybridParticleEvolution:
         return flux, cone
 
     def _apply_boundaries(self, x: Array, u: Array, t: float):
-        zero_flux = jnp.zeros((len(WALLS), self.n_flux_bins))
-        if self.periodic_x:
-            return x, u, zero_flux, jnp.zeros((1,))
         out_left, out_right = x < self.xmin, x > self.xmax
         any_out = out_left | out_right
         key, therm_key = jax.random.split(jax.random.fold_in(self.wall_key, jnp.asarray(t / self.dt).astype(jnp.int32)))
@@ -460,11 +462,12 @@ class HybridParticleEvolution:
             any_out,
         )
         # LPSE thermalizationProbability: thermalize (re-inject from the tail) with probability p,
-        # otherwise reflect specularly
+        # otherwise pass through periodically
         therm = any_out & (jax.random.uniform(therm_key, (self.n_p,)) < self.p_therm_x)
-        x = jnp.where(out_left, self.xmin, jnp.where(out_right, self.xmax, x))
+        x_wrapped = jnp.mod(x - self.xmin, self.Lx) + self.xmin
+        x = jnp.where(therm, jnp.where(out_left, self.xmin, self.xmax), x_wrapped)
         u_therm = jnp.where(out_left, u_new, -u_new)
-        u = jnp.where(therm, u_therm, jnp.where(any_out, -u, u))
+        u = jnp.where(therm, u_therm, u)
         return x, u, flux, cone
 
     def _maxwell_survival(self, speed: Array) -> Array:
@@ -508,13 +511,10 @@ class HybridParticleEvolution:
         return normal_velocity, tangential_velocity
 
     def _apply_boundaries_2d(self, x, y, u, t):
-        zero_flux = jnp.zeros((len(WALLS), self.n_flux_bins))
-        if self.periodic_x and self.periodic_y:
-            return x, y, u, zero_flux, jnp.zeros((1,))
         out_left, out_right = x < self.xmin, x > self.xmax
         out_bottom, out_top = y < self.ymin, y > self.ymax
-        cross_x = (out_left | out_right) if not self.periodic_x else jnp.zeros_like(out_left)
-        cross_y = (out_bottom | out_top) if not self.periodic_y else jnp.zeros_like(out_bottom)
+        cross_x = out_left | out_right
+        cross_y = out_bottom | out_top
         any_out = cross_x | cross_y
         flux, cone = self._wall_instruments(
             (out_left & cross_x, out_right & cross_x, out_bottom & cross_y, out_top & cross_y), u, any_out
@@ -540,16 +540,17 @@ class HybridParticleEvolution:
         gamma_rel = 1.0 / jnp.sqrt(1.0 - (speed / self.c) ** 2)
         u_new = gamma_rel[:, None] * velocity
 
-        if not self.periodic_x:
-            x = jnp.where(out_left, self.xmin, jnp.where(out_right, self.xmax, x))
-        if not self.periodic_y:
-            y = jnp.where(out_bottom, self.ymin, jnp.where(out_top, self.ymax, y))
-        # LPSE thermalizationProbability per wall direction: thermalize with probability p_x / p_y,
-        # otherwise reflect the normal momentum component specularly
+        # LPSE thermalizationProbability per wall direction: thermalize with probability p_x / p_y
+        # (clamped to the wall, re-injected inward), otherwise pass through periodically
         uni = jax.random.uniform(therm_key, (self.n_p,))
         therm = (cross_x & (uni < self.p_therm_x)) | (cross_y & (uni < self.p_therm_y))
-        u_reflect = jnp.stack((jnp.where(cross_x, -u[:, 0], u[:, 0]), jnp.where(cross_y, -u[:, 1], u[:, 1])), axis=-1)
-        u = jnp.where(therm[:, None], u_new, jnp.where(any_out[:, None], u_reflect, u))
+        x_wall = jnp.where(out_left, self.xmin, jnp.where(out_right, self.xmax, x))
+        y_wall = jnp.where(out_bottom, self.ymin, jnp.where(out_top, self.ymax, y))
+        x_wrapped = jnp.mod(x - self.xmin, self.Lx) + self.xmin
+        y_wrapped = jnp.mod(y - self.ymin, self.Ly) + self.ymin
+        x = jnp.where(therm, x_wall, x_wrapped)
+        y = jnp.where(therm, y_wall, y_wrapped)
+        u = jnp.where(therm[:, None], u_new, u)
         return x, y, u, flux, cone
 
     def _kinetic(self, u: Array) -> Array:

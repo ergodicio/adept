@@ -385,7 +385,10 @@ class HPEModel(BaseModel):
     gamma_limit_damping: float = 1500.0  # hpe.gammaLimit.damping, 1/ps: applied rate <= this
     gamma_limit_growth: float = 1500.0  # hpe.gammaLimit.growth, 1/ps: applied rate >= -this when allow_growth
     allow_growth: bool = False  # hpe.allowGrowth: negative (inverse Landau) rates allowed
-    thermalization_probability: list[float] = [1.0, 1.0]  # hpe.thermalizationProbability (x, y walls)
+    # hpe.thermalizationProbability (x, y walls): every crossing is counted by the instruments, then the
+    # particle is thermalized with this probability or passes through periodically (LPSE particle walls
+    # are independent of the field boundaries). None = 1 at absorbing field boundaries, 0 at periodic
+    thermalization_probability: list[float] | None = None
     magnetic_field: float = 0.0  # hpe.magneticField, tesla, out of plane (2-D push only)
     energy_conservation: bool = False  # hpe.enforceEnergyConservation: LD multiplier
     energy_conservation_steps: float = 1.0  # hpe.numStepsToAverageEnergyChange

@@ -603,11 +603,12 @@ def test_gamma_limits_and_allow_growth():
     assert gamma2[band].min() < 0.0 and gamma2[band].min() >= -0.25 - 1e-12
 
 
-def test_thermalization_probability_zero_reflects_specularly():
-    """LPSE hpe.thermalizationProbability = 0: particles leaving a wall are reflected, |u| kept."""
+def test_thermalization_probability_zero_passes_through_periodically():
+    """LPSE particle walls: a crossing is counted, then the particle is thermalized with the
+    per-direction probability or else wraps around periodically."""
     from adept._lpse2d.core.hpe import HybridParticleEvolution
 
-    for p_therm, expect_reflect in ((0.0, True), (1.0, False)):
+    for p_therm, expect_wrap in ((0.0, True), (1.0, False)):
         cfg = _make_cfg_2d(
             {"n_particles": 4000, "thermalization_probability": [p_therm, p_therm]},
             {"terms.epw.boundary.x": "absorbing", "terms.epw.boundary.y": "absorbing"},
@@ -618,16 +619,21 @@ def test_thermalization_probability_zero_reflects_specularly():
         y = jnp.full((n,), 0.5 * (hpe.ymin + hpe.ymax))
         u = jnp.stack((jnp.full((n,), 3.0 * hpe.vte), jnp.full((n,), 1.0 * hpe.vte)), axis=-1)
         x2, y2, u2, flux, cone = hpe._apply_boundaries_2d(x, y, u, 0.0)
-        assert float(jnp.max(x2)) <= hpe.xmax
-        if expect_reflect:
-            np.testing.assert_allclose(np.asarray(u2[:, 0]), -3.0 * hpe.vte)
-            np.testing.assert_allclose(np.asarray(u2[:, 1]), 1.0 * hpe.vte)
+        if expect_wrap:
+            np.testing.assert_allclose(np.asarray(x2), hpe.xmin + 0.1 * hpe.dx, rtol=1e-9)
+            np.testing.assert_allclose(np.asarray(u2), np.asarray(u))
         else:
+            assert float(jnp.max(x2)) <= hpe.xmax
             assert np.all(np.asarray(u2[:, 0]) < 0.0)  # re-injected inward with resampled speeds
             assert np.std(np.asarray(u2[:, 1])) > 0.1 * hpe.vte
-        # the wall-flux instrument saw every particle leave through the right wall
+        # the wall-flux instrument saw every particle leave through the right wall either way
         flux = np.asarray(flux)
         assert flux[1].sum() > 0.0 and flux[0].sum() == 0.0 and flux[2].sum() == 0.0 and flux[3].sum() == 0.0
+    # periodic field boundaries default to pass-through, absorbing ones to thermalization
+    hpe_p = HybridParticleEvolution(_make_cfg_2d({"n_particles": 100}))
+    assert hpe_p.p_therm_x == 0.0 and hpe_p.p_therm_y == 0.0
+    hpe_a = HybridParticleEvolution(_make_cfg_2d({"n_particles": 100}, {"terms.epw.boundary.x": "absorbing"}))
+    assert hpe_a.p_therm_x == 1.0 and hpe_a.p_therm_y == 0.0
 
 
 def test_wall_flux_bins_and_cone_energy():
@@ -721,9 +727,9 @@ def test_translator_maps_the_hpe_controls():
         "hpe.numStepsToAverageEnergyChange": "5",
         "hpe.metrics.nFluxMetrics": "2",
         "hpe.metrics.fluxMetric.1.energy.min": "0",
-        "hpe.metrics.fluxMetric.1.energy.max": "0.05",
-        "hpe.metrics.fluxMetric.2.energy.min": "0.05",
-        "hpe.metrics.fluxMetric.2.energy.max": "1e6",
+        "hpe.metrics.fluxMetric.1.energy.max": "50",
+        "hpe.metrics.fluxMetric.2.energy.min": "50",
+        "hpe.metrics.fluxMetric.2.energy.max": "1e9",
         "hpe.metrics.nPowerMetrics": "1",
         "hpe.metrics.powerMetric.1.angle": "20",
         "hpe.metrics.powerMetric.1.direction": "0 1 0",
