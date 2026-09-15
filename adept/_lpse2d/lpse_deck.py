@@ -461,14 +461,19 @@ def translate_parms(
             hpe["energy_conservation_steps"] = float(g("hpe.numStepsToAverageEnergyChange", "1"))
         n_flux = int(float(g("hpe.metrics.nFluxMetrics", "0")))
         if n_flux > 0:
-            edges = sorted(
-                {float(g(f"hpe.metrics.flux.{i}.energy.min", "0")) for i in range(1, n_flux + 1)}
-                | {float(g(f"hpe.metrics.flux.{i}.energy.max", "1e9")) for i in range(1, n_flux + 1)}
-            )
-            hpe["flux_bins"] = edges
+            # LPSE hpe.metrics.fluxMetric.N.energy.{min,max} (MeV in the decks: 0.010 = 10 keV); the
+            # adept instrument bins on one sorted edge list (keV)
+            edges = set()
+            for i in range(1, n_flux + 1):
+                for end, default in (("min", "0"), ("max", "1e6")):
+                    key = f"hpe.metrics.fluxMetric.{i}.energy.{end}"
+                    key = key if key in parms else f"hpe.metrics.flux.{i}.energy.{end}"
+                    edges.add(1.0e3 * float(g(key, default)))
+            hpe["flux_bins"] = sorted(edges)
         if int(float(g("hpe.metrics.nPowerMetrics", "0"))) > 0:
-            hpe["cone_angle"] = float(g("hpe.metrics.power.1.angle", "30"))
-            direction = _floats(g("hpe.metrics.power.1.direction", "1 0 0"))
+            prefix = "hpe.metrics.powerMetric.1" if "hpe.metrics.powerMetric.1.angle" in parms else "hpe.metrics.power.1"
+            hpe["cone_angle"] = float(g(f"{prefix}.angle", "30"))
+            direction = _floats(g(f"{prefix}.direction", "1 0 0"))
             hpe["cone_direction"] = [direction[0], direction[1] if len(direction) > 1 else 0.0]
         report["notes"].append(
             "hpe: dt/dtFields/stepsPerLandauUpdate/vdf.*/blend.gamma are LPSE tracker internals without an adept "
