@@ -11,7 +11,11 @@ Error handling differs from the OSIRIS runner on purpose: WarpX/AMReX fails
 loudly (``amrex::Abort`` and failed assertions exit non-zero), so the exit
 code is the primary signal and there is no exit-0 stderr fuzzing. The
 salvage-if-output-exists behavior is kept: a crash after diagnostics were
-written still lets post-processing run on the partial data.
+written still lets post-processing run on the partial data. "Output" means
+non-empty files under the diagnostic paths the deck configures — WarpX
+archives ``warpx_used_inputs`` before it validates the deck and AMReX drops
+``Backtrace.<rank>`` on an abort, so a run that never left startup leaves
+files behind without leaving anything to post-process.
 """
 
 from __future__ import annotations
@@ -23,10 +27,17 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from . import deck as _deck
+
 INPUTS_FILENAME = "inputs"
+# WarpX's archived copy of the inputs it parsed (``warpx.used_inputs_file``).
+# It is written before the deck is validated, so it exists for runs that
+# aborted in ReadParameters.
+USED_INPUTS_DEFAULT = "warpx_used_inputs"
 
 # Tokens WarpX/AMReX print on aborts/assertions/signal handlers, matched
 # lowercased. "### error" is WarpX's own WARPX_ABORT/ASSERT banner prefix
@@ -57,17 +68,62 @@ def _make_run_dir(run_root: Path) -> Path:
     return rd
 
 
-def _run_produced_output(run_dir: Path) -> bool:
-    """True if the run wrote any salvageable diagnostic output.
+def _as_list(v: Any) -> list:
+    return [] if v is None else (v if isinstance(v, list) else [v])
 
-    WarpX writes everything under the run directory: openPMD/plotfile dumps
-    under the diag prefixes (default ``diags/``), reduced diagnostics under
-    ``diags/reducedfiles/``. Any file beyond the ones the runner itself wrote
-    counts as output worth keeping.
+
+def _diagnostic_prefixes(deck: _deck.Deck, run_dir: Path) -> list[Path]:
+    """Output prefixes the deck configures, resolved against ``run_dir``.
+
+    Full diagnostics write under ``<diag_name>.file_prefix`` (default
+    ``diags/<diag_name>``); reduced diagnostics under
+    ``<reduced_diags_name>.path``, else ``reduced_diags.path`` (default
+    ``diags/reducedfiles``). ``file_prefix`` is a *name* prefix: the openPMD
+    writer uses it as a directory (``diags/diag1/openpmd_000100.h5``) while
+    the plotfile writer appends the step (``diags/diag100100/``), so callers
+    match ``prefix.parent`` entries whose name starts with ``prefix.name``.
     """
-    ours = {INPUTS_FILENAME, "stdout.log", "stderr.log"}
-    for p in run_dir.rglob("*"):
-        if p.is_file() and p.name not in ours:
+    prefixes: list[Path] = []
+    for name in _as_list(deck.get("diagnostics.diags_names")):
+        prefixes.append(run_dir / str(deck.get(f"{name}.file_prefix") or f"diags/{name}"))
+    reduced_default = str(deck.get("reduced_diags.path") or "diags/reducedfiles")
+    for name in _as_list(deck.get("warpx.reduced_diags_names")):
+        prefixes.append(run_dir / str(deck.get(f"{name}.path") or reduced_default))
+    return prefixes
+
+
+def _diagnostic_files(run_dir: Path, deck: _deck.Deck) -> Iterator[Path]:
+    """Regular files under the deck's diagnostic prefixes (see above)."""
+    seen: set[Path] = set()
+    for prefix in _diagnostic_prefixes(deck, run_dir):
+        if not prefix.parent.is_dir():
+            continue
+        for entry in prefix.parent.iterdir():
+            if not entry.name.startswith(prefix.name) or entry in seen:
+                continue
+            seen.add(entry)
+            if entry.is_file():
+                yield entry
+            elif entry.is_dir():
+                yield from (p for p in entry.rglob("*") if p.is_file())
+
+
+def _run_produced_output(run_dir: Path, deck: _deck.Deck) -> bool:
+    """True if the run wrote diagnostic data worth post-processing.
+
+    Only non-empty files under the deck's configured diagnostic paths count.
+    Provenance and crash artifacts are excluded wherever they land: the
+    archived inputs copy (``warpx.used_inputs_file``), AMReX's per-rank
+    ``Backtrace.<rank>`` dumps, and the files this runner wrote itself. A deck
+    that aborts in ReadParameters produces exactly those and nothing else, and
+    must be reported as a failure rather than salvaged.
+    """
+    used_inputs = Path(str(deck.get("warpx.used_inputs_file") or USED_INPUTS_DEFAULT)).name
+    ours = {INPUTS_FILENAME, "stdout.log", "stderr.log", used_inputs}
+    for p in _diagnostic_files(run_dir, deck):
+        if p.name in ours or p.name.startswith("Backtrace."):
+            continue
+        if p.stat().st_size > 0:
             return True
     return False
 
@@ -88,9 +144,10 @@ def run_warpx(
     ``crashed`` (bool), ``wall_time`` (float, seconds), and ``cmd``
     (list[str]).
 
-    Raises ``RuntimeError`` on a non-zero exit code that left no output
-    behind; a crash *with* output on disk is logged and salvaged so the
-    caller still consolidates and plots what was written.
+    Raises ``RuntimeError`` on a non-zero exit code that left no diagnostic
+    output behind (see :func:`_run_produced_output` — startup artifacts do
+    not count); a crash *with* diagnostic output on disk is logged and
+    salvaged so the caller still consolidates and plots what was written.
     """
     binary = Path(binary).expanduser().resolve()
     if not binary.exists():
@@ -150,15 +207,15 @@ def run_warpx(
         err_lines = [ln for ln in (stdout_tail + stderr_tail) if any(tok in ln.lower() for tok in _AMREX_ERR_TOKENS)]
         detail = "".join(err_lines[-20:]) or "".join(stderr_tail[-50:]) or "(empty stderr)"
         failure_msg = f"WarpX exited with status {rc}.\n  cmd: {shlex.join(cmd)}\n  cwd: {run_dir}\n  detail:\n{detail}"
-        if _run_produced_output(run_dir):
+        if _run_produced_output(run_dir, _deck.parse_deck(deck_text)):
             print(f"[warpx] WARNING: {failure_msg}")
             print(
-                "[warpx] the run produced output files despite the error above — "
+                "[warpx] the run produced diagnostic output despite the error above — "
                 "consolidating and post-processing the (possibly partial) data "
                 "anyway. Verify results carefully."
             )
         else:
-            raise RuntimeError(f"{failure_msg}\n  (no output files were written — nothing to salvage.)")
+            raise RuntimeError(f"{failure_msg}\n  (no diagnostic output was written — nothing to salvage.)")
 
     return {
         "run_dir": run_dir,

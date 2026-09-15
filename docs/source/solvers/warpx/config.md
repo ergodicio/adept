@@ -77,9 +77,11 @@ warpx:
   one token — strings with whitespace must be re-quoted to survive the parse/render round
   trip), which makes WarpX abort at startup inside `ReadParameters`
   (`queryArrWithParser`). Nothing validates an override's type against the deck value it
-  replaces, and the launcher records the solver exit code as a metric rather than failing
-  the job — so the symptom is a "successful" job that ended suspiciously fast, with
-  `Backtrace.*` files in the run dir.
+  replaces; the run fails at launch with the `ReadParameters` abort in the error. A
+  non-zero exit is only salvaged (logged, exit code recorded as a metric, post-processing
+  run on the partial data) when non-empty files exist under the diagnostic paths the deck
+  configures — `warpx_used_inputs` and `Backtrace.*`, which a startup abort leaves in the
+  run dir, do not count.
 
 The post-override deck is what runs, is logged key-by-key to MLflow (under `deck.*`), and is
 archived as the `inputs` artifact; WarpX's own `warpx_used_inputs` is archived too for provenance.
