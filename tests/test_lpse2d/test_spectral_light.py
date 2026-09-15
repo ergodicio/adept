@@ -94,7 +94,9 @@ def test_spectral_propagator_has_no_grid_dispersion():
     expected = np.asarray(E1) * np.exp(1j * phase)
     np.testing.assert_allclose(np.asarray(out_s), expected, rtol=1e-10, atol=1e-12)
     assert not np.allclose(np.asarray(out_f), expected, rtol=1e-4, atol=1e-6)
-    assert cfg_s["grid"]["light_substeps"] == 1 and cfg_f["grid"]["light_substeps"] > 1
+    # the spectral solver has no CFL limit: it sub-cycles only for its injectors (one cell per
+    # sub-step), fewer steps than the FD scheme's stability bound
+    assert 1 <= cfg_s["grid"]["light_substeps"] < cfg_f["grid"]["light_substeps"]
 
 
 def _fill_box(cfg, n_steps, pump_depletion):

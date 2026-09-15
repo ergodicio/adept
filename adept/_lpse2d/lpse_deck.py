@@ -443,8 +443,11 @@ def translate_parms(
         if "hpe.startEvolutionAt" in parms:
             hpe["t_start"] = f"{float(parms['hpe.startEvolutionAt'])}ps"
         if "hpe.VminOverVminPhase" in parms and float(parms["hpe.VminOverVminPhase"]) == 0.0:
-            # the whole Maxwellian is tracked (LPSE default); adept's tail cutoff is in units of vte
-            hpe["v_min"] = 0.05
+            report["notes"].append(
+                "hpe.VminOverVminPhase = 0 (LPSE tracks the whole Maxwellian): adept keeps its tail cutoff "
+                "(terms.hpe.v_min, 2.5 vte); set v_min: 0.05 to reproduce LPSE's wall-flux bins below ~6 keV "
+                "in field-free runs -- the kinetic feedback is calibrated for a tail"
+            )
         if "hpe.thermalizationProbability" in parms:
             tp = _floats(parms["hpe.thermalizationProbability"])
             hpe["thermalization_probability"] = [tp[0], tp[1] if len(tp) > 1 else tp[0]]

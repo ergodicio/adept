@@ -491,10 +491,23 @@ def get_derived_quantities(cfg: dict) -> dict:
             evolved_carriers.append("pump")
         dt_max = min(dt_limits)
         if light_solver == "spectral":
-            # the exact k-space propagator has no CFL limit: one sub-step unless asked for more
-            n_sub = int(cfg_grid.get("light_substeps", 1))
-            if n_sub < 1:
-                raise ValueError("grid.light_substeps must be a positive integer")
+            # the exact k-space propagator has no CFL limit, but the smooth injectors add their
+            # source with an Euler step: the light must not cross more than one cell per sub-step
+            # (LPSE's spectral decks use raman.dt ~ dx/c), or the injected amplitude is wrong
+            c_light = cfg["units"]["derived"]["c"]
+            n_needed = int(np.ceil(c_light * cfg_grid["dt"] / cfg_grid["dx"]))
+            if "light_substeps" in cfg_grid:
+                n_sub = int(cfg_grid["light_substeps"])
+                if n_sub < 1:
+                    raise ValueError("grid.light_substeps must be a positive integer")
+                if n_sub < n_needed:
+                    cells = c_light * cfg_grid["dt"] / n_sub / cfg_grid["dx"]
+                    print(
+                        f"WARNING: grid.light_substeps = {n_sub} lets light cross {cells:.1f} cells per "
+                        f"sub-step; the spectral injectors want <= 1 ({n_needed} sub-steps)"
+                    )
+            else:
+                n_sub = max(1, n_needed)
         elif "light_substeps" in cfg_grid:
             n_sub = int(cfg_grid["light_substeps"])
             if cfg_grid["dt"] / n_sub > dt_max:
