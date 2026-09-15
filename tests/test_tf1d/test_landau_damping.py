@@ -44,7 +44,7 @@ def test_single_resonance():
         kx = (
             np.fft.fftfreq(
                 mod_defaults["save"]["x"]["nx"],
-                d=mod_defaults["save"]["x"]["ax"][2] - mod_defaults["save"]["x"]["ax"][1],
+                d=exo.cfg["save"]["x"]["ax"][2] - exo.cfg["save"]["x"]["ax"][1],
             )
             * 2.0
             * np.pi

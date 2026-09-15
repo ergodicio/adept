@@ -12,11 +12,17 @@ Existing examples: `feat/vlasov1d-dougherty-nodrag`, `fix/vlasov1d-v0-units`, `f
 Commit subjects carry the same scope: `feat(vlasov1d): ...`.
 For repo-wide work with no solver (CI, docs, packaging), use the area instead: `ci/...`, `docs/...`, `chore/...`.
 
-## Everything is built on ergoExo
+## Legacy execution is built on ergoExo
 
 Solvers are never invoked directly. `ergoExo` (`adept/_base_.py`) owns the run: it creates the MLflow run and
 calls lifecycle methods on an `ADEPTModule` subclass in a fixed order. When adding or modifying a solver, work
-inside that contract rather than around it.
+inside that contract rather than around it unless the change is explicitly migrating the solver to the new
+architecture in `docs/adr/0001-explicit-simulation-boundaries.md`.
+
+New architecture work uses the logging-free contracts in `adept.core`. Do not add new tracking, artifact,
+filesystem, or process-global behavior to a `SolverBuilder` or `JaxProgram`. Existing `ergoExo` and
+`ADEPTModule` behavior remains compatibility-sensitive until it is replaced by the tested façade described in
+the ADR.
 
 Order — `ergoExo#_setup_()`, then `ergoExo#__call__()`:
 
@@ -34,9 +40,11 @@ Consequences that bite:
   first appear in `init_state_and_args()` if nothing put it in `cfg` during `get_solver_quantities()`.
 - The scalar/array split between steps 2 and 3 is load-bearing — arrays leaking into step 2 break param logging.
 - Gradients go through `vg()`; the base class raises unless the module implements a metric.
-- `ergoExo#_get_adept_module_()` is the registry: a hand-written branch mapping the `solver:` string to a class,
-  with no autodiscovery. One module directory can register several keys (`vlasov-1d` → `BaseVlasov1D`,
-  `vlasov-1d-iaw` → `IAWTurbulence1D`), so add a key per runnable module, not per directory.
+- `ergoExo#_get_adept_module_()` is the legacy registry: a hand-written branch mapping the `solver:` string to a
+  class, with no autodiscovery. One module directory can register several keys (`vlasov-1d` → `BaseVlasov1D`,
+  `vlasov-1d-iaw` → `IAWTurbulence1D`), so add a key per runnable module, not per directory. New logging-free
+  builders register stable names with `adept.core.SolverRegistry`; do not route an incomplete builder into
+  `ergoExo` before compatibility coverage exists.
 
 `docs/source/dev_guide.md` has the step-by-step for adding a solver — follow it rather than reconstructing the
 list. The step easiest to skip is the paths filter and job in `.github/workflows/cpu-tests.yaml`: CI only runs

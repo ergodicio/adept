@@ -268,6 +268,7 @@ class TermsConfig(BaseModel):
 
     field: str
     edfdv: str
+    vdfdx: str = "exponential"
     time: str
     species: list[SpeciesConfig] | None = None
     boltzmann_electrons: BoltzmannElectronsConfig | None = None

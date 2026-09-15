@@ -68,6 +68,23 @@ where $A$ is the advection operator. This is a much faster solver than the cubic
 
 2. **`cubic-spline`** - This is a semi-Lagrangian solver that uses a cubic-spline interpolator to advect the distribution function in velocity space. Use this if you have trouble with the exponential solver.
 
+3. **`lagrange7`** - An eight-point, degree-7 semi-Lagrangian velocity interpolator
+   for reducing interpolation error in resolved structures. It uses nonperiodic
+   velocity boundaries, supports multispecies grids and sharding, and requires at
+   least eight velocity cells per species. It does not enforce positivity.
+
+### Time Integration
+
+**`strang`** provides explicit spatial-half / velocity-full / spatial-half splitting,
+with the self-consistent field computed after the first half-stream and external
+forcing evaluated at the midpoint. It uses one velocity remap per timestep and
+returns the distribution and electric field at the same final time. Select it with
+`poisson` or `poisson-boltzmann`; it can be paired with any velocity pusher.
+
+The existing `leapfrog` and `sixth` options remain available. See the
+[configuration reference](config.md#strang-splitting-with-degree-7-velocity-interpolation)
+for the scope of the second-order update and boundary behavior.
+
 ### Spatial Advection
 
 1. **`exponential`** - This is the only solver that is available. We only have periodic boundaries implemented in space (for the plasma) so this is perfectly fine. It is also very fast.
@@ -91,6 +108,7 @@ where $A$ is the advection operator. This is a much faster solver than the cubic
 | $x$ (distribution and electrostatic field) | **Periodic** | Spatial advection and the Poisson/Ampère solves are spectral, so periodicity is structural rather than a choice. |
 | $v$ (`edfdv: exponential`) | **Periodic** | An artifact of doing the velocity push spectrally. It wraps the forward tail onto the $-v$ edge, so it is only safe when $f \approx 0$ at both velocity edges. |
 | $v$ (`edfdv: cubic-spline`) | Semi-Lagrangian interpolation | Does not assume periodicity; use it when the tails are populated. |
+| $v$ (`edfdv: lagrange7`) | Semi-Lagrangian interpolation | Exterior stencil samples and departure points use `1e-30`; no wraparound or mass renormalization. |
 | $v$ (collision operator) | **Zero-flux** | Applied at both velocity edges, which is what makes the Fokker-Planck operators conserve density exactly. |
 | $x$ (transverse vector potential $a$) | **Absorbing**, 2nd order | The transverse wave equation is solved by finite differences on a grid with two boundary cells, independently of the periodic plasma domain. |
 
@@ -137,6 +155,63 @@ With `solver: vlasov-1d-iaw` you additionally get `plots/iaw/density_spectrum.pn
 Timing metrics (`run_time`, `postprocess_time_min`, `total_time`) go to MLflow as metrics rather than
 files. Which streams exist, and at what cadence, is entirely determined by the `save` block — see the
 [Configuration Reference](config.md#save).
+
+## Running on Multiple GPUs
+
+`grid.parallel` splits the phase-space pushes across every GPU that the process can see. It is a
+deliberately naive scheme: **one process, one node, no distributed memory**. It buys throughput on a
+distribution function that already fits in a single GPU's memory; it does not let you run a bigger one.
+
+Set it to the list of axes to split over:
+
+```yaml
+grid:
+  nx: 17280
+  parallel: ["x", "v"]
+```
+
+### What gets split
+
+Each pusher is wrapped in `jax.shard_map` over a one-dimensional mesh of `jax.devices()`:
+
+| Axis | Operators | Why no halo is needed |
+|---|---|---|
+| `"x"` | `edfdv` (`exponential`, `cubic-spline`, and `lagrange7`) and the collision operator (Fokker-Planck + Krook) | Both are pointwise in $x$ — an independent velocity-space solve per spatial cell |
+| `"v"` | `vdfdx` (`exponential`) | The spectral $x$-advection is an independent phase rotation per velocity |
+
+Because the two axes are different, `["x", "v"]` makes XLA insert an all-to-all between the velocity
+and spatial pushes on every step. That transpose is the entire cost of the scheme, so it pays off only
+when $f$ is large enough that the per-device push dominates the reshuffle. Splitting a single axis
+(`["x"]`) avoids the transpose but leaves the other push serial.
+
+Everything else — the Poisson/Ampère solve, the Hou-Li filter, the drivers, the diagnostics, and the
+saves — operates on the global array and is gathered by XLA as needed. Nothing about `save` or
+post-processing changes: the state `diffrax` carries is an ordinary global array, so netCDF output is
+byte-for-byte the same as a serial run's.
+
+### Requirements and limits
+
+- `nx` must be divisible by the device count for `"x"`, and *every* species' `nv` for `"v"`. Otherwise
+  `shard_map` raises at trace time, naming the offending axis and size.
+- One process must see all the GPUs. On a NERSC Perlmutter node that means requesting the four GPUs
+  and launching **one** task — no `srun -n 4`:
+
+  ```bash
+  srun -n 1 -c 32 -G 4 uv run run.py --cfg configs/vlasov-1d/my-deck
+  ```
+
+- The full $f$ is allocated on the default device at initialization, so it must fit on one GPU. This is
+  the "naive" part, and the reason sharded initialization and sharded checkpointing are not involved.
+- Results match the serial path to round-off. The pushes are bitwise identical per step; over a run,
+  reduction reordering inside the shards leaves a drift of order $10^{-15}$ in $E$.
+- **`"v"` breaks reverse-mode AD.** `jax.grad` through the $v$-sharded `vdfdx` fails on jax 0.9.0.1
+  with a cotangent-type mismatch from the FFT along the unsharded axis (an upstream `shard_map`
+  limitation, reproducible in a few lines of pure JAX). Forward mode (`jax.jvp`) is fine, and the
+  $x$-sharded operators differentiate correctly in both modes with gradients identical to serial. For
+  gradient work, use `parallel: ["x"]`.
+
+For scale: an electron + ion deck at `nx: 17280`, `nv: 2048` with `parallel: ["x", "v"]` ran at
+roughly 45 ms/step on four A100s.
 
 ## Practical Notes
 

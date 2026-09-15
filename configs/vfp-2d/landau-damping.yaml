@@ -1,0 +1,67 @@
+solver: vfp-2d
+
+mlflow:
+  experiment: vfp2d
+  run: landau-damping
+
+units:
+  laser_wavelength: 351nm
+  reference electron temperature: 3000eV
+  reference ion temperature: 300eV
+  reference electron density: 2.275e21/cm^3
+  Z: 6
+  Ion: Au+
+  logLambda: nrl
+
+density:
+  # A fixed uniform ion background leaves the electron perturbation charged,
+  # so the initial spectral Poisson solve seeds the electrostatic field.
+  quasineutrality: false
+  species-electron:
+    m: 2.0
+    n:
+      x:
+        basis: cosine
+        baseline: 1.0
+        amplitude: 1.0e-4
+        wavelength: 20um
+      y:
+        basis: cosine
+        baseline: 1.0
+        amplitude: 1.0e-4
+        wavelength: 20um
+    T:
+      basis: uniform
+      baseline: 1.0
+
+grid:
+  xmin: 0um
+  xmax: 20um
+  nx: 32
+  ymin: 0um
+  ymax: 20um
+  ny: 32
+  tmin: 0fs
+  tmax: 100fs
+  dt: 0.05fs
+  nv: 96
+  vmax: 8.0
+  lmax: 5
+  mmax: 5
+
+terms:
+  fokker_planck:
+    active: false
+    flm:
+      ee: true
+    f00:
+      model: CoulombianKernel
+      scheme: central
+
+drivers: {}
+
+save:
+  t:
+    tmin: 0fs
+    tmax: 100fs
+    nt: 101

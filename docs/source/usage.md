@@ -53,15 +53,11 @@ once:
 ```{toctree}
 :maxdepth: 2
 
+usage/explicit_programs
+usage/observations
+usage/checkpoints
+usage/run_plans
+usage/host_runtime
+usage/legacy_compatibility
 usage/initialization
-```
-
----
-
-## Running on AWS Batch
-
-```{toctree}
-:maxdepth: 2
-
-usage/cloud
 ```

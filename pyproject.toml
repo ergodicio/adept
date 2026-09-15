@@ -10,6 +10,7 @@ license = "MIT"
 license-files = ["LICENSE*"]
 requires-python = ">=3.11"
 dependencies = [
+    "equinox",
     "lineax",
     "diffrax",
     "matplotlib",
@@ -18,9 +19,11 @@ dependencies = [
     "tqdm",
     "xarray",
     "mlflow",
+    # MLflow's S3 artifact store imports boto3 at runtime. Keep this explicit so
+    # generic AWS Batch images work from a frozen ADEPT lockfile.
+    "boto3",
     "h5netcdf",
     "optax",
-    "boto3",
     "pint",
     "plasmapy",
     "psutil",

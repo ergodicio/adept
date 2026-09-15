@@ -272,7 +272,7 @@ drivers:
 
 ### drivers.ib
 
-Inverse Bremsstrahlung (IB) laser heating. Augments the Fokker-Planck diffusion coefficient $D$ by $v_\text{osc}^2 g(v) / (6v)$ where $g(v) = [1 + (Z^2 n_i / (\omega_0 v^3))^2]^{-1}$ (Ridgers eq 4.39). Drives the distribution toward a Langdon/super-Gaussian shape.
+Inverse Bremsstrahlung (IB) laser heating. Augments the Fokker-Planck diffusion coefficient $D$ by $v_\text{osc}^2 g(v) / (6v)$ where $g(v) = [1 + (\nu_{ei}(v) / \omega_0)^2]^{-1}$ and $\nu_{ei}(v)=\nu_{ee,0}(\ln\Lambda_{ei}/\ln\Lambda_{ee})Z^2n_i/v^3$ in normalized units (Ridgers eq 4.39). Drives the distribution toward a Langdon/super-Gaussian shape.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|

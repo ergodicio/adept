@@ -18,9 +18,13 @@ from jax import numpy as jnp
 
 from adept._hermite_legendre_1d.vector_field import (
     StreamingExp1D,
+    hermite_cayley_update,
+    hermite_force_operator,
     hermite_legendre_coupling_vector,
     hermite_streaming_matrix,
+    legendre_cayley_update,
     legendre_constants,
+    legendre_force_operator,
     safe_col,
 )
 
@@ -101,3 +105,90 @@ def test_enforce_conservation_zeros_first_three():
         )
     )
     assert np.all(J[:3] == 0.0)
+
+
+def test_hermite_cayley_matches_dense_solve():
+    Nh, Nx = 9, 5
+    alpha, dt = 1.4, 0.17
+    rng = np.random.default_rng(2)
+    C = rng.standard_normal((Nh, Nx)) + 1j * rng.standard_normal((Nh, Nx))
+    E = rng.uniform(-0.8, 0.8, Nx)
+    ladder = np.sqrt(2.0 * np.arange(Nh)) / alpha
+
+    actual = np.asarray(hermite_cayley_update(jnp.asarray(C), jnp.asarray(E), dt, jnp.asarray(ladder)))
+    G = hermite_force_operator(Nh, alpha)
+    expected = np.empty_like(C)
+    eye = np.eye(Nh)
+    for ix in range(Nx):
+        s = 0.5 * dt * E[ix]
+        expected[:, ix] = np.linalg.solve(eye - s * G, (eye + s * G) @ C[:, ix])
+    np.testing.assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.parametrize("all_mode_penalty", [False, True])
+def test_legendre_structured_cayley_matches_dense_solve(all_mode_penalty):
+    Nl, Nx = 10, 4
+    v_a, v_b, dt = -2.0, 3.0, 0.11
+    rng = np.random.default_rng(3)
+    B = rng.standard_normal((Nl, Nx)) + 1j * rng.standard_normal((Nl, Nx))
+    E = rng.uniform(-0.7, 0.7, Nx)
+    leg = legendre_constants(Nl, v_a, v_b)
+    gamma_vec = np.full(Nl, 0.5)
+    if not all_mode_penalty:
+        gamma_vec[:3] = 0.0
+
+    actual = np.asarray(
+        legendre_cayley_update(
+            jnp.asarray(B),
+            jnp.asarray(E),
+            dt,
+            leg["deriv"],
+            jnp.asarray(gamma_vec),
+            leg["xi_a"],
+            leg["xi_b"],
+            v_b - v_a,
+        )
+    )
+    G = legendre_force_operator(leg["deriv"], gamma_vec, leg["xi_a"], leg["xi_b"], v_b - v_a)
+    expected = np.empty_like(B)
+    eye = np.eye(Nl)
+    for ix in range(Nx):
+        s = 0.5 * dt * E[ix]
+        expected[:, ix] = np.linalg.solve(eye - s * G, (eye + s * G) @ B[:, ix])
+    np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
+
+
+def test_all_mode_legendre_force_is_skew_and_cayley_preserves_norm():
+    Nl, Nx = 16, 6
+    v_a, v_b = 4.0, 15.0
+    leg = legendre_constants(Nl, v_a, v_b)
+    gamma_vec = np.full(Nl, 0.5)
+    G = legendre_force_operator(leg["deriv"], gamma_vec, leg["xi_a"], leg["xi_b"], v_b - v_a)
+    np.testing.assert_allclose(G + G.T, 0.0, atol=2e-13)
+    eigenvalues, eigenvectors = np.linalg.eigh(1j * G)
+
+    rng = np.random.default_rng(4)
+    B = rng.standard_normal((Nl, Nx)) + 1j * rng.standard_normal((Nl, Nx))
+    E = rng.uniform(-2.0, 2.0, Nx)
+    updated = np.asarray(
+        legendre_cayley_update(
+            jnp.asarray(B),
+            jnp.asarray(E),
+            0.4,
+            leg["deriv"],
+            jnp.asarray(gamma_vec),
+            leg["xi_a"],
+            leg["xi_b"],
+            v_b - v_a,
+            jnp.asarray(eigenvalues),
+            jnp.asarray(eigenvectors),
+        )
+    )
+    np.testing.assert_allclose(np.sum(np.abs(updated) ** 2, axis=0), np.sum(np.abs(B) ** 2, axis=0), rtol=2e-11)
+
+    eye = np.eye(Nl)
+    expected = np.empty_like(B)
+    for ix in range(Nx):
+        s = 0.5 * 0.4 * E[ix]
+        expected[:, ix] = np.linalg.solve(eye - s * G, (eye + s * G) @ B[:, ix])
+    np.testing.assert_allclose(updated, expected, rtol=2e-11, atol=2e-11)
