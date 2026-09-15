@@ -21,8 +21,8 @@ class TimeIntegrator:
     This is the base class for all time integrators. This makes it so that we dont have to
     load the electric field solver and the Vlasov pushers in every time integrator
 
-    The available solvers for E df/dv are "exponential", "cubic-spline", and "lagrange7"
-    The only solver for v df/dx is "exponential"
+    Both advection directions support "exponential", "pfc3", and "sl-weno5".
+    Velocity advection additionally supports "cubic-spline" and "lagrange7".
 
     :param cfg: Dict
     :param grid: Grid object for configuration space
@@ -36,7 +36,17 @@ class TimeIntegrator:
         self.species_params = cfg["grid"]["species_params"]
         parallel = cfg["grid"].get("parallel", False)
         self.edfdv = self.get_edfdv(cfg, parallel)
-        self.vdfdx = vlasov.SpaceExponential(grid.x, self.species_grids, parallel=_is_parallel(parallel, "v"))
+        self.vdfdx = self.get_vdfdx(cfg, grid, parallel)
+
+    def get_vdfdx(self, cfg: dict, grid: Grid, parallel):
+        """Select periodic spatial advection, preserving the spectral default."""
+        method = cfg["terms"].get("vdfdx", "exponential")
+        if method != "exponential" and cfg["terms"]["field"] == "hampere":
+            raise ValueError("field: hampere requires vdfdx: exponential for its spectral current integration")
+        pushers = {"exponential": vlasov.SpaceExponential, "pfc3": vlasov.SpacePFC3, "sl-weno5": vlasov.SpaceSLWENO5}
+        if method not in pushers:
+            raise NotImplementedError(f"vdfdx: {method} has not been implemented")
+        return pushers[method](grid.x, self.species_grids, parallel=_is_parallel(parallel, "v"))
 
     def get_edfdv(self, cfg: dict, parallel):
         """Return the configured velocity-space advection operator."""
@@ -52,6 +62,9 @@ class TimeIntegrator:
             return vlasov.VelocityLagrange7(
                 self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x")
             )
+        elif cfg["terms"]["edfdv"] in {"pfc3", "sl-weno5"}:
+            pusher = vlasov.VelocityPFC3 if cfg["terms"]["edfdv"] == "pfc3" else vlasov.VelocitySLWENO5
+            return pusher(self.species_grids, self.species_params, parallel=_is_parallel(parallel, "x"))
         else:
             raise NotImplementedError(f"{cfg['terms']['edfdv']} has not been implemented")
 

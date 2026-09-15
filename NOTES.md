@@ -118,3 +118,38 @@ Append-only checkpoints for scientific model development and validation.
 - **Evidence or artifacts:** `tests/test_vlasov1d/test_velocity_lagrange7.py`; `tests/test_vlasov1d/test_strang.py`; vault mirror `Notes/adept/2026-09-05-214802-codex-strang-lagrange7-79ad3623.md`.
 - **Interpretation:** These are implementation checks, not a turbulence result or an extensive convergence study. The new interpolation is unlimited and does not renormalize boundary losses. Strang's second-order scope is the collisionless electrostatic update; existing collision/filter/transverse coupling is unchanged.
 - **Next:** Publish the branch and open the requested upstream PR. Downstream adoption is outside this task.
+
+## 2026-09-15 11:26:29 EDT — Positive conservative Vlasov remaps
+
+- **Checkpoint ID:** 20260915T152629Z-a93c6e28
+- **State:** PLANNED
+- **USER (verbatim):** "ok can you make a PR with these two new integrators for ADEPT?"
+- **Objective:** Add opt-in PFC3 and conservative SL-WENO5 positivity-preserving pushers in x and v, compatible with existing time splitting and large signed displacements, and open an upstream PR.
+- **Provenance:** Base origin/main 265d51d; branch codex/vlasov1d-positive-remaps; Python 3.14.3 / JAX 0.9.0.1 on local CPU.
+- **Design:** Cell-average remapping with integer shifts, bounded outgoing fractional cell mass, periodic x and zero-inflow/open v; retain existing default pushers. Validate positivity, conservation/boundary loss, spatial convergence, signed Courant numbers above one, gradients, multispecies forces and sharding.
+- **Observation:** No new numerical result yet. Turbulence notes record dt=0.02 and sixth-order splitting as the later production choice. New-remap accuracy at that timestep and A100 performance remain unmeasured.
+- **Evidence:** Vault mirror Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md; downstream context Notes/vp-turbulence/2026-09-06-071913-codex-cascade-resolution-ad70be43.md.
+- **Next:** Implement, run numerical and integration checks, document limitations, and submit the PR. No turbulence production run is part of this implementation task.
+
+## 2026-09-15 11:42:02 EDT — Positive remap implementation and focused checks
+
+- **Checkpoint ID:** 20260915T154202Z-c3b71a92
+- **State:** PARTIAL; implementation complete, full regression suite running.
+- **Action:** Added pfc3/sl-weno5 in both terms.vdfdx and terms.edfdv, preserving defaults. PFC3 limits a mean-preserving quadratic using its full-cell minimum; SL-WENO5 uses fractional-integral optimal weights, WENO-Z weights and a donor-mass positivity limiter. This is not the full Xiong MPP construction. Whole-cell offsets avoid CFL subcycling; open velocity boundaries have zero inflow.
+- **Observation:** 36 remap tests pass, including repeated discontinuous/cold-beam transport, analytic spatial convergence at signed CFL 2.37, vacuum, mass/outflow, float32/float64, gradients and multispecies sharding. 55 integration/legacy-pusher/config checks pass, including every stage of sixth-order splitting and public Strang lifecycle. All use four logical CPU devices. Ruff 0.15.22 lint/format and whitespace checks pass.
+- **Correction during development:** Initial vacuum normalization produced nonfinite reverse-mode gradients; a sqrt(tiny) scale bound fixed the tested case. Float64 grid spacing initially promoted float32 distributions; spacing now follows distribution dtype. Half precision is rejected after observing nonfinite float16 WENO weights.
+- **Provenance:** Python 3.14.3 / JAX 0.9.0.1; local MLflow sqlite database /tmp/adept-positive-tests.db for the broader existing suite. No NERSC or production turbulence runs.
+- **Limitations:** Existing initialization and moment quadrature are not upgraded to high-order cell integrals. Energy/Casimir conservation, full-scheme temporal order, production timestep adequacy and A100 performance remain unestablished.
+- **Evidence:** tests/test_vlasov1d/test_positive_remap.py; tests/test_vlasov1d/test_strang.py; docs/source/solvers/vlasov1d/config.md; vault Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md.
+- **Next:** Finish broader regressions and submit the reviewed PR.
+
+## 2026-09-15 11:46:51 EDT — Positive remap PR and local regression results
+
+- **Checkpoint ID:** 20260915T154651Z-4fd95a71
+- **State:** COMPLETED implementation and local validation; GitHub CI pending.
+- **Provenance:** Implementation commit 9374dfa; PR https://github.com/ergodicio/adept/pull/370; branch codex/vlasov1d-positive-remaps.
+- **Observation:** The broader Vlasov1D run completed with 173 passed, 7 deselected and 1 XPASS in 663.35 s, excluding test_config_regression.py as in CI. The final 36 remap checks passed separately after the dtype-preservation/unsupported-precision checks were finalized; the focused remap plus Strang run passed 52 checks before the six precision-rejection cases were added. Ruff lint/format and whitespace checks pass. Tests used local CPU JAX 0.9.0.1 with four logical devices, with MLflow redirected to a local sqlite database.
+- **GitHub status at checkpoint:** Pre-commit, package-install and Hermite-Poisson checks passed on implementation commit 9374dfa; Vlasov1D and Hermite-Legendre jobs were still running. These are not final-head CI claims for the subsequent notes-only commit.
+- **Evidence:** adept/_vlasov1d/solvers/pushers/conservative.py; tests/test_vlasov1d/test_positive_remap.py; tests/test_vlasov1d/test_strang.py; docs/source/solvers/vlasov1d/config.md; vault Notes/adept/2026-09-15-112629-codex-positive-remaps-a93c6e28.md.
+- **Scope:** Existing defaults and time splitters are retained. The implemented positivity-only SL-WENO5 limiter is distinct from a full MPP limiter. No GPU performance, turbulence accuracy, energy/Casimir conservation or full-scheme temporal-order result is claimed.
+- **Next:** Review PR #370 and complete CI. A production-shape A100 benchmark and matched turbulence comparison at dt=0.02 are separate follow-up work.
