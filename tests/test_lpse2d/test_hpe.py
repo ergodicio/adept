@@ -720,13 +720,13 @@ def test_translator_maps_the_hpe_controls():
         "hpe.enforceEnergyConservation": "true",
         "hpe.numStepsToAverageEnergyChange": "5",
         "hpe.metrics.nFluxMetrics": "2",
-        "hpe.metrics.flux.1.energy.min": "0",
-        "hpe.metrics.flux.1.energy.max": "50",
-        "hpe.metrics.flux.2.energy.min": "50",
-        "hpe.metrics.flux.2.energy.max": "1e9",
+        "hpe.metrics.fluxMetric.1.energy.min": "0",
+        "hpe.metrics.fluxMetric.1.energy.max": "0.05",
+        "hpe.metrics.fluxMetric.2.energy.min": "0.05",
+        "hpe.metrics.fluxMetric.2.energy.max": "1e6",
         "hpe.metrics.nPowerMetrics": "1",
-        "hpe.metrics.power.1.angle": "20",
-        "hpe.metrics.power.1.direction": "0 1 0",
+        "hpe.metrics.powerMetric.1.angle": "20",
+        "hpe.metrics.powerMetric.1.direction": "0 1 0",
     }
     cfg, report = translate_parms(parms, experiment="x", run="y")
     h = cfg["terms"]["hpe"]

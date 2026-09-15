@@ -471,7 +471,9 @@ def translate_parms(
                     edges.add(1.0e3 * float(g(key, default)))
             hpe["flux_bins"] = sorted(edges)
         if int(float(g("hpe.metrics.nPowerMetrics", "0"))) > 0:
-            prefix = "hpe.metrics.powerMetric.1" if "hpe.metrics.powerMetric.1.angle" in parms else "hpe.metrics.power.1"
+            prefix = "hpe.metrics.powerMetric.1"
+            if f"{prefix}.angle" not in parms:
+                prefix = "hpe.metrics.power.1"
             hpe["cone_angle"] = float(g(f"{prefix}.angle", "30"))
             direction = _floats(g(f"{prefix}.direction", "1 0 0"))
             hpe["cone_direction"] = [direction[0], direction[1] if len(direction) > 1 else 0.0]
