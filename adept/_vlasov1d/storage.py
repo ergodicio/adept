@@ -162,6 +162,25 @@ def get_field_save_func(cfg):
     return fields_save_func
 
 
+def _clamp_to_knots(q: jnp.ndarray, knots: jnp.ndarray) -> jnp.ndarray:
+    """Clamp interpolation query points into the range spanned by ``knots``.
+
+    Save axes built by :func:`_add_dim_axes` are endpoint-inclusive, while the
+    solver's own x and v axes are cell-centred.  A save axis that spans the full
+    domain therefore overhangs the outermost solver cell centres by half a solver
+    cell at each end -- for example a ``v: {vmin: -15, vmax: 15}`` save against a
+    ``vmax: 15`` solver grid queries exactly +/-15, which lies outside the
+    solver's outermost cell centres no matter how fine the grid is.  ``interp2d``
+    defaults to ``extrap=False`` and returns NaN there, which would silently
+    poison the edge rows/columns of every interpolated save.  Clamping gives
+    those cells the nearest solver-cell value instead.
+
+    ``min``/``max`` rather than the first/last element, so a descending or
+    otherwise unordered axis still yields the true range.
+    """
+    return jnp.clip(q, jnp.min(knots), jnp.max(knots))
+
+
 def get_dist_save_func(axes, dist_save_config, dist_key):
     """Build a save callback for full or interpolated distribution-function output."""
     if {"t"} == set(dist_save_config.keys()):
@@ -172,8 +191,9 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
 
     elif {"t", "x", "v"} == set(dist_save_config.keys()):
         xq, vq = jnp.meshgrid(dist_save_config["x"]["ax"], dist_save_config["v"]["ax"], indexing="ij")
-        xq_flat, vq_flat = xq.ravel(), vq.ravel()
         out_shape = xq.shape
+        xq_flat = _clamp_to_knots(xq.ravel(), axes["x"])
+        vq_flat = _clamp_to_knots(vq.ravel(), axes["v"])
 
         def dist_save_func(t, y, args):
             """Return the distribution interpolated on configured x-v sample points."""
@@ -181,8 +201,9 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
 
     elif {"t", "kx", "v"} == set(dist_save_config.keys()):
         kxq, vq = jnp.meshgrid(dist_save_config["kx"]["ax"], dist_save_config["v"]["ax"], indexing="ij")
-        kxq_flat, vq_flat = kxq.ravel(), vq.ravel()
         out_shape = kxq.shape
+        kxq_flat = _clamp_to_knots(kxq.ravel(), axes["kx"])
+        vq_flat = _clamp_to_knots(vq.ravel(), axes["v"])
 
         def dist_save_func(t, y, args):
             """Return the distribution spectrum interpolated on configured kx-v points."""
