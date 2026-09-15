@@ -1000,10 +1000,10 @@ class _WorkerPool:
     mirror/unlink) is where the throughput ceiling is (job 57235103: the
     nx=1797 boxes out-produced a single drain loop from the first scan).
 
-    Each worker is ``python -m adept.osiris.stream --drain-worker <socket>``
-    launched with ``ADEPT_SKIP_SOLVER_IMPORTS=1``, so it imports only the light
-    stack (h5py/numpy/xarray, ~1 s — no jax), and runs a plain
-    :class:`_DrainCore` fed over an AF_UNIX :mod:`multiprocessing.connection`.
+    Each worker is ``python -m adept.osiris.stream --drain-worker <socket>``;
+    ``adept``'s package ``__init__`` resolves solvers lazily, so the worker
+    imports only the light stack (h5py/numpy/xarray, ~1 s — no jax), and runs a
+    plain :class:`_DrainCore` fed over an AF_UNIX :mod:`multiprocessing.connection`.
     Message protocol (pickled tuples), parent -> worker::
 
         ("init", core_cfg)                                  -> ("ready",)
@@ -1024,7 +1024,6 @@ class _WorkerPool:
         self._listener = Listener(address, family="AF_UNIX", authkey=self._authkey)
         env = dict(
             os.environ,
-            ADEPT_SKIP_SOLVER_IMPORTS="1",
             ADEPT_STREAM_AUTHKEY=self._authkey.hex(),
             OMP_NUM_THREADS="1",  # conversion is IO/gzip-bound; don't oversubscribe cores
         )
