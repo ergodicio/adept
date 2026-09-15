@@ -327,8 +327,10 @@ def translate_parms(
     n_beams = int(float(g("laser.nBeams", "1")))
     intensity = 0.0
     angle_deg = 0.0
+    beams = []
     for b in range(1, n_beams + 1):
-        intensity += float(g(f"laser.{b}.intensity", "0"))
+        i_b = float(g(f"laser.{b}.intensity", "0"))
+        intensity += i_b
         direction = _floats(g(f"laser.{b}.direction", "1 0 0"))
         dz = direction[2] if len(direction) > 2 else 0.0
         if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] <= 0:
@@ -336,16 +338,28 @@ def translate_parms(
         beam_angle = float(np.degrees(np.arctan2(direction[1], direction[0])))
         if b == 1:
             angle_deg = beam_angle
-        elif abs(beam_angle - angle_deg) > 1e-6:
-            report["unsupported"].append(
-                f"laser.{b}.direction differs from beam 1: one pump angle ({angle_deg:.2f} deg)"
-            )
         if float(g(f"laser.{b}.polarization", "0")) != 0.0:
             report["unsupported"].append(f"laser.{b}.polarization != 0: adept pump is in-plane (p) polarized")
-        if float(g(f"laser.{b}.frequencyShift", "0")) != 0.0:
-            report["notes"].append(f"laser.{b}.frequencyShift ignored (single color)")
-    if n_beams > 1:
-        report["notes"].append(f"{n_beams} beamlets summed into one plane wave (no speckle)")
+        beams.append(
+            {
+                "intensity": i_b,
+                "angle": beam_angle,
+                "phase": float(g(f"laser.{b}.phase", "0")),
+                "delta_omega": float(g(f"laser.{b}.frequencyShift", "0")),
+            }
+        )
+    beam_extras = {}
+    if float(g("laser.1.width", "0")) > 0:
+        beam_extras["beam_width"] = f"{float(g('laser.1.width'))}um"
+        beam_extras["beam_sg_order"] = float(g("laser.1.sgOrder", g("laser.1.sgPower", "2")))
+        off = _floats(g("laser.1.offset", "0 0"))
+        beam_extras["beam_offset"] = f"{off[1] if len(off) > 1 else 0.0}um"
+    kap = float(g("laser.bandwidth.KAP.frequency", "0"))
+    if kap > 0:
+        beam_extras["kap_bandwidth"] = kap
+    if g("laser.pulse.file"):
+        beam_extras["pulse_file"] = g("laser.pulse.file")
+        report["notes"].append("laser.pulse.file: adept expects a two-column (t_ps, amplitude) text table")
     drivers = {
         "E0": {
             "shape": "uniform",
@@ -353,6 +367,8 @@ def translate_parms(
             "delta_omega_max": 0.0,
             "params": {"phases": {"seed": 42}},
             "angle": angle_deg,
+            **({"beams": beams} if n_beams > 1 else {}),
+            **beam_extras,
             "envelope": {
                 "tw": f"{10 * tmax}ps",
                 "tr": "0.01ps",

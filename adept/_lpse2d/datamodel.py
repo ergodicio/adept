@@ -110,6 +110,15 @@ class E0DriverModel(BaseModel):
     angle: float = Field(default=0.0, gt=-90.0, lt=90.0)
     # only in-plane ("p", LPSE polarization 0) is representable: lpse2d carries no z component
     polarization: Literal["p"] = "p"
+    # LPSE laser.N.* beams: [{intensity: fraction or W/cm^2 (normalised), angle: deg, phase: rad,
+    # delta_omega: dW/W0}]; every beam carries every color. Spectral injector and static pump only.
+    beams: list[dict] | None = None
+    beam_width: str | None = None  # LPSE laser.N.width: transverse (y) standard deviation of injected beams
+    beam_sg_order: float = 2.0  # LPSE laser.N.sgOrder of that transverse profile (2 = Gaussian)
+    beam_offset: str | None = None  # y position of the beam centre (LPSE laser.N.offset)
+    kap_bandwidth: float = Field(default=0.0, ge=0.0, lt=1.0)  # LPSE bandwidth.KAP.frequency (dW/W0)
+    kap_seed: int = 0
+    pulse_file: str | None = None  # LPSE laser.pulse.file: two-column (t_ps, relative amplitude) table
 
 
 class E1DriverModel(BaseModel):

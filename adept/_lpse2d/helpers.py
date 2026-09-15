@@ -557,12 +557,44 @@ def get_derived_quantities(cfg: dict) -> dict:
         if k == "E0":
             angle_deg = float(cfg["drivers"][k].get("angle", 0.0))
             cfg["drivers"][k]["derived"]["angle"] = float(np.deg2rad(angle_deg))
+            e0_cfg = cfg["drivers"][k]
+            beams = e0_cfg.get("beams") or [{"intensity": 1.0, "angle": angle_deg, "phase": 0.0, "delta_omega": 0.0}]
+            fraction = np.array([float(b.get("intensity", 1.0)) for b in beams], dtype=np.float64)
+            if np.any(fraction < 0) or fraction.sum() <= 0:
+                raise ValueError("drivers.E0.beams intensities must be non-negative with a positive sum")
+            cfg["drivers"][k]["derived"]["beam_fraction"] = fraction / fraction.sum()
+            cfg["drivers"][k]["derived"]["beam_angle"] = np.deg2rad(
+                np.array([float(b.get("angle", angle_deg)) for b in beams], dtype=np.float64)
+            )
+            cfg["drivers"][k]["derived"]["beam_phase"] = np.array(
+                [float(b.get("phase", 0.0)) for b in beams], dtype=np.float64
+            )
+            cfg["drivers"][k]["derived"]["beam_delta_omega"] = np.array(
+                [float(b.get("delta_omega", 0.0)) for b in beams], dtype=np.float64
+            )
+            cfg["drivers"][k]["derived"]["beam_width"] = (
+                _Q(e0_cfg["beam_width"]).to("um").value if e0_cfg.get("beam_width") else 0.0
+            )
+            cfg["drivers"][k]["derived"]["beam_sg_order"] = float(e0_cfg.get("beam_sg_order", 2.0))
+            cfg["drivers"][k]["derived"]["beam_offset"] = (
+                _Q(e0_cfg["beam_offset"]).to("um").value if e0_cfg.get("beam_offset") else 0.0
+            )
+            cfg["drivers"][k]["derived"]["kap_bandwidth"] = float(e0_cfg.get("kap_bandwidth", 0.0))
+            cfg["drivers"][k]["derived"]["kap_seed"] = int(e0_cfg.get("kap_seed", 0))
+            if e0_cfg.get("pulse_file"):
+                table = np.loadtxt(e0_cfg["pulse_file"], dtype=np.float64)
+                if table.ndim != 2 or table.shape[1] < 2:
+                    raise ValueError("drivers.E0.pulse_file must be a two-column (t_ps, amplitude) table")
+                cfg["drivers"][k]["derived"]["pulse_t"] = table[:, 0]
+                cfg["drivers"][k]["derived"]["pulse_amp"] = table[:, 1]
+            multi = len(beams) > 1 or any(float(b.get("angle", angle_deg)) != 0.0 for b in beams)
+            angle_deg = angle_deg if not multi else 1.0  # trips the same checks below
             if angle_deg != 0.0:
                 if cfg["drivers"][k].get("speckle", {}).get("enabled", False):
-                    raise ValueError("drivers.E0.angle != 0 is not supported together with drivers.E0.speckle")
+                    raise ValueError("drivers.E0.angle / beams are not supported together with drivers.E0.speckle")
                 if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral":
                     raise ValueError(
-                        "drivers.E0.angle != 0 with terms.light.pump_depletion needs terms.light.solver: spectral "
+                        "drivers.E0.angle / beams with terms.light.pump_depletion need terms.light.solver: spectral "
                         "(the FD two-point injector launches along +x only)"
                     )
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value

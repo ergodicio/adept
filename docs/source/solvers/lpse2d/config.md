@@ -253,6 +253,10 @@ The main laser pump for TPD/SRS simulations.
 | `num_colors` | int | Number of laser colors (optional) |
 | `angle` | float | (default `0`) in-plane angle of incidence from +x in degrees (LPSE `laser.N.direction`). The static pump is the single grid mode nearest to `k0 (cos a, sin a)` (both components snapped, as LPSE's `makeStaticField`), polarized perpendicular to the snapped k; the spectral pump injector launches at the y-snapped transverse wavenumber with the x group velocity setting the flux. Not with `speckle` or the FD injector |
 | `polarization` | string | (default `p`) only in-plane polarization is representable (LPSE `polarization = 0`); lpse2d carries no out-of-plane field component |
+| `beams` | list | LPSE `laser.N.*` beamlets for the static pump and the spectral injector: `[{intensity, angle, phase, delta_omega}]` (intensities are normalised to fractions; every beam carries every color; `angle` in degrees, `phase` in radians, `delta_omega` as a fraction of w0) |
+| `beam_width` | string | transverse (y) standard deviation of the injected beams (LPSE `laser.N.width`); with `beam_sg_order` (default 2, Gaussian) and `beam_offset` (y of the beam centre) it sets the super-Gaussian `exp(-((y-y0)^2/2 sigma^2)^(p/2))` of the spectral injector |
+| `kap_bandwidth` | float | (default `0`) Kubo-Anderson phase bandwidth as a fraction of w0 (LPSE `laser.bandwidth.KAP.frequency`): the pump phase jumps to a new uniform value every `2 pi / (kap_bandwidth w0)`, deterministically from `kap_seed` and the beam index |
+| `pulse_file` | string | LPSE `laser.pulse.file`: a two-column text table `(t_ps, relative amplitude)` interpolated in time and multiplied onto the pump amplitude |
 | `shape` | string | Amplitude shape: `"uniform"` (optional) |
 | `offset` | string | (pump depletion only, optional) Distance of the pump boundary injector from `xmin`, with unit. Default `2 * boundary_width` |
 | `turn_on_time` | string | (pump depletion only, optional) Gaussian turn-on time of the injector. Default `10fs` |

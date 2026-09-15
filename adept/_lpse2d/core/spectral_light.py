@@ -179,14 +179,32 @@ class SpectralCoupledLight(CoupledLight):
         # in-plane angle of incidence (drivers.E0.angle): the transverse wavenumber is snapped
         # to the periodic y grid, kx follows from the local dispersion per color, and the
         # field is polarised perpendicular to the snapped k (LPSE beam direction / polarization 0)
-        angle = float(pump.get("angle", 0.0))
         dky = 2.0 * np.pi / (cfg["grid"]["ny"] * cfg["grid"]["dy"])
-        self.ky_pump = float(np.round(k0_inject * np.sin(angle) / dky) * dky) if cfg["grid"]["ny"] > 1 else 0.0
-        if abs(self.ky_pump) >= k0_inject:
+        angles = np.atleast_1d(np.asarray(pump.get("beam_angle", [pump.get("angle", 0.0)]), dtype=np.float64))
+        ky_beams = np.round(k0_inject * np.sin(angles) / dky) * dky if cfg["grid"]["ny"] > 1 else np.zeros_like(angles)
+        if np.any(np.abs(ky_beams) >= k0_inject):
             raise ValueError(
-                f"drivers.E0.angle = {np.rad2deg(angle):.1f} deg cannot be launched at density {self.n_src}"
+                f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched at density {self.n_src}"
             )
+        self.ky_beams = jnp.asarray(ky_beams)
+        self.ky_pump = float(ky_beams[0])
+        self.beam_fraction = jnp.asarray(np.atleast_1d(pump.get("beam_fraction", [1.0])), dtype=jnp.float64)
+        self.beam_phase = jnp.asarray(np.atleast_1d(pump.get("beam_phase", [0.0])), dtype=jnp.float64)
+        self.beam_delta_omega = jnp.asarray(np.atleast_1d(pump.get("beam_delta_omega", [0.0])), dtype=jnp.float64)
         self.y_arr = jnp.asarray(cfg["grid"]["y"])
+        # transverse super-Gaussian of the injected beams (LPSE laser.N.width / sgOrder / offset)
+        width = float(pump.get("beam_width", 0.0) or 0.0)
+        if width > 0.0 and cfg["grid"]["ny"] > 1:
+            order = float(pump.get("beam_sg_order", 2.0))
+            y_rel = (np.asarray(cfg["grid"]["y"]) - float(pump.get("beam_offset", 0.0))) ** 2 / (2.0 * width**2)
+            self.beam_envelope_y = jnp.asarray(np.exp(-(y_rel ** (order / 2.0))))
+        else:
+            self.beam_envelope_y = jnp.ones(cfg["grid"]["ny"])
+        # Kubo-Anderson bandwidth: piecewise-constant random phase with correlation time 2 pi / (dW)
+        self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
+        self.kap_seed = int(pump.get("kap_seed", 0) or 0)
+        self.pulse_t = jnp.asarray(pump["pulse_t"]) if "pulse_t" in pump else None
+        self.pulse_amp = jnp.asarray(pump["pulse_amp"]) if "pulse_amp" in pump else None
         width = pump.get("injector_width", np.pi / k0_inject)
         self.pump_profile = jnp.asarray(
             gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
@@ -216,18 +234,40 @@ class SpectralCoupledLight(CoupledLight):
         delta_omega = pump_args["delta_omega"]  # (nc,)
         intensities = pump_args["intensities"]  # (nc, ny)
         phases = pump_args["phases"]  # (nc, ny)
-        k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.n_src)  # (nc,)
-        kx = jnp.sqrt(k0**2 - self.ky_pump**2)  # (nc,) longitudinal wavenumber of each color
-        v_gx = self.c**2 * kx / self.w0  # flux through the injector plane is set by the x group velocity
         eps0 = 1.0 - self.n_src
+        if self.pulse_t is not None:
+            t_env = t_env * jnp.interp(t, self.pulse_t, self.pulse_amp)
         amp = self.E0_source * jnp.sqrt(intensities) / eps0**0.25 * t_env * turn_on  # (nc, ny)
+        amp = amp * self.beam_envelope_y[None, :]
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
-        carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[self.i0]))  # (nc, nx)
-        source = (amp * v_gx[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[:, :, None]
-        source = jnp.sum(source, axis=0) * jnp.exp(1j * self.ky_pump * self.y_arr)[None, :]  # (nx, ny)
-        k_mag = jnp.sqrt(kx[0] ** 2 + self.ky_pump**2)
-        pol = jnp.stack([-self.ky_pump / k_mag, kx[0] / k_mag])  # perpendicular to the (first color's) k
-        return source[..., None] * pol[None, None, :]
+        total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 2), dtype=jnp.complex128)
+        for b in range(int(self.ky_beams.shape[0])):
+            ky_b = self.ky_beams[b]
+            dw_b = self.beam_delta_omega[b]
+            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega + dw_b) ** 2 - self.n_src)  # (nc,)
+            kx = jnp.sqrt(k0**2 - ky_b**2)  # (nc,) longitudinal wavenumber of each color
+            v_gx = self.c**2 * kx / self.w0  # flux through the injector plane is set by the x group velocity
+            beam_phase = self.beam_phase[b] - self.w0 * dw_b * t + self.kap_phase(t, b)
+            amp_b = amp * jnp.sqrt(self.beam_fraction[b]) * jnp.exp(1j * beam_phase)
+            carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[self.i0]))  # (nc, nx)
+            source = (amp_b * v_gx[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[
+                :, :, None
+            ]
+            source = jnp.sum(source, axis=0) * jnp.exp(1j * ky_b * self.y_arr)[None, :]  # (nx, ny)
+            k_mag = jnp.sqrt(kx[0] ** 2 + ky_b**2)
+            pol = jnp.stack([-ky_b / k_mag, kx[0] / k_mag])  # perpendicular to the (first color's) k
+            total = total + source[..., None] * pol[None, None, :]
+        return total
+
+    def kap_phase(self, t, beam: int):
+        """Kubo-Anderson process (LPSE bandwidth.KAP.frequency): the phase jumps to a new uniform
+        random value every 2 pi / (kap_bandwidth w0), with a deterministic hash of the interval."""
+        if self.kap_bandwidth <= 0.0:
+            return 0.0
+        tau = 2.0 * jnp.pi / (self.kap_bandwidth * self.w0)
+        index = jnp.floor(t / tau)
+        seed = 12.9898 * (index + 1.0) + 78.233 * (beam + 1.0) + 37.719 * self.kap_seed
+        return 2.0 * jnp.pi * jnp.mod(jnp.sin(seed) * 43758.5453, 1.0)
 
     def __call__(self, t, E0, E1, phi_k, pump_args, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None
