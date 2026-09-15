@@ -250,6 +250,8 @@ The main laser pump for TPD/SRS simulations.
 | `envelope` | object | Spatiotemporal envelope |
 | `delta_omega_max` | float | Maximum frequency spread (optional) |
 | `num_colors` | int | Number of laser colors (optional) |
+| `angle` | float | (default `0`) in-plane angle of incidence from +x in degrees (LPSE `laser.N.direction`). The static pump is the single grid mode nearest to `k0 (cos a, sin a)` (both components snapped, as LPSE's `makeStaticField`), polarized perpendicular to the snapped k; the spectral pump injector launches at the y-snapped transverse wavenumber with the x group velocity setting the flux. Not with `speckle` or the FD injector |
+| `polarization` | string | (default `p`) only in-plane polarization is representable (LPSE `polarization = 0`); lpse2d carries no out-of-plane field component |
 | `shape` | string | Amplitude shape: `"uniform"` (optional) |
 | `offset` | string | (pump depletion only, optional) Distance of the pump boundary injector from `xmin`, with unit. Default `2 * boundary_width` |
 | `turn_on_time` | string | (pump depletion only, optional) Gaussian turn-on time of the injector. Default `10fs` |

@@ -176,6 +176,17 @@ class SpectralCoupledLight(CoupledLight):
         self.detune1 = jnp.exp(self.dt_l * self.linear_coeff)
         pump = cfg["drivers"]["E0"]["derived"]
         k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
+        # in-plane angle of incidence (drivers.E0.angle): the transverse wavenumber is snapped
+        # to the periodic y grid, kx follows from the local dispersion per color, and the
+        # field is polarised perpendicular to the snapped k (LPSE beam direction / polarization 0)
+        angle = float(pump.get("angle", 0.0))
+        dky = 2.0 * np.pi / (cfg["grid"]["ny"] * cfg["grid"]["dy"])
+        self.ky_pump = float(np.round(k0_inject * np.sin(angle) / dky) * dky) if cfg["grid"]["ny"] > 1 else 0.0
+        if abs(self.ky_pump) >= k0_inject:
+            raise ValueError(
+                f"drivers.E0.angle = {np.rad2deg(angle):.1f} deg cannot be launched at density {self.n_src}"
+            )
+        self.y_arr = jnp.asarray(cfg["grid"]["y"])
         width = pump.get("injector_width", np.pi / k0_inject)
         self.pump_profile = jnp.asarray(
             gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
@@ -192,8 +203,8 @@ class SpectralCoupledLight(CoupledLight):
     absorption_factor = SpectralRamanLight.absorption_factor
 
     def calc_pump_source(self, t: float, pump_args: dict) -> Array:
-        """Smooth injector for the rightward pump, summed over colors: the (nx, ny) source
-        added to E0_y (the FD two-point rows are replaced)."""
+        """Smooth injector for the rightward (optionally oblique) pump, summed over colors:
+        the (nx, ny, 2) source added to E0 (the FD two-point rows are replaced)."""
         t_env = get_envelope(
             pump_args["tr"],
             pump_args["tr"],
@@ -206,13 +217,17 @@ class SpectralCoupledLight(CoupledLight):
         intensities = pump_args["intensities"]  # (nc, ny)
         phases = pump_args["phases"]  # (nc, ny)
         k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.n_src)  # (nc,)
-        v_g = self.c**2 * k0 / self.w0
+        kx = jnp.sqrt(k0**2 - self.ky_pump**2)  # (nc,) longitudinal wavenumber of each color
+        v_gx = self.c**2 * kx / self.w0  # flux through the injector plane is set by the x group velocity
         eps0 = 1.0 - self.n_src
         amp = self.E0_source * jnp.sqrt(intensities) / eps0**0.25 * t_env * turn_on  # (nc, ny)
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
-        carrier = jnp.exp(1j * k0[:, None] * (self.x[None, :] - self.x[self.i0]))  # (nc, nx)
-        source = (amp * v_g[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[:, :, None]
-        return jnp.sum(source, axis=0)  # (nx, ny)
+        carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[self.i0]))  # (nc, nx)
+        source = (amp * v_gx[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[:, :, None]
+        source = jnp.sum(source, axis=0) * jnp.exp(1j * self.ky_pump * self.y_arr)[None, :]  # (nx, ny)
+        k_mag = jnp.sqrt(kx[0] ** 2 + self.ky_pump**2)
+        pol = jnp.stack([-self.ky_pump / k_mag, kx[0] / k_mag])  # perpendicular to the (first color's) k
+        return source[..., None] * pol[None, None, :]
 
     def __call__(self, t, E0, E1, phi_k, pump_args, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None
@@ -235,7 +250,7 @@ class SpectralCoupledLight(CoupledLight):
             E1 = E1 * detune1[..., None] * absorb1
             if self.tpd_enabled:
                 E0 = E0 + self.dt_l * self.calc_tpd_depletion(t_i, phi_k)
-            E0 = E0.at[..., 1].add(self.dt_l * self.calc_pump_source(t_i, pump_args))
+            E0 = E0 + self.dt_l * self.calc_pump_source(t_i, pump_args)
             if seed_args is not None:
                 E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation. The exchange is an exact local rotation

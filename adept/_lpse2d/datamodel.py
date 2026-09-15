@@ -92,6 +92,12 @@ class E0DriverModel(BaseModel):
     num_colors: int
     envelope: EnvelopeModel
     speckle: SpeckleModel | None = None
+    # in-plane angle of incidence from +x in degrees (LPSE laser.N.direction): the static pump
+    # is the grid mode nearest to k0 (cos a, sin a); the spectral injector launches at the
+    # y-snapped transverse wavenumber. Not with speckle or the FD injector.
+    angle: float = Field(default=0.0, gt=-90.0, lt=90.0)
+    # only in-plane ("p", LPSE polarization 0) is representable: lpse2d carries no z component
+    polarization: Literal["p"] = "p"
 
 
 class E1DriverModel(BaseModel):

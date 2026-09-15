@@ -554,6 +554,17 @@ def get_derived_quantities(cfg: dict) -> dict:
             )
             if cfg["drivers"][k].get("injector_width") is not None:
                 cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
+        if k == "E0":
+            angle_deg = float(cfg["drivers"][k].get("angle", 0.0))
+            cfg["drivers"][k]["derived"]["angle"] = float(np.deg2rad(angle_deg))
+            if angle_deg != 0.0:
+                if cfg["drivers"][k].get("speckle", {}).get("enabled", False):
+                    raise ValueError("drivers.E0.angle != 0 is not supported together with drivers.E0.speckle")
+                if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral":
+                    raise ValueError(
+                        "drivers.E0.angle != 0 with terms.light.pump_depletion needs terms.light.solver: spectral "
+                        "(the FD two-point injector launches along +x only)"
+                    )
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
@@ -608,8 +619,12 @@ def _pump_k_support(cfg: dict) -> tuple[float, float]:
         ky = k0 * numerical_aperture
     else:
         ky = 0.0
+    # an oblique pump (drivers.E0.angle) carries k0 sin(angle) in y
+    angle = np.deg2rad(float(cfg["drivers"]["E0"].get("angle", 0.0)))
+    kx_support = k0 * abs(np.cos(angle))
+    ky = max(ky, k0 * abs(np.sin(angle)))
 
-    return float(k0), float(ky)
+    return float(kx_support), float(ky)
 
 
 def get_solver_quantities(cfg: dict) -> dict:

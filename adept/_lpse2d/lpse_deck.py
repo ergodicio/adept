@@ -299,13 +299,22 @@ def translate_parms(
     # ---- laser beams (static: intensities summed; direction along +x expected)
     n_beams = int(float(g("laser.nBeams", "1")))
     intensity = 0.0
+    angle_deg = 0.0
     for b in range(1, n_beams + 1):
         intensity += float(g(f"laser.{b}.intensity", "0"))
         direction = _floats(g(f"laser.{b}.direction", "1 0 0"))
-        if abs(direction[0]) < 0.999 * np.linalg.norm(direction):
-            report["unsupported"].append(f"laser.{b}.direction oblique {direction}: adept pump is along +x")
+        dz = direction[2] if len(direction) > 2 else 0.0
+        if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] <= 0:
+            report["unsupported"].append(f"laser.{b}.direction {direction}: adept pump is in-plane and rightward")
+        beam_angle = float(np.degrees(np.arctan2(direction[1], direction[0])))
+        if b == 1:
+            angle_deg = beam_angle
+        elif abs(beam_angle - angle_deg) > 1e-6:
+            report["unsupported"].append(
+                f"laser.{b}.direction differs from beam 1: one pump angle ({angle_deg:.2f} deg)"
+            )
         if float(g(f"laser.{b}.polarization", "0")) != 0.0:
-            report["unsupported"].append(f"laser.{b}.polarization != 0: adept pump is y-polarized")
+            report["unsupported"].append(f"laser.{b}.polarization != 0: adept pump is in-plane (p) polarized")
         if float(g(f"laser.{b}.frequencyShift", "0")) != 0.0:
             report["notes"].append(f"laser.{b}.frequencyShift ignored (single color)")
     if n_beams > 1:
@@ -316,6 +325,7 @@ def translate_parms(
             "num_colors": 1,
             "delta_omega_max": 0.0,
             "params": {"phases": {"seed": 42}},
+            "angle": angle_deg,
             "envelope": {
                 "tw": f"{10 * tmax}ps",
                 "tr": "0.01ps",
