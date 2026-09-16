@@ -99,6 +99,15 @@ class RamanLight:
         # source and pairs with the EPW in a spurious two-wave instability (in the test_006
         # cross-check: 41/ps energy growth against LPSE's 5.8/ps)
         self.transverse_source = bool(cfg["terms"].get("light", {}).get("transverse_source", True))
+        # terms.light.transverse_fields: the FD curl-curl propagator (compact 3-point second
+        # differences, centred cross difference) has a non-zero discrete divergence, so a
+        # 2-D-structured transverse field acquires a longitudinal part at the discretisation
+        # level every step (percent level at k0 dx ~ 1-2; an oblique plane wave at 5 deg: 5 %).
+        # That part does not propagate and, driven by the EPW sources that see the whole
+        # field, is exactly what the projected pump-depletion term cannot return energy from
+        # (plan 2 N.4). Project the evolved light fields onto their transverse part once per
+        # EPW step, as the spectral solver keeps them by construction
+        self.transverse_fields = bool(cfg["terms"].get("light", {}).get("transverse_fields", True))
 
         background_density = cfg["grid"]["background_density"]
         # local detuning of the Raman envelope (MATLAB line 1668-1670)
@@ -266,4 +275,7 @@ class RamanLight:
                 self.n_over_nc1 if iaw_density is None else self.n_over_nc1 * (1.0 + iaw_density / self.n_over_env)
             )
             absorb = jnp.exp(-self.absorption_rate1 * self.dt_l * n_over_nc**2)[..., None]
-        return lax.fori_loop(0, self.n_sub, substep, E1)
+        E1 = lax.fori_loop(0, self.n_sub, substep, E1)
+        if self.transverse_fields:
+            E1 = transverse_part(E1, self.kx_arr, self.ky_arr, self.one_over_k_sq)
+        return E1

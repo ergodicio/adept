@@ -380,4 +380,9 @@ class CoupledLight(RamanLight):
         if self.light_filter is not None:
             E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.light_filter, axes=(0, 1))
             E1 = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.light_filter, axes=(0, 1))
+        if self.transverse_fields:
+            # drop the longitudinal part the FD curl-curl generated over the sub-steps (see
+            # RamanLight); a y-uniform plane-wave pump is unchanged
+            E0 = transverse_part(E0, self.kx_arr, self.ky_arr, self.one_over_k_sq)
+            E1 = transverse_part(E1, self.kx_arr, self.ky_arr, self.one_over_k_sq)
         return E0, E1

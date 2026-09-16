@@ -304,6 +304,12 @@ class LightModel(BaseModel):
     # without this it accumulates the source and pairs with the EPW in a spurious
     # two-wave instability (41/ps energy growth against LPSE's 5.8/ps in test_006)
     transverse_source: bool = True
+    # fd solver: project the evolved light fields (E0 with pump depletion, E1) onto their
+    # transverse part once per EPW step. The FD curl-curl propagator's discrete divergence
+    # is not zero, so 2-D-structured transverse fields acquire a longitudinal part every
+    # step (percent level at k0 dx ~ 1-2) that no propagator moves and that the EPW sources
+    # see while the projected TPD depletion term cannot return energy from it (plan 2 N.4)
+    transverse_fields: bool = True
     # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
     # or the amplitude rate at nc in 1/ps
     absorption: bool | float = False
