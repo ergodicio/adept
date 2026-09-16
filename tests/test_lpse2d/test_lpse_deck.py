@@ -174,3 +174,30 @@ def test_read_lpse_metrics_and_frames():
     # the x-space field is smooth along x on the scale of one cell but not constant
     assert np.abs(pots).std() > 0
 
+
+@pytest.mark.skipif(not RUN_025.exists(), reason="no LPSE reference run present (local or MLflow)")
+def test_read_frames_layout_is_c_order_x_then_y():
+    """test_025 (40 x 5 um, 720 x 90 nodes, ``grid.downSampleFactors = 1 4``): LPSE writes
+    ``(Nx, Ny)`` in C order (y fastest). The ``downSample_4`` frame is the full frame
+    subsampled by 4 along both axes under that layout and nothing recognisable under the
+    x-fastest one; the 2 um ``lw.Labc`` skirts along x (``Labc.y = 0``) lower ``<|phi|>`` in
+    the outer 36 cells of axis 0."""
+    from adept._lpse2d.lpse_deck import read_frames
+
+    (header, pots), _ = read_frames(RUN_025 / "lpse.pots")
+    (dheader, down), _ = read_frames(RUN_025 / "lpse.pots.downSample_4")
+    assert (dheader["Nx"], dheader["Ny"]) == (180, 23) and down.shape == (180, 23)
+    sub = pots[::4, ::4][:180, :23]
+    np.testing.assert_allclose(down, sub, rtol=1e-6, atol=1e-6 * np.abs(pots).max())
+    # under the wrong (transposed) layout the same subsample does not match at all
+    wrong = pots.ravel().reshape((90, 720)).T
+    overlap = abs(np.vdot(down.ravel(), wrong[::4, ::4][:180, :23].ravel())) / (
+        np.linalg.norm(down) * np.linalg.norm(sub)
+    )
+    assert overlap < 0.6
+    profile = np.abs(pots).mean(axis=1)
+    edges = np.concatenate([profile[:36], profile[-36:]]).mean()
+    assert edges < 0.9 * profile[100:-100].mean()
+    # no absorber along y: the y-profile is flat to the noise level
+    yprof = np.abs(pots).mean(axis=0)
+    assert yprof.std() / yprof.mean() < 0.1

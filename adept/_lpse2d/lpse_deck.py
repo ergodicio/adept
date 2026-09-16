@@ -557,7 +557,15 @@ def read_metrics(path: str | Path) -> dict[str, np.ndarray]:
 def read_frames(path: str | Path) -> list[tuple[dict, np.ndarray]]:
     """Read an LPSE binary field file: a list of ``(header, array)`` per frame, the array
     complex ``(Nx, Ny)`` (single precision in the file; ``FileType=real`` gives a real
-    array). Header values are parsed to float where possible."""
+    array; ``Nz > 1`` gives ``(Nx, Ny, Nz)``). Header values are parsed to float where
+    possible.
+
+    LPSE writes the field in C order ``(Nx, Ny, Nz)`` — the last index varies fastest — so
+    a 2-D frame is ``reshape((Nx, Ny))`` with *no* transpose. Verified on
+    ``runs/test_025``: the ``lpse.pots.downSample_4`` frame equals ``pots[::4, ::4]`` of
+    the full frame under this layout (normalized inner product 1.0000) and not under the
+    x-fastest one (0.49); the 2 um ``lw.Labc`` skirts along x show up as a 17 % dip of
+    ``<|phi|>`` in the outer 36 cells of axis 0, and the field is isotropically smooth."""
     blob = Path(path).read_bytes()
     frames = []
     begin = b"# BeginHeaderSegment;"
@@ -588,8 +596,9 @@ def read_frames(path: str | Path) -> list[tuple[dict, np.ndarray]]:
             arr = raw[0::2] + 1j * raw[1::2]
         else:
             arr = raw.astype(np.float64)
-        # LPSE stores x fastest (MATLAB reshape([Nx Ny]) column-major)
-        arr = arr.reshape((nz, ny, nx)).transpose(2, 1, 0)[:, :, 0]
+        arr = arr.reshape((nx, ny, nz))
+        if nz == 1:
+            arr = arr[:, :, 0]
         frames.append((header, arr))
         pos = start + 4 * count
     return frames

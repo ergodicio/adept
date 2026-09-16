@@ -1031,7 +1031,7 @@ def _lpse_density_profile(cfg: dict) -> np.ndarray:
         else:
             from adept._lpse2d.lpse_deck import read_frames
 
-            arr = np.real(read_frames(path)[-1][1]).T  # LPSE stores x fastest: (ny, nx) -> (nx, ny)
+            arr = np.real(read_frames(path)[-1][1])  # already (nx, ny)
         arr = np.asarray(arr, dtype=np.float64)
         if arr.ndim == 1:
             arr = np.repeat(arr[:, None], ny, axis=-1)
