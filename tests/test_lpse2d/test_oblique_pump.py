@@ -7,6 +7,8 @@ import pytest
 import yaml
 from jax import numpy as jnp
 
+from adept._lpse2d.parity import deck_path
+
 
 def _finish(cfg):
     from adept._lpse2d.helpers import (
@@ -113,11 +115,11 @@ def test_fd_injector_refuses_an_oblique_pump():
         _finish(cfg)
 
 
+@pytest.mark.skipif(deck_path("test_010") is None, reason="original-lpse example decks not available")
 def test_translator_maps_the_test_010_beam_direction():
     from adept._lpse2d.lpse_deck import parse_parms, translate_parms
 
-    deck = "/home/phil/Desktop/Ergodic-projects/original-lpse/examples/testRuns/test_010/lpse.parms"
-    cfg, report = translate_parms(parse_parms(deck), experiment="x", run="test_010")
+    cfg, report = translate_parms(parse_parms(deck_path("test_010")), experiment="x", run="test_010")
     assert abs(cfg["drivers"]["E0"]["angle"] - np.degrees(np.arctan2(0.28735, 0.95783))) < 1e-3
     assert not any("direction" in u for u in report["unsupported"])
 

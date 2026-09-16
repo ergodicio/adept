@@ -10,7 +10,12 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-LPSE_ROOT = Path("/home/phil/Desktop/Ergodic-projects/original-lpse")
+from adept._lpse2d.parity import lpse_root, reference_run_dir
+
+# ``$LPSE_ROOT`` or the ``original-lpse`` checkout beside this repository (or its worktree
+# parents); the shipped decks need the checkout, the reference-run tests fall back to the
+# ``lpse_reference/`` artifact tree on MLflow ``lpse-parity`` when the local run is absent.
+LPSE_ROOT = lpse_root() or Path("original-lpse-not-found")
 DECKS = LPSE_ROOT / "examples" / "testRuns"
 
 
@@ -149,10 +154,11 @@ def test_lpse_exp_profile_and_thermal_noise_without_debye_factor():
     np.testing.assert_allclose(kick[band] / kick_debye[band], np.sqrt(1.0 + (kx**2 + ky**2) * lam_sq)[band], rtol=1e-12)
 
 
-RUN_025 = LPSE_ROOT / "runs" / "test_025" / "data"
+_RUN_025 = reference_run_dir("test_025")
+RUN_025 = _RUN_025 / "data" if _RUN_025 is not None else Path("test_025-not-found")
 
 
-@pytest.mark.skipif(not RUN_025.exists(), reason="no LPSE reference run present")
+@pytest.mark.skipif(not RUN_025.exists(), reason="no LPSE reference run present (local or MLflow)")
 def test_read_lpse_metrics_and_frames():
     from adept._lpse2d.lpse_deck import read_frames, read_metrics
 
@@ -167,3 +173,4 @@ def test_read_lpse_metrics_and_frames():
     assert frames[1][0]["time"] == pytest.approx(1.0)
     # the x-space field is smooth along x on the scale of one cell but not constant
     assert np.abs(pots).std() > 0
+
