@@ -73,6 +73,64 @@ class ZakUnits:
         self.potential_zak_to_cgs = self.field_zak_to_cgs * self.um_per_zak * 1.0e-4
         self.field_zak_to_adept = self.field_zak_to_cgs / FIELD_SCALE_ADEPT
         self.potential_zak_to_adept = self.potential_zak_to_cgs / POTENTIAL_SCALE_ADEPT
+        # LPSE writes its potential frames (lw.save.pots) scaled by this factor -- the file holds
+        # e phi / (m_e c^2), not the ZAK potential (saveInNormalizedUnits is forced true,
+        # ParameterManager.cpp:442, 1247; ZakharovSolver.cpp:504)
+        self.potential_normalization_factor = QE_CGS / (ME_CGS * C_CGS**2) * self.potential_zak_to_cgs
+        # the electron density frames (lw.save.rho) carry potentialNormalizationFactor / (k0 in ZAK)^2
+        self.rho_normalization_factor = (
+            self.potential_normalization_factor / (self.um_per_zak * 1.0e-4 * self.laser_frequency / C_CGS) ** 2
+        )
+
+    @classmethod
+    def from_cfg(cls, cfg: dict) -> ZakUnits:
+        """The ZAK system of an adept config (``units`` block; ``atomic number`` is
+        ``MiOverMe / 1836.15`` as the translator writes it)."""
+        from astropy.units import Quantity as _Q
+
+        units = cfg["units"]
+        return cls(
+            _Q(units["reference electron temperature"]).to("keV").value,
+            _Q(units["reference ion temperature"]).to("keV").value,
+            float(units["ionization state"]),
+            float(units["atomic number"]) * 1836.15,
+            float(units["envelope density"]),
+            _Q(units["laser_wavelength"]).to("um").value,
+        )
+
+    def noise_amp_k0(self, h_um: float, nx: int, ny: int = 1, nz: int = 1) -> float:
+        """LPSE's ``lw.noise.calcNoiseAmp_K0`` (``ParameterManager.cpp:1440-1444``), the
+        k-space potential-kick constant of the ``lw.noise.isCalculated`` source for a grid of
+        square cells ``h_um`` (um) and ``nx x ny x nz`` nodes:
+
+            (2 pi / h)^nDim / (3 (2 pi)^{3/2} sqrt(eta) M^{1/4} sqrt(N_zak) L_zak^{3/2})
+                / sqrt(No_zak Lambda_d^3) / sqrt(deltaK3)
+
+        with ``N_zak = No / No_zak`` (No in 1/cm^3), ``L_zak = kde * debyeLength`` (cm),
+        ``Lambda_d = 1 / kde``, ``deltaK_i = 2 pi / (N_i h)`` (ZAK) and ``deltaK3`` the product
+        of ``nDim`` of them, the transverse one squared in 2-D. Its own source comments say
+        the derivation "doesn't all match"; this is the expression the code uses. test_010
+        (Te 2, Ti 1, Z 1, Mi/Me 1836, n_env 0.25, 20 x 10 um on 360 x 180 nodes) prints
+        1.7885e+00; this returns 1.78853."""
+        n_dim = 1 + int(ny > 1) + int(nz > 1)
+        h = h_um * self.zak_per_um
+        two_pi = 2.0 * np.pi
+        dk = [two_pi / (nx * h), two_pi / (ny * h), two_pi / (nz * h)]
+        if n_dim == 1:
+            delta_k3 = dk[0] ** 3
+        elif n_dim == 2:
+            delta_k3 = dk[0] * dk[1] ** 2
+        else:
+            delta_k3 = dk[0] * dk[1] * dk[2]
+        n_zak = self.n0 / self.n0_zak
+        l_zak = self.kde * self.debye_length_cm
+        lambda_d = 1.0 / self.kde
+        return float(
+            (two_pi / h) ** n_dim
+            / (3.0 * two_pi**1.5 * np.sqrt(self.eta) * self.big_m**0.25 * np.sqrt(n_zak) * l_zak**1.5)
+            / np.sqrt(self.n0_zak * lambda_d**3)
+            / np.sqrt(delta_k3)
+        )
 
     def summary(self) -> dict:
         return {
@@ -251,16 +309,13 @@ def translate_parms(
     noise_on = _bool(g("lw.noise.enable"))
     noise_amp_lpse = float(g("lw.noise.amplitude", "1" if _bool(g("lw.noise.isCalculated")) else "0"))
     noise_calculated = _bool(g("lw.noise.isCalculated"))
-    if noise_calculated:
-        report["notes"].append(
-            "lw.noise.isCalculated: LPSE's absolute constant is not reproduced; adept's equipartition "
-            "calibration (noise_calibrate) is used with the deck amplitude as multiplier"
-        )
     source = {
         "noise": noise_on,
         "noise_model": "thermal",
         "noise_debye_factor": noise_calculated,
-        "noise_calibrate": noise_calculated,
+        # isCalculated: LPSE's own calcNoiseAmp_K0 constant (ZakUnits.noise_amp_k0) with the
+        # deck amplitude as multiplier; otherwise the plain amplitude converted to adept units
+        "noise_calibrate": "lpse" if noise_calculated else False,
         "noise_amplitude": float(
             noise_amp_lpse if noise_calculated else noise_amp_lpse * zak.zak_per_um * zak.potential_zak_to_adept
         ),
@@ -559,6 +614,11 @@ def read_frames(path: str | Path) -> list[tuple[dict, np.ndarray]]:
     complex ``(Nx, Ny)`` (single precision in the file; ``FileType=real`` gives a real
     array; ``Nz > 1`` gives ``(Nx, Ny, Nz)``). Header values are parsed to float where
     possible.
+
+    The values are what LPSE wrote: ``lw.save.pots`` frames are scaled by
+    ``potentialNormalizationFactor`` (``saveInNormalizedUnits`` is forced on), so a potential
+    frame holds ``e phi / (m_e c^2)``; divide by ``ZakUnits.potential_normalization_factor``
+    for the ZAK potential (``rho`` frames: ``rho_normalization_factor``).
 
     LPSE writes the field in C order ``(Nx, Ny, Nz)`` — the last index varies fastest — so
     a 2-D frame is ``reshape((Nx, Ny))`` with *no* transpose. Verified on

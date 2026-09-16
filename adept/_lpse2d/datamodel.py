@@ -232,8 +232,10 @@ class DampingModel(BaseModel):
 class SourceModel(BaseModel):
     """EPW sources. ``noise_model: flat`` is the MATLAB per-step source ``dt * amplitude``
     with a random phase on every retained mode; ``thermal`` is LPSE's fluctuation-
-    dissipation source (see ``epw.noise_kick_spectrum``), optionally calibrated to the
-    electron temperature with ``noise_calibrate``. ``noise_max_wavenumber`` (units of k0)
+    dissipation source (see ``epw.noise_kick_spectrum``), optionally calibrated with
+    ``noise_calibrate``: ``equipartition`` (``true``) sets the amplitude from the electron
+    temperature, ``lpse`` uses LPSE's own ``lw.noise.calcNoiseAmp_K0`` constant (the
+    ``isCalculated`` source). ``noise_max_wavenumber`` (units of k0)
     is LPSE ``lw.noise.maxWavenumber``. ``tpd_form: lpse`` keeps LPSE's exact TPD
     coefficient and its ``(w0/wp0 - 1)`` charge-density factor; ``matlab`` is the
     prototype's ``w0 -> 2 wp0`` form (identical at envelope density 0.25)."""
@@ -242,7 +244,7 @@ class SourceModel(BaseModel):
     noise_model: Literal["flat", "thermal"] = "flat"
     noise_amplitude: float = 1e-10
     noise_seed: int | None = None
-    noise_calibrate: bool = False
+    noise_calibrate: bool | Literal["equipartition", "lpse"] = False
     noise_debye_factor: bool = True  # thermal model: keep the 1/sqrt(1 + k^2 lambda_D^2) spectrum shape
     noise_max_wavenumber: float | None = None
     tpd: bool

@@ -201,3 +201,130 @@ def test_read_frames_layout_is_c_order_x_then_y():
     # no absorber along y: the y-profile is flat to the noise level
     yprof = np.abs(pots).mean(axis=0)
     assert yprof.std() / yprof.mean() < 0.1
+
+
+# ------------------------------------------------ LPSE thermal-noise constant (plan 2 N.3) --
+
+
+def test_lpse_noise_constant_matches_the_value_lpse_prints():
+    """test_010 (Te 2, Ti 1, Z 1, Mi/Me 1836, n_env 0.25, 0.351 um; 20 x 10 um on 360 x 180
+    nodes, so h = 20/359 um) prints ``calcNoiseAmp_K0: 1.7885e+00`` (runs/test_010/lpse.out)."""
+    from adept._lpse2d.lpse_deck import ZakUnits
+
+    zak = ZakUnits(2.0, 1.0, 1.0, 1836.0, 0.25, 0.351)
+    assert zak.noise_amp_k0(20.0 / 359.0, 360, 180) == pytest.approx(1.7885, rel=1e-4)
+    # the normalization LPSE applies to its saved potential frames: e phi / (m_e c^2) per ZAK
+    assert 0.0 < zak.potential_normalization_factor < 1.0
+
+
+def _noise_cfg(calibrate, amplitude=1.0):
+    import yaml
+
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
+        cfg = yaml.safe_load(fi)
+    # test_010's plasma; a 64 x 32 box of square 0.1 um cells
+    cfg["units"].update(
+        {
+            "atomic number": 1836.0 / 1836.15,
+            "ionization state": 1,
+            "envelope density": 0.25,
+            "reference electron temperature": "2keV",
+            "reference ion temperature": "1keV",
+        }
+    )
+    cfg["density"] = {"basis": "uniform", "val": 0.25}
+    cfg["grid"].update({"xmax": "6.4um", "dx": "0.1um", "ymax": "1.6um", "ymin": "-1.6um", "tmax": "10fs", "dt": "2fs"})
+    cfg["terms"]["epw"]["source"].update(
+        {
+            "noise": True,
+            "noise_model": "thermal",
+            "noise_calibrate": calibrate,
+            "noise_amplitude": amplitude,
+            "tpd": False,
+        }
+    )
+    cfg["terms"]["epw"]["damping"]["collisions"] = 1.0
+    return _finish(cfg)
+
+
+def test_noise_calibrate_lpse_reproduces_lpse_kick_expression_mode_by_mode():
+    """``noise_calibrate: lpse`` must give, per retained mode, LPSE's k-space kick
+    ``A calcNoiseAmp_K0 / sqrt(1 + K^2 Lambda_d^2) sqrt(1 - exp(-2 gamma dt)) / |K|`` (ZAK, K in
+    1/zak) converted to this code's k-space potential (``potential_zak_to_adept``), and differ
+    from the equipartition calibration by a k-independent factor."""
+    from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
+    from adept._lpse2d.lpse_deck import ZakUnits
+
+    cfg = _noise_cfg("lpse", amplitude=0.7)
+    kick = np.asarray(noise_kick_spectrum(cfg))
+    grid, derived = cfg["grid"], cfg["units"]["derived"]
+    zak = ZakUnits.from_cfg(cfg)
+    kx = np.asarray(grid["kx"])[:, None]
+    ky = np.asarray(grid["ky"])[None, :]
+    k_sq = kx**2 + ky**2
+    retained = kick > 0
+    assert retained.sum() > 100
+    gamma = np.asarray(analytic_landau_rate(cfg)) + derived["nu_coll"]
+    c0 = zak.noise_amp_k0(grid["dx"], grid["nx"], grid["ny"])
+    big_k = np.sqrt(np.where(k_sq > 0, k_sq, 1.0)) / zak.zak_per_um  # 1/zak
+    lambda_d = 1.0 / zak.kde
+    lpse_kick = 0.7 * c0 / np.sqrt(1.0 + big_k**2 * lambda_d**2) * np.sqrt(-np.expm1(-2.0 * gamma * grid["dt"])) / big_k
+    expected = lpse_kick * zak.potential_zak_to_adept
+    np.testing.assert_allclose(kick[retained], expected[retained], rtol=1e-6)
+    # LPSE's Debye length equals this code's vte/wp0 (both use v_te^2 = kT/m)
+    assert lambda_d / zak.zak_per_um == pytest.approx(np.sqrt(derived["vte_sq"]) / derived["wp0"], rel=1e-4)
+    # equipartition and lpse differ by a constant factor across the band
+    equi = np.asarray(noise_kick_spectrum(_noise_cfg("equipartition", amplitude=0.7)))
+    ratio = kick[retained] / equi[retained]
+    assert ratio.std() < 1e-9 * ratio.mean()
+    # noise_calibrate: true is the equipartition calibration (unchanged behaviour)
+    np.testing.assert_array_equal(np.asarray(noise_kick_spectrum(_noise_cfg(True, amplitude=0.7))), equi)
+    with pytest.raises(ValueError, match="noise_calibrate"):
+        noise_kick_spectrum(_noise_cfg("bogus"))
+
+
+@pytest.mark.skipif(not DECKS.exists(), reason="original-lpse example decks not available")
+def test_translator_maps_is_calculated_to_noise_calibrate_lpse():
+    from adept._lpse2d.lpse_deck import parse_parms, translate_parms
+
+    cfg, report = translate_parms(parse_parms(DECKS / "test_010" / "lpse.parms"), run="test_010")
+    source = cfg["terms"]["epw"]["source"]
+    assert source["noise_calibrate"] == "lpse" and source["noise_debye_factor"] is True
+    assert source["noise_amplitude"] == 1.0  # the deck's lw.noise.amplitude multiplies LPSE's constant
+    assert not any("isCalculated" in n for n in report["notes"])
+
+
+@pytest.mark.skipif(not RUN_025.exists(), reason="no LPSE reference run present (local or MLflow)")
+def test_025_noise_floor_matches_the_fluctuation_dissipation_prediction():
+    """test_025 (EPW only, ``lw.noise.amplitude = 1``, collisional rate 1/ps + Landau, no
+    isCalculated): the interior ``<|phi|^2>`` of LPSE's potential frames at 0.5 and 1.0 ps
+    equals adept's expectation for the translated deck, ``sum_k D_k^2 (1 - exp(-2 gamma_k t))
+    / (1 - exp(-2 gamma_k dt)) / N^2`` (Parseval; the frame holds e phi / (m_e c^2)), within
+    the plan's 10 % -- with no adept run. Without the frame normalization the same comparison
+    reads 3e-4, without the transient 0.6 / 0.8: it is sensitive to every factor."""
+    from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
+    from adept._lpse2d.lpse_deck import ZakUnits, parse_parms, read_frames, translate_parms
+
+    cfg, _ = translate_parms(parse_parms(RUN_025.parent / "lpse.parms"), run="test_025")
+    cfg = _finish(cfg)
+    grid, derived = cfg["grid"], cfg["units"]["derived"]
+    nx, ny, dt = grid["nx"], grid["ny"], grid["dt"]
+    kick = np.asarray(noise_kick_spectrum(cfg))
+    kx = np.asarray(grid["kx"])[:, None]
+    ky = np.asarray(grid["ky"])[None, :]
+    k_sq = kx**2 + ky**2
+    gamma = np.asarray(analytic_landau_rate(cfg)) + derived["nu_coll"] * np.where(k_sq > 0, 1.0, 0.0)
+    retained = kick > 0
+    steady = np.where(retained, kick**2 / np.where(retained, -np.expm1(-2.0 * gamma * dt), 1.0), 0.0)
+    zak = ZakUnits.from_cfg(cfg)
+    x = np.asarray(grid["x"])
+    interior = (x > 6.0) & (x < 34.0)  # beyond the 2 um lw.Labc skirts
+    ratios = []
+    for header, pots in read_frames(RUN_025 / "lpse.pots"):
+        t = float(header["time"])
+        phi = pots / zak.potential_normalization_factor * zak.potential_zak_to_adept
+        expected = np.sum(steady * -np.expm1(-2.0 * gamma * t) * retained) / (nx * ny) ** 2
+        ratios.append(np.mean(np.abs(phi[interior, :]) ** 2) / expected)
+    assert len(ratios) == 2
+    for r in ratios:
+        assert r == pytest.approx(1.0, abs=0.10), ratios

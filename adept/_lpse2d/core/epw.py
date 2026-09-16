@@ -185,13 +185,21 @@ def noise_kick_spectrum(cfg: dict) -> np.ndarray:
     convention, and the ``1/|k|`` converts field to potential, so the steady state of
     ``phi_k *= exp(-gamma_k dt); phi_k += D_k e^{i theta}`` is the Cerenkov spectrum
     ``<|E_k|^2> = A^2 / (1 + k^2 lambda_D^2)`` per mode (x-space envelope amplitude
-    squared), independent of dt. With ``noise_calibrate: true`` the amplitude is set from
-    the electron temperature by equipartition -- electric energy ``kT/2`` per mode over
-    the box volume ``V`` (``Lz = Ly`` for the 2-D box, ``V = Lx^3`` when ny = 1, following
-    LPSE's ``deltaK3``): ``A_thermal = sqrt(8 pi kT / V)``, and ``noise_amplitude`` then
-    multiplies it (LPSE's ``isCalculated`` convention, amplitude 1 = thermal). Modes with
-    no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere is refused,
-    as in LPSE ("Cannot add LW noise without damping").
+    squared), independent of dt. ``noise_calibrate`` sets ``A`` from the plasma instead of
+    taking ``noise_amplitude`` literally; ``noise_amplitude`` then multiplies it (LPSE's
+    ``isCalculated`` convention, amplitude 1 = thermal):
+
+    - ``equipartition`` (or ``true``): electric energy ``kT/2`` per mode over the box volume
+      ``V`` (``Lz = Ly`` for the 2-D box, ``V = Lx^3`` when ny = 1, following LPSE's
+      ``deltaK3``): ``A_thermal = sqrt(8 pi kT / V)``;
+    - ``lpse``: LPSE's own constant ``lw.noise.calcNoiseAmp_K0`` (``ZakUnits.noise_amp_k0``)
+      converted from its ZAK k-space potential to this code's:
+      ``A = calcNoiseAmp_K0 * potential_zak_to_adept * zak_per_um / (nx ny)`` -- the
+      ``zak_per_um`` is the ``1/|K|`` of LPSE's kick expressed in 1/um, the ``1/(nx ny)``
+      cancels the ``N`` below (both codes add the kick to an unnormalized-FFT potential).
+
+    Modes with no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere
+    is refused, as in LPSE ("Cannot add LW noise without damping").
     """
     grid = cfg["grid"]
     source = cfg["terms"]["epw"]["source"]
@@ -223,21 +231,33 @@ def noise_kick_spectrum(cfg: dict) -> np.ndarray:
             "terms.epw.source.noise_model: thermal needs EPW damping (Landau and/or collisions) on the "
             "retained band -- LPSE refuses noise without damping and so does this model"
         )
-    if source.get("noise_calibrate", False):
+    nx, ny = int(grid["nx"]), int(grid["ny"])
+    n_total = float(nx * ny)
+    calibrate = source.get("noise_calibrate", False)
+    calibrate = "equipartition" if calibrate is True else (str(calibrate) if calibrate else "none")
+    if calibrate == "equipartition":
         # kT in this code's energy unit (massScale * spatialScale^2 / timeScale^2, cgs)
         from astropy.units import Quantity as _Q
 
         te_kev = _Q(cfg["units"]["reference electron temperature"]).to("keV").value
         energy_scale = derived["massScale"] * derived["spatialScale"] ** 2 / derived["timeScale"] ** 2
         kT = te_kev * 1.602176634e-9 / energy_scale
-        nx, ny = int(grid["nx"]), int(grid["ny"])
         lx = nx * grid["dx"]
         ly = ny * grid["dy"]
         volume = lx**3 if ny == 1 else lx * ly * ly
         amplitude = amplitude * np.sqrt(8.0 * np.pi * kT / volume)
+    elif calibrate == "lpse":
+        from adept._lpse2d.lpse_deck import ZakUnits
+
+        zak = ZakUnits.from_cfg(cfg)
+        h_um = min(float(grid["dx"]), float(grid["dy"])) if ny > 1 else float(grid["dx"])  # LPSE h_xyz
+        amplitude = amplitude * zak.noise_amp_k0(h_um, nx, ny) * zak.potential_zak_to_adept * zak.zak_per_um / n_total
+    elif calibrate != "none":
+        raise ValueError(
+            f"terms.epw.source.noise_calibrate must be false, true, 'equipartition' or 'lpse', got {calibrate!r}"
+        )
 
     lambda_d_sq = derived["vte_sq"] / derived["wp0"] ** 2
-    n_total = float(grid["nx"] * grid["ny"])
     k_safe = np.sqrt(np.where(k_sq > 0, k_sq, 1.0))
     two_g_dt = 2.0 * gamma * dt
     # LPSE switches to the small-argument form below 1e-4 to avoid a float32 cancellation;
