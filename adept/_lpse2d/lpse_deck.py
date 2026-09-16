@@ -519,7 +519,7 @@ def translate_parms(
             hpe["allow_growth"] = True
         if _bool(g("hpe.enforceEnergyConservation")):
             hpe["energy_conservation"] = True
-            hpe["energy_conservation_steps"] = float(g("hpe.numStepsToAverageEnergyChange", "1"))
+            hpe["energy_conservation_steps"] = float(g("hpe.numStepsToAverageEnergyChange", "10"))  # LPSE default
         n_flux = int(float(g("hpe.metrics.nFluxMetrics", "0")))
         if n_flux > 0:
             # LPSE hpe.metrics.fluxMetric.N.energy.{min,max} in keV (the decks bin a 2 keV plasma at

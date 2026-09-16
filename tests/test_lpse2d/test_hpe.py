@@ -684,23 +684,69 @@ def test_magnetic_field_rotates_momentum_without_changing_energy():
 
 
 def test_energy_conservation_multiplier_tracks_the_particle_gain():
+    """Plan 2 N.2: the multiplier solves LPSE's exponential expected-loss form,
+    ``W (1 - exp(-2 dt M gamma)) = gain`` on a single mode, i.e. ``M = -ln(1 - gain/W) / (2 dt gamma)``,
+    to LPSE's 1 % tolerance; the linearised ``gain / (2 dt gamma W)`` is only its small-argument
+    limit and under-estimates ``M`` on strongly damped modes."""
     from adept._lpse2d.core.hpe import HybridParticleEvolution
 
     cfg = _make_cfg({"energy_conservation": True, "energy_conservation_steps": 1.0})
     hpe = HybridParticleEvolution(cfg)
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
     phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128).at[3, 0].set(1.0e-3)
+    wave = float(hpe.wave_energy_scale * jnp.sum(hpe.k_sq * jnp.abs(phi_k) ** 2))
+    scale = hpe.particle_energy_scale
+
+    def exact(gamma, gain):
+        return -np.log(1.0 - gain / wave) / (2.0 * hpe.dt * gamma)
+
+    # weakly damped: the exponential and linear forms agree to 0.1 %
     gamma_l = jnp.full((nx, ny), 0.1)
-    loss = float(hpe.wave_energy_scale * jnp.sum(2.0 * gamma_l * hpe.dt * hpe.k_sq * jnp.abs(phi_k) ** 2))
-    d_kinetic = 2.0 * loss / hpe.particle_energy_scale  # particles gained twice the expected wave loss
-    m = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(d_kinetic))
-    np.testing.assert_allclose(float(m[0]), 2.0, rtol=1e-6)
-    m_clamped = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(100.0 * d_kinetic))
+    gain = 2.0 * (2.0 * 0.1 * hpe.dt * wave)
+    m = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(gain / scale))
+    np.testing.assert_allclose(float(m[0]), exact(0.1, gain), rtol=1e-2)
+    assert abs(float(m[0]) - 2.0) < 5e-3
+    assert float(hpe.expected_wave_loss(m[0], gamma_l, phi_k)) == pytest.approx(gain, rel=1e-2)
+    # strongly damped (2 gamma dt = 1): gain = W/2 needs M = ln 2 = 0.693, the linear form says 0.5
+    gamma_s = jnp.full((nx, ny), 0.5 / hpe.dt)
+    m_s = hpe.ld_multiplier(jnp.ones((1,)), gamma_s, phi_k, jnp.asarray(0.5 * wave / scale))
+    np.testing.assert_allclose(float(m_s[0]), np.log(2.0), rtol=1e-2)
+    assert float(m_s[0]) > 0.6
+    # clamped at LPSE's MAX_MULTIPLIER = 10 when the particles gained far more than any loss,
+    # and at 1/10 when they lost energy
+    m_clamped = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(100.0 * gain / scale))
     np.testing.assert_allclose(float(m_clamped[0]), 10.0, rtol=1e-6)
+    m_floor = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(-gain / scale))
+    np.testing.assert_allclose(float(m_floor[0]), 0.1, rtol=1e-6)
     # with a running average over 4 steps the multiplier moves a quarter of the way
     cfg4 = _make_cfg({"energy_conservation": True, "energy_conservation_steps": 4.0})
-    m4 = HybridParticleEvolution(cfg4).ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(d_kinetic))
-    np.testing.assert_allclose(float(m4[0]), 1.25, rtol=1e-6)
+    m4 = HybridParticleEvolution(cfg4).ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(gain / scale))
+    np.testing.assert_allclose(float(m4[0]), 1.0 + (exact(0.1, gain) - 1.0) / 4.0, rtol=1e-2)
+
+
+def test_energy_conservation_running_average_and_warm_up_gate():
+    """LPSE averages the particle energy change over ``numStepsToAverageEnergyChange`` steps
+    and re-solves the multiplier only after that many feedback steps; before that the
+    applied rate is the HPE rate times the previous (initial, 1) multiplier."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg = _make_cfg({"energy_conservation": True, "energy_conservation_steps": 3.0, "n_particles": 2000})
+    hpe = HybridParticleEvolution(cfg)
+    derived = cfg["units"]["derived"]
+    state = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
+    phi_k, _ = _single_mode_phi_k(cfg, 0.28 * derived["wp0"] / np.sqrt(derived["vte_sq"]), 1e-9)
+    state["epw"] = jnp.asarray(phi_k)
+    mults, powers = [], []
+    for i in range(6):
+        state = hpe(i * cfg["grid"]["dt"], state)
+        mults.append(float(state["hpe_ld_multiplier"][0]))
+        powers.append(float(state["hpe_particle_power"][0]))
+    # gate: counts 1, 2, 3 keep the initial multiplier; from the 4th call it is re-solved
+    assert mults[:3] == [1.0, 1.0, 1.0]
+    assert any(m != 1.0 for m in mults[3:])
+    # the running average carries state between calls
+    assert any(powers[i] != powers[i - 1] for i in range(1, 6))
+    assert state["hpe_particle_power"].shape == (1,)
 
 
 def test_translator_maps_the_hpe_controls():
