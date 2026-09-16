@@ -543,7 +543,8 @@ class SpectralEPWSolver:
             t: Current time
             phi_k: Potential in k-space
             ex, ey: Electric field components in real space
-            E0: Pump field in real space, shape (nx, ny, 2)
+            E0: Pump field in real space, shape (nx, ny, nc); only its in-plane components
+                couple to the in-plane EPW field (an s-polarised pump drives no TPD)
 
         Returns:
             TPD source term in k-space
@@ -584,8 +585,8 @@ class SpectralEPWSolver:
         filter is skipped on the static-laser path, line 2308).
 
         Args:
-            E0: Pump field (shape: nx, ny, 2)
-            E1: Raman field (shape: nx, ny, 2)
+            E0: Pump field (shape: nx, ny, nc)
+            E1: Raman field (shape: nx, ny, nc)
 
         Returns:
             SRS source term in k-space
@@ -593,7 +594,9 @@ class SpectralEPWSolver:
         E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
         if self.pump_depletion:
             E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
-        E0_dot_E1 = E0[..., 0] * jnp.conj(E1_filtered[..., 0]) + E0[..., 1] * jnp.conj(E1_filtered[..., 1])
+        # E0 . E1* over every component: with three-component fields (plan 2 F.1) the
+        # out-of-plane pair E0z E1z* drives s-polarised SRS
+        E0_dot_E1 = jnp.sum(E0 * jnp.conj(E1_filtered), axis=-1)
 
         # (1 + backgroundDensityPerturbation) = n / n_envelope
         source = self.srs_prefactor * self.background_density / self.envelope_density * E0_dot_E1

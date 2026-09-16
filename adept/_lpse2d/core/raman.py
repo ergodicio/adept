@@ -2,14 +2,7 @@ import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
 
-
-def transverse_part(field: Array, kx: Array, ky: Array, one_over_k_sq: Array) -> Array:
-    """The transverse (divergence-free) part of an (nx, ny, 2) x-space vector field, via the
-    k-space projector ``F - k (k . F) / k^2`` (LPSE ``LightSolver::getTransversePartOfSourceTerm``)."""
-    fx_k = jnp.fft.fft2(field[..., 0])
-    fy_k = jnp.fft.fft2(field[..., 1])
-    kdote = (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq
-    return jnp.stack([jnp.fft.ifft2(fx_k - kx[:, None] * kdote), jnp.fft.ifft2(fy_k - ky[None, :] * kdote)], axis=-1)
+from adept._lpse2d.core.vector import transverse_part  # re-exported for light.py and the tests
 
 
 def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
@@ -154,6 +147,9 @@ class RamanLight:
             self.seed_enabled = True
         else:
             self.seed_enabled = False
+        # component the seed injector writes: y (in-plane, p-polarised) unless drivers.E1
+        # asks for the out-of-plane z component (plan 2 F.2)
+        self.seed_component = int(cfg["drivers"].get("E1", {}).get("derived", {}).get("component", 1))
 
     def _d2x(self, f: Array) -> Array:
         return (jnp.roll(f, -1, axis=0) - 2.0 * f + jnp.roll(f, 1, axis=0)) / self.dx**2
@@ -207,9 +203,16 @@ class RamanLight:
             # MATLAB: i*w1/2 * [1 - wp0^2/w1^2 * (n_b/n_env + Nelf)] E1
             linear_coeff = linear_coeff - 1j * self.wp0**2 / (2.0 * self.w1) * iaw_density
 
-        # paraxial propagation with cross-derivative terms (MATLAB lines 1663-1671)
-        k_e1x = self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + linear_coeff * e1x
-        k_e1y = self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + linear_coeff * e1y
+        # paraxial propagation with cross-derivative terms (MATLAB lines 1663-1671): the
+        # discrete curl-curl on the in-plane components; the out-of-plane component (k_z = 0)
+        # sees the plain Laplacian, -(curl curl E)_z = laplacian(E_z)
+        k_e1 = [
+            self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + linear_coeff * e1x,
+            self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + linear_coeff * e1y,
+        ]
+        if E1.shape[-1] == 3:
+            e1z = E1[..., 2]
+            k_e1.append(self.diffraction_coeff * (self._d2x(e1z) + self._d2y(e1z)) + linear_coeff * e1z)
 
         # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation);
         # CoupledLight switches it off here when it integrates the exchange exactly
@@ -217,15 +220,15 @@ class RamanLight:
             source = (self.srs_coeff * jnp.conj(laplacian_phi))[..., None] * E0
             if self.transverse_source:
                 source = transverse_part(source, self.kx_arr, self.ky_arr, self.one_over_k_sq)
-            k_e1x += source[..., 0]
-            k_e1y += source[..., 1]
+            k_e1 = [k + source[..., i] for i, k in enumerate(k_e1)]
 
         if seed_args is not None:
             row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)
-            k_e1y = k_e1y.at[self.i1, :].add(row_i1)
-            k_e1y = k_e1y.at[self.i1 + 1, :].add(row_i1p1)
+            c = self.seed_component
+            k_e1[c] = k_e1[c].at[self.i1, :].add(row_i1)
+            k_e1[c] = k_e1[c].at[self.i1 + 1, :].add(row_i1p1)
 
-        return jnp.stack([k_e1x, k_e1y], axis=-1)
+        return jnp.stack(k_e1, axis=-1)
 
     def __call__(
         self,

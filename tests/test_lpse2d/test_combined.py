@@ -171,7 +171,8 @@ def test_unified_source_is_the_separate_sources_at_quarter_critical():
     t = 0.3
 
     source = combined.unified_source(t, E0, E1)
-    (lx_k, ly_k), (tx_k, ty_k) = longitudinal_transverse(source, combined.kx, combined.ky, combined.one_over_k_sq)
+    l_k, t_k = longitudinal_transverse(source, combined.kx, combined.ky, combined.one_over_k_sq)
+    (lx_k, ly_k), (tx_k, ty_k) = (l_k[..., 0], l_k[..., 1]), (t_k[..., 0], t_k[..., 1])
 
     # longitudinal part as a potential source vs TPD (E_L) + SRS (E_T) / (n/n_env)
     phi_source = _phi_from_source_field(source, cfg)
@@ -187,7 +188,8 @@ def test_unified_source_is_the_separate_sources_at_quarter_critical():
     # transverse part vs the Raman coupling, transverse-projected
     lap_phi = jnp.fft.ifft2(-epw.k_sq * phi)
     coupling = raman.srs_coeff * jnp.conj(lap_phi)[..., None] * E0
-    _, (cx_k, cy_k) = longitudinal_transverse(coupling, combined.kx, combined.ky, combined.one_over_k_sq)
+    _, c_k = longitudinal_transverse(coupling, combined.kx, combined.ky, combined.one_over_k_sq)
+    cx_k, cy_k = c_k[..., 0], c_k[..., 1]
     band = np.asarray(band)
     np.testing.assert_allclose(
         np.asarray(tx_k) * band, np.asarray(cx_k) * band, rtol=1e-9, atol=1e-11 * np.abs(cx_k).max()
@@ -212,7 +214,8 @@ def test_unified_depletion_is_srs_plus_tpd_depletion_at_quarter_critical():
     unified = combined.unified_depletion(t, E1)
     lap_phi = jnp.fft.ifft2(-combined.k_sq * phi)
     srs_dep = separate.srs_depletion_coeff0 * lap_phi[..., None] * e_t
-    _, (sx_k, sy_k) = longitudinal_transverse(srs_dep, combined.kx, combined.ky, combined.one_over_k_sq)
+    _, s_k = longitudinal_transverse(srs_dep, combined.kx, combined.ky, combined.one_over_k_sq)
+    sx_k, sy_k = s_k[..., 0], s_k[..., 1]
     srs_dep_t = jnp.stack([jnp.fft.ifft2(sx_k), jnp.fft.ifft2(sy_k)], axis=-1)
     expected = srs_dep_t + separate.calc_tpd_depletion(t, phi)
     np.testing.assert_allclose(

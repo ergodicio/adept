@@ -1399,10 +1399,17 @@ def make_field_xarrays(cfg, this_t, state, td):
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
     ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
     ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
-    e0x = xr.DataArray(np.array(state["E0"]).view(_complex)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e0y = xr.DataArray(np.array(state["E0"]).view(_complex)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e1x = xr.DataArray(np.array(state["E1"]).view(_complex)[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
-    e1y = xr.DataArray(np.array(state["E1"]).view(_complex)[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e0_all = np.array(state["E0"]).view(_complex)
+    e1_all = np.array(state["E1"]).view(_complex)
+    e0x = xr.DataArray(e0_all[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e0y = xr.DataArray(e0_all[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1x = xr.DataArray(e1_all[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
+    e1y = xr.DataArray(e1_all[..., 1], coords=(tax_tuple, xax_tuple, yax_tuple))
+    # the out-of-plane components (plan 2 F.1); saved only when the state carries them
+    z_fields = {}
+    if e0_all.shape[-1] == 3:
+        z_fields["e0z"] = xr.DataArray(e0_all[..., 2], coords=(tax_tuple, xax_tuple, yax_tuple))
+        z_fields["e1z"] = xr.DataArray(e1_all[..., 2], coords=(tax_tuple, xax_tuple, yax_tuple))
 
     from scipy import interpolate
 
@@ -1460,6 +1467,7 @@ def make_field_xarrays(cfg, this_t, state, td):
         "e0_y": e0y,
         "e1_x": e1x,
         "e1_y": e1y,
+        **({"e0_z": z_fields["e0z"], "e1_z": z_fields["e1z"]} if z_fields else {}),
         "background_density": background_density,
         **poynting,
     }
@@ -1844,7 +1852,9 @@ def get_default_save_func(cfg):
             if srs_on:
                 e1 = y["E1"].view(jnp.complex128)
                 out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))
-                out["reflectivity"] = sqrt_eps1 * jnp.mean(jnp.abs(e1[ix_probe, :, 1]) ** 2) / E0_source_sq
+                # the transverse components at the probe (y, and z for an s-polarised seed)
+                e1_probe_sq = jnp.sum(jnp.abs(e1[ix_probe, :, 1:]) ** 2, axis=-1)
+                out["reflectivity"] = sqrt_eps1 * jnp.mean(e1_probe_sq) / E0_source_sq
                 out["reflected_flux"] = -discrete_flux(e1, ix_left, flux_coeff_w1) / corr_e1_left / I0_code
                 out["backrefl_flux"] = discrete_flux(e1, ix_right, flux_coeff_w1) / corr_e1_right / I0_code
             else:

@@ -42,6 +42,7 @@ from jax import numpy as jnp
 from adept._base_ import get_envelope
 from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.raman import RamanLight, transverse_part
+from adept._lpse2d.core.vector import fft2c, ifft2c, split_k, with_components
 
 
 def gaussian_injector_profile(x: np.ndarray, x_inject: float, width: float, dx: float) -> np.ndarray:
@@ -59,20 +60,14 @@ def transverse_propagate(
     band: Array | float = 1.0,
     keep_longitudinal: bool = True,
 ) -> Array:
-    """Apply ``propagator`` (nx, ny) to the transverse part of ``field`` (nx, ny, 2) in k-space
+    """Apply ``propagator`` (nx, ny) to the transverse part of ``field`` (nx, ny, nc) in k-space
     and return the result in x-space. The longitudinal part is not propagated; it is kept
     inside the retained light ``band`` (LPSE zeroes every component outside the band and the
     anti-aliasing region, ``LightSolver.cpp:3720-3735``) or dropped altogether when
-    ``keep_longitudinal`` is False."""
-    fx_k = jnp.fft.fft2(field[..., 0])
-    fy_k = jnp.fft.fft2(field[..., 1])
-    kdote = (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq
-    lx_k, ly_k = kx[:, None] * kdote, ky[None, :] * kdote
-    tx_k, ty_k = fx_k - lx_k, fy_k - ly_k
-    l_factor = band if keep_longitudinal else 0.0
-    fx_k = l_factor * lx_k + propagator * tx_k
-    fy_k = l_factor * ly_k + propagator * ty_k
-    return jnp.stack([jnp.fft.ifft2(fx_k), jnp.fft.ifft2(fy_k)], axis=-1)
+    ``keep_longitudinal`` is False. A z component (k_z = 0) is entirely transverse."""
+    longitudinal_k, transverse_k = split_k(fft2c(field), kx, ky, one_over_k_sq)
+    l_factor = (jnp.asarray(band)[..., None] if jnp.ndim(band) else band) if keep_longitudinal else 0.0
+    return ifft2c(l_factor * longitudinal_k + propagator[..., None] * transverse_k)
 
 
 class SpectralRamanLight(RamanLight):
@@ -148,7 +143,7 @@ class SpectralRamanLight(RamanLight):
                 coupling = transverse_part(coupling, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             E1 = E1 + self.dt_l * coupling
             if seed_args is not None:
-                E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
+                E1 = E1.at[..., self.seed_component].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation; the longitudinal part is kept only
             # inside the light band
             E1 = transverse_propagate(
@@ -289,10 +284,10 @@ class SpectralCoupledLight(CoupledLight):
             E0 = E0 * detune0[..., None] * absorb0
             E1 = E1 * detune1[..., None] * absorb1
             if self.tpd_enabled:
-                E0 = E0 + self.dt_l * self.calc_tpd_depletion(t_i, phi_k)
-            E0 = E0 + self.dt_l * self.calc_pump_source(t_i, pump_args)
+                E0 = E0 + self.dt_l * with_components(self.calc_tpd_depletion(t_i, phi_k), E0.shape[-1])
+            E0 = E0 + self.dt_l * with_components(self.calc_pump_source(t_i, pump_args), E0.shape[-1])
             if seed_args is not None:
-                E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
+                E1 = E1.at[..., self.seed_component].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation. The exchange is an exact local rotation
             # that cannot be projected term by term, so with transverse_source the fields
             # themselves are kept transverse here (equivalent to projecting every source)

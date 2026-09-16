@@ -81,8 +81,12 @@ class Light:
         # (envelope-density) plasma frequency wp0 and snapped to the nearest FFT grid mode, so the
         # pump is exactly periodic on the grid. The local density swelling is applied as an
         # amplitude factor *after* the transform (not as a spatially-varying phase).
+        # the prescribed pump replaces the state's E0 wholesale, so it carries the state's
+        # component count (3 = x, y, z since plan 2 F.1; 2 for the older tests); the static
+        # p-polarised pump has no z component
+        nc = int(y["E0"].shape[-1]) if isinstance(y, dict) and "E0" in y else 3
         if self.multi_beam or self.kap_bandwidth > 0.0 or self.pulse_t is not None:
-            return self._oblique_update(t_ps, light_wave)
+            return self._oblique_update(t_ps, light_wave, nc)
         E0y_k = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
             delta_omega = light_wave["delta_omega"][i]
@@ -117,14 +121,14 @@ class Light:
             # Shape: (1, ny) -> (ny,)
             dE0y = dE0y * (envelope[0, :] / self.speckle_normalization)[None, :]
 
-        return jnp.stack([self.dE0x, dE0y], axis=-1)
+        return jnp.stack([self.dE0x, dE0y] + [self.dE0x] * (nc - 2), axis=-1)
 
-    def _oblique_update(self, t_ps: float, light_wave: dict) -> jnp.ndarray:
+    def _oblique_update(self, t_ps: float, light_wave: dict, nc: int = 3) -> jnp.ndarray:
         """Oblique static pump: each color is the single grid mode nearest to
         ``k0(delta_omega) (cos a, sin a)`` (LPSE ``makeStaticField`` rounds both components),
         built in x-space, with the field along ``(-sin a', cos a')`` of the *snapped* direction
         so that E0 is exactly transverse; the swelling factor is applied as in the normal case."""
-        E0 = jnp.zeros((self.nx, self.ny, 2), dtype=jnp.complex128)
+        E0 = jnp.zeros((self.nx, self.ny, nc), dtype=jnp.complex128)
         xx = self.x[:, None]
         yy = self.y[None, :]
         pulse = jnp.interp(t_ps, self.pulse_t, self.pulse_amp) if self.pulse_t is not None else 1.0
@@ -140,7 +144,8 @@ class Light:
                 kx = jnp.round(k0 * jnp.cos(angle) / self.dk) * self.dk
                 ky = jnp.round(k0 * jnp.sin(angle) / self.dky) * self.dky
                 k_snapped = jnp.sqrt(kx**2 + ky**2)
-                pol = jnp.stack([-ky / k_snapped, kx / k_snapped])  # unit vector perpendicular to k
+                # unit vector perpendicular to k, in the plane (p-polarised); no z component
+                pol = jnp.concatenate([jnp.stack([-ky / k_snapped, kx / k_snapped]), jnp.zeros(nc - 2)])
                 amp = (
                     pulse * self.E0_source * jnp.sqrt(intensity) * jnp.exp(-1j * (delta_omega * self.w0 * t_ps - phase))
                 )

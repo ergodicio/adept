@@ -524,13 +524,17 @@ terms:
     t_start: 2ps
 ```
 
+## Light-field components
+
+The pump `E0` and the Raman (or combined) field `E1` carry three components `(x, y, z)` on the 2-D grid, as LPSE's `XcComplex3` fields do on any grid. With `k_z = 0` the z component is purely transverse: every longitudinal/transverse projector acts on the in-plane pair and passes `E_z` through, the FD propagator advances it with the plain Laplacian (`-(curl curl E)_z = laplacian E_z`), it never enters the EPW potential `phi_k = i k . E_k / k^2`, and it never drives TPD (the EPW field is in-plane). It does drive SRS through `E0 . E1*`, so an s-polarised pump (`drivers.E0.polarization: 90`) scatters into an s-polarised Raman wave and drives no TPD. The fields output gains `e0_z` and `e1_z`; `reflectivity` and the flux series sum over every transverse component. A two-component checkpoint from before this change is padded with `E_z = 0` on restart. With `E_z = 0` throughout, every solver path reproduces the two-component code bit for bit (tests/test_lpse2d/test_three_component_fields.py).
+
 ## Diagnostics: Poynting flux and Thomson probes
 
 `save.fields.poynting: true` adds the light energy-flux density maps `s0_x`, `s0_y` (pump) and `s1_x`, `s1_y` (Raman) to the fields output, `S_j = (c^2/omega) Im(E* . d_j E)` in field-squared times um/ps (`v_g |E|^2` for a plane wave; LPSE `laser.save.S0` / `raman.save.S0`). `save.thomson: [{k: [kx, ky], bandwidth: 0.1, field: epw}]` adds synthetic Thomson-scattering probes to the default series (LPSE `thomsonScattering.N.wavevector.lw/.iaw` and `bandwidth`): for probe `i`, `thomson_i_re` / `thomson_i_im` are the summed complex amplitude of the EPW potential (or, with `field: iaw`, of the IAW density) over the k-window `|k - k_probe| < bandwidth k0`, and `thomson_i_power` the summed spectral power there; `k` and `bandwidth` are in units of the vacuum laser wavenumber.
 
 ## Checkpoint and restart
 
-`save.checkpoint: true` (or a path) writes the complete solver state at `grid.tmax` as an `.npz` (`binary/checkpoint.npz` in the run's artifacts when `true`); `restart: {file: <that .npz>}` in a later configuration resumes from it: the state replaces the fresh initial condition, integration starts at the checkpoint time, and the series/fields save axes start there too unless their `tmin` is later. The per-step noise and wall keys are folded in from the time index, so a run split into two resumes reproduces the unbroken run to round-off as long as the split time is a multiple of `grid.dt` (the fixed-step solver would otherwise clip one step differently). The configuration must otherwise be the same (grid, terms, drivers); mismatched state shapes are refused.
+`save.checkpoint: true` (or a path) writes the complete solver state at `grid.tmax` as an `.npz` (`binary/checkpoint.npz` in the run's artifacts when `true`); `restart: {file: <that .npz>}` in a later configuration resumes from it: the state replaces the fresh initial condition, integration starts at the checkpoint time, and the series/fields save axes start there too unless their `tmin` is later. The per-step noise and wall keys are folded in from the time index, so a run split into two resumes reproduces the unbroken run to round-off as long as the split time is a multiple of `grid.dt` (the fixed-step solver would otherwise clip one step differently). The configuration must otherwise be the same (grid, terms, drivers); mismatched state shapes are refused, except that a two-component `E0`/`E1` checkpoint is padded with `E_z = 0`.
 
 ## Absolute-threshold bisection (`adept._lpse2d.threshold`)
 

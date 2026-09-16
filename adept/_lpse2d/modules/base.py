@@ -85,8 +85,11 @@ class BaseLPSE2D(ADEPTModule):
         epw = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]), dtype=np.complex128)
 
         self.cfg["grid"]["background_density"] = get_density_profile(self.cfg)
-        E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
-        E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 2), dtype=np.complex128)
+        # the light fields carry three components (x, y, z) as LPSE's do on any grid (plan 2
+        # F.1); the grid is 2-D, so E_z is purely transverse and only an s-polarised beam or
+        # seed populates it
+        E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 3), dtype=np.complex128)
+        E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 3), dtype=np.complex128)
         state = {"epw": epw, "E0": E0, "E1": E1}
 
         if self.cfg["terms"]["epw"].get("energy_ledger", False):
@@ -126,10 +129,17 @@ class BaseLPSE2D(ADEPTModule):
             missing = [k for k in self.state if k not in loaded.files]
             if missing:
                 raise ValueError(f"checkpoint {restart['file']} lacks state entries {missing}")
+            restored = {}
             for k, v in self.state.items():
-                if loaded[k].shape != v.shape:
-                    raise ValueError(f"checkpoint entry {k} has shape {loaded[k].shape}, expected {v.shape}")
-            self.state = {k: np.asarray(loaded[k], dtype=np.float64) for k in self.state}
+                arr = np.asarray(loaded[k], dtype=np.float64)
+                if k in ("E0", "E1") and arr.shape[:-1] == v.shape[:-1] and arr.shape[-1] == 4:
+                    # a two-component (x, y) checkpoint from before plan 2 F.1: pad E_z = 0
+                    # (the float64 view of a complex component axis has twice the length)
+                    arr = np.concatenate([arr, np.zeros(arr.shape[:-1] + (2,), dtype=np.float64)], axis=-1)
+                if arr.shape != v.shape:
+                    raise ValueError(f"checkpoint entry {k} has shape {arr.shape}, expected {v.shape}")
+                restored[k] = arr
+            self.state = restored
             for sub in self.cfg["save"].values():
                 if isinstance(sub, dict) and isinstance(sub.get("t"), dict) and "tmin" in sub["t"]:
                     if _Q(sub["t"]["tmin"]).to("ps").value < self.restart_t0:

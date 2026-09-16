@@ -52,29 +52,24 @@ from adept._base_ import get_envelope
 from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
 from adept._lpse2d.core.raman import light_absorption_rates
 from adept._lpse2d.core.spectral_light import gaussian_injector_profile
+from adept._lpse2d.core.vector import dot_conj, fft2c, ifft2c, k_dot, split_k
 
 
 def longitudinal_transverse(field: Array, kx: Array, ky: Array, one_over_k_sq: Array) -> tuple[Array, Array]:
-    """k-space (fx_k, fy_k) split of an (nx, ny, 2) x-space field into its longitudinal and
-    transverse parts: returns ((lx_k, ly_k), (tx_k, ty_k))."""
-    fx_k = jnp.fft.fft2(field[..., 0])
-    fy_k = jnp.fft.fft2(field[..., 1])
-    kdote = (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq
-    lx_k, ly_k = kx[:, None] * kdote, ky[None, :] * kdote
-    return (lx_k, ly_k), (fx_k - lx_k, fy_k - ly_k)
+    """k-space split of an (nx, ny, nc) x-space field into its longitudinal and transverse
+    parts, ``(L_k, T_k)`` each (nx, ny, nc); a z component (k_z = 0) is wholly transverse."""
+    return split_k(fft2c(field), kx, ky, one_over_k_sq)
 
 
 def transverse_part(field: Array, kx: Array, ky: Array, one_over_k_sq: Array) -> Array:
     """The transverse (Raman light) part of a combined field, in x-space."""
-    _, (tx_k, ty_k) = longitudinal_transverse(field, kx, ky, one_over_k_sq)
-    return jnp.stack([jnp.fft.ifft2(tx_k), jnp.fft.ifft2(ty_k)], axis=-1)
+    _, transverse_k = longitudinal_transverse(field, kx, ky, one_over_k_sq)
+    return ifft2c(transverse_k)
 
 
 def potential_from_field(field: Array, kx: Array, ky: Array, one_over_k_sq: Array, band: Array) -> Array:
     """``phi_k = i k . E_k / k^2`` on the retained band (``makePotentialFromE_fft``)."""
-    fx_k = jnp.fft.fft2(field[..., 0])
-    fy_k = jnp.fft.fft2(field[..., 1])
-    return 1j * (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq * band
+    return 1j * k_dot(fft2c(field), kx, ky) * one_over_k_sq * band
 
 
 class CombinedSolver:
@@ -175,6 +170,7 @@ class CombinedSolver:
             pump = cfg["drivers"]["E0"]["derived"]
             x_inject = grid["xmin"] + pump["offset"]
             self.i0 = int(np.argmin(np.abs(np.asarray(self.x) - x_inject)))
+            self.pump_component = int(pump.get("component", 1))  # y (in-plane) or z (plan 2 F.2)
             self.n_src = float(self.background_density[self.i0, 0])
             if self.n_src >= 1.0:
                 raise ValueError("The pump injector sits at or above critical density")
@@ -195,31 +191,29 @@ class CombinedSolver:
 
     def unified_source(self, t: float, E0: Array, E1: Array) -> Array:
         """``-i e/(4 me w0) e^{-i dw t} [grad(E0 . E1*) + (1 - w0/wp0) E0 (div E1)*]`` in x-space."""
-        E0f = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter[..., None], axes=(0, 1))
-        scalar_k = jnp.fft.fft2(E0f[..., 0] * jnp.conj(E1[..., 0]) + E0f[..., 1] * jnp.conj(E1[..., 1])) * self.band
-        grad_x = jnp.fft.ifft2(1j * self.kx[:, None] * scalar_k)
-        grad_y = jnp.fft.ifft2(1j * self.ky[None, :] * scalar_k)
-        e1x_k, e1y_k = jnp.fft.fft2(E1[..., 0]), jnp.fft.fft2(E1[..., 1])
-        rho = jnp.fft.ifft2(1j * (self.kx[:, None] * e1x_k + self.ky[None, :] * e1y_k) * self.band)
-        term = jnp.stack([grad_x, grad_y], axis=-1) + self.rho_factor * E0f * jnp.conj(rho)[..., None]
+        E0f = ifft2c(fft2c(E0) * self.E0_filter[..., None])
+        # E0 . E1* over every component (E0z E1z* included), its gradient is in-plane
+        scalar_k = jnp.fft.fft2(dot_conj(E0f, E1)) * self.band
+        grad = jnp.zeros_like(E1)
+        grad = grad.at[..., 0].set(jnp.fft.ifft2(1j * self.kx[:, None] * scalar_k))
+        grad = grad.at[..., 1].set(jnp.fft.ifft2(1j * self.ky[None, :] * scalar_k))
+        rho = jnp.fft.ifft2(1j * k_dot(fft2c(E1), self.kx, self.ky) * self.band)
+        term = grad + self.rho_factor * E0f * jnp.conj(rho)[..., None]
         return self.source_coeff * jnp.exp(-1j * self.delta_w * t) * term
 
     def unified_depletion(self, t: float, E1: Array) -> Array:
         """``i e/(2 me w0) e^{+i dw t} [E1 div E1]`` (optionally transverse-projected)."""
-        e1x_k, e1y_k = jnp.fft.fft2(E1[..., 0]), jnp.fft.fft2(E1[..., 1])
-        rho = jnp.fft.ifft2(1j * (self.kx[:, None] * e1x_k + self.ky[None, :] * e1y_k) * self.band)
+        rho = jnp.fft.ifft2(1j * k_dot(fft2c(E1), self.kx, self.ky) * self.band)
         f = E1 * rho[..., None]
         if self.tpd_projection:
-            _, (tx_k, ty_k) = longitudinal_transverse(f, self.kx, self.ky, self.one_over_k_sq)
-            f = jnp.stack([jnp.fft.ifft2(tx_k), jnp.fft.ifft2(ty_k)], axis=-1)
+            _, transverse_k = longitudinal_transverse(f, self.kx, self.ky, self.one_over_k_sq)
+            f = ifft2c(transverse_k)
         return self.depletion_coeff * jnp.exp(1j * self.delta_w * t) * f
 
     def propagate_combined(self, E1: Array, gamma_landau) -> Array:
-        (lx_k, ly_k), (tx_k, ty_k) = longitudinal_transverse(E1, self.kx, self.ky, self.one_over_k_sq)
+        longitudinal_k, transverse_k = longitudinal_transverse(E1, self.kx, self.ky, self.one_over_k_sq)
         exp_l = self.disp_L * jnp.exp(-gamma_landau * self.dt_l)
-        fx_k = exp_l * lx_k + self.prop_T * tx_k
-        fy_k = exp_l * ly_k + self.prop_T * ty_k
-        return jnp.stack([jnp.fft.ifft2(fx_k), jnp.fft.ifft2(fy_k)], axis=-1)
+        return ifft2c(exp_l[..., None] * longitudinal_k + self.prop_T[..., None] * transverse_k)
 
     def add_noise(self, t: float, E1: Array) -> Array:
         import jax
@@ -228,9 +222,10 @@ class CombinedSolver:
         key = jax.random.fold_in(self.noise_key, step)
         phases = 2.0 * np.pi * jax.random.uniform(key, (self.nx, self.ny))
         phi_kick = self.noise_kick * jnp.exp(1j * phases)
-        ex_k = jnp.fft.fft2(E1[..., 0]) - 1j * self.kx[:, None] * phi_kick
-        ey_k = jnp.fft.fft2(E1[..., 1]) - 1j * self.ky[None, :] * phi_kick
-        return jnp.stack([jnp.fft.ifft2(ex_k), jnp.fft.ifft2(ey_k)], axis=-1)
+        e_k = fft2c(E1)
+        e_k = e_k.at[..., 0].add(-1j * self.kx[:, None] * phi_kick)
+        e_k = e_k.at[..., 1].add(-1j * self.ky[None, :] * phi_kick)
+        return ifft2c(e_k)
 
     def calc_pump_source(self, t: float, pump_args: dict) -> Array:
         t_env = get_envelope(
@@ -253,10 +248,8 @@ class CombinedSolver:
         return jnp.sum(source, axis=0)
 
     def propagate_pump(self, E0: Array) -> Array:
-        (lx_k, ly_k), (tx_k, ty_k) = longitudinal_transverse(E0, self.kx, self.ky, self.one_over_k_sq)
-        fx_k = lx_k + self.prop0 * tx_k
-        fy_k = ly_k + self.prop0 * ty_k
-        return jnp.stack([jnp.fft.ifft2(fx_k), jnp.fft.ifft2(fy_k)], axis=-1)
+        longitudinal_k, transverse_k = longitudinal_transverse(E0, self.kx, self.ky, self.one_over_k_sq)
+        return ifft2c(longitudinal_k + self.prop0[..., None] * transverse_k)
 
     # ---------------------------------------------------------------- step --
 
@@ -297,7 +290,7 @@ class CombinedSolver:
                     E0 = E0 * self.absorb0[..., None]
                 if self.sources_on:
                     E0 = E0 + self.dt_l * self.unified_depletion(t_i, E1)
-                E0 = E0.at[..., 1].add(self.dt_l * self.calc_pump_source(t_i, pump_args))
+                E0 = E0.at[..., self.pump_component].add(self.dt_l * self.calc_pump_source(t_i, pump_args))
             if self.sources_on:
                 E1 = E1 + self.dt_l * self.unified_source(t_i, E0, E1)
             # 3. k-space propagation with the L/T projector

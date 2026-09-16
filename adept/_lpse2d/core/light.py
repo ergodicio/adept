@@ -155,6 +155,8 @@ class CoupledLight(RamanLight):
         pump = cfg["drivers"]["E0"]["derived"]
         x_inject = cfg["grid"]["xmin"] + pump["offset"]
         self.i0 = int(np.argmin(np.abs(np.array(self.x) - x_inject)))
+        # component the pump injector writes: y (in-plane, p-polarised) or z (plan 2 F.2)
+        self.pump_component = int(cfg["drivers"]["E0"].get("derived", {}).get("component", 1))
         n_src = float(background_density[self.i0, 0])
         permittivity0 = 1.0 - n_src
         if permittivity0 <= 0:
@@ -215,31 +217,36 @@ class CoupledLight(RamanLight):
         rotation scheme integrates that exchange exactly outside the RHS), the TPD pump
         depletion, and the boundary injector."""
         e0x, e0y = E0[..., 0], E0[..., 1]
-        e1x, e1y = E1[..., 0], E1[..., 1]
         linear_coeff0 = self.linear_coeff0
         if iaw_density is not None:
             # MATLAB: i*w0/2 * [1 - wp0^2/w0^2 * (n_b/n_env + Nelf)] E0
             linear_coeff0 = linear_coeff0 - 1j * self.wp0**2 / (2.0 * self.w0) * iaw_density
 
-        k_e0x = self.diffraction_coeff0 * (self._d2y(e0x) - self._dxdy(e0y)) + linear_coeff0 * e0x
-        k_e0y = self.diffraction_coeff0 * (self._d2x(e0y) - self._dxdy(e0x)) + linear_coeff0 * e0y
+        # discrete curl-curl on the in-plane components, the plain Laplacian on E0z (k_z = 0)
+        k_e0 = [
+            self.diffraction_coeff0 * (self._d2y(e0x) - self._dxdy(e0y)) + linear_coeff0 * e0x,
+            self.diffraction_coeff0 * (self._d2x(e0y) - self._dxdy(e0x)) + linear_coeff0 * e0y,
+        ]
+        if E0.shape[-1] == 3:
+            e0z = E0[..., 2]
+            k_e0.append(self.diffraction_coeff0 * (self._d2x(e0z) + self._d2y(e0z)) + linear_coeff0 * e0z)
         if self.srs_enabled and couple:
             depletion = (self.srs_depletion_coeff0 * laplacian_phi)[..., None] * E1
             if self.transverse_source:
                 depletion = transverse_part(depletion, self.kx_arr, self.ky_arr, self.one_over_k_sq)
-            k_e0x += depletion[..., 0]
-            k_e0y += depletion[..., 1]
+            k_e0 = [k + depletion[..., i] for i, k in enumerate(k_e0)]
         if self.tpd_enabled:
             if phi_k is None:
                 raise ValueError("phi_k is required for TPD pump depletion")
-            tpd_dep = self.calc_tpd_depletion(t, phi_k)
-            k_e0x += tpd_dep[..., 0]
-            k_e0y += tpd_dep[..., 1]
+            tpd_dep = self.calc_tpd_depletion(t, phi_k)  # in-plane only: E_h has no z component
+            k_e0[0] = k_e0[0] + tpd_dep[..., 0]
+            k_e0[1] = k_e0[1] + tpd_dep[..., 1]
         row_i0, row_i0p1 = self.calc_pump_source(t, pump_args)
-        k_e0y = k_e0y.at[self.i0, :].add(row_i0)
-        k_e0y = k_e0y.at[self.i0 + 1, :].add(row_i0p1)
+        c = self.pump_component
+        k_e0[c] = k_e0[c].at[self.i0, :].add(row_i0)
+        k_e0[c] = k_e0[c].at[self.i0 + 1, :].add(row_i0p1)
 
-        return jnp.stack([k_e0x, k_e0y], axis=-1)
+        return jnp.stack(k_e0, axis=-1)
 
     def tpd_depletion_vector(self, phi_k: Array) -> Array:
         """``[E_h div(E_h)]_T`` in real space, shape (nx, ny, 2), from the frozen potential.
