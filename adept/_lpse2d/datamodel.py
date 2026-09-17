@@ -118,7 +118,9 @@ class E0DriverModel(BaseModel):
     # = from the x-max face), phase: rad, delta_omega: dW/W0, polarization: deg}]; every beam
     # carries every color. Spectral injector and static pump only.
     beams: list[dict] | None = None
-    beam_width: str | None = None  # LPSE laser.N.width: transverse (y) standard deviation of injected beams
+    # transverse (y) Gaussian standard deviation of the injected beams, exp(-(y^2/(2 s^2))^(n/2));
+    # LPSE laser.N.evolution.width is exp(-(y/W)^n), i.e. s = W / sqrt(2) (the translator converts)
+    beam_width: str | None = None
     beam_sg_order: float = 2.0  # LPSE laser.N.sgOrder of that transverse profile (2 = Gaussian)
     beam_offset: str | None = None  # y position of the beam centre (LPSE laser.N.offset)
     kap_bandwidth: float = Field(default=0.0, ge=0.0, lt=1.0)  # LPSE bandwidth.KAP.frequency (dW/W0)

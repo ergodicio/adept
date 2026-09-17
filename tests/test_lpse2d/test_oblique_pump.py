@@ -25,12 +25,12 @@ def _finish(cfg):
     return cfg
 
 
-def _cfg(angle, *, pump_depletion=False):
+def _cfg(angle, *, pump_depletion=False, light=None):
     with open("tests/test_lpse2d/configs/srs.yaml") as fi:
         cfg = yaml.safe_load(fi)
     cfg = deepcopy(cfg)
     cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "6.4um", "ymin": "-6.4um", "dx": "0.1um"})
-    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": pump_depletion}
+    cfg["terms"]["light"] = light or {"solver": "spectral", "pump_depletion": pump_depletion}
     cfg["terms"]["epw"]["source"]["noise"] = False
     cfg["terms"]["epw"]["boundary"] = {"x": "absorbing" if pump_depletion else "periodic", "y": "periodic"}
     cfg["drivers"]["E0"]["angle"] = angle
@@ -105,14 +105,50 @@ def test_spectral_injector_launches_the_oblique_pump():
     assert np.max(np.abs(E0)) > 0.0
 
 
-def test_fd_injector_refuses_an_oblique_pump():
-    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
-        cfg = yaml.safe_load(fi)
-    cfg["terms"]["light"] = {"solver": "fd", "pump_depletion": True}
-    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
-    cfg["drivers"]["E0"]["angle"] = 10.0
-    with pytest.raises(ValueError, match="spectral"):
-        _finish(cfg)
+@pytest.mark.parametrize("order", [2, 4])
+def test_fd_injector_launches_the_oblique_pump(order):
+    """The FD commutator injector (plan 2 L.4) launches a 20 deg beam: one ky row, kx from the
+    dispersion, the field transverse, nothing behind the plane; at order 4 as at order 2."""
+    from adept._lpse2d.core.light import CoupledLight
+    from adept._lpse2d.modules.driver import UniformDriver
+
+    cfg = _cfg(20.0, pump_depletion=True, light={"solver": "fd", "pump_depletion": True, "fd_order": order})
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    light = CoupledLight(cfg)
+    assert light.fd_general_injector
+    _, args = UniformDriver(cfg)({}, {"drivers": {}})
+    pump_args = args["drivers"]["E0"]
+    E0 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+    E1 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+    phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    t, dt = 0.0, cfg["grid"]["dt"]
+    for _ in range(int(0.05 / dt)):
+        E0, E1 = light(t, E0, E1, phi_k, pump_args, None)
+        t += dt
+    E0 = np.asarray(E0)
+    d = cfg["units"]["derived"]
+    k0 = d["w0"] / d["c"] * np.sqrt(1.0 - float(cfg["density"]["val"]))
+    kx, ky, ex, ey, _ = _dominant_mode(E0, cfg)
+    power_ky = np.sum(np.abs(np.fft.fft2(E0[..., 0])) ** 2 + np.abs(np.fft.fft2(E0[..., 1])) ** 2, axis=0)
+    assert power_ky[np.argmin(np.abs(np.asarray(cfg["grid"]["ky"]) - ky))] > 0.95 * power_ky.sum()
+    dky = 2 * np.pi / (ny * cfg["grid"]["dy"])
+    assert abs(ky - k0 * np.sin(np.deg2rad(20.0))) <= 0.5 * dky + 1e-9
+    # kx carries the stencil's grid dispersion (4 cells per wavelength here: +16 % at order 2,
+    # +1.5 % at order 4)
+    from adept._lpse2d.core.stencils import grid_wavenumber
+
+    dx = cfg["grid"]["dx"]
+    kx_grid = grid_wavenumber(np.sqrt(k0**2 - ky**2) * dx, order) / dx
+    assert abs(kx - kx_grid) < 0.1 * k0
+    # transverse up to the FD curl-curl's discrete divergence (terms.light.transverse_fields
+    # docs: percent level at k0 dx ~ 1-2 at order 2; the 4th-order stencil keeps it below 3 %)
+    assert abs(kx * ex + ky * ey) < {2: 0.15, 4: 3e-2}[order] * np.hypot(kx, ky) * np.hypot(abs(ex), abs(ey))
+    x = np.asarray(cfg["grid"]["x"])
+    amp = np.abs(E0[..., 0]) ** 2 + np.abs(E0[..., 1]) ** 2
+    front = amp[(x > 4.0) & (x < 8.0)].mean()
+    behind = amp[x < x[light.i0] - (order // 2 + 1) * cfg["grid"]["dx"]].max()
+    assert front > 0.0 and behind < 0.05 * front
+    assert np.all(E0[..., 2] == 0.0)  # p-polarised: no z component
 
 
 @pytest.mark.skipif(deck_path("test_010") is None, reason="original-lpse example decks not available")
@@ -219,16 +255,17 @@ def test_translator_maps_multi_beam_decks():
         "laser.2.intensity": "3e15",
         "laser.2.direction": "0.94 -0.34 0",
         "laser.2.frequencyShift": "0.01",
-        "laser.1.width": "3",
-        "laser.1.sgOrder": "4",
-        "laser.1.offset": "0 1 0",
+        "laser.1.evolution.width": "3",
+        "laser.1.evolution.sgOrder": "4",
+        "laser.1.evolution.offset": "0 1 0",
         "laser.bandwidth.KAP.frequency": "0.005",
     }
     cfg, report = translate_parms(parms, experiment="x", run="y")
     e0 = cfg["drivers"]["E0"]
     assert len(e0["beams"]) == 2 and e0["beams"][0]["intensity"] == 1e15 and e0["beams"][1]["delta_omega"] == 0.01
     assert abs(e0["beams"][1]["angle"] + e0["beams"][0]["angle"]) < 1e-9 and e0["beams"][0]["phase"] == 0.5
-    assert e0["beam_width"] == "3.0um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
+    # LPSE exp(-(r / 3)^4) is adept's sigma = 3 / sqrt(2)
+    assert e0["beam_width"] == f"{3.0 / np.sqrt(2.0)}um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
     assert e0["kap_bandwidth"] == 0.005
     assert not any("direction differs" in u for u in report["unsupported"])
 

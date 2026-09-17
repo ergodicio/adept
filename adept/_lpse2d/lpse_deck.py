@@ -438,11 +438,30 @@ def translate_parms(
         )
     polarization_deg = beams[0]["polarization"] if beams else 0.0
     beam_extras = {}
-    if float(g("laser.1.width", "0")) > 0:
-        beam_extras["beam_width"] = f"{float(g('laser.1.width'))}um"
-        beam_extras["beam_sg_order"] = float(g("laser.1.sgOrder", g("laser.1.sgPower", "2")))
-        off = _floats(g("laser.1.offset", "0 0"))
-        beam_extras["beam_offset"] = f"{off[1] if len(off) > 1 else 0.0}um"
+
+    def beam_profile(b):
+        # LPSE laser.N.evolution.{width, sgOrder | sgPower, offset} (SchrodingerSolver3::superGaussian:
+        # exp(-(r / width)^sgOrder)); the bare laser.N.width form is accepted too
+        width = float(g(f"laser.{b}.evolution.width", g(f"laser.{b}.width", "0")))
+        order = float(
+            g(f"laser.{b}.evolution.sgOrder", g(f"laser.{b}.evolution.sgPower", g(f"laser.{b}.sgOrder", "2")))
+        )
+        off = _floats(g(f"laser.{b}.evolution.offset", g(f"laser.{b}.offset", "0 0")))
+        return width, order, (off[1] if len(off) > 1 else 0.0)
+
+    width1, order1, offset1 = beam_profile(1)
+    if width1 > 0:
+        # adept's beam_width is the Gaussian standard deviation, exp(-(y^2 / (2 s^2))^(n/2)) =
+        # exp(-(|y| / (sqrt(2) s))^n): s = width / sqrt(2) reproduces LPSE's profile for any n
+        beam_extras["beam_width"] = f"{width1 / np.sqrt(2.0)}um"
+        beam_extras["beam_sg_order"] = order1
+        beam_extras["beam_offset"] = f"{offset1}um"
+        for b in range(2, n_beams + 1):
+            if beam_profile(b) != (width1, order1, offset1):
+                report["notes"].append(
+                    f"laser.{b}.evolution.width/sgOrder/offset differ from beam 1: one adept profile"
+                )
+                break
     kap = float(g("laser.bandwidth.KAP.frequency", "0"))
     if kap > 0:
         beam_extras["kap_bandwidth"] = kap

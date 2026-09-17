@@ -1,3 +1,4 @@
+import jax
 import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
@@ -95,6 +96,7 @@ class CoupledLight(RamanLight):
         derived = cfg["units"]["derived"]
         self.E0_source = derived["E0_source"]
         background_density = cfg["grid"]["background_density"]
+        self.nx, self.ny = int(cfg["grid"]["nx"]), int(cfg["grid"]["ny"])
         source_cfg = cfg["terms"]["epw"]["source"]
         self.srs_enabled = bool(source_cfg.get("srs", False))
         self.tpd_enabled = bool(source_cfg.get("tpd", False))
@@ -181,6 +183,59 @@ class CoupledLight(RamanLight):
         self.pump_turn_on_time = pump["turn_on_time"]
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
 
+        # ---- general FD injector (plan 2 L.4): oblique, multiple or transversely profiled beams
+        # use the same commutator on the full 2-D operator, S = D[H V] - H D[V], with V the
+        # analytic beam (polarised perpendicular to its k, super-Gaussian in y); the axial
+        # single-beam default keeps the row form above (bit-identical to the prototype)
+        angles = np.atleast_1d(np.asarray(pump.get("beam_angle", [pump.get("angle", 0.0)]), dtype=np.float64))
+        self.beam_width = float(pump.get("beam_width", 0.0) or 0.0)
+        self.fd_general_injector = bool(
+            angles.size > 1 or np.any(np.abs(np.sin(angles)) > 1e-12) or (self.beam_width > 0.0 and self.ny > 1)
+        )
+        if self.fd_general_injector:
+            x_np, y_np = np.asarray(self.x), np.asarray(self.y)
+            self.i0_max = int(np.argmin(np.abs(x_np - (cfg["grid"]["xmax"] - pump["offset"]))))
+            self.beam_i_inject = [self.i0_max if left else self.i0 for left in leftward]
+            self.beam_n_src = [float(background_density[i, 0]) for i in self.beam_i_inject]
+            if any(n >= 1.0 for n in self.beam_n_src):
+                raise ValueError("a pump injector plane sits at or above the critical density")
+            k0_beams = self.w0 / self.c * np.sqrt(1.0 - np.asarray(self.beam_n_src))
+            dky = 2.0 * np.pi / (self.ny * self.dy)
+            snap = bool(light_cfg.get("snap_beam_ky", True))
+            ky_beams = k0_beams * np.sin(angles) if self.ny > 1 else np.zeros_like(angles)
+            if snap and self.ny > 1:
+                ky_beams = np.round(ky_beams / dky) * dky
+            if np.any(np.abs(ky_beams) >= k0_beams):
+                raise ValueError(f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched")
+            self.ky_beams = ky_beams
+            self.beam_sign = [-1 if left else 1 for left in leftward]
+            self.beam_fraction = np.atleast_1d(np.asarray(pump.get("beam_fraction", [1.0]), dtype=np.float64))
+            self.beam_phase = np.atleast_1d(np.asarray(pump.get("beam_phase", [0.0]), dtype=np.float64))
+            self.beam_delta_omega = np.atleast_1d(np.asarray(pump.get("beam_delta_omega", [0.0]), dtype=np.float64))
+            self.beam_polarization = np.atleast_1d(
+                np.asarray(pump.get("beam_polarization", [pump.get("polarization", 0.0)]), dtype=np.float64)
+            )
+            if self.beam_width > 0.0 and self.ny > 1:
+                order = float(pump.get("beam_sg_order", 2.0))
+                y_rel = (y_np - float(pump.get("beam_offset", 0.0))) ** 2 / (2.0 * self.beam_width**2)
+                self.beam_envelope_y = jnp.asarray(np.exp(-(y_rel ** (order / 2.0))))
+            else:
+                self.beam_envelope_y = jnp.ones(self.ny)
+            m = self.fd_order // 2
+            # the commutator is non-zero on the stencil's rows about each plane only
+            self.beam_rows = [
+                np.arange(i - m + 1, i + m + 1) if sign > 0 else np.arange(i - m, i + m)
+                for i, sign in zip(self.beam_i_inject, self.beam_sign, strict=True)
+            ]
+            self.beam_masks = [
+                jnp.asarray(
+                    np.where(np.arange(self.nx) >= i + 1, 1.0, 0.0)
+                    if sign > 0
+                    else np.where(np.arange(self.nx) <= i, 1.0, 0.0)
+                )
+                for i, sign in zip(self.beam_i_inject, self.beam_sign, strict=True)
+            ]
+
     def calc_pump_source(self, t: float, pump_args: dict) -> list[tuple[int, Array]]:
         """
         Pump injector rows, summed over colors (MATLAB lines 1738-1750 at second order,
@@ -220,6 +275,76 @@ class CoupledLight(RamanLight):
 
         return self.injector_rows(self.i0, sign, wave)
 
+    def curl_curl(self, E: Array) -> list[Array]:
+        """``-(curl curl E)`` per component with the FD stencils: the discrete curl-curl on the
+        in-plane components, the plain Laplacian on E_z (k_z = 0)."""
+        ex, ey = E[..., 0], E[..., 1]
+        out = [self._d2y(ex) - self._dxdy(ey), self._d2x(ey) - self._dxdy(ex)]
+        if E.shape[-1] == 3:
+            ez = E[..., 2]
+            out.append(self._d2x(ez) + self._d2y(ez))
+        return out
+
+    def pump_pattern(self, pump_args: dict) -> list[Array]:
+        """The general injector's spatial source per beam, ``(nc, n_rows, ny, 3)``: the commutator
+        ``D[H V] - H D[V]`` of the curl-curl operator with the beam's mask, for the analytic beam
+        ``V = sqrt(I_c(y)) e^{i phases_c(y)} env(y) e^{i (kx (x - x_inj) + ky y)} pol`` of every
+        colour, restricted to the stencil's rows about the plane. Time enters only through the
+        scalar factors applied in ``pump_rhs``, so this is evaluated once per EPW step."""
+        delta_omega = pump_args["delta_omega"]  # (nc,)
+        amp_y = jnp.sqrt(pump_args["intensities"]) * jnp.exp(1j * pump_args["phases"])  # (nc, ny)
+        amp_y = amp_y * self.beam_envelope_y[None, :]
+        x = self.x[None, :, None]
+        y = self.y[None, None, :]
+        patterns = []
+        for b in range(len(self.beam_sign)):
+            sign, n_src, i_inject = self.beam_sign[b], self.beam_n_src[b], self.beam_i_inject[b]
+            ky_b = float(self.ky_beams[b])
+            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega + self.beam_delta_omega[b]) ** 2 - n_src)  # (nc,)
+            kx = sign * jnp.sqrt(k0**2 - ky_b**2)  # (nc,)
+            carrier = jnp.exp(1j * (kx[:, None, None] * (x - self.x[i_inject]) + ky_b * y))  # (nc, nx, ny)
+            v = carrier * amp_y[:, None, :] / (1.0 - n_src) ** 0.25
+            k_mag = jnp.sqrt(kx[0] ** 2 + ky_b**2)
+            cos_psi, sin_psi = np.cos(self.beam_polarization[b]), np.sin(self.beam_polarization[b])
+            # LPSE rotateBeam: cos(psi) along the in-plane transverse direction of the first
+            # colour's k, sin(psi) along z
+            pol = jnp.stack([-ky_b / k_mag * cos_psi, kx[0] / k_mag * cos_psi, sin_psi])
+            vvec = v[..., None] * pol[None, None, None, :]  # (nc, nx, ny, 3)
+            h = self.beam_masks[b][:, None, None]
+            rows = self.beam_rows[b]
+
+            def commutator(vc, h=h, rows=rows):
+                d_hv = jnp.stack(self.curl_curl(h * vc), axis=-1)
+                d_v = jnp.stack(self.curl_curl(vc), axis=-1)
+                return (d_hv - h * d_v)[rows]
+
+            patterns.append(jax.vmap(commutator)(vvec))  # (nc, n_rows, ny, 3)
+        return patterns
+
+    def general_pump_rows(self, t: float, pump_args: dict, patterns: list[Array]) -> list[tuple[int, Array]]:
+        """Rows ``(index, (ny, 3) values)`` of the general injector at time ``t``: the patterns
+        times the colour and beam time factors and the propagation coefficient."""
+        t_env = get_envelope(
+            pump_args["tr"],
+            pump_args["tr"],
+            pump_args["tc"] - pump_args["tw"] / 2,
+            pump_args["tc"] + pump_args["tw"] / 2,
+            t,
+        )
+        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        delta_omega = pump_args["delta_omega"]
+        color_time = jnp.exp(-1j * self.w0 * delta_omega * t)  # (nc,)
+        rows: dict[int, Array] = {}
+        for b, pattern in enumerate(patterns):
+            beam_time = jnp.exp(1j * (self.beam_phase[b] - self.w0 * self.beam_delta_omega[b] * t))
+            scale = (
+                self.diffraction_coeff0 * self.E0_source * t_env * turn_on * np.sqrt(self.beam_fraction[b]) * beam_time
+            )
+            block = scale * jnp.sum(pattern * color_time[:, None, None, None], axis=0)  # (n_rows, ny, 3)
+            for r, i in enumerate(self.beam_rows[b]):
+                rows[int(i)] = block[r] if int(i) not in rows else rows[int(i)] + block[r]
+        return list(rows.items())
+
     def pump_rhs(
         self,
         t: float,
@@ -230,25 +355,22 @@ class CoupledLight(RamanLight):
         iaw_density: Array | None = None,
         phi_k: Array | None = None,
         couple: bool = True,
+        patterns: list[Array] | None = None,
     ) -> Array:
         """Pump RHS: propagation + detuning (MATLAB lines 1616-1626), SRS pump depletion
         (lines 1640-1646: no conjugate, w1 denominator) unless ``couple`` is False (the
         rotation scheme integrates that exchange exactly outside the RHS), the TPD pump
         depletion, and the boundary injector."""
-        e0x, e0y = E0[..., 0], E0[..., 1]
         linear_coeff0 = self.linear_coeff0
         if iaw_density is not None:
             # MATLAB: i*w0/2 * [1 - wp0^2/w0^2 * (n_b/n_env + Nelf)] E0
             linear_coeff0 = linear_coeff0 - 1j * self.wp0**2 / (2.0 * self.w0) * iaw_density
 
         # discrete curl-curl on the in-plane components, the plain Laplacian on E0z (k_z = 0)
+        comps = [E0[..., i] for i in range(E0.shape[-1])]
         k_e0 = [
-            self.diffraction_coeff0 * (self._d2y(e0x) - self._dxdy(e0y)) + linear_coeff0 * e0x,
-            self.diffraction_coeff0 * (self._d2x(e0y) - self._dxdy(e0x)) + linear_coeff0 * e0y,
+            self.diffraction_coeff0 * cc + linear_coeff0 * e for cc, e in zip(self.curl_curl(E0), comps, strict=True)
         ]
-        if E0.shape[-1] == 3:
-            e0z = E0[..., 2]
-            k_e0.append(self.diffraction_coeff0 * (self._d2x(e0z) + self._d2y(e0z)) + linear_coeff0 * e0z)
         if self.srs_enabled and couple:
             depletion = (self.srs_depletion_coeff0 * laplacian_phi)[..., None] * E1
             if self.transverse_source:
@@ -260,14 +382,23 @@ class CoupledLight(RamanLight):
             tpd_dep = self.calc_tpd_depletion(t, phi_k)  # in-plane only: E_h has no z component
             k_e0[0] = k_e0[0] + tpd_dep[..., 0]
             k_e0[1] = k_e0[1] + tpd_dep[..., 1]
-        rows = self.calc_pump_source(t, pump_args)
-        for c, w in zip((1, 2), self.pump_weights, strict=True):
-            if w == 0.0:
-                continue
-            if c >= len(k_e0):
-                raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
-            for i, row in rows:
-                k_e0[c] = k_e0[c].at[i, :].add(w * row)
+        if self.fd_general_injector:
+            if patterns is None:
+                patterns = self.pump_pattern(pump_args)
+            for i, block in self.general_pump_rows(t, pump_args, patterns):
+                for c in range(len(k_e0)):
+                    k_e0[c] = k_e0[c].at[i, :].add(block[:, c])
+                if len(k_e0) == 2 and bool(np.any(np.sin(self.beam_polarization) != 0.0)):
+                    raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+        else:
+            rows = self.calc_pump_source(t, pump_args)
+            for c, w in zip((1, 2), self.pump_weights, strict=True):
+                if w == 0.0:
+                    continue
+                if c >= len(k_e0):
+                    raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+                for i, row in rows:
+                    k_e0[c] = k_e0[c].at[i, :].add(w * row)
 
         return jnp.stack(k_e0, axis=-1)
 
@@ -311,10 +442,13 @@ class CoupledLight(RamanLight):
         iaw_density: Array | None = None,
         phi_k: Array | None = None,
         couple: bool = True,
+        patterns: list[Array] | None = None,
     ) -> tuple[Array, Array]:
         # the E1 RHS (propagation + detuning + SRS coupling + seed rows) is exactly
         # the RamanLight one
-        pump_rhs = self.pump_rhs(t, E0, E1, laplacian_phi, pump_args, iaw_density, phi_k, couple=couple)
+        pump_rhs = self.pump_rhs(
+            t, E0, E1, laplacian_phi, pump_args, iaw_density, phi_k, couple=couple, patterns=patterns
+        )
         if not self.srs_enabled:
             return pump_rhs, jnp.zeros_like(E1)
         return pump_rhs, self.rhs(t, E1, E0, laplacian_phi, seed_args, iaw_density, couple=couple)
@@ -362,10 +496,21 @@ class CoupledLight(RamanLight):
         laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
         rotate = self.coupling == "rotation" and self.srs_enabled
         couple_in_rhs = not rotate
+        # the general injector's spatial pattern once per EPW step (time factors per sub-step)
+        patterns = self.pump_pattern(pump_args) if self.fd_general_injector else None
 
         def propagate(t_i, E0, E1):
             k_e0, k_e1 = self.coupled_rhs(
-                t_i, E0, E1, laplacian_phi, pump_args, seed_args, iaw_density, phi_k, couple=couple_in_rhs
+                t_i,
+                E0,
+                E1,
+                laplacian_phi,
+                pump_args,
+                seed_args,
+                iaw_density,
+                phi_k,
+                couple=couple_in_rhs,
+                patterns=patterns,
             )
             E0 = E0 + self.dt_l * jnp.real(k_e0)
             E1 = E1 + self.dt_l * jnp.real(k_e1)
@@ -379,6 +524,7 @@ class CoupledLight(RamanLight):
                 iaw_density,
                 phi_k,
                 couple=couple_in_rhs,
+                patterns=patterns,
             )
             E0 = E0 + 1j * self.dt_l * jnp.imag(k_e0)
             E1 = E1 + 1j * self.dt_l * jnp.imag(k_e1)

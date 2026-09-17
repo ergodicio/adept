@@ -748,18 +748,9 @@ def get_derived_quantities(cfg: dict) -> dict:
                 raise ValueError("drivers.E0 beams at +-90 deg (injection from a y face) are not supported")
             # a beam with |angle| > 90 propagates leftward and is launched from the x-max face
             cfg["drivers"][k]["derived"]["beam_leftward"] = np.array([abs(a) > 90.0 for a in beam_angles], dtype=bool)
-            # the FD injector launches along +-x only: one beam at 0 or 180 deg
-            axial = len(beams) == 1 and beam_angles[0] in (0.0, 180.0, -180.0)
             multi = len(beams) > 1 or any(a != 0.0 for a in beam_angles)
-            angle_deg = angle_deg if not multi else 1.0  # trips the same checks below
-            if angle_deg != 0.0:
-                if cfg["drivers"][k].get("speckle", {}).get("enabled", False):
-                    raise ValueError("drivers.E0.angle / beams are not supported together with drivers.E0.speckle")
-                if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral" and not axial:
-                    raise ValueError(
-                        "drivers.E0.angle / beams with terms.light.pump_depletion need terms.light.solver: spectral "
-                        "(the FD injector launches along +-x only)"
-                    )
+            if multi and cfg["drivers"][k].get("speckle", {}).get("enabled", False):
+                raise ValueError("drivers.E0.angle / beams are not supported together with drivers.E0.speckle")
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
