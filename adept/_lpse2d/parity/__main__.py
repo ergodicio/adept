@@ -5,12 +5,14 @@
     python -m adept._lpse2d.parity log   <run_id> <series.xr|series.nc> <lpse run dir> --windows ... [--full]
     python -m adept._lpse2d.parity fetch <deck> [--dest DIR]
     python -m adept._lpse2d.parity verify <run_id> [--windows ...] [--rtol 1e-6]
+    python -m adept._lpse2d.parity batch <jobs.yaml> --log-dir DIR [--gpus 0,1,2,3 | --workers N]
 
 ``run`` translates the deck (a shipped-deck name resolves through ``original-lpse``), runs it
 through ``ergoExo`` and — when the deck's reference run is found — logs the comparison to the
 new MLflow run. ``verify`` downloads a finished cross-check run's ``binary/series.xr`` and
 ``lpse_reference/lpse.metrics`` and checks that ``compare`` reproduces the ratio metrics
 stored on that run (the acceptance check for moving this tooling into the repository).
+``batch`` runs a YAML list of ``run`` jobs concurrently (``batch.py``).
 """
 
 from __future__ import annotations
@@ -55,6 +57,13 @@ def cmd_run(args) -> int:
     overrides = harness.merge_overrides(dict(harness.DEFAULT_OVERRIDES.get(deck, {})), _load_overrides(args.overrides))
     result = harness.run_deck(parms, overrides, out_dir=args.out, run=args.run, experiment=args.experiment)
     print(f"mlflow run {result.run_id}; unsupported: {result.report['unsupported']}")
+    if result.run_id and args.tag:
+        from adept import patched_mlflow as mlflow
+
+        client = mlflow.MlflowClient()
+        for spec in args.tag:
+            key, _, value = spec.partition("=")
+            client.set_tag(result.run_id, key, value)
     lpse_dir = reference.reference_run_dir(deck, download=not args.no_download)
     if lpse_dir is None:
         print(f"no LPSE reference run for {deck}; comparison skipped")
@@ -127,6 +136,12 @@ def cmd_verify(args) -> int:
     return 0 if ok else 1
 
 
+def cmd_batch(argv) -> int:
+    from . import batch
+
+    return batch.main(argv)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m adept._lpse2d.parity", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -143,6 +158,7 @@ def main(argv=None) -> int:
     p.add_argument("--full", action="store_true", help="log the whole reference run tree, not just metrics/parms")
     p.add_argument("--no-log", action="store_true", help="compare but do not log the comparison to MLflow")
     p.add_argument("--no-download", action="store_true", help="do not fetch a missing reference from MLflow")
+    p.add_argument("--tag", action="append", help="key=value MLflow tag for the run (repeatable)")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("compare", help="growth-rate comparison of an adept series with an LPSE metrics table")
@@ -173,6 +189,12 @@ def main(argv=None) -> int:
     p.add_argument("--rtol", type=float, default=1e-6)
     p.set_defaults(func=cmd_verify)
 
+    sub.add_parser("batch", help="run a YAML list of 'run' jobs concurrently (batch.py --help)")
+
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if argv and argv[0] == "batch":
+        # batch.py owns its own argument parser (so --help there documents the job file)
+        return cmd_batch(argv[1:])
     args = ap.parse_args(argv)
     np.set_printoptions(precision=6)
     return args.func(args)

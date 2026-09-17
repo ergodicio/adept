@@ -1,6 +1,7 @@
 """adept ``lpse2d`` vs original-LPSE parity tooling: reference-run location and the
 run / compare / log harness. ``python -m adept._lpse2d.parity --help`` for the CLI."""
 
+from .batch import job_command, load_jobs, run_batch
 from .harness import (
     DEFAULT_OVERRIDES,
     DEFAULT_WINDOWS,
@@ -42,6 +43,8 @@ __all__ = [
     "find_reference_run",
     "growth_rate",
     "hpe_wall_power",
+    "job_command",
+    "load_jobs",
     "log_reference",
     "lpse_root",
     "merge_overrides",
@@ -49,6 +52,7 @@ __all__ = [
     "read_flux",
     "reference_cache_dir",
     "reference_run_dir",
+    "run_batch",
     "run_deck",
     "translate_deck",
 ]

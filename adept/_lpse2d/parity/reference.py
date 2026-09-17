@@ -46,12 +46,18 @@ def lpse_root(env: str = "LPSE_ROOT") -> Path | None:
 
 
 def deck_path(deck: str, root: Path | None = None) -> Path | None:
-    """``<root>/examples/testRuns/<deck>/lpse.parms`` when the shipped deck exists."""
+    """The deck's ``lpse.parms``: the shipped example ``<root>/examples/testRuns/<deck>/``,
+    else the reference run's own copy (``<root>/runs/<deck>/`` -- the homogeneous controls
+    ``hom_srs_020`` / ``hom_tpd_023`` exist only there -- or the downloaded reference)."""
     root = root or lpse_root()
-    if root is None:
-        return None
-    path = root / "examples" / "testRuns" / deck / "lpse.parms"
-    return path if path.is_file() else None
+    candidates = []
+    if root is not None:
+        candidates += [root / "examples" / "testRuns" / deck / "lpse.parms", root / "runs" / deck / "lpse.parms"]
+    candidates.append(reference_cache_dir() / deck / "lpse.parms")
+    for path in candidates:
+        if path.is_file():
+            return path
+    return None
 
 
 def reference_cache_dir() -> Path:
