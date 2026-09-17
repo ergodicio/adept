@@ -513,9 +513,9 @@ def translate_parms(
             hpe["thermalization_probability"] = [tp[0], tp[1] if len(tp) > 1 else tp[0]]
         if "hpe.magneticField" in parms:
             b = _floats(parms["hpe.magneticField"])
-            hpe["magnetic_field"] = b[2] if len(b) > 2 else 0.0
-            if any(abs(v) > 0 for v in b[:2]):
-                report["unsupported"].append("hpe.magneticField in-plane components (only B_z acts on the 2-D push)")
+            b = (list(b) + [0.0, 0.0, 0.0])[:3]
+            # B_z alone keeps the (p_x, p_y) tracker; any in-plane component adds p_z (plan 2 F.4)
+            hpe["magnetic_field"] = b if any(abs(v) > 0 for v in b[:2]) else b[2]
         if "hpe.gammaLimit.damping" in parms:
             hpe["gamma_limit_damping"] = float(parms["hpe.gammaLimit.damping"])
         if "hpe.gammaLimit.growth" in parms:

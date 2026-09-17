@@ -787,3 +787,90 @@ def test_translator_maps_the_hpe_controls():
     assert h["gamma_limit_damping"] == 300.0 and h["gamma_limit_growth"] == 20.0 and h["allow_growth"]
     assert h["energy_conservation"] and h["energy_conservation_steps"] == 5.0
     assert h["flux_bins"] == [0.0, 50.0, 1e9] and h["cone_angle"] == 20.0 and h["cone_direction"] == [0.0, 1.0]
+
+
+# ---------------------------------------------- in-plane magnetic field, p_z (plan 2 F.4) --
+
+
+def test_in_plane_magnetic_field_rotates_momentum_into_pz():
+    """``magnetic_field: [B_x, 0, 0]``: the 2-D tracker carries p_z and a free-streaming
+    particle's momentum turns about x by omega_c dt / gamma -- after a quarter cyclotron
+    period p_y has become p_z, with |p| and the kinetic energy unchanged."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg = _make_cfg_2d({"n_particles": 64, "magnetic_field": [1.0, 0.0, 0.0]})
+    hpe = HybridParticleEvolution(cfg)
+    assert hpe.u_dim == 3 and hpe.in_plane_b
+    state = load_particles(cfg)
+    assert state["u_e"].shape == (64, 3) and np.all(state["u_e"][:, 2] == 0.0)
+    # quarter period over one HPE step: omega_c dt / gamma = pi / 2 -> choose B accordingly
+    u_y = 30.0  # um/ps, non-relativistic (gamma ~ 1 + 5e-9)
+    gamma = np.sqrt(1.0 + (u_y / hpe.c) ** 2)
+    omega_needed = 0.5 * np.pi * gamma / hpe.dt
+    cfg = _make_cfg_2d({"n_particles": 64, "magnetic_field": [omega_needed / 0.175882, 0.0, 0.0]})
+    hpe = HybridParticleEvolution(cfg)
+    rng = np.random.default_rng(1)
+    x = jnp.asarray(rng.uniform(cfg["grid"]["xmin"] + 1.0, cfg["grid"]["xmax"] - 1.0, 64))
+    y = jnp.asarray(rng.uniform(0.5 * cfg["grid"]["ymin"], 0.5 * cfg["grid"]["ymax"], 64))  # clear of the walls
+    u = jnp.asarray(np.tile([0.0, u_y, 0.0], (64, 1)))
+    zero_field = jnp.zeros((hpe.nx_f, hpe.ny_f, 2), dtype=jnp.complex128)
+    x_new, y_new, u_new, flux, cone, d_kinetic = hpe.push_2d(x, y, u, zero_field, 0.0)
+    u_new = np.asarray(u_new)
+    np.testing.assert_allclose(u_new[:, 2], u_y, rtol=1e-9)
+    np.testing.assert_allclose(u_new[:, 1], 0.0, atol=1e-9 * u_y)
+    np.testing.assert_allclose(u_new[:, 0], 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(u_new, axis=-1), u_y, rtol=1e-12)
+    assert abs(float(d_kinetic)) < 1e-12
+    # the in-plane displacement follows the in-plane momentum: each sub-step rotates u_half
+    # by d_theta and advances y with the rotated p_y, so dy = sum_i dtp u_y cos(i d_theta) / gamma
+    # (the discrete form of the quarter-turn integral (2/pi) u_y dt)
+    d_theta = 0.5 * np.pi / hpe.n_sub
+    expected_dy = hpe.dtp * u_y / gamma * np.sum(np.cos(d_theta * np.arange(1, hpe.n_sub + 1)))
+    dy = np.asarray(y_new) - np.asarray(y)
+    np.testing.assert_allclose(dy, expected_dy, rtol=1e-9)
+    assert abs(expected_dy - 2.0 / np.pi * u_y * hpe.dt / gamma) < 0.1 * expected_dy
+    assert np.all(np.abs(np.asarray(x_new) - np.asarray(x)) < 1e-12)
+
+
+def test_out_of_plane_field_keeps_the_two_momentum_tracker():
+    """``[0, 0, B_z]`` is the float form ``B_z`` bit for bit, with (p_x, p_y) particles."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg_f = _make_cfg_2d({"n_particles": 256, "magnetic_field": 2.0})
+    cfg_l = _make_cfg_2d({"n_particles": 256, "magnetic_field": [0.0, 0.0, 2.0]})
+    hpe_f, hpe_l = HybridParticleEvolution(cfg_f), HybridParticleEvolution(cfg_l)
+    assert hpe_f.u_dim == hpe_l.u_dim == 2 and not hpe_l.in_plane_b
+    s_f, s_l = load_particles(cfg_f), load_particles(cfg_l)
+    assert s_f["u_e"].shape == (256, 2)
+    np.testing.assert_array_equal(s_f["u_e"], s_l["u_e"])
+    rng = np.random.default_rng(2)
+    x = jnp.asarray(rng.uniform(cfg_f["grid"]["xmin"], cfg_f["grid"]["xmax"], 256))
+    y = jnp.asarray(rng.uniform(cfg_f["grid"]["ymin"], cfg_f["grid"]["ymax"], 256))
+    u = jnp.asarray(rng.normal(0.0, 30.0, (256, 2)))
+    zero_field = jnp.zeros((hpe_f.nx_f, hpe_f.ny_f, 2), dtype=jnp.complex128)
+    out_f = hpe_f.push_2d(x, y, u, zero_field, 0.0)
+    out_l = hpe_l.push_2d(x, y, u, zero_field, 0.0)
+    for a, b in zip(out_f, out_l, strict=True):
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+    # and it does rotate in the plane
+    assert np.abs(np.asarray(out_f[2]) - np.asarray(u)).max() > 0.0
+
+
+def test_translator_maps_the_full_magnetic_field_vector():
+    from adept._lpse2d.lpse_deck import translate_parms
+
+    base = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "laser.enable": "true",
+        "laser.wavelength": "0.351",
+        "lw.envelopeDensity": "0.25",
+        "hpe.enable": "true",
+        "hpe.nElectrons": "1000",
+        "simulation.time.end": "1",
+    }
+    cfg, report = translate_parms({**base, "hpe.magneticField": "0 0 3"}, run="bz")
+    assert cfg["terms"]["hpe"]["magnetic_field"] == 3.0
+    cfg, report = translate_parms({**base, "hpe.magneticField": "1.5 0 3"}, run="bx")
+    assert cfg["terms"]["hpe"]["magnetic_field"] == [1.5, 0.0, 3.0]
+    assert not any("magneticField" in u for u in report["unsupported"])

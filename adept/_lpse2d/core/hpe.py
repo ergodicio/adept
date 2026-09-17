@@ -207,6 +207,11 @@ def load_particles(cfg: dict) -> dict:
         counts, _ = np.histogram(velocity, bins=nv, range=(-v_max, v_max))
         hist = counts.astype(np.float64) / (n_p * arrays["dv"])
 
+    b_field = hpe.get("magnetic_field", 0.0)
+    in_plane_b = isinstance(b_field, (list, tuple, np.ndarray)) and any(float(v) != 0.0 for v in list(b_field)[:2])
+    if is_2d and in_plane_b:
+        # in-plane B couples p_z to the in-plane momentum (plan 2 F.4): carry it, starting at 0
+        u = np.concatenate([u, np.zeros((n_p, 1))], axis=-1)
     state = {
         "x_e": np.asarray(x, dtype=np.float64),
         "u_e": np.asarray(u, dtype=np.float64),
@@ -294,8 +299,20 @@ class HybridParticleEvolution:
         p_default = [0.0 if self.periodic_x else 1.0, 0.0 if self.periodic_y else 1.0]
         p_therm = list(hpe.get("thermalization_probability") or p_default)
         self.p_therm_x, self.p_therm_y = float(p_therm[0]), float(p_therm[1] if len(p_therm) > 1 else p_therm[0])
-        # uniform out-of-plane B (tesla): electron cyclotron frequency e B / m_e = 0.17588 rad/ps per tesla
-        self.omega_c = 0.175882 * float(hpe.get("magnetic_field", 0.0))
+        # uniform B (tesla): a number is B_z (out of plane); a list is [B_x, B_y, B_z] (LPSE
+        # hpe.magneticField). Electron cyclotron frequency e B / m_e = 0.17588 rad/ps per tesla.
+        # An in-plane component couples the in-plane momentum to p_z, so the 2-D tracker then
+        # carries a third momentum component (plan 2 F.4); with B_z only it stays (p_x, p_y)
+        b_field = hpe.get("magnetic_field", 0.0)
+        b_vec = np.zeros(3)
+        if isinstance(b_field, (list, tuple, np.ndarray)):
+            b_vec[: len(b_field)] = np.asarray(b_field, dtype=np.float64)[:3]
+        else:
+            b_vec[2] = float(b_field)
+        self.omega_c_vec = 0.175882 * b_vec
+        self.omega_c = float(self.omega_c_vec[2])
+        self.in_plane_b = bool(np.any(self.omega_c_vec[:2] != 0.0))
+        self.u_dim = 3 if (self.is_2d and self.in_plane_b) else 2
         self.energy_conservation = bool(hpe.get("energy_conservation", False))
         self.ec_steps = max(float(hpe.get("energy_conservation_steps", 1.0)), 1.0)
         self.flux_edges = jnp.asarray(flux_bin_edges(hpe))
@@ -404,7 +421,11 @@ class HybridParticleEvolution:
             + (1.0 - wx)[:, None] * wy[:, None] * e01
             + wx[:, None] * wy[:, None] * e11
         )
-        return -self.q_over_m * jnp.real(e_particle * jnp.exp(-1j * self.wp0 * t))
+        acceleration = -self.q_over_m * jnp.real(e_particle * jnp.exp(-1j * self.wp0 * t))
+        if self.u_dim == 3:
+            # the EPW field is in-plane: no force along z
+            acceleration = jnp.concatenate([acceleration, jnp.zeros((acceleration.shape[0], 1))], axis=-1)
+        return acceleration
 
     # ------------------------------------------------------------------ push --
 
@@ -425,7 +446,18 @@ class HybridParticleEvolution:
         t_i = t0 + i * self.dtp
         u_half = u + 0.5 * self.dtp * acceleration
         gamma_rel = jnp.sqrt(1.0 + jnp.sum((u_half / self.c) ** 2, axis=-1))
-        if self.omega_c != 0.0:
+        if self.in_plane_b:
+            # uniform B with in-plane components: rotate the 3-momentum about B-hat by
+            # |omega_c| dt / gamma (Rodrigues; the exact form of the Boris rotation) -- |u| and
+            # gamma are unchanged, p_z couples to the in-plane momentum
+            omega = jnp.asarray(self.omega_c_vec)
+            magnitude = float(np.linalg.norm(self.omega_c_vec))
+            axis = omega / magnitude
+            theta = magnitude * self.dtp / gamma_rel
+            cos_t, sin_t = jnp.cos(theta)[:, None], jnp.sin(theta)[:, None]
+            u_par = jnp.sum(u_half * axis[None, :], axis=-1, keepdims=True) * axis[None, :]
+            u_half = u_half * cos_t + jnp.cross(axis[None, :], u_half) * sin_t + u_par * (1.0 - cos_t)
+        elif self.omega_c != 0.0:
             # uniform B_z: rotate the momentum by omega_c dt / gamma (electrons turn counter-clockwise
             # for B along +z); |u| and gamma are unchanged
             theta = self.omega_c * self.dtp / gamma_rel
@@ -457,7 +489,7 @@ class HybridParticleEvolution:
             cone = jnp.zeros((1,))
         else:
             speed = jnp.sqrt(jnp.sum(u_vec**2, axis=-1))
-            cos_angle = jnp.sum(u_vec * self.cone_dir[None, :], axis=-1) / jnp.where(speed > 0, speed, 1.0)
+            cos_angle = jnp.sum(u_vec[:, :2] * self.cone_dir[None, :], axis=-1) / jnp.where(speed > 0, speed, 1.0)
             cone = jnp.sum(jnp.where(any_out & (cos_angle >= self.cone_cos), ke_kev, 0.0))[None]
         return flux, cone
 
@@ -548,6 +580,8 @@ class HybridParticleEvolution:
         velocity_x = jnp.where(corner, x_sign * jnp.abs(velocity_x), velocity_x)
         velocity_y = jnp.where(corner, y_sign * jnp.abs(velocity_y), velocity_y)
         velocity = jnp.stack((velocity_x, velocity_y), axis=-1)
+        if self.u_dim == 3:
+            velocity = jnp.concatenate([velocity, jnp.zeros((self.n_p, 1))], axis=-1)  # re-injected in the plane
         speed = jnp.sqrt(normal_velocity**2 + tangential_velocity**2)
         gamma_rel = 1.0 / jnp.sqrt(1.0 - (speed / self.c) ** 2)
         u_new = gamma_rel[:, None] * velocity
@@ -666,7 +700,7 @@ class HybridParticleEvolution:
             return counts / (self.n_p * self.dv)
 
         gamma_rel = jnp.sqrt(1.0 + jnp.sum((u / self.c) ** 2, axis=-1))
-        velocity = u / gamma_rel[:, None]
+        velocity = (u / gamma_rel[:, None])[:, :2]  # the oriented projections are in-plane
 
         def projected_histogram(direction):
             counts, _ = jnp.histogram(velocity @ direction, bins=self.v_edges)

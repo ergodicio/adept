@@ -402,7 +402,9 @@ class HPEModel(BaseModel):
     # particle is thermalized with this probability or passes through periodically (LPSE particle walls
     # are independent of the field boundaries). None = 1 at absorbing field boundaries, 0 at periodic
     thermalization_probability: list[float] | None = None
-    magnetic_field: float = 0.0  # hpe.magneticField, tesla, out of plane (2-D push only)
+    # hpe.magneticField, tesla: a number is B_z (out of plane); [B_x, B_y, B_z] adds in-plane
+    # components, with which the 2-D tracker carries p_z (plan 2 F.4). 2-D push only
+    magnetic_field: float | list[float] = 0.0
     energy_conservation: bool = False  # hpe.enforceEnergyConservation: LD multiplier
     energy_conservation_steps: float = 1.0  # hpe.numStepsToAverageEnergyChange
     flux_bins: list[float] | None = None  # keV edges of the wall-flux instrument (default 0, 50, 100, inf)
