@@ -705,6 +705,18 @@ def translate_parms(
         cfg["terms"]["hpe"] = hpe
     if initial_perturbation is not None:
         cfg["initial_perturbation"] = initial_perturbation
+    if _bool(g("absoluteThreshold.isFind")):
+        # the search's parameters (threshold.find_threshold_lpse); the deck's intensity is its start
+        noise_range = _floats(g("absoluteThreshold.noiseTimeRange", "0.01 0.1"))
+        cfg["threshold"] = {
+            "gain": float(g("absoluteThreshold.gain", "23.026")),
+            "dI_fract": float(g("absoluteThreshold.dI_fract", "0.3333")),
+            "n_iter": int(float(g("absoluteThreshold.numIterations", "5"))),
+            "noise_time_range": [noise_range[0], noise_range[1] if len(noise_range) > 1 else 0.1],
+        }
+        report["notes"].append(
+            "absoluteThreshold.isFind: run adept._lpse2d.threshold.find_threshold_lpse on this config"
+        )
     for item in report["unsupported"]:
         print(f"lpse_deck: not translated -- {item}")
     return cfg, report

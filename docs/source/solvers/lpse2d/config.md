@@ -545,6 +545,10 @@ The pump `E0` and the Raman (or combined) field `E1` carry three components `(x,
 
 `save.light_spectrum: [{field: E0, interval: 0.05ps, tmin: 0ps, x: [-46.9um, -46.7um], y: [-10um, 10um], poynting: false}]` adds light spectrum probes (LPSE `spectrum.N.laser` / `spectrum.N.raman`: `startTime`, `interval`, `location.min/.max`, `file.E0.*`, `file.S0.*`): probe `i` records the field `E0` (pump, carrier `w0`) or `E1` (Raman light, carrier `w1`) on the sub-box (coordinates from the box centre, nearest grid nodes; an omitted axis is the whole box) every `interval`, and post-processing writes `binary/light_spectrum_i.xr` with the components `e_x, e_y, e_z` against time, their temporal spectra `spectrum_x, ...` against `delta omega (w_carrier)` (the envelope frequency offset, positive above the carrier), the box-summed `power` (plotted in `plots/light_spectrum_i.png`) and, with `poynting: true`, the Poynting components `s_x, s_y` (one guard cell is kept for the differences and cropped afterwards). The translator maps every enabled LPSE probe that names an output file.
 
+## Absolute-threshold search
+
+`adept._lpse2d.threshold.find_threshold` bisects the pump intensity between a stable and an unstable bracket on the fitted EPW growth rate. `find_threshold_lpse` is LPSE's own `absoluteThreshold` search (`AbsoluteThreshold.cpp`): from the configuration's intensity it steps by `dI_fract` of it away from the first run's side until `ln(A_end / A_noise) > gain` flips (`A` the peak EPW amplitude `max_phi`, `A_noise` its mean before `noise_time_range[1]`), then `n_iter` halving steps towards the flip. The deck translator writes `absoluteThreshold.{gain, dI_fract, numIterations, noiseTimeRange}` into a `threshold` block that `find_threshold_lpse` reads (test_016); the defaults are LPSE's (`gain` 23.026, `dI_fract` 0.3333, 5 iterations, 0.01-0.1 ps).
+
 ## Initial perturbation (`initial_perturbation`)
 
 LPSE `initialPerturbation` (`InitialPerturbation.cpp`): a plane wave `A env(r) exp(i K . r)` written into one field at `t = 0`, for growth-rate tests that do not depend on a noise seed.

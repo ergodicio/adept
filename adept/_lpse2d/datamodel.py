@@ -519,3 +519,6 @@ class ConfigModel(BaseModel):
     units: UnitsModel
     restart: RestartModel | None = None
     initial_perturbation: InitialPerturbationModel | None = None
+    # LPSE absoluteThreshold.* (the search's parameters for threshold.find_threshold_lpse):
+    # {gain, dI_fract, n_iter, noise_time_range}; the search itself is a driver, not a run option
+    threshold: dict | None = None
