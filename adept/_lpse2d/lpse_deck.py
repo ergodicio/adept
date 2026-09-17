@@ -328,11 +328,16 @@ def translate_parms(
         "srs_k_filter": _bool(g("lw.kFilter.enable")),
         "srs_k_filter_scale": float(g("lw.kFilter.scale", "1.2")),
     }
+    if _bool(g("lw.restrictSourceRange.enable")):
+        epw_source_window = _source_window(g, "lw.restrictSourceRange")
+    else:
+        epw_source_window = None
     epw_solver = "combined" if g("lw.solver", "spectral").lower() == "combined" else "separate"
     if g("lw.solver", "spectral").lower() == "fd":
         report["unsupported"].append("lw.solver = fd (LPSE itself disables it); translated as spectral")
     epw = {
         "boundary": boundary,
+        **({"source_window": epw_source_window} if epw_source_window else {}),
         "damping": {
             "collisions": collisions,
             "landau": landau_on,
@@ -378,6 +383,10 @@ def translate_parms(
         light["pump_depletion"] = True
     if _bool(g("lw.kFilter.enable")):
         light["tpd_k_filter"] = True
+    # LPSE zeroes every source across the injector rows unless told otherwise; in the
+    # absorbing layers only on request (plan 2 I.3)
+    light["suppress_sources_at_injectors"] = _bool(g("suppressSourcesAtInjectors", "true"))
+    light["suppress_sources_in_absorbers"] = _bool(g("suppressSourcesInAbsorbingRegions"))
 
     # ---- laser beams (static: intensities summed; direction along +x expected)
     n_beams = int(float(g("laser.nBeams", "1")))
@@ -475,6 +484,12 @@ def translate_parms(
             stride = max(1, int(np.floor(iaw_step * 1.0001 / dt)))
             if stride > 1:
                 iaw["stride"] = stride
+        if _bool(g("iaw.restrictSourceRange.enable")):
+            iaw["source_window"] = _source_window(g, "iaw.restrictSourceRange")
+        if g("iaw.startEvolvingTime") is not None:
+            iaw["t_start"] = float(g("iaw.startEvolvingTime"))
+        if g("iaw.stopEvolvingTime") is not None:
+            iaw["t_stop"] = float(g("iaw.stopEvolvingTime"))
         tf = {w: _bool(g(f"thermalFil.{w}.enable")) for w in ("laser", "raman", "lw")}
         if any(tf.values()):
             tf["nonlocal"] = _bool(g("thermalFil.isNonlocal"))
@@ -626,6 +641,17 @@ def translate_parms(
 
 
 # ---------------------------------------------------------------- outputs --
+
+
+def _source_window(g, prefix: str) -> dict:
+    """``<prefix>.{width, center, edgeWidth}`` (um, from the box centre) -> ``source_window``."""
+    width = _floats(g(f"{prefix}.width", "0 0 0"))
+    center = _floats(g(f"{prefix}.center", "0 0 0"))
+    return {
+        "width": [f"{v}um" for v in (list(width) + [0.0, 0.0])[:2]],
+        "center": [f"{v}um" for v in (list(center) + [0.0, 0.0])[:2]],
+        "edge_width": f"{float(g(f'{prefix}.edgeWidth', '0'))}um",
+    }
 
 
 def read_metrics(path: str | Path) -> dict[str, np.ndarray]:

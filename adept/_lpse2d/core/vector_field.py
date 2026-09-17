@@ -111,6 +111,24 @@ class SplitStep:
             t,
         )
 
+    def iaw_step(self, y, t):
+        """The IAW step at ``t``, applied every ``stride``-th EPW step (LPSE strides the IAW
+        solver, advancing by stride*dt) and inside ``[t_start, t_stop)`` (LPSE
+        ``iaw.startEvolvingTime`` / ``stopEvolvingTime``); the direct call when nothing gates it."""
+        gates = []
+        if self.iaw.stride > 1:
+            gates.append(jnp.round(t / self.dt).astype(int) % self.iaw.stride == 0)
+        if self.iaw.t_start is not None:
+            gates.append(t >= self.iaw.t_start)
+        if self.iaw.t_stop is not None:
+            gates.append(t < self.iaw.t_stop)
+        if not gates:
+            return self.iaw(y, t)
+        active = gates[0]
+        for gate in gates[1:]:
+            active = active & gate
+        return lax.cond(active, lambda yy: self.iaw(yy, t), lambda yy: yy, y)
+
     def light_split_step(self, t, y, driver_args):
         iaw_density = y.get("iaw_density")
         if self.pump_depletion:
@@ -178,11 +196,7 @@ class SplitStep:
                 # the IAW ponderomotive drive sees the Raman light (transverse part) and the
                 # EPW (through the derived potential) separately, not the combined field
                 iaw_in = {**new_y, "E1": self.combined.transverse(new_y["E1"])}
-                if self.iaw.stride == 1:
-                    iaw_out = self.iaw(iaw_in, t)
-                else:
-                    step = jnp.round(t / self.dt).astype(int)
-                    iaw_out = lax.cond(step % self.iaw.stride == 0, lambda yy: self.iaw(yy, t), lambda yy: yy, iaw_in)
+                iaw_out = self.iaw_step(iaw_in, t)
                 new_y["iaw_density"] = iaw_out["iaw_density"]
                 new_y["iaw_velocity_divergence"] = iaw_out["iaw_velocity_divergence"]
             if self.hpe is not None:
@@ -207,12 +221,7 @@ class SplitStep:
         # ion-acoustic split step: the updated density is seen by the light and EPW
         # detuning terms on the next outer step, matching the MATLAB ordering
         if self.iaw is not None:
-            if self.iaw.stride == 1:
-                new_y = self.iaw(new_y, t)
-            else:
-                # LPSE strides the IAW solver: advance by stride*dt every stride-th EPW step
-                step = jnp.round(t / self.dt).astype(int)
-                new_y = lax.cond(step % self.iaw.stride == 0, lambda yy: self.iaw(yy, t), lambda yy: yy, new_y)
+            new_y = self.iaw_step(new_y, t)
 
         # particle push + Landau-damping feedback; the gamma_L written here is the
         # rate the EPW update applies on the next step (one-step lag)

@@ -403,6 +403,10 @@ class SpectralEPWSolver:
         # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
         # the cfg, so MLflow logs it) in helpers.get_derived_quantities; the fallback
         # here only fires if that step was skipped.
+        # x-space multiplier on the TPD / SRS sources (terms.epw.source_window, the absorber and
+        # injector suppressions; plan 2 I.3); 1.0 when none is configured
+        mask = cfg["grid"].get("epw_source_mask")
+        self.source_mask = 1.0 if mask is None or bool(np.all(np.asarray(mask) == 1.0)) else jnp.asarray(mask)
         self.noise_enabled = source_cfg["noise"]
         self.noise_model = str(source_cfg.get("noise_model", "flat"))
         if self.noise_model not in NOISE_MODELS:
@@ -550,14 +554,15 @@ class SpectralEPWSolver:
             TPD source term in k-space
         """
         e0x, e0y = E0[..., 0], E0[..., 1]
+        window = self.source_mask  # x-space source window (terms.epw.source_window etc.)
 
         # Component 1: F(E0 . conj(E))  (MATLAB line 2011-2012 with E0x = 0)
-        tpd1 = jnp.fft.fft2(e0x * jnp.conj(ex) + e0y * jnp.conj(ey))
+        tpd1 = jnp.fft.fft2(window * (e0x * jnp.conj(ex) + e0y * jnp.conj(ey)))
 
         # Component 2: i k . F(E0 conj(rho)) / k^2  (MATLAB line 2014-2018)
         rho = jnp.fft.ifft2(self.k_sq * phi_k)
-        tpd2_x = jnp.fft.fft2(e0x * jnp.conj(rho))
-        tpd2_y = jnp.fft.fft2(e0y * jnp.conj(rho))
+        tpd2_x = jnp.fft.fft2(window * e0x * jnp.conj(rho))
+        tpd2_y = jnp.fft.fft2(window * e0y * jnp.conj(rho))
         tpd2 = 1j * (self.kx[:, None] * tpd2_x + self.ky[None, :] * tpd2_y) * self.one_over_k_sq
 
         # Combine with prefactor (MATLAB line 2024; LPSE TPD_srcFactor)
@@ -601,7 +606,7 @@ class SpectralEPWSolver:
         # (1 + backgroundDensityPerturbation) = n / n_envelope
         source = self.srs_prefactor * self.background_density / self.envelope_density * E0_dot_E1
 
-        return jnp.fft.fft2(source)
+        return jnp.fft.fft2(self.source_mask * source)
 
     def get_noise(self, t: float) -> Array:
         """

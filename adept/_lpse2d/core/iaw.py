@@ -115,6 +115,13 @@ class IonAcousticWave:
         self.stride = int(iaw.get("stride", 1) or 1)
         if self.stride < 1:
             raise ValueError("terms.iaw.stride must be a positive integer")
+        # x-space window on the ponderomotive drive, squared (plan 2 I.3); 1.0 when none
+        mask = grid.get("iaw_source_mask")
+        self.source_mask_sq = 1.0 if mask is None or bool(np.all(np.asarray(mask) == 1.0)) else jnp.asarray(mask) ** 2
+        # terms.iaw.t_start / t_stop (ps): the IAW step only acts inside this interval (LPSE
+        # iaw.startEvolvingTime / stopEvolvingTime); None means unbounded
+        self.t_start = float(iaw["t_start"]) if iaw.get("t_start") is not None else None
+        self.t_stop = float(iaw["t_stop"]) if iaw.get("t_stop") is not None else None
         if self.stride > 1 and self.solver != "spectral":
             raise ValueError(
                 "terms.iaw.stride > 1 requires terms.iaw.solver: spectral (the explicit step is not stable)"
@@ -303,14 +310,17 @@ class IonAcousticWave:
         return ex, ey
 
     def ponderomotive_drive(self, phi_k: Array, E0: Array, E1: Array) -> Array:
-        """The EPW/pump/Raman part of the ponderomotive potential (no acoustic term)."""
+        """The EPW/pump/Raman part of the ponderomotive potential (no acoustic term), times the
+        square of the IAW source window (LPSE ``getPonderomotivePotential`` applies
+        ``restrictRange`` squared; ``terms.iaw.source_window``, plan 2 I.3)."""
         ex, ey = self.epw_fields(phi_k)
         epw_intensity = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
         pump_intensity = jnp.sum(jnp.abs(E0) ** 2, axis=-1)
         raman_intensity = jnp.sum(jnp.abs(E1) ** 2, axis=-1)
-        return self.ponderomotive_prefactor * (
+        drive = self.ponderomotive_prefactor * (
             epw_intensity / self.wp0**2 + pump_intensity / self.w0**2 + raman_intensity / self.w1**2
         )
+        return drive * self.source_mask_sq
 
     def ponderomotive_potential(self, phi_k: Array, E0: Array, E1: Array, density: Array) -> Array:
         """Build the acoustic plus EPW/pump/Raman ponderomotive potential."""

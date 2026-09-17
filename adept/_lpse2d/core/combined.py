@@ -135,6 +135,9 @@ class CombinedSolver:
         # rate the injected pump reflects off both walls into a standing wave (see helpers)
         self.light_boundary = grid["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
 
+        # x-space source window on the unified source (terms.epw.source_window etc., plan 2 I.3)
+        mask = grid.get("epw_source_mask")
+        self.source_mask = None if mask is None or bool(np.all(np.asarray(mask) == 1.0)) else jnp.asarray(mask)
         # unified source coefficient (LightSolver.cpp Sc_srs for the Raman class = (q/m)/(4 W0))
         self.source_coeff = -1j * self.e / (4.0 * self.me * self.w0)
         self.rho_factor = 1.0 - self.w0 / self.wp0
@@ -201,6 +204,8 @@ class CombinedSolver:
         grad = grad.at[..., 1].set(jnp.fft.ifft2(1j * self.ky[None, :] * scalar_k))
         rho = jnp.fft.ifft2(1j * k_dot(fft2c(E1), self.kx, self.ky) * self.band)
         term = grad + self.rho_factor * E0f * jnp.conj(rho)[..., None]
+        if self.source_mask is not None:
+            term = term * self.source_mask[..., None]
         return self.source_coeff * jnp.exp(-1j * self.delta_w * t) * term
 
     def unified_depletion(self, t: float, E1: Array) -> Array:

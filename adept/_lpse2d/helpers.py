@@ -203,6 +203,77 @@ def calc_threshold_intensity(Te: float, Ln: float, w0: float) -> float:
     return I_threshold
 
 
+def range_restriction(x: np.ndarray, y: np.ndarray, window: dict) -> np.ndarray:
+    """LPSE ``ZakharovSolver::restrictRange``: per axis a flat top of ``width`` about
+    ``center`` with linear ramps of ``edge_width`` to zero outside, multiplied over the axes
+    (an axis with width 0 / omitted is unrestricted). Coordinates are measured from the box
+    centre as in LPSE. Returns the (nx, ny) multiplier."""
+    xc = x - 0.5 * (x[0] + x[-1])
+    yc = y - 0.5 * (y[0] + y[-1])
+    widths = list(window.get("width") or [])
+    centers = list(window.get("center") or [])
+    edge = _Q(window.get("edge_width", "0um")).to("um").value
+    multiplier = np.ones((x.size, y.size))
+    for axis, coord in enumerate((xc[:, None], yc[None, :])):
+        width = _Q(widths[axis]).to("um").value if axis < len(widths) and widths[axis] is not None else 0.0
+        if width <= 0.0:
+            continue
+        center = _Q(centers[axis]).to("um").value if axis < len(centers) and centers[axis] is not None else 0.0
+        lo, hi = center - 0.5 * width, center + 0.5 * width
+        if edge > 0.0:
+            ramp = np.clip(np.minimum((coord - lo) / edge + 1.0, (hi - coord) / edge + 1.0), 0.0, 1.0)
+        else:
+            ramp = np.where((coord > lo) & (coord <= hi), 1.0, 0.0)
+        multiplier = multiplier * np.broadcast_to(ramp, multiplier.shape)
+    return multiplier
+
+
+def source_mask(cfg: dict, cfg_grid: dict, which: str) -> np.ndarray:
+    """The x-space source multiplier of ``which`` (``epw`` or ``iaw``): the range restriction
+    of ``terms.<which>.source_window`` times, with ``terms.light.suppress_sources_in_absorbers``,
+    zero inside the absorbing layers (``boundary_width`` from the walls, LPSE
+    ``suppressSourcesInAbsorbingRegions``) and, with ``terms.light.suppress_sources_at_injectors``
+    (LPSE ``suppressSourcesAtInjectors``), zero across the pump and seed injector rows."""
+    x = np.asarray(cfg_grid["x"], dtype=np.float64)
+    y = np.asarray(cfg_grid["y"], dtype=np.float64)
+    window = cfg["terms"].get(which, {}).get("source_window")
+    mask = range_restriction(x, y, window) if window else np.ones((x.size, y.size))
+    light = cfg["terms"].get("light", {})
+    if light.get("suppress_sources_in_absorbers", False):
+        boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
+        inside_x = (x < cfg_grid["xmin"] + boundary_width) | (x > cfg_grid["xmax"] - boundary_width)
+        mask = mask * np.where(inside_x, 0.0, 1.0)[:, None]
+        boundary = cfg["terms"][which]["boundary"] if which in cfg["terms"] else cfg["terms"]["epw"]["boundary"]
+        if y.size > 1 and str(boundary.get("y", "periodic")) != "periodic":
+            inside_y = (y < cfg_grid["ymin"] + boundary_width) | (y > cfg_grid["ymax"] - boundary_width)
+            mask = mask * np.where(inside_y, 0.0, 1.0)[None, :]
+    if light.get("suppress_sources_at_injectors", False):
+        dx = float(cfg_grid["dx"])
+        rows = np.ones(x.size)
+        pump = cfg["drivers"].get("E0", {}).get("derived", {})
+        if light.get("pump_depletion", False) and "offset" in pump:
+            rows = rows * _injector_rows(x, cfg_grid["xmin"] + pump["offset"], pump.get("injector_width"), dx, light)
+        seed = cfg["drivers"].get("E1", {}).get("derived", {})
+        if "offset" in seed:
+            rows = rows * _injector_rows(x, cfg_grid["xmax"] - seed["offset"], seed.get("injector_width"), dx, light)
+        mask = mask * rows[:, None]
+    return mask
+
+
+def _injector_rows(x: np.ndarray, x_inject: float, injector_width, dx: float, light: dict) -> np.ndarray:
+    """Zero over the injector's cells: the two rows of the FD two-point source (LPSE
+    ``solverOrder / 2 + 1``), or the Gaussian source's width in cells for the spectral solver."""
+    i0 = int(np.argmin(np.abs(x - x_inject)))
+    if str(light.get("solver", "fd")) == "spectral":
+        width_cells = int(np.ceil(float(injector_width) / dx)) if injector_width else 2
+        lo, hi = i0 - width_cells, i0 + width_cells
+    else:
+        lo, hi = i0, i0 + 1
+    rows = np.ones(x.size)
+    rows[max(lo, 0) : min(hi, x.size - 1) + 1] = 0.0
+    return rows
+
+
 def initial_perturbation_field(cfg: dict) -> np.ndarray:
     """The x-space plane wave of ``initial_perturbation`` on the grid, (nx, ny) complex, in this
     code's units of the target field (LPSE ``InitialPerturbation::create`` with its
@@ -867,6 +938,12 @@ def get_solver_quantities(cfg: dict) -> dict:
         if cfg["terms"]["zero_mask"]
         else 1
     )
+
+    # source windows (plan 2 I.3): x-space multipliers on the EPW sources (TPD, SRS, the
+    # combined solver's unified source) and on the IAW ponderomotive drive
+    cfg_grid["epw_source_mask"] = source_mask(cfg, cfg_grid, "epw")
+    if iaw.get("active", False):
+        cfg_grid["iaw_source_mask"] = source_mask(cfg, cfg_grid, "iaw")
 
     k_mag = np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
     kmax = cfg_grid["kx"].max()

@@ -262,12 +262,25 @@ class SourceModel(BaseModel):
     srs_k_filter_scale: float = Field(default=1.2, ge=1.0, le=10.0)
 
 
+class SourceWindowModel(BaseModel):
+    """LPSE ``restrictSourceRange`` (``ZakharovSolver::restrictRange``): the sources are
+    multiplied by a per-axis flat top of ``width`` about ``center`` (measured from the box
+    centre) with linear ramps of ``edge_width`` to zero outside; an axis with width 0 or
+    omitted is unrestricted. The IAW window enters its ponderomotive drive squared."""
+
+    center: list[str] | None = None
+    width: list[str] | None = None
+    edge_width: str = "0um"
+
+
 class EPWModel(BaseModel):
     boundary: BoundaryModel
     damping: DampingModel
     density_gradient: bool
     linear: bool
     source: SourceModel
+    # LPSE lw.restrictSourceRange: window on the TPD / SRS (and combined unified) sources
+    source_window: SourceWindowModel | None = None
     # LPSE lw.maxWavenumber: hard cap |k| < max_wavenumber * k0 on the retained EPW band
     max_wavenumber: float | None = None
     # per-operation EPW energy ledger accumulated in the state and reported in the default
@@ -315,6 +328,12 @@ class LightModel(BaseModel):
     # step (percent level at k0 dx ~ 1-2) that no propagator moves and that the EPW sources
     # see while the projected TPD depletion term cannot return energy from it (plan 2 N.4)
     transverse_fields: bool = True
+    # LPSE suppressSourcesInAbsorbingRegions (default false there) / suppressSourcesAtInjectors
+    # (default true there; false here so existing runs are unchanged -- the deck translator
+    # sets LPSE's default): zero the EPW and IAW sources inside the absorbing layers / across
+    # the pump and seed injector rows
+    suppress_sources_in_absorbers: bool = False
+    suppress_sources_at_injectors: bool = False
     # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
     # or the amplitude rate at nc in 1/ps
     absorption: bool | float = False
@@ -367,6 +386,11 @@ class IAWModel(BaseModel):
     max_density_perturbation: float | None = None
     flow: list[float] | None = None
     stride: int = 1
+    # LPSE iaw.restrictSourceRange (squared on the ponderomotive drive) and
+    # iaw.startEvolvingTime / stopEvolvingTime (ps): the IAW step acts only in [t_start, t_stop)
+    source_window: SourceWindowModel | None = None
+    t_start: float | None = None
+    t_stop: float | None = None
     noise: bool = False
     noise_amplitude: float = 1.0
     noise_seed: int | None = None
