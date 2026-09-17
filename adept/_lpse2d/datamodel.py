@@ -107,14 +107,16 @@ class E0DriverModel(BaseModel):
     # in-plane angle of incidence from +x in degrees (LPSE laser.N.direction): the static pump
     # is the grid mode nearest to k0 (cos a, sin a); the spectral injector launches at the
     # y-snapped transverse wavenumber. Not with speckle or the FD injector.
-    angle: float = Field(default=0.0, gt=-90.0, lt=90.0)
+    # |angle| > 90 is a leftward beam (LPSE laser.N.direction with a negative x): the injectors
+    # launch it from the x-max face at xmax - offset (plan 2 L.4a); +-90 (a y face) is not supported
+    angle: float = Field(default=0.0, gt=-180.0, le=180.0)
     # polarization angle in degrees about the beam axis, LPSE laser.N.polarization: 0 ("p") is
     # in-plane, 90 ("s") is along z, the out-of-plane component every light field carries (plan 2
     # F.1/F.2). The injectors launch cos(psi) in-plane + sin(psi) z
     polarization: float | Literal["p", "s"] = "p"
-    # LPSE laser.N.* beams: [{intensity: fraction or W/cm^2 (normalised), angle: deg, phase: rad,
-    # delta_omega: dW/W0, polarization: deg}]; every beam carries every color. Spectral injector
-    # and static pump only.
+    # LPSE laser.N.* beams: [{intensity: fraction or W/cm^2 (normalised), angle: deg (|angle| > 90
+    # = from the x-max face), phase: rad, delta_omega: dW/W0, polarization: deg}]; every beam
+    # carries every color. Spectral injector and static pump only.
     beams: list[dict] | None = None
     beam_width: str | None = None  # LPSE laser.N.width: transverse (y) standard deviation of injected beams
     beam_sg_order: float = 2.0  # LPSE laser.N.sgOrder of that transverse profile (2 = Gaussian)
@@ -320,6 +322,9 @@ class LightModel(BaseModel):
     # light propagator: "fd" (MATLAB staggered scheme, sub-cycled to its CFL limit) or
     # "spectral" (LPSE exact k-space propagator with L/T projection, no CFL limit)
     solver: Literal["fd", "spectral"] = "fd"
+    # fd solver: order of the central stencils (LPSE evolution.solverOrder 2 / 4 / 6); the
+    # plane-wave injectors widen with it and the light dt limit tightens by 4/3 and 68/45
+    fd_order: Literal[2, 4, 6] = 2
     # retained light band cap |k| < max_wavenumber * k0 (spectral solver; LPSE maxWavenumber)
     max_wavenumber: float | None = None
     # project the SRS light sources onto their transverse part every sub-step (LPSE

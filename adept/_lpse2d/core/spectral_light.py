@@ -170,6 +170,20 @@ class SpectralCoupledLight(CoupledLight):
         self.detune0 = jnp.exp(self.dt_l * self.linear_coeff0)
         self.detune1 = jnp.exp(self.dt_l * self.linear_coeff)
         pump = cfg["drivers"]["E0"]["derived"]
+        # beams with |angle| > 90 deg are launched leftward from the x-max face (plan 2 L.4a):
+        # their injector plane sits at xmax - offset, with that plane's density
+        leftward = np.atleast_1d(np.asarray(pump.get("beam_leftward", [False]), dtype=bool))
+        self.beam_sign = [-1 if left else 1 for left in leftward]
+        x_inject_max = cfg["grid"]["xmax"] - pump["offset"]
+        self.i0_max = int(np.argmin(np.abs(np.array(self.x) - x_inject_max)))
+        self.n_src_max = float(cfg["grid"]["background_density"][self.i0_max, 0])
+        if np.any(leftward) and self.n_src_max >= 1.0:
+            raise ValueError(
+                f"The x-max pump injector at x = {float(self.x[self.i0_max]):.2f} um sits at density "
+                f"{self.n_src_max:.3f} nc, at or above critical."
+            )
+        self.beam_i_inject = [self.i0_max if left else self.i0 for left in leftward]
+        self.beam_n_src = [self.n_src_max if left else self.n_src for left in leftward]
         k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
         # in-plane angle of incidence (drivers.E0.angle): the transverse wavenumber is snapped
         # to the periodic y grid (terms.light.snap_beam_ky, default), kx follows from the local
@@ -182,15 +196,16 @@ class SpectralCoupledLight(CoupledLight):
         dky = 2.0 * np.pi / (cfg["grid"]["ny"] * cfg["grid"]["dy"])
         angles = np.atleast_1d(np.asarray(pump.get("beam_angle", [pump.get("angle", 0.0)]), dtype=np.float64))
         snap = bool(cfg["terms"].get("light", {}).get("snap_beam_ky", True))
+        k0_beams = self.w0 / self.c * np.sqrt(1.0 - np.asarray(self.beam_n_src, dtype=np.float64))
         if cfg["grid"]["ny"] > 1:
-            ky_beams = k0_inject * np.sin(angles)
+            ky_beams = k0_beams * np.sin(angles)
             if snap:
                 ky_beams = np.round(ky_beams / dky) * dky
         else:
             ky_beams = np.zeros_like(angles)
-        if np.any(np.abs(ky_beams) >= k0_inject):
+        if np.any(np.abs(ky_beams) >= k0_beams):
             raise ValueError(
-                f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched at density {self.n_src}"
+                f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched at densities {self.beam_n_src}"
             )
         self.ky_beams = jnp.asarray(ky_beams)
         self.ky_pump = float(ky_beams[0])
@@ -219,6 +234,10 @@ class SpectralCoupledLight(CoupledLight):
         self.pump_profile = jnp.asarray(
             gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
         )
+        width_max = pump.get("injector_width", np.pi / (self.w0 / self.c * np.sqrt(max(1.0 - self.n_src_max, 1e-12))))
+        self.pump_profile_max = jnp.asarray(
+            gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0_max]), width_max, self.dx)
+        )
         if self.seed_enabled:
             seed = cfg["drivers"]["E1"]["derived"]
             width1 = seed.get("injector_width", np.pi / self.k1_inject)
@@ -231,8 +250,9 @@ class SpectralCoupledLight(CoupledLight):
     absorption_factor = SpectralRamanLight.absorption_factor
 
     def calc_pump_source(self, t: float, pump_args: dict) -> Array:
-        """Smooth injector for the rightward (optionally oblique) pump, summed over colors:
-        the (nx, ny, 3) source added to E0 (the FD two-point rows are replaced)."""
+        """Smooth injector for the (optionally oblique) pump beams, summed over colors: the
+        (nx, ny, 3) source added to E0 (the FD two-point rows are replaced). Beams with
+        |angle| > 90 deg are launched leftward from the x-max plane."""
         t_env = get_envelope(
             pump_args["tr"],
             pump_args["tr"],
@@ -244,25 +264,24 @@ class SpectralCoupledLight(CoupledLight):
         delta_omega = pump_args["delta_omega"]  # (nc,)
         intensities = pump_args["intensities"]  # (nc, ny)
         phases = pump_args["phases"]  # (nc, ny)
-        eps0 = 1.0 - self.n_src
         if self.pulse_t is not None:
             t_env = t_env * jnp.interp(t, self.pulse_t, self.pulse_amp)
-        amp = self.E0_source * jnp.sqrt(intensities) / eps0**0.25 * t_env * turn_on  # (nc, ny)
+        amp = self.E0_source * jnp.sqrt(intensities) * t_env * turn_on  # (nc, ny)
         amp = amp * self.beam_envelope_y[None, :]
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
         total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 3), dtype=jnp.complex128)
         for b in range(int(self.ky_beams.shape[0])):
             ky_b = self.ky_beams[b]
             dw_b = self.beam_delta_omega[b]
-            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega + dw_b) ** 2 - self.n_src)  # (nc,)
-            kx = jnp.sqrt(k0**2 - ky_b**2)  # (nc,) longitudinal wavenumber of each color
-            v_gx = self.c**2 * kx / self.w0  # flux through the injector plane is set by the x group velocity
+            sign, n_src, i_inject = self.beam_sign[b], self.beam_n_src[b], self.beam_i_inject[b]
+            profile = self.pump_profile_max if sign < 0 else self.pump_profile
+            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega + dw_b) ** 2 - n_src)  # (nc,)
+            kx = sign * jnp.sqrt(k0**2 - ky_b**2)  # (nc,) longitudinal wavenumber of each color, signed
+            v_gx = self.c**2 * jnp.abs(kx) / self.w0  # flux through the injector plane: the x group velocity
             beam_phase = self.beam_phase[b] - self.w0 * dw_b * t + self.kap_phase(t, b)
-            amp_b = amp * jnp.sqrt(self.beam_fraction[b]) * jnp.exp(1j * beam_phase)
-            carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[self.i0]))  # (nc, nx)
-            source = (amp_b * v_gx[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[
-                :, :, None
-            ]
+            amp_b = amp / (1.0 - n_src) ** 0.25 * jnp.sqrt(self.beam_fraction[b]) * jnp.exp(1j * beam_phase)
+            carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[i_inject]))  # (nc, nx)
+            source = (amp_b * v_gx[:, None] * color_phase)[:, None, :] * (carrier * profile[None, :])[:, :, None]
             source = jnp.sum(source, axis=0) * jnp.exp(1j * ky_b * self.y_arr)[None, :]  # (nx, ny)
             k_mag = jnp.sqrt(kx[0] ** 2 + ky_b**2)
             # LPSE rotateBeam: cos(psi) along the in-plane transverse direction of the (first

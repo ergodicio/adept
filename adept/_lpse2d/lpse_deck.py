@@ -356,7 +356,10 @@ def translate_parms(
     raman_solver = g("raman.solver", "spectral").lower()
     laser_solver = g("laser.solver", "static").lower()
     light: dict = {"pump_depletion": laser_evolves}
-    if epw_solver == "combined" or raman_solver == "spectral" or laser_solver == "spectral":
+    # only the evolved fields vote: raman.solver defaults to spectral in LPSE whether or not
+    # the Raman field is on, and a laser-only fd deck (test_016) must stay fd
+    voters = [s for s, on in ((raman_solver, raman_on), (laser_solver, laser_evolves)) if on]
+    if epw_solver == "combined" or "spectral" in voters:
         light["solver"] = "spectral"
     else:
         light["solver"] = "fd"
@@ -365,6 +368,23 @@ def translate_parms(
             f"laser.solver = {laser_solver} but raman.solver = {raman_solver}: "
             f"one adept light solver ({light['solver']})"
         )
+    if light["solver"] == "fd":
+        # evolution.solverOrder (default 2 in LPSE for both fields): one stencil order here
+        orders = {}
+        for field, active in (("laser", laser_evolves), ("raman", raman_on)):
+            key = f"{field}.evolution.solverOrder"
+            if active and key in parms:
+                orders[field] = int(float(parms[key]))
+        if orders:
+            order = max(orders.values())
+            if order not in (2, 4, 6):
+                report["unsupported"].append(f"evolution.solverOrder = {order} (2, 4 or 6)")
+            else:
+                light["fd_order"] = order
+                if len(set(orders.values())) > 1:
+                    report["notes"].append(
+                        f"laser/raman evolution.solverOrder differ ({orders}): one adept stencil order ({order})"
+                    )
     absorption = float(g("raman.evolution.absorption", g("laser.evolution.absorption", "0")))
     if absorption > 0:
         light["absorption"] = absorption
@@ -398,9 +418,12 @@ def translate_parms(
         intensity += i_b
         direction = _floats(g(f"laser.{b}.direction", "1 0 0"))
         dz = direction[2] if len(direction) > 2 else 0.0
-        if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] <= 0:
-            report["unsupported"].append(f"laser.{b}.direction {direction}: adept pump is in-plane and rightward")
-        beam_angle = float(np.degrees(np.arctan2(direction[1], direction[0])))
+        dy = direction[1] if len(direction) > 1 else 0.0
+        # in-plane beams from the x-min (dx > 0) or x-max (dx < 0) face; a y-face beam (dx = 0)
+        # and any out-of-plane direction are not supported
+        if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] == 0:
+            report["unsupported"].append(f"laser.{b}.direction {direction}: adept pump beams enter from the x faces")
+        beam_angle = float(np.degrees(np.arctan2(dy, direction[0])))
         if b == 1:
             angle_deg = beam_angle
         beams.append(

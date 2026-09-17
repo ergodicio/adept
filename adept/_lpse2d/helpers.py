@@ -252,7 +252,15 @@ def source_mask(cfg: dict, cfg_grid: dict, which: str) -> np.ndarray:
         rows = np.ones(x.size)
         pump = cfg["drivers"].get("E0", {}).get("derived", {})
         if light.get("pump_depletion", False) and "offset" in pump:
-            rows = rows * _injector_rows(x, cfg_grid["xmin"] + pump["offset"], pump.get("injector_width"), dx, light)
+            leftward = np.asarray(pump.get("beam_leftward", [False]), dtype=bool)
+            if not np.all(leftward):
+                rows = rows * _injector_rows(
+                    x, cfg_grid["xmin"] + pump["offset"], pump.get("injector_width"), dx, light
+                )
+            if np.any(leftward):
+                rows = rows * _injector_rows(
+                    x, cfg_grid["xmax"] - pump["offset"], pump.get("injector_width"), dx, light
+                )
         seed = cfg["drivers"].get("E1", {}).get("derived", {})
         if "offset" in seed:
             rows = rows * _injector_rows(x, cfg_grid["xmax"] - seed["offset"], seed.get("injector_width"), dx, light)
@@ -261,14 +269,16 @@ def source_mask(cfg: dict, cfg_grid: dict, which: str) -> np.ndarray:
 
 
 def _injector_rows(x: np.ndarray, x_inject: float, injector_width, dx: float, light: dict) -> np.ndarray:
-    """Zero over the injector's cells: the two rows of the FD two-point source (LPSE
-    ``solverOrder / 2 + 1``), or the Gaussian source's width in cells for the spectral solver."""
+    """Zero over the injector's cells: the rows of the FD plane-wave injector (two at second
+    order, ``fd_order`` rows centred on the plane in general -- LPSE ``solverOrder / 2 + 1``
+    on either side), or the Gaussian source's width in cells for the spectral solver."""
     i0 = int(np.argmin(np.abs(x - x_inject)))
     if str(light.get("solver", "fd")) == "spectral":
         width_cells = int(np.ceil(float(injector_width) / dx)) if injector_width else 2
         lo, hi = i0 - width_cells, i0 + width_cells
     else:
-        lo, hi = i0, i0 + 1
+        half = int(light.get("fd_order", 2)) // 2
+        lo, hi = i0 - half + 1, i0 + half
     rows = np.ones(x.size)
     rows[max(lo, 0) : min(hi, x.size - 1) + 1] = 0.0
     return rows
@@ -590,11 +600,16 @@ def get_derived_quantities(cfg: dict) -> dict:
 
         dt_limits = []
         evolved_carriers = []
+        # the stencil's largest eigenvalue per dimension relative to the compact stencil's
+        # 4/dx^2 (1, 4/3, 68/45 at orders 2, 4, 6) scales the propagation term of the bound
+        from adept._lpse2d.core.stencils import max_eigenvalue_factor
+
+        stencil_factor = max_eigenvalue_factor(cfg["terms"].get("light", {}).get("fd_order", 2))
         if srs_on:
             dt_limits.append(
                 1.0
                 / (
-                    2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
+                    stencil_factor * 2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
                     + _worst_detuning_sq(derived["w1"]) / (4.0 * derived["w1"])
                 )
             )
@@ -603,7 +618,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             dt_limits.append(
                 1.0
                 / (
-                    2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
+                    stencil_factor * 2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
                     + _worst_detuning_sq(derived["w0"]) / (4.0 * derived["w0"])
                 )
             )
@@ -728,15 +743,22 @@ def get_derived_quantities(cfg: dict) -> dict:
                     raise ValueError("drivers.E0.pulse_file must be a two-column (t_ps, amplitude) table")
                 cfg["drivers"][k]["derived"]["pulse_t"] = table[:, 0]
                 cfg["drivers"][k]["derived"]["pulse_amp"] = table[:, 1]
-            multi = len(beams) > 1 or any(float(b.get("angle", angle_deg)) != 0.0 for b in beams)
+            beam_angles = [float(b.get("angle", angle_deg)) for b in beams]
+            if any(abs(abs(a) - 90.0) < 1e-9 for a in beam_angles):
+                raise ValueError("drivers.E0 beams at +-90 deg (injection from a y face) are not supported")
+            # a beam with |angle| > 90 propagates leftward and is launched from the x-max face
+            cfg["drivers"][k]["derived"]["beam_leftward"] = np.array([abs(a) > 90.0 for a in beam_angles], dtype=bool)
+            # the FD injector launches along +-x only: one beam at 0 or 180 deg
+            axial = len(beams) == 1 and beam_angles[0] in (0.0, 180.0, -180.0)
+            multi = len(beams) > 1 or any(a != 0.0 for a in beam_angles)
             angle_deg = angle_deg if not multi else 1.0  # trips the same checks below
             if angle_deg != 0.0:
                 if cfg["drivers"][k].get("speckle", {}).get("enabled", False):
                     raise ValueError("drivers.E0.angle / beams are not supported together with drivers.E0.speckle")
-                if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral":
+                if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral" and not axial:
                     raise ValueError(
                         "drivers.E0.angle / beams with terms.light.pump_depletion need terms.light.solver: spectral "
-                        "(the FD two-point injector launches along +x only)"
+                        "(the FD injector launches along +-x only)"
                     )
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
@@ -1971,25 +1993,44 @@ def get_default_save_func(cfg):
         ix_left = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + probe_offset))))
         ix_right = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmax"] - probe_offset))))
         # with an evolved pump, the incident probe must sit downstream (+x) of the pump
-        # injector rows or it reads the near-field of the two-point source
+        # injector rows or it reads the near-field of the two-point source; a leftward beam
+        # (x-max face) likewise keeps the right probe upstream of its rows
         ix_left_e0 = ix_left
+        ix_right_e0 = ix_right
         if pump_evolved:
-            pump_offset = cfg["drivers"]["E0"]["derived"]["offset"]
+            pump = cfg["drivers"]["E0"]["derived"]
+            pump_offset = pump["offset"]
+            # clearance from the injector plane: 4 cells past the FD rows; the spectral solver's
+            # Gaussian source (injector_width, default half a local wavelength) needs three
+            # widths, or the probe reads the source region (incident 0.71 instead of 0.98 on the
+            # 20 um test box with the default probe_offset = offset)
+            clearance = 4
+            if cfg["terms"].get("light", {}).get("solver", "fd") == "spectral":
+                k0_inj = w0 / derived["c"] * np.sqrt(max(1.0 - float(np.min(cfg["grid"]["background_density"])), 0.0))
+                width = pump.get("injector_width", np.pi / k0_inj if k0_inj > 0 else 0.0)
+                clearance = max(clearance, int(np.ceil(3.0 * width / cfg["grid"]["dx"])) + 1)
             ix_inject = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmin"] + pump_offset))))
-            ix_left_e0 = max(ix_left, ix_inject + 4)
+            ix_left_e0 = max(ix_left, ix_inject + clearance)
+            if np.any(np.asarray(pump.get("beam_leftward", [False]))):
+                ix_inject_max = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmax"] - pump_offset))))
+                ix_right_e0 = min(ix_right, ix_inject_max - clearance)
         flux_coeff_w0 = derived["c"] ** 2 / (derived["w0"] * cfg["grid"]["dx"])
         flux_coeff_w1 = derived["c"] ** 2 / (derived["w1"] * cfg["grid"]["dx"])
         I0_code = derived["I0_code"]
 
         spectral_light = cfg["terms"].get("light", {}).get("solver", "fd") == "spectral"
+        fd_order = int(cfg["terms"].get("light", {}).get("fd_order", 2))
 
         def flux_correction(w, ix):
             # The discrete two-point flux of the FD mode at local wavenumber k is
             # |E|^2 * v_g,discrete with v_g,disc = (c^2/w) sin(k_grid dx)/dx, where
-            # k_grid satisfies the FD dispersion (2/dx^2)(1 - cos k_grid dx) = k^2.
+            # k_grid satisfies the stencil's dispersion sigma(k_grid dx) = -(k dx)^2
+            # ((2/dx^2)(1 - cos k_grid dx) = k^2 at second order; stencils.grid_wavenumber).
             # Dividing by sin(k_grid dx)/(k dx) converts it to the physical flux
             # |E|^2 * c * sqrt(eps). Evanescent probes get 1 (their flux is ~0 anyway).
             # The spectral solver has no grid dispersion: k_grid = k.
+            from adept._lpse2d.core.stencils import grid_wavenumber
+
             n_loc = float(np.mean(np.array(cfg["grid"]["background_density"])[ix, :]))
             eps = 1.0 - n_loc * w0**2 / w**2
             if eps <= 0:
@@ -1997,14 +2038,13 @@ def get_default_save_func(cfg):
             k_dx = w / derived["c"] * np.sqrt(eps) * cfg["grid"]["dx"]
             if spectral_light:
                 return float(np.sin(k_dx) / k_dx)
-            cos_kg = 1.0 - k_dx**2 / 2.0
-            if cos_kg <= -1.0:
+            kg_dx = grid_wavenumber(k_dx, fd_order)
+            if kg_dx >= np.pi:
                 return 1.0
-            sin_kg = float(np.sqrt(1.0 - cos_kg**2))
-            return float(sin_kg / k_dx)
+            return float(np.sin(kg_dx) / k_dx)
 
         corr_e0_left = flux_correction(w0, ix_left_e0)
-        corr_e0_right = flux_correction(w0, ix_right)
+        corr_e0_right = flux_correction(w0, ix_right_e0)
         corr_e1_left = flux_correction(w1, ix_left)
         corr_e1_right = flux_correction(w1, ix_right)
 
@@ -2130,7 +2170,7 @@ def get_default_save_func(cfg):
         if srs_on or pump_evolved:
             e0 = y["E0"].view(jnp.complex128)
             out["incident_flux"] = discrete_flux(e0, ix_left_e0, flux_coeff_w0) / corr_e0_left / I0_code
-            out["transmitted_flux"] = discrete_flux(e0, ix_right, flux_coeff_w0) / corr_e0_right / I0_code
+            out["transmitted_flux"] = discrete_flux(e0, ix_right_e0, flux_coeff_w0) / corr_e0_right / I0_code
             if srs_on:
                 e1 = y["E1"].view(jnp.complex128)
                 out["e1_sq"] = jnp.mean(jnp.sum(jnp.abs(e1) ** 2, axis=-1))

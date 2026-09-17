@@ -2,6 +2,7 @@ import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
 
+from adept._lpse2d.core.stencils import check_order, first_derivative, injector_weights, second_derivative
 from adept._lpse2d.core.vector import transverse_part  # re-exported for light.py and the tests
 
 
@@ -56,6 +57,15 @@ class RamanLight:
     where w1 = w0 - wp0 is the Raman envelope frequency and laplacian phi is computed
     spectrally from the EPW potential (MATLAB line 1604).
 
+    The spatial stencils are LPSE's ``evolution.solverOrder`` family (``terms.light.fd_order``
+    2, 4 or 6; ``SchrodingerSolver3::step_2d``): central second differences of that order
+    and, for the cross derivative, the product of the matching first-difference stencils.
+    The default 2 is the MATLAB prototype's compact stencil. The plane-wave injectors are
+    the total-field / scattered-field commutator of the same stencil with the injection
+    mask (``stencils.injector_weights``), which at second order is the two-point source of
+    the prototype and at higher order spreads over ``order / 2`` cells on either side of
+    the plane, as LPSE's ``addPlanewaveSource`` does.
+
     Time integration is the same staggered explicit scheme as MATLAB's lightSplitStep:
     the real part is updated with the RHS evaluated at t, then the imaginary part with
     the RHS evaluated at t + dt/2. Because this scheme is only conditionally stable
@@ -77,6 +87,13 @@ class RamanLight:
 
         self.dx = cfg["grid"]["dx"]
         self.dy = cfg["grid"]["dy"]
+        # FD stencil order (terms.light.fd_order; LPSE evolution.solverOrder): (offset, weight)
+        # pairs of the second- and first-difference stencils, the zero centre weight dropped
+        self.fd_order = check_order(cfg["terms"].get("light", {}).get("fd_order", 2))
+        m = self.fd_order // 2
+        c2, c1 = second_derivative(self.fd_order), first_derivative(self.fd_order)
+        self._second = [(j, float(c2[j + m])) for j in range(-m, m + 1)]
+        self._first = [(j, float(c1[j + m])) for j in range(-m, m + 1) if c1[j + m] != 0.0]
         self.dt = cfg["grid"]["dt"]  # outer (EPW) step
         self.n_sub = cfg["grid"]["light_substeps"]
         self.dt_l = self.dt / self.n_sub  # light sub-step
@@ -165,25 +182,52 @@ class RamanLight:
             E1 = E1.at[..., c].add(w * source)
         return E1
 
+    # the second-order branches keep the prototype's expressions verbatim so the default
+    # stays bit-identical; the general branches are the same stencils for any order
     def _d2x(self, f: Array) -> Array:
-        return (jnp.roll(f, -1, axis=0) - 2.0 * f + jnp.roll(f, 1, axis=0)) / self.dx**2
+        if self.fd_order == 2:
+            return (jnp.roll(f, -1, axis=0) - 2.0 * f + jnp.roll(f, 1, axis=0)) / self.dx**2
+        return sum(w * jnp.roll(f, -j, axis=0) for j, w in self._second) / self.dx**2
 
     def _d2y(self, f: Array) -> Array:
-        return (jnp.roll(f, -1, axis=1) - 2.0 * f + jnp.roll(f, 1, axis=1)) / self.dy**2
+        if self.fd_order == 2:
+            return (jnp.roll(f, -1, axis=1) - 2.0 * f + jnp.roll(f, 1, axis=1)) / self.dy**2
+        return sum(w * jnp.roll(f, -j, axis=1) for j, w in self._second) / self.dy**2
 
     def _dxdy(self, f: Array) -> Array:
-        return (
-            jnp.roll(f, (-1, -1), axis=(0, 1))
-            - jnp.roll(f, (1, -1), axis=(0, 1))
-            - jnp.roll(f, (-1, 1), axis=(0, 1))
-            + jnp.roll(f, (1, 1), axis=(0, 1))
-        ) / (4.0 * self.dx * self.dy)
+        if self.fd_order == 2:
+            return (
+                jnp.roll(f, (-1, -1), axis=(0, 1))
+                - jnp.roll(f, (1, -1), axis=(0, 1))
+                - jnp.roll(f, (-1, 1), axis=(0, 1))
+                + jnp.roll(f, (1, 1), axis=(0, 1))
+            ) / (4.0 * self.dx * self.dy)
+        return sum(wi * wj * jnp.roll(f, (-i, -j), axis=(0, 1)) for i, wi in self._first for j, wj in self._first) / (
+            self.dx * self.dy
+        )
 
-    def calc_seed_source(self, t: float, seed_args: dict) -> tuple[Array, Array]:
+    def injector_rows(self, i_plane: int, direction: int, wave) -> list[tuple[int, Array]]:
+        """The rows ``(index, values)`` of the plane-wave injector of this stencil order for the
+        analytic wave ``wave(i) -> (ny,)`` (the source's amplitude, carrier and phases at row
+        ``i``) filling the rows above (``direction = +1``) or below (``-1``) the plane at
+        ``i_plane``: ``S_r = sum_j c_j [H(r + j) - H(r)] wave(r + j)`` (``stencils.injector_weights``).
+        Second order: ``[(i_plane, +wave(i_plane + 1)), (i_plane + 1, -wave(i_plane))]`` for
+        ``+1``, the two-point source of the prototype."""
+        rows = []
+        for r, pairs in injector_weights(self.fd_order, direction).items():
+            value = None
+            for j, w in pairs:
+                term = w * wave(i_plane + r + j)
+                value = term if value is None else value + term
+            rows.append((i_plane + r, value))
+        return rows
+
+    def calc_seed_source(self, t: float, seed_args: dict) -> list[tuple[int, Array]]:
         """
-        Amplitude and phases for the two-point seed injector (MATLAB lines 1757-1769).
+        Rows of the seed injector (MATLAB lines 1757-1769 at second order; ``injector_rows``
+        for the stencil order), launching the leftward wave into ``x <= x[i1]``.
 
-        Returns the two rows to be added to the E1_y RHS at self.i1 and self.i1 + 1.
+        Returns ``(row index, values)`` pairs to be added to the E1 RHS.
         """
         dw1 = seed_args["delta_omega"]
         turn_on = 1.0 - jnp.exp(-((t / seed_args["turn_on_time"]) ** 2))
@@ -197,9 +241,10 @@ class RamanLight:
         # local seed wavenumber (MATLAB line 867)
         k1 = self.w1 / self.c * jnp.sqrt((1.0 + dw1) ** 2 - self.wpe_sq_i1 / self.w1**2)
 
-        row_i1 = -1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[self.i1 + 1] - 1j * self.w1 * dw1 * t)
-        row_i1p1 = 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[self.i1] - 1j * self.w1 * dw1 * t)
-        return row_i1, row_i1p1
+        def wave(i):
+            return 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[i] - 1j * self.w1 * dw1 * t)
+
+        return self.injector_rows(self.i1, -1, wave)
 
     def rhs(
         self,
@@ -237,14 +282,14 @@ class RamanLight:
             k_e1 = [k + source[..., i] for i, k in enumerate(k_e1)]
 
         if seed_args is not None:
-            row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)
+            rows = self.calc_seed_source(t, seed_args)
             for c, w in zip((1, 2), self.seed_weights, strict=True):
                 if w == 0.0:
                     continue
                 if c >= len(k_e1):
                     raise ValueError("an out-of-plane (s-polarised) seed needs three-component light fields")
-                k_e1[c] = k_e1[c].at[self.i1, :].add(w * row_i1)
-                k_e1[c] = k_e1[c].at[self.i1 + 1, :].add(w * row_i1p1)
+                for i, row in rows:
+                    k_e1[c] = k_e1[c].at[i, :].add(w * row)
 
         return jnp.stack(k_e1, axis=-1)
 

@@ -56,10 +56,12 @@ class CoupledLight(RamanLight):
     (settled against the equation document on 2026-09-14; adept main previously carried
     half this coefficient).
 
-    The pump injector amplitude is divided by sinc(k0 dx) so the launched amplitude is
-    exactly E0_source * sqrt(intensity) / eps^(1/4) despite the two-point discrete
-    source's sinc response (the E1 seed injector intentionally keeps the MATLAB
-    calibration; see tests/test_lpse2d/test_srs.py::test_srs_seed_propagation).
+    The pump injector is the stencil's plane-wave injector (``RamanLight.injector_rows``:
+    the two-point source at second order, wider at ``terms.light.fd_order`` 4 / 6) with
+    amplitude E0_source * sqrt(intensity) / eps^(1/4); the launched wave carries the
+    stencil's dispersion (``stencils.launched_amplitude_ratio``, a ~2 % deficit at 8 cells
+    per wavelength at second order, 0.1 % at fourth), which the flux probes normalise out
+    (tests/test_lpse2d/test_srs.py::test_pump_injector_calibration, test_fd_order.py).
 
     **Coupling scheme** (``terms.light.coupling``). The staggered real/imaginary update
     is a leapfrog only for a RHS operator that is i times a *real* matrix in the
@@ -152,8 +154,17 @@ class CoupledLight(RamanLight):
             self.light_filter = jnp.asarray(np.where(k_mag <= frac * k_nyq, 1.0, 0.0))[..., None]
 
         # ---- pump injector (MATLAB lines 1707-1753, mirrored to the left edge) ----
+        # a leftward beam (drivers.E0.angle 180, plan 2 L.4a) is launched from the x-max face
+        # at xmax - offset instead, as LPSE's x-max injector
         pump = cfg["drivers"]["E0"]["derived"]
-        x_inject = cfg["grid"]["xmin"] + pump["offset"]
+        leftward = np.atleast_1d(np.asarray(pump.get("beam_leftward", [False]), dtype=bool))
+        # (the spectral subclass keeps this x-min plane for its rightward beams when the beams
+        # are mixed, and adds its own x-max plane)
+        self.pump_direction = -1 if bool(np.all(leftward)) else 1
+        if self.pump_direction == 1:
+            x_inject = cfg["grid"]["xmin"] + pump["offset"]
+        else:
+            x_inject = cfg["grid"]["xmax"] - pump["offset"]
         self.i0 = int(np.argmin(np.abs(np.array(self.x) - x_inject)))
         # pump polarization (drivers.E0.polarization): the two-point injector writes cos(psi) to
         # the in-plane transverse component y and sin(psi) to z (plan 2 F.2)
@@ -170,12 +181,14 @@ class CoupledLight(RamanLight):
         self.pump_turn_on_time = pump["turn_on_time"]
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
 
-    def calc_pump_source(self, t: float, pump_args: dict) -> tuple[Array, Array]:
+    def calc_pump_source(self, t: float, pump_args: dict) -> list[tuple[int, Array]]:
         """
-        Two-point pump injector rows, summed over colors (MATLAB lines 1738-1750,
-        with +k0 and the left edge instead of -k1 and the right edge).
+        Pump injector rows, summed over colors (MATLAB lines 1738-1750 at second order,
+        with +k0 and the left edge instead of -k1 and the right edge; ``injector_rows``
+        for the stencil order), launching the rightward wave into ``x >= x[i0 + 1]`` (or, for
+        a leftward pump, ``e^{-i k0 x}`` into ``x <= x[i0]`` from the x-max face).
 
-        Returns the rows added to the E0_y RHS at self.i0 and self.i0 + 1.
+        Returns ``(row index, values)`` pairs added to the E0 RHS.
         """
         t_env = get_envelope(
             pump_args["tr"],
@@ -199,9 +212,13 @@ class CoupledLight(RamanLight):
         amp = self.source_prefactor0 * self.E0_source * jnp.sqrt(intensities) * t_env * turn_on  # (nc, ny)
 
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
-        row_i0p1 = jnp.sum(-1j * amp * jnp.exp(1j * k0[:, None] * self.x[self.i0]) * color_phase, axis=0)
-        row_i0 = jnp.sum(1j * amp * jnp.exp(1j * k0[:, None] * self.x[self.i0 + 1]) * color_phase, axis=0)
-        return row_i0, row_i0p1
+
+        sign = self.pump_direction
+
+        def wave(i):
+            return jnp.sum(1j * amp * jnp.exp(1j * sign * k0[:, None] * self.x[i]) * color_phase, axis=0)
+
+        return self.injector_rows(self.i0, sign, wave)
 
     def pump_rhs(
         self,
@@ -243,14 +260,14 @@ class CoupledLight(RamanLight):
             tpd_dep = self.calc_tpd_depletion(t, phi_k)  # in-plane only: E_h has no z component
             k_e0[0] = k_e0[0] + tpd_dep[..., 0]
             k_e0[1] = k_e0[1] + tpd_dep[..., 1]
-        row_i0, row_i0p1 = self.calc_pump_source(t, pump_args)
+        rows = self.calc_pump_source(t, pump_args)
         for c, w in zip((1, 2), self.pump_weights, strict=True):
             if w == 0.0:
                 continue
             if c >= len(k_e0):
                 raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
-            k_e0[c] = k_e0[c].at[self.i0, :].add(w * row_i0)
-            k_e0[c] = k_e0[c].at[self.i0 + 1, :].add(w * row_i0p1)
+            for i, row in rows:
+                k_e0[c] = k_e0[c].at[i, :].add(w * row)
 
         return jnp.stack(k_e0, axis=-1)
 

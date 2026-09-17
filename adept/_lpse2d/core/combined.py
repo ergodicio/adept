@@ -176,6 +176,8 @@ class CombinedSolver:
             # pump polarization (drivers.E0.polarization): cos(psi) to y, sin(psi) to z (plan 2 F.2)
             psi = float(pump.get("polarization", 0.0))
             self.pump_weights = (float(np.cos(psi)), float(np.sin(psi)))
+            if bool(np.any(cfg["drivers"]["E0"]["derived"].get("beam_leftward", [False]))):
+                raise ValueError("the combined solver's pump injector launches from the x-min face only")
             self.n_src = float(self.background_density[self.i0, 0])
             if self.n_src >= 1.0:
                 raise ValueError("The pump injector sits at or above critical density")
