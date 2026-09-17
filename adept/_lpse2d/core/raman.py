@@ -99,8 +99,11 @@ class RamanLight:
         # That part does not propagate and, driven by the EPW sources that see the whole
         # field, is exactly what the projected pump-depletion term cannot return energy from
         # (plan 2 N.4). Project the evolved light fields onto their transverse part once per
-        # EPW step, as the spectral solver keeps them by construction
-        self.transverse_fields = bool(cfg["terms"].get("light", {}).get("transverse_fields", True))
+        # EPW step, as the spectral solver keeps them by construction. Off by default: on the
+        # 1600x400 20 ps testbed case the projected FD scheme goes non-finite at 1.31 ps with
+        # the EPW still at its noise floor (unprojected: 3.93 ps), so the projection is a
+        # study option, not a fix
+        self.transverse_fields = bool(cfg["terms"].get("light", {}).get("transverse_fields", False))
 
         background_density = cfg["grid"]["background_density"]
         # local detuning of the Raman envelope (MATLAB line 1668-1670)

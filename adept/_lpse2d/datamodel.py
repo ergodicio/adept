@@ -326,8 +326,11 @@ class LightModel(BaseModel):
     # transverse part once per EPW step. The FD curl-curl propagator's discrete divergence
     # is not zero, so 2-D-structured transverse fields acquire a longitudinal part every
     # step (percent level at k0 dx ~ 1-2) that no propagator moves and that the EPW sources
-    # see while the projected TPD depletion term cannot return energy from it (plan 2 N.4)
-    transverse_fields: bool = True
+    # see while the projected TPD depletion term cannot return energy from it (plan 2 N.4).
+    # Off by default: on the srs-2d-testbed P1 case (1600x400, 20 ps) the projection makes
+    # the FD scheme itself unstable (non-finite at 1.31 ps with the EPW still at its noise
+    # floor, against 3.93 ps unprojected) -- the plan-2 run session, MLflow 618d7666
+    transverse_fields: bool = False
     # spectral injector: snap an oblique beam's k_y to the periodic y grid (default) or launch
     # the exact k0 sin(angle) as LPSE does (a non-commensurate box then carries a seam hot spot)
     snap_beam_ky: bool = True
