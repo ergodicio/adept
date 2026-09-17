@@ -107,11 +107,11 @@ def test_validation_and_translator():
     write_units(cfg)
     with pytest.raises(ValueError, match="y face"):
         get_derived_quantities(cfg)
-    # the FD injector takes an axial beam only
+    # an oblique leftward beam is accepted by the FD injector too (the general commutator
+    # injector of plan 2 L.4) and marked leftward
     cfg = _cfg("fd", angle=160.0)
     write_units(cfg)
-    with pytest.raises(ValueError, match="spectral"):
-        get_derived_quantities(cfg)
+    assert bool(get_derived_quantities(cfg)["drivers"]["E0"]["derived"]["beam_leftward"][0])
     cfg = _cfg("fd", angle=-180.0)
     write_units(cfg)
     assert bool(get_derived_quantities(cfg)["drivers"]["E0"]["derived"]["beam_leftward"][0])
