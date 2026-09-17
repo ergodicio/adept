@@ -155,8 +155,10 @@ class CoupledLight(RamanLight):
         pump = cfg["drivers"]["E0"]["derived"]
         x_inject = cfg["grid"]["xmin"] + pump["offset"]
         self.i0 = int(np.argmin(np.abs(np.array(self.x) - x_inject)))
-        # component the pump injector writes: y (in-plane, p-polarised) or z (plan 2 F.2)
-        self.pump_component = int(cfg["drivers"]["E0"].get("derived", {}).get("component", 1))
+        # pump polarization (drivers.E0.polarization): the two-point injector writes cos(psi) to
+        # the in-plane transverse component y and sin(psi) to z (plan 2 F.2)
+        psi = float(cfg["drivers"]["E0"].get("derived", {}).get("polarization", 0.0))
+        self.pump_weights = (float(np.cos(psi)), float(np.sin(psi)))
         n_src = float(background_density[self.i0, 0])
         permittivity0 = 1.0 - n_src
         if permittivity0 <= 0:
@@ -242,9 +244,13 @@ class CoupledLight(RamanLight):
             k_e0[0] = k_e0[0] + tpd_dep[..., 0]
             k_e0[1] = k_e0[1] + tpd_dep[..., 1]
         row_i0, row_i0p1 = self.calc_pump_source(t, pump_args)
-        c = self.pump_component
-        k_e0[c] = k_e0[c].at[self.i0, :].add(row_i0)
-        k_e0[c] = k_e0[c].at[self.i0 + 1, :].add(row_i0p1)
+        for c, w in zip((1, 2), self.pump_weights, strict=True):
+            if w == 0.0:
+                continue
+            if c >= len(k_e0):
+                raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+            k_e0[c] = k_e0[c].at[self.i0, :].add(w * row_i0)
+            k_e0[c] = k_e0[c].at[self.i0 + 1, :].add(w * row_i0p1)
 
         return jnp.stack(k_e0, axis=-1)
 

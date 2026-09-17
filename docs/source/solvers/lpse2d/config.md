@@ -252,7 +252,7 @@ The main laser pump for TPD/SRS simulations.
 | `delta_omega_max` | float | Maximum frequency spread (optional) |
 | `num_colors` | int | Number of laser colors (optional) |
 | `angle` | float | (default `0`) in-plane angle of incidence from +x in degrees (LPSE `laser.N.direction`). The static pump is the single grid mode nearest to `k0 (cos a, sin a)` (both components snapped, as LPSE's `makeStaticField`), polarized perpendicular to the snapped k; the spectral pump injector launches at the y-snapped transverse wavenumber with the x group velocity setting the flux. Not with `speckle` or the FD injector |
-| `polarization` | string | (default `p`) only in-plane polarization is representable (LPSE `polarization = 0`); lpse2d carries no out-of-plane field component |
+| `polarization` | number or string | (default `p`) polarization angle in degrees about the beam axis, LPSE `laser.N.polarization` (`rotateBeam`: the field starts along y, is rotated about the beam axis by the angle, then carried onto the beam direction): `0` / `p` is in-plane, `90` / `s` is along z, the out-of-plane component of the three-component light fields. Every injector (FD two-point rows, spectral Gaussian source, combined-solver source) and the static pump launch `cos(psi)` along the in-plane transverse direction and `sin(psi)` along z; per-beam values go in `beams[].polarization`. An s-polarised pump drives SRS (into an s-polarised Raman wave) and no TPD |
 | `beams` | list | LPSE `laser.N.*` beamlets for the static pump and the spectral injector: `[{intensity, angle, phase, delta_omega}]` (intensities are normalised to fractions; every beam carries every color; `angle` in degrees, `phase` in radians, `delta_omega` as a fraction of w0) |
 | `beam_width` | string | transverse (y) standard deviation of the injected beams (LPSE `laser.N.width`); with `beam_sg_order` (default 2, Gaussian) and `beam_offset` (y of the beam centre) it sets the super-Gaussian `exp(-((y-y0)^2/2 sigma^2)^(p/2))` of the spectral injector |
 | `kap_bandwidth` | float | (default `0`) Kubo-Anderson phase bandwidth as a fraction of w0 (LPSE `laser.bandwidth.KAP.frequency`): the pump phase jumps to a new uniform value every `2 pi / (kap_bandwidth w0)`, deterministically from `kap_seed` and the beam index |
@@ -342,6 +342,7 @@ propagates toward the low-density side while backscatter growth amplifies it aga
 | `offset` | string | Distance of the injector from the right boundary. Defaults to `1.6 * boundary_width`, just inside the absorbing boundary's tanh skirt; a warning is printed for smaller values because the seed would be damped at the source |
 | `yw` | string | Super-Gaussian (4th order) width of the seed in y; omit for uniform in y |
 | `injector_width` | string | (`terms.light.solver: spectral`, optional) Gaussian width of the smooth seed injector, with unit. Default one local wavelength `2 pi / k1(n_inject)` |
+| `polarization` | number or string | (default `p`) seed polarization angle in degrees about the beam axis (LPSE `raman.N.polarization`): `0` / `p` in-plane (y), `90` / `s` along z; the injector writes `cos(psi)` to y and `sin(psi)` to z |
 
 The density at the injector must be below the `w1` critical density (`n < 0.25 n_c` for
 envelope density 0.25), otherwise the seed is evanescent and setup raises an error. Without

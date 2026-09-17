@@ -394,16 +394,17 @@ def translate_parms(
         beam_angle = float(np.degrees(np.arctan2(direction[1], direction[0])))
         if b == 1:
             angle_deg = beam_angle
-        if float(g(f"laser.{b}.polarization", "0")) != 0.0:
-            report["unsupported"].append(f"laser.{b}.polarization != 0: adept pump is in-plane (p) polarized")
         beams.append(
             {
                 "intensity": i_b,
                 "angle": beam_angle,
                 "phase": float(g(f"laser.{b}.phase", "0")),
                 "delta_omega": float(g(f"laser.{b}.frequencyShift", "0")),
+                # LPSE rotateBeam: degrees about the beam axis, 0 in-plane (p), 90 along z (s)
+                "polarization": float(g(f"laser.{b}.polarization", "0")),
             }
         )
+    polarization_deg = beams[0]["polarization"] if beams else 0.0
     beam_extras = {}
     if float(g("laser.1.width", "0")) > 0:
         beam_extras["beam_width"] = f"{float(g('laser.1.width'))}um"
@@ -423,6 +424,7 @@ def translate_parms(
             "delta_omega_max": 0.0,
             "params": {"phases": {"seed": 42}},
             "angle": angle_deg,
+            "polarization": polarization_deg,
             **({"beams": beams} if n_beams > 1 else {}),
             **beam_extras,
             "envelope": {
@@ -442,7 +444,10 @@ def translate_parms(
         labc_light = float(g("laser.evolution.Labc.min.x", g("laser.evolution.Labc", str(labc_x))))
         drivers["E0"]["offset"] = f"{2.0 * max(labc_light, dx)}um"
     if raman_on and int(float(g("raman.nBeams", "0"))) > 0:
-        drivers["E1"] = {"intensity": f"{float(g('raman.1.intensity', '0'))}W/cm^2"}
+        drivers["E1"] = {
+            "intensity": f"{float(g('raman.1.intensity', '0'))}W/cm^2",
+            "polarization": float(g("raman.1.polarization", "0")),
+        }
 
     # ---- IAW
     iaw = None

@@ -170,7 +170,9 @@ class CombinedSolver:
             pump = cfg["drivers"]["E0"]["derived"]
             x_inject = grid["xmin"] + pump["offset"]
             self.i0 = int(np.argmin(np.abs(np.asarray(self.x) - x_inject)))
-            self.pump_component = int(pump.get("component", 1))  # y (in-plane) or z (plan 2 F.2)
+            # pump polarization (drivers.E0.polarization): cos(psi) to y, sin(psi) to z (plan 2 F.2)
+            psi = float(pump.get("polarization", 0.0))
+            self.pump_weights = (float(np.cos(psi)), float(np.sin(psi)))
             self.n_src = float(self.background_density[self.i0, 0])
             if self.n_src >= 1.0:
                 raise ValueError("The pump injector sits at or above critical density")
@@ -290,7 +292,13 @@ class CombinedSolver:
                     E0 = E0 * self.absorb0[..., None]
                 if self.sources_on:
                     E0 = E0 + self.dt_l * self.unified_depletion(t_i, E1)
-                E0 = E0.at[..., self.pump_component].add(self.dt_l * self.calc_pump_source(t_i, pump_args))
+                pump_source = self.dt_l * self.calc_pump_source(t_i, pump_args)
+                for c, w in zip((1, 2), self.pump_weights, strict=True):
+                    if w == 0.0:
+                        continue
+                    if c >= E0.shape[-1]:
+                        raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+                    E0 = E0.at[..., c].add(w * pump_source)
             if self.sources_on:
                 E1 = E1 + self.dt_l * self.unified_source(t_i, E0, E1)
             # 3. k-space propagation with the L/T projector

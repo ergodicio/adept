@@ -203,6 +203,19 @@ def calc_threshold_intensity(Te: float, Ln: float, w0: float) -> float:
     return I_threshold
 
 
+def _polarization_rad(value) -> float:
+    """``drivers.*.polarization``: degrees about the beam axis, or ``"p"`` (0, in-plane) / ``"s"``
+    (90, along z); returned in radians."""
+    if isinstance(value, str):
+        key = value.strip().lower()
+        if key == "p":
+            return 0.0
+        if key == "s":
+            return float(np.pi / 2.0)
+        value = float(value)
+    return float(np.deg2rad(float(value)))
+
+
 def get_derived_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are only integers or strings.
@@ -550,6 +563,7 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "turn_on_time": _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value,
                 "offset": offset,
                 "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
+                "polarization": _polarization_rad(cfg["drivers"][k].get("polarization", "p")),
             }
             if cfg["drivers"][k].get("injector_width") is not None:
                 cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
@@ -571,7 +585,15 @@ def get_derived_quantities(cfg: dict) -> dict:
             angle_deg = float(cfg["drivers"][k].get("angle", 0.0))
             cfg["drivers"][k]["derived"]["angle"] = float(np.deg2rad(angle_deg))
             e0_cfg = cfg["drivers"][k]
+            polarization = _polarization_rad(e0_cfg.get("polarization", "p"))
+            cfg["drivers"][k]["derived"]["polarization"] = polarization
             beams = e0_cfg.get("beams") or [{"intensity": 1.0, "angle": angle_deg, "phase": 0.0, "delta_omega": 0.0}]
+            # LPSE rotateBeam: the field starts along y, is rotated about the beam axis by the
+            # polarization angle, then carried onto the beam direction -- cos(psi) in-plane + sin(psi) z
+            cfg["drivers"][k]["derived"]["beam_polarization"] = np.array(
+                [_polarization_rad(b.get("polarization", e0_cfg.get("polarization", "p"))) for b in beams],
+                dtype=np.float64,
+            )
             fraction = np.array([float(b.get("intensity", 1.0)) for b in beams], dtype=np.float64)
             if np.any(fraction < 0) or fraction.sum() <= 0:
                 raise ValueError("drivers.E0.beams intensities must be non-negative with a positive sum")

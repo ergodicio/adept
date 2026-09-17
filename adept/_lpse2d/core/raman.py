@@ -147,9 +147,20 @@ class RamanLight:
             self.seed_enabled = True
         else:
             self.seed_enabled = False
-        # component the seed injector writes: y (in-plane, p-polarised) unless drivers.E1
-        # asks for the out-of-plane z component (plan 2 F.2)
-        self.seed_component = int(cfg["drivers"].get("E1", {}).get("derived", {}).get("component", 1))
+        # seed polarization (drivers.E1.polarization, LPSE raman.N.polarization): the injector
+        # writes cos(psi) to the in-plane transverse component y and sin(psi) to z (plan 2 F.2)
+        psi = float(cfg["drivers"].get("E1", {}).get("derived", {}).get("polarization", 0.0))
+        self.seed_weights = (float(np.cos(psi)), float(np.sin(psi)))
+
+    def add_seed(self, E1: Array, source: Array) -> Array:
+        """Add a scalar seed source (nx, ny) with the seed polarization: cos(psi) to y, sin(psi) to z."""
+        for c, w in zip((1, 2), self.seed_weights, strict=True):
+            if w == 0.0:
+                continue
+            if c >= E1.shape[-1]:
+                raise ValueError("an out-of-plane (s-polarised) seed needs three-component light fields")
+            E1 = E1.at[..., c].add(w * source)
+        return E1
 
     def _d2x(self, f: Array) -> Array:
         return (jnp.roll(f, -1, axis=0) - 2.0 * f + jnp.roll(f, 1, axis=0)) / self.dx**2
@@ -224,9 +235,13 @@ class RamanLight:
 
         if seed_args is not None:
             row_i1, row_i1p1 = self.calc_seed_source(t, seed_args)
-            c = self.seed_component
-            k_e1[c] = k_e1[c].at[self.i1, :].add(row_i1)
-            k_e1[c] = k_e1[c].at[self.i1 + 1, :].add(row_i1p1)
+            for c, w in zip((1, 2), self.seed_weights, strict=True):
+                if w == 0.0:
+                    continue
+                if c >= len(k_e1):
+                    raise ValueError("an out-of-plane (s-polarised) seed needs three-component light fields")
+                k_e1[c] = k_e1[c].at[self.i1, :].add(w * row_i1)
+                k_e1[c] = k_e1[c].at[self.i1 + 1, :].add(w * row_i1p1)
 
         return jnp.stack(k_e1, axis=-1)
 

@@ -143,7 +143,7 @@ class SpectralRamanLight(RamanLight):
                 coupling = transverse_part(coupling, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             E1 = E1 + self.dt_l * coupling
             if seed_args is not None:
-                E1 = E1.at[..., self.seed_component].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
+                E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation; the longitudinal part is kept only
             # inside the light band
             E1 = transverse_propagate(
@@ -186,6 +186,10 @@ class SpectralCoupledLight(CoupledLight):
         self.beam_fraction = jnp.asarray(np.atleast_1d(pump.get("beam_fraction", [1.0])), dtype=jnp.float64)
         self.beam_phase = jnp.asarray(np.atleast_1d(pump.get("beam_phase", [0.0])), dtype=jnp.float64)
         self.beam_delta_omega = jnp.asarray(np.atleast_1d(pump.get("beam_delta_omega", [0.0])), dtype=jnp.float64)
+        # per-beam polarization angle (rad) about the beam axis, drivers.E0.polarization / beams[].polarization
+        self.beam_polarization = jnp.asarray(
+            np.atleast_1d(pump.get("beam_polarization", [pump.get("polarization", 0.0)])), dtype=jnp.float64
+        )
         self.y_arr = jnp.asarray(cfg["grid"]["y"])
         # transverse super-Gaussian of the injected beams (LPSE laser.N.width / sgOrder / offset)
         width = float(pump.get("beam_width", 0.0) or 0.0)
@@ -217,7 +221,7 @@ class SpectralCoupledLight(CoupledLight):
 
     def calc_pump_source(self, t: float, pump_args: dict) -> Array:
         """Smooth injector for the rightward (optionally oblique) pump, summed over colors:
-        the (nx, ny, 2) source added to E0 (the FD two-point rows are replaced)."""
+        the (nx, ny, 3) source added to E0 (the FD two-point rows are replaced)."""
         t_env = get_envelope(
             pump_args["tr"],
             pump_args["tr"],
@@ -235,7 +239,7 @@ class SpectralCoupledLight(CoupledLight):
         amp = self.E0_source * jnp.sqrt(intensities) / eps0**0.25 * t_env * turn_on  # (nc, ny)
         amp = amp * self.beam_envelope_y[None, :]
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
-        total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 2), dtype=jnp.complex128)
+        total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 3), dtype=jnp.complex128)
         for b in range(int(self.ky_beams.shape[0])):
             ky_b = self.ky_beams[b]
             dw_b = self.beam_delta_omega[b]
@@ -250,9 +254,20 @@ class SpectralCoupledLight(CoupledLight):
             ]
             source = jnp.sum(source, axis=0) * jnp.exp(1j * ky_b * self.y_arr)[None, :]  # (nx, ny)
             k_mag = jnp.sqrt(kx[0] ** 2 + ky_b**2)
-            pol = jnp.stack([-ky_b / k_mag, kx[0] / k_mag])  # perpendicular to the (first color's) k
+            # LPSE rotateBeam: cos(psi) along the in-plane transverse direction of the (first
+            # color's) k, sin(psi) along z
+            cos_psi, sin_psi = jnp.cos(self.beam_polarization[b]), jnp.sin(self.beam_polarization[b])
+            pol = jnp.stack([-ky_b / k_mag * cos_psi, kx[0] / k_mag * cos_psi, sin_psi])
             total = total + source[..., None] * pol[None, None, :]
         return total
+
+    def pump_source_for(self, E0: Array, t: float, pump_args: dict) -> Array:
+        """``calc_pump_source`` with the component count of ``E0`` (refusing to drop a
+        z-polarised beam into a two-component field)."""
+        source = self.calc_pump_source(t, pump_args)
+        if E0.shape[-1] == 2 and bool(np.any(np.sin(np.asarray(self.beam_polarization)) != 0.0)):
+            raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+        return with_components(source, E0.shape[-1])
 
     def kap_phase(self, t, beam: int):
         """Kubo-Anderson process (LPSE bandwidth.KAP.frequency): the phase jumps to a new uniform
@@ -285,9 +300,9 @@ class SpectralCoupledLight(CoupledLight):
             E1 = E1 * detune1[..., None] * absorb1
             if self.tpd_enabled:
                 E0 = E0 + self.dt_l * with_components(self.calc_tpd_depletion(t_i, phi_k), E0.shape[-1])
-            E0 = E0 + self.dt_l * with_components(self.calc_pump_source(t_i, pump_args), E0.shape[-1])
+            E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)
             if seed_args is not None:
-                E1 = E1.at[..., self.seed_component].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
+                E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation. The exchange is an exact local rotation
             # that cannot be projected term by term, so with transverse_source the fields
             # themselves are kept transverse here (equivalent to projecting every source)

@@ -108,10 +108,13 @@ class E0DriverModel(BaseModel):
     # is the grid mode nearest to k0 (cos a, sin a); the spectral injector launches at the
     # y-snapped transverse wavenumber. Not with speckle or the FD injector.
     angle: float = Field(default=0.0, gt=-90.0, lt=90.0)
-    # only in-plane ("p", LPSE polarization 0) is representable: lpse2d carries no z component
-    polarization: Literal["p"] = "p"
+    # polarization angle in degrees about the beam axis, LPSE laser.N.polarization: 0 ("p") is
+    # in-plane, 90 ("s") is along z, the out-of-plane component every light field carries (plan 2
+    # F.1/F.2). The injectors launch cos(psi) in-plane + sin(psi) z
+    polarization: float | Literal["p", "s"] = "p"
     # LPSE laser.N.* beams: [{intensity: fraction or W/cm^2 (normalised), angle: deg, phase: rad,
-    # delta_omega: dW/W0}]; every beam carries every color. Spectral injector and static pump only.
+    # delta_omega: dW/W0, polarization: deg}]; every beam carries every color. Spectral injector
+    # and static pump only.
     beams: list[dict] | None = None
     beam_width: str | None = None  # LPSE laser.N.width: transverse (y) standard deviation of injected beams
     beam_sg_order: float = 2.0  # LPSE laser.N.sgOrder of that transverse profile (2 = Gaussian)
@@ -138,6 +141,8 @@ class E1DriverModel(BaseModel):
     yw: str | None = None  # super-Gaussian width of the seed in y; omit for uniform in y
     # spectral light solver: Gaussian width of the smooth injector (default one local wavelength)
     injector_width: str | None = None
+    # seed polarization angle in degrees (LPSE raman.N.polarization): 0 / "p" in-plane (y), 90 / "s" along z
+    polarization: float | Literal["p", "s"] = "p"
 
 
 class DriversModel(BaseModel):

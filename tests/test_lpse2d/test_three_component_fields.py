@@ -211,3 +211,153 @@ def test_ez_propagates_as_a_plane_wave(solver):
     E0p[..., 1] = E0[..., 2]
     outp, _ = light(0.0, jnp.asarray(E0p), E1, phi_k, pump_args, None, None)
     np.testing.assert_allclose(np.asarray(outp)[..., 1], out[..., 2], rtol=1e-12, atol=1e-18)
+
+
+# ----------------------------------------------------------- beam polarization (plan 2 F.2) --
+
+
+def _cfg_pol(polarization, **kw):
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = yaml.safe_load(fi)
+    cfg = deepcopy(cfg)
+    cfg["drivers"]["E0"]["polarization"] = polarization
+    cfg["density"] = {"basis": "uniform", "val": kw.get("density", 0.2)}
+    cfg["units"]["envelope density"] = 0.25 if kw.get("tpd") else kw.get("density", 0.2)
+    cfg["drivers"]["E0"]["envelope"]["tc"] = "19.95ps"
+    cfg["grid"].update(
+        {
+            "boundary_width": "0.4um",
+            "dt": "1fs",
+            "dx": "0.04um",
+            "xmax": "2.56um",
+            "tmax": "0.1ps",
+            "ymax": "0.32um",
+            "ymin": "-0.32um",
+            "low_pass_filter": 0.6,
+        }
+    )
+    cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
+    cfg["terms"]["epw"]["solver"] = kw.get("epw_solver", "separate")
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": kw.get("tpd", False), "srs": kw.get("srs", True)})
+    cfg["terms"]["light"] = {"solver": kw.get("light_solver", "fd"), "pump_depletion": kw.get("pump_depletion", True)}
+    if kw.get("angle"):
+        cfg["drivers"]["E0"]["angle"] = kw["angle"]
+    return _finish(cfg)
+
+
+def _pump_after(cfg, n_steps=8, nc=3, relative_amplitude=0.0):
+    """The pump (and Raman) fields after ``n_steps``; by default with no EPW seed, so only
+    the injector and the propagators act."""
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    step = SplitStep(cfg)
+    state = _seed(cfg, nc, relative_amplitude=relative_amplitude)
+    ny = cfg["grid"]["ny"]
+    pump = {**cfg["drivers"]["E0"]["derived"], "delta_omega": jnp.zeros(1), "phases": jnp.zeros((1, ny))}
+    args = {"drivers": {"E0": {**pump, "intensities": jnp.ones((1, ny))}}}
+    for i in range(n_steps):
+        state = step(i * cfg["grid"]["dt"], dict(state), args)
+    return np.asarray(state["E0"].view(jnp.complex128)), np.asarray(state["E1"].view(jnp.complex128))
+
+
+POL_PATHS = {
+    "separate/fd": dict(light_solver="fd"),
+    "separate/spectral": dict(light_solver="spectral"),
+    "separate/static": dict(light_solver="fd", pump_depletion=False),
+    "separate/static+oblique": dict(light_solver="fd", pump_depletion=False, angle=10.0),
+    "combined/spectral": dict(epw_solver="combined", light_solver="spectral", tpd=True, srs=True, density=0.22),
+}
+
+
+@pytest.mark.parametrize("path", list(POL_PATHS))
+def test_s_polarised_pump_lives_in_ez_on_every_injector(path):
+    """``drivers.E0.polarization: 90`` (or ``s``) puts the launched pump entirely in E0z with
+    the same amplitude the p-polarised launch puts in the in-plane transverse component."""
+    kw = POL_PATHS[path]
+    e0_p, _ = _pump_after(_cfg_pol("p", **kw))
+    e0_s, _ = _pump_after(_cfg_pol("s", **kw))
+    e0_90, _ = _pump_after(_cfg_pol(90.0, **kw))
+    assert np.abs(e0_p[..., 2]).max() == 0.0
+    assert np.abs(e0_s[..., 2]).max() > 0.0
+    np.testing.assert_array_equal(e0_s, e0_90)
+    # the s launch carries what the p launch carries in the plane, rotated out of it
+    in_plane_p = np.sqrt(np.abs(e0_p[..., 0]) ** 2 + np.abs(e0_p[..., 1]) ** 2)
+    np.testing.assert_allclose(np.abs(e0_s[..., 2]), in_plane_p, rtol=1e-9, atol=1e-9 * in_plane_p.max())
+    assert np.abs(e0_s[..., :2]).max() <= 1e-12 * in_plane_p.max()
+
+
+def test_intermediate_polarization_splits_cos_sin():
+    e0_p, _ = _pump_after(_cfg_pol("p", light_solver="spectral"))
+    e0_30, _ = _pump_after(_cfg_pol(30.0, light_solver="spectral"))
+    scale = np.abs(e0_p[..., 1]).max()
+    np.testing.assert_allclose(e0_30[..., 1], np.cos(np.deg2rad(30.0)) * e0_p[..., 1], rtol=1e-12, atol=1e-13 * scale)
+    np.testing.assert_allclose(e0_30[..., 2], np.sin(np.deg2rad(30.0)) * e0_p[..., 1], rtol=1e-12, atol=1e-13 * scale)
+
+
+def test_s_polarised_pump_drives_no_tpd_in_a_run():
+    """TPD on, SRS off, a pump along z: the EPW is never driven -- its energy after 40 steps
+    equals the free-decay value bit for bit -- while the p-polarised pump drives it."""
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    def final_energy(pol, intensity):
+        cfg = _cfg_pol(pol, light_solver="spectral", tpd=True, srs=False, density=0.25)
+        step = SplitStep(cfg)
+        state = _seed(cfg, 3, relative_amplitude=1e-2)
+        ny = cfg["grid"]["ny"]
+        pump = {**cfg["drivers"]["E0"]["derived"], "delta_omega": jnp.zeros(1), "phases": jnp.zeros((1, ny))}
+        args = {"drivers": {"E0": {**pump, "intensities": intensity * jnp.ones((1, ny))}}}
+        for i in range(40):
+            state = step(i * cfg["grid"]["dt"], dict(state), args)
+        return float(step.epw.energy(state["epw"].view(jnp.complex128)))
+
+    w_off = final_energy("p", 0.0)
+    w_p = final_energy("p", 30.0)
+    w_s = final_energy("s", 30.0)
+    assert w_off > 0.0
+    assert w_s == w_off
+    assert w_p != w_off
+
+
+def test_two_component_fields_refuse_an_s_polarised_pump():
+    cfg = _cfg_pol("s", light_solver="fd")
+    with pytest.raises(ValueError, match="three-component"):
+        _pump_after(cfg, n_steps=1, nc=2)
+
+
+def test_translator_maps_polarization_angles():
+    from adept._lpse2d.lpse_deck import translate_parms
+    from adept._lpse2d.parity import deck_path
+
+    parms = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "laser.enable": "true",
+        "laser.nBeams": "2",
+        "laser.1.intensity": "1e15",
+        "laser.1.polarization": "90",
+        "laser.2.intensity": "1e15",
+        "laser.2.polarization": "45",
+        "laser.wavelength": "0.351",
+        "raman.enable": "true",
+        "raman.nBeams": "1",
+        "raman.1.intensity": "1e12",
+        "raman.1.polarization": "90",
+        "lw.SRS.enable": "true",
+        "lw.envelopeDensity": "0.2",
+        "densityProfile.NminOverNc": "0.2",
+        "densityProfile.NmaxOverNc": "0.2",
+        "simulation.time.end": "1",
+    }
+    cfg, report = translate_parms(parms, run="pol")
+    assert cfg["drivers"]["E0"]["polarization"] == 90.0
+    assert [b["polarization"] for b in cfg["drivers"]["E0"]["beams"]] == [90.0, 45.0]
+    assert cfg["drivers"]["E1"]["polarization"] == 90.0
+    assert not any("polarization" in u for u in report["unsupported"])
+    deck = deck_path("test_017")
+    if deck is not None:
+        from adept._lpse2d.lpse_deck import parse_parms
+
+        cfg17, report17 = translate_parms(parse_parms(deck), run="test_017")
+        assert cfg17["drivers"]["E0"]["polarization"] == 90.0
+        assert not any("polarization" in u for u in report17["unsupported"])

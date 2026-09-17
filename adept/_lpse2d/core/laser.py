@@ -30,6 +30,11 @@ class Light:
         self.beam_fraction = np.atleast_1d(np.asarray(pump.get("beam_fraction", [1.0]), dtype=np.float64))
         self.beam_phase = np.atleast_1d(np.asarray(pump.get("beam_phase", [0.0]), dtype=np.float64))
         self.beam_delta_omega = np.atleast_1d(np.asarray(pump.get("beam_delta_omega", [0.0]), dtype=np.float64))
+        # polarization about the beam axis (rad): cos(psi) in the plane, sin(psi) along z (LPSE rotateBeam)
+        self.polarization = float(pump.get("polarization", 0.0))
+        self.beam_polarization = np.atleast_1d(
+            np.asarray(pump.get("beam_polarization", [self.polarization]), dtype=np.float64)
+        )
         self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
         self.kap_seed = int(pump.get("kap_seed", 0) or 0)
         self.pulse_t = jnp.asarray(pump["pulse_t"]) if "pulse_t" in pump else None
@@ -121,7 +126,13 @@ class Light:
             # Shape: (1, ny) -> (ny,)
             dE0y = dE0y * (envelope[0, :] / self.speckle_normalization)[None, :]
 
-        return jnp.stack([self.dE0x, dE0y] + [self.dE0x] * (nc - 2), axis=-1)
+        cos_psi, sin_psi = float(np.cos(self.polarization)), float(np.sin(self.polarization))
+        if nc == 2:
+            if sin_psi != 0.0:
+                raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+            return jnp.stack([self.dE0x, dE0y], axis=-1)
+        # p-polarised (psi = 0): the y component is dE0y exactly (x 1.0) and E0z = 0
+        return jnp.stack([self.dE0x, cos_psi * dE0y if cos_psi != 1.0 else dE0y, sin_psi * dE0y], axis=-1)
 
     def _oblique_update(self, t_ps: float, light_wave: dict, nc: int = 3) -> jnp.ndarray:
         """Oblique static pump: each color is the single grid mode nearest to
@@ -144,8 +155,13 @@ class Light:
                 kx = jnp.round(k0 * jnp.cos(angle) / self.dk) * self.dk
                 ky = jnp.round(k0 * jnp.sin(angle) / self.dky) * self.dky
                 k_snapped = jnp.sqrt(kx**2 + ky**2)
-                # unit vector perpendicular to k, in the plane (p-polarised); no z component
-                pol = jnp.concatenate([jnp.stack([-ky / k_snapped, kx / k_snapped]), jnp.zeros(nc - 2)])
+                # LPSE rotateBeam: cos(psi) along the in-plane unit vector perpendicular to the
+                # snapped k, sin(psi) along z
+                cos_psi, sin_psi = float(np.cos(self.beam_polarization[b])), float(np.sin(self.beam_polarization[b]))
+                if nc == 2 and sin_psi != 0.0:
+                    raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+                in_plane = jnp.stack([-ky / k_snapped, kx / k_snapped])
+                pol = jnp.concatenate([in_plane * cos_psi if cos_psi != 1.0 else in_plane, jnp.full(nc - 2, sin_psi)])
                 amp = (
                     pulse * self.E0_source * jnp.sqrt(intensity) * jnp.exp(-1j * (delta_omega * self.w0 * t_ps - phase))
                 )
