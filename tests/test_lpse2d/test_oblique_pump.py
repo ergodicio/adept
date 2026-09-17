@@ -231,3 +231,49 @@ def test_translator_maps_multi_beam_decks():
     assert e0["beam_width"] == "3.0um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
     assert e0["kap_bandwidth"] == 0.005
     assert not any("direction differs" in u for u in report["unsupported"])
+
+
+def test_exact_beam_ky_reproduces_the_seam_hot_spot():
+    """``terms.light.snap_beam_ky: false`` launches the exact ``k0 sin(angle)`` (LPSE's spectral
+    injector). On a box whose width does not hold an integer number of transverse wavelengths
+    the source has a phase kink at the periodic seam, the injected pump spreads into ky
+    sidebands and |E0|^2 acquires a ripple peaking at the seam; snapped (default) it is one ky
+    row and uniform in y (plan-2 N.1: this ripple is what set the test_010 reference's growth)."""
+    from adept._lpse2d.core.spectral_light import SpectralCoupledLight
+    from adept._lpse2d.modules.driver import UniformDriver
+
+    def launch(snap):
+        cfg = _cfg(20.0, pump_depletion=True)
+        cfg["terms"]["light"]["snap_beam_ky"] = snap
+        nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        light = SpectralCoupledLight(cfg)
+        d = cfg["units"]["derived"]
+        k0 = d["w0"] / d["c"] * np.sqrt(1.0 - float(cfg["density"]["val"]))
+        dky = 2 * np.pi / (ny * cfg["grid"]["dy"])
+        exact = k0 * np.sin(np.deg2rad(20.0))
+        assert abs(exact / dky - round(exact / dky)) > 0.1  # the test box is not commensurate
+        assert abs(float(light.ky_pump) - (np.round(exact / dky) * dky if snap else exact)) < 1e-9
+        _, args = UniformDriver(cfg)({}, {"drivers": {}})
+        E0 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+        E1 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+        phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128)
+        t, dt = 0.0, cfg["grid"]["dt"]
+        for _ in range(int(0.05 / dt)):
+            E0, E1 = light(t, E0, E1, phi_k, args["drivers"]["E0"], None)
+            t += dt
+        E0 = np.asarray(E0)
+        i2 = np.sum(np.abs(E0) ** 2, axis=-1)
+        ix = nx // 2
+        ripple = i2[ix] / i2[ix].mean()
+        power_ky = np.sum(np.abs(np.fft.fft(E0[ix], axis=0)) ** 2, axis=-1)
+        return ripple, power_ky / power_ky.sum()
+
+    ripple_snap, share_snap = launch(True)
+    ripple_exact, share_exact = launch(False)
+    np.testing.assert_allclose(ripple_snap, 1.0, atol=1e-6)  # one grid mode: uniform in y
+    assert share_snap.max() > 0.999
+    assert ripple_exact.max() > 1.1 and ripple_exact.min() < 0.9  # the seam hot spot
+    assert 0.9 < share_exact.max() < 0.995  # a few per cent in sidebands
+    # the hot spot sits at the periodic seam (the first/last rows)
+    peak = int(np.argmax(ripple_exact))
+    assert min(peak, ripple_exact.size - peak) <= 3

@@ -328,6 +328,9 @@ class LightModel(BaseModel):
     # step (percent level at k0 dx ~ 1-2) that no propagator moves and that the EPW sources
     # see while the projected TPD depletion term cannot return energy from it (plan 2 N.4)
     transverse_fields: bool = True
+    # spectral injector: snap an oblique beam's k_y to the periodic y grid (default) or launch
+    # the exact k0 sin(angle) as LPSE does (a non-commensurate box then carries a seam hot spot)
+    snap_beam_ky: bool = True
     # LPSE suppressSourcesInAbsorbingRegions (default false there) / suppressSourcesAtInjectors
     # (default true there; false here so existing runs are unchanged -- the deck translator
     # sets LPSE's default): zero the EPW and IAW sources inside the absorbing layers / across

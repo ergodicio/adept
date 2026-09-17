@@ -172,11 +172,22 @@ class SpectralCoupledLight(CoupledLight):
         pump = cfg["drivers"]["E0"]["derived"]
         k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
         # in-plane angle of incidence (drivers.E0.angle): the transverse wavenumber is snapped
-        # to the periodic y grid, kx follows from the local dispersion per color, and the
-        # field is polarised perpendicular to the snapped k (LPSE beam direction / polarization 0)
+        # to the periodic y grid (terms.light.snap_beam_ky, default), kx follows from the local
+        # dispersion per color, and the field is polarised perpendicular to k (LPSE beam
+        # direction / polarization 0). With snap_beam_ky false the injector carries the exact
+        # k0 sin(angle) as LPSE's spectral injector does: on a box whose width does not fit
+        # that wavelength the source has a phase kink at the periodic seam whose sidebands add
+        # up to an intensity hot spot there (test_010: +45 %, plan-2 N.1) -- kept as an option
+        # to reproduce such a reference run, not as a default.
         dky = 2.0 * np.pi / (cfg["grid"]["ny"] * cfg["grid"]["dy"])
         angles = np.atleast_1d(np.asarray(pump.get("beam_angle", [pump.get("angle", 0.0)]), dtype=np.float64))
-        ky_beams = np.round(k0_inject * np.sin(angles) / dky) * dky if cfg["grid"]["ny"] > 1 else np.zeros_like(angles)
+        snap = bool(cfg["terms"].get("light", {}).get("snap_beam_ky", True))
+        if cfg["grid"]["ny"] > 1:
+            ky_beams = k0_inject * np.sin(angles)
+            if snap:
+                ky_beams = np.round(ky_beams / dky) * dky
+        else:
+            ky_beams = np.zeros_like(angles)
         if np.any(np.abs(ky_beams) >= k0_inject):
             raise ValueError(
                 f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched at density {self.n_src}"
