@@ -283,3 +283,19 @@ def test_combined_split_step_runs_with_pump_depletion_iaw_noise_and_reports_tran
     assert "e1_sq" in out and bool(jnp.isfinite(out["e1_sq"]))
     # the pump has started to fill the box
     assert float(jnp.max(jnp.abs(state["E0"].view(jnp.complex128)))) > 0.0
+
+
+def test_separate_solver_refuses_tpd_with_srs():
+    """Plan 2 N.4: LPSE's refusal ('Must use lw.solver=combined when both SRS and TPD are
+    enabled') is now an error rather than a warning."""
+    import pytest
+    import yaml
+
+    from adept._lpse2d.helpers import get_derived_quantities, write_units
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = yaml.safe_load(fi)
+    cfg["terms"]["epw"]["source"].update({"tpd": True, "srs": True})
+    write_units(cfg)
+    with pytest.raises(ValueError, match="combined"):
+        get_derived_quantities(cfg)

@@ -547,11 +547,13 @@ def get_derived_quantities(cfg: dict) -> dict:
         if light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None:
             raise ValueError("terms.light.coupling / filter are options of the separate solver's FD light path")
     elif srs_on and tpd_on:
-        print(
-            "WARNING: terms.epw.source.tpd and srs are both on with terms.epw.solver: separate. The original "
-            "LPSE refuses this ('Must use lw.solver=combined when both SRS and TPD are enabled'): the four "
-            "separate envelope equations are not valid for simultaneous TPD and SRS. Use terms.epw.solver: "
-            "combined for the LPSE formulation."
+        # plan 2 N.4 (USER 2026-09-17): refused as LPSE does. The separate-equation runs with both
+        # on went non-finite (srs-2d-testbed P1 at 3.93 ps, P3 at 10.67 ps) and the four separate
+        # envelope equations are not valid for simultaneous TPD and SRS
+        raise ValueError(
+            "terms.epw.source.tpd and srs are both on with terms.epw.solver: separate. The original LPSE "
+            "refuses this ('Must use lw.solver=combined when both SRS and TPD are enabled'): the four separate "
+            "envelope equations are not valid for simultaneous TPD and SRS. Use terms.epw.solver: combined."
         )
     if pump_depletion:
         if not (srs_on or tpd_on):
