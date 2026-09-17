@@ -552,6 +552,34 @@ def translate_parms(
         if key.startswith("qle") and _bool(parms[key]):
             report["unsupported"].append(f"{key} (quasilinear module)")
 
+    # ---- initialPerturbation (InitialPerturbation.cpp): plane wave in one field at t = 0
+    initial_perturbation = None
+    if _bool(g("initialPerturbation.enable")):
+        ip_field = str(g("initialPerturbation.field", "pots")).lower()
+        ip_type = str(g("initialPerturbation.type", "planewave")).lower()
+        if ip_type != "planewave":
+            report["unsupported"].append(f"initialPerturbation.type = {ip_type} (only planewave)")
+        if ip_field == "pots":
+            target, component = "epw", "y"
+        elif ip_field[:2] in ("e0", "e1") and ip_field[-1] in "xyz":
+            target, component = ip_field[:2].upper(), ip_field[-1]
+        else:
+            target, component = "epw", "y"
+            report["unsupported"].append(f"initialPerturbation.field = {ip_field}")
+        direction = _floats(g("initialPerturbation.direction", "1 0 0"))
+        size = _floats(g("initialPerturbation.envelopeSize", "0 0 0"))
+        offset = _floats(g("initialPerturbation.envelopeOffset", "0 0 0"))
+        initial_perturbation = {
+            "field": target,
+            "component": component,
+            "amplitude": float(g("initialPerturbation.amplitude", "1")),
+            "wavelength": f"{float(g('initialPerturbation.wavelength', '1'))}um",
+            "direction": direction[:2],
+            "envelope_size": [f"{v}um" for v in (list(size) + [0.0, 0.0])[:2]],
+            "envelope_offset": [f"{v}um" for v in (list(offset) + [0.0, 0.0])[:2]],
+            "envelope_sg_order": float(g("initialPerturbation.envelopeSgOrder", "4")),
+        }
+
     cfg = {
         "solver": "envelope-2d",
         "units": {
@@ -590,6 +618,8 @@ def translate_parms(
         cfg["terms"]["iaw"] = iaw
     if hpe is not None:
         cfg["terms"]["hpe"] = hpe
+    if initial_perturbation is not None:
+        cfg["initial_perturbation"] = initial_perturbation
     for item in report["unsupported"]:
         print(f"lpse_deck: not translated -- {item}")
     return cfg, report

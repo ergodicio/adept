@@ -203,6 +203,41 @@ def calc_threshold_intensity(Te: float, Ln: float, w0: float) -> float:
     return I_threshold
 
 
+def initial_perturbation_field(cfg: dict) -> np.ndarray:
+    """The x-space plane wave of ``initial_perturbation`` on the grid, (nx, ny) complex, in this
+    code's units of the target field (LPSE ``InitialPerturbation::create`` with its
+    ``scaleFactor``): the potential ``e phi / (m_e c^2)`` converts with ``1 / (e_norm x_norm)``,
+    a light field ``e E / (m_e w0 c)`` with ``1 / e_norm``. Coordinates are measured from the
+    box centre as in LPSE."""
+    ip = cfg["initial_perturbation"]
+    grid, derived = cfg["grid"], cfg["units"]["derived"]
+    x = np.asarray(grid["x"], dtype=np.float64)
+    y = np.asarray(grid["y"], dtype=np.float64)
+    xc = x - 0.5 * (x[0] + x[-1])
+    yc = y - 0.5 * (y[0] + y[-1])
+    direction = np.asarray(list(ip.get("direction", [1.0, 0.0]))[:2] + [0.0, 0.0], dtype=np.float64)[:2]
+    norm = np.linalg.norm(direction)
+    if norm == 0.0:
+        raise ValueError("initial_perturbation.direction must be non-zero")
+    k_vec = 2.0 * np.pi / _Q(ip["wavelength"]).to("um").value * direction / norm
+    envelope = np.ones((x.size, y.size))
+    sizes = ip.get("envelope_size") or []
+    offsets = ip.get("envelope_offset") or []
+    order = float(ip.get("envelope_sg_order", 4.0))
+    for axis, coord in enumerate((xc[:, None], yc[None, :])):
+        size = _Q(sizes[axis]).to("um").value if axis < len(sizes) and sizes[axis] is not None else 0.0
+        if size > 0.0:
+            offset = _Q(offsets[axis]).to("um").value if axis < len(offsets) and offsets[axis] is not None else 0.0
+            envelope = envelope * np.exp(-(np.abs((coord - offset) / (0.5 * size)) ** order))
+    phase = np.exp(1j * (k_vec[0] * xc[:, None] + k_vec[1] * yc[None, :]))
+    amplitude = float(ip.get("amplitude", 1.0))
+    if ip.get("field", "epw") == "epw":
+        scale = 1.0 / (derived["e_norm"] * derived["x_norm"])  # e phi / (m_e c^2) -> potential
+    else:
+        scale = 1.0 / derived["e_norm"]  # e E / (m_e w0 c) -> field
+    return amplitude * scale * envelope * phase
+
+
 def _polarization_rad(value) -> float:
     """``drivers.*.polarization``: degrees about the beam axis, or ``"p"`` (0, in-plane) / ``"s"``
     (90, along z); returned in radians."""

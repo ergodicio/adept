@@ -435,6 +435,26 @@ class MLFlowModel(BaseModel):
     run: str
 
 
+class InitialPerturbationModel(BaseModel):
+    """LPSE ``initialPerturbation``: a plane wave ``A env(r) exp(i K . r)`` written into one
+    field at t = 0 (``InitialPerturbation.cpp``). ``field: epw`` seeds the EPW potential (and
+    the longitudinal part of the combined field), ``E0`` / ``E1`` one light-field
+    ``component``. ``amplitude`` is in LPSE's normalized output units: ``e phi / (m_e c^2)``
+    for the potential, ``e E / (m_e w0 c)`` for a light field. ``K = 2 pi / wavelength``
+    along ``direction``; ``envelope_size`` is the full width at 1/e per axis (omit or 0 for
+    none) of the super-Gaussian ``exp(-|(r - offset) / (size/2)|^sg_order)`` about the box
+    centre."""
+
+    field: Literal["epw", "E0", "E1"] = "epw"
+    component: Literal["x", "y", "z"] = "y"
+    amplitude: float = 1.0
+    wavelength: str
+    direction: list[float] = Field(default_factory=lambda: [1.0, 0.0])
+    envelope_size: list[str] | None = None
+    envelope_offset: list[str] | None = None
+    envelope_sg_order: float = 4.0
+
+
 class ConfigModel(BaseModel):
     density: DensityModel
     drivers: DriversModel
@@ -445,3 +465,4 @@ class ConfigModel(BaseModel):
     terms: TermsModel
     units: UnitsModel
     restart: RestartModel | None = None
+    initial_perturbation: InitialPerturbationModel | None = None

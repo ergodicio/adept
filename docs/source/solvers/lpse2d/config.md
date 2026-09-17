@@ -533,6 +533,23 @@ The pump `E0` and the Raman (or combined) field `E1` carry three components `(x,
 
 `save.fields.poynting: true` adds the light energy-flux density maps `s0_x`, `s0_y` (pump) and `s1_x`, `s1_y` (Raman) to the fields output, `S_j = (c^2/omega) Im(E* . d_j E)` in field-squared times um/ps (`v_g |E|^2` for a plane wave; LPSE `laser.save.S0` / `raman.save.S0`). `save.thomson: [{k: [kx, ky], bandwidth: 0.1, field: epw}]` adds synthetic Thomson-scattering probes to the default series (LPSE `thomsonScattering.N.wavevector.lw/.iaw` and `bandwidth`): for probe `i`, `thomson_i_re` / `thomson_i_im` are the summed complex amplitude of the EPW potential (or, with `field: iaw`, of the IAW density) over the k-window `|k - k_probe| < bandwidth k0`, and `thomson_i_power` the summed spectral power there; `k` and `bandwidth` are in units of the vacuum laser wavenumber.
 
+## Initial perturbation (`initial_perturbation`)
+
+LPSE `initialPerturbation` (`InitialPerturbation.cpp`): a plane wave `A env(r) exp(i K . r)` written into one field at `t = 0`, for growth-rate tests that do not depend on a noise seed.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `field` | string | (default `epw`) `epw` seeds the EPW potential (k-space state; with `terms.epw.solver: combined` also the longitudinal part of `E1`, `-grad phi`); `E0` / `E1` seed one light-field `component` |
+| `component` | string | (default `y`) `x`, `y` or `z` for a light field |
+| `amplitude` | float | (default `1`) in LPSE's normalized output units: `e phi / (m_e c^2)` for the potential, `e E / (m_e w0 c)` for a light field (the translator passes `initialPerturbation.amplitude` through) |
+| `wavelength` | string | perturbation wavelength with unit; `K = 2 pi / wavelength` along `direction` |
+| `direction` | list | (default `[1, 0]`) in-plane direction of `K` (normalised) |
+| `envelope_size` | list | (optional) full width at 1/e per axis, with units; omit or `0um` for no envelope along that axis |
+| `envelope_offset` | list | (optional) envelope centre per axis relative to the box centre, with units |
+| `envelope_sg_order` | float | (default `4`) super-Gaussian order of `exp(-\|(r - offset) / (size/2)\|^order)` |
+
+Coordinates are measured from the box centre, as in LPSE. A seeded EPW mode evolves freely at exactly the solver's analytic Landau rate for that `k` (`tests/test_lpse2d/test_initial_perturbation.py`).
+
 ## Checkpoint and restart
 
 `save.checkpoint: true` (or a path) writes the complete solver state at `grid.tmax` as an `.npz` (`binary/checkpoint.npz` in the run's artifacts when `true`); `restart: {file: <that .npz>}` in a later configuration resumes from it: the state replaces the fresh initial condition, integration starts at the checkpoint time, and the series/fields save axes start there too unless their `tmin` is later. The per-step noise and wall keys are folded in from the time index, so a run split into two resumes reproduces the unbroken run to round-off as long as the split time is a multiple of `grid.dt` (the fixed-step solver would otherwise clip one step differently). The configuration must otherwise be the same (grid, terms, drivers); mismatched state shapes are refused, except that a two-component `E0`/`E1` checkpoint is padded with `E_z = 0`.

@@ -92,6 +92,25 @@ class BaseLPSE2D(ADEPTModule):
         E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 3), dtype=np.complex128)
         state = {"epw": epw, "E0": E0, "E1": E1}
 
+        if self.cfg.get("initial_perturbation"):
+            # LPSE initialPerturbation: a plane wave in the potential (k-space state; with the
+            # combined solver also as the longitudinal part of E1) or in one light component
+            from adept._lpse2d.helpers import initial_perturbation_field
+
+            ip = self.cfg["initial_perturbation"]
+            wave = initial_perturbation_field(self.cfg)
+            if ip.get("field", "epw") == "epw":
+                phi_k = np.fft.fft2(wave)
+                state["epw"] = phi_k
+                if str(self.cfg["terms"]["epw"].get("solver", "separate")) == "combined":
+                    kx = np.asarray(self.cfg["grid"]["kx"])[:, None]
+                    ky = np.asarray(self.cfg["grid"]["ky"])[None, :]
+                    state["E1"][..., 0] = np.fft.ifft2(-1j * kx * phi_k)
+                    state["E1"][..., 1] = np.fft.ifft2(-1j * ky * phi_k)
+            else:
+                component = "xyz".index(str(ip.get("component", "y")))
+                state[ip["field"]][..., component] = wave
+
         if self.cfg["terms"]["epw"].get("energy_ledger", False):
             from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
 
