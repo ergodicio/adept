@@ -629,6 +629,9 @@ def translate_parms(
     }
     if light_substeps is not None:
         cfg["grid"]["light_substeps"] = light_substeps
+    light_spectrum = _light_spectrum_probes(parms, g, report, laser_evolves, raman_on)
+    if light_spectrum:
+        cfg["save"]["light_spectrum"] = light_spectrum
     if iaw is not None:
         cfg["terms"]["iaw"] = iaw
     if hpe is not None:
@@ -641,6 +644,41 @@ def translate_parms(
 
 
 # ---------------------------------------------------------------- outputs --
+
+
+def _light_spectrum_probes(parms: dict, g, report: dict, laser_evolves: bool, raman_on: bool) -> list[dict]:
+    """``spectrum.N.{laser|raman}.*`` (``LightSpectrum::readParameters``; ``laserSpectrum.nLaserSpectrum``
+    / ``ramanSpectrum.nRamanSpectrum`` give the counts) -> ``save.light_spectrum`` entries: the
+    field (E0 / E1), ``startTime`` -> ``tmin``, ``interval``, ``location.min / .max`` (um from
+    the box centre) -> ``x`` / ``y``, any ``file.S0.*`` -> ``poynting``. A probe with no output
+    file, or on a field that is not evolved, is disabled in LPSE and skipped here."""
+    probes = []
+    for kind, field, active in (("laser", "E0", laser_evolves), ("raman", "E1", raman_on)):
+        count = int(float(g(f"{kind}Spectrum.n{kind.capitalize()}Spectrum", "0")))
+        for n in range(1, count + 1):
+            prefix = f"spectrum.{n}.{kind}"
+            if not _bool(g(f"{prefix}.enable"), True):
+                continue
+            has_e = any(k.startswith(f"{prefix}.file.E0.") for k in parms)
+            has_s = any(k.startswith(f"{prefix}.file.S0.") for k in parms)
+            if not (has_e or has_s):
+                continue
+            if not active:
+                report["notes"].append(f"{prefix}: the {kind} field is not evolved; probe skipped")
+                continue
+            lo = _floats(g(f"{prefix}.location.min", "0"))
+            hi = _floats(g(f"{prefix}.location.max", "0"))
+            probe = {
+                "field": field,
+                "interval": f"{float(g(f'{prefix}.interval', '0.05'))}ps",
+                "tmin": f"{float(g(f'{prefix}.startTime', '0'))}ps",
+                "x": [f"{lo[0]}um", f"{hi[0]}um"],
+                "poynting": has_s,
+            }
+            if len(lo) > 1 and len(hi) > 1:
+                probe["y"] = [f"{lo[1]}um", f"{hi[1]}um"]
+            probes.append(probe)
+    return probes
 
 
 def _source_window(g, prefix: str) -> dict:

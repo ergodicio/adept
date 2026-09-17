@@ -208,6 +208,12 @@ class SaveModel(BaseModel):
     thomson: list[dict] | None = None
     # save.fields.poynting: true adds s0_x, s0_y, s1_x, s1_y (LPSE laser/raman.save.S0)
     poynting: bool = False
+    # light spectrum probes (LPSE spectrum.N.{laser|raman}: startTime, interval, location.min /
+    # .max, file.E0.*, file.S0.*): [{field: E0 | E1, interval: "0.05ps", tmin, tmax,
+    # x: [xmin, xmax], y: [ymin, ymax] (with units, from the box centre), poynting: false}]
+    # -> a time series of the field on the sub-box at `interval` and its omega spectrum,
+    # written to binary/light_spectrum_<i>.xr (plan 2 L.6)
+    light_spectrum: list[dict] | None = None
 
 
 class RestartModel(BaseModel):

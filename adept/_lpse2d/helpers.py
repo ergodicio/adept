@@ -1360,9 +1360,10 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     plot_srs_diagnostics(series, metrics, cfg, td)
     plot_fields(fields, td)
     plot_kt(kfields, td)
+    light_spectra = make_light_spectrum_xarrays(cfg, result, td)
     metrics["plot_time"] = time.time() - t0
 
-    return {"k": kfields, "x": fields, "series": series, "metrics": metrics}
+    return {"k": kfields, "x": fields, "series": series, "metrics": metrics, "light_spectrum": light_spectra}
 
 
 def plot_srs_diagnostics(series, metrics, cfg, td):
@@ -1728,7 +1729,154 @@ def get_save_quantities(cfg: dict) -> dict:
 
     cfg["save"]["default"] = get_default_save_func(cfg)
 
+    for i_probe, probe in enumerate(cfg["save"].get("light_spectrum") or []):
+        cfg["save"][f"light_spectrum_{i_probe}"] = light_spectrum_save(cfg, probe)
+
     return cfg
+
+
+def light_spectrum_save(cfg: dict, probe: dict) -> dict:
+    """The save group of one light spectrum probe (LPSE ``LightSpectrum``): the field ``E0`` or
+    ``E1`` on the sub-box ``x: [xmin, xmax]``, ``y: [ymin, ymax]`` (coordinates from the box
+    centre, as LPSE's ``location.min / .max``; nearest grid nodes, a whole axis when omitted),
+    sampled every ``interval`` from ``tmin`` (default the grid start) to ``tmax`` (default the
+    grid end). ``poynting: true`` keeps one guard cell on each side so the Poynting components
+    can be differenced in post-processing. The time series and its omega spectrum are
+    written by ``make_light_spectrum_xarrays``."""
+    field = str(probe.get("field", "E0"))
+    if field not in ("E0", "E1"):
+        raise ValueError(f"save.light_spectrum field must be E0 or E1, got {field!r}")
+    srs_on = bool(cfg["terms"]["epw"]["source"].get("srs", False))
+    combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    if field == "E1" and not (srs_on or combined):
+        raise ValueError("save.light_spectrum on E1 needs terms.epw.source.srs (the Raman field)")
+    interval = _Q(probe["interval"]).to("ps").value
+    if interval <= 0.0:
+        raise ValueError("save.light_spectrum interval must be positive")
+
+    def ps(value):
+        return float(value) if isinstance(value, (int, float)) else _Q(value).to("ps").value
+
+    grid_tmin, grid_tmax = ps(cfg["grid"]["tmin"]), ps(cfg["grid"]["tmax"])
+    tmin = ps(probe["tmin"]) if probe.get("tmin") is not None else grid_tmin
+    tmax = ps(probe["tmax"]) if probe.get("tmax") is not None else grid_tmax
+    tmin = max(tmin, grid_tmin)
+    tmax = min(tmax, grid_tmax)
+    if tmax < tmin:
+        raise ValueError("save.light_spectrum has tmax < tmin")
+    n_t = int(np.floor((tmax - tmin) / interval + 1.0e-9)) + 1
+    t_ax = tmin + interval * np.arange(n_t)
+    guard = 1 if bool(probe.get("poynting", False)) else 0
+
+    def index_range(axis, key, n):
+        coords = np.asarray(cfg["grid"][axis], dtype=np.float64)
+        centre = 0.5 * (coords[0] + coords[-1])
+        bounds = probe.get(key)
+        if bounds is None or n == 1:
+            return 0, n - 1
+        lo = _Q(bounds[0]).to("um").value + centre
+        hi = _Q(bounds[1]).to("um").value + centre
+        if hi < lo:
+            raise ValueError(f"save.light_spectrum {key} range is reversed")
+        i_lo = int(np.argmin(np.abs(coords - lo)))
+        i_hi = int(np.argmin(np.abs(coords - hi)))
+        return max(i_lo - guard, 0), min(i_hi + guard, n - 1)
+
+    ix = index_range("x", "x", int(cfg["grid"]["nx"]))
+    iy = index_range("y", "y", int(cfg["grid"]["ny"]))
+    x_slice = slice(ix[0], ix[1] + 1)
+    y_slice = slice(iy[0], iy[1] + 1)
+
+    def save_func(t, y, args):
+        return {"E": y[field][x_slice, y_slice, :]}
+
+    return {
+        "t": {"ax": jnp.asarray(t_ax), "dt": interval},
+        "func": save_func,
+        "field": field,
+        "ix": ix,
+        "iy": iy,
+        "guard": guard,
+    }
+
+
+def make_light_spectrum_xarrays(cfg: dict, result, td: str) -> list[xr.Dataset]:
+    """One Dataset per ``save.light_spectrum`` probe: the field components ``e_x, e_y, e_z`` on
+    the sub-box against ``t (ps)``, their spectra ``spectrum_x, ...`` against the envelope
+    frequency offset ``omega / w`` (``w`` the field's own carrier: ``w0`` for E0, ``w1`` for
+    E1; positive = above the carrier), the box-summed spectral power ``power`` and, with
+    ``poynting``, the Poynting components ``s_x, s_y`` (``(c^2/w) Im(E* . d_j E)``) on the box
+    without its guard cells. Written to ``binary/light_spectrum_<i>.xr``."""
+    derived = cfg["units"]["derived"]
+    out = []
+    for i_probe, probe in enumerate(cfg["save"].get("light_spectrum") or []):
+        key = f"light_spectrum_{i_probe}"
+        if key not in result.ys:
+            continue
+        sub = cfg["save"][key]
+        t_ax = np.asarray(result.ts[key], dtype=np.float64)
+        raw = np.asarray(result.ys[key]["E"])
+        arr = raw.view(np.complex64 if raw.dtype == np.float32 else np.complex128)  # (nt, nx_sub, ny_sub, ncomp)
+        w = derived["w0"] if sub["field"] == "E0" else derived["w1"]
+        x_full = np.asarray(cfg["grid"]["x"], dtype=np.float64)
+        y_full = np.asarray(cfg["grid"]["y"], dtype=np.float64)
+        x_ax = x_full[sub["ix"][0] : sub["ix"][1] + 1]
+        y_ax = y_full[sub["iy"][0] : sub["iy"][1] + 1]
+        g = sub["guard"]
+        data = {}
+        if g:
+            # the Poynting components from the guarded box, then everything cropped to the probe
+            dxs = float(x_full[1] - x_full[0]) if x_full.size > 1 else 1.0
+            dys = float(y_full[1] - y_full[0]) if y_full.size > 1 else 1.0
+            sx = np.zeros(arr.shape[:-1])
+            sy = np.zeros(arr.shape[:-1])
+            for comp in range(arr.shape[-1]):
+                e = arr[..., comp]
+                if arr.shape[1] > 1:
+                    sx += np.imag(np.conj(e) * np.gradient(e, dxs, axis=1))
+                if arr.shape[2] > 1:
+                    sy += np.imag(np.conj(e) * np.gradient(e, dys, axis=2))
+            factor = derived["c"] ** 2 / w
+            crop_x = slice(g if arr.shape[1] > 2 * g else 0, arr.shape[1] - g if arr.shape[1] > 2 * g else arr.shape[1])
+            crop_y = slice(g if arr.shape[2] > 2 * g else 0, arr.shape[2] - g if arr.shape[2] > 2 * g else arr.shape[2])
+            sx, sy = factor * sx[:, crop_x, crop_y], factor * sy[:, crop_x, crop_y]
+            arr = arr[:, crop_x, crop_y, :]
+            x_ax, y_ax = x_ax[crop_x], y_ax[crop_y]
+        t_tuple = ("t (ps)", t_ax)
+        x_tuple = ("x (um)", x_ax)
+        y_tuple = ("y (um)", y_ax)
+        names = ("x", "y", "z")[: arr.shape[-1]]
+        for comp, name in enumerate(names):
+            data[f"e_{name}"] = xr.DataArray(arr[..., comp], coords=(t_tuple, x_tuple, y_tuple))
+        if g:
+            data["s_x"] = xr.DataArray(sx, coords=(t_tuple, x_tuple, y_tuple))
+            data["s_y"] = xr.DataArray(sy, coords=(t_tuple, x_tuple, y_tuple))
+        # envelope spectrum: E(t) ~ e^{-i dw t} for a component dw above the carrier, so the
+        # frequency axis is -(FFT frequency); in units of the field's carrier
+        n_t = t_ax.size
+        if n_t > 1:
+            dt_probe = float(t_ax[1] - t_ax[0])
+            omega = -2.0 * np.pi * np.fft.fftfreq(n_t, d=dt_probe) / w
+            order = np.argsort(omega)
+            omega_tuple = ("delta omega (w_carrier)", omega[order])
+            spectra = np.fft.fft(arr, axis=0)[order]
+            power = np.zeros(n_t)
+            for comp, name in enumerate(names):
+                data[f"spectrum_{name}"] = xr.DataArray(spectra[..., comp], coords=(omega_tuple, x_tuple, y_tuple))
+                power += np.sum(np.abs(spectra[..., comp]) ** 2, axis=(1, 2))
+            data["power"] = xr.DataArray(power, coords=(omega_tuple,))
+        ds = xr.Dataset(data, attrs={"field": sub["field"], "carrier (rad/ps)": float(w)})
+        ds.to_netcdf(os.path.join(td, "binary", f"{key}.xr"), engine="h5netcdf", invalid_netcdf=True)
+        if "power" in ds:
+            fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
+            ax.semilogy(ds["delta omega (w_carrier)"].values, np.maximum(ds["power"].values, 1e-300))
+            ax.set_xlabel(f"(omega - w) / w  [{sub['field']}]")
+            ax.set_ylabel("|E(omega)|^2 summed over the probe")
+            ax.set_title(f"light spectrum probe {i_probe}")
+            fig.savefig(os.path.join(td, "plots", f"{key}.png"), bbox_inches="tight")
+            plt.close(fig)
+        out.append(ds)
+    return out
 
 
 def get_default_save_func(cfg):
