@@ -19,8 +19,19 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
+
+# Parity runs are float64 like the 2026-09-14 baseline (`run_adept_deck.py` set
+# jax_enable_x64); ergoExo does not enforce it for envelope-2d and run.py leaves that solver
+# in float32. `python -m adept._lpse2d.parity` has already imported the adept package (and
+# with it jax) by the time this module runs, so the flag is set on the live config as well as
+# in the environment (for anything spawned from here).
+os.environ.setdefault("JAX_ENABLE_X64", "1")
+import jax
+
+jax.config.update("jax_enable_x64", True)
 
 import numpy as np
 

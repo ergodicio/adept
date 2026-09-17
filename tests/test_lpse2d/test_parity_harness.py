@@ -173,6 +173,20 @@ def test_verify_reproduces_the_stored_baseline_metrics(tmp_path):
     assert (Path(tmp_path) / "binary" / "series.xr").is_file()
 
 
+def test_run_deck_refuses_float32():
+    """The comparison baseline is float64; a float32 run would be silently different."""
+    import jax
+
+    from adept._lpse2d.parity import run_deck
+
+    jax.config.update("jax_enable_x64", False)
+    try:
+        with pytest.raises(RuntimeError, match="float64"):
+            run_deck("unused.parms")
+    finally:
+        jax.config.update("jax_enable_x64", True)
+
+
 def test_batch_jobs_merge_defaults_and_build_run_commands(tmp_path):
     """A batch file's ``defaults`` merge under each job (``overrides`` / ``tags``
     recursively), ``job_command`` is the ``parity run`` argument vector, and the driver runs the

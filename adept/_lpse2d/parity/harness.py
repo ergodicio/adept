@@ -250,10 +250,16 @@ def run_deck(
 ) -> DeckRun:
     """Run a translated deck through ``ergoExo``; optionally save ``config.yaml``,
     ``series.nc``, ``fields.nc`` and ``metrics.npy`` under ``out_dir``."""
+    import jax
     import yaml
 
     from adept import ergoExo
 
+    if not jax.config.jax_enable_x64:
+        raise RuntimeError(
+            "the parity harness runs in float64 (the 09-14 baseline did): set JAX_ENABLE_X64=1 or "
+            "jax.config.update('jax_enable_x64', True) before importing jax"
+        )
     cfg, report = translate_deck(parms, overrides, run=run, experiment=experiment)
     deck = cfg["mlflow"]["run"]
     if out_dir is not None:
