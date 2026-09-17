@@ -407,6 +407,16 @@ def translate_parms(
         light["absorption"] = True
     if "raman.spectral.maxWavenumber" in parms:
         light["max_wavenumber"] = float(parms["raman.spectral.maxWavenumber"])
+    abc_type = str(g("laser.evolution.abc.type", g("raman.evolution.abc.type", "exp"))).lower()
+    if abc_type == "pml":
+        if light["solver"] == "fd":
+            light["absorber"] = "pml"
+            if "laser.evolution.abc.SabcDenom" in parms:
+                light["pml_denominator"] = float(parms["laser.evolution.abc.SabcDenom"])
+        else:
+            report["notes"].append("abc.type = pml with a spectral light solver: adept keeps the exp layer")
+    elif abc_type not in ("exp",):
+        report["unsupported"].append(f"abc.type = {abc_type} (exp or pml)")
     light["boundary_max_rate"] = float(
         g("raman.evolution.abc.maxDampingRate", g("laser.evolution.abc.maxDampingRate", "5000"))
     )

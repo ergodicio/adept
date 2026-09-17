@@ -133,6 +133,41 @@ class RamanLight:
         # absorbing boundaries are applied every sub-step so that light (group velocity ~ c)
         # cannot cross the absorber between damping applications
         self.sub_boundary = cfg["grid"]["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
+        # terms.light.absorber: pml (LPSE {laser|raman}.evolution.abc.type = pml; plan 2 L.2)
+        # replaces the multiplicative layer by a complex coordinate stretch of the Laplacian,
+        # v = 1 / (1 + e^{i pi / pml_denominator} delta^4) with delta the depth into the layer
+        # (SchrodingerSolver3::abc_compute), on the compact stencil in the layers as LPSE
+        self.pml = str(cfg["terms"].get("light", {}).get("absorber", "exp")) == "pml"
+        if self.pml:
+            self.sub_boundary = jnp.ones_like(self.sub_boundary)
+            denominator = float(cfg["terms"]["light"].get("pml_denominator", 5.0))
+            s_abc = np.exp(1j * np.pi / denominator)
+            from astropy.units import Quantity as _Q
+
+            width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+            x = np.asarray(cfg["grid"]["x"], dtype=np.float64)
+            y = np.asarray(cfg["grid"]["y"], dtype=np.float64)
+            boundary = cfg["terms"]["epw"]["boundary"]
+            depth_x = np.zeros(x.size)
+            if str(boundary.get("x", "periodic")) == "absorbing":
+                xmin, xmax = float(cfg["grid"]["xmin"]), float(cfg["grid"]["xmax"])
+                depth_x = np.clip(np.maximum(xmin + width - x, x - (xmax - width)) / width, 0.0, 1.0)
+            depth_y = np.zeros(y.size)
+            if y.size > 1 and str(boundary.get("y", "periodic")) == "absorbing":
+                ymin, ymax = float(cfg["grid"]["ymin"]), float(cfg["grid"]["ymax"])
+                depth_y = np.clip(np.maximum(ymin + width - y, y - (ymax - width)) / width, 0.0, 1.0)
+            delta = np.maximum(depth_x[:, None], depth_y[None, :])
+            self.pml_v = jnp.asarray(1.0 / (1.0 + s_abc * delta**4))
+            self.pml_inner = jnp.asarray(np.where(delta > 0.0, 0.0, 1.0))
+            # LPSE leaves the edge nodes of an absorbing axis un-updated (E = 0 there): the
+            # wall the attenuated wave reflects from on its way back through the layer. On this
+            # periodic (roll) grid the same wall keeps the layer's remnant from wrapping around
+            wall = np.ones((x.size, y.size))
+            if str(boundary.get("x", "periodic")) == "absorbing":
+                wall[0, :] = wall[-1, :] = 0.0
+            if y.size > 1 and str(boundary.get("y", "periodic")) == "absorbing":
+                wall[:, 0] = wall[:, -1] = 0.0
+            self.sub_boundary = jnp.asarray(wall)
 
         # collisional (inverse-bremsstrahlung) absorption, terms.light.absorption: the
         # amplitude decays at nu_abs (n/nc_w)^2 per wave, nc_w its own critical density
@@ -206,6 +241,40 @@ class RamanLight:
             self.dx * self.dy
         )
 
+    def _laplacian_pml(self, f: Array) -> Array:
+        """The complex-stretched compact Laplacian of the PML layers (LPSE ``step_2d`` PML
+        branch): ``sum_nb v (v + v_nb)/2 (f_nb - f) / h^2``, with the stencil-order Laplacian
+        in the interior (``v = 1``)."""
+        v = self.pml_v
+        lap = jnp.zeros_like(f)
+        for axis, h in ((0, self.dx), (1, self.dy)):
+            if f.shape[axis] == 1:
+                continue
+            for shift in (1, -1):
+                v_nb = jnp.roll(v, shift, axis=axis)
+                f_nb = jnp.roll(f, shift, axis=axis)
+                lap = lap + v * 0.5 * (v + v_nb) * (f_nb - f) / h**2
+        return jnp.where(self.pml_inner > 0.0, self._d2x(f) + self._d2y(f), lap)
+
+    def curl_curl(self, E: Array) -> list[Array]:
+        """``-(curl curl E)`` per component with the FD stencils: the discrete curl-curl on the
+        in-plane components, the plain Laplacian on E_z (k_z = 0). With the PML the Laplacian
+        part is the stretched one, the grad-div part the plain stencil (as LPSE)."""
+        ex, ey = E[..., 0], E[..., 1]
+        if self.pml:
+            out = [
+                self._laplacian_pml(ex) - (self._d2x(ex) + self._dxdy(ey)),
+                self._laplacian_pml(ey) - (self._dxdy(ex) + self._d2y(ey)),
+            ]
+            if E.shape[-1] == 3:
+                out.append(self._laplacian_pml(E[..., 2]))
+            return out
+        out = [self._d2y(ex) - self._dxdy(ey), self._d2x(ey) - self._dxdy(ex)]
+        if E.shape[-1] == 3:
+            ez = E[..., 2]
+            out.append(self._d2x(ez) + self._d2y(ez))
+        return out
+
     def _dx(self, f: Array) -> Array:
         """First difference along x of the stencil order (``stencils.first_derivative``)."""
         return sum(w * jnp.roll(f, -j, axis=0) for j, w in self._first) / self.dx
@@ -263,7 +332,6 @@ class RamanLight:
         iaw_density: Array | None = None,
         couple: bool = True,
     ) -> Array:
-        e1x, e1y = E1[..., 0], E1[..., 1]
         linear_coeff = self.linear_coeff
         if iaw_density is not None:
             # MATLAB: i*w1/2 * [1 - wp0^2/w1^2 * (n_b/n_env + Nelf)] E1
@@ -272,13 +340,8 @@ class RamanLight:
         # paraxial propagation with cross-derivative terms (MATLAB lines 1663-1671): the
         # discrete curl-curl on the in-plane components; the out-of-plane component (k_z = 0)
         # sees the plain Laplacian, -(curl curl E)_z = laplacian(E_z)
-        k_e1 = [
-            self.diffraction_coeff * (self._d2y(e1x) - self._dxdy(e1y)) + linear_coeff * e1x,
-            self.diffraction_coeff * (self._d2x(e1y) - self._dxdy(e1x)) + linear_coeff * e1y,
-        ]
-        if E1.shape[-1] == 3:
-            e1z = E1[..., 2]
-            k_e1.append(self.diffraction_coeff * (self._d2x(e1z) + self._d2y(e1z)) + linear_coeff * e1z)
+        comps = [E1[..., i] for i in range(E1.shape[-1])]
+        k_e1 = [self.diffraction_coeff * cc + linear_coeff * e for cc, e in zip(self.curl_curl(E1), comps, strict=True)]
 
         # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation);
         # CoupledLight switches it off here when it integrates the exchange exactly

@@ -324,6 +324,12 @@ class LightModel(BaseModel):
     # light propagator: "fd" (MATLAB staggered scheme, sub-cycled to its CFL limit) or
     # "spectral" (LPSE exact k-space propagator with L/T projection, no CFL limit)
     solver: Literal["fd", "spectral"] = "fd"
+    # fd solver: the light fields' absorbing layers -- "exp" (the multiplicative layer of
+    # grid.boundary_profile / boundary_max_rate) or "pml" (LPSE abc.type = pml: a complex
+    # coordinate stretch of the Laplacian, v = 1/(1 + e^{i pi/pml_denominator} delta^4), no
+    # multiplicative damping; boundary_width wide; plan 2 L.2)
+    absorber: Literal["exp", "pml"] = "exp"
+    pml_denominator: float = 5.0
     # fd solver with pump_depletion: resonance absorption of the pump at the critical surface
     # (LPSE laser.evolution.resonanceAbsorption): true or {t_start, t_stop, filter: true,
     # filter_width: 1.0, landau_update: 1, edge_width}; refused with the spectral solver as in LPSE

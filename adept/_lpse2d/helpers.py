@@ -507,6 +507,8 @@ def get_derived_quantities(cfg: dict) -> dict:
         light = {**light, **LightModel(**light).model_dump()}
         cfg["terms"]["light"] = light
     pump_depletion = light.get("pump_depletion", False)
+    if light.get("absorber", "exp") == "pml" and light.get("solver", "fd") != "fd":
+        raise ValueError("terms.light.absorber: pml is an option of the fd light solver")
     if light.get("resonance_absorption"):
         if not pump_depletion or light.get("solver", "fd") != "fd":
             raise ValueError(

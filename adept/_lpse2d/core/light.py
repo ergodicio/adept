@@ -295,16 +295,6 @@ class CoupledLight(RamanLight):
 
         return self.injector_rows(self.i0, sign, wave)
 
-    def curl_curl(self, E: Array) -> list[Array]:
-        """``-(curl curl E)`` per component with the FD stencils: the discrete curl-curl on the
-        in-plane components, the plain Laplacian on E_z (k_z = 0)."""
-        ex, ey = E[..., 0], E[..., 1]
-        out = [self._d2y(ex) - self._dxdy(ey), self._d2x(ey) - self._dxdy(ex)]
-        if E.shape[-1] == 3:
-            ez = E[..., 2]
-            out.append(self._d2x(ez) + self._d2y(ez))
-        return out
-
     def pump_pattern(self, pump_args: dict) -> list[Array]:
         """The general injector's spatial source per beam, ``(nc, n_rows, ny, 3)``: the commutator
         ``D[H V] - H D[V]`` of the curl-curl operator with the beam's mask, for the analytic beam
