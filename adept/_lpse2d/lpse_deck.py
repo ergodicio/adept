@@ -368,6 +368,21 @@ def translate_parms(
             f"laser.solver = {laser_solver} but raman.solver = {raman_solver}: "
             f"one adept light solver ({light['solver']})"
         )
+    if laser_evolves and _bool(g("laser.evolution.resonanceAbsorption.enable")):
+        if light["solver"] != "fd":
+            report["unsupported"].append("laser.evolution.resonanceAbsorption with a spectral light solver")
+        else:
+            ra = {
+                "t_start": f"{float(g('laser.evolution.resonanceAbsorption.time.start', '0'))}ps",
+                "filter": _bool(g("laser.evolution.resonanceAbsorption.filter.enable"), True),
+                "filter_width": float(g("laser.evolution.resonanceAbsorption.filter.width", "1")),
+                "landau_update": int(float(g("laser.evolution.resonanceAbsorption.LdUpdate", "1"))),
+            }
+            if "laser.evolution.resonanceAbsorption.time.stop" in parms:
+                ra["t_stop"] = f"{float(parms['laser.evolution.resonanceAbsorption.time.stop'])}ps"
+            light["resonance_absorption"] = ra
+    if raman_on and _bool(g("raman.evolution.resonanceAbsorption.enable")):
+        report["unsupported"].append("raman.evolution.resonanceAbsorption (adept applies RA to the pump only)")
     if light["solver"] == "fd":
         # evolution.solverOrder (default 2 in LPSE for both fields): one stencil order here
         orders = {}

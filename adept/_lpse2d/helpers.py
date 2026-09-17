@@ -507,6 +507,12 @@ def get_derived_quantities(cfg: dict) -> dict:
         light = {**light, **LightModel(**light).model_dump()}
         cfg["terms"]["light"] = light
     pump_depletion = light.get("pump_depletion", False)
+    if light.get("resonance_absorption"):
+        if not pump_depletion or light.get("solver", "fd") != "fd":
+            raise ValueError(
+                "terms.light.resonance_absorption needs terms.light.pump_depletion with the fd light solver "
+                "(LPSE refuses it with the spectral solver too)"
+            )
     light_solver = light.get("solver", "fd")
     combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
     if combined and not light:

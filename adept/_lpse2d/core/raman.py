@@ -206,6 +206,13 @@ class RamanLight:
             self.dx * self.dy
         )
 
+    def _dx(self, f: Array) -> Array:
+        """First difference along x of the stencil order (``stencils.first_derivative``)."""
+        return sum(w * jnp.roll(f, -j, axis=0) for j, w in self._first) / self.dx
+
+    def _dy(self, f: Array) -> Array:
+        return sum(w * jnp.roll(f, -j, axis=1) for j, w in self._first) / self.dy
+
     def injector_rows(self, i_plane: int, direction: int, wave) -> list[tuple[int, Array]]:
         """The rows ``(index, values)`` of the plane-wave injector of this stencil order for the
         analytic wave ``wave(i) -> (ny,)`` (the source's amplitude, carrier and phases at row

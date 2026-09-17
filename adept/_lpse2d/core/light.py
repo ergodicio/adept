@@ -183,6 +183,26 @@ class CoupledLight(RamanLight):
         self.pump_turn_on_time = pump["turn_on_time"]
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
 
+        # ---- resonance absorption (plan 2 L.3; LPSE laser.evolution.resonanceAbsorption) on the
+        # pump, applied every light sub-step after the propagation update
+        from adept._lpse2d.core.epw import analytic_landau_rate
+        from adept._lpse2d.core.resonance import ResonanceAbsorption
+
+        ra_cfg = light_cfg.get("resonance_absorption", None)
+        if ra_cfg:
+            # LPSE builds the Landau table whenever RA is on, whatever lw.landauDamping.enable
+            cfg_ld = {
+                **cfg,
+                "terms": {
+                    **cfg["terms"],
+                    "epw": {**cfg["terms"]["epw"], "damping": {**cfg["terms"]["epw"]["damping"], "landau": True}},
+                },
+            }
+            landau_rate = analytic_landau_rate(cfg_ld)
+        else:
+            landau_rate = None
+        self.resonance = ResonanceAbsorption(cfg, self, self.dt_l, landau_rate)
+
         # ---- general FD injector (plan 2 L.4): oblique, multiple or transversely profiled beams
         # use the same commutator on the full 2-D operator, S = D[H V] - H D[V], with V the
         # analytic beam (polarised perpendicular to its k, super-Gaussian in y); the axial
@@ -539,6 +559,8 @@ class CoupledLight(RamanLight):
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
             else:
                 E0, E1 = propagate(t_i, E0, E1)
+            if self.resonance.enabled:
+                E0 = self.resonance(t_i, i, E0)
             E0 = E0 * self.sub_boundary[..., None]
             E1 = E1 * self.sub_boundary[..., None]
             if absorb0 is not None:
