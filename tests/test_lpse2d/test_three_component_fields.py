@@ -315,8 +315,10 @@ def test_s_polarised_pump_drives_no_tpd_in_a_run():
     w_p = final_energy("p", 30.0)
     w_s = final_energy("s", 30.0)
     assert w_off > 0.0
-    assert w_s == w_off
-    assert w_p != w_off
+    # to round-off: the source is identically zero, but XLA's fusion of the s-pol path can
+    # round the free decay differently by an ulp or two (seen on the laptop, jax 0.9.0.1)
+    assert np.isclose(w_s, w_off, rtol=1e-12, atol=0.0)
+    assert not np.isclose(w_p, w_off, rtol=1e-6, atol=0.0)
 
 
 def test_two_component_fields_refuse_an_s_polarised_pump():
