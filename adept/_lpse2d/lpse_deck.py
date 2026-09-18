@@ -630,9 +630,29 @@ def translate_parms(
             "equivalent (adept sub-cycles at substep_courant and blends with v_blend_buffer)"
         )
 
-    for key in parms:
-        if key.startswith("qle") and _bool(parms[key]):
-            report["unsupported"].append(f"{key} (quasilinear module)")
+    # ---- qle (QuasilinearEvolution.cpp; plan 2 K.1)
+    qle = None
+    if _bool(g("qle.enable")):
+        p_therm = _floats(g("qle.thermalizationProbability", "1 0 0"))
+        qle = {
+            "active": True,
+            "nv": int(float(g("qle.velocityGrid", "100"))),
+            "v_max": float(g("qle.VmaxOverC", "0.5")),
+            "update_every": int(float(g("qle.numLwStepsPerUpdate", "1"))),
+            "t_start": float(g("qle.startEvolutionAt", "0")),
+            "thermal_correction": _bool(g("qle.includeThermalCorrection"), True),
+            "derivative_in_tensor": _bool(g("qle.includeDerivativeInDiffusionTensor"), True),
+            "landau_evolution": _bool(g("qle.landauDampingEvolution.enable")),
+            "thermalization_probability": [p_therm[0], p_therm[1] if len(p_therm) > 1 else 0.0],
+            "subcycling": int(float(g("qle.additionalSubcycling", "1"))),
+            "multiplier": float(g("qle.coefficientMultiplier", "1")),
+        }
+        solver = str(g("qle.solver", "spectral")).lower()
+        if solver == "implicit":
+            report["notes"].append("qle.solver = implicit: adept's quasilinear update is the explicit sub-cycled one")
+        if hpe is not None:
+            report["unsupported"].append("qle with hpe (LPSE refuses the pair as well)")
+            qle = None
 
     # ---- initialPerturbation (InitialPerturbation.cpp): plane wave in one field at t = 0
     initial_perturbation = None
@@ -703,6 +723,8 @@ def translate_parms(
         cfg["terms"]["iaw"] = iaw
     if hpe is not None:
         cfg["terms"]["hpe"] = hpe
+    if qle is not None:
+        cfg["terms"]["qle"] = qle
     if initial_perturbation is not None:
         cfg["initial_perturbation"] = initial_perturbation
     if _bool(g("absoluteThreshold.isFind")):

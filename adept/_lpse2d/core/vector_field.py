@@ -56,6 +56,14 @@ class SplitStep:
             self.raman = None
         else:
             self.raman = raman_cls(cfg) if srs_on else None
+        if cfg["terms"].get("qle", {}).get("active", False):
+            from adept._lpse2d.core.qle import QuasilinearEvolution
+
+            if cfg["terms"].get("hpe", {}).get("active", False):
+                raise ValueError("terms.qle and terms.hpe both evolve the Landau rate: enable one of them")
+            self.qle = QuasilinearEvolution(cfg)
+        else:
+            self.qle = None
         if cfg["terms"].get("hpe", {}).get("active", False):
             from adept._lpse2d.core.hpe import HybridParticleEvolution
 
@@ -201,6 +209,8 @@ class SplitStep:
                 new_y["iaw_velocity_divergence"] = iaw_out["iaw_velocity_divergence"]
             if self.hpe is not None:
                 new_y = self.hpe(t, new_y)
+            if self.qle is not None:
+                new_y = self.qle(t, new_y)  # y["epw"] is the potential derived from the combined field
             y, new_y = self._pack_y_(y, new_y)
             return new_y
 
@@ -227,6 +237,9 @@ class SplitStep:
         # rate the EPW update applies on the next step (one-step lag)
         if self.hpe is not None:
             new_y = self.hpe(t, new_y)
+        # quasilinear VDF update and its Landau rate (same one-step lag; plan 2 K.1)
+        if self.qle is not None:
+            new_y = self.qle(t, new_y)
 
         # pack y into float64
         y, new_y = self._pack_y_(y, new_y)

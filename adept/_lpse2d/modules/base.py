@@ -128,6 +128,11 @@ class BaseLPSE2D(ADEPTModule):
             # so the .view below is a no-op
             state = state | load_particles(self.cfg)
 
+        if self.cfg["terms"].get("qle", {}).get("active", False):
+            from adept._lpse2d.core.qle import load_qle_state
+
+            state = state | load_qle_state(self.cfg)
+
         self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
         # ---- restart (LPSE --restart): replace the freshly built state by a checkpoint and
         # continue from its time; the per-step noise / wall keys are folded in from the

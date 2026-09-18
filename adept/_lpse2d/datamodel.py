@@ -372,6 +372,25 @@ class LightModel(BaseModel):
     boundary_max_rate: float | None = None
 
 
+class QLEModel(BaseModel):
+    """Quasilinear evolution of the box-averaged electron distribution (LPSE qle.*; plan 2 K.1):
+    the VDF diffuses in the EPW spectrum and, with landau_evolution, the Landau rate of every
+    mode is recomputed from it (written to the state's gamma_L that the EPW step applies)."""
+
+    active: bool = False
+    nv: int = Field(default=100, ge=8)  # qle.velocityGrid: points per velocity dimension
+    v_max: float = Field(default=0.5, gt=0.0)  # qle.VmaxOverC
+    update_every: int = Field(default=1, ge=1)  # qle.numLwStepsPerUpdate (EPW steps)
+    t_start: float = 0.0  # qle.startEvolutionAt (ps)
+    thermal_correction: bool = True  # qle.includeThermalCorrection (Bohm-Gross resonance)
+    derivative_in_tensor: bool = True  # qle.includeDerivativeInDiffusionTensor (the drift d_i C_ij)
+    landau_evolution: bool = False  # qle.landauDampingEvolution.enable
+    thermalization_probability: list[float] = [1.0, 0.0]  # qle.thermalizationProbability (x, y)
+    subcycling: int = Field(default=1, ge=1)  # qle.additionalSubcycling
+    max_subcycles: int = Field(default=20000, ge=1)  # cap on the explicit sub-steps per update
+    multiplier: float = 1.0  # qle.coefficientMultiplier
+
+
 class IAWDampingModel(BaseModel):
     """Ion-acoustic damping. ``landau_form: simplified`` is ``gamma = landau * cs * |k|``
     (LPSE ``isSimplified``); ``full`` is the Z-generalized Krall-Trivelpiece rate with its
@@ -470,6 +489,7 @@ class TermsModel(BaseModel):
     light: LightModel = LightModel()
     iaw: IAWModel | None = None
     hpe: HPEModel | None = None
+    qle: QLEModel | None = None
     zero_mask: bool
 
 

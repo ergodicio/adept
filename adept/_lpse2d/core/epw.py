@@ -438,6 +438,9 @@ class SpectralEPWSolver:
         # state (y["gamma_L"], written by HybridParticleEvolution) instead of the
         # static analytic array
         self.hpe_enabled = bool(cfg["terms"].get("hpe", {}).get("active", False))
+        # the quasilinear module writes gamma_L likewise when it evolves the Landau rate
+        qle = cfg["terms"].get("qle", {}) or {}
+        self.qle_rate_enabled = bool(qle.get("active", False)) and bool(qle.get("landau_evolution", False))
 
         # direct EPW driver (drivers.E2), used by the validation/test configs
         self.driver = Driver(cfg)
@@ -695,7 +698,7 @@ class SpectralEPWSolver:
         book("dispersion", self.energy(phi_k))
 
         # MATLAB line 1981: divE = divE .* exp(-(gammaLandau + nu_coll) * DT)
-        if self.hpe_enabled:
+        if self.hpe_enabled or self.qle_rate_enabled:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
             gamma_landau = self.landau_rate

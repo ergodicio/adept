@@ -1384,9 +1384,49 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     plot_fields(fields, td)
     plot_kt(kfields, td)
     light_spectra = make_light_spectrum_xarrays(cfg, result, td)
+    vdf = make_vdf_xarray(cfg, result, td)
     metrics["plot_time"] = time.time() - t0
 
-    return {"k": kfields, "x": fields, "series": series, "metrics": metrics, "light_spectrum": light_spectra}
+    return {
+        "k": kfields,
+        "x": fields,
+        "series": series,
+        "metrics": metrics,
+        "light_spectrum": light_spectra,
+        "vdf": vdf,
+    }
+
+
+def make_vdf_xarray(cfg: dict, result, td: str):
+    """The quasilinear module's box-averaged VDF at the field save times (``binary/vdf.xr``:
+    ``vdf(t, vx[, vy])`` with velocities in um/ps), or None without ``terms.qle``."""
+    if "fields" not in result.ys or "vdf" not in result.ys["fields"]:
+        return None
+    from adept._lpse2d.core.qle import _qle_cfg
+
+    qle = _qle_cfg(cfg)
+    v_max = float(qle["v_max"]) * cfg["units"]["derived"]["c"]
+    v = np.linspace(-v_max, v_max, int(qle["nv"]))
+    arr = np.asarray(result.ys["fields"]["vdf"])
+    t_ax = ("t (ps)", np.asarray(result.ts["fields"], dtype=np.float64))
+    coords = (t_ax, ("vx (um per ps)", v)) + ((("vy (um per ps)", v),) if arr.ndim == 3 else ())
+    ds = xr.Dataset({"vdf": xr.DataArray(arr, coords=coords)})
+    ds.to_netcdf(os.path.join(td, "binary", "vdf.xr"), engine="h5netcdf", invalid_netcdf=True)
+    fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
+    vte = np.sqrt(cfg["units"]["derived"]["vte_sq"])
+    if arr.ndim == 3:
+        f_last = arr[-1].sum(axis=1) * (v[1] - v[0])
+        f_first = arr[0].sum(axis=1) * (v[1] - v[0])
+    else:
+        f_last, f_first = arr[-1], arr[0]
+    ax.semilogy(v / vte, np.maximum(f_first, 1e-300), "k--", label="t = 0")
+    ax.semilogy(v / vte, np.maximum(f_last, 1e-300), label=f"t = {t_ax[1][-1]:.2f} ps")
+    ax.set_xlabel("v_x / v_te")
+    ax.set_ylabel("f(v_x)")
+    ax.legend(fontsize=8)
+    fig.savefig(os.path.join(td, "plots", "vdf.png"), bbox_inches="tight")
+    plt.close(fig)
+    return ds
 
 
 def plot_srs_diagnostics(series, metrics, cfg, td):
@@ -1596,6 +1636,12 @@ def make_field_xarrays(cfg, this_t, state, td):
     )
 
     kfield_data = {"phi": phi_k, "ex": ex_k, "ey": ey_k}
+    if "gamma_L" in state:
+        # the evolved Landau rate of the quasilinear module (1/ps) on the k grid
+        kfield_data["gamma_L"] = xr.DataArray(
+            np.fft.fftshift(np.asarray(state["gamma_L"]), axes=(1, 2)),
+            coords=(tax_tuple, (r"kx ($kc\omega_0^{-1}$)", shift_kx), (r"ky ($kc\omega_0^{-1}$)", shift_ky)),
+        )
     poynting = {}
     if cfg["save"]["fields"].get("poynting", False):
         # LPSE {laser|raman}.save.S0: the envelope energy-flux density S_j = (c^2/w) Im(E* . d_j E)
@@ -1670,6 +1716,7 @@ def get_save_quantities(cfg: dict) -> dict:
 
     cfg["save"]["fields"]["t"]["dt"] = dt
     cfg["save"]["fields"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
+    qle_on = bool((cfg["terms"].get("qle") or {}).get("active", False))
 
     if "x" in cfg["save"]["fields"]:
         xmin = cfg["grid"]["xmin"]
@@ -1718,6 +1765,11 @@ def get_save_quantities(cfg: dict) -> dict:
 
             save_y = {}
             for k, v in y.items():
+                if k in ("vdf", "gamma_L") and qle_on:
+                    # the quasilinear VDF (plan 2 K.1; make_vdf_xarray) and its Landau rate on
+                    # the k grid (k-fields), verbatim
+                    save_y[k] = v
+                    continue
                 if k in PARTICLE_KEYS or k == "epw_ledger":
                     # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
                     # none of them fit the spatial interpolator; the histogram and the
@@ -1746,7 +1798,8 @@ def get_save_quantities(cfg: dict) -> dict:
         def save_func(t, y, args):
             from adept._lpse2d.core.hpe import PARTICLE_KEYS
 
-            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS and k != "epw_ledger"}
+            keep = ("vdf", "gamma_L") if qle_on else ()
+            return {k: v for k, v in y.items() if (k not in PARTICLE_KEYS or k in keep) and k != "epw_ledger"}
 
     cfg["save"]["fields"]["func"] = save_func
 
