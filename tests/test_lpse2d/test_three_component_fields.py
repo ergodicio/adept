@@ -144,8 +144,10 @@ def test_s_polarised_pump_drives_srs_but_not_tpd():
     E0 . E1*, is non-zero when the Raman light is also along z."""
     from adept._lpse2d.core.epw import SpectralEPWSolver
 
-    cfg = _cfg(tpd=True, srs=True, density=0.22)
+    # the separate solver takes one instability at a time (plan 2 N.4): one solver per source
+    cfg = _cfg(tpd=True, srs=False, density=0.22)
     epw = SpectralEPWSolver(cfg)
+    epw_srs = SpectralEPWSolver(_cfg(tpd=False, srs=True, density=0.22))
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
     rng = np.random.default_rng(5)
     phi_k = rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny))
@@ -162,13 +164,13 @@ def test_s_polarised_pump_drives_srs_but_not_tpd():
     assert np.all(tpd_s == 0.0)
     assert np.abs(tpd_p).max() > 0.0
 
-    srs_s = np.asarray(epw.calc_srs_source(E0_s, E1_s))
-    srs_p = np.asarray(epw.calc_srs_source(E0_p, E1_p))
+    srs_s = np.asarray(epw_srs.calc_srs_source(E0_s, E1_s))
+    srs_p = np.asarray(epw_srs.calc_srs_source(E0_p, E1_p))
     assert np.abs(srs_s).max() > 0.0
     # E0 . E1* is the same scalar whichever transverse direction carries the pair
     np.testing.assert_allclose(srs_s, srs_p, rtol=1e-12, atol=1e-12 * np.abs(srs_p).max())
     # crossed polarisations do not couple
-    assert np.abs(np.asarray(epw.calc_srs_source(E0_s, E1_p))).max() == 0.0
+    assert np.abs(np.asarray(epw_srs.calc_srs_source(E0_s, E1_p))).max() == 0.0
 
 
 @pytest.mark.parametrize("solver", ["fd", "spectral"])

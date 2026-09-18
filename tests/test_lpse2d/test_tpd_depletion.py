@@ -96,8 +96,9 @@ def test_combined_tpd_srs_iaw_deck_builds_all_fluid_couplings():
     cfg["grid"]["background_density"] = get_density_profile(cfg)
 
     step = SplitStep(cfg)
-    assert step.epw.tpd_enabled and step.epw.srs_enabled
-    assert step.pump_depletion and step.coupled_light.tpd_enabled and step.coupled_light.srs_enabled
+    # both instabilities on LPSE's combined formulation (the separate solver refuses the pair)
+    assert step.epw_solver == "combined" and step.combined.tpd_enabled and step.combined.srs_enabled
+    assert step.pump_depletion and step.combined.pump_depletion
     assert step.iaw is not None
     assert step.hpe is not None and step.hpe.is_2d
 
