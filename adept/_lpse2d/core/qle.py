@@ -25,7 +25,8 @@ limit ``dv^2 / (2 nDim max C)`` -- in conservative flux form here rather than LP
 ``C d^2 f + (d_i C_ij) d_j f`` (see ``_flux_increment``; ``derivative_in_tensor`` is
 accepted from the deck and implied) -- relaxes ``f`` towards the Maxwellian at
 ``p_x |v_x| / Lx + p_y |v_y| / Ly`` (particles leaving the box return thermalised with
-``thermalization_probability``), clips ``f >= 0`` and renormalises the density. With ``landau_evolution`` the Landau rate of every EPW mode is recomputed from
+``thermalization_probability``), clips ``f >= 0`` and renormalises the density. With
+``landau_evolution`` the Landau rate of every EPW mode is recomputed from
 the evolved ``f`` (``updateLandauDamping``),
 
     gamma_L(k) = -(pi/2) wpe^3 / k^3  sum_perp dv_perp  k . grad_v f |_{v = v_phase k^ + v_perp}
