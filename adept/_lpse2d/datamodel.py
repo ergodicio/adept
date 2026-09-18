@@ -427,13 +427,24 @@ class IAWModel(BaseModel):
     EPW steps, and the LPSE fluctuation-dissipation ``noise`` source on ``div v``."""
 
     active: bool = False
-    solver: Literal["explicit", "spectral"] = "explicit"
+    # fd: LPSE's finite-difference solver (iaw.solver = fd; plan 2 I.1): PPM advection by a
+    # plasma-flow profile on a grid refined super_samples times, sub-cycled at
+    # dt_fraction h/(sqrt(nDim) cs + |U|), Landau damping in k-space every landau_update sub-steps
+    solver: Literal["explicit", "spectral", "fd"] = "explicit"
     boundary: BoundaryModel | None = None  # defaults to terms.epw.boundary
     boundary_max_rate: float | None = None  # exp absorber peak rate (1/ps); default half the EPW one
     damping: IAWDampingModel = IAWDampingModel()
     max_density_perturbation: float | None = None
-    flow: list[float] | None = None
+    # [Mach_x, Mach_y] uniform (spectral, fd) or a profile mapping for the fd solver (LPSE
+    # iaw.velocityProfile.*; iaw_fd.flow_profile): {shape: linear | gaussian | log | file,
+    # from_location, to_location (um from the box centre), from_mach, to_mach, sg_order,
+    # geometry: cartesian | spherical, temporal_slope (1/ps), file}
+    flow: list[float] | dict | None = None
     stride: int = 1
+    super_samples: int = Field(default=2, ge=1)  # fd: iaw.fd.superSamples
+    dt_fraction: float = Field(default=0.95, gt=0.0, le=1.0)  # fd: iaw.fd.dtFraction
+    landau_update: int = Field(default=1, ge=1)  # fd: iaw.fd.numStepsPerLandauDampingUpdate
+    temporal_correction: bool = True  # fd: the second-order temporal source correction
     # LPSE iaw.restrictSourceRange (squared on the ponderomotive drive) and
     # iaw.startEvolvingTime / stopEvolvingTime (ps): the IAW step acts only in [t_start, t_stop)
     source_window: SourceWindowModel | None = None

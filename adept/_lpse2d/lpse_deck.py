@@ -528,9 +528,10 @@ def translate_parms(
     # ---- IAW
     iaw = None
     if _bool(g("iaw.enable")):
+        iaw_solver = "spectral" if g("iaw.solver", "spectral").lower() == "spectral" else "fd"
         iaw = {
             "active": True,
-            "solver": "spectral" if g("iaw.solver", "spectral").lower() == "spectral" else "explicit",
+            "solver": iaw_solver,
             "damping": {
                 "landau": float(g("iaw.landauDampingRate", g("iaw.dampingRate", "0"))),
                 "collisions": float(g("iaw.collisionalDampingRate", "0")),
@@ -539,8 +540,40 @@ def translate_parms(
             "max_density_perturbation": float(g("iaw.amplitudeClamp", "0.9")),
             "noise": _bool(g("iaw.noise.enable")),
         }
-        if g("iaw.solver", "spectral").lower() != "spectral":
-            report["notes"].append("iaw.solver = fd translated as spectral (adept has no PPM IAW solver)")
+        if iaw_solver == "fd":
+            # iaw.fd.* (IawSolver::readParameters; plan 2 I.1)
+            iaw["super_samples"] = int(float(g("iaw.fd.superSamples", "2")))
+            iaw["dt_fraction"] = float(g("iaw.fd.dtFraction", "0.95"))
+            iaw["landau_update"] = int(float(g("iaw.fd.numStepsPerLandauDampingUpdate", "1")))
+            if str(g("iaw.fd.advectionSolver", "ppm")).lower() not in ("ppm",):
+                report["notes"].append("iaw.fd.advectionSolver != ppm: adept's fd IAW solver advects with PPM")
+        # iaw.velocityProfile.* (plan 2 I.2): the plasma-flow profile of the fd solver
+        if _bool(g("iaw.velocityProfile.enable")):
+            shape = str(g("iaw.velocityProfile.shape", "linear")).lower()
+            if iaw_solver != "fd":
+                report["unsupported"].append("iaw.velocityProfile with iaw.solver = spectral (LPSE refuses it too)")
+            elif shape == "file":
+                report["unsupported"].append(
+                    "iaw.velocityProfile.shape = file (convert the LPSE binary to an .npz with ux, uy)"
+                )
+            else:
+                from_loc = _floats(g("iaw.velocityProfile.from.location", "0 0"))
+                to_loc = _floats(g("iaw.velocityProfile.to.location", "1 0"))
+                iaw["flow"] = {
+                    "shape": shape,
+                    "geometry": str(g("iaw.velocityProfile.geometry", "cartesian")).lower(),
+                    "from_location": [f"{from_loc[0]}um", f"{from_loc[1] if len(from_loc) > 1 else 0.0}um"],
+                    "to_location": [f"{to_loc[0]}um", f"{to_loc[1] if len(to_loc) > 1 else 0.0}um"],
+                    "from_mach": float(g("iaw.velocityProfile.from.speed", "0")),
+                    "to_mach": float(g("iaw.velocityProfile.to.speed", "0")),
+                    "sg_order": float(
+                        g(
+                            "iaw.velocityProfile.sgOrder",
+                            g("iaw.velocityProfile.sgPower", g("iaw.velocityProfile.power", "2")),
+                        )
+                    ),
+                    "temporal_slope": float(g("iaw.velocityProfile.temporalSlope", "0")),
+                }
         if "iaw.spectral.dt" in parms:
             # LPSE (Lpse.cpp:1264-1291): the IAW step is its own dt capped by maxLightStepsPerStep
             # light steps (when light evolves) and by maxLwStepsPerStep (default 2) EPW steps

@@ -120,6 +120,15 @@ class BaseLPSE2D(ADEPTModule):
             iaw_shape = (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"])
             state["iaw_density"] = np.zeros(iaw_shape, dtype=np.float64)
             state["iaw_velocity_divergence"] = np.zeros(iaw_shape, dtype=np.float64)
+            iaw_cfg = self.cfg["terms"]["iaw"]
+            s_fd = int(iaw_cfg.get("super_samples", 2)) if str(iaw_cfg.get("solver", "explicit")) == "fd" else 1
+            if s_fd > 1:
+                # the fd solver's super-sampled fields (plan 2 I.1)
+                from adept._lpse2d.core.iaw_fd import FD_STATE_KEYS
+
+                fine = (s_fd * iaw_shape[0], s_fd * iaw_shape[1] if iaw_shape[1] > 1 else 1)
+                state[FD_STATE_KEYS[0]] = np.zeros(fine, dtype=np.float64)
+                state[FD_STATE_KEYS[1]] = np.zeros(fine, dtype=np.float64)
 
         if self.cfg["terms"].get("hpe", {}).get("active", False):
             from adept._lpse2d.core.hpe import load_particles

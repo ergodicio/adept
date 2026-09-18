@@ -44,7 +44,7 @@ import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
-IAW_SOLVERS = ("explicit", "spectral")
+IAW_SOLVERS = ("explicit", "spectral", "fd")
 ION_LANDAU_FORMS = ("simplified", "full")
 
 
@@ -155,13 +155,18 @@ class IonAcousticWave:
         self.collisional_factor = 1.0 - self.nu_coll * self.dt
         self.max_density_perturbation = iaw["max_density_perturbation"]
 
-        # uniform background flow (Mach number along x, y) -> Doppler phase in the propagator
+        # uniform background flow (Mach number along x, y) -> Doppler phase in the propagator;
+        # the fd solver takes a profile too (a mapping; iaw_fd.flow_profile)
         flow = iaw.get("flow")
         if flow is None:
             self.flow = None
+        elif self.solver == "fd":
+            self.flow = flow
         else:
-            if self.solver != "spectral":
-                raise ValueError("terms.iaw.flow requires terms.iaw.solver: spectral")
+            if self.solver != "spectral" or isinstance(flow, dict):
+                raise ValueError(
+                    "a uniform terms.iaw.flow requires terms.iaw.solver: spectral; a profile the fd solver"
+                )
             self.flow = np.asarray(flow, dtype=np.float64) * self.cs
             if self.flow.shape != (2,):
                 raise ValueError("terms.iaw.flow must be [Mach_x, Mach_y]")
@@ -186,6 +191,14 @@ class IonAcousticWave:
             self.p_wn = jnp.asarray(coeff * sin_over_b * omega_sq)
             self.p_ww = jnp.asarray(coeff * (cos_b - sin_over_b * gamma))
             self.collisional_w_factor = float(np.exp(-2.0 * self.nu_coll * self.dt))
+
+        # the finite-difference solver with flow profiles (plan 2 I.1 / I.2)
+        if self.solver == "fd":
+            from adept._lpse2d.core.iaw_fd import FDIonAcoustic
+
+            self.fd = FDIonAcoustic(self, cfg)
+        else:
+            self.fd = None
 
         # IAW noise (LPSE IawSolver::addNoise): random-phase source on the velocity
         # divergence with the fluctuation-dissipation amplitude
@@ -372,8 +385,41 @@ class IonAcousticWave:
         velocity_divergence = jnp.real(jnp.fft.ifft2(w_new)) * self.boundary
         return density, velocity_divergence
 
+    def _fd_step(self, t: float, y: dict[str, Array]) -> dict[str, Array]:
+        """The FD solver on the (super-sampled) fine grid; returns the state entries it owns."""
+        from adept._lpse2d.core.iaw_fd import FD_STATE_KEYS, downsample, upsample
+
+        fd = self.fd
+        fine = fd.s > 1
+        n = y[FD_STATE_KEYS[0]] if fine else y["iaw_density"]
+        w = y[FD_STATE_KEYS[1]] if fine else y["iaw_velocity_divergence"]
+        drive = self.ponderomotive_drive(y["epw"], y["E0"], y["E1"])
+        if self.thermal_waves:
+            drive_lap = fd.laplacian(upsample(drive, fd.s)) + upsample(
+                self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"]), fd.s
+            )
+        else:
+            drive_lap = fd.laplacian(upsample(drive, fd.s))
+        noise_k = None
+        if self.noise_enabled:
+            coarse = self.get_noise(t)  # (nx, ny) k-space kick on the coarse band
+            if fine:
+                shifted = jnp.fft.fftshift(coarse)
+                padded = jnp.zeros((fd.fnx, fd.fny), dtype=coarse.dtype)
+                ox, oy = (fd.fnx - self.nx) // 2, (fd.fny - self.ny) // 2
+                noise_k = jnp.fft.ifftshift(padded.at[ox : ox + self.nx, oy : oy + self.ny].set(shifted)) * fd.s**2
+            else:
+                noise_k = coarse
+        n, w = fd.step(t, n, w, drive_lap, noise_k)
+        out = {"iaw_density": downsample(n, fd.s), "iaw_velocity_divergence": downsample(w, fd.s)}
+        if fine:
+            out[FD_STATE_KEYS[0]], out[FD_STATE_KEYS[1]] = n, w
+        return out
+
     def __call__(self, y: dict[str, Array], t: float = 0.0) -> dict[str, Array]:
         """Advance one IAW step (of length ``stride * grid.dt``) and return the full state."""
+        if self.solver == "fd":
+            return {**y, **self._fd_step(t, y)}
         if self.solver == "spectral":
             density, velocity_divergence = self._spectral_step(t, y)
         else:
