@@ -199,3 +199,52 @@ def test_seeded_magnetic_counterflow_runs_two_finite_coupled_steps():
         assert np.all(np.isfinite(np.asarray(value)))
     assert np.max(abs(np.asarray(saved["b"][-1]) - initial_b)) > 0
     assert np.max(abs(np.asarray(saved["ions"][-1]) - np.asarray(saved["ions"][0]))) > 0
+
+
+def test_current_sheet_requires_transverse_current_harmonic():
+    cfg = _small_config()
+    cfg["grid"]["mmax"] = 0
+    with pytest.raises(ValueError, match="transverse Ampere current"):
+        _initialize(cfg)
+
+
+@pytest.mark.parametrize("guide_only", [False, True])
+def test_axisymmetric_harmonics_accept_compatible_magnetic_current(guide_only):
+    cfg = _small_config()
+    cfg["grid"]["mmax"] = 0
+    field = {"uniform": ["0T", "0T", "1T"]}
+    if not guide_only:
+        field["vector_potential"] = {
+            "x": {
+                "scale": "0.03T*mm",
+                "profile": {
+                    "basis": "cosine",
+                    "axis": "y",
+                    "baseline": 1.0,
+                    "amplitude": 1.0,
+                    "wavelength": "4mm",
+                },
+            }
+        }
+    cfg["initial_conditions"]["magnetic_field"] = field
+    module = _initialize(cfg)
+    flm = real_to_complex(module.state["flm"])
+    required = module._maxwell.c2 * module._maxwell.curl(module.state["b"])
+    measured = current(flm, module.layout, module.grid.v, module.grid.dv)
+    np.testing.assert_allclose(measured, required, rtol=1e-12, atol=1e-22)
+    if not guide_only:
+        assert float(jnp.max(jnp.abs(required[..., 0]))) > 0
+
+
+def test_dimensional_separable_profiles_require_a_single_physical_scale():
+    grid, norm = _grid()
+    spec = {
+        "x": {"basis": "uniform", "baseline": "30eV"},
+        "y": {"basis": "uniform", "baseline": "45eV"},
+    }
+    with pytest.raises(ValueError, match="cannot both have physical amplitudes"):
+        profile_2d(spec, grid, norm, reference=norm.T0)
+    spec["y"]["baseline"] = 3.0
+    np.testing.assert_allclose(profile_2d(spec, grid, norm, reference=norm.T0), 6.0)
+    spec["x"]["baseline"] = 2.0
+    np.testing.assert_allclose(profile_2d({"scale": "15eV", "profile": spec}, grid, norm, reference=norm.T0), 6.0)

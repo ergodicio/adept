@@ -551,6 +551,24 @@ class BaseVFP2D(ADEPTModule):
             # Initialize the same quasistatic Ampere constraint used at every
             # subsequent kinetic stage. This defines the initial state; it is
             # not time-evolution projection work and does not enter its budget.
+            if self.layout.index(1, 1) < 0:
+                required_current = np.asarray(kinetic_step._target_current(self.state["b"]))
+                # A constant field may acquire tiny FFT roundoff currents. Use
+                # the derivative scale, not an absolute tolerance that could
+                # hide a physically small but representable field.
+                derivative_scale = float(jnp.max(jnp.abs(self.grid.kx)) + jnp.max(jnp.abs(self.grid.ky)))
+                roundoff = (
+                    64
+                    * np.finfo(required_current.dtype).eps
+                    * maxwell.c2
+                    * float(jnp.max(jnp.abs(self.state["b"])))
+                    * derivative_scale
+                )
+                if np.max(np.abs(required_current[..., 1:])) > roundoff:
+                    raise ValueError(
+                        "The initial magnetic field requires transverse Ampere current; "
+                        "set grid.mmax >= 1 so the (1,1) harmonic can represent Jy and Jz"
+                    )
             initial_flm = kinetic_step._project(real_to_complex(self.state["flm"]), self.state["b"])
             initial_hidden_dndz = KineticOhmStep._hidden_dndz(self.tmin, self.args, self.state["b"][..., 0])
             if self.ion_fluid_active:

@@ -141,6 +141,19 @@ def profile_2d(profile, grid: Grid, norm, reference=None) -> jnp.ndarray:
         y_envelope = jnp.sum(jnp.exp(-(((grid.y[:, None] - y_centers[None, :]) / y_radius) ** 2)), axis=1)
         return _quantity(profile.get("amplitude", 1.0), reference) * x_envelope[:, None] * y_envelope[None, :]
     if "x" in profile or "y" in profile:
+
+        def has_physical_amplitude(child):
+            amplitude_keys = ("baseline", "value", "amplitude", "bump_height")
+            return any(
+                isinstance(child.get(key), str) and not UREG.Quantity(child[key]).dimensionless
+                for key in amplitude_keys
+            )
+
+        if has_physical_amplitude(profile.get("x", {})) and has_physical_amplitude(profile.get("y", {})):
+            raise ValueError(
+                "Separable x/y profiles cannot both have physical amplitudes; "
+                "use one physical 'scale' with a dimensionless 'profile' shape"
+            )
         px = profile_1d(profile.get("x", {"basis": "uniform", "baseline": 1.0}), grid.x, norm, reference)
         py = profile_1d(profile.get("y", {"basis": "uniform", "baseline": 1.0}), grid.y, norm, reference)
         return px[:, None] * py[None, :]

@@ -48,7 +48,8 @@ Each scalar field accepts a uniform number/string, the existing profile syntax,
 or `{scale: <physical amplitude>, profile: <dimensionless shape>}`. This also
 applies to the electron `density.species-*.n` and `.T` fields. Their numeric
 amplitudes multiply the reference electron density and temperature respectively.
-Use `scale` for a dimensional separable x/y shape. `sine` and `cosine` retain their
+Use `scale` for a dimensional separable x/y shape; physical amplitude strings
+in both children are rejected. `sine` and `cosine` retain their
 multiplicative convention $b[1+a\sin(kx)]$. The added `periodic_tanh` basis uses
 an **additive** amplitude,
 
@@ -107,7 +108,11 @@ are mutually exclusive. A uniform guide field may accompany either.
 
 When `init_diffeqsolve` configures `kinetic-ohm`, it projects the initial electron
 $f_1$ current onto the same quasistatic Ampere constraint used during evolution,
-then recomputes the Ohm electric field. The coupled distribution is in the local
+then recomputes the Ohm electric field. A field requiring transverse current
+(`Jy` or `Jz`) needs `mmax >= 1`; initialization rejects a missing `(1,1)`
+harmonic. Uniform or purely `Jx`-carrying fields pass this initial-current check
+with `mmax=0`; subsequent angular dynamics still require convergence.
+The coupled distribution is in the local
 ion frame, so its relative electron current is the total current under
 quasineutrality. This initial projection defines the initial state; the cumulative
 current-projection work budget starts at zero. It preserves the isotropic
