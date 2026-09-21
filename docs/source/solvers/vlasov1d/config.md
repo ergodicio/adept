@@ -486,13 +486,116 @@ Solver algorithm configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `field` | string | Electric field solver: `"poisson"`, `"poisson-boltzmann"`, `"ampere"`, or `"hampere"` |
-| `edfdv` | string | Velocity advection scheme: `"exponential"` or `"cubic-spline"` |
-| `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian) or `"leapfrog"` |
+| `edfdv` | string | Velocity advection: `"exponential"`, `"cubic-spline"`, `"lagrange7"`, `"pfc3"`, or `"sl-weno5"` |
+| `vdfdx` | string | Spatial advection: `"exponential"` (default), `"pfc3"`, or `"sl-weno5"` |
+| `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian), `"leapfrog"`, or `"strang"` (explicit second-order electrostatic splitting) |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |
 | `krook` | object | Krook collision operator configuration |
 | `hou_li_filter` | object | Hou-Li spectral filter (optional, default off) |
 | `species` | list | (Optional) List of species configurations for multispecies simulations |
 | `boltzmann_electrons` | object | (Optional) Linearized Boltzmann electron closure parameters, used with `field: poisson-boltzmann` |
+
+### Strang splitting with degree-7 velocity interpolation
+
+Select these options in an existing Vlasov-1D configuration:
+
+```yaml
+terms:
+  field: poisson  # poisson-boltzmann is also supported
+  time: strang
+  edfdv: lagrange7
+  # Retain the configuration's species, collision, and other term settings.
+```
+
+`strang` streams in space for half a timestep, evaluates the self-consistent field,
+pushes velocity for a full timestep using midpoint external forcing, then streams
+for the remaining half timestep. There is one velocity remap per full timestep.
+Saved self-consistent and external electric fields are evaluated at the end of
+the step. This option supports `poisson` and `poisson-boltzmann`; `ampere` and
+`hampere` retain their existing `leapfrog` requirement.
+
+The second-order description applies to the collisionless electrostatic step.
+The existing collision, filter, and transverse-wave coupling is unchanged; choosing
+`strang` does not raise the order of those separate updates.
+
+`lagrange7` uses eight velocity samples to interpolate a degree-7 polynomial. It
+supports species-specific uniform grids (including asymmetric bounds), requires
+at least eight velocity cells per species, and works with the existing `grid.parallel`
+options. It can also be selected independently with the other time integrators.
+The stencil uses `1e-30` for samples outside the velocity grid and returns `1e-30`
+for departure points outside the first/last cell centers, without periodic wraparound.
+Keep populated structures clear of the velocity edges. The interpolation is unlimited:
+it can produce negative values near unresolved structure and does not renormalize
+mass lost through the boundaries. Gradients with respect to displacement are
+piecewise smooth as the stencil changes between cells.
+
+### Positive conservative semi-Lagrangian advection
+
+Select either `pfc3` or `sl-weno5` independently in each advection direction:
+
+```yaml
+terms:
+  field: poisson
+  time: sixth
+  vdfdx: sl-weno5  # or pfc3; omission retains exponential
+  edfdv: sl-weno5  # or pfc3
+  hou_li_filter:
+    is_on: false
+  # Retain the configuration's species, collisions and other term settings.
+```
+
+These are advection pushers, not new time splitters. Both work with `sixth`,
+`strang`, and `leapfrog`, including negative splitting stages. A displacement
+of 2.46 cells is an exact two-cell offset followed by a 0.46-cell conservative
+remap; it does not trigger subcycling. Positivity adds no advection CFL
+restriction. Field evolution, splitting accuracy, collisions and any transverse
+wave solver still constrain the usable timestep. Selecting `sixth` does not
+establish sixth-order accuracy of the complete discretized and limited scheme.
+
+- **PFC3** uses a quadratic reconstruction whose cell mean is preserved while its
+  deviations are scaled to make the polynomial nonnegative throughout the cell.
+  It requires at least three cells along the remapped direction and has third-order
+  spatial accuracy on smooth, resolved data when the limiter is inactive.
+- **SL-WENO5** integrates three quadratic reconstructions with displacement-dependent
+  optimal weights and WENO-Z nonlinear weights. Its smooth spatial order is five;
+  it requires at least five cells. An outgoing-mass limiter bounds the fractional
+  mass leaving each donor between zero and that donor's mass. This local limiter
+  guarantees positivity, but does not enforce a local maximum principle. It is not
+  an implementation of the full parametrized MPP limiter in Xiong et al.
+
+Both evolve **cell averages** in an `(nx, nv)` array. The existing initializer's
+center samples are interpreted as midpoint approximations to these averages;
+initialization and existing moment/field quadrature can therefore limit overall
+accuracy even when the remap is high order. For a formal spatial convergence
+study, supply accurately integrated initial cell averages. There is no automatic
+conversion of a point-sampled restart. Ordinary sums times `dx`/`dv` conserve
+the represented mass; exact momentum, energy or Casimir conservation is not implied.
+
+Spatial boundaries are periodic. Velocity boundaries use **zero inflow**, including
+partial cells at the domain edges, and discard escaped mass without renormalization
+or periodic wraparound. This differs from the `1e-30` exterior point values used by
+the interpolation pushers. Keep populated structures clear of velocity boundaries
+when measuring closed-system conservation or using negative splitting stages.
+
+For finite, nonnegative input cell averages, each remap returns nonnegative cell
+averages and preserves mass up to roundoff, except for velocity boundary loss.
+It does not repair an already negative checkpoint. To retain this property through
+the collisionless split update, select positive pushers in **both** directions and
+disable Hou-Li filtering. Mixing in spectral/interpolation advection, filtering, or
+other operators without a positivity guarantee removes the full-step guarantee.
+The `hampere` field solver requires `vdfdx: exponential`, since its integrated
+current is tied to spectral streaming; incompatible selections are rejected.
+
+The implementation uses compact per-line shifts and local gathers, without global
+prefix sums or data-dependent loops. Float32 and float64 are supported; half
+precision is rejected because the nonlinear weights can overflow. Existing species-specific velocity grids,
+ponderomotive forces and `grid.parallel: ["x", "v"]` are supported. Autodiff is
+piecewise smooth away from stencil and limiter switches. A100 performance and
+nonlinear turbulence accuracy at production timesteps require separate measurement.
+
+Background: [Filbet, Sonnendrücker and Bertrand (2001), conservative/PFC methods](https://doi.org/10.1006/jcph.2001.6818),
+[Borges et al. (2008), WENO-Z](https://doi.org/10.1016/j.jcp.2007.11.038), and
+[Xiong et al. (2014), positive conservative SL-WENO flux limiting](https://arxiv.org/abs/1401.0076).
 
 ### species (Multispecies Configuration)
 
