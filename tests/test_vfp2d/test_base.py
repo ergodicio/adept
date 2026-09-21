@@ -197,6 +197,11 @@ def test_driven_reservoir_run_saves_external_source_budgets():
     dataset = module.post_process(output, "")["vfp2d"]
     assert dataset.attrs["spatial_boundary_model"] == "periodic with explicit reservoir sources"
     assert dataset.reservoir_total_momentum.dims == ("t", "component")
+    assert dataset.reservoir_magnetic_field_change.dims == ("t", "x", "y", "component")
+    assert dataset.attrs["light_speed_normalized"] > 0
+    assert dataset.attrs["temperature_energy_normalized"] > 0
+    for side in ("lower", "upper"):
+        assert f"centerline_{side}_source_accounted_faraday_residual" in dataset
     assert dataset.reservoir_total_momentum[-1, 0] > 0.0
     assert np.all(np.isfinite(dataset.source_accounted_total_energy))
     np.testing.assert_allclose(

@@ -36,6 +36,7 @@ Documentation
    solvers/vfp2d/joglekar2014
    solvers/vfp2d/magpie_geometry
    solvers/vfp2d/reservoirs
+   solvers/vfp2d/magpie_analysis
    solvers/spectrax1d/overview
    solvers/hermite_legendre_1d/overview
    solvers/pic1d/overview
