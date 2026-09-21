@@ -425,6 +425,7 @@ class BaseVFP2D(ADEPTModule):
             self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
         relativistic = bool(self.cfg["grid"].get("relativistic", False))
         streaming_speed = self.grid.v / jnp.sqrt(1.0 + self.grid.v**2) if relativistic else self.grid.v
+        self._streaming_speed = streaming_speed
         partitioned_dx = self.grid.dx if self.spatial_sharding is not None else None
         partitioned_dy = self.grid.dy if self.spatial_sharding is not None else None
         vlasov = TzoufrasVlasov(
@@ -652,7 +653,7 @@ class BaseVFP2D(ADEPTModule):
         flm_jax = real_to_complex(result.ys["flm"])
         flm = np.asarray(flm_jax)
         ne = density(flm_jax, self.layout, self.grid.v, self.grid.dv)
-        plasma_current = current(flm_jax, self.layout, self.grid.v, self.grid.dv)
+        plasma_current = current(flm_jax, self.layout, self.grid.v, self.grid.dv, streaming_speed=self._streaming_speed)
         mean_v2 = scalar_velocity_moment(flm_jax, self.layout, self.grid.v, self.grid.dv, power=2)
         temperature_normalized = (2.0 / 3.0) * mean_v2 / self.plasma_norm.vth_norm() ** 2
         pressure_anisotropy = tensor_velocity_moment(flm_jax, self.layout, self.grid.v, self.grid.dv, power=0)

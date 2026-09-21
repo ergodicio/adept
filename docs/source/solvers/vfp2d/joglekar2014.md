@@ -137,8 +137,13 @@ The coupled source half-steps include $\mathbf j\times\mathbf B$, with
 $\mathbf j=c^2\nabla\times\mathbf B$ in code units, and midpoint ion mechanical
 work $\mathbf u_i\cdot(\mathbf j\times\mathbf B)$. The first half-step uses the
 initial magnetic field and the second uses the field after the kinetic/Faraday step.
-Each source update remaps the electrons into the updated ion frame. Collision and
-inverse-bremsstrahlung inputs use the midpoint ion number density $n_i=\rho_i/m_i$.
+Each source update remaps the electrons into the updated ion frame. Electron
+pressure contributes ion mechanical work $-\mathbf u_i\cdot\nabla\cdot\mathbf P_e$;
+electron peculiar pressure work $-\mathbf P_e:\nabla\mathbf u_i$ is supplied once,
+by the moving-frame deformation operator. Their sum is the pressure-flux divergence
+$-\nabla\cdot(\mathbf P_e\cdot\mathbf u_i)$, not pointwise cancellation of thermal
+and mechanical work. No additional pressure source is applied to electron `f00`.
+Collision and inverse-bremsstrahlung inputs use the midpoint ion number density $n_i=\rho_i/m_i$.
 Setting `ion_fluid.frozen: true` suppresses both hydro and coupled ion source updates.
 
 For the first coupled milestone, an isothermal or adiabatic ion pressure law is adequate.

@@ -499,3 +499,55 @@ def test_slowed_ampere_nonneutral_initialization_satisfies_gauss_law():
         np.testing.assert_allclose(permittivity * divergence, charge - jnp.mean(charge), atol=2e-13)
     assert jnp.max(jnp.abs(fields[0])) > 0.0
     np.testing.assert_allclose(fields[1], fields[0] / 25.0, rtol=2e-13, atol=2e-13)
+
+
+def test_relativistic_ampere_diagnostics_match_evolution_current():
+    from adept.vfp2d import current
+    from adept.vfp2d.harmonics import complex_to_real, real_to_complex
+
+    for mode in ("ampere", "oshun-implicit"):
+        cfg = _config(collisions=False)
+        cfg["grid"].update({"relativistic": True, "nx": 8, "ny": 4, "nv": 32})
+        cfg["terms"]["field_solver"] = {"mode": mode, "relative_permittivity": 25.0}
+        module = BaseVFP2D(copy.deepcopy(cfg))
+        module.write_units()
+        module.get_derived_quantities()
+        module.get_solver_quantities()
+        module.init_state_and_args()
+        f = real_to_complex(module.state["flm"])
+        f = f.at[..., module.layout.index(1, 0), :].set(0.01 * f[..., module.layout.index(0, 0), :])
+        module.state["flm"] = complex_to_real(f)
+        wave = jnp.sin(2.0 * jnp.pi * module.grid.x / (module.grid.dx * module.grid.nx))[:, None]
+        module.state["b"] = module.state["b"].at[..., 2].set(1e-5 * wave)
+        module.init_diffeqsolve()
+        output = module(None, None)
+        saved = output["solver result"].ys
+        dataset = module.post_process(output, "")["vfp2d"]
+        # Independent angular/radial integration of the relativistic current.
+        f = real_to_complex(saved["flm"])
+        p = module.grid.v
+        weight = p**3 / jnp.sqrt(1.0 + p**2)
+        f10 = jnp.real(f[..., module.layout.index(1, 0), :])
+        f11 = f[..., module.layout.index(1, 1), :]
+        expected = (
+            -4.0
+            * jnp.pi
+            / 3.0
+            * module.grid.dv
+            * jnp.stack(
+                (
+                    jnp.sum(f10 * weight, axis=-1),
+                    2.0 * jnp.sum(f11.real * weight, axis=-1),
+                    -2.0 * jnp.sum(f11.imag * weight, axis=-1),
+                ),
+                axis=-1,
+            )
+        )
+        np.testing.assert_allclose(dataset.current, expected, rtol=2e-13, atol=2e-13)
+        residual = expected - dataset.ampere_target_current.values
+        np.testing.assert_allclose(dataset.ampere_residual, residual, atol=2e-13)
+        np.testing.assert_allclose(dataset.ampere_residual_linf, jnp.max(jnp.abs(residual), axis=(1, 2, 3)), atol=2e-13)
+        assert jnp.max(jnp.abs(expected - current(f, module.layout, p, module.grid.dv))) > 1e-6
+        if mode == "oshun-implicit":
+            np.testing.assert_allclose(dataset.ampere_residual_linf[1:], 0.0, atol=2e-12)
+            assert jnp.max(jnp.abs(expected[1:])) > 1e-6

@@ -250,7 +250,7 @@ def test_midpoint_momentum_exchange_preserves_lab_momentum_and_energy():
     assert jnp.linalg.norm(updated_ions[..., 1:4]) > 0.0
 
 
-def test_midpoint_pressure_feedback_preserves_global_momentum_and_energy():
+def test_midpoint_pressure_source_preserves_electron_lab_energy_and_adds_ion_work():
     grid, layout, _maxwell, _stationary, moving, hydro, flm, field, ions, ion_mass = _make_problem()
     pressure = ElectronPressureCoupling(moving.ion_frame)
     coupled = CoupledIonKineticStep(moving, hydro, moving.dt, pressure=pressure)
@@ -283,7 +283,13 @@ def test_midpoint_pressure_feedback_preserves_global_momentum_and_energy():
     )
 
     np.testing.assert_allclose(after["total_momentum"], before["total_momentum"], rtol=3e-13, atol=3e-13)
-    np.testing.assert_allclose(after["total_energy"], before["total_energy"], rtol=3e-13, atol=3e-13)
+    # This source supplies ion mechanical work. Its electron counterpart is
+    # deformation in the kinetic step, not a local thermal-energy subtraction.
+    np.testing.assert_allclose(after["electron_energy"], before["electron_energy"], rtol=3e-13, atol=3e-13)
+    ion_work = grid.dx * grid.dy * jnp.sum(0.5 * jnp.sum(updated_ions[..., 1:4] ** 2, axis=-1) / updated_ions[..., 0])
+    assert float(ion_work) > 0.0
+    np.testing.assert_allclose(after["ion_energy"] - before["ion_energy"], ion_work, atol=3e-13)
+    np.testing.assert_allclose(after["total_energy"] - before["total_energy"], ion_work, atol=3e-13)
     assert jnp.linalg.norm(updated_ions[..., 1:4]) > 0.0
 
 
@@ -321,3 +327,28 @@ def test_magnetic_source_accelerates_ions_and_applies_midpoint_work():
     ion_work = jnp.sum(source[..., 4])
     assert abs(float(ion_work)) > 1e-6
     np.testing.assert_allclose(field_work + ion_work, 0.0, atol=2e-15)
+
+
+def test_coupled_pressure_gradient_temperature_is_galilean_invariant():
+    """A common boost must only translate an initially isothermal density wave."""
+    from adept.vfp2d import scalar_velocity_moment
+
+    grid, layout, _, _, moving, hydro, flm, field, ions, ion_mass = _make_problem(nx=16, nv=64)
+    coupled = CoupledIonKineticStep(
+        moving, hydro, grid.dt, ion_mass=ion_mass, pressure=ElectronPressureCoupling(moving.ion_frame)
+    )
+    advance = jax.jit(coupled)
+    temperatures = []
+    boost = 0.4
+    nsteps = 5
+    for velocity in (0.0, boost):
+        boosted_ions = ions.at[..., 1].set(ions[..., 0] * velocity)
+        boosted_ions = boosted_ions.at[..., 4].add(0.5 * ions[..., 0] * velocity**2)
+        state = {"flm": flm, "e": field, "b": field, "ions": boosted_ions}
+        for step in range(nsteps):
+            state = advance(step * grid.dt, state)
+        temperatures.append(scalar_velocity_moment(state["flm"], layout, grid.v, grid.dv, power=2) / 3.0)
+    # Compare T_boost(x + U t) with T_rest(x) on the periodic grid.
+    phase = jnp.exp(1j * grid.kx * boost * nsteps * grid.dt)[:, None]
+    translated = jnp.fft.ifft(jnp.fft.fft(temperatures[1], axis=0) * phase, axis=0).real
+    np.testing.assert_allclose(translated, temperatures[0], rtol=0.0, atol=5e-8)
