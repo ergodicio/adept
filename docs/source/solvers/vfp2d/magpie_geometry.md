@@ -259,3 +259,4 @@ $N_tN_xN_yN_vN_h$ plus transform/collision costs. Benchmark a compiled short run
 on the intended hardware before committing to a long run. Refinement in space,
 velocity and harmonic order compounds the cost; no wall-clock claim follows
 from these setup calculations.
+# Review trigger: this page defines the physical-unit geometry contract for MAGPIE inputs.
