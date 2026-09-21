@@ -20,7 +20,7 @@ from adept.vfp2d import (
 )
 
 
-def _make_state(nx=2, ny=2, nv=160, l_max=2, ion_mass=100.0, ion_temperature=0.15):
+def _make_state(nx=2, ny=2, nv=160, l_max=2, m_max=None, ion_mass=100.0, ion_temperature=0.15):
     grid = Grid(
         xmin=0.0,
         xmax=1.0,
@@ -32,8 +32,9 @@ def _make_state(nx=2, ny=2, nv=160, l_max=2, ion_mass=100.0, ion_temperature=0.1
         nv=nv,
         dt=0.01,
         l_max=l_max,
+        m_max=m_max,
     )
-    layout = HarmonicLayout(l_max)
+    layout = HarmonicLayout(l_max, m_max)
     f = jnp.zeros((nx, ny, layout.size, nv), dtype=jnp.complex128)
     f00 = jnp.exp(-(grid.v**2))
     normalization = 4.0 * jnp.pi * jnp.sum(f00 * grid.v**2) * grid.dv
@@ -103,8 +104,9 @@ def test_momentum_relaxation_is_equal_opposite_and_energy_neutral():
     np.testing.assert_allclose(diondt[..., 4], 0.0, atol=2e-14)
 
 
-def test_velocity_frame_remap_preserves_lab_moments_exactly():
-    grid, layout, _exchange, f, _ions = _make_state(nx=3, ny=2, nv=192, l_max=3)
+@pytest.mark.parametrize("m_max", [1, 3])
+def test_velocity_frame_remap_preserves_lab_moments_exactly(m_max):
+    grid, layout, _exchange, f, _ions = _make_state(nx=3, ny=2, nv=192, l_max=3, m_max=m_max)
     f00 = jnp.real(f[..., layout.index(0, 0), :])
     f = f.at[..., layout.index(1, 0), :].set(0.06 * grid.v * f00)
     f = f.at[..., layout.index(1, 1), :].set((-0.025 + 0.035j) * grid.v * f00)
@@ -158,3 +160,12 @@ def test_combined_exchange_moves_temperatures_toward_equilibrium():
     difference_after = electron_temperature_after - ion_temperature_after
 
     assert jnp.all(jnp.abs(difference_after) < jnp.abs(difference_before))
+
+
+@pytest.mark.parametrize("l_max", [0, 1, 2])
+def test_velocity_frame_remap_rejects_missing_first_moments(l_max):
+    grid, _, _, _, _ = _make_state(nv=16)
+    layout = HarmonicLayout(l_max, m_max=0)
+    vlasov = TzoufrasVlasov(layout, grid.v, grid.dv, grid.kx, grid.ky)
+    with pytest.raises(ValueError, match="velocity-frame remapping requires lmax >= 1 and mmax >= 1"):
+        VelocityFrameRemap(IonFrameVlasov(vlasov))

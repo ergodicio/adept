@@ -145,6 +145,10 @@ $-\nabla\cdot(\mathbf P_e\cdot\mathbf u_i)$, not pointwise cancellation of therm
 and mechanical work. No additional pressure source is applied to electron `f00`.
 Collision and inverse-bremsstrahlung inputs use the midpoint ion number density $n_i=\rho_i/m_i$.
 Setting `ion_fluid.frozen: true` suppresses both hydro and coupled ion source updates.
+Coupled ion runs require `grid.lmax >= 1` and `grid.mmax >= 1` so frame remaps can
+preserve all three momentum components. They reject active hidden density gradients:
+the ion continuity and pressure operators only include x/y derivatives. The hidden-gradient
+workflow remains available with `ion_fluid.active: false`.
 
 For the first coupled milestone, an isothermal or adiabatic ion pressure law is adequate.
 The acceptance tests should verify total particle number, total momentum, total energy, and

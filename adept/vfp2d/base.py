@@ -412,6 +412,13 @@ class BaseVFP2D(ADEPTModule):
 
     def init_diffeqsolve(self):
         if self.ion_fluid_active:
+            if self.field_cfg.get("hidden_density_gradient", {}).get("active", False):
+                raise ValueError(
+                    "moving ion-fluid coupling does not support field_solver.hidden_density_gradient; "
+                    "set hidden_density_gradient.active=false because ion continuity and pressure are only 2D"
+                )
+            if self.layout.index(1, 0) < 0 or self.layout.index(1, 1) < 0:
+                raise ValueError("moving ion-fluid coupling requires grid.lmax >= 1 and grid.mmax >= 1")
             if self.field_mode != "kinetic-ohm":
                 raise ValueError("moving ion-fluid coupling currently requires terms.field_solver.mode='kinetic-ohm'")
             if self.spatial_sharding is not None:

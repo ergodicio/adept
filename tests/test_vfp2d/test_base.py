@@ -4,6 +4,7 @@ import copy
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 import xarray as xr
 from jax.sharding import NamedSharding
 
@@ -551,3 +552,34 @@ def test_relativistic_ampere_diagnostics_match_evolution_current():
         if mode == "oshun-implicit":
             np.testing.assert_allclose(dataset.ampere_residual_linf[1:], 0.0, atol=2e-12)
             assert jnp.max(jnp.abs(expected[1:])) > 1e-6
+
+
+@pytest.mark.parametrize("frozen", [False, True])
+def test_coupled_hidden_density_gradient_is_rejected(frozen):
+    cfg = _config(collisions=False)
+    cfg["terms"]["field_solver"] = {
+        "mode": "kinetic-ohm",
+        "hidden_density_gradient": {"active": True, "scale_length": "2um"},
+    }
+    cfg["terms"]["ion_fluid"] = {
+        "active": True,
+        "frozen": frozen,
+        "initial_velocity": [0.0, 0.0, 0.2],
+    }
+    with pytest.raises(ValueError, match=r"does not support field_solver\.hidden_density_gradient"):
+        _setup_and_run(cfg)
+    # A configured but inactive hidden gradient still permits coupled transport.
+    cfg["terms"]["field_solver"]["hidden_density_gradient"]["active"] = False
+    module, output = _setup_and_run(cfg)
+    assert "hidden_dndz" not in module.args
+    assert jnp.all(jnp.isfinite(output["solver result"].ys["flm"]))
+
+
+@pytest.mark.parametrize("lmax", [0, 1, 2])
+def test_coupled_layout_requires_transverse_momentum(lmax):
+    cfg = _config(collisions=False)
+    cfg["grid"].update({"lmax": lmax, "mmax": 0})
+    cfg["terms"]["field_solver"] = {"mode": "kinetic-ohm"}
+    cfg["terms"]["ion_fluid"] = {"active": True, "initial_velocity": [0.0, 0.1, 0.0]}
+    with pytest.raises(ValueError, match=r"coupling requires grid\.lmax >= 1 and grid\.mmax >= 1"):
+        _setup_and_run(cfg)
