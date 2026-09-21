@@ -89,6 +89,7 @@ jobs:
           vfp2d:
             - *shared
             - 'adept/vfp2d/**'
+            - 'adept/vfp1d/**'  # shared collision operators and normalization
             - 'configs/vfp-2d/**'
             - 'tests/test_vfp2d/**'
           spectrax1d:

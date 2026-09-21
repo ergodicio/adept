@@ -127,41 +127,75 @@ omitted) or with a differentiable tanh gate (`switch_width` set). Output variabl
 with `ohm_` contain the resistive, Hall, Nernst, scalar-pressure, and $f_2$ tensor-pressure
 contributions.
 
-## Moving ion-fluid coupling (Gate 2a)
+## Moving ion-fluid coupling
 
-The first opt-in production coupling slice is available for non-relativistic,
-unsharded `kinetic-ohm` runs on periodic grids:
+Moving ions are opt-in for non-relativistic, unsharded `kinetic-ohm` runs on
+periodic grids:
 
 ```yaml
 terms:
   field_solver: {mode: kinetic-ohm}
   ion_fluid:
     active: true
-    mass_ratio: 1836.0
+    mass_ratio: 21874.66
     gamma: 1.6666666666666667
     cfl: 0.4
     boundaries: [periodic, periodic]
-    initial_velocity: [0.0, 0.0, 0.0]  # normalized to c
+    initial_velocity: [0.0, 0.0, 0.0]  # legacy constants normalized to c
     frozen: false
-    temperature_relaxation_rate: 0.0   # normalized inverse time
+    electron_pressure_feedback: true
+    temperature_relaxation_rate: 0.0   # prescribed rate in normalized inverse time
     momentum_relaxation_rate: 0.0
 ```
 
-`CoupledIonKineticStep` applies an ion Euler half-step, advances the kinetic-Ohm
-system with midpoint ion velocity/gradient/acceleration, applies midpoint local
-temperature exchange, and finishes the ion Euler step. The laboratory electric
-field includes the ideal bulk term $-\mathbf u_i\times\mathbf B$. Initial ion
-density is taken from the discretely integrated electron density, so
-$n_e=Z n_i$ is exact on the radial grid.
+`mass_ratio` is the mass of **one ion** divided by the electron mass; charge is
+set separately by `units.Z`. A carbon-12 example uses approximately `12*u/m_e = 21874.66`.
+Charge state is fixed. Rates are prescribed moment-relaxation rates, not an
+atomic-kinetics or full finite-mass Landau model. Zero disables that exchange;
+this must not be interpreted as predicting physical electron-ion equilibration.
 
-Gate 2a intentionally rejects spatial sharding, nonperiodic boundaries,
-relativistic velocity coordinates, and nonzero production momentum relaxation.
-The last restriction avoids claiming lab-frame momentum conservation before the
-finite-mass velocity-frame remap is implemented. Electron-pressure feedback into
-the ion momentum equation and quantitative Spitzer--Härm/Epperlein--Haines
-convergence are Gate 2b requirements.
-The initial ion half-step is checked against the configured acoustic/advection
-`cfl`; the run timestep must remain conservative as the ion state evolves.
+The symmetric coupled map applies hydro and pressure/exchange/magnetic half-kicks
+around the full kinetic step. Ion momentum receives `J cross B - div(Pe)`;
+magnetic force also contributes its mechanical work. Changes in ion velocity
+remap the kinetic electron distribution between frames. Collision densities use
+the midpoint ion state. The laboratory electric field contains the ideal bulk
+term `-ui cross B`. `frozen: true` holds ions fixed through hydro and all coupled
+source updates.
+
+Initial ion density follows the discretely integrated electron density, so
+`ne = Z ni` at initialization. Quasineutrality is diagnosed during evolution.
+The initial hydro half-step is checked against the acoustic/advection `cfl`;
+this is not a complete magnetic, Hall, electron-streaming or gyrofrequency
+stability bound, and later states may be more restrictive. Timestep and radial
+resolution convergence remain required.
+
+The moving-ion path rejects spatial sharding, nonperiodic boundaries, and
+relativistic coordinates. The alternative implicit-current and slowed-Ampere
+field modes currently support stationary ions only. See the
+[ion-frame derivation](moving_frame.md) for the implemented operators and their
+validation boundaries.
+
+## Driven periodic reservoirs
+
+A prescribed initial state can be maintained in smooth boundary bands:
+
+```yaml
+drivers:
+  reservoir:
+    active: true
+    target: initial_state
+    relaxation_time: 1ns
+    x_width: 2mm
+    y_width: 1mm
+    magnetic: true
+```
+
+Each width must be smaller than the corresponding half-box; zero disables that
+pair of bands. The target is the fully initialized state. Particle mixing is
+performed in a common ion frame, magnetic increments are curls, and measured
+source additions are saved for particle number, momentum and energy. This is a
+periodic forced interaction-region model, not an open boundary condition. See
+[reservoir equations, budgets and buffer tests](reservoirs.md).
 
 The reconnection diagnostics report a normalized rate and flux only when the upstream
 $B_x$ fields are antiparallel and balanced and the origin contains both an in-plane null/
