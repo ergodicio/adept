@@ -117,3 +117,4 @@ the removed work defect. The updated test tightens its absolute residual bound
 and limits refinement sensitivity; it does not identify the remaining residual's
 cause. Longer flow-time convergence, angular refinement, and projection-free
 energy closure remain open.
+# Review trigger: this page records the discrete electric-work correction and its limits.
