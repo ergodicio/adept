@@ -1,0 +1,10 @@
+# Reruns of the 2026-09-21 reference cross-checks after three fixes: the QLE plateau-edge
+# gradient (test_029), the 1-D y boundary (test_001, test_030) and compare() on light-only
+# references (test_001).
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: refs-2026-09-21}
+jobs:
+  - {deck: test_029, run: test_029/qle/3, windows: 0.2-0.6,0.6-1.0,1.5-2.0, tags: {milestone: M9}}
+  - {deck: test_001, run: test_001/cbet/2, windows: 1.0-2.0, tags: {milestone: M10}}
+  - {deck: test_030, run: test_030/spectrum/2, windows: 0.5-1.5, tags: {milestone: M11}}

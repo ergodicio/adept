@@ -458,10 +458,14 @@ def translate_parms(
         direction = _floats(g(f"laser.{b}.direction", "1 0 0"))
         dz = direction[2] if len(direction) > 2 else 0.0
         dy = direction[1] if len(direction) > 1 else 0.0
-        # in-plane beams from the x-min (dx > 0) or x-max (dx < 0) face; a y-face beam (dx = 0)
-        # and any out-of-plane direction are not supported
-        if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] == 0:
-            report["unsupported"].append(f"laser.{b}.direction {direction}: adept pump beams enter from the x faces")
+        # in-plane beams from the x-min (dx > 0) or x-max (dx < 0) face; a y-face beam
+        # (evolution.source = min.y / max.y, or dx = 0) and any out-of-plane direction are
+        # not supported (plan 2 L.4b)
+        source_face = str(g(f"laser.{b}.evolution.source", "min.x")).lower()
+        if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] == 0 or source_face.endswith(".y"):
+            report["unsupported"].append(
+                f"laser.{b}.direction {direction} / evolution.source = {source_face}: adept pump beams enter from the x faces"
+            )
         beam_angle = float(np.degrees(np.arctan2(dy, direction[0])))
         if b == 1:
             angle_deg = beam_angle

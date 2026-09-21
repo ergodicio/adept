@@ -242,8 +242,17 @@ class CoupledLight(RamanLight):
             ky_beams = k0_beams * np.sin(angles) if self.ny > 1 else np.zeros_like(angles)
             if snap and self.ny > 1:
                 ky_beams = np.round(ky_beams / dky) * dky
-            if np.any(np.abs(ky_beams) >= k0_beams):
-                raise ValueError(f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched")
+            # every colour of every beam must have kx^2 = k0(dw)^2 - ky^2 > 0 at its plane
+            dw_min = float(np.min(np.atleast_1d(pump.get("beam_delta_omega", [0.0])))) - float(
+                cfg["drivers"]["E0"].get("delta_omega_max", 0.0) or 0.0
+            )
+            k0_low = self.w0 / self.c * np.sqrt(np.maximum((1.0 + dw_min) ** 2 - np.asarray(self.beam_n_src), 0.0))
+            if np.any(np.abs(ky_beams) >= 0.999 * k0_low):
+                bad = np.rad2deg(angles[np.abs(ky_beams) >= 0.999 * k0_low])
+                raise ValueError(
+                    f"drivers.E0 beams at {np.round(bad, 2)} deg graze the x face (|ky| >= k0 for some colour): "
+                    "adept injects from the x faces only"
+                )
             self.ky_beams = ky_beams
             self.beam_sign = [-1 if left else 1 for left in leftward]
             self.beam_fraction = np.atleast_1d(np.asarray(pump.get("beam_fraction", [1.0]), dtype=np.float64))
