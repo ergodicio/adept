@@ -1,0 +1,66 @@
+# Minimal 1D laser + exponential-profile plasma smoke deck.
+# SI units throughout (WarpX convention). Sized to run in seconds on one rank:
+# max_step terminates the run long before stop_time.
+
+my_constants.n0 = 9.05e27          # reference density, m^-3 (= 9.05e21 cm^-3)
+my_constants.Ln = 100.e-6          # density gradient scale length, m
+
+max_step  = 100
+stop_time = 2.e-12
+
+amr.n_cell   = 256
+amr.max_level = 0
+
+geometry.dims    = 1
+geometry.prob_lo = 0.
+geometry.prob_hi = 60.e-6
+
+# NB: PML is WarpX's default field BC but aborts at runtime in 1D Cartesian
+# (verified at dev@72280884a — see dev_docs/warpx-m0-diag-verification.md), so
+# 1D decks must set the field BCs explicitly. Silver-Mueller is the 1D absorber
+# (Yee solver only).
+boundary.field_lo    = absorbing_silver_mueller
+boundary.field_hi    = absorbing_silver_mueller
+boundary.particle_lo = absorbing
+boundary.particle_hi = absorbing
+
+warpx.cfl           = 0.999
+warpx.verbose       = 1
+algo.particle_shape = 3
+
+particles.species_names = electrons
+
+electrons.charge          = -q_e
+electrons.mass            = m_e
+electrons.injection_style = NUniformPerCell
+electrons.num_particles_per_cell_each_dim = 64
+electrons.profile         = parse_density_function
+electrons.density_function(x,y,z) = "0.1*n0*exp(z/Ln)"
+electrons.momentum_distribution_type = maxwellian
+electrons.ux_std          = 0.0885    # sqrt(kT/mc^2) for Te = 4 keV
+electrons.uy_std          = 0.0885
+electrons.uz_std          = 0.0885
+
+lasers.names        = laser1
+laser1.profile      = Gaussian
+laser1.position     = 0. 0. 1.e-6
+laser1.direction    = 0. 0. 1.
+laser1.polarization = 1. 0. 0.
+laser1.e_max        = 3.66e10       # V/m -> a0 = 0.004 at 351 nm
+laser1.wavelength   = 3.51e-7
+laser1.profile_waist    = 100.e-6
+laser1.profile_duration = 1.e-12
+laser1.profile_t_peak   = 1.5e-12
+laser1.profile_focal_distance = 0.
+
+diagnostics.diags_names = diag1
+diag1.diag_type = Full
+diag1.format    = openpmd
+diag1.openpmd_backend = h5
+diag1.intervals = 50
+
+warpx.reduced_diags_names = fieldenergy particleenergy
+fieldenergy.type          = FieldEnergy
+fieldenergy.intervals     = 10
+particleenergy.type       = ParticleEnergy
+particleenergy.intervals  = 10

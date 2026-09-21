@@ -733,6 +733,8 @@ def plot_omega_k(
     t = da.coords["t"].values
     xname = next(d for d in da.dims if d != "t")
     x = da.coords[xname].values
+    if t.size < 2 or x.size < 2:
+        raise ValueError(f"omega-k spectrum needs >=2 samples per axis; got t={t.size}, {xname}={x.size}")
     dt = float(t[1] - t[0])
     dx = float(x[1] - x[0])
     nt = t.size
@@ -1341,47 +1343,56 @@ def transverse_field_boundary_slabs(run_dir: str | Path, *, guard_cells: int = 1
         ser = _io.load_series(diags[rel])
         return ser if ser.ndim == 2 else None
 
-    # Resolve the slab columns from the first available transverse field, then
-    # drop it (each field is reloaded one at a time below so only one whole-grid
-    # array is ever resident).
-    probe = None
-    for comp in ("e2", "b3", "e3", "b2"):
-        probe = _load(comp)
-        if probe is not None:
-            break
-    if probe is None:
-        return None
-    xdim = next(d for d in probe.dims if d != "t")
-    t = np.asarray(probe.coords["t"].values, dtype=float)
-    n = int(probe.sizes[xdim])
+    # Load each transverse field one at a time and slice it to the edge slabs
+    # immediately (``.copy()`` so the slabs do not keep the whole-grid array
+    # alive as a view base), so only one whole-grid array is ever resident.
     g, w = guard_cells, window_cells
-    if g + w > n:
-        g, w = 0, min(w, n)
-    left, right = slice(g, g + w), slice(n - g - w, n - g)
-    del probe
-
-    def _slabs(comp: str) -> tuple[np.ndarray, np.ndarray] | None:
-        """Raw field ``comp`` sliced to the (left, right) edge slabs.
-
-        ``.copy()`` so the returned slabs do not keep the whole-grid array alive
-        as a view base — the (t, x) field is freed when this returns.
-        """
+    xdim = None
+    left = right = None
+    slabs: dict[str, tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = {}
+    for comp in ("e2", "b3", "e3", "b2"):
         da = _load(comp)
         if da is None:
-            return None
+            continue
+        if xdim is None:
+            xdim = next(d for d in da.dims if d != "t")
+            n = int(da.sizes[xdim])
+            if g + w > n:
+                g, w = 0, min(w, n)
+            left, right = slice(g, g + w), slice(n - g - w, n - g)
+        tc = np.asarray(da.coords["t"].values, dtype=float)
+        ic = np.asarray(da.coords["iter"].values) if "iter" in da.coords else tc
         lo = da.isel({xdim: left}).values.copy()
         hi = da.isel({xdim: right}).values.copy()
-        return lo, hi
+        del da
+        slabs[comp] = (tc, ic, lo, hi)
+    if not slabs:
+        return None
+
+    # A streamed run can leave each report's aggregate NetCDF ending on a
+    # different dump (the drainer flushes reports independently), so an e and
+    # its partner b need not share a time axis sample-for-sample. Restrict
+    # every slab to the iterations all loaded fields share before combining.
+    common = None
+    for _tc, ic, _lo, _hi in slabs.values():
+        common = ic if common is None else np.intersect1d(common, ic)
+    for comp, (tc, ic, lo, hi) in slabs.items():
+        if ic.size != common.size or not np.array_equal(ic, common):
+            mask = np.isin(ic, common)
+            slabs[comp] = (tc[mask], ic[mask], lo[mask], hi[mask])
+    t = next(iter(slabs.values()))[0]
 
     edges: dict[str, dict[str, dict[str, np.ndarray]]] = {"left": {}, "right": {}}
 
     def _add_pair(name: str, e: str, b: str, *, right_sign: float) -> None:
         # right-going = (e + right_sign*b)/2, left-going = (e - right_sign*b)/2
         # (e2/b3: right_sign=+1; e3/b2: right_sign=-1), matching efield_lr_components.
-        es, bs = _slabs(e), _slabs(b)
-        if es is None or bs is None:
+        if e not in slabs or b not in slabs:
             return
-        for edge, ei, bi in (("left", es[0], bs[0]), ("right", es[1], bs[1])):
+        for edge, ei, bi in (
+            ("left", slabs[e][2], slabs[b][2]),
+            ("right", slabs[e][3], slabs[b][3]),
+        ):
             edges[edge][name] = {
                 "right": (ei + right_sign * bi) / 2.0,
                 "left": (ei - right_sign * bi) / 2.0,
@@ -1536,29 +1547,37 @@ def save_canned_plots(
             continue
         if ser.ndim != 2:
             continue  # 2D-in-space field plots deferred
+        if ser.sizes.get("t", 0) < 2:
+            # Stray single-dump series (e.g. a batch-pass leftover of a fully
+            # streamed report) can't make a spacetime or omega-k view.
+            print(f"[plots] skipping {diag_rel}: fewer than 2 time dumps")
+            continue
 
-        fig, ax = plt.subplots(figsize=(6, 4))
-        plot_spacetime(ser, ax=ax)
-        written[f"spacetime/{comp}"] = _write(fig, f"spacetime/{comp}.png")
+        try:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            plot_spacetime(ser, ax=ax)
+            written[f"spacetime/{comp}"] = _write(fig, f"spacetime/{comp}.png")
 
-        fig, ax = plt.subplots(figsize=(6, 4))
-        plot_spacetime(ser, ax=ax, log=True)
-        written[f"spacetime_log/{comp}"] = _write(fig, f"spacetime_log/{comp}.png")
+            fig, ax = plt.subplots(figsize=(6, 4))
+            plot_spacetime(ser, ax=ax, log=True)
+            written[f"spacetime_log/{comp}"] = _write(fig, f"spacetime_log/{comp}.png")
 
-        written[f"lineouts/{comp}"] = _write(plot_lineouts(ser, n_panels=n_panels), f"lineouts/{comp}.png")
+            written[f"lineouts/{comp}"] = _write(plot_lineouts(ser, n_panels=n_panels), f"lineouts/{comp}.png")
 
-        # Full (k, ω) spectrum on top, equal-aspect square window below.
-        written[f"omega_k/{comp}"] = _write(
-            plot_omega_k_figure(
-                ser,
-                v_th=v_th,
-                omega_p=omega_p,
-                show_bam=show_bam,
-                ion_acoustic=ion_acoustic or None,
-                omega_k_zoom=omega_k_zoom,
-            ),
-            f"omega_k/{comp}.png",
-        )
+            # Full (k, ω) spectrum on top, equal-aspect square window below.
+            written[f"omega_k/{comp}"] = _write(
+                plot_omega_k_figure(
+                    ser,
+                    v_th=v_th,
+                    omega_p=omega_p,
+                    show_bam=show_bam,
+                    ion_acoustic=ion_acoustic or None,
+                    omega_k_zoom=omega_k_zoom,
+                ),
+                f"omega_k/{comp}.png",
+            )
+        except Exception as e:
+            print(f"[plots] skipping field plots for {diag_rel}: {e}")
 
     # --- Currents (j1/j2/j3) combined views ---
     try:
@@ -1587,18 +1606,21 @@ def save_canned_plots(
         if ser.ndim != 2:
             continue
 
-        fig, ax = plt.subplots(figsize=(6, 4))
-        plot_spacetime(ser, ax=ax)
-        written[f"moments/{species}/{quantity}"] = _write(fig, f"moments/{species}/{quantity}.png")
+        try:
+            fig, ax = plt.subplots(figsize=(6, 4))
+            plot_spacetime(ser, ax=ax)
+            written[f"moments/{species}/{quantity}"] = _write(fig, f"moments/{species}/{quantity}.png")
 
-        fig, ax = plt.subplots(figsize=(6, 4))
-        plot_spacetime(ser, ax=ax, log=True)
-        written[f"moments/{species}/{quantity}_log"] = _write(fig, f"moments/{species}/{quantity}_log.png")
+            fig, ax = plt.subplots(figsize=(6, 4))
+            plot_spacetime(ser, ax=ax, log=True)
+            written[f"moments/{species}/{quantity}_log"] = _write(fig, f"moments/{species}/{quantity}_log.png")
 
-        written[f"moments/{species}/lineouts/{quantity}"] = _write(
-            plot_lineouts(ser, n_panels=n_panels),
-            f"moments/{species}/lineouts/{quantity}.png",
-        )
+            written[f"moments/{species}/lineouts/{quantity}"] = _write(
+                plot_lineouts(ser, n_panels=n_panels),
+                f"moments/{species}/lineouts/{quantity}.png",
+            )
+        except Exception as e:
+            print(f"[plots] skipping moment plots for {diag_rel}: {e}")
 
     # --- Per-species density + temperature profiles ---
     for species, entries in sorted(_species_diags(run_dir).items()):

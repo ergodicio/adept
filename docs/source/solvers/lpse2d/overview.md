@@ -12,9 +12,29 @@ These equations model the evolution and interaction of the complex envelopes of 
 
 ### Note on Pump Depletion
 
-One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. We do not currently have this implemented, so we have light waves that behave as external drivers for the plasma waves and we only model the plasma wave response.
+One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. By default the pump is prescribed analytically (an external driver for the plasma waves), which is adequate below the absolute instability threshold; above it the plasma-wave and Raman fields grow without bound because nothing depletes the pump.
 
-This approach is adequate for modeling laser plasma instabilities below the absolute instability threshold.
+Setting `terms.light.pump_depletion: true` evolves the pump `E0` with the finite-difference envelope solver and a two-point boundary injector at the low-density side. Every active instability contributes its reciprocal pump term:
+
+- SRS contributes $-i e/(4 \omega_1 m_e) (\nabla^2 \phi) \mathbf{E}_1$.
+- TPD contributes $i e/(4 \omega_0 m_e) e^{i(\omega_0-2\omega_{p0})t} E_{h,y}\nabla\!\cdot\!\mathbf{E}_h$ to the y-polarized pump. This is the discrete reciprocal of the existing TPD source and conserves $\int[|E_0|^2+(\omega_{p0}/\omega_0)|\mathbf{E}_h|^2]$ for the coupling terms alone.
+
+Both terms are included when TPD and SRS are enabled together. Dynamic pump evolution enables true transmission/absorption diagnostics and provides the physical saturation channel needed above threshold.
+
+### SRS diagnostics
+
+With `terms.epw.source.srs` on, the default time series includes OSIRIS-comparable channels (fields converted to $m_e c \omega_0/e$, lengths to $c/\omega_0$, fluxes normalized to the nominal incident flux):
+
+| series | meaning | OSIRIS scan2 counterpart |
+|---|---|---|
+| `epw_energy` | $\frac{1}{4}\,dx \sum_x \langle\|E_{epw}\|^2\rangle_y$ (cycle-averaged field energy) | `W(t) = 1/2 dx sum e1^2` |
+| `epw_dissipation` | total EPW energy handed to electrons per ps (Landau + collisional, the solver's own rates; includes the kinetic half) | absorbed fraction / hot-electron source |
+| `epw_boundary_loss` | total EPW energy removed by the absorbing boundaries per ps | — |
+| `incident_flux`, `transmitted_flux` | pump flux at probes near each edge | `incident_t`, `T_t` |
+| `reflected_flux`, `backrefl_flux` | Raman flux leaving left / right | `R_t` |
+| `reflectivity`, `e1_sq` | legacy probes (unchanged) | — |
+
+`post_process` logs scalar metrics with the same names and definitions as `osiris_lpi` (`laser_reflectivity`, `laser_transmissivity`, `laser_absorbed_frac`, per-quarter `_seg{i}of4` variants, `epw_growth_rate` per $\omega_0$ with the identical automated fit window, `electron_energy_frac_final`, and the `laser_incident_flux_ratio` health check).
 
 ### Electron Plasma Waves
 
@@ -50,9 +70,9 @@ density gradient, periodic transverse to it. The $k=0$ mode is masked out of the
 
 ## Forcing and Drivers
 
-Because pump depletion is not implemented, **the laser is pure forcing** — it drives the plasma waves
-and is never itself depleted. That is the central approximation of this solver and the reason it is
-only valid below the absolute instability threshold.
+With `terms.light.pump_depletion: false`, the laser is prescribed forcing and is therefore appropriate
+only while depletion is negligible. With depletion enabled, the injected pump propagates through the
+box and receives the reciprocal TPD and/or SRS feedback described above.
 
 | Term | Role |
 |---|---|
@@ -60,6 +80,14 @@ only valid below the absolute instability threshold.
 | $S_\text{TPD}$ | The two-plasmon-decay source coupling $E_0$ to the plasma-wave envelope. |
 | $S_h$ | A noise/seed source for the plasma waves. |
 | $\nu_e^\circ$ | Landau damping of the plasma-wave envelope. |
+
+### Ion-acoustic waves
+
+`terms.iaw.active: true` evolves the fractional ion-density perturbation and ion-velocity divergence using the MATLAB LPSE split step. The pressure contains acoustic restoring force plus ponderomotive drive from the EPW, pump, and Raman fields. The resulting density perturbation feeds back into the detuning of all three envelope equations. IAW boundary damping defaults to the EPW boundary configuration; collisional and Landau damping are independently configurable.
+
+### Hybrid particles and the 2D boundary
+
+The HPE particle tracker supplies self-consistent Landau-damping feedback and hot-electron diagnostics in both quasi-1D and 2D runs. For `ny > 1`, a single box-wide ensemble carries `(x, y, p_x, p_y)` and samples both electric-field components; angle-resolved projected-velocity histograms provide the resonant distribution for every `(k_x, k_y)` mode without assigning particles to individual grid cells. Periodic boundaries wrap particles, while reservoir walls use flux-weighted thermal-tail reinjection. HPE can be combined with TPD, SRS, pump depletion, and IAWs, as demonstrated by `configs/envelope-2d/tpd-srs-iaw.yaml`; `srs-hpe.yaml` remains the smaller quasi-1D example.
 
 ## What Gets Saved
 
@@ -70,6 +98,8 @@ only valid below the absolute instability threshold.
 | `fields.xr` | The real-space envelope fields over time |
 | `k-fields.xr` | The same in wavenumber space — this is where TPD growth is measured |
 | `series.xr` | Scalar time series |
+
+When IAWs are active, `fields.xr` and `k-fields.xr` also contain `iaw_density` and `iaw_velocity_divergence`; `series.xr` includes `iaw_density_sq` and `iaw_density_abs_max`.
 
 **`plots/`**, per field `k`:
 

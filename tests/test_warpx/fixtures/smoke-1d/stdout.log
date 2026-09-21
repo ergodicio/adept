@@ -1,0 +1,818 @@
+Initializing AMReX (26.08-4-gcb098067c32e)...
+MPI initialized with 1 MPI processes
+MPI initialized with thread support level 3
+Initializing CUDA...
+CUDA initialized with 1 device.
+AMReX (26.08-4-gcb098067c32e) initialized
+PICSAR (26.05)
+WarpX (26.08-18-g72280884aee1)
+
+                                   ___
+    __        __             ___  /  /
+    \ \      / /_ _ _ __ _ __\  \/  /
+     \ \ /\ / / _` | '__| '_ \\    /
+      \ V  V / (_| | |  | |_) /    \
+       \_/\_/ \__,_|_|  | .__/__/\  \
+                        |_|       \__\
+
+Level 0: dt = 7.810090573e-16 ; dz = 2.34375e-07
+
+Grids Summary:
+  Level 0   2 grids  256 cells  100 % of domain
+            smallest grid: 128  biggest grid: 128
+
+-------------------------------------------------------------------------------
+--------------------------- MAIN EM PIC PARAMETERS ----------------------------
+-------------------------------------------------------------------------------
+Precision:            | DOUBLE
+Particle precision:   | DOUBLE
+Geometry:             | 1D (Z)
+Operation mode:       | Electromagnetic
+                      | - vacuum
+-------------------------------------------------------------------------------
+Current Deposition:   | Esirkepov 
+Guard cells           | - ng_alloc_J  = (5)
+ (allocated for J)    | 
+Particle Pusher:      | Boris 
+Charge Deposition:    | standard 
+Field Gathering:      | energy-conserving 
+Particle Shape Factor:| 3
+-------------------------------------------------------------------------------
+Maxwell Solver:       | Yee 
+                      | - staggered grid 
+Guard cells           | - ng_alloc_EB = (4)
+ (allocated for E/B)  | 
+-------------------------------------------------------------------------------
+For full input parameters, see the file: warpx_used_inputs
+
+--- INFO    : Writing openPMD file diags/diag1000000
+STEP 1 starts ...
+
+
+**** WARNINGS ******************************************************************
+* GLOBAL warning list  after  [ FIRST STEP ]
+*
+* No recorded warnings.
+********************************************************************************
+
+STEP 1 ends. TIME = 7.810090573e-16 DT = 7.810090573e-16
+Evolve time = 0.120214739 s; This step = 0.120214739 s; Avg. per step = 0.120214739 s
+
+STEP 2 starts ...
+STEP 2 ends. TIME = 1.562018115e-15 DT = 7.810090573e-16
+Evolve time = 0.121530092 s; This step = 0.001315353 s; Avg. per step = 0.060765046 s
+
+STEP 3 starts ...
+STEP 3 ends. TIME = 2.343027172e-15 DT = 7.810090573e-16
+Evolve time = 0.122790518 s; This step = 0.001260426 s; Avg. per step = 0.04093017267 s
+
+STEP 4 starts ...
+--- INFO    : re-sorting particles
+STEP 4 ends. TIME = 3.124036229e-15 DT = 7.810090573e-16
+Evolve time = 0.160479959 s; This step = 0.037689441 s; Avg. per step = 0.04011998975 s
+
+STEP 5 starts ...
+STEP 5 ends. TIME = 3.905045286e-15 DT = 7.810090573e-16
+Evolve time = 0.161750886 s; This step = 0.001270927 s; Avg. per step = 0.0323501772 s
+
+STEP 6 starts ...
+STEP 6 ends. TIME = 4.686054344e-15 DT = 7.810090573e-16
+Evolve time = 0.162971656 s; This step = 0.00122077 s; Avg. per step = 0.02716194267 s
+
+STEP 7 starts ...
+STEP 7 ends. TIME = 5.467063401e-15 DT = 7.810090573e-16
+Evolve time = 0.164195944 s; This step = 0.001224288 s; Avg. per step = 0.02345656343 s
+
+STEP 8 starts ...
+--- INFO    : re-sorting particles
+STEP 8 ends. TIME = 6.248072458e-15 DT = 7.810090573e-16
+Evolve time = 0.166072743 s; This step = 0.001876799 s; Avg. per step = 0.02075909287 s
+
+STEP 9 starts ...
+STEP 9 ends. TIME = 7.029081515e-15 DT = 7.810090573e-16
+Evolve time = 0.167293223 s; This step = 0.00122048 s; Avg. per step = 0.01858813589 s
+
+STEP 10 starts ...
+STEP 10 ends. TIME = 7.810090573e-15 DT = 7.810090573e-16
+Evolve time = 0.169027336 s; This step = 0.001734113 s; Avg. per step = 0.0169027336 s
+
+STEP 11 starts ...
+STEP 11 ends. TIME = 8.59109963e-15 DT = 7.810090573e-16
+Evolve time = 0.170295158 s; This step = 0.001267822 s; Avg. per step = 0.015481378 s
+
+STEP 12 starts ...
+--- INFO    : re-sorting particles
+STEP 12 ends. TIME = 9.372108687e-15 DT = 7.810090573e-16
+Evolve time = 0.172145746 s; This step = 0.001850588 s; Avg. per step = 0.01434547883 s
+
+STEP 13 starts ...
+STEP 13 ends. TIME = 1.015311774e-14 DT = 7.810090573e-16
+Evolve time = 0.173410501 s; This step = 0.001264755 s; Avg. per step = 0.01333926931 s
+
+STEP 14 starts ...
+STEP 14 ends. TIME = 1.09341268e-14 DT = 7.810090573e-16
+Evolve time = 0.174674805 s; This step = 0.001264304 s; Avg. per step = 0.01247677179 s
+
+STEP 15 starts ...
+STEP 15 ends. TIME = 1.171513586e-14 DT = 7.810090573e-16
+Evolve time = 0.175920423 s; This step = 0.001245618 s; Avg. per step = 0.0117280282 s
+
+STEP 16 starts ...
+--- INFO    : re-sorting particles
+STEP 16 ends. TIME = 1.249614492e-14 DT = 7.810090573e-16
+Evolve time = 0.177751052 s; This step = 0.001830629 s; Avg. per step = 0.01110944075 s
+
+STEP 17 starts ...
+STEP 17 ends. TIME = 1.327715397e-14 DT = 7.810090573e-16
+Evolve time = 0.1789605 s; This step = 0.001209448 s; Avg. per step = 0.01052708824 s
+
+STEP 18 starts ...
+STEP 18 ends. TIME = 1.405816303e-14 DT = 7.810090573e-16
+Evolve time = 0.180172904 s; This step = 0.001212404 s; Avg. per step = 0.01000960578 s
+
+STEP 19 starts ...
+STEP 19 ends. TIME = 1.483917209e-14 DT = 7.810090573e-16
+Evolve time = 0.181361271 s; This step = 0.001188367 s; Avg. per step = 0.009545330053 s
+
+STEP 20 starts ...
+--- INFO    : re-sorting particles
+STEP 20 ends. TIME = 1.562018115e-14 DT = 7.810090573e-16
+Evolve time = 0.183633905 s; This step = 0.002272634 s; Avg. per step = 0.00918169525 s
+
+STEP 21 starts ...
+STEP 21 ends. TIME = 1.64011902e-14 DT = 7.810090573e-16
+Evolve time = 0.184890475 s; This step = 0.00125657 s; Avg. per step = 0.008804308333 s
+
+STEP 22 starts ...
+STEP 22 ends. TIME = 1.718219926e-14 DT = 7.810090573e-16
+Evolve time = 0.186096858 s; This step = 0.001206383 s; Avg. per step = 0.008458948091 s
+
+STEP 23 starts ...
+STEP 23 ends. TIME = 1.796320832e-14 DT = 7.810090573e-16
+Evolve time = 0.187300064 s; This step = 0.001203206 s; Avg. per step = 0.008143481043 s
+
+STEP 24 starts ...
+--- INFO    : re-sorting particles
+STEP 24 ends. TIME = 1.874421737e-14 DT = 7.810090573e-16
+Evolve time = 0.189081338 s; This step = 0.001781274 s; Avg. per step = 0.007878389083 s
+
+STEP 25 starts ...
+STEP 25 ends. TIME = 1.952522643e-14 DT = 7.810090573e-16
+Evolve time = 0.190282059 s; This step = 0.001200721 s; Avg. per step = 0.00761128236 s
+
+STEP 26 starts ...
+STEP 26 ends. TIME = 2.030623549e-14 DT = 7.810090573e-16
+Evolve time = 0.19147201 s; This step = 0.001189951 s; Avg. per step = 0.007364308077 s
+
+STEP 27 starts ...
+STEP 27 ends. TIME = 2.108724455e-14 DT = 7.810090573e-16
+Evolve time = 0.192625751 s; This step = 0.001153741 s; Avg. per step = 0.007134287074 s
+
+STEP 28 starts ...
+--- INFO    : re-sorting particles
+STEP 28 ends. TIME = 2.18682536e-14 DT = 7.810090573e-16
+Evolve time = 0.194434449 s; This step = 0.001808698 s; Avg. per step = 0.006944087464 s
+
+STEP 29 starts ...
+STEP 29 ends. TIME = 2.264926266e-14 DT = 7.810090573e-16
+Evolve time = 0.195600774 s; This step = 0.001166325 s; Avg. per step = 0.006744854276 s
+
+STEP 30 starts ...
+STEP 30 ends. TIME = 2.343027172e-14 DT = 7.810090573e-16
+Evolve time = 0.197133688 s; This step = 0.001532914 s; Avg. per step = 0.006571122933 s
+
+STEP 31 starts ...
+STEP 31 ends. TIME = 2.421128078e-14 DT = 7.810090573e-16
+Evolve time = 0.198323259 s; This step = 0.001189571 s; Avg. per step = 0.006397524484 s
+
+STEP 32 starts ...
+--- INFO    : re-sorting particles
+STEP 32 ends. TIME = 2.499228983e-14 DT = 7.810090573e-16
+Evolve time = 0.200116456 s; This step = 0.001793197 s; Avg. per step = 0.00625363925 s
+
+STEP 33 starts ...
+STEP 33 ends. TIME = 2.577329889e-14 DT = 7.810090573e-16
+Evolve time = 0.201249587 s; This step = 0.001133131 s; Avg. per step = 0.006098472333 s
+
+STEP 34 starts ...
+STEP 34 ends. TIME = 2.655430795e-14 DT = 7.810090573e-16
+Evolve time = 0.202423296 s; This step = 0.001173709 s; Avg. per step = 0.005953626353 s
+
+STEP 35 starts ...
+STEP 35 ends. TIME = 2.7335317e-14 DT = 7.810090573e-16
+Evolve time = 0.203610612 s; This step = 0.001187316 s; Avg. per step = 0.005817446057 s
+
+STEP 36 starts ...
+--- INFO    : re-sorting particles
+STEP 36 ends. TIME = 2.811632606e-14 DT = 7.810090573e-16
+Evolve time = 0.205464977 s; This step = 0.001854365 s; Avg. per step = 0.005707360472 s
+
+STEP 37 starts ...
+STEP 37 ends. TIME = 2.889733512e-14 DT = 7.810090573e-16
+Evolve time = 0.206642553 s; This step = 0.001177576 s; Avg. per step = 0.005584933865 s
+
+STEP 38 starts ...
+STEP 38 ends. TIME = 2.967834418e-14 DT = 7.810090573e-16
+Evolve time = 0.207850789 s; This step = 0.001208236 s; Avg. per step = 0.005469757605 s
+
+STEP 39 starts ...
+STEP 39 ends. TIME = 3.045935323e-14 DT = 7.810090573e-16
+Evolve time = 0.209012325 s; This step = 0.001161536 s; Avg. per step = 0.005359290385 s
+
+STEP 40 starts ...
+--- INFO    : re-sorting particles
+STEP 40 ends. TIME = 3.124036229e-14 DT = 7.810090573e-16
+Evolve time = 0.211191277 s; This step = 0.002178952 s; Avg. per step = 0.005279781925 s
+
+STEP 41 starts ...
+STEP 41 ends. TIME = 3.202137135e-14 DT = 7.810090573e-16
+Evolve time = 0.212378642 s; This step = 0.001187365 s; Avg. per step = 0.005179966878 s
+
+STEP 42 starts ...
+STEP 42 ends. TIME = 3.280238041e-14 DT = 7.810090573e-16
+Evolve time = 0.213578812 s; This step = 0.00120017 s; Avg. per step = 0.00508520981 s
+
+STEP 43 starts ...
+STEP 43 ends. TIME = 3.358338946e-14 DT = 7.810090573e-16
+Evolve time = 0.214827937 s; This step = 0.001249125 s; Avg. per step = 0.004995998535 s
+
+STEP 44 starts ...
+--- INFO    : re-sorting particles
+STEP 44 ends. TIME = 3.436439852e-14 DT = 7.810090573e-16
+Evolve time = 0.216698634 s; This step = 0.001870697 s; Avg. per step = 0.004924968955 s
+
+STEP 45 starts ...
+STEP 45 ends. TIME = 3.514540758e-14 DT = 7.810090573e-16
+Evolve time = 0.217823379 s; This step = 0.001124745 s; Avg. per step = 0.004840519533 s
+
+STEP 46 starts ...
+STEP 46 ends. TIME = 3.592641663e-14 DT = 7.810090573e-16
+Evolve time = 0.218974805 s; This step = 0.001151426 s; Avg. per step = 0.004760321848 s
+
+STEP 47 starts ...
+STEP 47 ends. TIME = 3.670742569e-14 DT = 7.810090573e-16
+Evolve time = 0.220129347 s; This step = 0.001154542 s; Avg. per step = 0.004683603128 s
+
+STEP 48 starts ...
+--- INFO    : re-sorting particles
+STEP 48 ends. TIME = 3.748843475e-14 DT = 7.810090573e-16
+Evolve time = 0.221896183 s; This step = 0.001766836 s; Avg. per step = 0.004622837146 s
+
+STEP 49 starts ...
+STEP 49 ends. TIME = 3.826944381e-14 DT = 7.810090573e-16
+Evolve time = 0.223044082 s; This step = 0.001147899 s; Avg. per step = 0.004551920041 s
+
+STEP 50 starts ...
+--- INFO    : Writing openPMD file diags/diag1000050
+STEP 50 ends. TIME = 3.905045286e-14 DT = 7.810090573e-16
+Evolve time = 0.236844304 s; This step = 0.013800222 s; Avg. per step = 0.00473688608 s
+
+STEP 51 starts ...
+STEP 51 ends. TIME = 3.983146192e-14 DT = 7.810090573e-16
+Evolve time = 0.238137244 s; This step = 0.00129294 s; Avg. per step = 0.004669357725 s
+
+STEP 52 starts ...
+--- INFO    : re-sorting particles
+STEP 52 ends. TIME = 4.061247098e-14 DT = 7.810090573e-16
+Evolve time = 0.240008783 s; This step = 0.001871539 s; Avg. per step = 0.004615553519 s
+
+STEP 53 starts ...
+STEP 53 ends. TIME = 4.139348004e-14 DT = 7.810090573e-16
+Evolve time = 0.241239503 s; This step = 0.00123072 s; Avg. per step = 0.004551688736 s
+
+STEP 54 starts ...
+STEP 54 ends. TIME = 4.217448909e-14 DT = 7.810090573e-16
+Evolve time = 0.242486433 s; This step = 0.00124693 s; Avg. per step = 0.0044904895 s
+
+STEP 55 starts ...
+STEP 55 ends. TIME = 4.295549815e-14 DT = 7.810090573e-16
+Evolve time = 0.243796055 s; This step = 0.001309622 s; Avg. per step = 0.004432655545 s
+
+STEP 56 starts ...
+--- INFO    : re-sorting particles
+STEP 56 ends. TIME = 4.373650721e-14 DT = 7.810090573e-16
+Evolve time = 0.245677602 s; This step = 0.001881547 s; Avg. per step = 0.004387100036 s
+
+STEP 57 starts ...
+STEP 57 ends. TIME = 4.451751626e-14 DT = 7.810090573e-16
+Evolve time = 0.246889044 s; This step = 0.001211442 s; Avg. per step = 0.004331386737 s
+
+STEP 58 starts ...
+STEP 58 ends. TIME = 4.529852532e-14 DT = 7.810090573e-16
+Evolve time = 0.248098643 s; This step = 0.001209599 s; Avg. per step = 0.00427756281 s
+
+STEP 59 starts ...
+STEP 59 ends. TIME = 4.607953438e-14 DT = 7.810090573e-16
+Evolve time = 0.249324293 s; This step = 0.00122565 s; Avg. per step = 0.004225835475 s
+
+STEP 60 starts ...
+--- INFO    : re-sorting particles
+STEP 60 ends. TIME = 4.686054344e-14 DT = 7.810090573e-16
+Evolve time = 0.251631193 s; This step = 0.0023069 s; Avg. per step = 0.004193853217 s
+
+STEP 61 starts ...
+STEP 61 ends. TIME = 4.764155249e-14 DT = 7.810090573e-16
+Evolve time = 0.252904054 s; This step = 0.001272861 s; Avg. per step = 0.004145968098 s
+
+STEP 62 starts ...
+STEP 62 ends. TIME = 4.842256155e-14 DT = 7.810090573e-16
+Evolve time = 0.254147458 s; This step = 0.001243404 s; Avg. per step = 0.004099152548 s
+
+STEP 63 starts ...
+STEP 63 ends. TIME = 4.920357061e-14 DT = 7.810090573e-16
+Evolve time = 0.255404118 s; This step = 0.00125666 s; Avg. per step = 0.004054033619 s
+
+STEP 64 starts ...
+--- INFO    : re-sorting particles
+STEP 64 ends. TIME = 4.998457967e-14 DT = 7.810090573e-16
+Evolve time = 0.257276037 s; This step = 0.001871919 s; Avg. per step = 0.004019938078 s
+
+STEP 65 starts ...
+STEP 65 ends. TIME = 5.076558872e-14 DT = 7.810090573e-16
+Evolve time = 0.258423676 s; This step = 0.001147639 s; Avg. per step = 0.003975748862 s
+
+STEP 66 starts ...
+STEP 66 ends. TIME = 5.154659778e-14 DT = 7.810090573e-16
+Evolve time = 0.259578208 s; This step = 0.001154532 s; Avg. per step = 0.003933003152 s
+
+STEP 67 starts ...
+STEP 67 ends. TIME = 5.232760684e-14 DT = 7.810090573e-16
+Evolve time = 0.260749012 s; This step = 0.001170804 s; Avg. per step = 0.003891776299 s
+
+STEP 68 starts ...
+--- INFO    : re-sorting particles
+STEP 68 ends. TIME = 5.310861589e-14 DT = 7.810090573e-16
+Evolve time = 0.262546047 s; This step = 0.001797035 s; Avg. per step = 0.003860971279 s
+
+STEP 69 starts ...
+STEP 69 ends. TIME = 5.388962495e-14 DT = 7.810090573e-16
+Evolve time = 0.263699888 s; This step = 0.001153841 s; Avg. per step = 0.003821737507 s
+
+STEP 70 starts ...
+STEP 70 ends. TIME = 5.467063401e-14 DT = 7.810090573e-16
+Evolve time = 0.265278601 s; This step = 0.001578713 s; Avg. per step = 0.0037896943 s
+
+STEP 71 starts ...
+STEP 71 ends. TIME = 5.545164307e-14 DT = 7.810090573e-16
+Evolve time = 0.266471637 s; This step = 0.001193036 s; Avg. per step = 0.003753121648 s
+
+STEP 72 starts ...
+--- INFO    : re-sorting particles
+STEP 72 ends. TIME = 5.623265212e-14 DT = 7.810090573e-16
+Evolve time = 0.268271276 s; This step = 0.001799639 s; Avg. per step = 0.003725989944 s
+
+STEP 73 starts ...
+STEP 73 ends. TIME = 5.701366118e-14 DT = 7.810090573e-16
+Evolve time = 0.269394658 s; This step = 0.001123382 s; Avg. per step = 0.003690337781 s
+
+STEP 74 starts ...
+STEP 74 ends. TIME = 5.779467024e-14 DT = 7.810090573e-16
+Evolve time = 0.270546404 s; This step = 0.001151746 s; Avg. per step = 0.003656032486 s
+
+STEP 75 starts ...
+STEP 75 ends. TIME = 5.85756793e-14 DT = 7.810090573e-16
+Evolve time = 0.27171799 s; This step = 0.001171586 s; Avg. per step = 0.003622906533 s
+
+STEP 76 starts ...
+--- INFO    : re-sorting particles
+STEP 76 ends. TIME = 5.935668835e-14 DT = 7.810090573e-16
+Evolve time = 0.273542128 s; This step = 0.001824138 s; Avg. per step = 0.003599238526 s
+
+STEP 77 starts ...
+STEP 77 ends. TIME = 6.013769741e-14 DT = 7.810090573e-16
+Evolve time = 0.274764652 s; This step = 0.001222524 s; Avg. per step = 0.003568372104 s
+
+STEP 78 starts ...
+STEP 78 ends. TIME = 6.091870647e-14 DT = 7.810090573e-16
+Evolve time = 0.275970042 s; This step = 0.00120539 s; Avg. per step = 0.003538077462 s
+
+STEP 79 starts ...
+STEP 79 ends. TIME = 6.169971552e-14 DT = 7.810090573e-16
+Evolve time = 0.277180713 s; This step = 0.001210671 s; Avg. per step = 0.00350861662 s
+
+STEP 80 starts ...
+--- INFO    : re-sorting particles
+STEP 80 ends. TIME = 6.248072458e-14 DT = 7.810090573e-16
+Evolve time = 0.279394553 s; This step = 0.00221384 s; Avg. per step = 0.003492431912 s
+
+STEP 81 starts ...
+STEP 81 ends. TIME = 6.326173364e-14 DT = 7.810090573e-16
+Evolve time = 0.280596857 s; This step = 0.001202304 s; Avg. per step = 0.003464158728 s
+
+STEP 82 starts ...
+STEP 82 ends. TIME = 6.40427427e-14 DT = 7.810090573e-16
+Evolve time = 0.281754675 s; This step = 0.001157818 s; Avg. per step = 0.003436032622 s
+
+STEP 83 starts ...
+STEP 83 ends. TIME = 6.482375175e-14 DT = 7.810090573e-16
+Evolve time = 0.282907033 s; This step = 0.001152358 s; Avg. per step = 0.00340851847 s
+
+STEP 84 starts ...
+--- INFO    : re-sorting particles
+STEP 84 ends. TIME = 6.560476081e-14 DT = 7.810090573e-16
+Evolve time = 0.284691152 s; This step = 0.001784119 s; Avg. per step = 0.003389180381 s
+
+STEP 85 starts ...
+STEP 85 ends. TIME = 6.638576987e-14 DT = 7.810090573e-16
+Evolve time = 0.285884439 s; This step = 0.001193287 s; Avg. per step = 0.003363346341 s
+
+STEP 86 starts ...
+STEP 86 ends. TIME = 6.716677893e-14 DT = 7.810090573e-16
+Evolve time = 0.286998313 s; This step = 0.001113874 s; Avg. per step = 0.003337189686 s
+
+STEP 87 starts ...
+STEP 87 ends. TIME = 6.794778798e-14 DT = 7.810090573e-16
+Evolve time = 0.288163696 s; This step = 0.001165383 s; Avg. per step = 0.003312226391 s
+
+STEP 88 starts ...
+--- INFO    : re-sorting particles
+STEP 88 ends. TIME = 6.872879704e-14 DT = 7.810090573e-16
+Evolve time = 0.289940742 s; This step = 0.001777046 s; Avg. per step = 0.003294781159 s
+
+STEP 89 starts ...
+STEP 89 ends. TIME = 6.95098061e-14 DT = 7.810090573e-16
+Evolve time = 0.291091206 s; This step = 0.001150464 s; Avg. per step = 0.003270687708 s
+
+STEP 90 starts ...
+STEP 90 ends. TIME = 7.029081515e-14 DT = 7.810090573e-16
+Evolve time = 0.292658287 s; This step = 0.001567081 s; Avg. per step = 0.003251758744 s
+
+STEP 91 starts ...
+STEP 91 ends. TIME = 7.107182421e-14 DT = 7.810090573e-16
+Evolve time = 0.293853237 s; This step = 0.00119495 s; Avg. per step = 0.003229156451 s
+
+STEP 92 starts ...
+--- INFO    : re-sorting particles
+STEP 92 ends. TIME = 7.185283327e-14 DT = 7.810090573e-16
+Evolve time = 0.295676242 s; This step = 0.001823005 s; Avg. per step = 0.003213872196 s
+
+STEP 93 starts ...
+STEP 93 ends. TIME = 7.263384233e-14 DT = 7.810090573e-16
+Evolve time = 0.296844521 s; This step = 0.001168279 s; Avg. per step = 0.00319187657 s
+
+STEP 94 starts ...
+STEP 94 ends. TIME = 7.341485138e-14 DT = 7.810090573e-16
+Evolve time = 0.297965729 s; This step = 0.001121208 s; Avg. per step = 0.003169848181 s
+
+STEP 95 starts ...
+STEP 95 ends. TIME = 7.419586044e-14 DT = 7.810090573e-16
+Evolve time = 0.299086566 s; This step = 0.001120837 s; Avg. per step = 0.003148279642 s
+
+STEP 96 starts ...
+--- INFO    : re-sorting particles
+STEP 96 ends. TIME = 7.49768695e-14 DT = 7.810090573e-16
+Evolve time = 0.300884131 s; This step = 0.001797565 s; Avg. per step = 0.003134209698 s
+
+STEP 97 starts ...
+STEP 97 ends. TIME = 7.575787856e-14 DT = 7.810090573e-16
+Evolve time = 0.302033764 s; This step = 0.001149633 s; Avg. per step = 0.003113750144 s
+
+STEP 98 starts ...
+STEP 98 ends. TIME = 7.653888761e-14 DT = 7.810090573e-16
+Evolve time = 0.303184288 s; This step = 0.001150524 s; Avg. per step = 0.003093717224 s
+
+STEP 99 starts ...
+STEP 99 ends. TIME = 7.731989667e-14 DT = 7.810090573e-16
+Evolve time = 0.304345453 s; This step = 0.001161165 s; Avg. per step = 0.003074196495 s
+
+STEP 100 starts ...
+--- INFO    : re-sorting particles
+--- INFO    : Writing openPMD file diags/diag1000100
+STEP 100 ends. TIME = 7.810090573e-14 DT = 7.810090573e-16
+Evolve time = 0.31795162 s; This step = 0.013606167 s; Avg. per step = 0.0031795162 s
+
+
+**** WARNINGS ******************************************************************
+* GLOBAL warning list  after  [ THE END ]
+*
+* No recorded warnings.
+********************************************************************************
+
+Total Time                     : 0.569183328
+
+
+TinyProfiler total time across processes [min...avg...max]: 0.5694 ... 0.5694 ... 0.5694
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Excl. Min  Excl. Avg  Excl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+FlushFormatOpenPMD::WriteToFile()                                          3    0.07147    0.07147    0.07147  12.55%
+WarpX::InitData()                                                          1    0.04943    0.04943    0.04943   8.68%
+PermutationForDeposition()                                               100    0.04728    0.04728    0.04728   8.30%
+PhysicalParticleContainer::PushP()                                        20     0.0454     0.0454     0.0454   7.97%
+PhysicalParticleContainer::AddPlasma()                                     1    0.04338    0.04338    0.04338   7.62%
+WarpX::EvolveB()                                                         200    0.02993    0.02993    0.02993   5.26%
+Redistribute_partition                                                   202    0.02627    0.02627    0.02627   4.61%
+WarpXOpenPMDPlot::WriteOpenPMDParticles()                                  3    0.02249    0.02249    0.02249   3.95%
+FillBoundary_nowait()                                                   1584    0.02088    0.02088    0.02088   3.67%
+WarpXOpenPMDPlot::SeriesFlush()()                                          9    0.02017    0.02017    0.02017   3.54%
+FabArray::setVal()                                                       315    0.01795    0.01795    0.01795   3.15%
+sample::Coarsen()                                                         36    0.01776    0.01776    0.01776   3.12%
+MultiReducedDiags::ComputeDiags()                                        101    0.01704    0.01704    0.01704   2.99%
+Filter::ApplyStencil(MultiFab)                                           300    0.01693    0.01693    0.01693   2.97%
+LaserParticleContainer::Evolve::ParticlePush                             100    0.01634    0.01634    0.01634   2.87%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                     3    0.00901    0.00901    0.00901   1.58%
+ParticleCopyPlan::build                                                  202   0.008263   0.008263   0.008263   1.45%
+WarpXParticleContainer::ApplyBoundaryConditions()                        200   0.006478   0.006478   0.006478   1.14%
+WarpX::Evolve::step                                                      100   0.006245   0.006245   0.006245   1.10%
+amrex::Copy()                                                            984   0.005932   0.005932   0.005932   1.04%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                300   0.005333   0.005333   0.005333   0.94%
+ParticleContainer::Redistribute_impl()                                   202    0.00518    0.00518    0.00518   0.91%
+WarpXOpenPMDPlot::CloseStep()                                              3   0.004558   0.004558   0.004558   0.80%
+ParticleContainer::SortParticlesForDeposition()                           50   0.004091   0.004091   0.004091   0.72%
+WarpX::EvolveE()                                                         100   0.003728   0.003728   0.003728   0.65%
+amrex::packBuffer                                                        202   0.003501   0.003501   0.003501   0.61%
+PhysicalParticleContainer::Evolve::GatherAndPush                         200   0.002849   0.002849   0.002849   0.50%
+WarpX::OneStep_nosub()                                                   100   0.002676   0.002676   0.002676   0.47%
+amrex::unpackBuffer                                                      202   0.002648   0.002648   0.002648   0.47%
+MultiFab::Copy()                                                         984   0.002375   0.002375   0.002375   0.42%
+FabArrayBase::getFB()                                                   1584   0.002175   0.002175   0.002175   0.38%
+WarpX::SyncCurrent()                                                     100   0.002063   0.002063   0.002063   0.36%
+PhysicalParticleContainer::Evolve()                                      100   0.002062   0.002062   0.002062   0.36%
+FillBoundary_finish()                                                   1584   0.001995   0.001995   0.001995   0.35%
+WarpX::UpdateAuxiliaryData()                                             114   0.001471   0.001471   0.001471   0.26%
+FillBoundaryAndSync_nowait()                                             600    0.00146    0.00146    0.00146   0.26%
+FillBoundaryAndSync_finish()                                             600   0.001406   0.001406   0.001406   0.25%
+ParticleCopyPlan::buildCopiesAtomicScatter                               202   0.001336   0.001336   0.001336   0.23%
+amrex::computeNeighborProcs                                              200   0.001269   0.001269   0.001269   0.22%
+ParticleContainer::ReserveForRedistribute()                              202   0.001197   0.001197   0.001197   0.21%
+FillBoundary_nowait(Vector)                                              228   0.001114   0.001114   0.001114   0.20%
+LaserParticleContainer::Evolve()                                         100   0.001092   0.001092   0.001092   0.19%
+FabArray<FAB>::SumBoundary()                                             300   0.001083   0.001083   0.001083   0.19%
+FillBoundary_finish(Vector)                                              228   0.001077   0.001077   0.001077   0.19%
+WarpXOpenPMDPlot::DumpToFile()                                             3   0.001015   0.001015   0.001015   0.18%
+main()                                                                     1  0.0009568  0.0009568  0.0009568   0.17%
+FillBoundaryAndSync_nowait(Vector)                                       200  0.0009548  0.0009548  0.0009548   0.17%
+FillBoundaryAndSync_finish(Vector)                                       200  0.0009228  0.0009228  0.0009228   0.16%
+FabArray<FAB>::SumBoundary_finish()                                      300  0.0007524  0.0007524  0.0007524   0.13%
+ablastr::utils::communication::SumBoundary                               300  0.0007506  0.0007506  0.0007506   0.13%
+FabArray<FAB>::SumBoundary_nowait()                                      300   0.000739   0.000739   0.000739   0.13%
+Diagnostics::FilterComputePackFlush()                                    102  0.0007159  0.0007159  0.0007159   0.13%
+MultiParticleContainer::RedistributeLocal                                100  0.0003842  0.0003842  0.0003842   0.07%
+MultiParticleContainer::doQedEvents()                                    100   0.000372   0.000372   0.000372   0.07%
+WarpX::OneStep()                                                         100  0.0002723  0.0002723  0.0002723   0.05%
+WarpX::Evolve()                                                            1  0.0001353  0.0001353  0.0001353   0.02%
+ParticleContainer::copyParticles                                           3  1.917e-05  1.917e-05  1.917e-05   0.00%
+PhysicalParticleContainer::AddParticles()                                  1  4.609e-06  4.609e-06  4.609e-06   0.00%
+REG::WarpX::Evolve()                                                       1  4.178e-06  4.178e-06  4.178e-06   0.00%
+Other                                                                   2294   0.004823   0.004823   0.004823   0.85%
+---------------------------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Incl. Min  Incl. Avg  Incl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+main()                                                                     1     0.5692     0.5692     0.5692  99.97%
+REG::WarpX::Evolve()                                                       1     0.3195     0.3195     0.3195  56.11%
+WarpX::Evolve()                                                            1     0.3195     0.3195     0.3195  56.11%
+WarpX::Evolve::step                                                      100     0.3191     0.3191     0.3191  56.03%
+WarpX::InitData()                                                          1     0.2488     0.2488     0.2488  43.69%
+Diagnostics::FilterComputePackFlush()                                    102      0.149      0.149      0.149  26.17%
+FlushFormatOpenPMD::WriteToFile()                                          3     0.1299     0.1299     0.1299  22.81%
+WarpX::OneStep()                                                         100     0.1166     0.1166     0.1166  20.48%
+WarpX::OneStep_nosub()                                                   100     0.1163     0.1163     0.1163  20.43%
+ParticleContainer::Redistribute_impl()                                   202    0.05159    0.05159    0.05159   9.06%
+ParticleContainer::SortParticlesForDeposition()                           50    0.05137    0.05137    0.05137   9.02%
+MultiParticleContainer::RedistributeLocal                                100    0.05119    0.05119    0.05119   8.99%
+PermutationForDeposition()                                               100    0.04728    0.04728    0.04728   8.30%
+PhysicalParticleContainer::PushP()                                        20     0.0454     0.0454     0.0454   7.97%
+PhysicalParticleContainer::AddParticles()                                  1    0.04339    0.04339    0.04339   7.62%
+PhysicalParticleContainer::AddPlasma()                                     1    0.04338    0.04338    0.04338   7.62%
+WarpX::SyncCurrent()                                                     100    0.03638    0.03638    0.03638   6.39%
+WarpXOpenPMDPlot::WriteOpenPMDParticles()                                  3    0.03533    0.03533    0.03533   6.21%
+WarpX::EvolveB()                                                         200    0.02993    0.02993    0.02993   5.26%
+Redistribute_partition                                                   202    0.02627    0.02627    0.02627   4.61%
+FillBoundary_nowait()                                                   1584     0.0231     0.0231     0.0231   4.06%
+WarpXOpenPMDPlot::SeriesFlush()()                                          9    0.02017    0.02017    0.02017   3.54%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                     3    0.01852    0.01852    0.01852   3.25%
+LaserParticleContainer::Evolve()                                         100    0.01836    0.01836    0.01836   3.22%
+FabArray::setVal()                                                       315    0.01795    0.01795    0.01795   3.15%
+sample::Coarsen()                                                         36    0.01776    0.01776    0.01776   3.12%
+MultiReducedDiags::ComputeDiags()                                        101    0.01704    0.01704    0.01704   2.99%
+Filter::ApplyStencil(MultiFab)                                           300    0.01693    0.01693    0.01693   2.97%
+LaserParticleContainer::Evolve::ParticlePush                             100    0.01634    0.01634    0.01634   2.87%
+WarpXOpenPMDPlot::DumpToFile()                                             3    0.01221    0.01221    0.01221   2.14%
+ablastr::utils::communication::SumBoundary                               300    0.01162    0.01162    0.01162   2.04%
+ParticleCopyPlan::build                                                  202    0.01118    0.01118    0.01118   1.96%
+FabArray<FAB>::SumBoundary()                                             300    0.01087    0.01087    0.01087   1.91%
+FillBoundaryAndSync_nowait(Vector)                                       200   0.009387   0.009387   0.009387   1.65%
+FillBoundary_nowait(Vector)                                              228   0.009335   0.009335   0.009335   1.64%
+PhysicalParticleContainer::Evolve()                                      100    0.00932    0.00932    0.00932   1.64%
+FabArray<FAB>::SumBoundary_nowait()                                      300   0.008646   0.008646   0.008646   1.52%
+FillBoundaryAndSync_nowait()                                             600   0.008433   0.008433   0.008433   1.48%
+MultiFab::Copy()                                                         984   0.008307   0.008307   0.008307   1.46%
+WarpXParticleContainer::ApplyBoundaryConditions()                        200   0.006478   0.006478   0.006478   1.14%
+amrex::Copy()                                                            984   0.005932   0.005932   0.005932   1.04%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                300   0.005333   0.005333   0.005333   0.94%
+WarpXOpenPMDPlot::CloseStep()                                              3   0.004558   0.004558   0.004558   0.80%
+WarpX::UpdateAuxiliaryData()                                             114   0.004019   0.004019   0.004019   0.71%
+WarpX::EvolveE()                                                         100   0.003728   0.003728   0.003728   0.65%
+amrex::packBuffer                                                        202   0.003501   0.003501   0.003501   0.61%
+FillBoundaryAndSync_finish(Vector)                                       200   0.003074   0.003074   0.003074   0.54%
+PhysicalParticleContainer::Evolve::GatherAndPush                         200   0.002849   0.002849   0.002849   0.50%
+amrex::unpackBuffer                                                      202   0.002648   0.002648   0.002648   0.47%
+FabArrayBase::getFB()                                                   1584   0.002219   0.002219   0.002219   0.39%
+FillBoundaryAndSync_finish()                                             600   0.002151   0.002151   0.002151   0.38%
+FillBoundary_finish()                                                   1584   0.001995   0.001995   0.001995   0.35%
+FillBoundary_finish(Vector)                                              228   0.001936   0.001936   0.001936   0.34%
+ParticleCopyPlan::buildCopiesAtomicScatter                               202   0.001336   0.001336   0.001336   0.23%
+amrex::computeNeighborProcs                                              200   0.001269   0.001269   0.001269   0.22%
+ParticleContainer::ReserveForRedistribute()                              202   0.001197   0.001197   0.001197   0.21%
+FabArray<FAB>::SumBoundary_finish()                                      300   0.001144   0.001144   0.001144   0.20%
+MultiParticleContainer::doQedEvents()                                    100  0.0006589  0.0006589  0.0006589   0.12%
+ParticleContainer::copyParticles                                           3  0.0006346  0.0006346  0.0006346   0.11%
+Other                                                                   2294   0.005135   0.005135   0.005135   0.90%
+---------------------------------------------------------------------------------------------------------------------
+
+
+
+BEGIN REGION WarpX::Evolve()
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Excl. Min  Excl. Avg  Excl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+PermutationForDeposition()                                               100    0.04728    0.04728    0.04728   8.30%
+PhysicalParticleContainer::PushP()                                        20     0.0454     0.0454     0.0454   7.97%
+WarpX::EvolveB()                                                         200    0.02993    0.02993    0.02993   5.26%
+Redistribute_partition                                                   200    0.02612    0.02612    0.02612   4.59%
+FillBoundary_nowait()                                                   1578    0.02075    0.02075    0.02075   3.64%
+Filter::ApplyStencil(MultiFab)                                           300    0.01693    0.01693    0.01693   2.97%
+LaserParticleContainer::Evolve::ParticlePush                             100    0.01634    0.01634    0.01634   2.87%
+WarpXOpenPMDPlot::SeriesFlush()()                                          6    0.01294    0.01294    0.01294   2.27%
+ParticleCopyPlan::build                                                  200   0.008116   0.008116   0.008116   1.43%
+WarpXParticleContainer::ApplyBoundaryConditions()                        200   0.006478   0.006478   0.006478   1.14%
+WarpX::Evolve::step                                                      100   0.006245   0.006245   0.006245   1.10%
+amrex::Copy()                                                            978   0.005923   0.005923   0.005923   1.04%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                     2   0.005486   0.005486   0.005486   0.96%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                300   0.005333   0.005333   0.005333   0.94%
+ParticleContainer::Redistribute_impl()                                   200   0.004987   0.004987   0.004987   0.88%
+ParticleContainer::SortParticlesForDeposition()                           50   0.004091   0.004091   0.004091   0.72%
+WarpX::EvolveE()                                                         100   0.003728   0.003728   0.003728   0.65%
+amrex::packBuffer                                                        200   0.003477   0.003477   0.003477   0.61%
+WarpXOpenPMDPlot::CloseStep()                                              2   0.003087   0.003087   0.003087   0.54%
+PhysicalParticleContainer::Evolve::GatherAndPush                         200   0.002849   0.002849   0.002849   0.50%
+FabArray::setVal()                                                       300   0.002761   0.002761   0.002761   0.48%
+WarpX::OneStep_nosub()                                                   100   0.002676   0.002676   0.002676   0.47%
+amrex::unpackBuffer                                                      200   0.002628   0.002628   0.002628   0.46%
+MultiFab::Copy()                                                         978   0.002358   0.002358   0.002358   0.41%
+FabArrayBase::getFB()                                                   1578   0.002161   0.002161   0.002161   0.38%
+WarpX::SyncCurrent()                                                     100   0.002063   0.002063   0.002063   0.36%
+PhysicalParticleContainer::Evolve()                                      100   0.002062   0.002062   0.002062   0.36%
+FillBoundary_finish()                                                   1578   0.001987   0.001987   0.001987   0.35%
+MultiReducedDiags::ComputeDiags()                                        100   0.001623   0.001623   0.001623   0.29%
+FillBoundaryAndSync_nowait()                                             600    0.00146    0.00146    0.00146   0.26%
+WarpX::UpdateAuxiliaryData()                                             113   0.001448   0.001448   0.001448   0.25%
+FillBoundaryAndSync_finish()                                             600   0.001406   0.001406   0.001406   0.25%
+ParticleCopyPlan::buildCopiesAtomicScatter                               200   0.001332   0.001332   0.001332   0.23%
+amrex::computeNeighborProcs                                              200   0.001269   0.001269   0.001269   0.22%
+ParticleContainer::ReserveForRedistribute()                              200    0.00118    0.00118    0.00118   0.21%
+FillBoundary_nowait(Vector)                                              226   0.001102   0.001102   0.001102   0.19%
+LaserParticleContainer::Evolve()                                         100   0.001092   0.001092   0.001092   0.19%
+FabArray<FAB>::SumBoundary()                                             300   0.001083   0.001083   0.001083   0.19%
+FillBoundary_finish(Vector)                                              226   0.001065   0.001065   0.001065   0.19%
+FillBoundaryAndSync_nowait(Vector)                                       200  0.0009548  0.0009548  0.0009548   0.17%
+FillBoundaryAndSync_finish(Vector)                                       200  0.0009228  0.0009228  0.0009228   0.16%
+FabArray<FAB>::SumBoundary_finish()                                      300  0.0007524  0.0007524  0.0007524   0.13%
+ablastr::utils::communication::SumBoundary                               300  0.0007506  0.0007506  0.0007506   0.13%
+FabArray<FAB>::SumBoundary_nowait()                                      300   0.000739   0.000739   0.000739   0.13%
+Diagnostics::FilterComputePackFlush()                                    101  0.0006629  0.0006629  0.0006629   0.12%
+WarpXOpenPMDPlot::DumpToFile()                                             2  0.0006414  0.0006414  0.0006414   0.11%
+MultiParticleContainer::RedistributeLocal                                100  0.0003842  0.0003842  0.0003842   0.07%
+WarpX::OneStep()                                                         100  0.0002723  0.0002723  0.0002723   0.05%
+FlushFormatOpenPMD::WriteToFile()                                          2  0.0002356  0.0002356  0.0002356   0.04%
+WarpX::Evolve()                                                            1  0.0001353  0.0001353  0.0001353   0.02%
+WarpXOpenPMDPlot::WriteOpenPMDParticles()                                  2  9.895e-05  9.895e-05  9.895e-05   0.02%
+REG::WarpX::Evolve()                                                       1  4.178e-06  4.178e-06  4.178e-06   0.00%
+Other                                                                   2375   0.004666   0.004666   0.004666   0.82%
+---------------------------------------------------------------------------------------------------------------------
+
+---------------------------------------------------------------------------------------------------------------------
+Name                                                                  NCalls  Incl. Min  Incl. Avg  Incl. Max   Max %
+---------------------------------------------------------------------------------------------------------------------
+REG::WarpX::Evolve()                                                       1     0.3195     0.3195     0.3195  56.11%
+WarpX::Evolve()                                                            1     0.3195     0.3195     0.3195  56.11%
+WarpX::Evolve::step                                                      100     0.3191     0.3191     0.3191  56.03%
+WarpX::OneStep()                                                         100     0.1166     0.1166     0.1166  20.48%
+WarpX::OneStep_nosub()                                                   100     0.1163     0.1163     0.1163  20.43%
+ParticleContainer::SortParticlesForDeposition()                           50    0.05137    0.05137    0.05137   9.02%
+MultiParticleContainer::RedistributeLocal                                100    0.05119    0.05119    0.05119   8.99%
+ParticleContainer::Redistribute_impl()                                   200    0.05081    0.05081    0.05081   8.92%
+PermutationForDeposition()                                               100    0.04728    0.04728    0.04728   8.30%
+PhysicalParticleContainer::PushP()                                        20     0.0454     0.0454     0.0454   7.97%
+WarpX::SyncCurrent()                                                     100    0.03638    0.03638    0.03638   6.39%
+WarpX::EvolveB()                                                         200    0.02993    0.02993    0.02993   5.26%
+Redistribute_partition                                                   200    0.02612    0.02612    0.02612   4.59%
+Diagnostics::FilterComputePackFlush()                                    101    0.02454    0.02454    0.02454   4.31%
+FlushFormatOpenPMD::WriteToFile()                                          2    0.02314    0.02314    0.02314   4.06%
+FillBoundary_nowait()                                                   1578    0.02294    0.02294    0.02294   4.03%
+LaserParticleContainer::Evolve()                                         100    0.01836    0.01836    0.01836   3.22%
+Filter::ApplyStencil(MultiFab)                                           300    0.01693    0.01693    0.01693   2.97%
+LaserParticleContainer::Evolve::ParticlePush                             100    0.01634    0.01634    0.01634   2.87%
+WarpXOpenPMDPlot::SeriesFlush()()                                          6    0.01294    0.01294    0.01294   2.27%
+ablastr::utils::communication::SumBoundary                               300    0.01162    0.01162    0.01162   2.04%
+WarpXOpenPMDPlot::WriteOpenPMDFields()                                     2    0.01139    0.01139    0.01139   2.00%
+ParticleCopyPlan::build                                                  200    0.01102    0.01102    0.01102   1.94%
+FabArray<FAB>::SumBoundary()                                             300    0.01087    0.01087    0.01087   1.91%
+FillBoundaryAndSync_nowait(Vector)                                       200   0.009387   0.009387   0.009387   1.65%
+PhysicalParticleContainer::Evolve()                                      100    0.00932    0.00932    0.00932   1.64%
+FillBoundary_nowait(Vector)                                              226   0.009158   0.009158   0.009158   1.61%
+FabArray<FAB>::SumBoundary_nowait()                                      300   0.008646   0.008646   0.008646   1.52%
+FillBoundaryAndSync_nowait()                                             600   0.008433   0.008433   0.008433   1.48%
+WarpXOpenPMDPlot::WriteOpenPMDParticles()                                  2    0.00843    0.00843    0.00843   1.48%
+MultiFab::Copy()                                                         978   0.008282   0.008282   0.008282   1.45%
+WarpXOpenPMDPlot::DumpToFile()                                             2   0.008025   0.008025   0.008025   1.41%
+WarpXParticleContainer::ApplyBoundaryConditions()                        200   0.006478   0.006478   0.006478   1.14%
+amrex::Copy()                                                            978   0.005923   0.005923   0.005923   1.04%
+WarpXParticleContainer::DepositCurrent::CurrentDeposition                300   0.005333   0.005333   0.005333   0.94%
+WarpX::UpdateAuxiliaryData()                                             113   0.003971   0.003971   0.003971   0.70%
+WarpX::EvolveE()                                                         100   0.003728   0.003728   0.003728   0.65%
+amrex::packBuffer                                                        200   0.003477   0.003477   0.003477   0.61%
+WarpXOpenPMDPlot::CloseStep()                                              2   0.003087   0.003087   0.003087   0.54%
+FillBoundaryAndSync_finish(Vector)                                       200   0.003074   0.003074   0.003074   0.54%
+PhysicalParticleContainer::Evolve::GatherAndPush                         200   0.002849   0.002849   0.002849   0.50%
+FabArray::setVal()                                                       300   0.002761   0.002761   0.002761   0.48%
+amrex::unpackBuffer                                                      200   0.002628   0.002628   0.002628   0.46%
+FabArrayBase::getFB()                                                   1578   0.002184   0.002184   0.002184   0.38%
+FillBoundaryAndSync_finish()                                             600   0.002151   0.002151   0.002151   0.38%
+FillBoundary_finish()                                                   1578   0.001987   0.001987   0.001987   0.35%
+FillBoundary_finish(Vector)                                              226   0.001916   0.001916   0.001916   0.34%
+MultiReducedDiags::ComputeDiags()                                        100   0.001623   0.001623   0.001623   0.29%
+ParticleCopyPlan::buildCopiesAtomicScatter                               200   0.001332   0.001332   0.001332   0.23%
+amrex::computeNeighborProcs                                              200   0.001269   0.001269   0.001269   0.22%
+ParticleContainer::ReserveForRedistribute()                              200    0.00118    0.00118    0.00118   0.21%
+FabArray<FAB>::SumBoundary_finish()                                      300   0.001144   0.001144   0.001144   0.20%
+Other                                                                   2375   0.005403   0.005403   0.005403   0.95%
+---------------------------------------------------------------------------------------------------------------------
+
+END REGION WarpX::Evolve()
+Device Memory Usage:
+---------------------------------------------------------------------------
+Name                                             Nalloc    AvgMem    MaxMem
+---------------------------------------------------------------------------
+The_Arena::Initialize()                               1   178 KiB    29 GiB
+ResizeRandomSeed                                      1    39 MiB    40 MiB
+ParticleContainer::SortParticlesForDeposition()     150   199 KiB   861 KiB
+PhysicalParticleContainer::AddPlasma()               18   476 KiB   797 KiB
+MultiReducedDiags::ComputeDiags()                    77  6322   B   432 KiB
+ParticleContainer::Redistribute_impl()                6   952   B   325 KiB
+WarpX::InitData()                                    30    37 KiB   240 KiB
+Redistribute_partition                             2110  1083   B   117 KiB
+PermutationForDeposition()                          350  5688   B    71 KiB
+ParticleContainer::addParticles                      18    53   B    67 KiB
+FillBoundary_nowait()                              1212  5248   B    10 KiB
+main()                                               33  7310   B  7680   B
+FabArray::setVal()                                   19  4483   B  4864   B
+DenseBins<T>::buildGPU                               12  2076   B  3328   B
+WarpX::SyncCurrent()                                600   100   B  2560   B
+ParticleBufferMap::define                             8  1661   B  2048   B
+ParticleCopyPlan::build                            1212    36   B  1280   B
+LaserParticleContainer::Evolve()                    300    23   B   768   B
+amrex::packBuffer                                   100     3   B   768   B
+ParticleCopyPlan::buildCopiesAtomicScatter          188     8   B   512   B
+amrex::Copy()                                       300     2   B   256   B
+BilinearFilter::ComputeStencils()                     1   241   B   256   B
+---------------------------------------------------------------------------
+
+Managed Memory Usage:
+---------------------------------------------------------
+Name                             Nalloc  AvgMem    MaxMem
+---------------------------------------------------------
+The_Managed_Arena::Initialize()       1  28   B  8192 KiB
+---------------------------------------------------------
+
+Pinned Memory Usage:
+-----------------------------------------------------------------------
+Name                                         Nalloc    AvgMem    MaxMem
+-----------------------------------------------------------------------
+The_Pinned_Arena::Initialize()                    1    11   B  8192 KiB
+ParticleContainer::addParticles                  36    16 KiB   795 KiB
+WarpXOpenPMDPlot::WriteOpenPMDFields::D2H()      54   174   B    18 KiB
+FillBoundary_nowait()                           612  5242   B  9984   B
+main()                                           63  6335   B  6656   B
+FabArray::setVal()                               19  4483   B  4864   B
+WarpX::InitData()                                10   108   B  1536   B
+ParticleContainer::Redistribute_impl()          208   416   B  1024   B
+MultiReducedDiags::ComputeDiags()                77     7   B   256   B
+ParticleCopyPlan::build                         202     6   B   256   B
+Redistribute_partition                          303     2   B   256   B
+Unprofiled                                        3     0   B   256   B
+amrex::Copy()                                   300     2   B   256   B
+-----------------------------------------------------------------------
+
+Comms Memory Usage:
+-------------------------------------------------------
+Name                           Nalloc  AvgMem    MaxMem
+-------------------------------------------------------
+The_Comms_Arena::Initialize()       1   9   B  8192 KiB
+-------------------------------------------------------
+
+Total GPU global memory (MB) spread across MPI: [40440 ... 40440]
+Free  GPU global memory (MB) spread across MPI: [9562 ... 9562]
+[The         Arena] max space (MB) allocated spread across MPI: [30330 ... 30330]
+[The         Arena] max space (MB) used      spread across MPI: [41 ... 41]
+[The Managed Arena] max space (MB) allocated spread across MPI: [8 ... 8]
+[The Managed Arena] max space (MB) used      spread across MPI: [0 ... 0]
+[The  Pinned Arena] max space (MB) allocated spread across MPI: [8 ... 8]
+[The  Pinned Arena] max space (MB) used      spread across MPI: [0 ... 0]
+[The   Comms Arena] max space (MB) allocated spread across MPI: [8 ... 8]
+[The   Comms Arena] max space (MB) used      spread across MPI: [0 ... 0]
+AMReX (26.08-4-gcb098067c32e) finalized

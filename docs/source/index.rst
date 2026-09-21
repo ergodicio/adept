@@ -57,6 +57,7 @@ Documentation
    solvers/vfp2d/config
    solvers/tf1d/config
    solvers/osiris/config
+   solvers/warpx/config
 
 .. toctree::
    :maxdepth: 2
