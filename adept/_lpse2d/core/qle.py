@@ -306,14 +306,24 @@ class QuasilinearEvolution:
         """``gamma_L(k)`` on the EPW k grid from the evolved ``f`` (0 where the mode's phase
         velocity is off the grid, as LPSE)."""
         # grad f = f grad(ln f): exact for a Maxwellian on any grid (a plain central difference
-        # of the exponential over-estimates |f'| by 20 % at dv = 0.13 vte, LPSE's default)
-        log_f = jnp.log(jnp.maximum(f, 1e-300))
-        if self.is_2d:
-            grad = f[..., None] * jnp.stack(
-                [jnp.gradient(log_f, self.dv, axis=0), jnp.gradient(log_f, self.dv, axis=1)], axis=-1
-            )
-        else:
-            grad = (f * jnp.gradient(log_f, self.dv))[:, None]
+        # of the exponential over-estimates |f'| by 20 % at dv = 0.13 vte, LPSE's default).
+        # Where a neighbour sits at the floor (the clipped edge of a plateau) ln f jumps by
+        # hundreds across one cell and f grad(ln f) is meaningless: the plain difference there
+        # (test_029/qle/2: a -10 wpe Landau rate at the plateau edge blew the EPW up in one step)
+        floor = 1e-30 * jnp.max(f)
+        log_f = jnp.log(jnp.maximum(f, floor))
+        axes = (0, 1) if self.is_2d else (0,)
+        parts = []
+        for axis in axes:
+            g_log = f * jnp.gradient(log_f, self.dv, axis=axis)
+            g_lin = jnp.gradient(f, self.dv, axis=axis)
+            pad = [(0, 0)] * f.ndim
+            pad[axis] = (1, 1)
+            fp = jnp.pad(f, pad, mode="edge")
+            lo = jnp.minimum(jnp.roll(fp, 1, axis=axis), jnp.roll(fp, -1, axis=axis))
+            lo = lo[tuple(slice(1, -1) if a == axis else slice(None) for a in range(f.ndim))]
+            parts.append(jnp.where(jnp.minimum(lo, f) > floor, g_log, g_lin))
+        grad = jnp.stack(parts, axis=-1)
         v_perp = self.v_perp
 
         def at_k(args):
