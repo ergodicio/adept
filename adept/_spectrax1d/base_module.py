@@ -819,8 +819,7 @@ class BaseSpectrax1D(ADEPTModule):
         with open(os.path.join(td, "scalar_outputs.txt"), "w") as f:
             f.write("Spectrax Scalar Outputs\n")
             f.write("=" * 50 + "\n\n")
-            for key, value in sorted(scalar_outputs.items()):
-                f.write(f"{key}: {value}\n")
+            f.writelines(f"{key}: {value}\n" for key, value in sorted(scalar_outputs.items()))
 
     def _process_distribution_function(self, Ck, t_array, Nn, Nm, Np, Nx, Ny, Nz, td: str) -> None:
         """Process and save distribution function (Hermite-Fourier coefficients)."""

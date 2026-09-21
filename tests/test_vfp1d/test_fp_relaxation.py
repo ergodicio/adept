@@ -194,6 +194,6 @@ class Vfp1dVectorFieldFactory(AbstractFPRelaxationVectorFieldFactory):
             grid=vfp_grid,
             model=get_model(model_name, vfp_grid.v, vfp_grid.dv),
             scheme=get_scheme(scheme_map.get(scheme_name, scheme_name.lower()), vfp_grid.dv),
-            sc_beta=SelfConsistentBetaConfig(max_steps=sc_iterations if sc_iterations > 0 else 0),
+            sc_beta=SelfConsistentBetaConfig(max_steps=max(0, sc_iterations)),
         )
         return F0CollisionsVectorField(collisions=collisions, dt=dt)
