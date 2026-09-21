@@ -562,7 +562,9 @@ def get_derived_quantities(cfg: dict) -> dict:
         )
     if pump_depletion:
         if not (srs_on or tpd_on):
-            raise ValueError("terms.light.pump_depletion requires at least one of terms.epw.source.srs/tpd")
+            # a light-only run (LPSE lw.enable = false: test_001, 003, 011, 012, 019): the pump
+            # propagates with no instability coupling and the EPW stays at zero
+            print("NOTE: terms.light.pump_depletion without terms.epw.source.srs/tpd -- the pump propagates uncoupled")
         if "E0" not in cfg["drivers"]:
             raise ValueError(
                 "terms.light.pump_depletion requires drivers.E0 (the evolved pump is launched "

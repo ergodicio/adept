@@ -297,6 +297,12 @@ def translate_parms(
     # ---- EPW terms
     labc_x = float(g("lw.Labc.min.x", g("lw.Labc", "0")))
     labc_y = float(g("lw.Labc.min.y", g("lw.Labc", "0")))
+    # the light fields' absorbing layers (adept derives them from the EPW boundary): a
+    # light-only deck (lw.enable = false) has only laser.evolution.Labc, and an evolved pump
+    # needs an absorbing x boundary to exit the box
+    if laser_evolves:
+        labc_x = max(labc_x, float(g("laser.evolution.Labc.min.x", g("laser.evolution.Labc", "0"))))
+        labc_y = max(labc_y, float(g("laser.evolution.Labc.min.y", g("laser.evolution.Labc", "0"))))
     boundary = {"x": "absorbing" if labc_x > 0 else "periodic", "y": "absorbing" if labc_y > 0 else "periodic"}
     boundary_width = max(labc_x, labc_y, dx)
     if labc_x > 0 and labc_y > 0 and labc_x != labc_y:
@@ -689,9 +695,8 @@ def translate_parms(
             "subcycling": int(float(g("qle.additionalSubcycling", "1"))),
             "multiplier": float(g("qle.coefficientMultiplier", "1")),
         }
-        solver = str(g("qle.solver", "spectral")).lower()
-        if solver == "implicit":
-            report["notes"].append("qle.solver = implicit: adept's quasilinear update is the explicit sub-cycled one")
+        if str(g("qle.solver", "spectral")).lower() == "implicit":
+            qle["solver"] = "implicit"
         if hpe is not None:
             report["unsupported"].append("qle with hpe (LPSE refuses the pair as well)")
             qle = None

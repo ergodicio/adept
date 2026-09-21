@@ -100,6 +100,8 @@ class QuasilinearEvolution:
         self.subcycling = int(qle["subcycling"])
         self.max_subcycles = int(qle["max_subcycles"])
         self.multiplier = float(qle["multiplier"])
+        self.solver = str(qle["solver"])
+        self.cg_iterations = int(qle["cg_iterations"])
         p = list(qle["thermalization_probability"]) + [0.0, 0.0]
         self.p_therm = (float(p[0]), float(p[1]))
 
@@ -262,16 +264,41 @@ class QuasilinearEvolution:
         dt_max = self.dv**2 / (2.0 * self.ndim * jnp.where(c_max > 0.0, c_max, 1.0))
         n_needed = jnp.where(c_max > 0.0, jnp.ceil(dt / dt_max), 1.0) * self.subcycling
         # LPSE sub-cycles to the diffusion limit however many steps that takes ([qle:N]); the
-        # trip count is data-dependent (a while loop under jit), capped at max_subcycles
+        # trip count is data-dependent (a while loop under jit). Beyond max_subcycles -- the
+        # saturated TPD / SRS spectrum on a coarse velocity grid (test_029 at 1.85 ps needed
+        # more than 20000) -- the step is taken implicitly instead (backward Euler, CG)
         n_sub = jnp.clip(n_needed, 1, self.max_subcycles).astype(jnp.int32)
         dt_sub = dt / n_sub
 
-        def substep(i, f):
-            f_new = f + dt_sub * self._flux_increment(f, tensor)
-            f_new = jnp.maximum(0.0, f_new - dt_sub * self.therm_rate * (f_new - self.f0))
+        def relax(f_new, step):
+            f_new = jnp.maximum(0.0, f_new - step * self.therm_rate * (f_new - self.f0))
             return f_new * (self.volume0 / (jnp.sum(f_new) * self.dv**self.ndim))
 
-        return lax.fori_loop(0, n_sub, substep, f)
+        def substep(i, f):
+            return relax(f + dt_sub * self._flux_increment(f, tensor), dt_sub)
+
+        def explicit(f):
+            return lax.fori_loop(0, n_sub, substep, f)
+
+        def implicit(f):
+            return relax(self._implicit_step(f, tensor, dt), dt)
+
+        if self.solver == "implicit":
+            return implicit(f)
+        return lax.cond(n_needed > self.max_subcycles, implicit, explicit, f)
+
+    def _implicit_step(self, f: Array, tensor: Array, dt: float) -> Array:
+        """Backward Euler ``(1 - dt L) f_new = f`` with ``L`` the conservative flux operator
+        (symmetric, negative semi-definite: ``1 - dt L`` is SPD), solved matrix-free by
+        conjugate gradients. Unconditionally stable, density-exact (``L`` conserves the sum);
+        first order in ``dt`` like LPSE's implicit theta scheme at theta = 1."""
+        from jax.scipy.sparse.linalg import cg
+
+        def operator(x):
+            return x - dt * self._flux_increment(x, tensor)
+
+        f_new, _ = cg(operator, f, x0=f, tol=1e-10, atol=0.0, maxiter=self.cg_iterations)
+        return f_new
 
     # ------------------------------------------------------------ Landau rate --
 

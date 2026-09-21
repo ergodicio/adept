@@ -391,8 +391,12 @@ class QLEModel(BaseModel):
     landau_evolution: bool = False  # qle.landauDampingEvolution.enable
     thermalization_probability: list[float] = [1.0, 0.0]  # qle.thermalizationProbability (x, y)
     subcycling: int = Field(default=1, ge=1)  # qle.additionalSubcycling
-    max_subcycles: int = Field(default=20000, ge=1)  # cap on the explicit sub-steps per update
+    max_subcycles: int = Field(default=20000, ge=1)  # explicit sub-steps beyond which the step goes implicit
     multiplier: float = 1.0  # qle.coefficientMultiplier
+    # explicit (LPSE's sub-cycled update, implicit beyond max_subcycles) or implicit (backward
+    # Euler by CG every update; LPSE qle.solver = implicit is its theta-scheme ADI)
+    solver: Literal["explicit", "implicit"] = "explicit"
+    cg_iterations: int = Field(default=500, ge=1)
 
 
 class IAWDampingModel(BaseModel):
