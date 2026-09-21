@@ -142,7 +142,9 @@ improvement over $n_v=32$, and separately checks projection work and
 quasineutrality. At that resolution the measured raw, accounted, and projection
 contributions are 2.954%, 0.742%, and 2.212% of the perturbation energy,
 respectively. This is a bounded radial convergence requirement, not a universal
-resolution recommendation or long-time energy acceptance criterion.
+resolution recommendation or long-time energy acceptance criterion. The end time
+is only about 0.8% of a guide-field Alfvén period for this initial state; the
+full-period wave test above applies to the ideal magnetic subsystem alone.
 
 Longer finite-field kinetic runs must establish temporal, radial, spatial, and
 angular convergence on the relevant energy-transfer and flow timescales. Driven
