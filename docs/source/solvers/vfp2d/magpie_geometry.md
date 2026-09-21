@@ -169,3 +169,88 @@ domain limit comparisons with the experiment. In particular, the observed change
 from upstream Z=4 to sheet Z=6 cannot occur in this example. Use matched charge,
 geometry and material assumptions when comparing with GORGON, and distinguish
 assumed initial profiles from simulated observables.
+
+## Initial numerical scales and a path to convergence
+
+The following are **setup-only** calculations for the checked-in carbon deck
+(`nx=ny=64`, `nv=48`, `lmax=mmax=2`). They use the initialized arrays and the
+actual field/ion operators; they are not a stability result for a later heated,
+compressed or plasmoid-containing state. The physical cell sizes are
+$\Delta x=0.4375$ mm and $\Delta y=0.1875$ mm. The radial cutoff is
+$v_{max}=1.2994\times10^7$ m/s, and $\Delta v=2.7071\times10^5$ m/s.
+
+For the table, $k_{max}=\sqrt{(\pi/\Delta x)^2+(\pi/\Delta y)^2}
+=1.8229\times10^4$ m$^{-1}$, $v_{last}$ is the largest sampled radial velocity,
+and the initialized peak field is 3.0053 T including the seed perturbation.
+
+| Initial scale | Value at $\Delta t=0.1$ ps | Interpretation |
+| --- | ---: | --- |
+| Spectral streaming $v_{last}k_{max}\Delta t$ | 0.02344 | Fastest spatial mode estimate for the sampled electron speeds |
+| Electron gyromotion $\Omega_{ce}\Delta t$ | 0.05286 | $\Omega_{ce}=eB_{max}/m_e=5.286\times10^{11}$ s$^{-1}$ |
+| Retained angular gyromotion $l_{max}\Omega_{ce}\Delta t$ | 0.1057 | Largest rotation frequency within the retained harmonics |
+| Hall envelope $D_H k_{max}^2\Delta t$ | 0.001653 | $D_H=B/(\mu_0 e n_e)=49.76$ m$^2$/s at peak B |
+| Resistive diffusion $D_\eta k_{max}^2\Delta t$ | 0.0003072 | $D_\eta=9.245$ m$^2$/s from the initialized kinetic-Ohm coefficient |
+| Electric radial displacement $e|E|_{max}\Delta t/(m_e\Delta v)$ | 0.009730 | Includes the initialized bulk, pressure and other Ohm terms |
+| Ion Euler half-step CFL limit at `cfl=0.4` | 0.8640 ns | The actual hydro half-step is only 0.00005 ns |
+
+The Hall estimate is the uniform-background whistler envelope
+$|\omega|\le D_H k^2$; it does not bound all modes of an inhomogeneous coupled
+state. The resistive value is the frozen local coefficient
+$c_{norm}^2\eta_{norm}L_0^2/\tau$ with
+$\eta_{norm}=\texttt{resistivity_coefficient}/\langle v^3\rangle$.
+The ion Euler CFL check includes ion sound and advection, not all coupled
+magnetic/electron-pressure waves. Initial ion sound speed is 25.89 km/s;
+including isothermal electron pressure gives the estimate
+$\sqrt{(\gamma_iT_i+ZT_e)/m_i}=33.95$ km/s, and the peak Alfvén speed is
+69.35 km/s. Evaluate these indicators again as B, density, pressure and velocity
+change, and establish timestep convergence against a smaller step.
+
+Collisions add an independent accuracy check. For the implemented Lorentz
+$l=1$ electron-ion diagonal, evaluated at
+$v=\sqrt{T_e/m_e}$, $\nu_{ei}=1.254\times10^{12}$ s$^{-1}$ and the collision
+half-step has $\nu_{ei}\Delta t/2=0.06269$. At the first radial node that factor
+is 108.3 because the diagonal scales as $v^{-3}$. Its implicit treatment removes
+that diagonal's explicit stability restriction, but does not establish temporal
+accuracy; the anisotropic electron-electron off-diagonal terms remain explicit.
+Refine the collision timestep as well as the radial grid.
+
+The 0.2 ps horizon covers only 0.0168 electron gyro-orbits. Ions at 50 km/s move
+10 nm, compared with the 600 micrometre sheet half-width. It is therefore a
+plumbing test: the sheet inflow time $\delta/V_{in}=12$ ns is 60,000 times longer.
+Finite two-step output cannot demonstrate hydrodynamic reconnection or agreement
+with the experimental outflow speed.
+
+The spatial mesh has only 3.2 cells per measured sheet half-width and 16 per
+measured half-length. The x domain extends to twice the experimental half-length
+on each side, whereas the periodic y reversal is 6 mm from the central sheet.
+Those box choices are not experimental boundary conditions. Compare successively
+finer grids (for example 64, 128 and 256 cells per axis), then increase domain
+sizes at fixed physical cell sizes to separate resolution effects from periodic
+image effects. Compare sheet width, flux transfer, outflow and heating in a
+fixed central physical region. The initial two-cell width rejection is much
+weaker than this convergence requirement.
+
+Velocity extent also needs attention before heating studies. The current cutoff
+is $8\sqrt{15\,\mathrm{eV}/m_e}$, but only
+$3.098\sqrt{100\,\mathrm{eV}/m_e}$ at the sheet electron temperature reported in
+[Hare et al., Table I](https://arxiv.org/pdf/1609.09234). An untruncated isotropic
+100 eV Maxwellian has **2.23% of its particle number and 8.74% of its kinetic
+energy above this cutoff** (respectively the upper incomplete gamma fractions
+$Q(3/2,a^2/2)$ and $Q(5/2,a^2/2)$, with $a=3.098$). A normalized truncated
+distribution cannot recover those missing tails. To retain eight thermal
+standard deviations at 100 eV, raise the config's `vmax` to at least
+$8\sqrt{100/15}=20.66$; keeping the initial $\Delta v$ then needs at least 124
+radial cells. This is an example extent calculation, not a converged choice.
+Refine extent and spacing separately, and increase `lmax=mmax` through a
+convergence sequence: 2, 4 and 6 retain 6, 15 and 28 packed complex harmonics.
+
+At the current timestep, 100 ns requires one million steps and 250 ns requires
+2.5 million. The initial arrays occupy 18.375 MiB in float64 real storage,
+including the coupled state; 101 full snapshots alone occupy about 1.81 GiB
+before file overhead. This excludes RK stages, transforms, collision workspaces,
+compiler memory and diagnostic arrays. Dominant distribution storage scales as
+$16N_xN_yN_vN_h$ bytes, and a rough workload count scales with
+$N_tN_xN_yN_vN_h$ plus transform/collision costs. Benchmark a compiled short run
+on the intended hardware before committing to a long run. Refinement in space,
+velocity and harmonic order compounds the cost; no wall-clock claim follows
+from these setup calculations.
