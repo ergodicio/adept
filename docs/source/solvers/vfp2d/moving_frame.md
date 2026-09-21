@@ -154,3 +154,4 @@ material limitations for experiment design. The existing initial ion CFL check
 uses Euler sound/flow speeds; it does not establish stability for Alfvén,
 magnetosonic, or Hall induction timescales. Those require explicit timestep
 verification for each magnetized configuration.
+# Review trigger: this page documents the moving-ion frame used by the MAGPIE force coupling.
