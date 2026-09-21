@@ -118,9 +118,15 @@ def compare(series, lpse_metrics, windows) -> dict[str, float]:
             metrics[f"{name}_energy_growth_lpse_{tag}"] = gl
             if np.isfinite(ga) and np.isfinite(gl) and gl != 0:
                 metrics[f"{name}_energy_growth_ratio_{tag}"] = ga / gl
-    epw, el = s["epw_energy"], d["EPW_energy"]
-    metrics["epw_half_max_time_adept_ps"] = float(t[np.argmax(epw > 0.5 * epw.max())])
-    metrics["epw_half_max_time_lpse_ps"] = float(tl[np.argmax(el > 0.5 * el.max())])
+    # a light-only reference (lw.enable = false) has no EPW_energy column
+    if "epw_energy" in s and "EPW_energy" in d:
+        epw, el = s["epw_energy"], d["EPW_energy"]
+        metrics["epw_half_max_time_adept_ps"] = float(t[np.argmax(epw > 0.5 * epw.max())])
+        metrics["epw_half_max_time_lpse_ps"] = float(tl[np.argmax(el > 0.5 * el.max())])
+    # light-only decks: the pump energy (LPSE E0_energy vs the adept incident / transmitted flux
+    # is the observable there; the column is recorded for the note)
+    if "E0_energy" in d:
+        metrics["e0_energy_lpse_final"] = float(d["E0_energy"][-1])
     if IAW_PAIR[0] in d and IAW_PAIR[1] in s:
         metrics["iaw_max_adept"] = float(np.max(s[IAW_PAIR[1]]))
         metrics["iaw_max_lpse"] = float(np.max(d[IAW_PAIR[0]]))

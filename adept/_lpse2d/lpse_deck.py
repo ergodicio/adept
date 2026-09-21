@@ -304,6 +304,11 @@ def translate_parms(
         labc_x = max(labc_x, float(g("laser.evolution.Labc.min.x", g("laser.evolution.Labc", "0"))))
         labc_y = max(labc_y, float(g("laser.evolution.Labc.min.y", g("laser.evolution.Labc", "0"))))
     boundary = {"x": "absorbing" if labc_x > 0 else "periodic", "y": "absorbing" if labc_y > 0 else "periodic"}
+    if ny == 1:
+        # a 1-D deck: LPSE's scalar Labc names no y layer; adept's one-cell y axis would sit
+        # entirely inside one (test_030: the whole box damped at 0.78 per light sub-step)
+        boundary["y"] = "periodic"
+        labc_y = 0.0
     boundary_width = max(labc_x, labc_y, dx)
     if labc_x > 0 and labc_y > 0 and labc_x != labc_y:
         report["notes"].append("different x/y absorber widths: adept uses one boundary_width (the larger)")
