@@ -464,7 +464,8 @@ def translate_parms(
         source_face = str(g(f"laser.{b}.evolution.source", "min.x")).lower()
         if abs(dz) > 1e-6 * np.linalg.norm(direction) or direction[0] == 0 or source_face.endswith(".y"):
             report["unsupported"].append(
-                f"laser.{b}.direction {direction} / evolution.source = {source_face}: adept pump beams enter from the x faces"
+                f"laser.{b}.direction {direction} / evolution.source = {source_face}: "
+                "adept pump beams enter from the x faces"
             )
         beam_angle = float(np.degrees(np.arctan2(dy, direction[0])))
         if b == 1:
