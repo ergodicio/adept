@@ -61,6 +61,11 @@ The [MAGPIE analysis reference](magpie_analysis.md) defines the independent bulk
 and Alfvén rate normalizations, physical output units, source-aware flux budgets,
 and the carbon upstream scale-report CLI.
 
+Nonrelativistic runs use the [discrete electric-work correction](electric_work.md)
+by default. Relativistic runs retain the original electric operator. The
+correction preserves the explicit velocity-tail terms and does not remove
+current-projection work or guarantee distribution positivity.
+
 ## Laser heating
 
 VFP2D shares the conservative inverse-bremsstrahlung and Maxwellian heating operators with
