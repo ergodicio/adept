@@ -19,6 +19,7 @@ from adept.vfp2d.exchange import (
 )
 from adept.vfp2d.harmonics import HarmonicLayout, complex_to_real, density, real_to_complex
 from adept.vfp2d.hydro import IonEuler2D, conserved_to_primitive
+from adept.vfp2d.magnetic import IonMagneticCoupling
 from adept.vfp2d.pressure import ElectronPressureCoupling
 from adept.vfp2d.vector_field import KineticOhmStep
 
@@ -29,7 +30,9 @@ class CoupledIonKineticStep:
     The electron step must be a ``KineticOhmStep`` configured with an ion-frame
     operator. Ion kinematics are held at the hydro midpoint during its RK stages.
     This production coupling includes ideal-ion transport and local finite-mass
-    thermal and momentum exchange together with electron-pressure feedback.
+    thermal and momentum exchange together with electron-pressure feedback and
+    magnetic force/work. Magnetic half-kicks use the old and advanced fields,
+    bracketing induction with the same midpoint ion velocity.
     """
 
     def __init__(
@@ -51,6 +54,7 @@ class CoupledIonKineticStep:
         self.dt = float(dt)
         self.exchange = exchange
         self.pressure = pressure
+        self.magnetic = IonMagneticCoupling(electron_step.maxwell)
         electron_mass = 1.0
         if exchange is not None:
             electron_mass = exchange.electron_mass
@@ -105,8 +109,10 @@ class CoupledIonKineticStep:
         ions: Array,
         args: dict | None,
         source_dt: float | None = None,
+        magnetic_field: Array | None = None,
     ) -> tuple[Array, Array]:
-        if self.exchange is None and self.pressure is None:
+        magnetic_active = self.evolve_ions and magnetic_field is not None
+        if self.exchange is None and self.pressure is None and not magnetic_active:
             return flm, ions
         source_dt = self.dt if source_dt is None else float(source_dt)
         template = ions[..., 0]
@@ -127,6 +133,9 @@ class CoupledIonKineticStep:
             pressure_df1, pressure_di1, _diagnostics = self.pressure(flm, ions)
             df1 += pressure_df1
             di1 += pressure_di1
+        if magnetic_active:
+            magnetic_di1, _diagnostics = self.magnetic(magnetic_field, ions)
+            di1 += magnetic_di1
         midpoint_i = ions + 0.5 * source_dt * di1
         initial_velocity = ions[..., 1:4] / ions[..., :1]
         midpoint_velocity = midpoint_i[..., 1:4] / midpoint_i[..., :1]
@@ -147,6 +156,9 @@ class CoupledIonKineticStep:
             pressure_df2, pressure_di2, _diagnostics = self.pressure(midpoint_f, midpoint_i)
             df2 += pressure_df2
             di2 += pressure_di2
+        if magnetic_active:
+            magnetic_di2, _diagnostics = self.magnetic(magnetic_field, midpoint_i)
+            di2 += magnetic_di2
         final_i = ions + source_dt * di2
         final_velocity = final_i[..., 1:4] / final_i[..., :1]
         base_in_midpoint_frame = self.frame_remap(flm, half_frame_change)
@@ -159,8 +171,13 @@ class CoupledIonKineticStep:
             raise ValueError("coupled state must contain the ion conserved array under 'ions'")
         flm = real_to_complex(state["flm"]) if self.electron_step.real_storage else state["flm"]
         midpoint_ions = self._hydro_half_step(state["ions"])
-        flm, midpoint_ions = self._exchange(t + 0.25 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt)
+        if self.evolve_ions:
+            flm, midpoint_ions = self._exchange(t + 0.25 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt, state["b"])
         electron_args = {**({} if args is None else args), **self.ion_kinematics(midpoint_ions)}
+        if self.exchange is not None:
+            # Collision density must follow compression, rather than retaining
+            # the initial profile supplied by BaseVFP2D.
+            electron_args["ni"] = midpoint_ions[..., 0] / self.exchange.ion_mass
         electron_state = {
             "flm": complex_to_real(flm) if self.electron_step.real_storage else flm,
             "e": state["e"],
@@ -173,9 +190,22 @@ class CoupledIonKineticStep:
         flm = (
             real_to_complex(advanced_electrons["flm"]) if self.electron_step.real_storage else advanced_electrons["flm"]
         )
-        flm, midpoint_ions = self._exchange(t + 0.75 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt)
+        if self.evolve_ions:
+            flm, midpoint_ions = self._exchange(
+                t + 0.75 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt, advanced_electrons["b"]
+            )
         final_ions = self._hydro_half_step(midpoint_ions)
         final_args = {**({} if args is None else args), **self.ion_kinematics(final_ions)}
+        # The source kick translates the peculiar current when the ion frame
+        # accelerates. Enforce Ampere at the *returned* time as well, recording
+        # its lab-frame work instead of deferring a hidden correction to the
+        # next electron step.
+        projected_f = self.electron_step._project(flm, advanced_electrons["b"])
+        if "current_projection_energy" in advanced_electrons:
+            advanced_electrons["current_projection_energy"] += self.electron_step._projection_energy_density(
+                flm, projected_f, final_args
+            )
+        flm = projected_f
         hidden_dndz = self.electron_step._hidden_dndz(
             t + self.dt,
             final_args,

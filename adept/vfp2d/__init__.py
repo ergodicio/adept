@@ -32,6 +32,7 @@ from adept.vfp2d.hydro import (
     hllc_flux,
     primitive_to_conserved,
 )
+from adept.vfp2d.magnetic import IonMagneticCoupling
 from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import KineticOhm2D, project_current_moment
 from adept.vfp2d.pressure import ElectronPressureCoupling, electron_pressure_tensor
@@ -56,6 +57,7 @@ __all__ = [
     "HouLiFilter2D",
     "IonEuler2D",
     "IonFrameVlasov",
+    "IonMagneticCoupling",
     "KineticOhm2D",
     "KineticOhmStep",
     "Maxwell2D",

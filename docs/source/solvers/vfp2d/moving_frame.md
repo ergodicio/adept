@@ -54,9 +54,11 @@ Gate 1a tests establish:
 - the analytic pressure-anisotropy rate under prescribed trace-free strain; and
 - cancellation between a uniform force and an oppositely accelerating frame.
 
-Gate 2a wires this implementation into the opt-in `CoupledIonKineticStep`. The angular
-Galerkin path remains a correctness reference; a sparse precomputed operator is required
-before high-$\ell$ production runs.
+`CoupledIonKineticStep` wires these operators into the opt-in moving-ion time loop.
+The production deformation operator uses precomputed sparse harmonic maps; the dense
+angular Galerkin implementation remains a test oracle. Arbitrary harmonic support is
+implemented, while performance and angular convergence still require checks for each
+production regime.
 
 ## Gate 1b moment-exchange reference
 
@@ -81,7 +83,72 @@ residuals.
 This is a differential, weak-drift moment-relaxation reference, not a replacement for
 the full finite-mass Landau collision operator. In particular, momentum relaxation is
 energy-neutral to first order in the relative drift; drift-energy thermalization is a
-higher-order effect. Gate 2a integrates time-centered thermal exchange into the hydro/VFP
-split and saves the resulting energy budget. Production momentum exchange remains disabled
-until Gate 2b adds the finite-mass velocity-frame remap; electron-pressure feedback and
-quantitative local transport convergence are also still required.
+higher-order effect. The coupled split includes time-centered thermal and momentum
+exchange. `VelocityFrameRemap` translates the distribution between accelerated ion
+frames while preserving the discrete Galilean density, lab momentum, and lab energy
+transforms. Electron-pressure feedback supplies $-\nabla\cdot\mathbf P_e$ and
+equal-and-opposite resolved mechanical work. Local transport and Biermann tests are
+implemented; full finite-mass collision physics remains outside this moment model.
+
+## Magnetic force and the energy budget
+
+The quasistatic normalization is
+
+$$
+\mathbf J=c^2\nabla\times\mathbf B,\qquad
+\mathcal E_B=\tfrac12c^2|\mathbf B|^2.
+$$
+
+`IonMagneticCoupling` uses the same discrete curl as Faraday's law and adds
+$\mathbf J\times\mathbf B$ to ion momentum and
+$\mathbf u_i\cdot(\mathbf J\times\mathbf B)$ to ion total energy. Magnetic
+source half-kicks use the old and advanced fields, with midpoint mechanical work
+and frame remaps. The electron step between them includes
+$\mathbf E_{\rm bulk}=-\mathbf u_i\times\mathbf B$. On a periodic grid the ideal
+magnetic and mechanical work cancel under the discrete curl summation identity.
+There is no opposite electron heating term for magnetic ion work: its reservoir
+is the magnetic energy evolved by induction.
+
+Collision half-steps receive the evolving midpoint ion number density. With
+`frozen: true`, the coupled call skips all ion sources and transport. Direct
+source-operator tests can still call the exchange map independently.
+
+The returned distribution satisfies the Ampere current constraint after the final
+frame change. This projection's lab energy is added to
+`current_projection_energy`. Diagnostics retain both `total_energy` and
+`accounted_total_energy = total_energy - current_projection_energy`; the latter
+does not imply that the projection is physically energy conserving. Number and
+quasineutrality diagnostics are measured without repairing density.
+
+## Verification scope and remaining energy gate
+
+`tests/test_vfp2d/test_magnetic.py` verifies magnetic pressure and tension, periodic
+work cancellation for both derivative backends, ion internal-energy preservation
+under a magnetic kick, unchanged electron lab energy under the accompanying frame
+translation, and an actual nonzero ion response in the coupled solver. A separate
+ideal magnetic subsystem test propagates a circularly polarized Alfvén wave for
+one period; it verifies the force/induction split without claiming a full kinetic
+Alfvén benchmark.
+
+The finite-field coupled diagnostic initializes
+$\mathbf B=(0.2,0.01\cos x,0.01\sin x)$ on a $12\times4$ periodic grid with
+$c=5$, uniform density and pressure, and runs to normalized $t=0.5$. Its energy
+scale is the transverse magnetic perturbation, not the much larger background
+thermal or guide-field energy. At $n_v=32$, halving $\Delta t$ from 0.01 to 0.005
+leaves the accounted defect close to 6.74% of that perturbation. Increasing
+$n_v$ to 64 reduces it to 1.69%. The declared regression gate uses $n_v=96$,
+$\Delta t=0.005$, requires less than 1% accounted defect and at least eightfold
+improvement over $n_v=32$, and separately checks projection work and
+quasineutrality. At that resolution the measured raw, accounted, and projection
+contributions are 2.954%, 0.742%, and 2.212% of the perturbation energy,
+respectively. This is a bounded radial convergence requirement, not a universal
+resolution recommendation or long-time energy acceptance criterion.
+
+Longer finite-field kinetic runs must establish temporal, radial, spatial, and
+angular convergence on the relevant energy-transfer and flow timescales. Driven
+boundaries also need an explicit source/escape budget. Current projection,
+finite-radial-grid work errors, positivity, and the fluid-ion approximation remain
+material limitations for experiment design. The existing initial ion CFL check
+uses Euler sound/flow speeds; it does not establish stability for Alfvén,
+magnetosonic, or Hall induction timescales. Those require explicit timestep
+verification for each magnetized configuration.

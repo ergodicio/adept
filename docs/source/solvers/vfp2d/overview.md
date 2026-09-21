@@ -31,45 +31,51 @@ The solver includes:
 - the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$;
 - spatially shaped inverse-bremsstrahlung or Maxwellian heating;
 - distribution-function diagnostics for the scalar, vector, $f_2$ tensor, and Nernst moments used in kinetic Ohm's law.
+- opt-in ideal-fluid ions coupled to ion-frame electrons through pressure feedback,
+  finite-mass moment exchange, and magnetic force and mechanical work.
 
 The default is non-relativistic, matching VFP-1D. With `grid.relativistic: true`, the radial coordinate is momentum in $m_ec$ units, streaming uses $v=p/\sqrt{1+p^2}$, current moments use $p^2v$, and initialization uses a Maxwell-Juttner distribution. The current collision operator is non-relativistic, so relativistic mode presently requires `terms.fokker_planck.active: false`.
 
 ## Time integration
 
-Each step uses collision half-step / midpoint kinetic-field step / collision half-step. In
+Each electron step uses collision half-step / kinetic-field step / collision half-step. In
 `maxwell` mode the middle step advances explicit Vlasov--Maxwell. In `kinetic-ohm` mode it
-evaluates the inertia-free generalized Ohm law, advances Faraday's law, and projects the
-current moment onto quasistatic Ampere's law. The origin derivative enforces the KALOS
+evaluates the inertia-free generalized Ohm law with RK4, advances Faraday's law, and projects the
+current moment onto quasistatic Ampere's law. `oshun-implicit` instead solves the local
+kinetic electric-current response without projecting $f_1$; this stationary-ion mode
+still advances Faraday explicitly. The origin derivative enforces the KALOS
 regularity condition $f_\ell^m\sim p^\ell$. Spatial derivatives and field curls are spectral
 on a periodic box.
 
 ## Current limitations
 
 - periodic spatial boundaries only;
-- stationary ions represented by a prescribed neutralizing background;
+- moving ions require nonrelativistic `kinetic-ohm` and an unsharded periodic grid;
 - no atomic kinetics or ionization;
 - relativistic collisions are not yet implemented;
 - positivity is not guaranteed by a truncated spherical-harmonic expansion.
-- `kinetic-ohm` is inertia-free and uses a current-moment projection; a fully implicit kinetic-current response is not yet implemented;
-- moving-ion fluid coupling is not yet implemented.
+- `kinetic-ohm` neglects electron inertia and changes the lab-frame electron energy
+  when projecting the peculiar current; this work is reported separately;
+- no experiment-scale validation of the coupled ion-fluid model or its energy budget.
 
 ## Ion-fluid development phases
 
-The first moving-ion component is available as the standalone `IonEuler2D` finite-volume
+`IonEuler2D` is a standalone finite-volume
 operator. It advances cell averages of
 $(\rho_i,\rho_i u_x,\rho_i u_y,\rho_i u_z,\mathcal E_i)$ with MUSCL reconstruction,
-HLLC fluxes, periodic or outflow boundaries, and SSP-RK2 time stepping. Keeping the
-operator separate from the kinetic split initially makes its conservation and shock
-tests auditable before electron pressure work or collisional exchange are introduced.
+HLLC fluxes, periodic or outflow boundaries, and SSP-RK2 time stepping. Its production
+coupling through `CoupledIonKineticStep` currently requires periodic boundaries for
+the complete kinetic/field/fluid system.
 
 Development follows the verification gates in the kinetic-electron / ion-fluid research
 plan:
 
 1. **Gate 0a (implemented):** conservative Euler core; uniform-flow, smooth-advection,
    contact, conservation, and coordinate-rotated Sod tests.
-2. **Gate 0b:** strong-shock, Sedov, isentropic-vortex, and magnetic-divergence tests,
-   followed by configuration and diagnostic integration.
-3. **Gate 1a (implemented as an equation-level reference):** conservative bulk
+2. **Gate 0b (implemented):** strong-shock, Sedov, and isentropic-vortex checks,
+   with configuration and ion-invariant diagnostic integration. Discrete magnetic
+   divergence preservation is tested independently with Faraday's curl.
+3. **Gate 1a (implemented):** conservative bulk
    advection plus compression, shear, and frame acceleration for arbitrary spherical
    harmonics. See the [ion-frame derivation and tests](moving_frame.md).
 4. **Gate 1b (implemented as a local moment-exchange reference):** finite-mass
@@ -79,12 +85,22 @@ plan:
 5. **Gate 2a (implemented, opt in):** time-centered kinetic-Ohm/ideal-ion production
    split, ideal bulk magnetic advection, local temperature exchange, coupled invariant
    histories, and an exact frozen-ion regression limit.
-6. **Gate 2b:** electron-pressure feedback, finite-mass momentum-frame remapping,
-   sparse high-$\ell$ operators, and quantitative Spitzer--Härm/Epperlein--Haines and
-   Biermann convergence tests.
+6. **Gate 2b (implemented):** electron-pressure feedback, finite-mass momentum-frame
+   remapping, sparse harmonic deformation verified against a dense oracle, and local
+   Spitzer--Härm/Epperlein--Haines and Biermann convergence tests. These local tests do
+   not establish nonlinear experiment-scale convergence.
+7. **Magnetic flow milestone (implemented):** $\mathbf J\times\mathbf B$ force and
+   $\mathbf u_i\cdot(\mathbf J\times\mathbf B)$ ion work, with source half-kicks
+   around induction. Tests cover pressure and tension, discrete ideal-work balance,
+   one-period Alfvén propagation of the ideal magnetic subsystem, the full coupled
+   initial tension response, and finite-field radial energy convergence.
 
-The default production `vfp-2d` time loop still uses stationary ions. Gate 2a moving
-ions must be enabled explicitly and should not yet be used for production parameter
-scans; Gate 0b and Gate 2b remain acceptance boundaries.
+The default `vfp-2d` time loop uses stationary ions. Moving ions must be enabled
+explicitly. The finite-field test declares a less-than-1% **accounted** energy defect
+relative to the transverse magnetic perturbation at its specified end time and radial
+resolution. The raw energy and current-projection work remain separately visible; this
+test does not close the long-time energy gate. See the [coupling details](moving_frame.md)
+before choosing a resolution. Sustained driven/open boundaries, cooling/ionization,
+and convergence over experimental flow times remain separate development gates.
 
 See the [configuration reference](config.md), the [Joglekar 2014 reconstruction design](joglekar2014.md), and [`configs/vfp-2d/landau-damping.yaml`](../../../../configs/vfp-2d/landau-damping.yaml).
