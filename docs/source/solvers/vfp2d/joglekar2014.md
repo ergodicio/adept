@@ -133,6 +133,14 @@ opposite work and momentum exchange. Its update splits naturally into:
   of the ion frame;
 - implicit collisions and laser heating.
 
+The coupled source half-steps include $\mathbf j\times\mathbf B$, with
+$\mathbf j=c^2\nabla\times\mathbf B$ in code units, and midpoint ion mechanical
+work $\mathbf u_i\cdot(\mathbf j\times\mathbf B)$. The first half-step uses the
+initial magnetic field and the second uses the field after the kinetic/Faraday step.
+Each source update remaps the electrons into the updated ion frame. Collision and
+inverse-bremsstrahlung inputs use the midpoint ion number density $n_i=\rho_i/m_i$.
+Setting `ion_fluid.frozen: true` suppresses both hydro and coupled ion source updates.
+
 For the first coupled milestone, an isothermal or adiabatic ion pressure law is adequate.
 The acceptance tests should verify total particle number, total momentum, total energy, and
 $\nabla\cdot\mathbf B$ across the kinetic--fluid exchange. A prescribed bulk velocity is a

@@ -162,7 +162,7 @@ def test_current_projection_ledger_matches_lab_frame_energy_change():
 def test_midpoint_temperature_exchange_preserves_coupled_energy():
     grid, layout, _maxwell, _stationary, moving, hydro, flm, field, ions, ion_mass = _make_problem()
     exchange = ElectronIonExchange(layout, grid.v, grid.dv, ion_mass=ion_mass)
-    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, exchange=exchange, evolve_ions=False)
+    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, exchange=exchange)
     before = coupled_invariants(
         flm,
         ions,
@@ -210,7 +210,7 @@ def test_midpoint_momentum_exchange_preserves_lab_momentum_and_energy():
     flm = flm.at[..., layout.index(1, 0), :].set(0.07 * grid.v * f00)
     flm = flm.at[..., layout.index(1, 1), :].set((-0.03 + 0.02j) * grid.v * f00)
     exchange = ElectronIonExchange(layout, grid.v, grid.dv, ion_mass=ion_mass)
-    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, exchange=exchange, evolve_ions=False)
+    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, exchange=exchange)
     before = coupled_invariants(
         flm,
         ions,
@@ -253,7 +253,7 @@ def test_midpoint_momentum_exchange_preserves_lab_momentum_and_energy():
 def test_midpoint_pressure_feedback_preserves_global_momentum_and_energy():
     grid, layout, _maxwell, _stationary, moving, hydro, flm, field, ions, ion_mass = _make_problem()
     pressure = ElectronPressureCoupling(moving.ion_frame)
-    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, pressure=pressure, evolve_ions=False)
+    coupled = CoupledIonKineticStep(moving, hydro, moving.dt, pressure=pressure)
     before = coupled_invariants(
         flm,
         ions,
@@ -285,3 +285,39 @@ def test_midpoint_pressure_feedback_preserves_global_momentum_and_energy():
     np.testing.assert_allclose(after["total_momentum"], before["total_momentum"], rtol=3e-13, atol=3e-13)
     np.testing.assert_allclose(after["total_energy"], before["total_energy"], rtol=3e-13, atol=3e-13)
     assert jnp.linalg.norm(updated_ions[..., 1:4]) > 0.0
+
+
+def test_magnetic_source_accelerates_ions_and_applies_midpoint_work():
+    grid, layout, maxwell, _, moving, hydro, flm, field, ions, ion_mass = _make_problem(nx=16, dt=2.0e-6)
+    # Uniform thermodynamic state with magnetic pressure and tension forces.
+    ions = jnp.broadcast_to(ions[0, 0], ions.shape)
+    flm = jnp.broadcast_to(flm[0, 0], flm.shape)
+    magnetic = field.at[..., 0].set(0.03).at[..., 2].set(0.02 * jnp.sin(grid.x)[:, None])
+    coupled = CoupledIonKineticStep(moving, hydro, grid.dt, ion_mass=ion_mass)
+    expected_force = jnp.stack(
+        (
+            -maxwell.c2 * 0.02**2 * jnp.sin(grid.x) * jnp.cos(grid.x),
+            jnp.zeros_like(grid.x),
+            maxwell.c2 * 0.03 * 0.02 * jnp.cos(grid.x),
+        ),
+        axis=-1,
+    )[:, None, :] * jnp.ones((1, grid.ny, 1))
+    source_dt = 2.0e-3
+    updated_f, updated_i = coupled._exchange(0.0, flm, ions, {}, source_dt, magnetic_field=magnetic)
+    np.testing.assert_allclose(updated_i[..., 1:4], source_dt * expected_force, atol=2e-15)
+    kinetic_gain = 0.5 * jnp.sum(updated_i[..., 1:4] ** 2, axis=-1) / ions[..., 0]
+    np.testing.assert_allclose(updated_i[..., 4] - ions[..., 4], kinetic_gain, atol=2e-15)
+    assert jnp.max(kinetic_gain) > 0.0
+    result = jax.jit(coupled)(0.0, {"flm": flm, "e": field, "b": magnetic, "ions": ions})
+    np.testing.assert_allclose(result["ions"][..., 1:4] / grid.dt, expected_force, rtol=2e-4, atol=1e-8)
+    assert jnp.all(jnp.isfinite(updated_f))
+
+    # Periodic Faraday work must oppose the ion mechanical work.
+    velocity = field.at[..., 0].set(0.1 * jnp.sin(2.0 * grid.x)[:, None])
+    moving_ions = ions.at[..., 1:4].set(ions[..., :1] * velocity)
+    source = coupled._magnetic_source(moving_ions, magnetic)
+    magnetic_rate = maxwell.curl(jnp.cross(velocity, magnetic))
+    field_work = maxwell.c2 * jnp.sum(magnetic * magnetic_rate)
+    ion_work = jnp.sum(source[..., 4])
+    assert abs(float(ion_work)) > 1e-6
+    np.testing.assert_allclose(field_work + ion_work, 0.0, atol=2e-15)

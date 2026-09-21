@@ -389,3 +389,113 @@ def test_reconnection_gate_and_bz_quadrupole_detect_a_central_sheet():
     assert np.isfinite(diagnosed.normalized_reconnection_rate.item())
     assert diagnosed.current_sheet_dominance.item() > 0.7
     assert diagnosed.bz_quadrupole_purity.item() > 0.9
+
+
+def _nonuniform_ion_config(*, frozen=False):
+    cfg = _config(collisions=True)
+    cfg["grid"].update({"nx": 6, "ny": 4, "nv": 16})
+    cfg["density"]["species-electron"]["n"] = {
+        "basis": "gaussian_spots",
+        "baseline": 1.0,
+        "x_center": "1um",
+        "x_radius": "0.5um",
+        "y_centers": ["1um"],
+        "y_radius": "0.5um",
+    }
+    cfg["terms"].update(
+        {
+            "field_solver": {"mode": "kinetic-ohm"},
+            "ion_fluid": {
+                "active": True,
+                "mass_ratio": 100.0,
+                "frozen": frozen,
+                "momentum_relaxation_rate": 0.2,
+                "temperature_relaxation_rate": 0.3,
+            },
+        }
+    )
+    return cfg
+
+
+def test_frozen_configuration_preserves_ions_with_pressure_and_exchange_sources():
+    cfg = _nonuniform_ion_config(frozen=True)
+    module, output = _setup_and_run(cfg)
+    saved = output["solver result"].ys
+    assert np.ptp(np.asarray(module.state["ions"][..., 0])) > 0.0
+    for ions in saved["ions"]:
+        np.testing.assert_array_equal(ions, module.state["ions"])
+    reference_args = {
+        **module.args,
+        "ion_velocity": jnp.zeros_like(module.state["e"]),
+        "ion_velocity_gradient": jnp.zeros((*module.state["e"].shape, 3)),
+        "ion_material_acceleration": jnp.zeros_like(module.state["e"]),
+    }
+    reference = module._coupled_step.electron_step(0.0, module.state, reference_args)
+    result = module._coupled_step(0.0, module.state, module.args)
+    for key in ("flm", "e", "b"):
+        np.testing.assert_allclose(result[key], reference[key], rtol=2e-12, atol=2e-12)
+
+
+def test_coupled_collisions_and_ib_use_evolved_midpoint_density():
+    from adept.vfp2d.harmonics import real_to_complex
+
+    cfg = _nonuniform_ion_config()
+    cfg["terms"]["ion_fluid"]["initial_velocity"] = [0.2, 0.0, 0.0]
+    cfg["drivers"]["ib"] = {"intensity_1e15_Wcm2": 0.1}
+    module, output = _setup_and_run(cfg)
+    assert all(jnp.all(jnp.isfinite(v)) for v in output["solver result"].ys.values())
+    step = module._coupled_step
+    state = module.state
+    flm, midpoint = step._exchange(
+        0.25 * step.dt,
+        real_to_complex(state["flm"]),
+        step._hydro_half_step(state["ions"]),
+        module.args,
+        0.5 * step.dt,
+        state["b"],
+    )
+    expected_ni = midpoint[..., 0] / module.ion_mass
+    assert float(jnp.max(jnp.abs(expected_ni - module.args["ni"]))) > 1e-9
+    original_collide = step.electron_step._collide
+    recorded = []
+
+    def checked_collide(t, f, args, dt):
+        recorded.append(args)
+        np.testing.assert_allclose(args["ni"], expected_ni, rtol=2e-14)
+        derived = module.cfg["units"]["derived"]
+        expected_ib = (
+            derived["nuee_coeff"] * derived["logLam_ratio"] * args["Z"] ** 2 * expected_ni / derived["w0_norm"]
+        )
+        np.testing.assert_allclose(args["ib_Z2ni_w0"], expected_ib, rtol=2e-14)
+        return original_collide(t, f, args, dt)
+
+    step.electron_step._collide = checked_collide
+    result = step(0.0, state, module.args)
+    assert len(recorded) == 2
+    assert jnp.all(jnp.isfinite(result["flm"]))
+
+
+def test_slowed_ampere_nonneutral_initialization_satisfies_gauss_law():
+    from adept.vfp2d import Maxwell2D, density
+    from adept.vfp2d.harmonics import real_to_complex
+
+    cfg = _nonuniform_ion_config()
+    cfg["terms"].pop("ion_fluid")
+    cfg["density"]["quasineutrality"] = False
+    cfg["grid"].update({"nx": 9, "ny": 7})
+    fields = []
+    for permittivity in (1.0, 25.0):
+        cfg["terms"]["field_solver"] = {"mode": "ampere", "relative_permittivity": permittivity}
+        module = BaseVFP2D(copy.deepcopy(cfg))
+        module.write_units()
+        module.get_derived_quantities()
+        module.get_solver_quantities()
+        module.init_state_and_args()
+        fields.append(module.state["e"])
+        ne = density(real_to_complex(module.state["flm"]), module.layout, module.grid.v, module.grid.dv)
+        charge = jnp.mean(module._density) - ne
+        maxwell = Maxwell2D(module.grid.kx, module.grid.ky, c=1.0)
+        divergence = maxwell.ddx(fields[-1][..., 0]) + maxwell.ddy(fields[-1][..., 1])
+        np.testing.assert_allclose(permittivity * divergence, charge - jnp.mean(charge), atol=2e-13)
+    assert jnp.max(jnp.abs(fields[0])) > 0.0
+    np.testing.assert_allclose(fields[1], fields[0] / 25.0, rtol=2e-13, atol=2e-13)

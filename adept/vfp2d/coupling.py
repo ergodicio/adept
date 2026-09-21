@@ -1,7 +1,7 @@
 """Time-centered kinetic-electron / ion-fluid coupling for VFP-2D.
 
 The split composes ion-frame electrons, ideal-ion Euler transport, kinetic
-electron-pressure feedback, and finite-mass electron--ion exchange. It remains
+electron-pressure feedback, magnetic force/work, and finite-mass electron--ion exchange. It remains
 explicit and auditable: hydro half-step, coupled-source half-step, full kinetic
 step, the second coupled-source half-step, then the second hydro half-step.
 """
@@ -41,6 +41,7 @@ class CoupledIonKineticStep:
         exchange: ElectronIonExchange | None = None,
         pressure: ElectronPressureCoupling | None = None,
         evolve_ions: bool = True,
+        ion_mass: float | None = None,
     ):
         if electron_step.ion_frame is None:
             raise ValueError("coupled kinetic-ion stepping requires an ion-frame electron operator")
@@ -49,6 +50,11 @@ class CoupledIonKineticStep:
         self.electron_step = electron_step
         self.hydro = hydro
         self.dt = float(dt)
+        self.ion_mass = float(ion_mass if ion_mass is not None else (exchange.ion_mass if exchange else 1836.0))
+        if self.ion_mass <= 0.0:
+            raise ValueError("ion_mass must be positive")
+        if exchange is not None and self.ion_mass != exchange.ion_mass:
+            raise ValueError("coupling and exchange ion masses must match")
         self.exchange = exchange
         self.pressure = pressure
         electron_mass = 1.0
@@ -90,6 +96,20 @@ class CoupledIonKineticStep:
             "ion_material_acceleration": material_acceleration,
         }
 
+    def electron_args(self, ions: Array, args: dict | None) -> dict:
+        """Refresh all ion-density-dependent electron inputs at this split stage."""
+        result = {**({} if args is None else args), **self.ion_kinematics(ions)}
+        result["ni"] = ions[..., 0] / self.ion_mass
+        if "ib_Z2ni_w0_per_ni" in result:
+            result["ib_Z2ni_w0"] = result["ib_Z2ni_w0_per_ni"] * result["ni"]
+        return result
+
+    def _magnetic_source(self, ions: Array, magnetic_field: Array) -> Array:
+        """Quasineutral Lorentz force and its mechanical work in code units."""
+        force = jnp.cross(self.electron_step._target_current(magnetic_field), magnetic_field)
+        velocity = ions[..., 1:4] / ions[..., :1]
+        return jnp.zeros_like(ions).at[..., 1:4].set(force).at[..., 4].set(jnp.sum(velocity * force, axis=-1))
+
     @staticmethod
     def _rate(args: dict | None, key: str, t: float, template: Array) -> Array:
         if not args or key not in args:
@@ -105,8 +125,9 @@ class CoupledIonKineticStep:
         ions: Array,
         args: dict | None,
         source_dt: float | None = None,
+        magnetic_field: Array | None = None,
     ) -> tuple[Array, Array]:
-        if self.exchange is None and self.pressure is None:
+        if not self.evolve_ions or (self.exchange is None and self.pressure is None and magnetic_field is None):
             return flm, ions
         source_dt = self.dt if source_dt is None else float(source_dt)
         template = ions[..., 0]
@@ -127,6 +148,8 @@ class CoupledIonKineticStep:
             pressure_df1, pressure_di1, _diagnostics = self.pressure(flm, ions)
             df1 += pressure_df1
             di1 += pressure_di1
+        if magnetic_field is not None:
+            di1 += self._magnetic_source(ions, magnetic_field)
         midpoint_i = ions + 0.5 * source_dt * di1
         initial_velocity = ions[..., 1:4] / ions[..., :1]
         midpoint_velocity = midpoint_i[..., 1:4] / midpoint_i[..., :1]
@@ -147,6 +170,8 @@ class CoupledIonKineticStep:
             pressure_df2, pressure_di2, _diagnostics = self.pressure(midpoint_f, midpoint_i)
             df2 += pressure_df2
             di2 += pressure_di2
+        if magnetic_field is not None:
+            di2 += self._magnetic_source(midpoint_i, magnetic_field)
         final_i = ions + source_dt * di2
         final_velocity = final_i[..., 1:4] / final_i[..., :1]
         base_in_midpoint_frame = self.frame_remap(flm, half_frame_change)
@@ -159,8 +184,8 @@ class CoupledIonKineticStep:
             raise ValueError("coupled state must contain the ion conserved array under 'ions'")
         flm = real_to_complex(state["flm"]) if self.electron_step.real_storage else state["flm"]
         midpoint_ions = self._hydro_half_step(state["ions"])
-        flm, midpoint_ions = self._exchange(t + 0.25 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt)
-        electron_args = {**({} if args is None else args), **self.ion_kinematics(midpoint_ions)}
+        flm, midpoint_ions = self._exchange(t + 0.25 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt, state["b"])
+        electron_args = self.electron_args(midpoint_ions, args)
         electron_state = {
             "flm": complex_to_real(flm) if self.electron_step.real_storage else flm,
             "e": state["e"],
@@ -173,9 +198,11 @@ class CoupledIonKineticStep:
         flm = (
             real_to_complex(advanced_electrons["flm"]) if self.electron_step.real_storage else advanced_electrons["flm"]
         )
-        flm, midpoint_ions = self._exchange(t + 0.75 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt)
+        flm, midpoint_ions = self._exchange(
+            t + 0.75 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt, advanced_electrons["b"]
+        )
         final_ions = self._hydro_half_step(midpoint_ions)
-        final_args = {**({} if args is None else args), **self.ion_kinematics(final_ions)}
+        final_args = self.electron_args(final_ions, args)
         hidden_dndz = self.electron_step._hidden_dndz(
             t + self.dt,
             final_args,

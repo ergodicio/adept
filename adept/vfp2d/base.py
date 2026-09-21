@@ -261,7 +261,10 @@ class BaseVFP2D(ADEPTModule):
         zref = float(self.cfg["units"]["Z"])
         ion_charge = n_total if self.cfg["density"].get("quasineutrality", True) else jnp.mean(n_total)
         charge_density = ion_charge - density(flm, self.layout, self.grid.v, self.grid.dv)
-        e = SpectralPoisson2D(self.grid.kx, self.grid.ky)(charge_density)
+        relative_permittivity = (
+            float(self.field_cfg.get("relative_permittivity", 1.0)) if self.field_mode == "ampere" else 1.0
+        )
+        e = SpectralPoisson2D(self.grid.kx, self.grid.ky)(charge_density / relative_permittivity)
         # Diffrax currently warns that complex state support is experimental.
         # Keep its PyTree purely real while retaining complex arithmetic inside
         # the harmonic operator.
@@ -319,13 +322,14 @@ class BaseVFP2D(ADEPTModule):
             )
             self.args["ib_vosc2"] = self.cfg["units"]["derived"]["vosc2_per_intensity"] * intensity * profile
             derived = self.cfg["units"]["derived"]
-            self.args["ib_Z2ni_w0"] = inverse_bremsstrahlung_resonance_ratio(
+            self.args["ib_Z2ni_w0_per_ni"] = inverse_bremsstrahlung_resonance_ratio(
                 self.args["Z"],
-                self.args["ni"],
+                jnp.ones_like(self.args["ni"]),
                 derived["nuee_coeff"],
                 derived["logLam_ratio"],
                 derived["w0_norm"],
             )
+            self.args["ib_Z2ni_w0"] = self.args["ib_Z2ni_w0_per_ni"] * self.args["ni"]
             for source_key, arg_key in (
                 ("switch_on", "ib_t_on"),
                 ("switch_off", "ib_t_off"),
@@ -576,6 +580,7 @@ class BaseVFP2D(ADEPTModule):
                     kinetic_step,
                     hydro,
                     self.grid.dt,
+                    ion_mass=self.ion_mass,
                     exchange=exchange,
                     pressure=pressure,
                     evolve_ions=not bool(self.ion_cfg.get("frozen", False)),
