@@ -13,7 +13,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     """Persist saved fields/moments to netCDF and return them as xr.Datasets."""
     result = {}
     shared_keys = {"ex", "ey", "bz", "jx_driver", "jy_driver"}
-    species_names = [k for k in fields.keys() if k not in shared_keys]
+    species_names = [k for k in fields if k not in shared_keys]
 
     x_coord = cfg["grid"]["x"]
     y_coord = cfg["grid"]["y"]
@@ -40,7 +40,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
 
 def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
     """Persist distribution snapshots to netCDF."""
-    save_keys = [k for k in ys.keys() if "_species_name" in cfg["save"].get(k, {})]
+    save_keys = [k for k in ys if "_species_name" in cfg["save"].get(k, {})]
     binary_dir = os.path.join(td, "binary")
     os.makedirs(binary_dir, exist_ok=True)
 

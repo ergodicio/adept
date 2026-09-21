@@ -305,7 +305,7 @@ class NonlinearVectorField(eqx.Module):
     def _unpack_y_(self, y: dict[str, Array]) -> dict[str, Array]:
         """Unpack state from float64 views to complex128."""
         new_y = {}
-        for k in y.keys():
+        for k in y:
             if k in self.complex_state_vars:
                 new_y[k] = y[k].view(jnp.complex128)
             else:

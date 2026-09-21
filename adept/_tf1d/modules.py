@@ -149,14 +149,12 @@ class BaseTwoFluid1D(ADEPTModule):
 
         cfg_grid = {
             **cfg_grid,
-            **{
-                "x": jnp.linspace(
-                    cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
-                ),
-                "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
-                "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-                "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
-            },
+            "x": jnp.linspace(
+                cfg_grid["xmin"] + cfg_grid["dx"] / 2, cfg_grid["xmax"] - cfg_grid["dx"] / 2, cfg_grid["nx"]
+            ),
+            "t": jnp.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
+            "kx": jnp.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
+            "kxr": jnp.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"]) * 2.0 * np.pi,
         }
 
         one_over_kx = np.zeros_like(cfg_grid["kx"])

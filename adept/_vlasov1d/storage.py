@@ -23,7 +23,7 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
     result = {}
     # Shared field keys at top level
     shared_field_keys = {"e", "de", "a", "prev_a", "pond", "ep", "em"}
-    species_names = [k for k in fields.keys() if k not in shared_field_keys]
+    species_names = [k for k in fields if k not in shared_field_keys]
 
     # Store species-specific moments
     for species_name in species_names:
@@ -82,9 +82,7 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
     :param ys:
     :return: dict mapping save_key -> xr.Dataset
     """
-    dist_save_keys = [
-        k for k in ys.keys() if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})
-    ]
+    dist_save_keys = [k for k in ys if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})]
 
     result = {}
     for save_key in dist_save_keys:
@@ -189,10 +187,7 @@ def get_dist_save_func(axes, dist_save_config, dist_key):
             fkx = jnp.abs(jnp.fft.rfft(y[dist_key], axes=0))
             return interp2d(kxq_flat, vq_flat, axes["kx"], axes["v"], fkx, method="linear").reshape(out_shape)
 
-    elif {"t", "x", "kv"} == set(dist_save_config.keys()):
-        pass
-
-    elif {"t", "kx", "kv"} == set(dist_save_config.keys()):
+    elif {"t", "x", "kv"} == set(dist_save_config.keys()) or {"t", "kx", "kv"} == set(dist_save_config.keys()):
         pass
     else:
         raise NotImplementedError
