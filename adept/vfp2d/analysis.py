@@ -67,6 +67,9 @@ def add_flow_diagnostics(
     y = np.asarray(ds.y)
     bx_line = np.asarray(ds.b.sel(component="x"))[:, ix0, :]
     ez_line = np.asarray(ds.e.sel(component="z"))[:, ix0, :]
+    source_bx_line = None
+    if "reservoir_magnetic_field_change" in ds:
+        source_bx_line = np.asarray(ds.reservoir_magnetic_field_change.sel(component="x"))[:, ix0, :]
     center_gradient = np.gradient(bx_line, y, axis=-1)[:, iy0]
     data["current_sheet_gradient_half_width"] = _ratio(np.asarray(ds.upstream_bx), np.abs(center_gradient))
     descriptions["current_sheet_gradient_half_width"] = (
@@ -86,6 +89,22 @@ def add_flow_diagnostics(
         if nt >= 2 and np.all(np.diff(times) > 0.0):
             derivative = np.gradient(flux, times, edge_order=2 if nt >= 3 else 1)
         data[f"{prefix}_faraday_residual"] = derivative - rhs
+        if source_bx_line is not None:
+            data[f"{prefix}_source_bx_flux"] = np.trapezoid(source_bx_line[:, indices], y[indices], axis=-1)
+            # Subtract the cumulative measured source locally before integrating,
+            # retaining the physical Faraday evolution between source substeps.
+            corrected_flux = np.trapezoid((bx_line - source_bx_line)[:, indices], y[indices], axis=-1)
+            corrected_derivative = np.full(nt, np.nan)
+            if nt >= 2 and np.all(np.diff(times) > 0.0):
+                corrected_derivative = np.gradient(corrected_flux, times, edge_order=2 if nt >= 3 else 1)
+            data[f"{prefix}_source_accounted_faraday_residual"] = corrected_derivative - rhs
+            descriptions[f"{prefix}_source_bx_flux"] = (
+                "signed integral of cumulative reservoir_magnetic_field_change_x dy over the same fixed interval"
+            )
+            descriptions[f"{prefix}_source_accounted_faraday_residual"] = (
+                "d/dt integral (B_x - cumulative reservoir magnetic change_x) dy - (E_z(a)-E_z(b)); "
+                "subtracts measured reservoir drive, retains saved-time and spatial quadrature errors"
+            )
         descriptions[f"{prefix}_bx_flux"] = (
             "signed integral B_x dy at fixed diagnostic x, from lower saved cell center to sheet center"
             if label == "lower"
@@ -93,7 +112,8 @@ def add_flow_diagnostics(
         )
         descriptions[f"{prefix}_faraday_residual"] = (
             "d/dt integral B_x dy - (E_z at lower integration limit - E_z at upper integration limit); "
-            "includes saved-time and spatial quadrature errors; not a topology-gated reconnection rate"
+            "includes external magnetic drive, saved-time and spatial quadrature errors; "
+            "not a topology-gated reconnection rate"
         )
 
     if "ion_velocity" in ds and "ions" in ds:

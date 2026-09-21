@@ -140,6 +140,7 @@ def test_fixed_line_flux_budget_obeys_faraday_with_mean_magnetic_flux():
     np.testing.assert_allclose(ds.centerline_upper_faraday_rate, -float(ds.y[-1]))
     single = add_reconnection_diagnostics(_sheet_dataset())
     assert np.isnan(single.centerline_lower_faraday_residual.item())
+    assert "centerline_lower_source_accounted_faraday_residual" not in single
 
 
 def test_harris_gradient_width_converges_and_is_not_rms_width():
@@ -166,3 +167,28 @@ def test_magpie_reference_scales_match_si_and_documented_regime():
 def test_magpie_reference_rejects_unphysical_inputs(value):
     with pytest.raises(ValueError, match="mean_charge"):
         MagpieReference(mean_charge=value).scales()
+
+
+def test_measured_external_curl_source_is_removed_from_faraday_residual():
+    ds = _sheet_dataset(nt=3)
+    xx, yy = np.meshgrid(np.asarray(ds.x), np.asarray(ds.y), indexing="ij")
+    source = np.zeros_like(ds.b)
+    # Cumulative external curl of A_z=t^2 cos(x) cos(y). It is divergence-free,
+    # has zero box mean and transports nonzero flux through each half line.
+    for it, time in enumerate(np.asarray(ds.t)):
+        source[it, ..., 0] = -(time**2) * np.cos(xx) * np.sin(yy)
+        source[it, ..., 1] = time**2 * np.sin(xx) * np.cos(yy)
+        # The physical Faraday contribution is d_t B_x=-d_y E_z=-1.
+        ds.b[it, :, :, 0] -= time
+    ds["reservoir_magnetic_field_change"] = (("t", "x", "y", "component"), source)
+    ds["b"] = ds.b + ds.reservoir_magnetic_field_change
+    ds.e.loc[{"component": "z"}] = ds.y
+    diagnosed = add_reconnection_diagnostics(ds)
+    for side in ("lower", "upper"):
+        np.testing.assert_allclose(diagnosed[f"centerline_{side}_source_accounted_faraday_residual"], 0.0, atol=3e-14)
+        flux = np.asarray(diagnosed[f"centerline_{side}_source_bx_flux"])
+        expected_drive_rate = np.gradient(flux, np.asarray(ds.t), edge_order=2)
+        np.testing.assert_allclose(diagnosed[f"centerline_{side}_faraday_residual"], expected_drive_rate, atol=3e-14)
+        assert abs(expected_drive_rate[-1]) > 0.7
+    single = add_reconnection_diagnostics(ds.isel(t=slice(0, 1)))
+    assert np.isnan(single.centerline_lower_source_accounted_faraday_residual.item())

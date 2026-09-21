@@ -162,14 +162,32 @@ $$
 $$
 
 `bx_flux`, `faraday_rate`, and `faraday_residual` save the inventory, electric
-flux difference and their mismatch. The residual uses finite differences
-between saved times and trapezoidal spatial integration; refine the save
+flux difference and their mismatch. The raw residual includes external magnetic
+drive and must not be treated as a numerical conservation error in a driven run.
+The residual uses finite differences between saved times and trapezoidal spatial integration; refine the save
 cadence and grid before interpreting it as an evolution error. A single
 snapshot has a NaN residual. The integrals retain mean magnetic flux that
 the periodic $A_z$ reconstruction excludes. They do not assume moving
 upstream peaks are fixed integration boundaries and do not cover the
 unsaved half-cell beyond either edge. They are local Faraday consistency
 checks, not full-domain energy or mass conservation claims.
+
+When `reservoir_magnetic_field_change(t,x,y,component)` is present, the analysis
+also saves each side's `source_bx_flux` and
+`source_accounted_faraday_residual`. The former integrates the cumulative
+**measured** magnetic increment of the reservoir on the same fixed interval;
+the latter is
+
+$$
+\frac{d}{dt}\int_a^b(B_x-\Delta B_{x,R}^{cumulative})\,dy
+- [E_z(a)-E_z(b)].
+$$
+
+This subtracts the implemented source, including spatial-envelope derivatives,
+without constructing an artificial source electric field. It retains errors
+from time sampling, spatial quadrature and the physical update. Missing source
+history leaves the original diagnostics unchanged; a single snapshot still
+has no evaluable time derivative.
 
 ## What a comparison can establish
 
