@@ -170,11 +170,14 @@ def parse_parms(path: str | Path) -> dict[str, str]:
                 continue
             key, value = statement.split("=", 1)
             parms[key.strip()] = value.strip().strip('"')
+    # the deck's directory, for file references relative to it (private key)
+    parms["_deck_dir"] = str(Path(path).resolve().parent)
     return parms
 
 
 def _floats(value: str) -> list[float]:
-    return [float(v) for v in value.replace(",", " ").split()]
+    """``"1 0 0"``, ``"1,0,0"`` or ``"[1,0,0]"`` -> floats (LPSE's get_floatVector accepts all three)."""
+    return [float(v) for v in value.replace(",", " ").replace("[", " ").replace("]", " ").split()]
 
 
 def _bool(value: str | None, default: bool = False) -> bool:
@@ -490,9 +493,15 @@ def translate_parms(
     kap = float(g("laser.bandwidth.KAP.frequency", "0"))
     if kap > 0:
         beam_extras["kap_bandwidth"] = kap
-    if g("laser.pulse.file"):
+    # LPSE laser.pulseShape.{enable, file} (LightSolver::loadPulseShapingData: two columns
+    # t_ps scale, linear interpolation, held outside), resolved relative to the deck's directory
+    if _bool(g("laser.pulseShape.enable")) and g("laser.pulseShape.file"):
+        pulse_path = Path(g("laser.pulseShape.file"))
+        if not pulse_path.is_absolute() and parms.get("_deck_dir"):
+            pulse_path = Path(parms["_deck_dir"]) / pulse_path
+        beam_extras["pulse_file"] = str(pulse_path)
+    elif g("laser.pulse.file"):
         beam_extras["pulse_file"] = g("laser.pulse.file")
-        report["notes"].append("laser.pulse.file: adept expects a two-column (t_ps, amplitude) text table")
     drivers = {
         "E0": {
             "shape": "uniform",

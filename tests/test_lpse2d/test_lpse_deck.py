@@ -328,3 +328,25 @@ def test_025_noise_floor_matches_the_fluctuation_dissipation_prediction():
     assert len(ratios) == 2
     for r in ratios:
         assert r == pytest.approx(1.0, abs=0.10), ratios
+
+
+def test_translator_reads_pulse_shape_files_and_bracketed_vectors(tmp_path):
+    """LPSE's keys are laser.pulseShape.{enable, file} (a two-column t_ps / scale table,
+    relative to the deck) and get_floatVector accepts ``[1,0,0]`` (test_012's direction)."""
+    from adept._lpse2d.lpse_deck import _floats, parse_parms, translate_parms
+
+    assert _floats("[1,0,0]") == [1.0, 0.0, 0.0] and _floats("0.98 0.17 0") == [0.98, 0.17, 0.0]
+    deck = tmp_path / "lpse.parms"
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "pulseShape.dat").write_text("# t scale\n0 0\n0.2 1\n2 1\n")
+    deck.write_text(
+        "grid.sizes = 20 10;\ngrid.nodes = 200 100;\nsimulation.time.end = 1;\nlaser.enable = true;\n"
+        "laser.nBeams = 1;\nlaser.1.intensity = 1e15;\nlaser.pulseShape.enable = true;\n"
+        "laser.pulseShape.file = ./data/pulseShape.dat;\ninitialPerturbation.enable = true;\n"
+        "initialPerturbation.field = E0_z;\ninitialPerturbation.direction = [1,0,0];\n"
+    )
+    parms = parse_parms(deck)
+    cfg, report = translate_parms(parms, run="x")
+    assert cfg["drivers"]["E0"]["pulse_file"] == str(tmp_path / "data" / "pulseShape.dat")
+    assert cfg["initial_perturbation"]["direction"] == [1.0, 0.0]
+    assert not any("pulse" in u for u in report["unsupported"])
