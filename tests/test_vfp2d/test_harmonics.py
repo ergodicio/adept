@@ -328,7 +328,9 @@ def test_operator_is_jittable_and_differentiable():
 def test_relativistic_momentum_mode_uses_p_over_gamma_for_streaming_and_current():
     grid, layout, _operator, flm = _make_problem(l_max=1, nx=8, ny=2)
     speed = grid.v / jnp.sqrt(1.0 + grid.v**2)
-    operator = TzoufrasVlasov(layout, grid.v, grid.dv, grid.kx, grid.ky, streaming_speed=speed)
+    operator = TzoufrasVlasov(
+        layout, grid.v, grid.dv, grid.kx, grid.ky, streaming_speed=speed, conserve_electric_work=False
+    )
     flm = flm.at[..., layout.index(0, 0), :].set(jnp.cos(grid.x)[:, None, None])
     result = operator.streaming(flm)
     expected = jnp.broadcast_to(speed[None, None, :] * jnp.sin(grid.x)[:, None, None], (grid.nx, grid.ny, grid.nv))

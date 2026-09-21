@@ -96,11 +96,14 @@ plan:
    initial tension response, and finite-field radial energy convergence.
 
 The default `vfp-2d` time loop uses stationary ions. Moving ions must be enabled
-explicitly. The finite-field test declares a less-than-1% **accounted** energy defect
-relative to the transverse magnetic perturbation at its specified end time and radial
-resolution. The raw energy and current-projection work remain separately visible; this
-test does not close the long-time energy gate. See the [coupling details](moving_frame.md)
-before choosing a resolution. Sustained driven/open boundaries, cooling/ionization,
-and convergence over experimental flow times remain separate development gates.
+explicitly. The nonrelativistic electric operator corrects its known interior
+radial work defect while retaining the upper-tail flux and separate current-projection
+accounting. A finite-field coupled check requires less than 0.1% **accounted** energy
+defect relative to the transverse magnetic perturbation at its specified end time.
+The raw energy and projection work remain separately visible. See the
+[electric-work derivation and limits](electric_work.md) and [coupling details](moving_frame.md)
+before choosing a resolution. These tests do not close the long-time energy gate.
+Sustained driven/open boundaries, cooling/ionization, and convergence over experimental
+flow times remain separate development gates.
 
 See the [configuration reference](config.md), the [Joglekar 2014 reconstruction design](joglekar2014.md), and [`configs/vfp-2d/landau-damping.yaml`](../../../../configs/vfp-2d/landau-damping.yaml).

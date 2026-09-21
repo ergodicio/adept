@@ -10,7 +10,13 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jax import Array
 
-from adept.vfp2d.harmonics import HarmonicLayout, current, density, scalar_velocity_moment
+from adept.vfp2d.harmonics import (
+    HarmonicLayout,
+    current,
+    density,
+    electron_energy_moment_correction,
+    scalar_velocity_moment,
+)
 from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import project_current_moment
 
@@ -39,27 +45,6 @@ def electron_kinetic_energy_density(
     i00 = layout.index(0, 0)
     f00 = jnp.real(f[..., i00, :])
     return 2.0 * jnp.pi * float(electron_mass) * jnp.sum(f00 * jnp.asarray(v) ** 4, axis=-1) * float(dv)
-
-
-def electron_energy_moment_correction(
-    f: Array,
-    layout: HarmonicLayout,
-    v: Array,
-    dv: float,
-    energy_correction: Array,
-    electron_mass: float,
-) -> Array:
-    """Return a density-neutral ``f00`` correction with a prescribed energy."""
-
-    i00 = layout.index(0, 0)
-    f00 = jnp.real(f[..., i00, :])
-    mean_square_speed = scalar_velocity_moment(f, layout, v, dv, power=2)
-    density_neutral_basis = (v**2 - mean_square_speed[..., None]) * f00
-    response = 2.0 * jnp.pi * electron_mass * jnp.sum(density_neutral_basis * v**4, axis=-1) * dv
-    tiny = jnp.finfo(response.dtype).tiny
-    safe_response = jnp.where(jnp.abs(response) > tiny, response, 1.0)
-    amplitude = jnp.where(jnp.abs(response) > tiny, energy_correction / safe_response, 0.0)
-    return jnp.zeros_like(f).at[..., i00, :].set(amplitude[..., None] * density_neutral_basis)
 
 
 class VelocityFrameRemap:
