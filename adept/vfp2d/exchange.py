@@ -53,12 +53,17 @@ class VelocityFrameRemap:
     A second-order velocity-space translation retains the resolved distribution
     shape. Discrete projections then enforce the exact Galilean density,
     momentum, and kinetic-energy transforms, including radial-grid boundary
-    defects from the differential translation operator.
+    defects from the differential translation operator. Both first-harmonic
+    modes (1,0) and (1,1) are required to represent arbitrary 3D frame shifts.
     """
 
     def __init__(self, ion_frame: IonFrameVlasov, *, electron_mass: float = 1.0):
         if electron_mass <= 0.0:
             raise ValueError("electron_mass must be positive")
+        if ion_frame.layout.index(1, 0) < 0 or ion_frame.layout.index(1, 1) < 0:
+            raise ValueError(
+                "velocity-frame remapping requires lmax >= 1 and mmax >= 1 to preserve all momentum components"
+            )
         self.ion_frame = ion_frame
         self.layout = ion_frame.layout
         self.v = ion_frame.vlasov.v

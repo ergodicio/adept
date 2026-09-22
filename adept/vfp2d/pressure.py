@@ -5,7 +5,6 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jax import Array
 
-from adept.vfp2d.exchange import electron_energy_moment_correction
 from adept.vfp2d.harmonics import HarmonicLayout, density, scalar_velocity_moment, tensor_velocity_moment
 from adept.vfp2d.moving_frame import IonFrameVlasov
 
@@ -35,9 +34,11 @@ class ElectronPressureCoupling:
     """Map kinetic electron pressure into conservative ion sources.
 
     The ion momentum source is ``-div(P_e)``. Its total-energy source is the
-    resolved mechanical work ``u_i . [-div(P_e)]``, with an exactly opposite
-    density-neutral electron energy correction. The independently diagnosed
-    moving-frame deformation work converges to ``-P_e : grad(u_i)``.
+    resolved mechanical work ``-u_i . div(P_e)``. Electron peculiar energy
+    receives ``-P_e : grad(u_i)`` from the moving-frame deformation operator,
+    so this source must not add another f00 energy correction. Their sum is
+    the conservative pressure-flux divergence ``-div(P_e . u_i)``; the two
+    work terms cancel globally on a periodic domain, not pointwise.
     """
 
     def __init__(self, ion_frame: IonFrameVlasov, *, electron_mass: float = 1.0):
@@ -73,25 +74,22 @@ class ElectronPressureCoupling:
         ion_rate = jnp.zeros_like(ion_conserved)
         ion_rate = ion_rate.at[..., 1:4].set(force)
         ion_rate = ion_rate.at[..., 4].set(jnp.sum(ion_velocity * force, axis=-1))
-        electron_rate = electron_energy_moment_correction(
-            f,
-            self.layout,
-            self.v,
-            self.dv,
-            -ion_rate[..., 4],
-            self.electron_mass,
-        )
+        electron_rate = jnp.zeros_like(f)
         electron_work = -jnp.einsum(
             "...ij,...ij->...",
             pressure,
             self.ion_frame.velocity_gradient(ion_velocity),
         )
+        pressure_flux = jnp.einsum("...ij,...i->...j", pressure, ion_velocity)
+        flux_divergence = jnp.real(self.ion_frame.vlasov.spatial_derivative(pressure_flux[..., 0], axis=0))
+        flux_divergence += jnp.real(self.ion_frame.vlasov.spatial_derivative(pressure_flux[..., 1], axis=1))
         diagnostics = {
             "electron_pressure": pressure,
             "ion_pressure_force": force,
             "ion_pressure_work": ion_rate[..., 4],
-            "electron_pressure_work": -ion_rate[..., 4],
+            "electron_pressure_work": electron_work,
             "electron_deformation_work": electron_work,
-            "local_pressure_work_residual": jnp.zeros_like(ion_rate[..., 4]),
+            "pressure_flux_divergence": flux_divergence,
+            "local_pressure_work_residual": ion_rate[..., 4] + electron_work + flux_divergence,
         }
         return electron_rate, ion_rate, diagnostics

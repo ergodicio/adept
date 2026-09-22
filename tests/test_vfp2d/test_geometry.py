@@ -1,7 +1,11 @@
 """Initial-unit, import, topology and quasistatic-current checks."""
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -97,6 +101,62 @@ def test_vector_potential_has_zero_discrete_divergence_and_physical_units(finite
             * (0.4 * 2 * jnp.pi / length_y * jnp.sin(2 * jnp.pi * grid.y / length_y))[None, :]
         )
         np.testing.assert_allclose(b[..., 0], expected_bx, rtol=1e-12, atol=1e-19)
+
+
+def _check_sharded_magnetic_initialization():
+    assert jax.device_count() == 8
+    for cells_per_shard in (1, 2):
+        for use_sheet in (False, True):
+            cfg = _small_config()
+            cfg["grid"].update(nx=8 * cells_per_shard, sharding={"enabled": True, "axis": "x"})
+            cfg["terms"]["ion_fluid"]["active"] = False
+            cfg["initial_conditions"].pop("ion_velocity")
+            cfg["initial_conditions"].pop("ion_temperature")
+            if not use_sheet:
+                cfg["initial_conditions"]["magnetic_field"] = {
+                    "vector_potential": {
+                        "z": {
+                            "scale": "0.3T*mm",
+                            "profile": {
+                                "x": {"basis": "cosine", "amplitude": 0.7, "wavelength": "28mm"},
+                                "y": {"basis": "cosine", "amplitude": 0.4, "wavelength": "4mm"},
+                            },
+                        }
+                    }
+                }
+            module = _initialize(cfg)
+            b = module.state["b"]
+            assert len(b.addressable_shards) == 8
+            assert b.addressable_shards[0].data.shape[0] == cells_per_shard
+            # Use the actual evolution operator, including its halo stencil.
+            ddx_bx = module._maxwell.ddx(b[..., 0])
+            ddy_by = module._maxwell.ddy(b[..., 1])
+            scale = float(jnp.max(jnp.abs(ddx_bx)))
+            assert scale > 0.0  # Both x and y variations must participate.
+            np.testing.assert_allclose(ddx_bx + ddy_by, 0.0, atol=2e-13 * scale)
+
+
+def test_sharded_magnetic_initialization_preserves_evolution_divergence():
+    # Device count must be set before JAX initializes; isolate it from the rest
+    # of the suite so this regression also runs on single-device CI workers.
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import runpy, sys; runpy.run_path(sys.argv[1])['_check_sharded_magnetic_initialization']()",
+            str(Path(__file__).resolve()),
+        ],
+        env={
+            **os.environ,
+            "JAX_PLATFORMS": "cpu",
+            "JAX_ENABLE_X64": "true",
+            "XLA_FLAGS": "--xla_force_host_platform_device_count=8",
+        },
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_legacy_normalized_velocity_and_reference_ion_temperature_are_preserved():
@@ -204,6 +264,9 @@ def test_seeded_magnetic_counterflow_runs_two_finite_coupled_steps():
 def test_current_sheet_requires_transverse_current_harmonic():
     cfg = _small_config()
     cfg["grid"]["mmax"] = 0
+    cfg["terms"]["ion_fluid"]["active"] = False
+    cfg["initial_conditions"].pop("ion_velocity")
+    cfg["initial_conditions"].pop("ion_temperature")
     with pytest.raises(ValueError, match="transverse Ampere current"):
         _initialize(cfg)
 
@@ -212,6 +275,11 @@ def test_current_sheet_requires_transverse_current_harmonic():
 def test_axisymmetric_harmonics_accept_compatible_magnetic_current(guide_only):
     cfg = _small_config()
     cfg["grid"]["mmax"] = 0
+    # Moving-ion frame remapping requires mmax >= 1, independently of whether
+    # the magnetic current can be represented by axisymmetric harmonics.
+    cfg["terms"]["ion_fluid"]["active"] = False
+    cfg["initial_conditions"].pop("ion_velocity")
+    cfg["initial_conditions"].pop("ion_temperature")
     field = {"uniform": ["0T", "0T", "1T"]}
     if not guide_only:
         field["vector_potential"] = {

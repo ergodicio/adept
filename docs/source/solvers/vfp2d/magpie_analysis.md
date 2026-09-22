@@ -212,3 +212,4 @@ for an entire drive. Aluminium has much stronger cooling and requires a
 different validation program. Use these limitations to choose an analysis
 question and comparison observables, rather than treating agreement in
 one diagnostic as experimental design validation.
+# Review trigger: this page defines the analysis contract for MAGPIE-scale comparisons.
