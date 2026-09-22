@@ -239,6 +239,8 @@ class IonFrameVlasov:
     electric field is in the laboratory frame; ``u_i x B`` is added before the
     peculiar-velocity Lorentz push.  ``material_acceleration`` must use the
     same normalized acceleration units as the electric-force coefficient.
+    Set ``bulk_transport=False`` only when bulk advection is advanced by a
+    separate operator, as in the shared ion/electron finite-volume split.
     """
 
     def __init__(self, vlasov: TzoufrasVlasov):
@@ -327,6 +329,7 @@ class IonFrameVlasov:
         velocity_gradient: Array | None = None,
         material_acceleration: Array | None = None,
         dfdz: Array | None = None,
+        bulk_transport: bool = True,
     ) -> Array:
         if velocity_gradient is None:
             velocity_gradient = self.velocity_gradient(ion_velocity)
@@ -334,7 +337,8 @@ class IonFrameVlasov:
             material_acceleration = jnp.zeros_like(ion_velocity)
         rest_frame_electric = electric_field + jnp.cross(ion_velocity, magnetic_field)
         result = self.vlasov(f, rest_frame_electric, magnetic_field, dfdz=dfdz)
-        result += self.bulk_advection(f, ion_velocity, dfdz=dfdz)
+        if bulk_transport:
+            result += self.bulk_advection(f, ion_velocity, dfdz=dfdz)
         result += self.deformation(f, velocity_gradient)
         result += self.frame_acceleration(f, material_acceleration)
         for index, (_ell, m) in enumerate(self.layout.pairs):

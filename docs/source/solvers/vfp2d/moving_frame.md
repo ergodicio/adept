@@ -93,6 +93,31 @@ source stage remaps the electron distribution into the updated ion frame with
 and energy transforms. Remapping requires the (1,0) and (1,1) modes, so coupled runs
 require `lmax >= 1` and `mmax >= 1`.
 
+For evolving ions, each hydro half-step transports the electron distribution
+with the **same HLLC mass flux and SSPRK2 stages** as ion mass. Face values of
+`flm / rho_i` use a MUSCL reconstruction whose limiter is shared across all
+real and imaginary harmonic/radial components. Thus a constant discrete
+number moment of `flm / rho_i` remains constant at faces: initially neutral
+cells receive matching electron and ion number fluxes. The periodic transport
+conserves every globally integrated coefficient and transports existing charge
+errors; it does not reset electron density to `Z * ni` after a step.
+
+The kinetic stage disables its spectral bulk advection in this split. Relative
+streaming, frame deformation and acceleration, collisions, and the Ampere
+current constraint remain active. An enabled spatial filter acts on the field
+and anisotropic harmonics while leaving the full `f00` radial spectrum
+unchanged; filtering electron density independently would violate the shared
+continuity update. Standalone and frozen-ion stepping retain their original
+bulk-advection and filtering behavior. Finite velocity-domain losses and
+non-number-conserving collision choices remain separate sources of charge error.
+
+Spectral first derivatives also use a zero Nyquist multiplier on even grids,
+matching the real-field curl operator. A complex harmonic coefficient stores
+two real angular components; differentiating its unresolved Nyquist mode with
+an imaginary multiplier would rotate those components and generate a spurious
+density rate even when the projected current is a discrete curl. Odd-grid and
+resolved Fourier modes retain their usual spectral derivatives.
+
 The sources include full `f0 + f2` electron-pressure feedback and magnetic force/work.
 Ion pressure work is $-\mathbf u_i\cdot\nabla\cdot\mathbf P_e$, while electron peculiar
 pressure work $-\mathbf P_e:\nabla\mathbf u_i$ is supplied once by deformation in the

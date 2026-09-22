@@ -149,8 +149,9 @@ def test_oshun_nyquist_transport_preserves_real_m_zero_at_every_stage(real_stora
     field = jnp.zeros((grid.nx, grid.ny, 3))
     m_zero = np.flatnonzero(layout.m == 0)
     assert jnp.min(flm[..., layout.index(0, 0), :].real) > 0.0
-    # Exercise a nonzero imaginary Nyquist derivative, not a uniform null case.
-    assert jnp.max(jnp.abs(vlasov.streaming(flm)[..., m_zero, :].imag)) > 1e-4
+    # A nonuniform checkerboard has a zero first derivative on the real grid;
+    # its unresolved derivative must not rotate real angular components.
+    np.testing.assert_allclose(vlasov.streaming(flm), 0.0, atol=2e-14)
 
     rate1 = step._non_electric_rate(flm, field)
     midpoint = flm + 0.5 * grid.dt * rate1

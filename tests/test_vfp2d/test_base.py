@@ -490,10 +490,11 @@ def test_coupled_collisions_and_ib_use_evolved_midpoint_density():
     assert all(jnp.all(jnp.isfinite(v)) for v in output["solver result"].ys.values())
     step = module._coupled_step
     state = module.state
+    transported_f, transported_ions = step._hydro_half_step(real_to_complex(state["flm"]), state["ions"])
     flm, midpoint = step._exchange(
         0.25 * step.dt,
-        real_to_complex(state["flm"]),
-        step._hydro_half_step(state["ions"]),
+        transported_f,
+        transported_ions,
         module.args,
         0.5 * step.dt,
         state["b"],

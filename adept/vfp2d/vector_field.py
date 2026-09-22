@@ -379,6 +379,11 @@ class KineticOhmStep:
     while preserving the velocity-dependent ``f1`` structure responsible for
     nonlocal heat flow. It is deliberately separate from the future fully
     implicit kinetic-current-response algorithm.
+
+    ``bulk_transport=False`` delegates ion-frame bulk transport to the coupled
+    hydro stages and leaves f00 unfiltered, since its density must use the
+    same transport operator as the ion density. Standalone calls retain the
+    original bulk-advection and filtering behavior.
     """
 
     def __init__(
@@ -491,7 +496,9 @@ class KineticOhmStep:
         smooth_gate = 0.5 * (1.0 - jnp.tanh((t - t_off) / jnp.maximum(width, 1e-30)))
         return source * jnp.where(width > 0.0, smooth_gate, sharp_gate)
 
-    def _rates(self, t: float, flm: Array, magnetic_field: Array, args: dict | None) -> tuple[Array, Array, Array]:
+    def _rates(
+        self, t: float, flm: Array, magnetic_field: Array, args: dict | None, *, bulk_transport: bool = True
+    ) -> tuple[Array, Array, Array]:
         flm = self._project(flm, magnetic_field)
         hidden_dndz = self._hidden_dndz(t, args, magnetic_field[..., 0])
         electric_field, _terms = self.electric_field(
@@ -517,10 +524,13 @@ class KineticOhmStep:
                 velocity_gradient=velocity_gradient,
                 material_acceleration=material_acceleration,
                 dfdz=dfdz,
+                bulk_transport=bulk_transport,
             )
         return dfdt, -self.maxwell.curl(electric_field), electric_field
 
-    def __call__(self, t: float, state: dict[str, Array], args: dict | None = None) -> dict[str, Array]:
+    def __call__(
+        self, t: float, state: dict[str, Array], args: dict | None = None, *, bulk_transport: bool = True
+    ) -> dict[str, Array]:
         flm = real_to_complex(state["flm"]) if self.real_storage else state["flm"]
         magnetic_field = state["b"]
         flm = self._positive_f00(self._collide(t, flm, args, 0.5 * self.dt))
@@ -529,18 +539,18 @@ class KineticOhmStep:
         projection_energy += self._projection_energy_density(flm, projected_f, args)
         flm = projected_f
 
-        df1, db1, _electric1 = self._rates(t, flm, magnetic_field, args)
+        df1, db1, _electric1 = self._rates(t, flm, magnetic_field, args, bulk_transport=bulk_transport)
         stage2_b = magnetic_field + 0.5 * self.dt * db1
         stage2_f = self._positive_f00(self._project(flm + 0.5 * self.dt * df1, stage2_b))
-        df2, db2, _electric2 = self._rates(t + 0.5 * self.dt, stage2_f, stage2_b, args)
+        df2, db2, _electric2 = self._rates(t + 0.5 * self.dt, stage2_f, stage2_b, args, bulk_transport=bulk_transport)
 
         stage3_b = magnetic_field + 0.5 * self.dt * db2
         stage3_f = self._positive_f00(self._project(flm + 0.5 * self.dt * df2, stage3_b))
-        df3, db3, _electric3 = self._rates(t + 0.5 * self.dt, stage3_f, stage3_b, args)
+        df3, db3, _electric3 = self._rates(t + 0.5 * self.dt, stage3_f, stage3_b, args, bulk_transport=bulk_transport)
 
         stage4_b = magnetic_field + self.dt * db3
         stage4_f = self._positive_f00(self._project(flm + self.dt * df3, stage4_b))
-        df4, db4, _electric4 = self._rates(t + self.dt, stage4_f, stage4_b, args)
+        df4, db4, _electric4 = self._rates(t + self.dt, stage4_f, stage4_b, args, bulk_transport=bulk_transport)
 
         result_b = magnetic_field + (self.dt / 6.0) * (db1 + 2.0 * db2 + 2.0 * db3 + db4)
         result_f = flm + (self.dt / 6.0) * (df1 + 2.0 * df2 + 2.0 * df3 + df4)
@@ -552,7 +562,14 @@ class KineticOhmStep:
         # scale during long heated runs. Filter only configuration space, once
         # per full step, then restore the f00 and Ampere-moment invariants.
         result_b = jnp.real(self._filter(result_b))
-        result_f = self._positive_f00(self._filter(result_f))
+        filtered_f = self._filter(result_f)
+        if not bulk_transport:
+            # Shared ion/electron transport owns the density. Filtering f00
+            # alone would diffuse electrons without the matching ion flux.
+            # Keep its full radial spectrum, including its energy moment.
+            i00 = self.layout.index(0, 0)
+            filtered_f = filtered_f.at[..., i00, :].set(result_f[..., i00, :])
+        result_f = self._positive_f00(filtered_f)
         projected_f = self._project(result_f, result_b)
         projection_energy += self._projection_energy_density(result_f, projected_f, args)
         result_f = projected_f
