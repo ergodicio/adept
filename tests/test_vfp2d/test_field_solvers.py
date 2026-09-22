@@ -3,8 +3,10 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from adept.vfp2d import Grid, HarmonicLayout, Maxwell2D, OSHUNImplicitStep, TzoufrasVlasov, current
+from adept.vfp2d.harmonics import complex_to_real, real_to_complex
 
 
 def _problem(nx=6, ny=4, nv=48, dt=1.0e-3):
@@ -136,3 +138,33 @@ def test_oshun_step_is_jittable_and_leaves_a_uniform_equilibrium_unchanged():
     np.testing.assert_allclose(result["flm"], flm, rtol=2e-13, atol=2e-13)
     np.testing.assert_allclose(result["e"], 0.0, atol=2e-13)
     np.testing.assert_allclose(result["b"], 0.0, atol=2e-13)
+
+
+@pytest.mark.parametrize("real_storage", [False, True])
+def test_oshun_nyquist_transport_preserves_real_m_zero_at_every_stage(real_storage):
+    grid, layout, vlasov, maxwell, _, flm = _problem(nx=8)
+    step = OSHUNImplicitStep(vlasov, maxwell, layout, grid.v, grid.dv, grid.dt, real_storage=real_storage)
+    checkerboard = (-1.0) ** jnp.arange(grid.nx)
+    flm = flm * (1.0 + 0.05 * checkerboard[:, None, None, None])
+    field = jnp.zeros((grid.nx, grid.ny, 3))
+    m_zero = np.flatnonzero(layout.m == 0)
+    assert jnp.min(flm[..., layout.index(0, 0), :].real) > 0.0
+    # Exercise a nonzero imaginary Nyquist derivative, not a uniform null case.
+    assert jnp.max(jnp.abs(vlasov.streaming(flm)[..., m_zero, :].imag)) > 1e-4
+
+    rate1 = step._non_electric_rate(flm, field)
+    midpoint = flm + 0.5 * grid.dt * rate1
+    rate2 = step._non_electric_rate(midpoint, field)
+    transported = step._non_electric_step(flm, field)
+    for stage in (rate1, midpoint, rate2, transported):
+        np.testing.assert_array_equal(stage[..., m_zero, :].imag, 0.0)
+    # Projecting only the final state would still allow a spurious f00/f20 update.
+    np.testing.assert_allclose(transported, flm, rtol=0.0, atol=2e-14)
+
+    state = {"flm": complex_to_real(flm) if real_storage else flm, "e": field, "b": field}
+    result = jax.jit(step)(0.0, state, {})
+    final_f = real_to_complex(result["flm"]) if real_storage else result["flm"]
+    np.testing.assert_array_equal(final_f[..., m_zero, :].imag, 0.0)
+    np.testing.assert_allclose(final_f, flm, rtol=0.0, atol=2e-14)
+    np.testing.assert_allclose(result["e"], 0.0, atol=2e-14)
+    np.testing.assert_allclose(result["b"], 0.0, atol=2e-14)

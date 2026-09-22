@@ -103,10 +103,12 @@ def test_pressure_feedback_closes_periodic_deformation_work_budget():
     total_work = jnp.sum(measured_electron_work + ion_rate[..., 4]) * grid.dx * grid.dy
     np.testing.assert_allclose(total_work, 0.0, atol=3e-12)
     np.testing.assert_allclose(
-        electron_kinetic_energy_density(electron_rate, frame.layout, grid.v, grid.dv) + ion_rate[..., 4],
+        measured_electron_work + ion_rate[..., 4] + diagnostics["pressure_flux_divergence"],
         0.0,
-        atol=3e-13,
+        atol=3.0e-3 * work_scale,
     )
+    np.testing.assert_array_equal(electron_rate, jnp.zeros_like(f))
+    np.testing.assert_allclose(diagnostics["local_pressure_work_residual"], 0.0, atol=3e-13)
 
 
 def test_pressure_work_radial_defect_converges_at_second_order():
