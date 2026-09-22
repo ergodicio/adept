@@ -112,3 +112,4 @@ reservoir, verify quasineutral mixtures and exact ion relaxation, check magnetic
 divergence and mean flux, and verify the ledger survives the physical step.
 These establish the implementation of the source, not a calibrated model of
 MAGPIE inflow or outflow.
+# Review trigger: this page defines the externally driven periodic reservoir scope.
