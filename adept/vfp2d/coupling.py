@@ -19,6 +19,7 @@ from adept.vfp2d.exchange import (
 )
 from adept.vfp2d.harmonics import HarmonicLayout, complex_to_real, density, real_to_complex
 from adept.vfp2d.hydro import IonEuler2D, conserved_to_primitive
+from adept.vfp2d.magnetic import IonMagneticCoupling
 from adept.vfp2d.pressure import ElectronPressureCoupling
 from adept.vfp2d.vector_field import KineticOhmStep
 
@@ -29,7 +30,9 @@ class CoupledIonKineticStep:
     The electron step must be a ``KineticOhmStep`` configured with an ion-frame
     operator. Ion kinematics are held at the hydro midpoint during its RK stages.
     This production coupling includes ideal-ion transport and local finite-mass
-    thermal and momentum exchange together with electron-pressure feedback.
+    thermal and momentum exchange together with electron-pressure feedback and
+    magnetic force/work. Magnetic half-kicks use the old and advanced fields,
+    bracketing induction with the same midpoint ion velocity.
     """
 
     def __init__(
@@ -57,6 +60,7 @@ class CoupledIonKineticStep:
             raise ValueError("coupling and exchange ion masses must match")
         self.exchange = exchange
         self.pressure = pressure
+        self.magnetic = IonMagneticCoupling(electron_step.maxwell)
         electron_mass = 1.0
         if exchange is not None:
             electron_mass = exchange.electron_mass
@@ -106,9 +110,8 @@ class CoupledIonKineticStep:
 
     def _magnetic_source(self, ions: Array, magnetic_field: Array) -> Array:
         """Quasineutral Lorentz force and its mechanical work in code units."""
-        force = jnp.cross(self.electron_step._target_current(magnetic_field), magnetic_field)
-        velocity = ions[..., 1:4] / ions[..., :1]
-        return jnp.zeros_like(ions).at[..., 1:4].set(force).at[..., 4].set(jnp.sum(velocity * force, axis=-1))
+        source, _diagnostics = self.magnetic(magnetic_field, ions)
+        return source
 
     @staticmethod
     def _rate(args: dict | None, key: str, t: float, template: Array) -> Array:
@@ -203,6 +206,16 @@ class CoupledIonKineticStep:
         )
         final_ions = self._hydro_half_step(midpoint_ions)
         final_args = self.electron_args(final_ions, args)
+        # The source kick translates the peculiar current when the ion frame
+        # accelerates. Enforce Ampere at the *returned* time as well, recording
+        # its lab-frame work instead of deferring a hidden correction to the
+        # next electron step.
+        projected_f = self.electron_step._project(flm, advanced_electrons["b"])
+        if "current_projection_energy" in advanced_electrons:
+            advanced_electrons["current_projection_energy"] += self.electron_step._projection_energy_density(
+                flm, projected_f, final_args
+            )
+        flm = projected_f
         hidden_dndz = self.electron_step._hidden_dndz(
             t + self.dt,
             final_args,

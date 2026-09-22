@@ -31,6 +31,8 @@ The solver includes:
 - the linearized Tzoufras anisotropic electron-electron and electron-ion operator for every retained $(\ell,m)$;
 - spatially shaped inverse-bremsstrahlung or Maxwellian heating;
 - distribution-function diagnostics for the scalar, vector, $f_2$ tensor, and Nernst moments used in kinetic Ohm's law.
+- opt-in ideal-fluid ions coupled to ion-frame electrons through pressure feedback,
+  finite-mass moment exchange, and magnetic force and mechanical work.
 
 The default is non-relativistic, matching VFP-1D. With `grid.relativistic: true`, the radial coordinate is momentum in $m_ec$ units, streaming uses $v=p/\sqrt{1+p^2}$, current moments use $p^2v$, and initialization uses a Maxwell-Juttner distribution. The current collision operator is non-relativistic, so relativistic mode presently requires `terms.fokker_planck.active: false`.
 
@@ -88,8 +90,19 @@ components and acceptance tests are implemented:
    and quantitative Spitzer–Härm/Epperlein–Haines and Biermann local-limit tests.
 6. **Nonlinear energy gate:** accounted-energy tolerance and timestep, spatial, and radial
    refinement tests for the periodic coupled benchmark. Projection work is saved separately.
+7. **Magnetic flow milestone:** $\mathbf J\times\mathbf B$ force and
+   $\mathbf u_i\cdot(\mathbf J\times\mathbf B)$ ion work, with source half-kicks
+   around induction. Tests cover pressure and tension, discrete ideal-work balance,
+   one-period Alfvén propagation of the ideal magnetic subsystem, the full coupled
+   initial tension response, and finite-field radial energy convergence.
 
 Stationary ions remain the default. Passing these local and nonlinear tests does not
 complete production-scale validation; moving-ion parameter scans remain a future gate.
+The finite-field test declares a less-than-1% **accounted** energy defect relative to
+the transverse magnetic perturbation at its specified end time and radial resolution.
+Raw energy and current-projection work remain separately visible; this test does not
+close the long-time energy gate. See the [coupling details](moving_frame.md) before
+choosing a resolution. Sustained driven/open boundaries, cooling/ionization, and
+convergence over experimental flow times remain separate development gates.
 
 See the [configuration reference](config.md), the [Joglekar 2014 reconstruction design](joglekar2014.md), and [`configs/vfp-2d/landau-damping.yaml`](../../../../configs/vfp-2d/landau-damping.yaml).
