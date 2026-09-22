@@ -82,16 +82,20 @@ mode; a relativistic discrete energy correction is not implemented.
 
 The [finite-field coupling diagnostic](moving_frame.md) is also run to $t=2$,
 four times its original interval, on the same $12\times4$ grid. At $n_v=32$,
-$\Delta t=0.01$, the accounted defect changes from **+7.3874%** with the original
-stencil to **-0.05698%** with the work correction. The percentages use initial
-transverse magnetic perturbation energy. Halving $\Delta t$ gives -0.05696%;
-doubling $n_v$ to 64 gives -0.05379%. At that finer resolution the raw defect is
-**+1.0008%**, with **+1.0545%** current-projection work recorded separately.
+$\Delta t=0.01$, the accounted defect changes from **+7.4362%** with the original
+stencil to **-0.008376%** with the work correction. The percentages use initial
+transverse magnetic perturbation energy. Halving $\Delta t$ gives -0.008362%;
+doubling $n_v$ to 64 gives -0.002703%. At that finer resolution the raw defect is
+**+1.0518%**, with **+1.0545%** current-projection work recorded separately.
 Quasineutrality remains below $3\times10^{-14}$ in these checks.
 
 The declared regression requires less than 0.1% accounted defect at $t=2$ and
 more than hundredfold improvement over the uncorrected control. It also bounds
-the sensitivity to temporal and radial refinement. This interval is about 3.1%
+the sensitivity to temporal refinement and requires radial refinement to reduce
+the residual by more than a factor of two, to below 0.004%. These results include
+the pressure-work fix that removes a duplicate electron-energy source; the old
+radial-difference bound measured approach to that source's nonzero error plateau.
+This interval is about 3.1%
 of the guide-field Alfvén period, so it is not a full-period kinetic-wave or
 experiment-duration validation. The ideal magnetic subsystem has a separate
 full-period test.

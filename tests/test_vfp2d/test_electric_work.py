@@ -140,4 +140,7 @@ def test_corrected_finite_magnetic_energy_budget_remains_resolved_at_longer_time
         assert abs(result["accounted"]) < 1e-3
     assert abs(original["accounted"]) / abs(coarse["accounted"]) > 100.0
     assert abs(coarse["accounted"] - time_fine["accounted"]) < 1e-6
-    assert abs(time_fine["accounted"] - radial_fine["accounted"]) < 4e-5
+    # With the pressure-work double count removed, radial refinement reduces
+    # the residual rather than approaching the old nonzero error plateau.
+    assert abs(radial_fine["accounted"]) < 0.5 * abs(time_fine["accounted"])
+    assert abs(radial_fine["accounted"]) < 4e-5
