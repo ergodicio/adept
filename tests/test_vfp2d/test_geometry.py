@@ -204,6 +204,9 @@ def test_seeded_magnetic_counterflow_runs_two_finite_coupled_steps():
 def test_current_sheet_requires_transverse_current_harmonic():
     cfg = _small_config()
     cfg["grid"]["mmax"] = 0
+    cfg["terms"]["ion_fluid"]["active"] = False
+    cfg["initial_conditions"].pop("ion_velocity")
+    cfg["initial_conditions"].pop("ion_temperature")
     with pytest.raises(ValueError, match="transverse Ampere current"):
         _initialize(cfg)
 
@@ -212,6 +215,11 @@ def test_current_sheet_requires_transverse_current_harmonic():
 def test_axisymmetric_harmonics_accept_compatible_magnetic_current(guide_only):
     cfg = _small_config()
     cfg["grid"]["mmax"] = 0
+    # Moving-ion frame remapping requires mmax >= 1, independently of whether
+    # the magnetic current can be represented by axisymmetric harmonics.
+    cfg["terms"]["ion_fluid"]["active"] = False
+    cfg["initial_conditions"].pop("ion_velocity")
+    cfg["initial_conditions"].pop("ion_temperature")
     field = {"uniform": ["0T", "0T", "1T"]}
     if not guide_only:
         field["vector_potential"] = {

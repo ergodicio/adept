@@ -217,7 +217,10 @@ class BaseVFP2D(ADEPTModule):
         zref = float(self.cfg["units"]["Z"])
         ion_charge = n_total if self.cfg["density"].get("quasineutrality", True) else jnp.mean(n_total)
         charge_density = ion_charge - density(flm, self.layout, self.grid.v, self.grid.dv)
-        e = SpectralPoisson2D(self.grid.kx, self.grid.ky)(charge_density)
+        relative_permittivity = (
+            float(self.field_cfg.get("relative_permittivity", 1.0)) if self.field_mode == "ampere" else 1.0
+        )
+        e = SpectralPoisson2D(self.grid.kx, self.grid.ky)(charge_density / relative_permittivity)
         # Diffrax currently warns that complex state support is experimental.
         # Keep its PyTree purely real while retaining complex arithmetic inside
         # the harmonic operator.
@@ -284,13 +287,14 @@ class BaseVFP2D(ADEPTModule):
             )
             self.args["ib_vosc2"] = self.cfg["units"]["derived"]["vosc2_per_intensity"] * intensity * profile
             derived = self.cfg["units"]["derived"]
-            self.args["ib_Z2ni_w0"] = inverse_bremsstrahlung_resonance_ratio(
+            self.args["ib_Z2ni_w0_per_ni"] = inverse_bremsstrahlung_resonance_ratio(
                 self.args["Z"],
-                self.args["ni"],
+                jnp.ones_like(self.args["ni"]),
                 derived["nuee_coeff"],
                 derived["logLam_ratio"],
                 derived["w0_norm"],
             )
+            self.args["ib_Z2ni_w0"] = self.args["ib_Z2ni_w0_per_ni"] * self.args["ni"]
             for source_key, arg_key in (
                 ("switch_on", "ib_t_on"),
                 ("switch_off", "ib_t_off"),
@@ -373,6 +377,13 @@ class BaseVFP2D(ADEPTModule):
 
     def init_diffeqsolve(self):
         if self.ion_fluid_active:
+            if self.field_cfg.get("hidden_density_gradient", {}).get("active", False):
+                raise ValueError(
+                    "moving ion-fluid coupling does not support field_solver.hidden_density_gradient; "
+                    "set hidden_density_gradient.active=false because ion continuity and pressure are only 2D"
+                )
+            if self.layout.index(1, 0) < 0 or self.layout.index(1, 1) < 0:
+                raise ValueError("moving ion-fluid coupling requires grid.lmax >= 1 and grid.mmax >= 1")
             if self.field_mode != "kinetic-ohm":
                 raise ValueError("moving ion-fluid coupling currently requires terms.field_solver.mode='kinetic-ohm'")
             if self.spatial_sharding is not None:
@@ -386,6 +397,7 @@ class BaseVFP2D(ADEPTModule):
             self.args = jtu.tree_map(self.spatial_sharding.put, self.args)
         relativistic = bool(self.cfg["grid"].get("relativistic", False))
         streaming_speed = self.grid.v / jnp.sqrt(1.0 + self.grid.v**2) if relativistic else self.grid.v
+        self._streaming_speed = streaming_speed
         partitioned_dx = self.grid.dx if self.spatial_sharding is not None else None
         partitioned_dy = self.grid.dy if self.spatial_sharding is not None else None
         vlasov = TzoufrasVlasov(
@@ -541,6 +553,7 @@ class BaseVFP2D(ADEPTModule):
                     kinetic_step,
                     hydro,
                     self.grid.dt,
+                    ion_mass=self.ion_mass,
                     exchange=exchange,
                     pressure=pressure,
                     evolve_ions=not bool(self.ion_cfg.get("frozen", False)),
@@ -633,7 +646,7 @@ class BaseVFP2D(ADEPTModule):
         flm_jax = real_to_complex(result.ys["flm"])
         flm = np.asarray(flm_jax)
         ne = density(flm_jax, self.layout, self.grid.v, self.grid.dv)
-        plasma_current = current(flm_jax, self.layout, self.grid.v, self.grid.dv)
+        plasma_current = current(flm_jax, self.layout, self.grid.v, self.grid.dv, streaming_speed=self._streaming_speed)
         mean_v2 = scalar_velocity_moment(flm_jax, self.layout, self.grid.v, self.grid.dv, power=2)
         temperature_normalized = (2.0 / 3.0) * mean_v2 / self.plasma_norm.vth_norm() ** 2
         pressure_anisotropy = tensor_velocity_moment(flm_jax, self.layout, self.grid.v, self.grid.dv, power=0)
