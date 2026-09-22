@@ -268,11 +268,11 @@ class CoupledLight(RamanLight):
             else:
                 self.beam_envelope_y = jnp.ones(self.ny)
             m = self.fd_order // 2
-            # the commutator is non-zero on the stencil's rows about each plane only
-            self.beam_rows = [
-                np.arange(i - m + 1, i + m + 1) if sign > 0 else np.arange(i - m, i + m)
-                for i, sign in zip(self.beam_i_inject, self.beam_sign, strict=True)
-            ]
+            # the commutator is non-zero on the stencil's rows about each plane only: offsets
+            # -m+1 .. m from the plane for either direction -- the mask edge lies between rows i
+            # and i+1 for a rightward (H = 1 above i) and a leftward (H = 1 up to i) beam alike
+            # (stencils.injector_offsets)
+            self.beam_rows = [np.arange(i - m + 1, i + m + 1) for i in self.beam_i_inject]
             self.beam_masks = [
                 jnp.asarray(
                     np.where(np.arange(self.nx) >= i + 1, 1.0, 0.0)

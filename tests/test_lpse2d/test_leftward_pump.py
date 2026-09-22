@@ -75,12 +75,15 @@ def test_fd_leftward_pump_mirrors_the_rightward_one():
     )
 
 
-def test_spectral_counter_propagating_beams_form_a_standing_wave():
+@pytest.mark.parametrize("solver", ["spectral", "fd"])
+def test_counter_propagating_beams_form_a_standing_wave(solver):
     """Two beams of half intensity at 0 and 180 deg (the CBET / SBS-backscatter geometry): the
-    spectral injectors launch one from each x face; the bulk holds +k0 and -k0 with equal
-    power and the mean intensity is the nominal one."""
+    injectors launch one from each x face; the bulk holds +k0 and -k0 with equal power and the
+    mean intensity is the nominal one. With the FD solver this is the general (commutator)
+    injector, whose leftward beam lost one of its two source rows before 2026-09-22 (test_001's
+    seed then arrived at twice LPSE's intensity)."""
     beams = [{"intensity": 0.5, "angle": 0.0}, {"intensity": 0.5, "angle": 180.0}]
-    dcfg, x, e0, series = _run(_cfg("spectral", beams=beams))
+    dcfg, x, e0, series = _run(_cfg(solver, beams=beams))
     derived = dcfg["units"]["derived"]
     n = dcfg["units"]["envelope density"]
     nominal_sq = (derived["E0_source"] * (1.0 - n) ** -0.25) ** 2
