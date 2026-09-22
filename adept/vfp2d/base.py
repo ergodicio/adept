@@ -888,6 +888,19 @@ class BaseVFP2D(ADEPTModule):
                 "harmonic_convention": "Tzoufras JCP 230 (2011)",
                 "length_unit_um": float(self.plasma_norm.L0.to("um").magnitude),
                 "time_unit_ps": float(self.plasma_norm.tau.to("ps").magnitude),
+                "density_unit_m3": float(self.plasma_norm.n0.to("1/m^3").magnitude),
+                "velocity_unit_m_s": float(self.plasma_norm.v0.to("m/s").magnitude),
+                "temperature_unit_ev": float(self.plasma_norm.T0.to("eV").magnitude),
+                "magnetic_field_unit_t": float(
+                    (self.plasma_norm.m0 / (self.plasma_norm.q0 * self.plasma_norm.tau)).to("tesla").magnitude
+                ),
+                "electric_field_unit_v_m": float(
+                    (self.plasma_norm.m0 * self.plasma_norm.v0 / (self.plasma_norm.q0 * self.plasma_norm.tau))
+                    .to("V/m")
+                    .magnitude
+                ),
+                "light_speed_normalized": float(self.plasma_norm.speed_of_light_norm()),
+                "temperature_energy_normalized": float(0.5 * self.plasma_norm.vth_norm() ** 2),
                 "field_solver_mode": self.field_mode,
                 "relative_permittivity": self._maxwell.relative_permittivity,
                 "spatial_boundary_model": (

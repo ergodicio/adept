@@ -57,6 +57,10 @@ See [periodic MAGPIE geometry and physical-unit imports](magpie_geometry.md) for
 spatial ion velocity/temperature, vector-potential magnetic initialization, and
 explicit-unit two-dimensional NPZ electron profiles.
 
+The [MAGPIE analysis reference](magpie_analysis.md) defines the independent bulk
+and Alfvén rate normalizations, physical output units, source-aware flux budgets,
+and the carbon upstream scale-report CLI.
+
 ## Laser heating
 
 VFP2D shares the conservative inverse-bremsstrahlung and Maxwellian heating operators with
