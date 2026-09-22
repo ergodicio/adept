@@ -82,12 +82,15 @@ contracted $\langle\mathbf{vvv}\rangle:\mathbf E$ term used to derive the displa
 The current projection also exchanges a small amount of kinetic energy with the unresolved
 constraint system. Both effects must be measured in convergence tests.
 
-The higher-fidelity `implicit-current` mode remains to be implemented. It should solve the
-electric field as a Lagrange multiplier that makes the implicit kinetic current response agree
-with Ampere's current. That retains electron inertia when requested and avoids using the
-displayed Ohm law as an evolution closure. The solve should use matrix-free JAX
-Jacobian-vector products and a Krylov method, with a custom VJP or implicit differentiation
-rather than differentiating through every iteration.
+The implemented `oshun-implicit` alternative solves a local discrete $3\times3$
+kinetic-current response for the electric field enforcing Ampere's current, without
+projecting `f1` or using the algebraic Ohm law. Faraday and non-electric transport remain
+explicit, so this is not a fully implicit Maxwell solve. It currently supports stationary
+ions without spatial sharding. `ampere` provides a second alternative: an explicit
+Ampere residual divided by a configurable relative permittivity, with correspondingly
+slower light and plasma frequencies. See the [field-mode configuration](config.md).
+A fully implicit field/transport solve and long-time validation of the full published
+geometry remain future work.
 
 ## The 2.5D Biermann source
 
@@ -164,7 +167,8 @@ useful operator test, but it should not be presented as the physical coupling.
    the local $B_z$ quadrupole score.
 3. Fully implicit kinetic-current response and mapped/stretched $x$ mesh with non-periodic
    thermal boundaries for the full published box.
-4. Conservative ion-fluid coupling and moving-ion comparison.
+4. Conservative ion-fluid coupling. **Implemented with local and nonlinear refinement tests;**
+   production-scale moving-ion comparisons remain.
 5. Higher $\ell_{max}$, convergence scans, and differentiable parameter inference.
 
 The benchmark should first lock the published $\ell_{max}=2$ result, then demonstrate that
