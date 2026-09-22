@@ -2,7 +2,9 @@
 
 ADEPT is introducing a logging-free numerical API alongside `ergoExo`. It is opt-in:
 existing solver entry points and output dictionaries are unchanged. The currently
-registered pilots are `tf-1d` and electrostatic `pic-1d`.
+registered solvers are `tf-1d`, electrostatic `pic-1d`, and `vfp-2d`.
+Supported forward `ergoExo` calls also use prepared execution through the
+[compatibility façade](legacy_compatibility.md).
 
 The numerical boundary has five explicit values:
 

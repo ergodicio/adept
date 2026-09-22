@@ -10,13 +10,64 @@ $$
 
 The implementation follows equations (5)-(24) of Tzoufras et al., *Journal of Computational Physics* **230** (2011), 6475-6494, and equations (28)-(39) of Bell et al., *Plasma Physics and Controlled Fusion* **48** (2006), R37-R57 (the KALOS review).
 
+## Explicit preparation and execution
+
+`vfp-2d` is registered with the logging-free core API. Existing YAML configurations
+can be prepared without MLflow or filesystem writes:
+
+```python
+import jax
+
+jax.config.update("jax_enable_x64", True)
+
+from adept import SimulationSpec, run_prepared, solver_registry
+
+prepared = solver_registry.prepare(SimulationSpec.from_legacy_config(config), key=42)
+completed = run_prepared(prepared, key=jax.random.key(42))
+raw = completed.raw_result
+final_state = raw.final_state
+history = raw.observations["state"]
+times = raw.times["state"]
+dataset = completed.report.result["vfp2d"]
+```
+
+The builder shares initialization and numerical operators with `BaseVFP2D`. It
+supports all four field modes, collisions and heating, permitted moving-ion and
+reservoir configurations, and existing x-axis sharding. Existing physics restrictions
+still apply. Capabilities declare float64, differentiation, and single/multiple-device
+placement; batching and multi-host execution are not advertised. The default
+`LocalExecutor` currently admits only single-device placement.
+
+The numerical program is a `ScanProgram` over the complete split-step map. Its arrays
+and nested operators are explicit PyTree children. Pass `program`, `params`, `state`,
+`inputs`, and `key` individually to JAX transformations, as described in the
+[explicit-program guide](../../usage/explicit_programs.md). `params` is initially
+empty; `inputs` contains normalized runtime arrays such as `ni`, `Z`, `D0_heating`,
+and enabled IB/hidden-gradient controls. Use `partition_parameters` to select these
+controls for differentiation while keeping the remaining inputs fixed. Preparation
+itself is host-side and is not differentiated. The program records executed inputs
+in `raw.stats["runtime_inputs"]` so the host analyzer uses updated controls when
+reconstructing Ohm-law diagnostics.
+
+Saved histories retain the existing `save.t` schedule, including linear interpolation
+between timesteps. `final_state` always contains the last complete step, even when
+saving stops earlier. `observation_plan` declares the complete-state sample schema,
+retained byte budget, and any sharding collectives. The analyzer returns the existing
+xarray diagnostics and metrics in a `Report`; explicit runs do not write plots or
+NetCDF files automatically. To export a report, call
+`adept.vfp2d.plotting.save_artifacts(dataset, output_directory)` on the host.
+
+Ordinary `ergoExo` forward calls use this prepared path and preserve legacy output and
+artifact behavior. Custom modules, replaced states, and explicit legacy arguments
+retain the compatibility fallback.
+
 ## Harmonic storage
 
 Only $m\geq0$ is stored. The retained modes satisfy
 
 $$0\leq\ell\leq\ell_{\max},\qquad 0\leq m\leq\min(\ell,m_{\max}).$$
 
-They occupy one packed harmonic axis rather than a nested Python dictionary. Output includes `ell(harmonic)` and `m(harmonic)` coordinates. Internally, Diffrax sees a real-valued final axis of length two; the operator restores complex values for the angular algebra. This avoids relying on experimental complex-state support while remaining compatible with JIT, `vmap`, autodiff, and array sharding.
+They occupy one packed harmonic axis rather than a nested Python dictionary. Output includes `ell(harmonic)` and `m(harmonic)` coordinates. Both execution APIs use a real-valued final axis of length two; the operator restores complex values for the angular algebra. This avoids relying on experimental complex-state support while remaining compatible with JIT, `vmap`, autodiff, and array sharding.
 
 ## Physics
 
