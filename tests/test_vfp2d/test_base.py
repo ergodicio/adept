@@ -170,6 +170,44 @@ def test_gate2b_uniform_coupled_run_saves_ion_state_and_invariants():
     np.testing.assert_allclose(reconstructed_e, dataset.e, rtol=2e-12, atol=2e-12)
 
 
+def test_driven_reservoir_run_saves_external_source_budgets():
+    cfg = _config(collisions=False)
+    cfg["grid"].update({"nx": 6, "ny": 6})
+    cfg["terms"].update(
+        {
+            "field_solver": {"mode": "kinetic-ohm"},
+            "ion_fluid": {"active": True, "mass_ratio": 100.0, "initial_velocity": [1.0e-4, 0.0, 0.0]},
+        }
+    )
+    cfg["drivers"]["reservoir"] = {
+        "active": True,
+        "relaxation_time": "0.1fs",
+        "x_width": "0.5um",
+        "y_width": "0.5um",
+    }
+    module = BaseVFP2D(copy.deepcopy(cfg))
+    module.write_units()
+    module.get_derived_quantities()
+    module.get_solver_quantities()
+    module.init_state_and_args()
+    module.init_diffeqsolve()
+    # The stored target retains its prescribed flow while the live initial
+    # state is at rest, so this exercises actual external momentum injection.
+    module.state["ions"] = module.state["ions"].at[..., 1:4].set(0.0)
+    output = module(None, None)
+    dataset = module.post_process(output, "")["vfp2d"]
+    assert dataset.attrs["spatial_boundary_model"] == "periodic with explicit reservoir sources"
+    assert dataset.reservoir_total_momentum.dims == ("t", "component")
+    assert dataset.reservoir_total_momentum[-1, 0] > 0.0
+    assert np.all(np.isfinite(dataset.source_accounted_total_energy))
+    np.testing.assert_allclose(
+        dataset.source_accounted_total_energy,
+        dataset.total_energy - dataset.current_projection_energy - dataset.reservoir_total_energy,
+        rtol=3e-13,
+        atol=3e-13,
+    )
+
+
 def test_collisional_end_to_end_step_is_finite():
     _module, output = _setup_and_run(_config(collisions=True))
     for value in output["solver result"].ys.values():

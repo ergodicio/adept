@@ -47,6 +47,7 @@ from adept.vfp2d.moving_frame import IonFrameVlasov
 from adept.vfp2d.ohm import KineticOhm2D
 from adept.vfp2d.plotting import add_reconnection_diagnostics, reconnection_metrics, save_artifacts
 from adept.vfp2d.pressure import ElectronPressureCoupling
+from adept.vfp2d.reservoir import SOURCE_INVARIANTS, DrivenReservoirStep, boundary_buffer
 from adept.vfp2d.vector_field import (
     KineticOhmStep,
     Maxwell2D,
@@ -101,6 +102,7 @@ class BaseVFP2D(ADEPTModule):
         self._kinetic_step = None
         self._implicit_current_step = None
         self._coupled_step = None
+        self._reservoir_step = None
         self._maxwell = None
         self.ion_cfg = cfg.get("terms", {}).get("ion_fluid", {})
         self.ion_fluid_active = bool(self.ion_cfg.get("active", False))
@@ -601,6 +603,30 @@ class BaseVFP2D(ADEPTModule):
                 f"Unsupported VFP-2D field solver mode {self.field_mode!r}; expected "
                 "'maxwell', 'ampere', 'oshun-implicit', or 'kinetic-ohm'"
             )
+        reservoir_cfg = self.cfg.get("drivers", {}).get("reservoir", {})
+        if reservoir_cfg.get("active", False):
+            if self._coupled_step is None:
+                raise ValueError("driven reservoirs require kinetic-Ohm moving-ion coupling")
+            if reservoir_cfg.get("target", "initial_state") != "initial_state":
+                raise ValueError("reservoir.target currently supports only 'initial_state'")
+            relaxation_time = normalize(reservoir_cfg["relaxation_time"], self.plasma_norm, dim="t")
+            if not np.isfinite(relaxation_time) or relaxation_time <= 0.0:
+                raise ValueError("reservoir.relaxation_time must be finite and positive")
+            mask = boundary_buffer(
+                self.grid,
+                x_width=normalize(reservoir_cfg.get("x_width", 0.0), self.plasma_norm, dim="x"),
+                y_width=normalize(reservoir_cfg.get("y_width", 0.0), self.plasma_norm, dim="x"),
+            )
+            self._reservoir_step = DrivenReservoirStep(
+                self._coupled_step,
+                self.state,
+                mask / relaxation_time,
+                ion_mass=self.ion_mass,
+                ion_charge=float(self.cfg["units"]["Z"]),
+                magnetic=bool(reservoir_cfg.get("magnetic", True)),
+            )
+            self.state.update(self._reservoir_step.initial_ledger(self.state["b"]))
+            step = self._reservoir_step
         save_cfg = self.cfg.get("save", {}).get("t", {})
         save_tmin = normalize(save_cfg.get("tmin", self.tmin), self.plasma_norm, dim="t")
         save_tmax = normalize(save_cfg.get("tmax", self.tmax), self.plasma_norm, dim="t")
@@ -800,6 +826,27 @@ class BaseVFP2D(ADEPTModule):
                     "harmonic_free_energy": (("t", "harmonic"), np.asarray(harmonic_free_energy)),
                 }
             )
+        if self._reservoir_step is not None:
+            data_vars["reservoir_magnetic_field_change"] = (
+                ("t", "x", "y", "component"),
+                np.asarray(result.ys["reservoir_magnetic_field_change"]),
+            )
+            for name in SOURCE_INVARIANTS:
+                dims = ("t", "component") if name == "total_momentum" else ("t",)
+                data_vars[f"reservoir_{name}"] = (dims, np.asarray(result.ys[f"reservoir_{name}"]))
+            data_vars["source_accounted_total_energy"] = (
+                ("t",),
+                np.asarray(invariants["accounted_total_energy"] - result.ys["reservoir_total_energy"]),
+            )
+            data_vars["source_accounted_total_momentum"] = (
+                ("t", "component"),
+                np.asarray(invariants["total_momentum"] - result.ys["reservoir_total_momentum"]),
+            )
+            for name in ("electron_number", "ion_number"):
+                data_vars[f"source_accounted_{name}"] = (
+                    ("t",),
+                    np.asarray(invariants[name] - result.ys[f"reservoir_{name}"]),
+                )
         if self._kinetic_ohm is not None and self._maxwell is not None:
             ohm_keys = ["resistive", "hall", "nernst", "scalar_pressure", "tensor_pressure"]
             if self.ion_fluid_active:
@@ -843,8 +890,19 @@ class BaseVFP2D(ADEPTModule):
                 "time_unit_ps": float(self.plasma_norm.tau.to("ps").magnitude),
                 "field_solver_mode": self.field_mode,
                 "relative_permittivity": self._maxwell.relative_permittivity,
+                "spatial_boundary_model": (
+                    "periodic with explicit reservoir sources" if self._reservoir_step is not None else "periodic"
+                ),
+                "reservoir_budget_convention": (
+                    "cumulative measured external injection; source_accounted energy also subtracts current projection "
+                    "work; other external heating and numerical dissipation are not subtracted"
+                    if self._reservoir_step is not None
+                    else "not applicable"
+                ),
                 "ampere_constraint": "current = c^2 curl(magnetic_field); residual is current minus target",
-                "ion_fluid_coupling": "gate2a" if self.ion_fluid_active else "stationary",
+                "ion_fluid_coupling": "kinetic-ohm magnetic force and moment exchange"
+                if self.ion_fluid_active
+                else "stationary",
                 "coupled_energy_convention": (
                     "electron lab kinetic + ion total + magnetic; algebraic kinetic-Ohm E has no field energy"
                     if self.ion_fluid_active

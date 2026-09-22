@@ -1,0 +1,81 @@
+# Driven periodic carbon interaction-region smoke, not an experimental reproduction.
+# Source bands require independent box/width/relaxation-time sensitivity checks.
+# Hare et al., Phys. Rev. Lett. 118, 085001 (2017), Table I:
+# https://arxiv.org/pdf/1609.09234
+# Upstream ne=3e17 cm^-3, Te=15eV, Ti<=50eV, Z=4, B=3T, Vin=50km/s;
+# measured sheet half-width delta=0.6mm. Keep upstream Ti upper bound explicit.
+# x is outflow and y is inflow here (opposite to the paper's coordinate names).
+# Domain extent, perturbation and numerical resolution are modeling choices.
+solver: vfp-2d
+mlflow:
+  experiment: vfp2d-magpie-carbon
+  run: driven-initialization-smoke
+units:
+  # Normalization convention only; this model has no laser driver.
+  laser_wavelength: 351nm
+  reference electron temperature: 15eV
+  reference ion temperature: 50eV
+  reference electron density: 3e17/cm^3
+  Z: 4
+  Ion: C 4+
+  logLambda: nrl
+density:
+  quasineutrality: true
+  species-electron:
+    m: 2.0
+    n: {basis: uniform, baseline: 1.0}
+    T: {basis: uniform, baseline: 1.0}
+grid:
+  xmin: -14mm
+  xmax: 14mm
+  nx: 64
+  ymin: -6mm
+  ymax: 6mm
+  ny: 64
+  tmin: 0ps
+  tmax: 0.2ps  # two-step smoke only; this is not a MAGPIE evolution time
+  dt: 0.1ps
+  nv: 48
+  vmax: 8.0
+  lmax: 2
+  mmax: 2
+initial_conditions:
+  ion_temperature: 50eV
+  ion_velocity:
+    - 0km/s
+    - {basis: periodic_tanh, axis: y, baseline: 0, amplitude: -50km/s,
+       width: 0.6mm, wavelength: 12mm, center: 0mm}
+    - 0km/s
+  magnetic_field:
+    uniform: [0T, 0T, 0T]
+    periodic_sheet:
+      field: 3T
+      width: 0.6mm
+      center: 0mm
+      perturbation: 0.03T*mm
+terms:
+  field_solver: {mode: kinetic-ohm}
+  ion_fluid:
+    active: true
+    mass_ratio: 21874.66  # carbon-12 mass / electron mass
+    gamma: 1.6666666666666667
+    boundaries: [periodic, periodic]
+    cfl: 0.4
+    electron_pressure_feedback: true
+    momentum_relaxation_rate: 0.0
+    temperature_relaxation_rate: 0.0
+  fokker_planck:
+    active: true
+    flm: {ee: true}
+    f00: {model: CoulombianKernel, scheme: chang_cooper, positivity: conservative}
+  hou_li_filter: {is_on: true, alpha: 36.0, order: 36, dimensions: [x, y]}
+drivers:
+  reservoir:
+    active: true
+    target: initial_state
+    relaxation_time: 1ns
+    x_width: 2mm
+    y_width: 1mm
+    magnetic: true
+save:
+  t: {tmin: 0ps, tmax: 0.2ps, nt: 3}

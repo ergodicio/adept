@@ -172,7 +172,7 @@ omitted) or with a differentiable tanh gate (`switch_width` set). Output variabl
 with `ohm_` contain the resistive, Hall, Nernst, scalar-pressure, and $f_2$ tensor-pressure
 contributions.
 
-## Moving ion-fluid coupling (Gates 2a/2b)
+## Moving ion-fluid coupling
 
 Opt-in coupling is available for non-relativistic, unsharded `kinetic-ohm` runs on
 periodic grids with `density.quasineutrality: true`:
@@ -182,16 +182,22 @@ terms:
   field_solver: {mode: kinetic-ohm}
   ion_fluid:
     active: true
-    mass_ratio: 1836.0
+    mass_ratio: 21874.66
     gamma: 1.6666666666666667
     cfl: 0.4
     boundaries: [periodic, periodic]
-    initial_velocity: [0.0, 0.0, 0.0]  # code velocity units
+    initial_velocity: [0.0, 0.0, 0.0]  # legacy constants normalized to c
     frozen: false
-    temperature_relaxation_rate: 0.0   # normalized inverse time
+    temperature_relaxation_rate: 0.0   # prescribed rate in normalized inverse time
     momentum_relaxation_rate: 0.0
     electron_pressure_feedback: true
 ```
+
+`mass_ratio` is the mass of **one ion** divided by the electron mass; charge is
+set separately by `units.Z`. A carbon-12 example uses approximately `12*u/m_e = 21874.66`.
+Charge state is fixed. Rates are prescribed moment-relaxation rates, not an
+atomic-kinetics or full finite-mass Landau model. Zero disables that exchange;
+this must not be interpreted as predicting physical electron-ion equilibration.
 
 `CoupledIonKineticStep` uses a symmetric composition:
 
@@ -219,7 +225,33 @@ active `field_solver.hidden_density_gradient` are rejected. These restrictions a
 apply when `frozen: true`. The initial ion half-step is checked against the configured
 acoustic/advection `cfl`; the timestep must remain conservative as the ion state evolves.
 Local transport and nonlinear conservation/refinement tests are implemented, but
-production-scale validation remains outstanding.
+production-scale validation remains outstanding. This CFL check is not a complete
+magnetic, Hall, electron-streaming or gyrofrequency stability bound; timestep and
+radial resolution convergence remain required. See the
+[ion-frame derivation](moving_frame.md) for the implemented operators and their
+validation boundaries.
+
+## Driven periodic reservoirs
+
+A prescribed initial state can be maintained in smooth boundary bands:
+
+```yaml
+drivers:
+  reservoir:
+    active: true
+    target: initial_state
+    relaxation_time: 1ns
+    x_width: 2mm
+    y_width: 1mm
+    magnetic: true
+```
+
+Each width must be smaller than the corresponding half-box; zero disables that
+pair of bands. The target is the fully initialized state. Particle mixing is
+performed in a common ion frame, magnetic increments are curls, and measured
+source additions are saved for particle number, momentum and energy. This is a
+periodic forced interaction-region model, not an open boundary condition. See
+[reservoir equations, budgets and buffer tests](reservoirs.md).
 
 ## Reconnection diagnostics
 
