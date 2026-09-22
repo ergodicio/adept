@@ -232,6 +232,7 @@ class BaseVFP2D(ADEPTModule):
             self.grid,
             self.plasma_norm,
             finite_difference=self.spatial_sharding is not None,
+            mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
         )
         self.state = {"flm": complex_to_real(flm), "e": e, "b": magnetic_field}
         self._density = n_total
