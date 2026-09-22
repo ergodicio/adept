@@ -180,6 +180,23 @@ class TzoufrasVlasov:
         padded = jnp.concatenate((left, f, right), axis=-1)
         return (padded[..., 2:] - padded[..., :-2]) / (2.0 * self.dv)
 
+    def spatial_derivative(self, f: Array, axis: int) -> Array:
+        """Differentiate a VFP-grid field along ``x`` (0) or ``y`` (1)."""
+
+        if axis == 0:
+            return (
+                _spectral_derivative(f, self.kx, axis=0)
+                if self.dx is None
+                else periodic_central_derivative(f, self.dx, axis=0, mesh=self.mesh)
+            )
+        if axis == 1:
+            return (
+                _spectral_derivative(f, self.ky, axis=1)
+                if self.dy is None
+                else periodic_central_derivative(f, self.dy, axis=1)
+            )
+        raise ValueError("VFP-2D spatial derivative axis must be 0 (x) or 1 (y)")
+
     def gh(self, f: Array) -> tuple[Array, Array]:
         """Return the radial operators ``G_l`` and ``H_l`` from Eqs. (20)--(22)."""
 
@@ -200,16 +217,8 @@ class TzoufrasVlasov:
         for an integrable 2.5D density gradient without allocating a z grid.
         """
 
-        dfdx = (
-            _spectral_derivative(f, self.kx, axis=0)
-            if self.dx is None
-            else periodic_central_derivative(f, self.dx, axis=0, mesh=self.mesh)
-        )
-        dfdy = (
-            _spectral_derivative(f, self.ky, axis=1)
-            if self.dy is None
-            else periodic_central_derivative(f, self.dy, axis=1)
-        )
+        dfdx = self.spatial_derivative(f, axis=0)
+        dfdy = self.spatial_derivative(f, axis=1)
         if dfdz is None:
             dfdz = jnp.zeros_like(f)
         transverse_minus = dfdy - 1j * dfdz

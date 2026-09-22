@@ -275,14 +275,37 @@ def test_periodic_streaming_conserves_total_particle_number():
     np.testing.assert_allclose(jnp.sum(dndt), 0.0, atol=2e-12)
 
 
-def test_maxwell_curl_keeps_divergence_of_b_constant():
+def test_multistep_faraday_update_preserves_magnetic_divergence():
     grid, _layout, _operator, _flm = _make_problem()
     maxwell = Maxwell2D(grid.kx, grid.ky, c=3.0)
-    e = jnp.zeros((grid.nx, grid.ny, 3)).at[..., 2].set(jnp.sin(grid.x)[:, None] * jnp.cos(2.0 * grid.y)[None, :])
-    b = jnp.zeros_like(e)
-    _dedt, dbdt = maxwell(e, b, jnp.zeros_like(e))
-    divergence = maxwell.ddx(dbdt[..., 0]) + maxwell.ddy(dbdt[..., 1])
-    np.testing.assert_allclose(divergence, 0.0, atol=2e-12)
+    x = grid.x[:, None]
+    y = grid.y[None, :]
+    b = jnp.stack(
+        (
+            2.0 * jnp.sin(x) * jnp.cos(2.0 * y),
+            -jnp.cos(x) * jnp.sin(2.0 * y),
+            0.1 * jnp.cos(2.0 * x - y),
+        ),
+        axis=-1,
+    )
+    initial_divergence = maxwell.ddx(b[..., 0]) + maxwell.ddy(b[..., 1])
+    np.testing.assert_allclose(initial_divergence, 0.0, atol=2e-12)
+
+    for step in range(24):
+        phase = 0.17 * step
+        electric = jnp.stack(
+            (
+                0.2 * jnp.cos(x + phase) * jnp.sin(y),
+                0.3 * jnp.sin(2.0 * x) * jnp.cos(y - phase),
+                jnp.sin(x + phase) * jnp.cos(2.0 * y - phase),
+            ),
+            axis=-1,
+        )
+        _dedt, dbdt = maxwell(electric, b, jnp.zeros_like(b))
+        b = b + 0.013 * dbdt
+
+    final_divergence = maxwell.ddx(b[..., 0]) + maxwell.ddy(b[..., 1])
+    np.testing.assert_allclose(final_divergence, initial_divergence, atol=2e-12)
 
 
 def test_operator_is_jittable_and_differentiable():
