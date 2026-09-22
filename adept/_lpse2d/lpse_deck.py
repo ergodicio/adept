@@ -544,6 +544,9 @@ def translate_parms(
     if laser_evolves:
         labc_light = float(g("laser.evolution.Labc.min.x", g("laser.evolution.Labc", str(labc_x))))
         drivers["E0"]["offset"] = f"{2.0 * max(labc_light, dx)}um"
+        # LPSE laser.evolution.riseTime (fs, default 30): the 1 - exp(-(t/rise)^2) ramp on every
+        # pump source (SchrodingerSolver3::addInjectorSources)
+        drivers["E0"]["turn_on_time"] = f"{float(g('laser.evolution.riseTime', '30'))}fs"
     if raman_on and int(float(g("raman.nBeams", "0"))) > 0:
         drivers["E1"] = {
             "intensity": f"{float(g('raman.1.intensity', '0'))}W/cm^2",
