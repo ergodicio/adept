@@ -151,7 +151,8 @@ ideal magnetic subsystem test propagates a circularly polarized Alfvén wave for
 one period; it verifies the force/induction split without claiming a full kinetic
 Alfvén benchmark.
 
-The finite-field coupled diagnostic initializes
+The original centered-electric-operator diagnostic, retained as a controlled
+comparison with `conserve_electric_work=False`, initializes
 $\mathbf B=(0.2,0.01\cos x,0.01\sin x)$ on a $12\times4$ periodic grid with
 $c=5$, uniform density and pressure, and runs to normalized $t=0.5$. Its energy
 scale is the transverse magnetic perturbation, not the much larger background
@@ -166,6 +167,8 @@ respectively. This is a bounded radial convergence requirement, not a universal
 resolution recommendation or long-time energy acceptance criterion. The end time
 is only about 0.8% of a guide-field Alfvén period for this initial state; the
 full-period wave test above applies to the ideal magnetic subsystem alone.
+The default nonrelativistic operator now removes the analytically identified
+interior electric-work defect; see the [derivation and longer coupled check](electric_work.md).
 
 Longer finite-field kinetic runs must establish temporal, radial, spatial, and
 angular convergence on the relevant energy-transfer and flow timescales. Driven

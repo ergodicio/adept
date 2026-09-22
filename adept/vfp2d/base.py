@@ -410,6 +410,7 @@ class BaseVFP2D(ADEPTModule):
             self.grid.kx,
             self.grid.ky,
             streaming_speed=streaming_speed,
+            conserve_electric_work=not relativistic,
             dx=partitioned_dx,
             dy=partitioned_dy,
             mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,

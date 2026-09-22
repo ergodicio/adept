@@ -225,7 +225,7 @@ def test_ideal_magnetic_split_propagates_alfven_wave_and_converges():
 
 
 @cache
-def _finite_magnetic_energy_defect(nv, dt):
+def _finite_magnetic_energy_defect(nv, dt, final_time=0.5, conserve_electric_work=True):
     """Expose finite-radial-grid work errors on a nonzero magnetic reservoir.
 
     This is a convergence diagnostic, not a claim that a percent-level defect
@@ -238,6 +238,7 @@ def _finite_magnetic_energy_defect(nv, dt):
         nv=nv,
         dt=dt,
     )
+    moving.vlasov.conserve_electric_work = bool(conserve_electric_work)
     flm = jnp.broadcast_to(flm[:1, :1], flm.shape)
     ions = jnp.broadcast_to(ions[:1, :1], ions.shape)
     magnetic = zeros.at[..., 0].set(0.2)
@@ -277,7 +278,7 @@ def _finite_magnetic_energy_defect(nv, dt):
     initial = invariants(state)
     wave_energy = 0.5 * maxwell.c2 * grid.dx * grid.dy * jnp.sum(magnetic[..., 1:] ** 2)
     advance = jax.jit(coupled)
-    for i in range(round(0.5 / dt)):
+    for i in range(round(final_time / dt)):
         state = advance(i * dt, state, {})
     final = invariants(state)
     return {
@@ -288,10 +289,10 @@ def _finite_magnetic_energy_defect(nv, dt):
     }
 
 
-def test_finite_magnetic_energy_defect_decreases_under_radial_refinement():
-    coarse = _finite_magnetic_energy_defect(32, 0.01)
-    time_fine = _finite_magnetic_energy_defect(32, 0.005)
-    radial_fine = _finite_magnetic_energy_defect(96, 0.005)
+def test_uncorrected_finite_magnetic_energy_defect_decreases_under_radial_refinement():
+    coarse = _finite_magnetic_energy_defect(32, 0.01, conserve_electric_work=False)
+    time_fine = _finite_magnetic_energy_defect(32, 0.005, conserve_electric_work=False)
+    radial_fine = _finite_magnetic_energy_defect(96, 0.005, conserve_electric_work=False)
     for result in (coarse, time_fine, radial_fine):
         np.testing.assert_allclose(result["raw"] - result["projection"], result["accounted"], atol=2e-12)
         assert result["quasineutrality"] < 1e-12
