@@ -239,7 +239,7 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     # Default save.*.t.tmin/tmax to grid values (preserves unit strings)
     for save_type in cfg.get("save", {}).keys():
-        if "t" in cfg["save"][save_type]:
+        if isinstance(cfg["save"][save_type], dict) and "t" in cfg["save"][save_type]:
             t_cfg = cfg["save"][save_type]["t"]
             t_cfg.setdefault("tmin", cfg_grid.get("tmin", "0ps"))
             t_cfg.setdefault("tmax", cfg_grid["tmax"])
@@ -247,7 +247,7 @@ def get_derived_quantities(cfg: dict) -> dict:
     # cfg_grid["xmax"] = _Q(cfg_grid["xmax"]).to("um").value
     # cfg_grid["xmin"] = _Q(cfg_grid["xmin"]).to("um").value
 
-    if "linear" in cfg["density"]["basis"]:
+    if cfg["density"]["basis"] == "linear":
         L = _Q(cfg["density"]["gradient scale length"]).to("um").value
         nmax = cfg["density"]["max"]
         nmin = cfg["density"]["min"]
@@ -318,15 +318,23 @@ def get_derived_quantities(cfg: dict) -> dict:
 
         inv_dy_sq = 0.0 if cfg_grid["ny"] == 1 else 1.0 / cfg_grid["dy"] ** 2
         omega_max = 2.0 * cfg["units"]["derived"]["cs"] * np.sqrt(1.0 / cfg_grid["dx"] ** 2 + inv_dy_sq)
-        if omega_max * cfg_grid["dt"] >= 2.0:
-            raise ValueError(
-                "The ion-acoustic update is unstable: omega_iaw,max * grid.dt must be < 2 "
-                f"(got {omega_max * cfg_grid['dt']:.3g}). Reduce grid.dt or increase grid.dx."
-            )
+        if iaw["stride"] < 1:
+            raise ValueError("terms.iaw.stride must be a positive integer")
+        if iaw["solver"] == "explicit":
+            if iaw["stride"] != 1:
+                raise ValueError("terms.iaw.stride > 1 requires terms.iaw.solver: spectral")
+            if iaw["flow"] is not None:
+                raise ValueError("terms.iaw.flow requires terms.iaw.solver: spectral")
+            if omega_max * cfg_grid["dt"] >= 2.0:
+                raise ValueError(
+                    "The ion-acoustic update is unstable: omega_iaw,max * grid.dt must be < 2 "
+                    f"(got {omega_max * cfg_grid['dt']:.3g}). Reduce grid.dt or increase grid.dx, "
+                    "or use terms.iaw.solver: spectral (unconditionally stable)."
+                )
         cfg["terms"]["iaw"] = iaw
         print(
-            "IAWs are on -- evolving density and velocity divergence with "
-            f"omega_iaw,max * dt = {omega_max * cfg_grid['dt']:.3g}"
+            f"IAWs are on ({iaw['solver']} solver, every {iaw['stride']} EPW step(s)) -- evolving density and "
+            f"velocity divergence with omega_iaw,max * dt = {omega_max * cfg_grid['dt'] * iaw['stride']:.3g}"
         )
 
     # HPE (Follett-style test-particle Landau damping): resolve defaults, convert
@@ -363,14 +371,22 @@ def get_derived_quantities(cfg: dict) -> dict:
 
     # light-wave options: defaults and validation (coupling scheme, filter) come from
     # the datamodel's LightModel; unknown keys are passed through untouched
+    from adept._lpse2d.datamodel import LightModel
+
     light = cfg["terms"].get("light", {})
     if light:
-        from adept._lpse2d.datamodel import LightModel
-
         light = {**light, **LightModel(**light).model_dump()}
         cfg["terms"]["light"] = light
     pump_depletion = light.get("pump_depletion", False)
-    if not pump_depletion and (light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None):
+    light_solver = light.get("solver", "fd")
+    combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    if combined and not light:
+        cfg["terms"]["light"] = light = {**LightModel().model_dump()}
+    if (
+        not pump_depletion
+        and not combined
+        and (light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None)
+    ):
         raise ValueError(
             "terms.light.coupling and terms.light.filter act on the coupled (pump-depletion) light solver "
             "and require terms.light.pump_depletion: true"
@@ -378,6 +394,28 @@ def get_derived_quantities(cfg: dict) -> dict:
     source_terms = cfg["terms"]["epw"]["source"]
     srs_on = bool(source_terms.get("srs", False))
     tpd_on = bool(source_terms.get("tpd", False))
+    epw_solver = cfg["terms"]["epw"].get("solver", "separate")
+    if epw_solver == "combined":
+        if srs_on != tpd_on:
+            raise ValueError(
+                "terms.epw.solver: combined needs terms.epw.source.tpd and srs both on or both off "
+                "(LPSE: 'When lw.solver=combined, both SRS and TPD must be enabled or neither')"
+            )
+        if light_solver != "spectral":
+            raise ValueError("terms.epw.solver: combined requires terms.light.solver: spectral")
+        if "E2" in cfg["drivers"]:
+            raise ValueError("terms.epw.solver: combined does not support the direct EPW driver drivers.E2")
+        if cfg["terms"]["epw"].get("energy_ledger", False):
+            raise ValueError("terms.epw.energy_ledger is only available with terms.epw.solver: separate")
+        if light.get("coupling", "explicit") != "explicit" or light.get("filter") is not None:
+            raise ValueError("terms.light.coupling / filter are options of the separate solver's FD light path")
+    elif srs_on and tpd_on:
+        print(
+            "WARNING: terms.epw.source.tpd and srs are both on with terms.epw.solver: separate. The original "
+            "LPSE refuses this ('Must use lw.solver=combined when both SRS and TPD are enabled'): the four "
+            "separate envelope equations are not valid for simultaneous TPD and SRS. Use terms.epw.solver: "
+            "combined for the LPSE formulation."
+        )
     if pump_depletion:
         if not (srs_on or tpd_on):
             raise ValueError("terms.light.pump_depletion requires at least one of terms.epw.source.srs/tpd")
@@ -394,7 +432,7 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(the pump is launched by a boundary injector and must exit the box)"
             )
 
-    if srs_on:
+    if srs_on and cfg["terms"]["epw"]["source"].get("srs_k_filter", True):
         derived = cfg["units"]["derived"]
 
         # The SRS source filter only passes wavenumbers up to the local Raman light
@@ -452,7 +490,25 @@ def get_derived_quantities(cfg: dict) -> dict:
             )
             evolved_carriers.append("pump")
         dt_max = min(dt_limits)
-        if "light_substeps" in cfg_grid:
+        if light_solver == "spectral":
+            # the exact k-space propagator has no CFL limit, but the smooth injectors add their
+            # source with an Euler step: the light must not cross more than one cell per sub-step
+            # (LPSE's spectral decks use raman.dt ~ dx/c), or the injected amplitude is wrong
+            c_light = cfg["units"]["derived"]["c"]
+            n_needed = int(np.ceil(c_light * cfg_grid["dt"] / cfg_grid["dx"]))
+            if "light_substeps" in cfg_grid:
+                n_sub = int(cfg_grid["light_substeps"])
+                if n_sub < 1:
+                    raise ValueError("grid.light_substeps must be a positive integer")
+                if n_sub < n_needed:
+                    cells = c_light * cfg_grid["dt"] / n_sub / cfg_grid["dx"]
+                    print(
+                        f"WARNING: grid.light_substeps = {n_sub} lets light cross {cells:.1f} cells per "
+                        f"sub-step; the spectral injectors want <= 1 ({n_needed} sub-steps)"
+                    )
+            else:
+                n_sub = max(1, n_needed)
+        elif "light_substeps" in cfg_grid:
             n_sub = int(cfg_grid["light_substeps"])
             if cfg_grid["dt"] / n_sub > dt_max:
                 raise ValueError(
@@ -463,7 +519,10 @@ def get_derived_quantities(cfg: dict) -> dict:
             n_sub = int(np.ceil(cfg_grid["dt"] / (0.9 * dt_max)))
         cfg_grid["light_substeps"] = n_sub
         carriers = " + ".join(evolved_carriers)
-        print(f"{carriers} light is sub-cycled {n_sub}x per EPW step (dt_light limit {dt_max:.2e} ps)")
+        print(
+            f"{carriers} light ({light_solver} solver) is sub-cycled {n_sub}x per EPW step "
+            f"(FD dt_light limit {dt_max:.2e} ps)"
+        )
 
     # change driver parameters to the right units
     for k in cfg["drivers"].keys():
@@ -492,6 +551,8 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "offset": offset,
                 "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
             }
+            if cfg["drivers"][k].get("injector_width") is not None:
+                cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
             continue
         if k == "E0" and pump_depletion:
             # boundary-injector parameters for the evolved pump: the injector sits at
@@ -504,6 +565,51 @@ def get_derived_quantities(cfg: dict) -> dict:
             cfg["drivers"][k]["derived"]["turn_on_time"] = (
                 _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value
             )
+            if cfg["drivers"][k].get("injector_width") is not None:
+                cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
+        if k == "E0":
+            angle_deg = float(cfg["drivers"][k].get("angle", 0.0))
+            cfg["drivers"][k]["derived"]["angle"] = float(np.deg2rad(angle_deg))
+            e0_cfg = cfg["drivers"][k]
+            beams = e0_cfg.get("beams") or [{"intensity": 1.0, "angle": angle_deg, "phase": 0.0, "delta_omega": 0.0}]
+            fraction = np.array([float(b.get("intensity", 1.0)) for b in beams], dtype=np.float64)
+            if np.any(fraction < 0) or fraction.sum() <= 0:
+                raise ValueError("drivers.E0.beams intensities must be non-negative with a positive sum")
+            cfg["drivers"][k]["derived"]["beam_fraction"] = fraction / fraction.sum()
+            cfg["drivers"][k]["derived"]["beam_angle"] = np.deg2rad(
+                np.array([float(b.get("angle", angle_deg)) for b in beams], dtype=np.float64)
+            )
+            cfg["drivers"][k]["derived"]["beam_phase"] = np.array(
+                [float(b.get("phase", 0.0)) for b in beams], dtype=np.float64
+            )
+            cfg["drivers"][k]["derived"]["beam_delta_omega"] = np.array(
+                [float(b.get("delta_omega", 0.0)) for b in beams], dtype=np.float64
+            )
+            cfg["drivers"][k]["derived"]["beam_width"] = (
+                _Q(e0_cfg["beam_width"]).to("um").value if e0_cfg.get("beam_width") else 0.0
+            )
+            cfg["drivers"][k]["derived"]["beam_sg_order"] = float(e0_cfg.get("beam_sg_order", 2.0))
+            cfg["drivers"][k]["derived"]["beam_offset"] = (
+                _Q(e0_cfg["beam_offset"]).to("um").value if e0_cfg.get("beam_offset") else 0.0
+            )
+            cfg["drivers"][k]["derived"]["kap_bandwidth"] = float(e0_cfg.get("kap_bandwidth", 0.0))
+            cfg["drivers"][k]["derived"]["kap_seed"] = int(e0_cfg.get("kap_seed", 0))
+            if e0_cfg.get("pulse_file"):
+                table = np.loadtxt(e0_cfg["pulse_file"], dtype=np.float64)
+                if table.ndim != 2 or table.shape[1] < 2:
+                    raise ValueError("drivers.E0.pulse_file must be a two-column (t_ps, amplitude) table")
+                cfg["drivers"][k]["derived"]["pulse_t"] = table[:, 0]
+                cfg["drivers"][k]["derived"]["pulse_amp"] = table[:, 1]
+            multi = len(beams) > 1 or any(float(b.get("angle", angle_deg)) != 0.0 for b in beams)
+            angle_deg = angle_deg if not multi else 1.0  # trips the same checks below
+            if angle_deg != 0.0:
+                if cfg["drivers"][k].get("speckle", {}).get("enabled", False):
+                    raise ValueError("drivers.E0.angle / beams are not supported together with drivers.E0.speckle")
+                if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral":
+                    raise ValueError(
+                        "drivers.E0.angle / beams with terms.light.pump_depletion need terms.light.solver: spectral "
+                        "(the FD two-point injector launches along +x only)"
+                    )
         cfg["drivers"][k]["derived"]["tw"] = _Q(cfg["drivers"][k]["envelope"]["tw"]).to("ps").value
         cfg["drivers"][k]["derived"]["tc"] = _Q(cfg["drivers"][k]["envelope"]["tc"]).to("ps").value
         cfg["drivers"][k]["derived"]["tr"] = _Q(cfg["drivers"][k]["envelope"]["tr"]).to("ps").value
@@ -558,8 +664,12 @@ def _pump_k_support(cfg: dict) -> tuple[float, float]:
         ky = k0 * numerical_aperture
     else:
         ky = 0.0
+    # an oblique pump (drivers.E0.angle) carries k0 sin(angle) in y
+    angle = np.deg2rad(float(cfg["drivers"]["E0"].get("angle", 0.0)))
+    kx_support = k0 * abs(np.cos(angle))
+    ky = max(ky, k0 * abs(np.sin(angle)))
 
-    return float(k0), float(ky)
+    return float(kx_support), float(ky)
 
 
 def get_solver_quantities(cfg: dict) -> dict:
@@ -620,28 +730,80 @@ def get_solver_quantities(cfg: dict) -> dict:
 
     boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
     rise = boundary_width / 5
+    boundary_profile = str(cfg_grid.get("boundary_profile", "tanh"))
+    if boundary_profile not in ("tanh", "exp"):
+        raise ValueError(f"grid.boundary_profile must be 'tanh' or 'exp', got {boundary_profile!r}")
 
-    def absorbing_boundary(boundary):
+    def absorbing_rate(boundary, max_rate=None):
+        """Amplitude damping rate (1/ps) of the absorbing layers, shape (nx, ny).
+
+        ``tanh``: MATLAB's envelope, ``boundary_abs_coeff * (1 - tanh-envelope)``.
+        ``exp``: LPSE absorbingBoundaries.cpp, ``rate = max_rate (e^{lambda s/L} - 1)/(e^lambda - 1)``
+        with s the distance into the layer of width L, per axis, the two axes combined by max.
+        """
+        if boundary_profile == "tanh":
+            if boundary["x"] == "absorbing":
+                left = cfg_grid["xmin"] + boundary_width
+                right = cfg_grid["xmax"] - boundary_width
+                envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
+            else:
+                envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+
+            if boundary["y"] == "absorbing":
+                left = cfg_grid["ymin"] + boundary_width
+                right = cfg_grid["ymax"] - boundary_width
+                envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
+            else:
+                envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+
+            return float(cfg_grid["boundary_abs_coeff"]) * (1.0 - envelope_x * envelope_y)
+
+        lam = float(cfg_grid.get("boundary_lambda", 7.0))
+        gamma_max = float(cfg_grid.get("boundary_max_rate", 200.0)) if max_rate is None else float(max_rate)
+        coeff = gamma_max / np.expm1(lam)
+
+        def axis_rate(ax, lo, hi):
+            # LPSE measures the distance into the layer in whole cells from the edge cell
+            # (absorbingBoundaries.cpp), so the first/last cell carries the full rate and
+            # the layer spans boundary_width / dx cells
+            half = 0.5 * (ax[1] - ax[0]) if ax.size > 1 else 0.0
+            s = np.maximum(lo + boundary_width + half - ax, ax - (hi - boundary_width - half))
+            s = np.clip(s, 0.0, boundary_width)
+            return coeff * np.expm1(lam * s / boundary_width)
+
+        rate_x = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
+        rate_y = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
         if boundary["x"] == "absorbing":
-            left = cfg_grid["xmin"] + boundary_width
-            right = cfg_grid["xmax"] - boundary_width
-            envelope_x = get_envelope(rise, rise, left, right, cfg_grid["x"])[:, None]
-        else:
-            envelope_x = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
-
+            rate_x = axis_rate(cfg_grid["x"], cfg_grid["xmin"], cfg_grid["xmax"])[:, None] * np.ones(
+                (1, cfg_grid["ny"])
+            )
         if boundary["y"] == "absorbing":
-            left = cfg_grid["ymin"] + boundary_width
-            right = cfg_grid["ymax"] - boundary_width
-            envelope_y = get_envelope(rise, rise, left, right, cfg_grid["y"])[None, :]
-        else:
-            envelope_y = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+            rate_y = axis_rate(cfg_grid["y"], cfg_grid["ymin"], cfg_grid["ymax"])[None, :] * np.ones(
+                (cfg_grid["nx"], 1)
+            )
+        return np.maximum(rate_x, rate_y)
 
-        return np.exp(-float(cfg_grid["boundary_abs_coeff"]) * cfg_grid["dt"] * (1.0 - envelope_x * envelope_y))
+    def absorbing_boundary(boundary, max_rate=None):
+        return np.exp(-absorbing_rate(boundary, max_rate) * cfg_grid["dt"])
 
-    cfg_grid["absorbing_boundaries"] = absorbing_boundary(cfg["terms"]["epw"]["boundary"])
+    cfg_grid["absorbing_rate"] = absorbing_rate(cfg["terms"]["epw"]["boundary"])
+    cfg_grid["absorbing_boundaries"] = np.exp(-cfg_grid["absorbing_rate"] * cfg_grid["dt"])
+    # the light fields get their own absorber strength (LPSE {laser|raman}.evolution.abc.maxDampingRate,
+    # default 5e3/ps against 200/ps for the EPW): light crosses a 3 um layer in 0.01 ps, so at the
+    # EPW rate the exp profile removes only ~25 % per crossing and the pump builds a coherent
+    # standing wave between the walls (1.45x the launched amplitude on the LPSE test_010 deck).
+    # The tanh profile keeps boundary_abs_coeff for both (no change for existing configs).
+    light_max_rate = cfg["terms"].get("light", {}).get("boundary_max_rate")
+    if light_max_rate is None and boundary_profile == "exp":
+        light_max_rate = 5.0e3
+    cfg_grid["light_absorbing_boundaries"] = absorbing_boundary(cfg["terms"]["epw"]["boundary"], light_max_rate)
     iaw = cfg["terms"].get("iaw", {})
     if iaw.get("active", False):
-        cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"])
+        # LPSE's IAW absorber default is half the EPW one (IawSolver.cpp abc.maxDampingRate = 100)
+        iaw_max_rate = iaw.get("boundary_max_rate")
+        if iaw_max_rate is None and boundary_profile == "exp":
+            iaw_max_rate = 0.5 * float(cfg_grid.get("boundary_max_rate", 200.0))
+        cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"], iaw_max_rate)
 
     cfg_grid["zero_mask"] = (
         np.where(np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) == 0, 0, 1)
@@ -696,8 +858,27 @@ def get_solver_quantities(cfg: dict) -> dict:
             f"dealias='shifted-band': alias-free band is |kx| <= {kx_limit:.2f}, |ky| <= {ky_limit:.2f} 1/um "
             f"(Nyquist {kx_nyquist:.2f}, {ky_nyquist:.2f}); low_pass_filter caps |k| <= {cutoff:.2f}"
         )
+    elif dealias == "rectangular":
+        # the original LPSE mask (grid.antiAliasing.range): the outer fraction of *each* k axis
+        # is zeroed, i.e. |kx| < low_pass_filter * kmax_x and |ky| < low_pass_filter * kmax_y
+        kx_nyquist = float(np.abs(cfg_grid["kx"]).max())
+        ky_nyquist = float(np.abs(cfg_grid["ky"]).max())
+        frac = float(cfg_grid["low_pass_filter"])
+        band = (np.abs(cfg_grid["kx"])[:, None] < frac * kx_nyquist) & (
+            (np.abs(cfg_grid["ky"])[None, :] < frac * ky_nyquist) | (cfg_grid["ny"] == 1)
+        )
+        cfg_grid["low_pass_filter_grid"] = np.where(band, 1.0, 0.0)
     elif dealias != "isotropic":
-        raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic' or 'shifted-band'.")
+        raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic', 'shifted-band' or 'rectangular'.")
+
+    # LPSE lw.maxWavenumber: an additional hard cap on the retained EPW band, in units
+    # of the vacuum laser wavenumber k0 = w0/c
+    max_wavenumber = cfg["terms"]["epw"].get("max_wavenumber")
+    if max_wavenumber is not None:
+        k0_vac = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"]
+        cfg_grid["low_pass_filter_grid"] = cfg_grid["low_pass_filter_grid"] * np.where(
+            k_mag < float(max_wavenumber) * k0_vac, 1.0, 0.0
+        )
 
     retained = float(np.mean(cfg_grid["low_pass_filter_grid"] > 0))
     debye_length = np.sqrt(cfg["units"]["derived"]["vte_sq"]) / cfg["units"]["derived"]["wp0"]
@@ -800,10 +981,127 @@ def get_density_profile(cfg: dict) -> Array:
         amp = cfg["density"]["amplitude"]
         kk = cfg["density"]["wavenumber"]
         nprof = baseline * (1.0 + amp * np.sin(kk * cfg["grid"]["x"]))
+
+    elif str(cfg["density"]["basis"]).startswith("lpse-"):
+        nprof = _lpse_density_profile(cfg)
     else:
         raise NotImplementedError
 
     return nprof
+
+
+LPSE_DENSITY_SHAPES = ("linear", "exp", "gaussian", "inverse-power", "quadratic", "qd", "gd", "file")
+
+
+def _lpse_density_profile(cfg: dict) -> np.ndarray:
+    """The original LPSE density profiles (``ZakharovSolver::backgroundDensityShape``),
+    ``density.basis: lpse-<shape>`` with shape in ``LPSE_DENSITY_SHAPES``.
+
+    With ``r`` the distance from the N_max location along the unit vector towards the N_min
+    location (``geometry: cartesian``) or the radial distance from it (``spherical``), ``dr``
+    the min-max separation and ``p = sg_order`` (default 2):
+
+    - ``linear``: ``N_max + (N_min - N_max) r/dr``, clipped to [N_min, N_max]
+    - ``exp``: ``N_max exp(-r/L)``, ``L = dr/ln(N_max/N_min)``, clipped to [N_min, N_max]
+    - ``gaussian``: ``N_max exp(-|r/s|^p)``, ``s = dr / ln(N_max/N_min)^(1/p)`` (not clipped below)
+    - ``inverse-power``: ``N_min (dr/|r|)^p`` for ``|r| > r_c = dr (N_min/N_max)^(1/p)``, else ``N_max``
+    - ``quadratic``: ``A0 + A1 x + A2 x^2`` through ``(0, central_density)``, ``(x_min, N_min)``,
+      ``(x_max, N_max)`` with x measured from ``origin`` (LPSE's box centre)
+    - ``qd`` / ``gd``: linear plus a parabolic / super-Gaussian dip of depth ``dip_depth``, full
+      width ``dip_width`` at ``dip_offset`` from ``origin``
+    - ``file``: a (nx, ny) or (nx,) array from ``file`` (``.npy``, a text table, or an LPSE
+      grid file read with ``lpse_deck.read_frames``)
+
+    Every profile is clipped at ``max_density`` (LPSE ``maxBackgroundDensity``, 1.25 n_c here)."""
+    d = cfg["density"]
+    shape = str(d["basis"])[5:]
+    if shape not in LPSE_DENSITY_SHAPES:
+        raise ValueError(f"density.basis lpse-{shape}: shape must be one of {LPSE_DENSITY_SHAPES}")
+    x = np.asarray(cfg["grid"]["x"], dtype=np.float64)
+    y = np.asarray(cfg["grid"]["y"], dtype=np.float64)
+    nx, ny = len(x), cfg["grid"]["ny"]
+    max_density = float(d.get("max_density", 1.25))
+
+    if shape == "file":
+        path = str(d["file"])
+        if path.endswith(".npy"):
+            arr = np.load(path)
+        elif path.endswith((".txt", ".csv", ".dat")):
+            arr = np.loadtxt(path)
+        else:
+            from adept._lpse2d.lpse_deck import read_frames
+
+            arr = np.real(read_frames(path)[-1][1]).T  # LPSE stores x fastest: (ny, nx) -> (nx, ny)
+        arr = np.asarray(arr, dtype=np.float64)
+        if arr.ndim == 1:
+            arr = np.repeat(arr[:, None], ny, axis=-1)
+        if arr.shape != (nx, ny):
+            raise ValueError(f"density.file {path} has shape {arr.shape}, the grid is {(nx, ny)}")
+        return np.minimum(arr, max_density)
+
+    n_min, n_max = float(d["min"]), float(d["max"])
+    p = float(d.get("sg_order", 2.0))
+    loc_min = np.array([_Q(d["min_location"]).to("um").value, _Q(d.get("min_location_y", "0um")).to("um").value])
+    loc_max = np.array([_Q(d["max_location"]).to("um").value, _Q(d.get("max_location_y", "0um")).to("um").value])
+    X, Y = np.meshgrid(x, y, indexing="ij")
+    dr = float(np.linalg.norm(loc_min - loc_max))
+    if dr == 0.0 and n_min != n_max and shape not in ("quadratic",):
+        raise ValueError("density: min_location and max_location coincide but min != max")
+    if str(d.get("geometry", "cartesian")) == "spherical":
+        r = np.hypot(X - loc_max[0], Y - loc_max[1])
+    else:
+        direction = (loc_min - loc_max) / dr if dr > 0 else np.array([1.0, 0.0])
+        r = (X - loc_max[0]) * direction[0] + (Y - loc_max[1]) * direction[1]
+    lo, hi = min(n_min, n_max), max(n_min, n_max)
+
+    def _linear():
+        if dr == 0.0 or n_min == n_max:
+            return np.full_like(X, n_max)
+        return np.clip(n_max + (n_min - n_max) * r / dr, lo, hi)
+
+    # the quadratic and the dips use LPSE's box-centred x; ``origin`` is that point here
+    origin = _Q(d["origin"]).to("um").value if d.get("origin") is not None else 0.5 * (x[0] + x[-1])
+    xc = X - origin
+
+    if shape == "linear":
+        nprof = _linear()
+    elif shape == "exp":
+        if n_min == n_max:
+            nprof = np.full_like(X, n_max)
+        else:
+            nprof = np.clip(n_max * np.exp(-r / (dr / np.log(n_max / n_min))), lo, hi)
+    elif shape == "gaussian":
+        if n_max <= n_min:
+            raise ValueError("density lpse-gaussian needs max > min")
+        sd = dr / np.log(n_max / n_min) ** (1.0 / p)
+        nprof = n_max * np.exp(-(np.abs(r / sd) ** p))
+    elif shape == "inverse-power":
+        if n_max <= n_min:
+            raise ValueError("density lpse-inverse-power needs max > min")
+        rc = dr * (n_min / n_max) ** (1.0 / p)
+        safe = np.where(np.abs(r) > 0, np.abs(r), 1.0)
+        nprof = np.where(np.abs(r) > rc, n_min * (dr / safe) ** p, n_max)
+    elif shape == "quadratic":
+        a0 = float(d["central_density"])
+        x1, x2 = loc_min[0] - origin, loc_max[0] - origin
+        if x1 == 0.0 or x2 == 0.0 or x1 == x2:
+            raise ValueError("density lpse-quadratic: min/max locations must differ from each other and from origin")
+        a2 = (n_max - n_min * x2 / x1 + a0 * (x2 / x1 - 1.0)) / (x2**2 - x1 * x2)
+        a1 = (n_min - a0 - a2 * x1**2) / x1
+        nprof = a0 + a1 * xc + a2 * xc**2
+    elif shape in ("qd", "gd"):
+        dn = float(d["dip_depth"])
+        wd = 0.5 * _Q(d["dip_width"]).to("um").value
+        xd = _Q(d.get("dip_offset", "0um")).to("um").value
+        nprof = _linear()
+        if shape == "qd":
+            inside = np.abs(xc - xd) <= wd
+            nprof = nprof + np.where(inside, dn * (((xc - xd) / wd) ** 2 - 1.0), 0.0)
+        else:
+            nprof = nprof - dn * np.exp(-(np.abs((xc - xd) / wd) ** p))
+    if np.any(nprof < 0):
+        raise ValueError("density: the LPSE profile is negative somewhere")
+    return np.minimum(nprof, max_density)
 
 
 def plot_fields(fields, td):
@@ -907,6 +1205,16 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     t0 = time.time()
     kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
     series = make_series_xarrays(cfg, result.ts["default"], result.ys["default"], td)
+    if "checkpoint" in result.ys:
+        target = cfg["save"]["checkpoint"]
+        path = target if isinstance(target, str) else os.path.join(td, "binary", "checkpoint.npz")
+        np.savez(
+            path,
+            t=np.asarray(result.ts["checkpoint"][-1]),
+            **{k: np.asarray(v[-1]) for k, v in result.ys["checkpoint"].items()},
+        )
+        cfg["save"]["checkpoint_file"] = path
+        print(f"checkpoint written to {path}")
     metrics["write_time"] = time.time() - t0
     os.makedirs(os.path.join(td, "plots"))
 
@@ -1123,6 +1431,27 @@ def make_field_xarrays(cfg, this_t, state, td):
     )
 
     kfield_data = {"phi": phi_k, "ex": ex_k, "ey": ey_k}
+    poynting = {}
+    if cfg["save"]["fields"].get("poynting", False):
+        # LPSE {laser|raman}.save.S0: the envelope energy-flux density S_j = (c^2/w) Im(E* . d_j E)
+        # (v_g |E|^2 for a plane wave), in field^2 * um/ps, on the save grid
+        derived = cfg["units"]["derived"]
+        for name, arr, w in (
+            ("s0", np.array(state["E0"]).view(_complex), derived["w0"]),
+            ("s1", np.array(state["E1"]).view(_complex), derived["w1"]),
+        ):
+            dxs = float(xax[1] - xax[0]) if len(xax) > 1 else 1.0
+            dys = float(yax[1] - yax[0]) if len(yax) > 1 else 1.0
+            sx = np.zeros(arr.shape[:-1])
+            sy = np.zeros(arr.shape[:-1])
+            for comp in range(2):
+                e = arr[..., comp]
+                sx += np.imag(np.conj(e) * np.gradient(e, dxs, axis=1))
+                if arr.shape[2] > 1:
+                    sy += np.imag(np.conj(e) * np.gradient(e, dys, axis=2))
+            factor = derived["c"] ** 2 / w
+            poynting[f"{name}_x"] = xr.DataArray(factor * sx, coords=(tax_tuple, xax_tuple, yax_tuple))
+            poynting[f"{name}_y"] = xr.DataArray(factor * sy, coords=(tax_tuple, xax_tuple, yax_tuple))
     field_data = {
         "phi": phi_x,
         "ex": ex,
@@ -1132,6 +1461,7 @@ def make_field_xarrays(cfg, this_t, state, td):
         "e1_x": e1x,
         "e1_y": e1y,
         "background_density": background_density,
+        **poynting,
     }
     if "iaw_density" in state:
         iaw_density_np = np.asarray(state["iaw_density"])
@@ -1222,7 +1552,7 @@ def get_save_quantities(cfg: dict) -> dict:
 
             save_y = {}
             for k, v in y.items():
-                if k in PARTICLE_KEYS:
+                if k in PARTICLE_KEYS or k == "epw_ledger":
                     # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
                     # none of them fit the spatial interpolator; the histogram and the
                     # damping-reduction scalars are saved through the default series
@@ -1250,7 +1580,7 @@ def get_save_quantities(cfg: dict) -> dict:
         def save_func(t, y, args):
             from adept._lpse2d.core.hpe import PARTICLE_KEYS
 
-            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS}
+            return {k: v for k, v in y.items() if k not in PARTICLE_KEYS and k != "epw_ledger"}
 
     cfg["save"]["fields"]["func"] = save_func
 
@@ -1260,7 +1590,7 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate
 
     srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
     pump_evolved = cfg["terms"].get("light", {}).get("pump_depletion", False)
@@ -1269,6 +1599,16 @@ def get_default_save_func(cfg):
     dt = cfg["grid"]["dt"]
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
     kx, ky = cfg["grid"]["kx"], cfg["grid"]["ky"]
+    thomson_probes = list(cfg["save"].get("thomson") or [])
+    thomson_masks = []
+    k0_vac = derived["w0"] / derived["c"]
+    for probe in thomson_probes:
+        if probe.get("field", "epw") == "iaw" and not iaw_on:
+            raise ValueError("save.thomson probe on the IAW density needs terms.iaw.active")
+        kxp, kyp = (float(v) * k0_vac for v in probe["k"])
+        band = float(probe.get("bandwidth", 0.1)) * k0_vac
+        dist = np.sqrt((np.asarray(kx)[:, None] - kxp) ** 2 + (np.asarray(ky)[None, :] - kyp) ** 2)
+        thomson_masks.append(jnp.asarray(dist < band))
 
     # OSIRIS-normalized EPW energy: W = 1/2 * dx * sum_x <e^2>_cycle with fields in
     # me*c*w0/e and lengths in c/w0 (osiris_lpi/epw_growth.py convention). The complex
@@ -1282,13 +1622,8 @@ def get_default_save_func(cfg):
     # Parseval: sum_x <.>_y |E|^2 = (1/(nx*ny^2)) * sum_k k^2 |phi_k|^2.
     k_sq = np.array(kx[:, None] ** 2 + ky[None, :] ** 2)
     zero_mask = np.where(k_sq > 0, 1.0, 0.0)
-    if cfg["terms"]["epw"]["damping"].get("landau", True):
-        gamma_total = np.array(
-            landau_damping_rate(jnp.array(k_sq), derived["wp0"], derived["vte_sq"], jnp.array(zero_mask))
-        )
-    else:
-        gamma_total = np.zeros_like(k_sq)
-    gamma_total = gamma_total + derived.get("nu_coll", 0.0) * zero_mask
+    # the same static rate (form, threshold, multiplier) the solver applies
+    gamma_total = np.array(analytic_landau_rate(cfg)) + derived.get("nu_coll", 0.0) * zero_mask
     energy_loss_factor = (1.0 - np.exp(-2.0 * gamma_total * dt)) / dt  # 1/ps, per k mode
     boundary_sq_loss = (1.0 - np.array(cfg["grid"]["absorbing_boundaries"]) ** 2) / dt  # 1/ps, per cell
 
@@ -1356,17 +1691,22 @@ def get_default_save_func(cfg):
         flux_coeff_w1 = derived["c"] ** 2 / (derived["w1"] * cfg["grid"]["dx"])
         I0_code = derived["I0_code"]
 
+        spectral_light = cfg["terms"].get("light", {}).get("solver", "fd") == "spectral"
+
         def flux_correction(w, ix):
             # The discrete two-point flux of the FD mode at local wavenumber k is
             # |E|^2 * v_g,discrete with v_g,disc = (c^2/w) sin(k_grid dx)/dx, where
             # k_grid satisfies the FD dispersion (2/dx^2)(1 - cos k_grid dx) = k^2.
             # Dividing by sin(k_grid dx)/(k dx) converts it to the physical flux
             # |E|^2 * c * sqrt(eps). Evanescent probes get 1 (their flux is ~0 anyway).
+            # The spectral solver has no grid dispersion: k_grid = k.
             n_loc = float(np.mean(np.array(cfg["grid"]["background_density"])[ix, :]))
             eps = 1.0 - n_loc * w0**2 / w**2
             if eps <= 0:
                 return 1.0
             k_dx = w / derived["c"] * np.sqrt(eps) * cfg["grid"]["dx"]
+            if spectral_light:
+                return float(np.sin(k_dx) / k_dx)
             cos_kg = 1.0 - k_dx**2 / 2.0
             if cos_kg <= -1.0:
                 return 1.0
@@ -1383,6 +1723,20 @@ def get_default_save_func(cfg):
             cross = jnp.sum(jnp.conj(E[ix, :, :]) * E[ix + 1, :, :], axis=-1)
             return coeff * jnp.mean(jnp.imag(cross))
 
+    ledger_on = bool(cfg["terms"]["epw"].get("energy_ledger", False))
+    if ledger_on:
+        from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
+
+        # sum_k k^2 |phi_k|^2 -> the epw_energy normalization (Parseval, see above)
+        ledger_prefactor = epw_energy_prefactor / (nx * ny**2)
+
+    combined_solver = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    if combined_solver:
+        from adept._lpse2d.core.combined import transverse_part
+
+        one_over_k_sq_c = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
+        kx_c, ky_c = jnp.asarray(kx), jnp.asarray(ky)
+
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
         ex = -1j * kx[:, None] * phi_k
@@ -1390,10 +1744,23 @@ def get_default_save_func(cfg):
         ex = jnp.fft.ifft2(ex)
         ey = jnp.fft.ifft2(ey)
         e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
+        if combined_solver:
+            # the Raman-light diagnostics see the transverse part of the combined field only
+            y = {
+                **y,
+                "E1": transverse_part(y["E1"].view(jnp.complex128), kx_c, ky_c, one_over_k_sq_c).view(jnp.float64),
+            }
 
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 
         out["epw_energy"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq, axis=1))
+        if ledger_on:
+            # cumulative energy attributed to each split-step operation, in epw_energy units;
+            # epw_energy(t) - epw_energy(0) - sum of the channels closes to round-off
+            ledger = y[LEDGER_KEY] * ledger_prefactor
+            for i, name in enumerate(LEDGER_CHANNELS):
+                out[f"epw_ledger_{name}"] = ledger[i]
+            out["epw_ledger_closure"] = out["epw_energy"] - jnp.sum(ledger)
         # dissipation/boundary channels are TOTAL EPW-energy rates: epw_energy counts
         # only the electric part (the OSIRIS field-only convention), so the energy
         # actually handed to electrons -- and the budget sink -- carries the local
@@ -1422,6 +1789,17 @@ def get_default_save_func(cfg):
             out["iaw_density_sq"] = jnp.mean(iaw_density**2)
             out["iaw_density_abs_max"] = jnp.max(jnp.abs(iaw_density))
 
+        # Thomson-scattering probes (LPSE thomsonScattering.N: wavevector.lw / .iaw, bandwidth):
+        # the complex amplitude and the power of the EPW potential (or the IAW density) in the
+        # k-window |k - k_probe| < bandwidth k0, as a time series for later spectral analysis
+        for i_probe, mask in enumerate(thomson_masks):
+            field = "iaw" if thomson_probes[i_probe].get("field", "epw") == "iaw" else "epw"
+            spectrum = jnp.fft.fft2(y["iaw_density"]) if field == "iaw" else phi_k
+            amplitude = jnp.sum(jnp.where(mask, spectrum, 0.0))
+            out[f"thomson_{i_probe}_re"] = jnp.real(amplitude)
+            out[f"thomson_{i_probe}_im"] = jnp.imag(amplitude)
+            out[f"thomson_{i_probe}_power"] = jnp.sum(jnp.where(mask, jnp.abs(spectrum) ** 2, 0.0))
+
         if hpe_on:
             u = y["u_e"]
             if u.ndim == 2:
@@ -1433,6 +1811,16 @@ def get_default_save_func(cfg):
             out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
             out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
             out["hpe_hist"] = y["epw_hist"]
+            # LPSE-style instruments: cumulative energy (keV, per real electron via w_tail) out of
+            # each wall per energy bin, inside the acceptance cone, and the LD multiplier
+            from adept._lpse2d.core.hpe import WALLS
+
+            wall_flux = y["hpe_wall_flux"]
+            for i_wall, wall in enumerate(WALLS):
+                for i_bin in range(wall_flux.shape[1]):
+                    out[f"hpe_wall_energy_{wall}_bin{i_bin}"] = w_tail * wall_flux[i_wall, i_bin]
+            out["hpe_cone_energy"] = w_tail * y["hpe_cone_energy"][0]
+            out["hpe_ld_multiplier"] = y["hpe_ld_multiplier"][0]
             if have_ratio_band:
                 ratio = y["gamma_L"] / gamma_an_safe
                 # inflation-o-meters: worst-case reduction across the resonant band
