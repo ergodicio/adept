@@ -37,6 +37,14 @@ ponderomotive kick ``w' += dt k^2 PP_k`` (``PP`` without its ``cs^2 n`` part, wh
 is inside the propagator), and the fluctuation-dissipation noise source on ``w``.
 Unconditionally stable and exact for the linear acoustic part at any ``dt``, so
 the IAW may also be advanced every ``terms.iaw.stride`` EPW steps as LPSE does.
+
+**Normalisation of the feedback.** The drive above is density-independent, so ``n`` is the
+*local* fractional perturbation ``delta n / n_b(x)`` -- LPSE's ``Nelf``. The waves see the
+density ``n_b (1 + n)``: in units of the envelope density the perturbation is
+``n * n_b / n_env`` (LPSE ``densityPerturbation += Nelf * backgroundDensity``,
+``ZakharovSolver::densityUpdateOfE_fft`` and ``LightSolver.cpp:4063``). The MATLAB prototype adds
+``Nelf`` to ``n_b / n_env`` directly, which is exact only where ``n_b = n_env``; it is kept as
+``terms.iaw.feedback: envelope`` (``iaw_feedback_factor``).
 """
 
 import jax
@@ -46,6 +54,20 @@ from jax import numpy as jnp
 
 IAW_SOLVERS = ("explicit", "spectral", "fd")
 ION_LANDAU_FORMS = ("simplified", "full")
+
+
+def iaw_feedback_factor(cfg: dict):
+    """The factor that turns ``iaw_density`` (the local fraction ``delta n / n_b``) into the
+    perturbation the waves see in units of the envelope density: ``n_b / n_env`` (LPSE,
+    ``terms.iaw.feedback: local``, the default) or 1 (the MATLAB prototype's
+    ``n_b / n_env + Nelf``, ``feedback: envelope``). Shape ``(nx, ny)`` or a scalar."""
+    iaw = cfg["terms"].get("iaw") or {}
+    mode = str(iaw.get("feedback", "local"))
+    if mode not in ("local", "envelope"):
+        raise ValueError(f"terms.iaw.feedback must be local or envelope, got {mode!r}")
+    if not iaw.get("active", False) or mode == "envelope":
+        return 1.0
+    return jnp.asarray(np.asarray(cfg["grid"]["background_density"]) / float(cfg["units"]["envelope density"]))
 
 
 def _Q_kev(value) -> float:

@@ -429,6 +429,11 @@ class SpectralEPWSolver:
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
         self.iaw_enabled = cfg["terms"].get("iaw", {}).get("active", False)
+        # iaw_density is the local fraction delta n / n_b: n_b / n_env turns it into the
+        # detuning's units (LPSE Nelf * n_b; 1 for terms.iaw.feedback: envelope)
+        from adept._lpse2d.core.iaw import iaw_feedback_factor
+
+        self.iaw_feedback = iaw_feedback_factor(cfg)
 
         # Landau damping flag (previously ignored -- damping was unconditionally on)
         self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
@@ -756,7 +761,7 @@ class SpectralEPWSolver:
                 background_density / self.envelope_density - 1.0 if self.density_gradient_enabled else 0.0
             )
             if self.iaw_enabled:
-                density_perturbation = density_perturbation + y["iaw_density"]
+                density_perturbation = density_perturbation + y["iaw_density"] * self.iaw_feedback
             density_phase = jnp.exp(-1j * self.wp0 / 2.0 * density_perturbation * self.dt)
             ex = ex * density_phase
             ey = ey * density_phase

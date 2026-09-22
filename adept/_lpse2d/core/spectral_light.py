@@ -122,7 +122,10 @@ class SpectralRamanLight(RamanLight):
         """``exp(-nu dt_l (n/nc_w)^2)`` with the IAW perturbation included."""
         if rate is None:
             return 1.0
-        n_over_nc = density_ratio if iaw_density is None else density_ratio * (1.0 + iaw_density / self.n_over_env)
+        if iaw_density is None:
+            n_over_nc = density_ratio
+        else:
+            n_over_nc = density_ratio * (1.0 + iaw_density * self.iaw_feedback / self.n_over_env)
         return jnp.exp(-rate * self.dt_l * n_over_nc**2)[..., None]
 
     def __call__(self, t, E1, E0_fn, phi_k, seed_args, iaw_density=None):
@@ -130,7 +133,7 @@ class SpectralRamanLight(RamanLight):
         laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
         detune = self.detune1
         if iaw_density is not None:
-            detune = detune * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.dt_l)
+            detune = detune * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.iaw_feedback * self.dt_l)
         absorb = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
 
         def substep(i, E1):
@@ -314,8 +317,9 @@ class SpectralCoupledLight(CoupledLight):
         laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
         detune0, detune1 = self.detune0, self.detune1
         if iaw_density is not None:
-            detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.dt_l)
-            detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.dt_l)
+            dn = iaw_density * self.iaw_feedback  # in units of n_env (LPSE Nelf * n_b / No)
+            detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn * self.dt_l)
+            detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn * self.dt_l)
         absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, iaw_density)
         absorb1 = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
         exchange = self.srs_enabled

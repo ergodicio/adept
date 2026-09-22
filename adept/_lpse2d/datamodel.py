@@ -453,6 +453,10 @@ class IAWModel(BaseModel):
     dt_fraction: float = Field(default=0.95, gt=0.0, le=1.0)  # fd: iaw.fd.dtFraction
     landau_update: int = Field(default=1, ge=1)  # fd: iaw.fd.numStepsPerLandauDampingUpdate
     temporal_correction: bool = True  # fd: the second-order temporal source correction
+    # how the IAW density feeds back into the EPW and light: local (LPSE: the waves see
+    # n_b (1 + iaw_density), iaw_density being the local fraction) or envelope (the MATLAB
+    # prototype: iaw_density added to n_b / n_env, exact only where n_b = n_env)
+    feedback: Literal["local", "envelope"] = "local"
     # LPSE iaw.restrictSourceRange (squared on the ponderomotive drive) and
     # iaw.startEvolvingTime / stopEvolvingTime (ps): the IAW step acts only in [t_start, t_stop)
     source_window: SourceWindowModel | None = None

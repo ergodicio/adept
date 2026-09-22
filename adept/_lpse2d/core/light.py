@@ -400,7 +400,7 @@ class CoupledLight(RamanLight):
         linear_coeff0 = self.linear_coeff0
         if iaw_density is not None:
             # MATLAB: i*w0/2 * [1 - wp0^2/w0^2 * (n_b/n_env + Nelf)] E0
-            linear_coeff0 = linear_coeff0 - 1j * self.wp0**2 / (2.0 * self.w0) * iaw_density
+            linear_coeff0 = linear_coeff0 - 1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.iaw_feedback
 
         # discrete curl-curl on the in-plane components, the plain Laplacian on E0z (k_z = 0)
         comps = [E0[..., i] for i in range(E0.shape[-1])]
@@ -586,8 +586,9 @@ class CoupledLight(RamanLight):
 
         absorb0 = absorb1 = None
         if self.absorption_rate0 is not None:
-            n0 = self.n_over_nc0 if iaw_density is None else self.n_over_nc0 * (1.0 + iaw_density / self.n_over_env)
-            n1 = self.n_over_nc1 if iaw_density is None else self.n_over_nc1 * (1.0 + iaw_density / self.n_over_env)
+            dn = None if iaw_density is None else iaw_density * self.iaw_feedback / self.n_over_env
+            n0 = self.n_over_nc0 if dn is None else self.n_over_nc0 * (1.0 + dn)
+            n1 = self.n_over_nc1 if dn is None else self.n_over_nc1 * (1.0 + dn)
             absorb0 = jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)[..., None]
             absorb1 = jnp.exp(-self.absorption_rate1 * self.dt_l * n1**2)[..., None]
         E0, E1 = lax.fori_loop(0, self.n_sub, substep, (E0, E1))

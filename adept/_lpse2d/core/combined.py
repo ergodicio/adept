@@ -120,6 +120,10 @@ class CombinedSolver:
         self.envelope_density = cfg["units"]["envelope density"]
         self.background_density = grid["background_density"]
         self.n_over_env = self.background_density / self.envelope_density
+        # iaw_density (the local fraction delta n / n_b) in units of n_env: n_b / n_env (LPSE)
+        from adept._lpse2d.core.iaw import iaw_feedback_factor
+
+        self.iaw_feedback = iaw_feedback_factor(cfg)
         self.delta_w = self.w0 - 2.0 * self.wp0
 
         # propagators over one sub-step
@@ -272,7 +276,7 @@ class CombinedSolver:
         iaw_density = y.get("iaw_density")
         detune = self.detune
         if iaw_density is not None:
-            detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * iaw_density)
+            detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * iaw_density * self.iaw_feedback)
         if self.hpe_enabled:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
@@ -283,7 +287,9 @@ class CombinedSolver:
         if self.pump_depletion:
             detune0 = self.detune0
             if iaw_density is not None:
-                detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.dt_l)
+                detune0 = detune0 * jnp.exp(
+                    -1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.iaw_feedback * self.dt_l
+                )
 
         def substep(i, fields):
             E0, E1 = fields

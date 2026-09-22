@@ -174,6 +174,10 @@ class RamanLight:
         # (LPSE calculateScatteringPotential; nu_abs from the NRL formula at nc_w with
         # the wave's wavelength, or a user rate in 1/ps at nc_w)
         self.n_over_env = background_density / self.envelope_density
+        # iaw_density (the local fraction delta n / n_b) in units of n_env: n_b / n_env (LPSE)
+        from adept._lpse2d.core.iaw import iaw_feedback_factor
+
+        self.iaw_feedback = iaw_feedback_factor(cfg)
         self.n_over_nc0 = background_density  # n / nc (w0)
         self.n_over_nc1 = background_density * (self.w0 / self.w1) ** 2  # n / nc (w1)
         self.absorption_rate0, self.absorption_rate1 = light_absorption_rates(cfg)
@@ -335,7 +339,7 @@ class RamanLight:
         linear_coeff = self.linear_coeff
         if iaw_density is not None:
             # MATLAB: i*w1/2 * [1 - wp0^2/w1^2 * (n_b/n_env + Nelf)] E1
-            linear_coeff = linear_coeff - 1j * self.wp0**2 / (2.0 * self.w1) * iaw_density
+            linear_coeff = linear_coeff - 1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.iaw_feedback
 
         # paraxial propagation with cross-derivative terms (MATLAB lines 1663-1671): the
         # discrete curl-curl on the in-plane components; the out-of-plane component (k_z = 0)
@@ -408,7 +412,9 @@ class RamanLight:
         absorb = None
         if self.absorption_rate1 is not None:
             n_over_nc = (
-                self.n_over_nc1 if iaw_density is None else self.n_over_nc1 * (1.0 + iaw_density / self.n_over_env)
+                self.n_over_nc1
+                if iaw_density is None
+                else self.n_over_nc1 * (1.0 + iaw_density * self.iaw_feedback / self.n_over_env)
             )
             absorb = jnp.exp(-self.absorption_rate1 * self.dt_l * n_over_nc**2)[..., None]
         E1 = lax.fori_loop(0, self.n_sub, substep, E1)
