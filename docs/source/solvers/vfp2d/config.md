@@ -32,7 +32,7 @@ along $x$ over every visible JAX device. `nx` must be divisible by the device co
 sharded path uses fourth-order periodic finite differences (with two-cell halo exchange)
 for spatial derivatives, because a global Fourier transform along a partitioned axis would
 replicate the dominant distribution array. Saved snapshots are replicated only when they
-are written. On this path, an requested $x$ Hou--Li filter is implemented as a shard-local
+are written. On this path, a requested $x$ Hou--Li filter is implemented as a shard-local
 eighth-difference Nyquist filter with four-cell halo exchange; $y$ retains the spectral
 Hou--Li filter.
 
@@ -100,6 +100,50 @@ derivative for the kernel model at the frozen distribution, but a finite implici
 not exactly energy conserving away from a Maxwellian. Collision-step convergence is required;
 keep the collision half-step well below the shortest relevant collision time.
 
+## Field-solver modes
+
+Choose `terms.field_solver.mode` from the following hierarchy. Stationary ions are
+the default (`terms.ion_fluid.active: false`).
+
+| Mode | Field evolution | Ion coupling and sharding |
+| --- | --- | --- |
+| `maxwell` (default) | Physical explicit Vlasov–Maxwell | Stationary ions; x sharding supported |
+| `ampere` | Explicit Ampere residual divided by relative permittivity; explicit Faraday | Stationary ions; x sharding supported |
+| `oshun-implicit` | Local discrete kinetic-current response solve; explicit Faraday | Stationary ions; sharding rejected |
+| `kinetic-ohm` | Algebraic kinetic Ohm law with an Ampere current-moment projection | Stationary ions with x sharding, or unsharded coupled ions |
+
+For slowed explicit Ampere, `relative_permittivity` is required and must be at least one:
+
+```yaml
+terms:
+  field_solver:
+    mode: ampere
+    relative_permittivity: 1.0e6
+```
+
+The complete Ampere residual is divided by this factor. Light and plasma frequencies
+are reduced by its square root, while the steady target remains $J=c^2\nabla\times B$.
+The initial Poisson field satisfies the same permittivity-weighted Gauss constraint,
+and electric-field energy is weighted by that permittivity. This is still an explicit
+mode, so its timestep must resolve the slowed field dynamics and kinetic transport.
+
+The OSHUN-style alternative uses:
+
+```yaml
+terms:
+  field_solver:
+    mode: oshun-implicit
+    response_regularization: 0.0
+```
+
+It computes a local $3\times3$ response $\partial J_i/\partial E_j$ and solves for the
+electric field that brings the kinetically updated distribution to $J=c^2\nabla\times B$.
+The electric force updates the harmonic distribution without projecting `f1`. Faraday
+and non-electric transport remain explicit; this is not a fully implicit Maxwell solve.
+Both `grid.lmax >= 1` and `grid.mmax >= 1` are required. Optional
+`response_regularization` adds a nonnegative diagonal shift to the response matrix;
+its default of zero retains the unregularized Ampere constraint.
+
 ## Long-timescale kinetic Ohm mode
 
 `maxwell` is the default field solver. For collisional transport times, `kinetic-ohm` suppresses
@@ -121,7 +165,8 @@ terms:
         y_radius: 17um
 ```
 
-The optional hidden gradient is the unresolved $\partial_z n$ used by the 2.5D PRL geometry.
+The optional hidden gradient is available only with stationary ions. It is the unresolved
+$\partial_z n$ used by the 2.5D PRL geometry.
 It enters the pressure-gradient Ohm residual and can be switched sharply (`switch_width`
 omitted) or with a differentiable tanh gate (`switch_width` set). Output variables prefixed
 with `ohm_` contain the resistive, Hall, Nernst, scalar-pressure, and $f_2$ tensor-pressure
@@ -129,8 +174,8 @@ contributions.
 
 ## Moving ion-fluid coupling
 
-Moving ions are opt-in for non-relativistic, unsharded `kinetic-ohm` runs on
-periodic grids:
+Opt-in coupling is available for non-relativistic, unsharded `kinetic-ohm` runs on
+periodic grids with `density.quasineutrality: true`:
 
 ```yaml
 terms:
@@ -143,9 +188,9 @@ terms:
     boundaries: [periodic, periodic]
     initial_velocity: [0.0, 0.0, 0.0]  # legacy constants normalized to c
     frozen: false
-    electron_pressure_feedback: true
     temperature_relaxation_rate: 0.0   # prescribed rate in normalized inverse time
     momentum_relaxation_rate: 0.0
+    electron_pressure_feedback: true
 ```
 
 `mass_ratio` is the mass of **one ion** divided by the electron mass; charge is
@@ -154,24 +199,35 @@ Charge state is fixed. Rates are prescribed moment-relaxation rates, not an
 atomic-kinetics or full finite-mass Landau model. Zero disables that exchange;
 this must not be interpreted as predicting physical electron-ion equilibration.
 
-The symmetric coupled map applies hydro and pressure/exchange/magnetic half-kicks
-around the full kinetic step. Ion momentum receives `J cross B - div(Pe)`;
-magnetic force also contributes its mechanical work. Changes in ion velocity
-remap the kinetic electron distribution between frames. Collision densities use
-the midpoint ion state. The laboratory electric field contains the ideal bulk
-term `-ui cross B`. `frozen: true` holds ions fixed through hydro and all coupled
-source updates.
+`CoupledIonKineticStep` uses a symmetric composition:
 
-Initial ion density follows the discretely integrated electron density, so
-`ne = Z ni` at initialization. Quasineutrality is diagnosed during evolution.
-The initial hydro half-step is checked against the acoustic/advection `cfl`;
-this is not a complete magnetic, Hall, electron-streaming or gyrofrequency
-stability bound, and later states may be more restrictive. Timestep and radial
-resolution convergence remain required.
+1. Ion Euler half-step.
+2. Coupled pressure, magnetic-force, and local exchange half-step.
+3. Full kinetic-Ohm step at midpoint ion velocity, gradient, and acceleration.
+4. Second coupled-source half-step.
+5. Second ion Euler half-step.
 
-The moving-ion path rejects spatial sharding, nonperiodic boundaries, and
-relativistic coordinates. The alternative implicit-current and slowed-Ampere
-field modes currently support stationary ions only. See the
+The source steps include the full `f0 + f2` electron pressure force and $J\times B$
+with midpoint ion mechanical work. Electron pressure work enters once through the
+moving-frame deformation operator. Finite-mass frame remapping preserves electron
+lab-frame moments as ion velocity changes. Both nonzero momentum and temperature
+relaxation rates are supported; they default to zero and use a weak-drift moment
+exchange model, not a full finite-mass Landau operator. Electron-pressure feedback
+is enabled by default. `frozen: true` suppresses hydro and all coupled ion sources.
+
+The laboratory electric field includes $-\mathbf u_i\times\mathbf B$. Initial ion
+density is taken from the discretely integrated electron density so $n_e=Z n_i$
+is exact initially; collision and IB density inputs are refreshed from midpoint ions.
+
+Coupled runs require `grid.lmax >= 1` and `grid.mmax >= 1` for all three frame-momentum
+components. Spatial sharding, nonperiodic boundaries, relativistic coordinates, and
+active `field_solver.hidden_density_gradient` are rejected. These restrictions also
+apply when `frozen: true`. The initial ion half-step is checked against the configured
+acoustic/advection `cfl`; the timestep must remain conservative as the ion state evolves.
+Local transport and nonlinear conservation/refinement tests are implemented, but
+production-scale validation remains outstanding. This CFL check is not a complete
+magnetic, Hall, electron-streaming or gyrofrequency stability bound; timestep and
+radial resolution convergence remain required. See the
 [ion-frame derivation](moving_frame.md) for the implemented operators and their
 validation boundaries.
 
@@ -196,6 +252,8 @@ performed in a common ion frame, magnetic increments are curls, and measured
 source additions are saved for particle number, momentum and energy. This is a
 periodic forced interaction-region model, not an open boundary condition. See
 [reservoir equations, budgets and buffer tests](reservoirs.md).
+
+## Reconnection diagnostics
 
 The reconnection diagnostics report a normalized rate and flux only when the upstream
 $B_x$ fields are antiparallel and balanced and the origin contains both an in-plane null/
@@ -222,13 +280,20 @@ save:
 
 Post-processing returns an xarray dataset with `flm_real`, `flm_imag`, `e`, `b`, density,
 temperature, current, Nernst velocity, and the traceless pressure-anisotropy moment. Harmonics
-are labeled by the `ell` and `m` coordinates. Coupled runs additionally save the ion conserved
+are labeled by the `ell` and `m` coordinates. All field modes save `ampere_target_current`,
+`ampere_residual`, `ampere_residual_linf`, and `magnetic_field_energy`, plus solver-mode
+and relative-permittivity attributes. Explicit `maxwell`/`ampere` runs also save electric
+and total electromagnetic field energy. Relativistic current diagnostics use the same
+$p^2(p/\sqrt{1+p^2})$ weight as evolution. Coupled runs additionally save the ion conserved
 state and primitives, particle counts, quasineutrality residual, lab-frame total momentum,
 separate electron/ion/magnetic energies, total energy, magnetic-divergence residual, negative
 isotropic mass, harmonic free energy, and the `ohm_bulk` field.
 Because `kinetic-ohm` has no displacement-current evolution, its algebraic electric field
 does not carry a separately evolved field-energy term; `total_energy` is electron lab-frame
-kinetic plus ion total plus magnetic energy.
+kinetic plus ion total plus magnetic energy. `current_projection_energy` records the
+lab-frame electron work introduced by the Ampere projection, and
+`accounted_total_energy = total_energy - current_projection_energy` exposes the remaining
+coupled energy defect.
 
 See the [Joglekar 2014 reconstruction and hydro-coupling design](joglekar2014.md) for the
-distinction between the runnable reduced benchmark and the planned long-time implicit solve.
+distinction between the implemented field modes and the remaining full-benchmark validation.

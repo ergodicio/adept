@@ -282,7 +282,9 @@ class OSHUNImplicitStep:
         return self.collisions(flm, Z=z, ni=ni, dt=dt, **heating)
 
     def _non_electric_rate(self, flm: Array, magnetic_field: Array) -> Array:
-        return self.vlasov.streaming(flm) + self.vlasov.magnetic(flm, magnetic_field)
+        # Use the common RHS so every midpoint stage preserves real m=0
+        # coefficients, including the imaginary derivative of a Nyquist mode.
+        return self.vlasov(flm, jnp.zeros_like(magnetic_field), magnetic_field)
 
     def _non_electric_step(self, flm: Array, magnetic_field: Array) -> Array:
         rate1 = self._non_electric_rate(flm, magnetic_field)

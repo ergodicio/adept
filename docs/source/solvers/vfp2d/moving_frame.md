@@ -40,7 +40,7 @@ their equations (5), (43), and (48).
   $\nabla_c\cdot(A\mathbf c f)$; and
 - frame acceleration through the existing arbitrary-harmonic electric-force operator.
 
-The angular quadrature uses ADEPT's unnormalized associated-Legendre convention and
+The angular Galerkin construction uses ADEPT's unnormalized associated-Legendre convention and
 projects the continuous product before truncating back to the configured harmonic
 layout. This avoids the top-mode product error that occurs when two already-truncated
 direction matrices are multiplied.
@@ -54,11 +54,9 @@ Gate 1a tests establish:
 - the analytic pressure-anisotropy rate under prescribed trace-free strain; and
 - cancellation between a uniform force and an oppositely accelerating frame.
 
-`CoupledIonKineticStep` wires these operators into the opt-in moving-ion time loop.
-The production deformation operator uses precomputed sparse harmonic maps; the dense
-angular Galerkin implementation remains a test oracle. Arbitrary harmonic support is
-implemented, while performance and angular convergence still require checks for each
-production regime.
+Gates 2a/2b wire this implementation into the opt-in `CoupledIonKineticStep`. The
+production deformation operator uses precomputed sparse angular couplings. Dense angular
+quadrature remains a verification reference for the sparse operator.
 
 ## Gate 1b moment-exchange reference
 
@@ -80,15 +78,38 @@ state. Tests cover both directions of temperature relaxation, all three momentum
 components, density preservation, JIT execution, and machine-small exchange
 residuals.
 
-This is a differential, weak-drift moment-relaxation reference, not a replacement for
-the full finite-mass Landau collision operator. In particular, momentum relaxation is
-energy-neutral to first order in the relative drift; drift-energy thermalization is a
-higher-order effect. The coupled split includes time-centered thermal and momentum
-exchange. `VelocityFrameRemap` translates the distribution between accelerated ion
-frames while preserving the discrete Galilean density, lab momentum, and lab energy
-transforms. Electron-pressure feedback supplies $-\nabla\cdot\mathbf P_e$ and
-equal-and-opposite resolved mechanical work. Local transport and Biermann tests are
-implemented; full finite-mass collision physics remains outside this moment model.
+This remains a weak-drift moment-relaxation model, not a replacement for the full
+finite-mass Landau collision operator. The source measures electron energy transfer in
+the lab frame, including ion velocity dotted with the relative momentum transfer.
+Both momentum and thermal exchange are enabled in the coupled split when their
+configured rates are nonzero.
+
+## Gates 2a/2b coupled evolution
+
+`CoupledIonKineticStep` composes hydro half-step, coupled-source half-step, full kinetic
+step at midpoint ion kinematics, coupled-source half-step, and hydro half-step. Each
+source stage remaps the electron distribution into the updated ion frame with
+`VelocityFrameRemap`; discrete corrections enforce the Galilean density, momentum,
+and energy transforms. Remapping requires the (1,0) and (1,1) modes, so coupled runs
+require `lmax >= 1` and `mmax >= 1`.
+
+The sources include full `f0 + f2` electron-pressure feedback and magnetic force/work.
+Ion pressure work is $-\mathbf u_i\cdot\nabla\cdot\mathbf P_e$, while electron peculiar
+pressure work $-\mathbf P_e:\nabla\mathbf u_i$ is supplied once by deformation in the
+kinetic step. Their sum is a pressure-flux divergence; there is no extra local `f00`
+pressure-energy correction. The lab electric field contains $-\mathbf u_i\times\mathbf B$.
+
+Tests cover finite-mass frame invariants, coupled temperature behavior under a common
+boost with a pressure gradient, local Spitzer–Härm/Epperlein–Haines and Biermann limits,
+and nonlinear coupled energy under timestep, spatial, and radial refinement. The
+Ampere projection's lab-frame work is recorded in `current_projection_energy` and
+subtracted in `accounted_total_energy`.
+
+The coupled path is periodic, quasineutral, non-relativistic, unsharded, and restricted
+to `kinetic-ohm`. Active hidden density gradients are rejected because the ion equations
+include only x/y derivatives. `frozen: true` suppresses hydro and coupled ion sources.
+Production-scale validation, nonperiodic coupled boundaries, and a full finite-mass
+collision operator remain future work; see the [configuration reference](config.md).
 
 ## Magnetic force and the energy budget
 
@@ -110,8 +131,8 @@ There is no opposite electron heating term for magnetic ion work: its reservoir
 is the magnetic energy evolved by induction.
 
 Collision half-steps receive the evolving midpoint ion number density. With
-`frozen: true`, the coupled call skips all ion sources and transport. Direct
-source-operator tests can still call the exchange map independently.
+`frozen: true`, both the coupled call and its exchange map skip all ion sources;
+the coupled call also skips ion transport.
 
 The returned distribution satisfies the Ampere current constraint after the final
 frame change. This projection's lab energy is added to

@@ -10,6 +10,7 @@ from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
+from jax.sharding import Mesh
 
 from adept.normalization import UREG, normalize
 from adept.vfp1d.helpers import load_profile_on_grid
@@ -179,12 +180,16 @@ def vector_profile(spec, grid: Grid, norm, reference) -> jnp.ndarray:
     return result
 
 
-def initial_magnetic_field(spec: Mapping, grid: Grid, norm, *, finite_difference=False) -> jnp.ndarray:
+def initial_magnetic_field(
+    spec: Mapping, grid: Grid, norm, *, finite_difference=False, mesh: Mesh | None = None
+) -> jnp.ndarray:
     """Return ``curl(A) + B_uniform`` with the evolution's discrete derivatives.
 
     ``periodic_sheet`` provides an antiparallel Bx reversal across y=``center``
     with a second periodic reversal at the domain seam. It is not an open-boundary
     equilibrium. The optional cosine Az perturbation seeds a central X point.
+    A mesh selects the same partition-dependent finite-difference stencil as
+    evolution, including its second-order fallback for one x cell per shard.
     """
     if not isinstance(spec, Mapping):
         raise TypeError("initial_conditions.magnetic_field must be a mapping")
@@ -199,12 +204,14 @@ def initial_magnetic_field(spec: Mapping, grid: Grid, norm, *, finite_difference
     if isinstance(uniform, str) or len(uniform) != 3 or any(isinstance(value, Mapping) for value in uniform):
         raise ValueError("magnetic_field.uniform requires three scalar constants")
     b_uniform = jnp.asarray([_quantity(value, b0) for value in uniform])
+    finite_difference = finite_difference or mesh is not None
     curl = Maxwell2D(
         grid.kx,
         grid.ky,
         norm.speed_of_light_norm(),
         dx=grid.dx if finite_difference else None,
         dy=grid.dy if finite_difference else None,
+        mesh=mesh,
     ).curl
     potential = jnp.zeros((grid.nx, grid.ny, 3))
     if "vector_potential" in spec:

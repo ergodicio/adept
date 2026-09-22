@@ -175,6 +175,28 @@ from upstream Z=4 to sheet Z=6 cannot occur in this example. Use matched charge,
 geometry and material assumptions when comparing with GORGON, and distinguish
 assumed initial profiles from simulated observables.
 
+## Outputs and reconnection-rate normalization
+
+The existing postprocessing saves fields, current, ion primitives and sheet/topology
+diagnostics in `binary/moments.nc`. Its `normalized_reconnection_rate` uses
+$E_z(X)/(B_{up}v_{N,in})$, where `upstream_v_nernst_y` measures inward Nernst
+transport. This is not a normalization by the imposed ion inflow: finite
+counterstreams alone do not make this rate a bulk-flow MAGPIE observable.
+
+When inward Nernst transport vanishes, the saved rate is NaN. The scalar
+`reconnection_metrics` summary exports an unavailable final rate as zero (and a
+zero peak if no finite rates exist), alongside validity metrics. A zero summary
+therefore does not establish zero reconnection. Inspect `reconnection_valid`,
+`rate_normalization_valid`, the rate's finiteness and the denominator together;
+the normalization flag alone does not exclude a zero Nernst denominator.
+
+For a bulk-inflow-normalized analysis, use the saved `ion_velocity`, `b` and `e`
+to evaluate $E_z(X)/(B_{up}u_{i,in})$ with an explicitly chosen upstream sampling
+region and inward-flow sign convention. Check the topology validity and a
+nonzero bulk-inflow denominator separately from the Nernst validity flag. The
+saved fields support this analysis; the existing normalized-rate summary does
+not compute it.
+
 ## Initial numerical scales and a path to convergence
 
 The following are **setup-only** calculations for the checked-in carbon deck
@@ -259,3 +281,4 @@ $N_tN_xN_yN_vN_h$ plus transform/collision costs. Benchmark a compiled short run
 on the intended hardware before committing to a long run. Refinement in space,
 velocity and harmonic order compounds the cost; no wall-clock claim follows
 from these setup calculations.
+# Review trigger: this page defines the physical-unit geometry contract for MAGPIE inputs.
