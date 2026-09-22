@@ -53,6 +53,10 @@ density:
 
 Supported analytic bases are `uniform`, `sine`, `cosine`, and `tanh`; file profiles retain the VFP-1D loader behavior. With `quasineutrality: true`, the stationary ion charge follows the initial electron density. With `false`, it is spatially uniform at the mean density and the initial Poisson solve produces the field associated with electron-density perturbations.
 
+See [periodic MAGPIE geometry and physical-unit imports](magpie_geometry.md) for
+spatial ion velocity/temperature, vector-potential magnetic initialization, and
+explicit-unit two-dimensional NPZ electron profiles.
+
 ## Laser heating
 
 VFP2D shares the conservative inverse-bremsstrahlung and Maxwellian heating operators with

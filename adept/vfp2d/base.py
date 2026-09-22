@@ -22,11 +22,13 @@ from adept.vfp1d.fokker_planck import (
     inverse_bremsstrahlung_resonance_ratio,
 )
 from adept.vfp1d.grid import Grid as CollisionGrid
-from adept.vfp1d.helpers import _initialize_distribution_, calc_logLambda, load_profile_on_grid
+from adept.vfp1d.helpers import _initialize_distribution_, calc_logLambda
 from adept.vfp2d.collisions import AnisotropicCollisions, CollisionStep
 from adept.vfp2d.coupling import CoupledIonKineticStep, coupled_invariants
 from adept.vfp2d.distributed import create_spatial_sharding
 from adept.vfp2d.exchange import ElectronIonExchange
+from adept.vfp2d.geometry import initial_magnetic_field, vector_profile
+from adept.vfp2d.geometry import profile_2d as _profile_2d
 from adept.vfp2d.grid import Grid
 from adept.vfp2d.harmonics import (
     HarmonicLayout,
@@ -53,56 +55,6 @@ from adept.vfp2d.vector_field import (
     SplitStepVFP2D,
     VlasovMaxwell,
 )
-
-
-def _profile_1d(profile: dict, axis, norm, reference=None) -> jnp.ndarray:
-    basis = profile.get("basis", "uniform")
-    baseline = float(profile.get("baseline", profile.get("value", 1.0)))
-    if basis == "uniform":
-        return baseline * jnp.ones_like(axis)
-    if basis in ("sine", "cosine"):
-        amplitude = float(profile.get("amplitude", 0.0))
-        wavelength = normalize(profile["wavelength"], norm, dim="x")
-        trig = jnp.sin if basis == "sine" else jnp.cos
-        return baseline * (1.0 + amplitude * trig(2.0 * jnp.pi * axis / wavelength))
-    if basis == "tanh":
-        center = normalize(profile["center"], norm, dim="x")
-        width = normalize(profile["width"], norm, dim="x")
-        rise = normalize(profile["rise"], norm, dim="x")
-        left, right = center - 0.5 * width, center + 0.5 * width
-        envelope = 0.5 * (jnp.tanh((axis - left) / rise) - jnp.tanh((axis - right) / rise))
-        if profile.get("bump_or_trough", "bump") == "trough":
-            envelope = 1.0 - envelope
-        return baseline + float(profile.get("bump_height", 0.0)) * envelope
-    if basis == "file":
-        loaded = load_profile_on_grid(profile, axis, norm)
-        if reference is None:
-            raise ValueError("A physical reference quantity is required for file profiles")
-        return jnp.asarray((loaded / reference).to("").magnitude)
-    raise NotImplementedError(f"Unsupported VFP-2D profile basis: {basis}")
-
-
-def _profile_2d(profile: dict, grid: Grid, norm, reference=None) -> jnp.ndarray:
-    """Build a separable 2D profile while accepting VFP-1D profile syntax."""
-
-    if profile.get("basis") == "gaussian_spots":
-        x_center = normalize(profile.get("x_center", 0.0), norm, dim="x")
-        x_radius = normalize(profile["x_radius"], norm, dim="x")
-        y_radius = normalize(profile.get("y_radius", profile["x_radius"]), norm, dim="x")
-        y_centers = profile.get("y_centers", [profile.get("y_center", 0.0)])
-        y_centers = jnp.asarray([normalize(center, norm, dim="x") for center in y_centers])
-        x_envelope = jnp.exp(-(((grid.x - x_center) / x_radius) ** 2))
-        y_envelope = jnp.sum(jnp.exp(-(((grid.y[:, None] - y_centers[None, :]) / y_radius) ** 2)), axis=1)
-        return float(profile.get("amplitude", 1.0)) * x_envelope[:, None] * y_envelope[None, :]
-
-    if "x" in profile or "y" in profile:
-        px = _profile_1d(profile.get("x", {"basis": "uniform", "baseline": 1.0}), grid.x, norm, reference)
-        py = _profile_1d(profile.get("y", {"basis": "uniform", "baseline": 1.0}), grid.y, norm, reference)
-        return px[:, None] * py[None, :]
-    target_axis = profile.get("axis", "x")
-    if target_axis == "y":
-        return jnp.broadcast_to(_profile_1d(profile, grid.y, norm, reference)[None, :], (grid.nx, grid.ny))
-    return jnp.broadcast_to(_profile_1d(profile, grid.x, norm, reference)[:, None], (grid.nx, grid.ny))
 
 
 class BaseVFP2D(ADEPTModule):
@@ -224,6 +176,10 @@ class BaseVFP2D(ADEPTModule):
                 reference=UREG.Quantity(self.cfg["units"]["reference electron density"]),
             )
             t_prof = _profile_2d(component["T"], self.grid, self.plasma_norm, reference=self.plasma_norm.T0)
+            if not np.all(np.isfinite(np.asarray(n_prof))) or np.any(np.asarray(n_prof) < 0):
+                raise ValueError(f"{name} electron density must be finite and nonnegative")
+            if not np.all(np.isfinite(np.asarray(t_prof))) or np.any(np.asarray(t_prof) <= 0):
+                raise ValueError(f"{name} electron temperature must be finite and strictly positive")
             if self.cfg["grid"].get("relativistic", False):
                 theta0 = float((self.plasma_norm.T0 / (UREG.m_e * UREG.c**2)).to("").magnitude)
                 theta = theta0 * t_prof[..., None]
@@ -268,7 +224,17 @@ class BaseVFP2D(ADEPTModule):
         # Diffrax currently warns that complex state support is experimental.
         # Keep its PyTree purely real while retaining complex arithmetic inside
         # the harmonic operator.
-        self.state = {"flm": complex_to_real(flm), "e": e, "b": jnp.zeros_like(e)}
+        initial = self.cfg.get("initial_conditions", {})
+        if not self.ion_fluid_active and any(key in initial for key in ("ion_velocity", "ion_temperature")):
+            raise ValueError("Initial ion velocity/temperature profiles require terms.ion_fluid.active=true")
+        magnetic_field = initial_magnetic_field(
+            initial.get("magnetic_field", {}),
+            self.grid,
+            self.plasma_norm,
+            finite_difference=self.spatial_sharding is not None,
+            mesh=None if self.spatial_sharding is None else self.spatial_sharding.mesh,
+        )
+        self.state = {"flm": complex_to_real(flm), "e": e, "b": magnetic_field}
         self._density = n_total
         self.args = {"Z": jnp.ones_like(n_total), "ni": n_total / zref}
         if self.ion_fluid_active:
@@ -277,19 +243,19 @@ class BaseVFP2D(ADEPTModule):
             # finite radial grid at initialization.
             ion_density = density(flm, self.layout, self.grid.v, self.grid.dv) / zref
             self.args["ni"] = ion_density
-            ion_velocity = jnp.broadcast_to(
-                jnp.asarray(self.ion_cfg.get("initial_velocity", [0.0, 0.0, 0.0])),
-                (self.grid.nx, self.grid.ny, 3),
+            ion_velocity = vector_profile(
+                initial.get("ion_velocity", self.ion_cfg.get("initial_velocity", [0.0, 0.0, 0.0])),
+                self.grid,
+                self.plasma_norm,
+                self.plasma_norm.v0,
             )
-            ion_temperature = float(
-                (
-                    UREG.Quantity(self.cfg["units"]["reference ion temperature"])
-                    / UREG.Quantity(self.cfg["units"]["reference electron temperature"])
-                )
-                .to("")
-                .magnitude
+            reference_ti = UREG.Quantity(self.cfg["units"]["reference ion temperature"])
+            ion_temperature = _profile_2d(
+                initial.get("ion_temperature", 1.0), self.grid, self.plasma_norm, reference=reference_ti
             )
-            ion_temperature *= 0.5 * self.plasma_norm.vth_norm() ** 2
+            if not np.all(np.isfinite(np.asarray(ion_temperature))) or np.any(np.asarray(ion_temperature) <= 0):
+                raise ValueError("initial_conditions.ion_temperature must be finite and strictly positive")
+            ion_temperature *= float((reference_ti / (self.plasma_norm.m0 * self.plasma_norm.v0**2)).to("").magnitude)
             ion_primitive = jnp.concatenate(
                 (
                     (self.ion_mass * ion_density)[..., None],
@@ -596,7 +562,28 @@ class BaseVFP2D(ADEPTModule):
                 self._coupled_step = step
             else:
                 step = kinetic_step
-            initial_flm = real_to_complex(self.state["flm"])
+            # Initialize the same quasistatic Ampere constraint used at every
+            # subsequent kinetic stage. This defines the initial state; it is
+            # not time-evolution projection work and does not enter its budget.
+            if self.layout.index(1, 1) < 0:
+                required_current = np.asarray(kinetic_step._target_current(self.state["b"]))
+                # A constant field may acquire tiny FFT roundoff currents. Use
+                # the derivative scale, not an absolute tolerance that could
+                # hide a physically small but representable field.
+                derivative_scale = float(jnp.max(jnp.abs(self.grid.kx)) + jnp.max(jnp.abs(self.grid.ky)))
+                roundoff = (
+                    64
+                    * np.finfo(required_current.dtype).eps
+                    * maxwell.c2
+                    * float(jnp.max(jnp.abs(self.state["b"])))
+                    * derivative_scale
+                )
+                if np.max(np.abs(required_current[..., 1:])) > roundoff:
+                    raise ValueError(
+                        "The initial magnetic field requires transverse Ampere current; "
+                        "set grid.mmax >= 1 so the (1,1) harmonic can represent Jy and Jz"
+                    )
+            initial_flm = kinetic_step._project(real_to_complex(self.state["flm"]), self.state["b"])
             initial_hidden_dndz = KineticOhmStep._hidden_dndz(self.tmin, self.args, self.state["b"][..., 0])
             if self.ion_fluid_active:
                 initial_args = {**self.args, **step.ion_kinematics(self.state["ions"])}
@@ -608,7 +595,7 @@ class BaseVFP2D(ADEPTModule):
                 initial_args,
                 hidden_dndz=initial_hidden_dndz,
             )
-            self.state = {**self.state, "e": initial_e}
+            self.state = {**self.state, "e": initial_e, "flm": complex_to_real(initial_flm)}
         else:
             raise ValueError(
                 f"Unsupported VFP-2D field solver mode {self.field_mode!r}; expected "

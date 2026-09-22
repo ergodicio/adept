@@ -34,6 +34,7 @@ Documentation
    solvers/vfp1d/overview
    solvers/vfp2d/overview
    solvers/vfp2d/joglekar2014
+   solvers/vfp2d/magpie_geometry
    solvers/spectrax1d/overview
    solvers/hermite_legendre_1d/overview
    solvers/pic1d/overview
