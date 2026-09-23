@@ -50,6 +50,7 @@ from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
+from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import light_absorption_rates
 from adept._lpse2d.core.spectral_light import gaussian_injector_profile
 from adept._lpse2d.core.vector import dot_conj, fft2c, ifft2c, k_dot, split_k
@@ -186,6 +187,8 @@ class CombinedSolver:
             if self.n_src >= 1.0:
                 raise ValueError("The pump injector sits at or above critical density")
             self.pump_turn_on_time = pump["turn_on_time"]
+            # LPSE laser.pulseShape: the injected source carries sqrt(shape) (core/pulse.py)
+            self.pulse = PulseShape(pump)
             k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
             width = pump.get("injector_width", np.pi / k0_inject)
             self.pump_profile = jnp.asarray(
@@ -255,6 +258,7 @@ class CombinedSolver:
         k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.n_src)
         v_g = self.c**2 * k0 / self.w0
         amp = self.E0_source * jnp.sqrt(intensities) / (1.0 - self.n_src) ** 0.25 * t_env * turn_on
+        amp = amp * self.pulse.field_factor(t)
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)
         carrier = jnp.exp(1j * k0[:, None] * (self.x[None, :] - self.x[self.i0]))
         source = (amp * v_g[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[:, :, None]

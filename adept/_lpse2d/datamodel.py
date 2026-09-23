@@ -139,7 +139,13 @@ class E0DriverModel(BaseModel):
     beam_offset: str | None = None  # y position of the beam centre (LPSE laser.N.offset)
     kap_bandwidth: float = Field(default=0.0, ge=0.0, lt=1.0)  # LPSE bandwidth.KAP.frequency (dW/W0)
     kap_seed: int = 0
-    pulse_file: str | None = None  # LPSE laser.pulse.file: two-column (t_ps, relative amplitude) table
+    # LPSE laser.pulseShape: a *power* factor on the pump (the field carries its square root) --
+    # `file` reads pulse_file, a two-column (t_ps, power scale in [0, 10]) table; `square` is
+    # 1/duty_cycle for the first duty_cycle of each period, else 0; `sin` is 2 sin^2(pi t/period)
+    pulse_shape: Literal["file", "square", "sin"] | None = None  # default: file when pulse_file is set
+    pulse_file: str | None = None
+    pulse_period: str | None = None  # square / sin, default 0.1ps (LPSE pulseShape.period)
+    pulse_duty_cycle: float = Field(default=0.5, gt=0.0, lt=1.0)  # square (LPSE pulseShape.dutyCycle)
     # the pump launched from LPSE injector files instead of analytic beams (plan 2 L.4c)
     injector_file: InjectorFileModel | None = None
 

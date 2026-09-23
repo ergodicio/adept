@@ -554,7 +554,6 @@ def get_derived_quantities(cfg: dict) -> dict:
             "beam_width": bool(e0.get("beam_width")),
             "num_colors > 1": int(e0.get("num_colors", 1)) > 1,
             "kap_bandwidth": float(e0.get("kap_bandwidth", 0.0)) > 0.0,
-            "pulse_file": bool(e0.get("pulse_file")),
             "speckle": bool(e0.get("speckle", {}).get("enabled", False)),
         }
         if any(analytic.values()):
@@ -782,12 +781,26 @@ def get_derived_quantities(cfg: dict) -> dict:
             )
             cfg["drivers"][k]["derived"]["kap_bandwidth"] = float(e0_cfg.get("kap_bandwidth", 0.0))
             cfg["drivers"][k]["derived"]["kap_seed"] = int(e0_cfg.get("kap_seed", 0))
-            if e0_cfg.get("pulse_file"):
-                table = np.loadtxt(e0_cfg["pulse_file"], dtype=np.float64)
-                if table.ndim != 2 or table.shape[1] < 2:
-                    raise ValueError("drivers.E0.pulse_file must be a two-column (t_ps, amplitude) table")
-                cfg["drivers"][k]["derived"]["pulse_t"] = table[:, 0]
-                cfg["drivers"][k]["derived"]["pulse_amp"] = table[:, 1]
+            # LPSE laser.pulseShape.{shape, file, period, dutyCycle}: a power factor (core/pulse.py)
+            pulse_shape = e0_cfg.get("pulse_shape") or ("file" if e0_cfg.get("pulse_file") else None)
+            if pulse_shape == "file":
+                if not e0_cfg.get("pulse_file"):
+                    raise ValueError("drivers.E0.pulse_shape: file needs drivers.E0.pulse_file")
+                from adept._lpse2d.core.pulse import load_pulse_table
+
+                pulse_t, pulse_power = load_pulse_table(e0_cfg["pulse_file"])
+                cfg["drivers"][k]["derived"]["pulse_t"] = pulse_t
+                cfg["drivers"][k]["derived"]["pulse_power"] = pulse_power
+            elif pulse_shape in ("square", "sin"):
+                duty_cycle = float(e0_cfg.get("pulse_duty_cycle", 0.5))
+                if not 0.0 < duty_cycle < 1.0:
+                    raise ValueError("drivers.E0.pulse_duty_cycle must lie strictly between 0 and 1 (LPSE)")
+                cfg["drivers"][k]["derived"]["pulse_period"] = _Q(e0_cfg.get("pulse_period", "0.1ps")).to("ps").value
+                cfg["drivers"][k]["derived"]["pulse_duty_cycle"] = duty_cycle
+            elif pulse_shape is not None:
+                raise ValueError(f"drivers.E0.pulse_shape must be file, square or sin (LPSE), got {pulse_shape!r}")
+            if pulse_shape is not None:
+                cfg["drivers"][k]["derived"]["pulse_shape"] = pulse_shape
             beam_angles = [float(b.get("angle", angle_deg)) for b in beams]
             if any(abs(abs(a) - 90.0) < 1e-9 for a in beam_angles):
                 raise ValueError("drivers.E0 beams at +-90 deg (injection from a y face) are not supported")

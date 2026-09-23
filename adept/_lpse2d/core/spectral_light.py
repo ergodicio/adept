@@ -39,7 +39,6 @@ import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
 
-from adept._base_ import get_envelope
 from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.raman import RamanLight, transverse_part
 from adept._lpse2d.core.vector import fft2c, ifft2c, split_k, with_components
@@ -231,8 +230,6 @@ class SpectralCoupledLight(CoupledLight):
         # Kubo-Anderson bandwidth: piecewise-constant random phase with correlation time 2 pi / (dW)
         self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
         self.kap_seed = int(pump.get("kap_seed", 0) or 0)
-        self.pulse_t = jnp.asarray(pump["pulse_t"]) if "pulse_t" in pump else None
-        self.pulse_amp = jnp.asarray(pump["pulse_amp"]) if "pulse_amp" in pump else None
         width = pump.get("injector_width", np.pi / k0_inject)
         self.pump_profile = jnp.asarray(
             gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
@@ -256,20 +253,11 @@ class SpectralCoupledLight(CoupledLight):
         """Smooth injector for the (optionally oblique) pump beams, summed over colors: the
         (nx, ny, 3) source added to E0 (the FD two-point rows are replaced). Beams with
         |angle| > 90 deg are launched leftward from the x-max plane."""
-        t_env = get_envelope(
-            pump_args["tr"],
-            pump_args["tr"],
-            pump_args["tc"] - pump_args["tw"] / 2,
-            pump_args["tc"] + pump_args["tw"] / 2,
-            t,
-        )
-        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        time_factor = self.pump_time_factor(t, pump_args)
         delta_omega = pump_args["delta_omega"]  # (nc,)
         intensities = pump_args["intensities"]  # (nc, ny)
         phases = pump_args["phases"]  # (nc, ny)
-        if self.pulse_t is not None:
-            t_env = t_env * jnp.interp(t, self.pulse_t, self.pulse_amp)
-        amp = self.E0_source * jnp.sqrt(intensities) * t_env * turn_on  # (nc, ny)
+        amp = self.E0_source * jnp.sqrt(intensities) * time_factor  # (nc, ny)
         amp = amp * self.beam_envelope_y[None, :]
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
         total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 3), dtype=jnp.complex128)

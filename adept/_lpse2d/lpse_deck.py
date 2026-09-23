@@ -520,15 +520,26 @@ def translate_parms(
     kap = float(g("laser.bandwidth.KAP.frequency", "0"))
     if kap > 0:
         beam_extras["kap_bandwidth"] = kap
-    # LPSE laser.pulseShape.{enable, file} (LightSolver::loadPulseShapingData: two columns
-    # t_ps scale, linear interpolation, held outside), resolved relative to the deck's directory
-    if _bool(g("laser.pulseShape.enable")) and g("laser.pulseShape.file"):
-        pulse_path = Path(g("laser.pulseShape.file"))
-        if not pulse_path.is_absolute() and parms.get("_deck_dir"):
-            pulse_path = Path(parms["_deck_dir"]) / pulse_path
-        beam_extras["pulse_file"] = str(pulse_path)
-    elif g("laser.pulse.file"):
-        beam_extras["pulse_file"] = g("laser.pulse.file")
+    # LPSE laser.pulseShape.{enable, shape, file, period, dutyCycle} (LightSolver.cpp:1175-1214):
+    # a power factor, shape file (default; two columns t_ps scale, LightSolver::loadPulseShapingData,
+    # resolved relative to the deck's directory), square or sin; period in ps
+    if _bool(g("laser.pulseShape.enable")):
+        pulse_shape = g("laser.pulseShape.shape", "file").strip().lower()
+        if pulse_shape == "file":
+            if not g("laser.pulseShape.file"):
+                raise ValueError("laser.pulseShape.shape = file needs laser.pulseShape.file (LPSE refuses the deck)")
+            pulse_path = Path(g("laser.pulseShape.file"))
+            if not pulse_path.is_absolute() and parms.get("_deck_dir"):
+                pulse_path = Path(parms["_deck_dir"]) / pulse_path
+            beam_extras["pulse_file"] = str(pulse_path)
+        elif pulse_shape in ("square", "sin"):
+            beam_extras["pulse_shape"] = pulse_shape
+            beam_extras["pulse_period"] = f"{float(g('laser.pulseShape.period', '0.1'))}ps"
+            beam_extras["pulse_duty_cycle"] = float(g("laser.pulseShape.dutyCycle", "0.5"))
+        else:
+            raise ValueError(f"laser.pulseShape.shape = {pulse_shape}: LPSE takes file, square or sin")
+    if _bool(g("raman.pulseShape.enable")):
+        report["unsupported"].append("raman.pulseShape: adept's Raman seed has no pulse shape")
     drivers = {
         "E0": {
             "shape": "uniform",

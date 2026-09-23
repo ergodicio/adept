@@ -2,6 +2,8 @@ import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
+from adept._lpse2d.core.pulse import PulseShape
+
 
 class Light:
     def __init__(self, cfg) -> None:
@@ -37,8 +39,9 @@ class Light:
         )
         self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
         self.kap_seed = int(pump.get("kap_seed", 0) or 0)
-        self.pulse_t = jnp.asarray(pump["pulse_t"]) if "pulse_t" in pump else None
-        self.pulse_amp = jnp.asarray(pump["pulse_amp"]) if "pulse_amp" in pump else None
+        # LPSE laser.pulseShape: the static field scales as sqrt(max(shape, 1e-12))
+        # (LightSolver::applyPulseShapeStatic)
+        self.pulse = PulseShape(pump)
         self.multi_beam = len(self.beam_angle) > 1 or float(self.beam_angle[0]) != 0.0
 
         # Speckle state
@@ -90,7 +93,7 @@ class Light:
         # component count (3 = x, y, z since plan 2 F.1; 2 for the older tests); the static
         # p-polarised pump has no z component
         nc = int(y["E0"].shape[-1]) if isinstance(y, dict) and "E0" in y else 3
-        if self.multi_beam or self.kap_bandwidth > 0.0 or self.pulse_t is not None:
+        if self.multi_beam or self.kap_bandwidth > 0.0 or self.pulse.active:
             return self._oblique_update(t_ps, light_wave, nc)
         E0y_k = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
@@ -142,7 +145,7 @@ class Light:
         E0 = jnp.zeros((self.nx, self.ny, nc), dtype=jnp.complex128)
         xx = self.x[:, None]
         yy = self.y[None, :]
-        pulse = jnp.interp(t_ps, self.pulse_t, self.pulse_amp) if self.pulse_t is not None else 1.0
+        pulse = self.pulse.static_field_factor(t_ps)
         for b in range(len(self.beam_angle)):
             angle = float(self.beam_angle[b])
             dw_b = float(self.beam_delta_omega[b])

@@ -4,6 +4,7 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
+from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import RamanLight, transverse_part
 
 
@@ -198,6 +199,8 @@ class CoupledLight(RamanLight):
             )
         self.n_src = n_src
         self.pump_turn_on_time = pump["turn_on_time"]
+        # LPSE laser.pulseShape: every injected source carries sqrt(shape) (core/pulse.py)
+        self.pulse = PulseShape(pump)
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
 
         # ---- resonance absorption (plan 2 L.3; LPSE laser.evolution.resonanceAbsorption) on the
@@ -312,12 +315,10 @@ class CoupledLight(RamanLight):
 
         return jnp.asarray(times), jax.vmap(source)(planes), rows
 
-    def file_pump_rows(self, t: float, pump_args: dict) -> Array:
-        """The file injector's rows ``(2, ny, 3)`` at time ``t``: LPSE interpolates linearly between
-        the file times and repeats the table with the last time as period
-        (``SchrodingerSolver3::addInjectorSources``, loadInjector); one time is held constant. As
-        every pump source, the rows carry the pump envelope and the turn-on ramp (LPSE
-        ``laser.evolution.riseTime``)."""
+    def pump_time_factor(self, t: float, pump_args: dict):
+        """The scalar time factor of every pump source: the driver envelope, the turn-on ramp
+        ``1 - exp(-(t / turn_on_time)^2)`` and the square root of the pulse shape's power factor,
+        LPSE's ``temporalSourceAmplitudeMultiplier`` (``SchrodingerSolver3::addInjectorSources``)."""
         t_env = get_envelope(
             pump_args["tr"],
             pump_args["tr"],
@@ -326,6 +327,15 @@ class CoupledLight(RamanLight):
             t,
         )
         turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        return t_env * turn_on * self.pulse.field_factor(t)
+
+    def file_pump_rows(self, t: float, pump_args: dict) -> Array:
+        """The file injector's rows ``(2, ny, 3)`` at time ``t``: LPSE interpolates linearly between
+        the file times and repeats the table with the last time as period
+        (``SchrodingerSolver3::addInjectorSources``, loadInjector); one time is held constant. As
+        every pump source, the rows carry the pump envelope and the turn-on ramp (LPSE
+        ``laser.evolution.riseTime``)."""
+        time_factor = self.pump_time_factor(t, pump_args)
         if self.file_times.size == 1:
             pattern = self.file_patterns[0]
         else:
@@ -334,7 +344,7 @@ class CoupledLight(RamanLight):
             k = jnp.clip(jnp.searchsorted(self.file_times, t_c, side="right") - 1, 0, self.file_times.size - 2)
             a = (t_c - self.file_times[k]) / (self.file_times[k + 1] - self.file_times[k])
             pattern = (1.0 - a) * self.file_patterns[k] + a * self.file_patterns[k + 1]
-        return t_env * turn_on * pattern
+        return time_factor * pattern
 
     def calc_pump_source(self, t: float, pump_args: dict) -> list[tuple[int, Array]]:
         """
@@ -345,14 +355,7 @@ class CoupledLight(RamanLight):
 
         Returns ``(row index, values)`` pairs added to the E0 RHS.
         """
-        t_env = get_envelope(
-            pump_args["tr"],
-            pump_args["tr"],
-            pump_args["tc"] - pump_args["tw"] / 2,
-            pump_args["tc"] + pump_args["tw"] / 2,
-            t,
-        )
-        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        time_factor = self.pump_time_factor(t, pump_args)
 
         delta_omega = pump_args["delta_omega"]  # (nc,)
         intensities = pump_args["intensities"]  # (nc, ny), fractions summing to 1
@@ -364,7 +367,7 @@ class CoupledLight(RamanLight):
         # normalize to the *measured* incident flux, so this bias cancels there.
         k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.n_src)  # (nc,)
 
-        amp = self.source_prefactor0 * self.E0_source * jnp.sqrt(intensities) * t_env * turn_on  # (nc, ny)
+        amp = self.source_prefactor0 * self.E0_source * jnp.sqrt(intensities) * time_factor  # (nc, ny)
 
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
 
@@ -414,22 +417,13 @@ class CoupledLight(RamanLight):
     def general_pump_rows(self, t: float, pump_args: dict, patterns: list[Array]) -> list[tuple[int, Array]]:
         """Rows ``(index, (ny, 3) values)`` of the general injector at time ``t``: the patterns
         times the colour and beam time factors and the propagation coefficient."""
-        t_env = get_envelope(
-            pump_args["tr"],
-            pump_args["tr"],
-            pump_args["tc"] - pump_args["tw"] / 2,
-            pump_args["tc"] + pump_args["tw"] / 2,
-            t,
-        )
-        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        time_factor = self.pump_time_factor(t, pump_args)
         delta_omega = pump_args["delta_omega"]
         color_time = jnp.exp(-1j * self.w0 * delta_omega * t)  # (nc,)
         rows: dict[int, Array] = {}
         for b, pattern in enumerate(patterns):
             beam_time = jnp.exp(1j * (self.beam_phase[b] - self.w0 * self.beam_delta_omega[b] * t))
-            scale = (
-                self.diffraction_coeff0 * self.E0_source * t_env * turn_on * np.sqrt(self.beam_fraction[b]) * beam_time
-            )
+            scale = self.diffraction_coeff0 * self.E0_source * time_factor * np.sqrt(self.beam_fraction[b]) * beam_time
             block = scale * jnp.sum(pattern * color_time[:, None, None, None], axis=0)  # (n_rows, ny, 3)
             for r, i in enumerate(self.beam_rows[b]):
                 rows[int(i)] = block[r] if int(i) not in rows else rows[int(i)] + block[r]

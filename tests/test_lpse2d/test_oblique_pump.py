@@ -223,12 +223,13 @@ def test_transverse_profile_kap_and_pulse_file(tmp_path):
     np.testing.assert_allclose(np.asarray(light.beam_envelope_y), expected, rtol=1e-12)
     _, args = UniformDriver(cfg)({}, {"drivers": {}})
     pa = args["drivers"]["E0"]
-    # the pulse table scales the source amplitude by 0.25
+    # the pulse table is a power factor: 0.25 scales the source amplitude by sqrt(0.25) = 0.5
+    # (LPSE SchrodingerSolver3::addInjectorSources)
     s = np.asarray(light.calc_pump_source(0.05, pa))
     raw2 = _beams_cfg(None, [{"intensity": 1.0, "angle": 0.0}], beam_width="2um", beam_sg_order=4.0, beam_offset="1um")
     light2 = SpectralCoupledLight(_finish(raw2))
     s2 = np.asarray(light2.calc_pump_source(0.05, pa))
-    np.testing.assert_allclose(np.abs(s), 0.25 * np.abs(s2), rtol=1e-9)
+    np.testing.assert_allclose(np.abs(s), 0.5 * np.abs(s2), rtol=1e-9)
     # KAP: the phase is piecewise constant with correlation time 2 pi / (kap_bandwidth w0)
     w0 = cfg["units"]["derived"]["w0"]
     tau = 2.0 * np.pi / (0.02 * w0)
