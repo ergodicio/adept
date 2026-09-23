@@ -144,9 +144,10 @@ class IonAcousticWave:
         # iaw.startEvolvingTime / stopEvolvingTime); None means unbounded
         self.t_start = float(iaw["t_start"]) if iaw.get("t_start") is not None else None
         self.t_stop = float(iaw["t_stop"]) if iaw.get("t_stop") is not None else None
-        if self.stride > 1 and self.solver != "spectral":
+        if self.stride > 1 and self.solver == "explicit":
+            # the fd solver sub-cycles its IAW step to its own stability limit (iaw_fd.FDIonAcoustic)
             raise ValueError(
-                "terms.iaw.stride > 1 requires terms.iaw.solver: spectral (the explicit step is not stable)"
+                "terms.iaw.stride > 1 requires terms.iaw.solver: spectral or fd (the explicit step is not stable)"
             )
 
         self.dt = grid["dt"] * self.stride
@@ -214,14 +215,6 @@ class IonAcousticWave:
             self.p_ww = jnp.asarray(coeff * (cos_b - sin_over_b * gamma))
             self.collisional_w_factor = float(np.exp(-2.0 * self.nu_coll * self.dt))
 
-        # the finite-difference solver with flow profiles (plan 2 I.1 / I.2)
-        if self.solver == "fd":
-            from adept._lpse2d.core.iaw_fd import FDIonAcoustic
-
-            self.fd = FDIonAcoustic(self, cfg)
-        else:
-            self.fd = None
-
         # IAW noise (LPSE IawSolver::addNoise): random-phase source on the velocity
         # divergence with the fluctuation-dissipation amplitude
         #     A N sqrt(exp(2 dt (gamma_k + nu)) - 1)
@@ -239,6 +232,15 @@ class IonAcousticWave:
             self.noise_key = jax.random.PRNGKey(int(seed) if seed is not None else 271828)
         else:
             self.noise_kick = None
+
+        # the finite-difference solver with flow profiles (plan 2 I.1 / I.2); built last, it reads
+        # the damping and noise set up above
+        if self.solver == "fd":
+            from adept._lpse2d.core.iaw_fd import FDIonAcoustic
+
+            self.fd = FDIonAcoustic(self, cfg)
+        else:
+            self.fd = None
 
     def _init_thermal_filamentation(self, cfg: dict) -> None:
         """LPSE ``thermalFil.{laser,raman,lw}`` (``ZakharovSolver::getThermalFilamentationSource``):
@@ -415,24 +417,14 @@ class IonAcousticWave:
         fine = fd.s > 1
         n = y[FD_STATE_KEYS[0]] if fine else y["iaw_density"]
         w = y[FD_STATE_KEYS[1]] if fine else y["iaw_velocity_divergence"]
-        drive = self.ponderomotive_drive(y["epw"], y["E0"], y["E1"])
+        # E2 = -lap(PP) = k^2 PP formed on the EPW grid (+ the thermal-filamentation source), then
+        # interpolated to the fine grid (ZakharovSolver::getPonderomotivePotential(pp, false),
+        # advanceNelfAndDivV_fd); the same k^2 drive as the spectral step
+        drive_k = jnp.fft.fft2(self.ponderomotive_drive(y["epw"], y["E0"], y["E1"]))
+        e2 = jnp.real(jnp.fft.ifft2(self.k_sq * drive_k))
         if self.thermal_waves:
-            drive_lap = fd.laplacian(upsample(drive, fd.s)) + upsample(
-                self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"]), fd.s
-            )
-        else:
-            drive_lap = fd.laplacian(upsample(drive, fd.s))
-        noise_k = None
-        if self.noise_enabled:
-            coarse = self.get_noise(t)  # (nx, ny) k-space kick on the coarse band
-            if fine:
-                shifted = jnp.fft.fftshift(coarse)
-                padded = jnp.zeros((fd.fnx, fd.fny), dtype=coarse.dtype)
-                ox, oy = (fd.fnx - self.nx) // 2, (fd.fny - self.ny) // 2
-                noise_k = jnp.fft.ifftshift(padded.at[ox : ox + self.nx, oy : oy + self.ny].set(shifted)) * fd.s**2
-            else:
-                noise_k = coarse
-        n, w = fd.step(t, n, w, drive_lap, noise_k)
+            e2 = e2 + self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"])
+        n, w = fd.step(t, n, w, upsample(e2, fd.s))
         out = {"iaw_density": downsample(n, fd.s), "iaw_velocity_divergence": downsample(w, fd.s)}
         if fine:
             out[FD_STATE_KEYS[0]], out[FD_STATE_KEYS[1]] = n, w

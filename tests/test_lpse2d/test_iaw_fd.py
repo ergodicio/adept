@@ -248,3 +248,186 @@ def test_cbet_resonance_localises_at_the_mach_one_layers():
     assert abs(x_lower - 7.5) < 0.6 and abs(x_upper - 12.5) < 0.6
     assert lower > 2.5 * mid and upper > 2.5 * mid
     assert mid < 0.01  # the uniform standing-wave drive alone (no-flow level ~5e-3)
+
+
+# ---- LPSE's fd step (IawSolver::oneTimeStep / evolve / applyFFTDampingAndNoise) ----------------
+# Tolerances fixed before the runs: the driven response of the fd and spectral steps lags the exact
+# one by the same one step (both kick w after the propagation), so they agree to O((w dt)^2) --
+# 5 %; the free-mode decay follows exp(-(gamma_L + nu) T) up to the splitting error O(W dt) -- 3 %.
+
+
+def _cfg_extra(solver, landau=0.0, collisions=0.0, **extra):
+    from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["grid"].update(
+        {"ymax": "0.02um", "ymin": "-0.02um", "xmax": "12.8um", "dx": "0.05um", "tmax": "10fs", "dt": "2fs"}
+    )
+    cfg["terms"]["iaw"] = {
+        "active": True,
+        "solver": solver,
+        "damping": {"landau": landau, "collisions": collisions},
+        "super_samples": 2,
+        **extra,
+    }
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    cfg["grid"] = get_solver_quantities(cfg)
+    cfg["grid"]["background_density"] = get_density_profile(cfg)
+    return cfg
+
+
+def _state(cfg, iaw, n0, w0, e0=None):
+    from adept._lpse2d.core.iaw_fd import FD_STATE_KEYS, upsample
+
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    y = {
+        "epw": jnp.zeros((nx, ny), complex),
+        "E0": jnp.zeros((nx, ny, 3), complex) if e0 is None else jnp.asarray(e0),
+        "E1": jnp.zeros((nx, ny, 3), complex),
+        "iaw_density": jnp.asarray(n0),
+        "iaw_velocity_divergence": jnp.asarray(w0),
+    }
+    if iaw.solver == "fd" and iaw.fd.s > 1:
+        y[FD_STATE_KEYS[0]] = upsample(jnp.asarray(n0), iaw.fd.s)
+        y[FD_STATE_KEYS[1]] = upsample(jnp.asarray(w0), iaw.fd.s)
+    return y
+
+
+def test_fd_fine_grid_of_a_1d_box_keeps_one_y_cell():
+    """A 1-D box refines x only: the fd state and every interpolated source are (s nx, 1)."""
+    from adept._lpse2d.core.iaw_fd import downsample, upsample
+
+    x = np.arange(64) / 64
+    f = jnp.asarray((np.cos(2 * np.pi * 3 * x) + 0.5 * np.sin(2 * np.pi * 11 * x))[:, None])  # band-limited
+    up = upsample(f, 2)
+    assert up.shape == (128, 1)
+    np.testing.assert_allclose(np.asarray(downsample(up, 2)), np.asarray(f), rtol=1e-12, atol=1e-12)
+    g = jnp.asarray(np.random.default_rng(1).normal(size=(16, 8)))
+    assert upsample(g, 2).shape == (32, 16)
+
+
+@pytest.mark.parametrize("solver", ["fd", "spectral"])
+def test_ponderomotive_drive_expels_ions_like_lpse(solver):
+    """E2 = -lap(PP) (ZakharovSolver::getPonderomotivePotential): a Gaussian intensity bump drives
+    the density *down* at its peak, in the fd step as in the spectral step (the fd step had +lap)."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    results = {}
+    for s in ("spectral", solver):
+        cfg = _cfg_extra(s)
+        iaw = IonAcousticWave(cfg)
+        x = np.asarray(cfg["grid"]["x"])
+        xc = 0.5 * (x[0] + x[-1])
+        e0 = np.zeros((x.size, 1, 3), complex)
+        e0[:, 0, 1] = 1e-1 * np.exp(-((x - xc) ** 2) / (2 * 0.5**2))
+        y = _state(cfg, iaw, np.zeros((x.size, 1)), np.zeros((x.size, 1)), e0)
+        step = jax.jit(lambda y, t, iaw=iaw: iaw(y, t))
+        for i in range(20):
+            y = step(y, i * iaw.dt)
+        results[s] = float(np.asarray(y["iaw_density"])[np.argmin(abs(x - xc)), 0])
+    assert results[solver] < 0.0
+    assert results[solver] == pytest.approx(results["spectral"], rel=0.05)
+
+
+@pytest.mark.parametrize("landau_update", [1, 2, 3])
+def test_fd_kspace_step_cadence_is_lpse_global_counter(landau_update):
+    """IawSolver::evolve damps on timeStepIndex % (numStepsPerStep * numStepsPerLandauDampingUpdate)
+    == 0 of the whole run, over the combined interval: one IAW step (one sub-step) taken at run
+    step g differs from the undamped one by exactly exp(-(2 gamma_L + 2 nu) landau_update dt) when
+    g % landau_update == 0 and not at all otherwise (the per-call counter never damped with one
+    sub-step per call and landau_update > 1). Tolerance 1e-9."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+    from adept._lpse2d.core.iaw_fd import upsample
+
+    landau, nu = 0.2, 2.0
+    cfg = _cfg_extra("fd", landau=landau, collisions=nu, landau_update=landau_update)
+    iaw = IonAcousticWave(cfg)
+    fd = iaw.fd
+    assert fd.n_sub == 1
+    n0, w0, (_, _, k) = _travelling_wave(cfg, (40, 0))
+    n, w = upsample(jnp.asarray(n0), fd.s), upsample(jnp.asarray(w0), fd.s)
+    e2 = jnp.zeros_like(n)
+    gamma = landau * cfg["units"]["derived"]["cs"] * k
+    factor = np.exp(-(2.0 * gamma + 2.0 * nu) * landau_update * fd.dt_sub)
+    ref = np.fft.fft(np.asarray(fd.step(float(1 * iaw.dt), n, w, e2)[1])[:, 0])[40] if landau_update > 1 else None
+    for g in range(2 * landau_update + 1):
+        w_g = np.fft.fft(np.asarray(fd.step(float(g * iaw.dt), n, w, e2)[1])[:, 0])[40]
+        if g % landau_update == 0:
+            undamped = ref if ref is not None else w_g / factor
+            assert abs(w_g) == pytest.approx(factor * abs(undamped), rel=1e-9)
+        else:
+            assert abs(w_g) == pytest.approx(abs(ref), rel=1e-9)
+
+
+def test_fd_free_mode_decays_at_landau_plus_collisions():
+    """A weakly damped free mode (W / omega ~ 0.08) decays as exp(-(gamma_L + nu) t), LPSE's
+    2 gamma_L + 2 nu on w shared with n; the rate fitted over ~3 periods, tolerance 3 %."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    landau, nu, update = 0.02, 0.3, 2
+    cfg = _cfg_extra("fd", landau=landau, collisions=nu, landau_update=update)
+    n0, w0, (_, _, k) = _travelling_wave(cfg, (60, 0))
+    iaw = IonAcousticWave(cfg)
+    cs = cfg["units"]["derived"]["cs"]
+    steps = int(np.ceil(3 * 2 * np.pi / (cs * k) / iaw.dt))
+    y = _state(cfg, iaw, n0, w0)
+    step = jax.jit(lambda y, t: iaw(y, t))
+    amp = []
+    for i in range(steps):
+        y = step(y, i * iaw.dt)
+        amp.append(abs(np.fft.fft(np.asarray(y["iaw_density"])[:, 0])[60]))
+    t = (np.arange(steps) + 1) * iaw.dt
+    rate = -np.polyfit(t, np.log(amp), 1)[0]
+    assert rate == pytest.approx(landau * cs * k + nu, rel=0.03)
+
+
+def test_simplified_zero_landau_switches_the_kspace_step_off_like_lpse():
+    """IawSolver.cpp:2428: with the simplified form and a zero Landau rate LPSE returns before the
+    k-space step, so collisions do not act either."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    cfg = _cfg_extra("fd", landau=0.0, collisions=2.0)
+    n0, w0, _ = _travelling_wave(cfg, (40, 0))
+    iaw = IonAcousticWave(cfg)
+    assert not iaw.fd.kspace_step
+    y = _state(cfg, iaw, n0, w0)
+    for i in range(30):
+        y = iaw(y, i * iaw.dt)
+    mode = abs(np.fft.fft2(np.asarray(y["iaw_density"]))[40, 0]) / abs(np.fft.fft2(n0)[40, 0])
+    assert mode == pytest.approx(1.0, abs=0.02)
+
+
+def test_fd_noise_is_lpse_add_noise_on_the_fine_grid():
+    """IawSolver::addNoise: from rest, one k-space step leaves |w_k| = A N_fine sqrt(exp(2 dt (gamma_L
+    + nu)) - 1) on |k| < (1 - range) k_nyq_coarse, k != 0, and zero outside (tolerance 1e-9)."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+    from adept._lpse2d.core.iaw_fd import FD_STATE_KEYS
+
+    cfg = _cfg_extra("fd", landau=0.2, collisions=0.5, noise=True, noise_amplitude=1e-6)
+    iaw = IonAcousticWave(cfg)
+    fd = iaw.fd
+    nx = cfg["grid"]["nx"]
+    y = _state(cfg, iaw, np.zeros((nx, 1)), np.zeros((nx, 1)))
+    w_fine = np.asarray(iaw(y, 0.0)[FD_STATE_KEYS[1]])
+    w_k = np.abs(np.fft.fft2(w_fine))
+    fk = 2.0 * np.pi * np.fft.fftfreq(fd.fnx, d=fd.h)
+    gamma = 0.2 * cfg["units"]["derived"]["cs"] * np.abs(fk)
+    k_noise = float(cfg["grid"]["low_pass_filter"]) * float(np.max(np.abs(np.asarray(cfg["grid"]["kx"]))))
+    inside = (np.abs(fk) < k_noise) & (fk != 0.0)
+    expected = 1e-6 * fd.fnx * np.sqrt(np.expm1(2.0 * fd.dt_damp * (gamma + 0.5)))
+    # w is real: each mode holds the Hermitian average of the kicks at +k and -k
+    np.testing.assert_array_less(w_k[~inside, 0], 1e-9 * expected[inside].max())
+    assert np.all(w_k[inside, 0] <= expected[inside] * (1 + 1e-9))
+    assert np.all(w_k[inside, 0] > 0.0)
+
+
+def test_force_average_to_zero_rescales_the_dominant_sign_like_lpse():
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    iaw = IonAcousticWave(_cfg_extra("fd", landau=0.1))
+    f = jnp.asarray([[3.0], [-1.0], [0.0], [-0.5]])
+    out = np.asarray(iaw.fd._average_to_zero(f))
+    np.testing.assert_allclose(out[:, 0], [1.5, -1.0, 0.0, -0.5], rtol=1e-12)
+    assert abs(out.sum()) < 1e-12
