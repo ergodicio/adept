@@ -528,8 +528,12 @@ def translate_parms(
             "polarization": polarization_deg,
             **({"beams": beams} if n_beams > 1 else {}),
             **beam_extras,
+            # LPSE has no pump envelope (an evolved pump ramps with laser.evolution.riseTime only, a
+            # static one is on from t = 0): the window opens 0.1 ps before t = 0, where its 10 fs
+            # tanh rise is complete (at t = 0 it was the half-way point, a ~1 % deficit in the
+            # first 0.1 ps of test_019)
             "envelope": {
-                "tw": f"{10 * tmax}ps",
+                "tw": f"{10 * tmax + 0.2}ps",
                 "tr": "0.01ps",
                 "tc": f"{5 * tmax}ps",
                 "xr": "0.2um",
