@@ -241,8 +241,19 @@ def translate_parms(
     sample_period = float(g("simulation.samplePeriod", str(tmax)))
 
     # ---- anti-aliasing: outer fraction of each axis zeroed
-    # LPSE: no anti-aliasing unless grid.antiAliasing.range is given (ParameterManager.cpp:237-240)
-    aa_range = float(g("grid.antiAliasing.range", "0"))
+    # LPSE ParameterManager.cpp:237-244: grid.antiAliasing.range is a vector of up to six
+    # fractions (+x, -x, +y, -y, +z, -z faces of k-space, Lpse::setupAntiAliasingRange), each
+    # missing entry taking the previous one's value; with the key omitted the range is 0.3334
+    aa_values = _floats(g("grid.antiAliasing.range", "0.3334"))
+    aa_range = aa_values[0] if aa_values else 0.3334
+    if len(aa_values) > 1 and any(v != aa_range for v in aa_values[:4]):
+        report["unsupported"].append(
+            f"grid.antiAliasing.range = {aa_values}: per-face ranges; adept applies {aa_range} on every face"
+        )
+    for solver_key in ("lw.antiAliasing.range", "iaw.antiAliasing.range"):
+        # LwSolver.cpp:159-169 / IawSolver.cpp:302-313: a solver's own range overrides the grid's
+        if solver_key in parms and _floats(parms[solver_key])[:1] != [aa_range]:
+            report["unsupported"].append(f"{solver_key}: adept has one anti-aliasing mask for every field")
 
     # ---- density profile
     shape = g("densityProfile.shape", "linear").lower()

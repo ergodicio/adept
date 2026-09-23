@@ -109,7 +109,7 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `boundary_max_rate` | float | (`exp` profile) Peak amplitude damping rate in 1/ps (default `200`, LPSE `lw.abc.maxDampingRate`). The IAW absorber uses half of it unless `terms.iaw.boundary_max_rate` is set (LPSE `IawSolver` default 100) |
 | `boundary_lambda` | float | (`exp` profile) Exponential steepness (default `7`, LPSE `abc.lambda`) |
 | `low_pass_filter` | float | Low-pass filter cutoff as fraction of kmax (0-1) |
-| `dealias` | string | Shape of the anti-aliasing mask: `isotropic` (default) or `shifted-band` |
+| `dealias` | string | Shape of the anti-aliasing mask: `isotropic` (default), `shifted-band` or `rectangular` (LPSE `grid.antiAliasing.range`: the outer `1 - low_pass_filter` of each k axis is zeroed; the deck translator uses it with LPSE's range, `0.3334` when the deck omits the key, ParameterManager.cpp:241) |
 | `dt` | string | Timestep with unit |
 | `dx` | string | Spatial resolution with unit |
 | `tmax` | string | End time with unit |
@@ -137,6 +137,7 @@ wrong shape for the job — it discards high-`ky` modes that can never alias.
 | Value | Mask |
 |-------|------|
 | `isotropic` (default) | `|k| < low_pass_filter * kmax` only. Alias-free only if `low_pass_filter * kmax + k0 <= kmax`, which is not checked. |
+| `rectangular` | `|kx| < low_pass_filter * kmax_x` and `|ky| < low_pass_filter * kmax_y` (the original LPSE mask). |
 | `shifted-band` | Additionally requires `|kx| <= kmax_x - k0` and `|ky| <= kmax_y - k0 * NA`, which is exactly alias-free for the source products. `NA` is the numerical aperture of the speckle profile, and is zero without one. |
 
 `shifted-band` computes its limits from `k0` and the grid, so it stays correct as `dx`, the laser

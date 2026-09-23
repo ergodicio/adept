@@ -350,3 +350,43 @@ def test_translator_reads_pulse_shape_files_and_bracketed_vectors(tmp_path):
     assert cfg["drivers"]["E0"]["pulse_file"] == str(tmp_path / "data" / "pulseShape.dat")
     assert cfg["initial_perturbation"]["direction"] == [1.0, 0.0]
     assert not any("pulse" in u for u in report["unsupported"])
+
+
+def _translate_minimal(tmp_path, extra: str = ""):
+    from adept._lpse2d.lpse_deck import parse_parms, translate_parms
+
+    deck = tmp_path / "lpse.parms"
+    deck.write_text(
+        "grid.sizes = 20 10;\ngrid.nodes = 200 100;\nsimulation.time.end = 1;\nlaser.enable = true;\n"
+        "laser.nBeams = 1;\nlaser.1.intensity = 1e15;\n" + extra
+    )
+    return translate_parms(parse_parms(deck), run="x")
+
+
+@pytest.mark.parametrize(
+    "line, retained",
+    [
+        ("", 1.0 - 0.3334),  # key omitted: ParameterManager.cpp:241 sets 0.3334
+        ("grid.antiAliasing.range = 0;\n", 1.0),
+        ("grid.antiAliasing.range = 0.4;\n", 0.6),
+        ("grid.antiAliasing.range = [0.25];\n", 0.75),
+    ],
+)
+def test_translator_anti_aliasing_range_follows_lpse_default(tmp_path, line, retained):
+    """LPSE anti-aliases every run unless the deck sets grid.antiAliasing.range = 0: the
+    six-face range vector defaults to 0.3334 (ParameterManager.cpp:237-244)."""
+    cfg, report = _translate_minimal(tmp_path, line)
+    assert cfg["grid"]["dealias"] == "rectangular"
+    assert cfg["grid"]["low_pass_filter"] == pytest.approx(retained)
+    assert not any("antiAliasing" in u for u in report["unsupported"])
+
+
+def test_translator_reports_anti_aliasing_it_cannot_represent(tmp_path):
+    """Per-face ranges and a solver-specific lw./iaw. range (LwSolver.cpp:159-169) have no
+    adept counterpart: one rectangular mask serves every field."""
+    _, report = _translate_minimal(tmp_path, "grid.antiAliasing.range = 0.3 0.2;\n")
+    assert any("per-face" in u for u in report["unsupported"])
+    _, report = _translate_minimal(tmp_path, "grid.antiAliasing.range = 0.3;\nlw.antiAliasing.range = 0.5;\n")
+    assert any("lw.antiAliasing.range" in u for u in report["unsupported"])
+    _, report = _translate_minimal(tmp_path, "grid.antiAliasing.range = 0.3;\nlw.antiAliasing.range = 0.3;\n")
+    assert not any("antiAliasing" in u for u in report["unsupported"])
