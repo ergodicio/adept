@@ -93,6 +93,20 @@ class SpeckleModel(BaseModel):
     ssd_transverse_bandwidth_distribution: list[float] | None = None  # [x, y]
 
 
+class InjectorFileModel(BaseModel):
+    """
+    Pump injector read from LPSE files (``laser.E_<c>.loadInjector.<side>.x.filename``, made by
+    ``matlab/m201902_createLpseInjector_v02.m``): per time, the complex field of each listed
+    component on the injector plane and on the plane one cell further in, in ``e E / (m_e w0 c)``.
+    The first plane sits on the first injected row (the row after ``xmin + offset`` from x-min, the
+    row at ``xmax - offset`` from x-max); several times are interpolated linearly and repeat with the
+    last time as period, as LPSE. Second-order fd light solver with the evolved pump only.
+    """
+
+    side: Literal["min.x", "max.x"] = "min.x"
+    files: dict[Literal["x", "y", "z"], str]  # field component -> file path
+
+
 class E0DriverModel(BaseModel):
     """
     E0 driver model
@@ -126,6 +140,8 @@ class E0DriverModel(BaseModel):
     kap_bandwidth: float = Field(default=0.0, ge=0.0, lt=1.0)  # LPSE bandwidth.KAP.frequency (dW/W0)
     kap_seed: int = 0
     pulse_file: str | None = None  # LPSE laser.pulse.file: two-column (t_ps, relative amplitude) table
+    # the pump launched from LPSE injector files instead of analytic beams (plan 2 L.4c)
+    injector_file: InjectorFileModel | None = None
 
 
 class E1DriverModel(BaseModel):

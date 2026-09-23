@@ -533,6 +533,34 @@ def get_derived_quantities(cfg: dict) -> dict:
             "terms.light.coupling and terms.light.filter act on the coupled (pump-depletion) light solver "
             "and require terms.light.pump_depletion: true"
         )
+    injector_file = cfg["drivers"].get("E0", {}).get("injector_file")
+    if injector_file:
+        from adept._lpse2d.datamodel import InjectorFileModel
+
+        if not InjectorFileModel(**injector_file).files:
+            raise ValueError("drivers.E0.injector_file.files lists no component file")
+        # LPSE SchrodingerSolver3::initializeInjectorSources: "solver=fd and solverOrder=2 must be
+        # used when loading injectors from a file"; LightSolver: "Cannot read in injector and
+        # specify beams"
+        if not pump_depletion or light_solver != "fd" or combined or int(light.get("fd_order", 2)) != 2:
+            raise ValueError(
+                "drivers.E0.injector_file needs the evolved pump (terms.light.pump_depletion) on the "
+                "second-order fd light solver, as LPSE (solver = fd, solverOrder = 2)"
+            )
+        e0 = cfg["drivers"]["E0"]
+        analytic = {
+            "beams": bool(e0.get("beams")),
+            "angle": float(e0.get("angle", 0.0)) != 0.0,
+            "beam_width": bool(e0.get("beam_width")),
+            "num_colors > 1": int(e0.get("num_colors", 1)) > 1,
+            "kap_bandwidth": float(e0.get("kap_bandwidth", 0.0)) > 0.0,
+            "pulse_file": bool(e0.get("pulse_file")),
+            "speckle": bool(e0.get("speckle", {}).get("enabled", False)),
+        }
+        if any(analytic.values()):
+            raise ValueError(
+                f"drivers.E0.injector_file replaces the analytic beams; remove {[k for k, v in analytic.items() if v]}"
+            )
     source_terms = cfg["terms"]["epw"]["source"]
     srs_on = bool(source_terms.get("srs", False))
     tpd_on = bool(source_terms.get("tpd", False))
@@ -765,6 +793,11 @@ def get_derived_quantities(cfg: dict) -> dict:
                 raise ValueError("drivers.E0 beams at +-90 deg (injection from a y face) are not supported")
             # a beam with |angle| > 90 propagates leftward and is launched from the x-max face
             cfg["drivers"][k]["derived"]["beam_leftward"] = np.array([abs(a) > 90.0 for a in beam_angles], dtype=bool)
+            if e0_cfg.get("injector_file"):
+                # the file injector launches from its face: x-max is leftward
+                cfg["drivers"][k]["derived"]["beam_leftward"] = np.array(
+                    [e0_cfg["injector_file"].get("side", "min.x") == "max.x"], dtype=bool
+                )
             multi = len(beams) > 1 or any(a != 0.0 for a in beam_angles)
             if multi and cfg["drivers"][k].get("speckle", {}).get("enabled", False):
                 raise ValueError("drivers.E0.angle / beams are not supported together with drivers.E0.speckle")
@@ -1091,6 +1124,25 @@ def get_solver_quantities(cfg: dict) -> dict:
             ssd_number_color_cycles=speckle_cfg.get("ssd_number_color_cycles"),
             ssd_transverse_bandwidth_distribution=speckle_cfg.get("ssd_transverse_bandwidth_distribution"),
         )
+
+    injector_file = cfg["drivers"].get("E0", {}).get("injector_file")
+    if injector_file:
+        # the LPSE injector files (plan 2 L.4c): (T,) times in ps and (T, 2, ny, 3) planes in this
+        # code's field units (e E / (m_e w0 c) / e_norm); every listed component must share the times
+        from adept._lpse2d.lpse_deck import read_injector_file
+
+        times = None
+        planes = np.zeros((1, 2, cfg_grid["ny"], 3), dtype=np.complex128)
+        for comp, path in injector_file["files"].items():
+            t_c, p_c = read_injector_file(path, cfg_grid["ny"])
+            if times is None:
+                times = t_c
+                planes = np.zeros((t_c.size, 2, cfg_grid["ny"], 3), dtype=np.complex128)
+            elif t_c.shape != times.shape or np.any(np.abs(t_c - times) > 1e-5):
+                raise ValueError("drivers.E0.injector_file: the component files must share their times (LPSE)")
+            planes[..., "xyz".index(comp)] = p_c / cfg["units"]["derived"]["e_norm"]
+        cfg["drivers"]["E0"]["derived"]["injector_times"] = times
+        cfg["drivers"]["E0"]["derived"]["injector_planes"] = planes
 
     return cfg_grid
 

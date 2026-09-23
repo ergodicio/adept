@@ -547,6 +547,59 @@ def translate_parms(
         # LPSE laser.evolution.riseTime (fs, default 30): the 1 - exp(-(t/rise)^2) ramp on every
         # pump source (SchrodingerSolver3::addInjectorSources)
         drivers["E0"]["turn_on_time"] = f"{float(g('laser.evolution.riseTime', '30'))}fs"
+
+    # ---- pump from injector files (LPSE laser.E_<c>.loadInjector.<side>.<axis>.filename; plan 2 L.4c)
+    injector_keys = {
+        k: v
+        for k, v in parms.items()
+        if re.fullmatch(r"(laser|raman)\.E_[xyz]\.loadInjector\.(min|max)\.[xyz]\.filename", k) and v
+    }
+    if injector_keys:
+        faces = set()
+        files = {}
+        for key, value in injector_keys.items():
+            field, comp, _, side, axis, _ = key.split(".")
+            if field != "laser" or axis != "x":
+                report["unsupported"].append(f"{key}: adept loads pump (laser) injectors on the x faces only")
+                continue
+            path = Path(value)
+            if not path.is_absolute() and parms.get("_deck_dir"):
+                path = Path(parms["_deck_dir"]) / path
+            faces.add(side)
+            files[comp[-1]] = str(path)
+        if len(faces) > 1:
+            report["unsupported"].append("laser loadInjector files on both x faces: adept injects from one face")
+        elif files:
+            side = faces.pop()
+            if not laser_evolves:
+                report["unsupported"].append("laser loadInjector files need laser.solver = fd (LPSE refuses otherwise)")
+            if n_beams > 1 or "laser.1.intensity" in parms:
+                report["unsupported"].append("laser loadInjector files together with laser beams (LPSE refuses it)")
+            # LPSE's primary injector node is the edge of the light absorber, int(Labc / h) nodes in
+            # from the face (SchrodingerSolver3::completeBoundaryConditions); the file's first plane
+            # sits on it. adept's drivers.E0.offset names the plane's last scattered-field row
+            # (rightward: the row before the first injected row; leftward: the first injected row).
+            labc_light = float(g(f"laser.evolution.Labc.{side}.x", g("laser.evolution.Labc", str(labc_x))))
+            n_abc = int(labc_light / dx)
+            if abs(labc_light / dx - round(labc_light / dx)) < 1e-4:
+                report["notes"].append(
+                    f"laser.evolution.Labc / h = {labc_light / dx:.6f}: LPSE's single-precision index may differ by one"
+                )
+            offset_cells = n_abc - 0.5 if side == "min" else n_abc + 0.5
+            drivers["E0"]["offset"] = f"{offset_cells * dx}um"
+            drivers["E0"]["injector_file"] = {"side": f"{side}.x", "files": files}
+            # the nominal intensity (units.laser intensity, the flux metrics' normalisation) is the
+            # peak |E|^2 of the files, e E / (m_e w0 c) -> W/cm^2 as electronOscillationVelocity.m
+            peak = 0.0
+            for path in files.values():
+                try:
+                    _, planes = read_injector_file(path, ny)
+                    peak = max(peak, float(np.max(np.abs(planes[:, 0]))))
+                except (OSError, ValueError) as err:
+                    report["notes"].append(f"injector file {path} not read at translation: {err}")
+            w0 = 2.0 * np.pi * C_CGS / (wavelength_um * 1e-4)
+            intensity = (peak * ME_CGS * w0 * C_CGS / QE_CGS) ** 2 * C_CGS / (8.0 * np.pi) * 1e-7
+            drivers["E0"].pop("beams", None)
     if raman_on and int(float(g("raman.nBeams", "0"))) > 0:
         drivers["E1"] = {
             "intensity": f"{float(g('raman.1.intensity', '0'))}W/cm^2",
@@ -922,6 +975,33 @@ def read_frames(path: str | Path) -> list[tuple[dict, np.ndarray]]:
         frames.append((header, arr))
         pos = start + 4 * count
     return frames
+
+
+def read_injector_file(path: str | Path, n_points: int) -> tuple[np.ndarray, np.ndarray]:
+    """Read an LPSE light-injector file (``laser.E_<c>.loadInjector.<side>.<axis>.filename``,
+    written by ``matlab/m201902_createLpseInjector_v02.m``): ``(times_ps (T,), planes (T, 2,
+    n_points))`` with the planes complex in LPSE's light-field unit ``e E / (m_e w0 c)``.
+
+    The format is ``LightSolver::readInjectorFiles``: single-precision floats, per time the
+    time in ps, then the ``n_points`` complex values (re, im interleaved) of the injector plane,
+    then those of the plane one cell further into the box. ``n_points`` is the number of grid
+    points on the injector face (``Ny`` for an x face in 2-D). LPSE requires the first time to
+    be 0 and the times to increase."""
+    data = np.fromfile(Path(path), dtype="<f4").astype(np.float64)
+    per_time = 1 + 2 * 2 * n_points
+    if data.size == 0 or data.size % per_time:
+        raise ValueError(
+            f"injector file {path} holds {data.size} floats, not a multiple of 1 + 4 * {n_points} "
+            "(time + two planes of complex values per time)"
+        )
+    data = data.reshape(-1, per_time)
+    times = data[:, 0].copy()
+    planes = (data[:, 1::2] + 1j * data[:, 2::2]).reshape(-1, 2, n_points)
+    if times[0] != 0.0:
+        raise ValueError(f"injector file {path}: the first time must be 0 (LPSE), got {times[0]}")
+    if np.any(np.diff(times) <= 0.0):
+        raise ValueError(f"injector file {path}: the times must increase (LPSE)")
+    return times, planes
 
 
 def main(argv=None):

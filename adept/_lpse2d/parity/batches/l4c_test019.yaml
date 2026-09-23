@@ -1,0 +1,8 @@
+# test_019 (2-D Gaussian beam launched from an LPSE injector file; light only) for plan 2 L.4c / M11.
+# The file is made by original-lpse runs/test_019/make_injector.sh (the vendor MATLAB generator under
+# Octave); the reference run is original-lpse runs/test_019 (2026-09-22).
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: L.4c, milestone: M11}
+jobs:
+  - {deck: test_019, run: test_019/injector-file/1, windows: 0.05-0.2}

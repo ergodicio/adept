@@ -282,6 +282,60 @@ class CoupledLight(RamanLight):
                 for i, sign in zip(self.beam_i_inject, self.beam_sign, strict=True)
             ]
 
+        # ---- injector from LPSE files (plan 2 L.4c; drivers.E0.injector_file)
+        self.file_injector = "injector_planes" in pump
+        if self.file_injector:
+            self.file_times, self.file_patterns, self.file_rows = self.file_injector_patterns(
+                pump["injector_times"], pump["injector_planes"]
+            )
+
+    def file_injector_patterns(self, times, planes) -> tuple[Array, Array, np.ndarray]:
+        """The file injector's source rows per file time, ``(T, 2, ny, 3)``, and their row indices.
+
+        LPSE's ``SchrodingerSolver3::getInjectorSource`` (second order): with W the field that is
+        the file's first plane on the first injected row p, its second plane on the next row inward
+        and zero elsewhere, the source is ``-(L W)`` on the row outside the plane (p - s) and on p,
+        L the pump's propagation operator (diffraction on the curl-curl + detuning, background
+        density only). It is the total-field / scattered-field source ``S = H L V - L (H V)``
+        with the incident field V's row outside the plane eliminated by assuming ``L V = 0`` at p,
+        i.e. that the file holds a steady solution -- the only form the two planes allow."""
+        s = self.pump_direction
+        p = self.i0 + 1 if s > 0 else self.i0
+        rows = np.array([p - s, p])
+        planes = jnp.asarray(planes)
+        linear = jnp.asarray(self.linear_coeff0)[..., None]
+
+        def source(pl):
+            w = jnp.zeros((self.nx, self.ny, 3), dtype=planes.dtype).at[p].set(pl[0]).at[p + s].set(pl[1])
+            lw = self.diffraction_coeff0 * jnp.stack(self.curl_curl(w), axis=-1) + linear * w
+            return -lw[rows]
+
+        return jnp.asarray(times), jax.vmap(source)(planes), rows
+
+    def file_pump_rows(self, t: float, pump_args: dict) -> Array:
+        """The file injector's rows ``(2, ny, 3)`` at time ``t``: LPSE interpolates linearly between
+        the file times and repeats the table with the last time as period
+        (``SchrodingerSolver3::addInjectorSources``, loadInjector); one time is held constant. As
+        every pump source, the rows carry the pump envelope and the turn-on ramp (LPSE
+        ``laser.evolution.riseTime``)."""
+        t_env = get_envelope(
+            pump_args["tr"],
+            pump_args["tr"],
+            pump_args["tc"] - pump_args["tw"] / 2,
+            pump_args["tc"] + pump_args["tw"] / 2,
+            t,
+        )
+        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        if self.file_times.size == 1:
+            pattern = self.file_patterns[0]
+        else:
+            period = self.file_times[-1]
+            t_c = t - jnp.floor(t / period) * period
+            k = jnp.clip(jnp.searchsorted(self.file_times, t_c, side="right") - 1, 0, self.file_times.size - 2)
+            a = (t_c - self.file_times[k]) / (self.file_times[k + 1] - self.file_times[k])
+            pattern = (1.0 - a) * self.file_patterns[k] + a * self.file_patterns[k + 1]
+        return t_env * turn_on * pattern
+
     def calc_pump_source(self, t: float, pump_args: dict) -> list[tuple[int, Array]]:
         """
         Pump injector rows, summed over colors (MATLAB lines 1738-1750 at second order,
@@ -426,6 +480,11 @@ class CoupledLight(RamanLight):
                     k_e0[c] = k_e0[c].at[i, :].add(block[:, c])
                 if len(k_e0) == 2 and bool(np.any(np.sin(self.beam_polarization) != 0.0)):
                     raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+        elif self.file_injector:
+            block = self.file_pump_rows(t, pump_args)
+            for r, i in enumerate(self.file_rows):
+                for c in range(len(k_e0)):
+                    k_e0[c] = k_e0[c].at[int(i), :].add(block[r, :, c])
         else:
             rows = self.calc_pump_source(t, pump_args)
             for c, w in zip((1, 2), self.pump_weights, strict=True):
