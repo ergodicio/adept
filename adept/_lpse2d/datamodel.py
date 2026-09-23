@@ -387,9 +387,13 @@ class LightModel(BaseModel):
     # the pump and seed injector rows
     suppress_sources_in_absorbers: bool = False
     suppress_sources_at_injectors: bool = False
-    # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
-    # or the amplitude rate at nc in 1/ps
+    # collisional (inverse-bremsstrahlung) absorption of the pump (LPSE laser.evolution.absorption):
+    # false, true (NRL formula as in LPSE) or the amplitude rate at the pump's nc in 1/ps
     absorption: bool | float = False
+    # the Raman light's own absorption (LPSE raman.evolution.absorption), as `absorption` at its
+    # own critical density -- for the combined solver's field, whose carrier is wp0, that is n_env;
+    # None: derived from `absorption` by the NRL wavelength scaling
+    raman_absorption: bool | float | None = None
     # peak amplitude damping rate (1/ps) of the light fields' absorbing layers with the exp
     # profile (LPSE {laser|raman}.evolution.abc.maxDampingRate, default 5e3); None = 5e3 for the
     # exp profile and the EPW absorber (boundary_abs_coeff) for the tanh profile

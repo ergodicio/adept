@@ -390,3 +390,11 @@ def test_translator_reports_anti_aliasing_it_cannot_represent(tmp_path):
     assert any("lw.antiAliasing.range" in u for u in report["unsupported"])
     _, report = _translate_minimal(tmp_path, "grid.antiAliasing.range = 0.3;\nlw.antiAliasing.range = 0.3;\n")
     assert not any("antiAliasing" in u for u in report["unsupported"])
+
+
+@pytest.mark.parametrize("line, feedback", [("", False), ("hpe.landauDampingEvolution.enable = true;\n", True)])
+def test_translator_maps_hpe_landau_damping_evolution_with_lpse_default(tmp_path, line, feedback):
+    """ParameterManager.cpp:272-279: useLDE defaults to false -- the particles then leave the
+    Landau rate Maxwellian (ElectronTracker.cu:335)."""
+    cfg, _ = _translate_minimal(tmp_path, "lw.enable = true;\nhpe.enable = true;\n" + line)
+    assert cfg["terms"]["hpe"]["feedback"] is feedback

@@ -166,7 +166,7 @@ def analytic_landau_rate(cfg: dict) -> Array:
     return rate * multiplier
 
 
-def noise_kick_spectrum(cfg: dict) -> np.ndarray:
+def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | None = None) -> np.ndarray:
     """
     Per-step, per-mode EPW noise kick amplitude ``D_k`` (k-space potential units), for both
     noise models. ``get_noise`` multiplies it by a random phase every step; the diagnostics
@@ -200,6 +200,10 @@ def noise_kick_spectrum(cfg: dict) -> np.ndarray:
 
     Modes with no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere
     is refused, as in LPSE ("Cannot add LW noise without damping").
+
+    ``dt`` and ``nu_coll`` default to the EPW step and ``terms.epw.damping.collisions``; the
+    combined solver passes its light sub-step and the Raman light's rate, as LPSE's
+    ``addNoise_combinedSolver_spectral(dt)`` / ``addNoiseToPotential_fft`` do in combined mode.
     """
     grid = cfg["grid"]
     source = cfg["terms"]["epw"]["source"]
@@ -216,13 +220,14 @@ def noise_kick_spectrum(cfg: dict) -> np.ndarray:
 
     model = str(source.get("noise_model", "flat"))
     amplitude = float(source.get("noise_amplitude", 1e-10))
-    dt = grid["dt"]
+    dt = grid["dt"] if dt is None else float(dt)
     if model == "flat":
         return dt * amplitude * band
     if model != "thermal":
         raise ValueError(f"terms.epw.source.noise_model must be 'flat' or 'thermal', got {model!r}")
 
-    gamma = np.asarray(analytic_landau_rate(cfg)) + derived.get("nu_coll", 0.0) * zero_mask
+    nu = derived.get("nu_coll", 0.0) if nu_coll is None else float(nu_coll)
+    gamma = np.asarray(analytic_landau_rate(cfg)) + nu * zero_mask
     retained = band > 0.0
     if not np.any(retained):
         return np.zeros_like(k_sq)

@@ -14,9 +14,10 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
 
 1. x-space scattering potential on the whole field, ``exp(-i dt wp0/2 (n_tot/n_env - 1))``
    (the EPW density detuning, identical to the light detuning at carrier ``wp0``), and
-   the collisional damping ``exp(-nu_coll dt (n/n_env)^2)`` -- LPSE damps the combined
-   field with its Raman absorption coefficient evaluated at the field's own critical
-   density, which is ``n_env``;
+   the collisional damping ``exp(-nu_R dt (n/n_env)^2)`` -- LPSE damps the combined field
+   with the Raman light's absorption (``raman.evolution.absorption``,
+   ``terms.light.raman_absorption``) at the field's own critical density, ``n_env``, and
+   ignores ``lw.collisionalDampingRate`` (``LightSolver::calculateScatteringPotential``);
 2. the unified source, forward Euler (``LightSolver.cpp:4239``):
 
        dE1/dt = -i e/(4 me w0) e^{-i (w0 - 2 wp0) t} [ grad(E0 . E1*) + (1 - w0/wp0) E0 (div E1)* ]
@@ -30,7 +31,9 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
    ``k k/k^2 E1`` (Bohm-Gross dispersion and Landau damping) and
    ``exp(-i dt c^2 k^2/(2 wp0))`` on ``(I - k k/k^2) E1`` (light near its cutoff), with
    modes outside the retained band zeroed;
-4. the EPW noise source on the longitudinal part (``noise_model`` as in ``epw.py``);
+4. the EPW noise source on the longitudinal part (``noise_model`` as in ``epw.py``), built
+   for the light sub-step with the Raman rate as its collisional part
+   (``LwSolver::addNoise_combinedSolver_spectral(dt)``, ``ZakharovSolver::addNoiseToPotential_fft``);
 5. the absorbing layers.
 
 With ``terms.light.pump_depletion`` the pump advances in the same sub-step with the
@@ -39,9 +42,10 @@ spectral propagator and LPSE's unified depletion term (``LightSolver.cpp:4265``)
     dE0/dt = i e/(2 me w0) e^{+i (w0 - 2 wp0) t} E1 (div E1)
 
 which contains both the SRS depletion (``E1_T div E1``, ``i e/(4 me w1)`` at n_c/4)
-and the TPD depletion (``E1_L div E1``); ``terms.light.tpd_projection`` applies the
-transverse projection to it (LPSE's combined path does not, set it to ``false`` for
-an exact match). Otherwise the pump is the prescribed field of ``laser.py``.
+and the TPD depletion (``E1_L div E1``), unprojected: LPSE takes the transverse part of
+source terms only outside combined mode (``LightSolver.cpp:4325``), so
+``terms.light.tpd_projection`` does not apply here. Otherwise the pump is the prescribed field
+of ``laser.py``.
 """
 
 import numpy as np
@@ -117,7 +121,10 @@ class CombinedSolver:
         self.vte_sq = derived["vte_sq"]
         self.e = derived["e"]
         self.me = derived["me"]
-        self.nu_coll = derived.get("nu_coll", 0.0)
+        # the Raman light's absorption at its own critical density (n_env for this field), not
+        # the EPW's collisions (LightSolver::calculateScatteringPotential, raman class)
+        _, raman_rate = light_absorption_rates(cfg)
+        self.nu_raman = 0.0 if raman_rate is None else float(raman_rate)
         self.envelope_density = cfg["units"]["envelope density"]
         self.background_density = grid["background_density"]
         self.n_over_env = self.background_density / self.envelope_density
@@ -130,11 +137,17 @@ class CombinedSolver:
         # propagators over one sub-step
         self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
         self.hpe_enabled = bool(cfg["terms"].get("hpe", {}).get("active", False))
+        # the state's evolved Landau rate: from the particles (HPE) or the quasilinear VDF with
+        # landau_evolution, as the separate EPW solver (LPSE applies the evolved LDgammaE in both)
+        qle = cfg["terms"].get("qle", {}) or {}
+        self.evolved_landau = self.hpe_enabled or (
+            bool(qle.get("active", False)) and bool(qle.get("landau_evolution", False))
+        )
         self.landau_rate = analytic_landau_rate(cfg)
         self.disp_L = jnp.exp(-1j * self.dt_l * 1.5 * self.vte_sq / self.wp0 * self.k_sq) * self.band
         self.prop_T = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.wp0) * self.k_sq) * self.band
         self.detune = jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * (self.n_over_env - 1.0))
-        self.collisional = jnp.exp(-self.nu_coll * self.dt_l * self.n_over_env**2)
+        self.collisional = jnp.exp(-self.nu_raman * self.dt_l * self.n_over_env**2)
         self.boundary = grid["absorbing_boundaries"] ** (1.0 / self.n_sub)
         # the pump is LPSE's laser class: its own (5e3/ps) absorber, not the EPW one -- at the EPW
         # rate the injected pump reflects off both walls into a standing wave (see helpers)
@@ -161,7 +174,7 @@ class CombinedSolver:
         if self.noise_enabled:
             import jax
 
-            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg))
+            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg, dt=self.dt_l, nu_coll=self.nu_raman))
             seed = source_cfg.get("noise_seed")
             self.noise_key = jax.random.PRNGKey(int(seed) if seed is not None else np.random.randint(2**20))
 
@@ -172,7 +185,6 @@ class CombinedSolver:
             self.detune0 = jnp.exp(self.dt_l * self.linear_coeff0)
             self.prop0 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w0) * self.k_sq) * self.band
             self.depletion_coeff = 1j * self.e / (2.0 * self.me * self.w0)
-            self.tpd_projection = bool(light_cfg.get("tpd_projection", True))
             rate0, _ = light_absorption_rates(cfg)
             self.absorb0 = None if rate0 is None else jnp.exp(-rate0 * self.dt_l * self.background_density**2)
             pump = cfg["drivers"]["E0"]["derived"]
@@ -218,13 +230,9 @@ class CombinedSolver:
         return self.source_coeff * jnp.exp(-1j * self.delta_w * t) * term
 
     def unified_depletion(self, t: float, E1: Array) -> Array:
-        """``i e/(2 me w0) e^{+i dw t} [E1 div E1]`` (optionally transverse-projected)."""
+        """``i e/(2 me w0) e^{+i dw t} [E1 div E1]`` (unprojected, as LPSE's combined path)."""
         rho = jnp.fft.ifft2(1j * k_dot(fft2c(E1), self.kx, self.ky) * self.band)
-        f = E1 * rho[..., None]
-        if self.tpd_projection:
-            _, transverse_k = longitudinal_transverse(f, self.kx, self.ky, self.one_over_k_sq)
-            f = ifft2c(transverse_k)
-        return self.depletion_coeff * jnp.exp(1j * self.delta_w * t) * f
+        return self.depletion_coeff * jnp.exp(1j * self.delta_w * t) * E1 * rho[..., None]
 
     def propagate_combined(self, E1: Array, gamma_landau) -> Array:
         longitudinal_k, transverse_k = longitudinal_transverse(E1, self.kx, self.ky, self.one_over_k_sq)
@@ -281,7 +289,7 @@ class CombinedSolver:
         detune = self.detune
         if iaw_density is not None:
             detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * iaw_density * self.iaw_feedback)
-        if self.hpe_enabled:
+        if self.evolved_landau:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
             gamma_landau = self.landau_rate

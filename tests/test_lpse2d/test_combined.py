@@ -200,7 +200,7 @@ def test_unified_source_is_the_separate_sources_at_quarter_critical():
 
 
 def test_unified_depletion_is_srs_plus_tpd_depletion_at_quarter_critical():
-    from adept._lpse2d.core.combined import CombinedSolver, longitudinal_transverse
+    from adept._lpse2d.core.combined import CombinedSolver
     from adept._lpse2d.core.spectral_light import SpectralCoupledLight
 
     cfg = _cfg(density=0.2, pump_depletion=True, periodic=False)
@@ -212,12 +212,12 @@ def test_unified_depletion_is_srs_plus_tpd_depletion_at_quarter_critical():
     E1 = _field_from_phi(phi, cfg) + e_t
     t = 0.2
     unified = combined.unified_depletion(t, E1)
+    # LPSE's combined path takes no transverse part (LightSolver.cpp:4325), so the identity is with
+    # the unprojected separate terms: E1 div E1 = E_T div E_L (SRS) + E_L div E_L (TPD)
     lap_phi = jnp.fft.ifft2(-combined.k_sq * phi)
     srs_dep = separate.srs_depletion_coeff0 * lap_phi[..., None] * e_t
-    _, s_k = longitudinal_transverse(srs_dep, combined.kx, combined.ky, combined.one_over_k_sq)
-    sx_k, sy_k = s_k[..., 0], s_k[..., 1]
-    srs_dep_t = jnp.stack([jnp.fft.ifft2(sx_k), jnp.fft.ifft2(sy_k)], axis=-1)
-    expected = srs_dep_t + separate.calc_tpd_depletion(t, phi)
+    separate.tpd_projection = False
+    expected = srs_dep + separate.calc_tpd_depletion(t, phi)
     np.testing.assert_allclose(
         np.asarray(unified), np.asarray(expected), rtol=1e-9, atol=1e-11 * np.abs(expected).max()
     )
@@ -299,3 +299,124 @@ def test_separate_solver_refuses_tpd_with_srs():
     write_units(cfg)
     with pytest.raises(ValueError, match="combined"):
         get_derived_quantities(cfg)
+
+
+# ---- LPSE's combined-mode damping, noise and depletion (C++-convention pass, Phase 0) -------------
+# Tolerances fixed before the runs: exact identities 1e-12; the noise steady state is averaged
+# over ~2000 modes x 150 samples, so the n_sub-independence ratio is set at 15 %.
+
+
+def _combined_raw(**light):
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["density"] = {"basis": "uniform", "val": 0.22}
+    cfg["grid"].update(
+        {
+            "boundary_width": "0.6um",
+            "dt": "1fs",
+            "dx": "0.1um",
+            "xmax": "6.4um",
+            "tmax": "10fs",
+            "ymax": "1.6um",
+            "ymin": "-1.6um",
+            "low_pass_filter": 0.6,
+        }
+    )
+    cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": False, "srs": False})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False, **light}
+    return cfg
+
+
+def test_combined_field_damps_with_the_raman_absorption_not_the_epw_collisions():
+    """LightSolver::calculateScatteringPotential (Raman class): exp(-nu_R dt (n/n_env)^2) with
+    raman.evolution.absorption; lw.collisionalDampingRate plays no part in combined mode."""
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    raw = _combined_raw(raman_absorption=2.0, absorption=False)
+    raw["terms"]["epw"]["damping"]["collisions"] = 5.0
+    solver = CombinedSolver(_finish(raw))
+    n_ratio = np.asarray(solver.n_over_env)
+    np.testing.assert_allclose(np.asarray(solver.collisional), np.exp(-2.0 * solver.dt_l * n_ratio**2), rtol=1e-12)
+    raw = _combined_raw(raman_absorption=False)
+    raw["terms"]["epw"]["damping"]["collisions"] = 5.0
+    np.testing.assert_allclose(np.asarray(CombinedSolver(_finish(raw)).collisional), 1.0, rtol=0, atol=0)
+
+
+def test_combined_noise_steady_state_is_independent_of_the_light_substeps():
+    """LwSolver::addNoise_combinedSolver_spectral(dt) is called once per light step with that dt: the
+    fluctuation-dissipation steady state cannot depend on the sub-step count (the kick built for
+    the EPW step and applied every sub-step gave n_sub times the power)."""
+    import jax
+
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    energies = {}
+    for n_sub in (2, 8):
+        raw = _combined_raw(raman_absorption=20.0)
+        raw["grid"]["light_substeps"] = n_sub
+        raw["terms"]["epw"]["source"].update({"noise": True, "noise_model": "thermal", "noise_seed": 3})
+        cfg = _finish(raw)
+        solver = CombinedSolver(cfg)
+        assert solver.n_sub == n_sub
+        nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        y = {"E0": jnp.zeros((nx, ny, 3), complex), "E1": jnp.zeros((nx, ny, 3), complex)}
+        step = jax.jit(lambda t, y, solver=solver: solver(t, y, {}, E0_fn=lambda t: y["E0"]))
+        samples = []
+        for i in range(450):
+            E0, E1, _ = step(i * cfg["grid"]["dt"], y)
+            y = {"E0": E0, "E1": E1}
+            if i >= 300:
+                samples.append(float(jnp.sum(jnp.abs(E1) ** 2)))
+        energies[n_sub] = np.mean(samples)
+    assert energies[8] / energies[2] == pytest.approx(1.0, rel=0.15)
+
+
+def test_combined_pump_depletion_is_not_projected():
+    """LightSolver.cpp:4325 takes the transverse part of source terms only outside combined mode."""
+    from adept._lpse2d.core.combined import CombinedSolver
+    from adept._lpse2d.core.vector import fft2c, k_dot
+
+    raw = _combined_raw(pump_depletion=True, tpd_projection=True)
+    raw["terms"]["epw"]["source"].update({"tpd": True, "srs": True})
+    raw["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+    cfg = _finish(raw)
+    solver = CombinedSolver(cfg)
+    rng = np.random.default_rng(5)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    E1 = jnp.asarray(rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    rho = jnp.fft.ifft2(1j * k_dot(fft2c(E1), solver.kx, solver.ky) * solver.band)
+    expected = solver.depletion_coeff * jnp.exp(1j * solver.delta_w * 0.3) * E1 * rho[..., None]
+    np.testing.assert_allclose(np.asarray(solver.unified_depletion(0.3, E1)), np.asarray(expected), rtol=1e-12)
+
+
+def test_combined_solver_applies_the_quasilinear_landau_rate():
+    """With qle.landau_evolution the state's gamma_L is the EPW damping in combined mode too."""
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    raw = _combined_raw()
+    raw["terms"]["qle"] = {"active": True, "landau_evolution": True}
+    cfg = _finish(raw)
+    solver = CombinedSolver(cfg)
+    assert solver.evolved_landau
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    E1 = _field_from_phi(_random_phi(cfg, 7), cfg)
+    E1 = jnp.concatenate([E1, jnp.zeros((nx, ny, 1), complex)], axis=-1)
+    y = {"E0": jnp.zeros((nx, ny, 3), complex), "E1": E1, "gamma_L": jnp.full((nx, ny), 1.0e6)}
+    _, E1_new, _ = solver(0.0, y, {}, E0_fn=lambda t: y["E0"])
+    assert float(jnp.max(jnp.abs(E1_new))) < 1e-6 * float(jnp.max(jnp.abs(E1)))
+
+
+def test_translator_maps_laser_and_raman_absorption_separately(tmp_path):
+    from adept._lpse2d.lpse_deck import parse_parms, translate_parms
+
+    deck = tmp_path / "lpse.parms"
+    deck.write_text(
+        "grid.sizes = 20 10;\ngrid.nodes = 200 100;\nsimulation.time.end = 1;\nlaser.enable = true;\n"
+        "laser.nBeams = 1;\nlaser.1.intensity = 1e15;\nlaser.evolution.absorption = 0;\n"
+        "raman.evolution.absorption = 1;\n"
+    )
+    cfg, _ = translate_parms(parse_parms(deck), run="x")
+    assert cfg["terms"]["light"]["absorption"] is False and cfg["terms"]["light"]["raman_absorption"] == 1.0

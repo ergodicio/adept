@@ -425,11 +425,14 @@ def translate_parms(
                     report["notes"].append(
                         f"laser/raman evolution.solverOrder differ ({orders}): one adept stencil order ({order})"
                     )
-    absorption = float(g("raman.evolution.absorption", g("laser.evolution.absorption", "0")))
-    if absorption > 0:
-        light["absorption"] = absorption
-    elif absorption < 0:
-        light["absorption"] = True
+    # LPSE {laser|raman}.evolution.absorption (LightSolver.cpp:1349-1350, default 0; negative =
+    # calculated): each class's own rate at its own critical density
+    for key, target in (
+        ("laser.evolution.absorption", "absorption"),
+        ("raman.evolution.absorption", "raman_absorption"),
+    ):
+        rate = float(g(key, "0"))
+        light[target] = True if rate < 0 else (rate if rate > 0 else False)
     if "raman.spectral.maxWavenumber" in parms:
         light["max_wavenumber"] = float(parms["raman.spectral.maxWavenumber"])
     abc_type = str(g("laser.evolution.abc.type", g("raman.evolution.abc.type", "exp"))).lower()
@@ -718,7 +721,10 @@ def translate_parms(
     # ---- HPE
     hpe = None
     if _bool(g("hpe.enable")):
-        hpe = {"active": True}
+        # LPSE hpe.landauDampingEvolution.enable (ParameterManager.cpp:272-279, default false): the
+        # particles' histogram replaces the Maxwellian Landau rate only when it is on
+        # (ElectronTracker.cu:335 makeLandauDamping); off, the particles are diagnostics
+        hpe = {"active": True, "feedback": _bool(g("hpe.landauDampingEvolution.enable"), False)}
         for lpse_key, adept_key in (
             ("hpe.numParticles", "n_particles"),
             ("hpe.nParticles", "n_particles"),

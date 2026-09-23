@@ -8,22 +8,24 @@ from adept._lpse2d.core.vector import transverse_part  # re-exported for light.p
 
 def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
     """Amplitude absorption rates (1/ps) at the critical density of the pump and of the
-    Raman light, from ``terms.light.absorption``: ``false`` (none), ``true`` (NRL plasma
-    formulary as coded in LPSE ``LightSolver.cpp``: ``nu = 5.11e10 Z logLambda /
-    (lambda_um^2 Te_keV^1.5) * 1e-12``, ``logLambda = 6.68 + ln(lambda_um Te)`` for
-    ``Te > 0.01 Z^2`` else ``9.13 + ln(lambda_um Te^1.5 / Z)``, evaluated with each wave's
-    own wavelength), or a number (rate at nc for the pump; the Raman value is scaled by
-    ``(lambda_1/lambda_0)^-2 = (w1/w0)^2`` as the formula's leading dependence)."""
+    Raman light (LPSE's per-class ``{laser|raman}.evolution.absorption``, ``wsAbsorptionAtNc``).
+    ``terms.light.absorption`` is the pump's: ``false`` (none), ``true`` (NRL plasma formulary as
+    coded in LPSE ``LightSolver.cpp``: ``nu = 5.11e10 Z logLambda / (lambda_um^2 Te_keV^1.5) *
+    1e-12``, ``logLambda = 6.68 + ln(lambda_um Te)`` for ``Te > 0.01 Z^2`` else ``9.13 +
+    ln(lambda_um Te^1.5 / Z)``, with the wave's own wavelength) or a number.
+    ``terms.light.raman_absorption`` is the Raman light's, the same choices; when it is absent
+    the Raman rate follows the pump's (the NRL formula at the Raman wavelength, or a number scaled
+    by ``(lambda_1/lambda_0)^-2 = (w1/w0)^2``, the formula's leading dependence). The combined
+    solver's field is the Raman class with carrier ``wp0``: its wavelength is ``lambda_0 w0/wp0``."""
     from astropy.units import Quantity as _Q
 
-    absorption = cfg["terms"].get("light", {}).get("absorption", False)
-    if absorption is None or absorption is False:
-        return None, None
+    light = cfg["terms"].get("light", {})
     derived = cfg["units"]["derived"]
     z = float(cfg["units"]["ionization state"])
     te = _Q(cfg["units"]["reference electron temperature"]).to("keV").value
     lambda0 = _Q(cfg["units"]["laser_wavelength"]).to("um").value
-    lambda1 = lambda0 * derived["w0"] / derived["w1"]
+    combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    lambda1 = lambda0 * derived["w0"] / (derived["wp0"] if combined else derived["w1"])
 
     def nrl(lam_um):
         if te > 0.01 * z**2:
@@ -32,12 +34,25 @@ def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
             log_lambda = 9.13 + np.log(lam_um * te**1.5 / z)
         return 5.11e10 * z * log_lambda / (lam_um**2 * te**1.5) * 1.0e-12
 
-    if absorption is True:
-        return float(nrl(lambda0)), float(nrl(lambda1))
-    rate0 = float(absorption)
-    if rate0 < 0.0:
-        raise ValueError("terms.light.absorption must be false, true or a non-negative rate in 1/ps")
-    return rate0, rate0 * (derived["w1"] / derived["w0"]) ** 2
+    def rate(value, lam_um):
+        if value is None or value is False:
+            return None
+        if value is True:
+            return float(nrl(lam_um))
+        if float(value) < 0.0:
+            raise ValueError("terms.light.absorption / raman_absorption must be false, true or a non-negative rate")
+        return float(value)
+
+    absorption = light.get("absorption", False)
+    rate0 = rate(absorption, lambda0)
+    raman = light.get("raman_absorption")
+    if raman is not None:
+        rate1 = rate(raman, lambda1)
+    elif absorption is True:
+        rate1 = float(nrl(lambda1))
+    else:
+        rate1 = None if rate0 is None else rate0 * (derived["w1"] / derived["w0"]) ** 2
+    return rate0, rate1
 
 
 class RamanLight:
