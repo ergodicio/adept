@@ -8,6 +8,17 @@ from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import RamanLight, transverse_part
 
 
+def super_gaussian_y(y, width: float, order: float, offset: float) -> np.ndarray:
+    """LPSE's transverse beam profile (``SchrodingerSolver3::superGaussian``) across y:
+    ``exp(-(|y - offset| / W)^order)`` with ``W = sqrt(2) width`` (``beam_width`` is the Gaussian
+    standard deviation, the translator's ``W / sqrt(2)``); 1 everywhere when the width or the order
+    is 0, LPSE's periodic-injection case."""
+    y = np.asarray(y, dtype=np.float64)
+    if width <= 0.0 or order == 0.0:
+        return np.ones_like(y)
+    return np.exp(-((np.abs(y - offset) / (np.sqrt(2.0) * width)) ** order))
+
+
 class CoupledLight(RamanLight):
     """
     Evolves the pump E0 and, when enabled, the Raman scattered light E1.
@@ -264,10 +275,15 @@ class CoupledLight(RamanLight):
             self.beam_polarization = np.atleast_1d(
                 np.asarray(pump.get("beam_polarization", [pump.get("polarization", 0.0)]), dtype=np.float64)
             )
-            if self.beam_width > 0.0 and self.ny > 1:
-                order = float(pump.get("beam_sg_order", 2.0))
-                y_rel = (y_np - float(pump.get("beam_offset", 0.0))) ** 2 / (2.0 * self.beam_width**2)
-                self.beam_envelope_y = jnp.asarray(np.exp(-(y_rel ** (order / 2.0))))
+            if self.ny > 1:
+                self.beam_envelope_y = jnp.asarray(
+                    super_gaussian_y(
+                        y_np,
+                        self.beam_width,
+                        float(pump.get("beam_sg_order", 4.0)),
+                        float(pump.get("beam_offset", 0.0)),
+                    )
+                )
             else:
                 self.beam_envelope_y = jnp.ones(self.ny)
             m = self.fd_order // 2

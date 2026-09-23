@@ -495,17 +495,23 @@ def translate_parms(
     beam_extras = {}
 
     def beam_profile(b):
-        # LPSE laser.N.evolution.{width, sgOrder | sgPower, offset} (SchrodingerSolver3::superGaussian:
-        # exp(-(r / width)^sgOrder)); the bare laser.N.width form is accepted too
-        width = float(g(f"laser.{b}.evolution.width", g(f"laser.{b}.width", "0")))
-        order = float(
-            g(f"laser.{b}.evolution.sgOrder", g(f"laser.{b}.evolution.sgPower", g(f"laser.{b}.sgOrder", "2")))
-        )
-        off = _floats(g(f"laser.{b}.evolution.offset", g(f"laser.{b}.offset", "0 0")))
+        # LPSE laser.N.evolution.{width, sgOrder | sgPower, offset} (LightSolver.cpp:1754-1762;
+        # SchrodingerSolver3::superGaussian: exp(-(r / width)^sgOrder)); width defaults to 0 (flat),
+        # sgOrder to 4 (LightSolver.cpp:1700-1704), and sgPower, read second, overrides it. LPSE reads
+        # no bare laser.N.width / sgOrder / offset, so neither does the translator
+        for bare in ("width", "sgOrder", "sgPower", "offset"):
+            if f"laser.{b}.{bare}" in parms:
+                report["unsupported"].append(
+                    f"laser.{b}.{bare}: not an LPSE key (LPSE reads laser.{b}.evolution.{bare})"
+                )
+        width = float(g(f"laser.{b}.evolution.width", "0"))
+        order = float(g(f"laser.{b}.evolution.sgPower", g(f"laser.{b}.evolution.sgOrder", "4")))
+        off = _floats(g(f"laser.{b}.evolution.offset", "0 0"))
         return width, order, (off[1] if len(off) > 1 else 0.0)
 
     width1, order1, offset1 = beam_profile(1)
-    if width1 > 0:
+    # a zero width or order is LPSE's flat (periodic-injection) beam: no transverse profile
+    if width1 > 0 and order1 != 0:
         # adept's beam_width is the Gaussian standard deviation, exp(-(y^2 / (2 s^2))^(n/2)) =
         # exp(-(|y| / (sqrt(2) s))^n): s = width / sqrt(2) reproduces LPSE's profile for any n
         beam_extras["beam_width"] = f"{width1 / np.sqrt(2.0)}um"

@@ -39,7 +39,7 @@ import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
 
-from adept._lpse2d.core.light import CoupledLight
+from adept._lpse2d.core.light import CoupledLight, super_gaussian_y
 from adept._lpse2d.core.raman import RamanLight, transverse_part
 from adept._lpse2d.core.vector import fft2c, ifft2c, split_k, with_components
 
@@ -221,10 +221,12 @@ class SpectralCoupledLight(CoupledLight):
         self.y_arr = jnp.asarray(cfg["grid"]["y"])
         # transverse super-Gaussian of the injected beams (LPSE laser.N.width / sgOrder / offset)
         width = float(pump.get("beam_width", 0.0) or 0.0)
-        if width > 0.0 and cfg["grid"]["ny"] > 1:
-            order = float(pump.get("beam_sg_order", 2.0))
-            y_rel = (np.asarray(cfg["grid"]["y"]) - float(pump.get("beam_offset", 0.0))) ** 2 / (2.0 * width**2)
-            self.beam_envelope_y = jnp.asarray(np.exp(-(y_rel ** (order / 2.0))))
+        if cfg["grid"]["ny"] > 1:
+            self.beam_envelope_y = jnp.asarray(
+                super_gaussian_y(
+                    cfg["grid"]["y"], width, float(pump.get("beam_sg_order", 4.0)), float(pump.get("beam_offset", 0.0))
+                )
+            )
         else:
             self.beam_envelope_y = jnp.ones(cfg["grid"]["ny"])
         # Kubo-Anderson bandwidth: piecewise-constant random phase with correlation time 2 pi / (dW)

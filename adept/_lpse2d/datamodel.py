@@ -135,7 +135,9 @@ class E0DriverModel(BaseModel):
     # transverse (y) Gaussian standard deviation of the injected beams, exp(-(y^2/(2 s^2))^(n/2));
     # LPSE laser.N.evolution.width is exp(-(y/W)^n), i.e. s = W / sqrt(2) (the translator converts)
     beam_width: str | None = None
-    beam_sg_order: float = 2.0  # LPSE laser.N.sgOrder of that transverse profile (2 = Gaussian)
+    # LPSE laser.N.evolution.sgOrder of that profile: default 4 as LPSE (LightSolver.cpp:1704);
+    # 2 is a Gaussian, 0 a flat beam (SchrodingerSolver3::superGaussian)
+    beam_sg_order: float = Field(default=4.0, ge=0.0)
     beam_offset: str | None = None  # y position of the beam centre (LPSE laser.N.offset)
     kap_bandwidth: float = Field(default=0.0, ge=0.0, lt=1.0)  # LPSE bandwidth.KAP.frequency (dW/W0)
     kap_seed: int = 0

@@ -775,7 +775,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             cfg["drivers"][k]["derived"]["beam_width"] = (
                 _Q(e0_cfg["beam_width"]).to("um").value if e0_cfg.get("beam_width") else 0.0
             )
-            cfg["drivers"][k]["derived"]["beam_sg_order"] = float(e0_cfg.get("beam_sg_order", 2.0))
+            cfg["drivers"][k]["derived"]["beam_sg_order"] = float(e0_cfg.get("beam_sg_order", 4.0))  # LPSE default
             cfg["drivers"][k]["derived"]["beam_offset"] = (
                 _Q(e0_cfg["beam_offset"]).to("um").value if e0_cfg.get("beam_offset") else 0.0
             )
