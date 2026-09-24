@@ -128,7 +128,40 @@ def test_translator_maps_the_shape_keys():
     cfg, report = translate_parms(parms, experiment="x", run="y")
     d = cfg["density"]
     assert d["basis"] == "lpse-gd" and d["sg_order"] == 4.0 and d["dip_depth"] == 0.02
-    assert d["dip_width"] == "3.0um" and d["dip_offset"] == "1.0um" and d["origin"] == "10.0um"
-    assert d["min_location"] == "0.0um" and d["max_location"] == "20.0um"
+    # LPSE's box centre (node 100 of 201, h = 0.1 um) is adept's xmax / 2 = 10.05 um (A33)
+    assert d["dip_width"] == "3.0um" and d["dip_offset"] == "1.0um" and float(d["origin"][:-2]) == pytest.approx(10.05)
+    assert float(d["min_location"][:-2]) == pytest.approx(0.05) and float(d["max_location"][:-2]) == pytest.approx(
+        20.05
+    )
     cfg, report = translate_parms(dict(base, **{"densityProfile.shape": "inverseSquare"}), experiment="x", run="y")
     assert cfg["density"]["basis"] == "lpse-inverse-power" and cfg["density"]["sg_order"] == 2.0
+
+
+def test_translated_density_sits_on_lpse_nodes():
+    """Inventory A33: LPSE evaluates the profile at node i, x = i h - Lx/2 (ZakharovSolver::
+    backgroundDensityShape); the translated profile at adept index i must be that value (1e-12, fixed in
+    advance: the same formula). Before, it was evaluated half a cell further in."""
+    from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
+    from adept._lpse2d.lpse_deck import translate_parms
+
+    parms = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "laser.enable": "true",
+        "lw.enable": "true",
+        "lw.spectral.dt": "0.005",
+        "simulation.time.end": "1",
+        "laser.1.intensity": "1e15",
+        "densityProfile.NminOverNc": "0.2",
+        "densityProfile.NmaxOverNc": "0.28",
+        "densityProfile.NminLocation": "-8 0",
+        "densityProfile.NmaxLocation": "6 0",
+    }
+    cfg, _ = translate_parms(parms, experiment="x", run="y")
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    cfg["grid"] = get_solver_quantities(cfg)
+    n = np.asarray(get_density_profile(cfg))[:, 0]
+    x_nodes = np.arange(201) * 0.1 - 10.0
+    want = np.clip(0.2 + (0.28 - 0.2) * (x_nodes + 8.0) / 14.0, 0.2, 0.28)  # LPSE clips to [N_min, N_max]
+    np.testing.assert_allclose(n, want, rtol=1e-12)

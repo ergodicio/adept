@@ -190,9 +190,10 @@ C_UM_PER_PS = 299.792458
 
 
 def lpse_density_max(parms: dict[str, str], lx: float) -> float:
-    """The largest background density on LPSE's grid (n / n_c), which its FD light step uses: a
-    linear profile continues past its locations to the box edges; all are clipped at
-    maxBackgroundDensity (default 1.25)."""
+    """The largest background density on LPSE's grid (n / n_c; getMinAndMaxBackgroundDensity reads the
+    grid), which its FD light step uses: a linear profile is clipped between N_min and N_max
+    (backgroundDensityShape), so a box that ends before the N_max location peaks at its edge; all are
+    clipped at maxBackgroundDensity (default 1.25)."""
     g = parms.get
     n_env = float(g("lw.envelopeDensity", "0.25"))
     n_min = float(g("densityProfile.NminOverNc", str(n_env)))
@@ -204,7 +205,8 @@ def lpse_density_max(parms: dict[str, str], lx: float) -> float:
         x1 = _floats(g("densityProfile.NmaxLocation", f"{lx / 2}"))[0]
         if x1 != x0:
             slope = (n_max - n_min) / (x1 - x0)
-            peak = max(n_min + slope * (x - x0) for x in (-lx / 2.0, lx / 2.0))
+            lo, hi = min(n_min, n_max), max(n_min, n_max)
+            peak = max(min(max(n_min + slope * (x - x0), lo), hi) for x in (-lx / 2.0, lx / 2.0))
     return min(peak, clip)
 
 
@@ -415,10 +417,14 @@ def translate_parms(
     # ---- grid: LPSE nodes span the size with both end nodes, dx = L / (N - 1)
     sizes = _floats(g("grid.sizes", "0 0"))
     nodes = [int(v) for v in _floats(g("grid.nodes", "0 0"))]
-    lx = sizes[0]
     nx = nodes[0]
-    dx = lx / (nx - 1)
     ny = nodes[1] if len(nodes) > 1 else 1
+    # LPSE's cell is the smallest of the axes' spacings and the box is rescaled to it (h_xyz =
+    # min(d_x, d_y), adjustGridCoordinates, ParameterManager.cpp:1260-1272): Lx = h (Nx - 1)
+    dx = sizes[0] / (nx - 1)
+    if ny > 1 and len(sizes) > 1 and sizes[1] > 0:
+        dx = min(dx, sizes[1] / (ny - 1))
+    lx = dx * (nx - 1)
     xmax = nx * dx
     if ny > 1:
         half_y = 0.5 * ny * dx
@@ -453,8 +459,11 @@ def translate_parms(
     shape = g("densityProfile.shape", "linear").lower()
     n_min = float(g("densityProfile.NminOverNc", str(n_env)))
     n_max = float(g("densityProfile.NmaxOverNc", str(n_env)))
-    x_min_loc = _floats(g("densityProfile.NminLocation", f"{-lx / 2}"))[0] + lx / 2.0
-    x_max_loc = _floats(g("densityProfile.NmaxLocation", f"{lx / 2}"))[0] + lx / 2.0
+    # LPSE's node i sits at i h - Lx/2 (ZakharovSolver::backgroundDensityShape, Lx = (N - 1) h), adept's
+    # cell i at (i + 1/2) h from xmin = 0: LPSE's box centre is adept's xmax / 2, not Lx / 2 (half a cell)
+    centre = xmax / 2.0
+    x_min_loc = _floats(g("densityProfile.NminLocation", f"{-lx / 2}"))[0] + centre
+    x_max_loc = _floats(g("densityProfile.NmaxLocation", f"{lx / 2}"))[0] + centre
     shape_map = {
         "linear": "linear",
         "exp": "exp",
@@ -481,7 +490,7 @@ def translate_parms(
         "min_location_y": f"{y_min_loc[1] if len(y_min_loc) > 1 else 0.0}um",
         "max_location_y": f"{y_max_loc[1] if len(y_max_loc) > 1 else 0.0}um",
         "geometry": "spherical" if g("densityProfile.geometry", "cartesian").lower() == "spherical" else "cartesian",
-        "origin": f"{lx / 2.0}um",
+        "origin": f"{centre}um",
         # LPSE densityProfile.maxBackgroundDensity: default 1.25 n_c, up to 1000 (ParameterManager.cpp:610, 619)
         "max_density": float(g("densityProfile.maxBackgroundDensity", "1.25")),
     }

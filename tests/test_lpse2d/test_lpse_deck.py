@@ -97,10 +97,10 @@ def test_translate_test_006_builds_a_runnable_config():
     assert grid["nx"] == 360 and grid["ny"] == 360
     assert grid["dx"] == pytest.approx(20.0 / 359.0)
     n = np.asarray(grid["background_density"])[:, 0]
-    x = np.asarray(grid["x"])
-    # linear from 0.2 at the N_min location (x = 0) to 0.28 at N_max (x = 20), clipped outside
-    inside = (x > 0.0) & (x < 20.0)
-    np.testing.assert_allclose(n[inside], 0.2 + 0.08 * x[inside] / 20.0, rtol=1e-12)
+    # LPSE's node i sits at i h from the N_min location (x = 0) to N_max (x = 20 um, node 359); index i
+    # carries that node's value (A33), linear from 0.2 to 0.28
+    x_nodes = np.asarray(grid["x"]) - 0.5 * grid["dx"]
+    np.testing.assert_allclose(n, 0.2 + 0.08 * x_nodes / 20.0, rtol=1e-12)
     assert n.min() >= 0.2 - 1e-12 and n.max() <= 0.28 + 1e-12
     # rectangular anti-aliasing: outer 33.4 % of each axis zeroed
     band = np.asarray(grid["low_pass_filter_grid"])
