@@ -79,6 +79,56 @@ def test_farsight_case_config_matches_shared_definition():
     assert config["save"]["distribution"]["every_steps"] == 10
 
 
+def test_explicit_positivity_option_and_method_identity(tmp_path):
+    from examples.farsight_comparison.movies import farsight_method
+    from examples.farsight_comparison.run import method_label
+    from examples.farsight_comparison.scan import build_parser, build_tasks
+
+    options = vars(
+        build_parser().parse_args(
+            [
+                "--output",
+                str(tmp_path),
+                "--cases",
+                "two-stream",
+                "--solvers",
+                "farsight",
+                "--nx",
+                "4",
+                "--nv",
+                "4",
+                "--amr",
+                "--quadrature",
+                "simpson",
+                "--positivity-limiter",
+                "bernstein",
+            ]
+        )
+    )
+    task = build_tasks(options, tmp_path)[0]
+    assert task["positivity_limiter"] == "bernstein"
+    case = get_case("two-stream", nx=4, nv=4)
+    config = farsight_config(case, amr=True, quadrature="simpson", positivity_limiter="bernstein")
+    assert config["numerical"]["positivity_limiter"] == "bernstein"
+    assert method_label(task) == farsight_method(config) == "farsight-amr-direct-bernstein"
+    with pytest.raises(ValueError, match=r"AMR|amr"):
+        farsight_config(case, positivity_limiter="bernstein", quadrature="simpson")
+
+
+def test_positivity_control_manifest_changes_only_limiter(tmp_path):
+    from examples.farsight_comparison.scan import build_parser, build_tasks
+
+    manifest = Path(__file__).parents[2] / "examples/farsight_comparison/positivity-two-stream.json"
+    args = build_parser().parse_args(["--output", str(tmp_path), "--task-file", str(manifest)])
+    tasks = build_tasks(vars(args), tmp_path)
+    ignore = {"positivity_limiter", "name", "output"}
+    assert {k: v for k, v in tasks[0].items() if k not in ignore} == {
+        k: v for k, v in tasks[1].items() if k not in ignore
+    }
+    assert [t["positivity_limiter"] for t in tasks] == ["none", "bernstein"]
+    assert all(t["quadrature"] == "simpson" for t in tasks)
+
+
 def test_benchmark_executes_identical_closure_three_times(tmp_path):
     import jax.numpy as jnp
 

@@ -192,18 +192,33 @@ def diagnose(state, weights):
 
     Between remeshes, mass and C2 are fixed-weight material sums, not a
     measurement of deformed panel volume or of fine-scale resolution.
-    Momentum and kinetic energy below assume unit particle mass.
+    C2 includes both signs of f; its positive/negative parts are diagnostics,
+    not clipping or a positivity correction. Negative-node counts are unweighted
+    native-node counts (including active panel-edge duplicates). Inactive AMR
+    padding is excluded before arithmetic, even if it contains nonfinite values.
+    Momentum and kinetic energy below assume unit particle mass. Additional
+    scalar state entries, including positivity-stage budgets, pass through.
     """
     f, v = state["f"], state["v"]
     weights = state.get("weights", weights)
-    min_f = jnp.min(jnp.where(state["active"][:, None], f, jnp.inf)) if "active" in state else jnp.min(f)
+    if "active" in state:
+        active = state["active"][:, None]
+        min_f = jnp.min(jnp.where(active, f, jnp.inf))
+        f, v, weights = (jnp.where(active, value, 0.0) for value in (f, v, weights))
+    else:
+        min_f = jnp.min(f)
+    positive_f, negative_f = jnp.maximum(f, 0.0), jnp.minimum(f, 0.0)
     return {
         "mass": jnp.sum(weights * f),
         "c2": jnp.sum(weights * f**2),
+        "c2_positive": jnp.sum(weights * positive_f**2),
+        "c2_negative": jnp.sum(weights * negative_f**2),
         "momentum": jnp.sum(weights * f * v),
         "kinetic_energy": 0.5 * jnp.sum(weights * f * v**2),
         "min_f": min_f,
-        "negative_mass": jnp.sum(weights * jnp.maximum(-f, 0)),
+        "positive_mass": jnp.sum(weights * positive_f),
+        "negative_mass": -jnp.sum(weights * negative_f),
+        "negative_node_count": jnp.sum(f < 0.0, dtype=jnp.int32),
         **{
             key: value
             for key, value in state.items()

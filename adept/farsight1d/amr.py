@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from .numerics import _basis, _cross, initial_state, make_mesh, rk4_push
+from .positivity import limit_rectangles, limit_source_samples
 
 
 class PanelHierarchy(eqx.Module):
@@ -167,14 +168,20 @@ def initialize_amr(hierarchy, candidate_f, *, max_panels, min_level=0, atol=0.05
     }
 
 
-def remesh_amr(state, hierarchy, *, chunk_size=64, max_gap_fraction=0.01):
+def remesh_amr(state, hierarchy, *, chunk_size=64, max_gap_fraction=0.01, positivity_limiter="none"):
     """Sample the hierarchy from deformed active-panel polynomials.
 
     Finest-containing leaf owns overlaps. At an interior polygon crack use
     the nearest polygon in fixed (x/L, v/velocity_span) distance, recording
     and bounding polynomial extension. Only crossing an actual outer velocity
     edge gives zero inflow. Those edges must remain graphs in x; folds fail.
+
+    The optional source limiter bounds all sampled candidate values with one
+    affine scaling per source owner. It does not bound the whole deformed
+    polynomial or make this nonconservative remap conservative.
     """
+    if positivity_limiter not in ("none", "bernstein"):
+        raise ValueError("positivity_limiter must be 'none' or 'bernstein'")
     px, pv, pf, active = state["x"], state["v"], state["f"], state["active"]
     length, velocity_span = hierarchy.length, hierarchy.vmax - hierarchy.vmin
     cx, cv = px[:, 4], pv[:, 4]
@@ -235,16 +242,18 @@ def remesh_amr(state, hierarchy, *, chunk_size=64, max_gap_fraction=0.01):
         extension = jnp.where(gap, jnp.sqrt(distances[nearest]), 0.0)
         owner = jnp.where(covered, containing, nearest)
         value = jnp.sum(_basis(txs[owner], tvs[owner]) * coefficients[owner])
-        return jnp.where(outside, 0.0, value), ~covered, gap, extension, boundary_found
+        result = jnp.where(outside, 0.0, value), ~covered, gap, extension, boundary_found
+        if positivity_limiter == "bernstein":
+            return (*result, owner, outside)
+        return result
 
     # Canonicalize targets before ownership tests so coincident periodic nodes
     # select exactly the same polynomial, including when panels overlap.
     targets_x = hierarchy.x.reshape(-1)
     targets_x = hierarchy.xmin + jnp.mod(targets_x - hierarchy.xmin, length)
     targets = jnp.stack((targets_x, hierarchy.v.reshape(-1)), axis=-1)
-    values, uncovered, gaps, extension, boundary_found = jax.lax.map(
-        sample, targets, batch_size=min(chunk_size, targets.shape[0])
-    )
+    sampled = jax.lax.map(sample, targets, batch_size=min(chunk_size, targets.shape[0]))
+    values, uncovered, gaps, extension, boundary_found = sampled[:5]
     valid = (
         jnp.all(~active | panel_ok)
         & jnp.all(boundary_found)
@@ -259,6 +268,16 @@ def remesh_amr(state, hierarchy, *, chunk_size=64, max_gap_fraction=0.01):
         "max_panel_area_error": jnp.max(jnp.where(active, jnp.abs(area / reference_area - 1), 0.0)),
         "valid": valid,
     }
+    if positivity_limiter == "bernstein":
+        raw_values = values
+        values, positivity = limit_source_samples(values, sampled[5], sampled[6], pf, state["weights"], active)
+        info.update(
+            valid=valid & positivity["valid"],
+            raw_candidate_f=raw_values.reshape(hierarchy.x.shape),
+            source_limiter_panels=positivity["limited_panels"],
+            source_limiter_min_theta=positivity["min_theta"],
+            positivity_failed_panels=positivity["failed_panels"],
+        )
     return values.reshape(hierarchy.x.shape), info
 
 
@@ -276,14 +295,24 @@ class AdaptiveFarsightSystem(eqx.Module):
     remesh_every: int = eqx.field(static=True, default=1)
     chunk_size: int = eqx.field(static=True, default=64)
     max_gap_fraction: float = eqx.field(static=True, default=0.01)
+    positivity_limiter: str = eqx.field(static=True, default="none")
     field_solver: Any = None
 
     def step(self, step, state, params, inputs, key):
         del params, inputs, key
+        if self.positivity_limiter == "bernstein":
+            # Inactive sentinel values are not material particles. Mask before
+            # the force calculation, rather than relying on zero times NaN.
+            source_x = jnp.where(state["active"][:, None], state["x"], 0.0)
+            source_v = jnp.where(state["active"][:, None], state["v"], 0.0)
+            source_q = jnp.where(state["active"][:, None], self.charge * state["weights"] * state["f"], 0.0)
+        else:
+            source_x, source_v = state["x"], state["v"]
+            source_q = self.charge * state["weights"] * state["f"]
         x, v = rk4_push(
-            state["x"],
-            state["v"],
-            self.charge * state["weights"] * state["f"],
+            source_x,
+            source_v,
+            source_q,
             self.dt,
             self.length,
             self.epsilon,
@@ -292,18 +321,25 @@ class AdaptiveFarsightSystem(eqx.Module):
             field_solver=self.field_solver,
         )
         x, v = jnp.where(state["active"][:, None], x, state["x"]), jnp.where(state["active"][:, None], v, state["v"])
+        finite = jnp.all(jnp.isfinite(x)) & jnp.all(jnp.isfinite(v))
+        if self.positivity_limiter == "bernstein":
+            finite = jnp.all(~state["active"][:, None] | (jnp.isfinite(x) & jnp.isfinite(v)))
         pushed = {
             **state,
             "x": x,
             "v": v,
-            "valid": state["valid"] & jnp.all(jnp.isfinite(x)) & jnp.all(jnp.isfinite(v)),
+            "valid": state["valid"] & finite,
         }
         if self.remesh_every == 0:
             return pushed
 
         def reset(current):
             candidates, info = remesh_amr(
-                current, self.hierarchy, chunk_size=self.chunk_size, max_gap_fraction=self.max_gap_fraction
+                current,
+                self.hierarchy,
+                chunk_size=self.chunk_size,
+                max_gap_fraction=self.max_gap_fraction,
+                positivity_limiter=self.positivity_limiter,
             )
             selected = initialize_amr(
                 self.hierarchy,
@@ -314,14 +350,64 @@ class AdaptiveFarsightSystem(eqx.Module):
                 rtol=self.rtol,
             )
             weights, f = current["weights"], current["f"]
+            if self.positivity_limiter == "bernstein":
+                weights = jnp.where(current["active"][:, None], weights, 0.0)
+                f = jnp.where(current["active"][:, None], f, 0.0)
             new_weights, new_f = selected["weights"], selected["f"]
             mass_delta = jnp.sum(new_weights * new_f) - jnp.sum(weights * f)
             c2_delta = jnp.sum(new_weights * new_f**2) - jnp.sum(weights * f**2)
             same_layout_f = candidates[jnp.maximum(current["panel_id"], 0)]
             regrid_mass = jnp.sum(new_weights * new_f) - jnp.sum(weights * same_layout_f)
             regrid_c2 = jnp.sum(new_weights * new_f**2) - jnp.sum(weights * same_layout_f**2)
+            positivity_updates = {}
+            if self.positivity_limiter == "bernstein":
+                raw_layout_f = info["raw_candidate_f"][jnp.maximum(current["panel_id"], 0)]
+                raw_layout_f = jnp.where(current["active"][:, None], raw_layout_f, 0.0)
+                same_layout_f = jnp.where(current["active"][:, None], same_layout_f, 0.0)
+                limited_f, destination = limit_rectangles(new_f, new_weights, selected["active"])
+                selected = {**selected, "f": limited_f, "valid": selected["valid"] & destination["valid"]}
+                # Exclusive operation ordering: old -> raw samples on old
+                # layout -> source-limited old layout -> new selected layout
+                # -> destination-limited new layout. Initial limiting is not
+                # included in these cumulative evolution budgets.
+                for name, power in (("mass", 1), ("c2", 2)):
+                    old = jnp.sum(weights * f**power)
+                    raw = jnp.sum(weights * raw_layout_f**power)
+                    source_limited = jnp.sum(weights * same_layout_f**power)
+                    pre_destination = jnp.sum(new_weights * new_f**power)
+                    final = jnp.sum(new_weights * limited_f**power)
+                    for stage, delta in (
+                        ("interpolation", raw - old),
+                        ("source_limiter", source_limited - raw),
+                        ("destination_limiter", final - pre_destination),
+                    ):
+                        key = f"{stage}_{name}_change"
+                        positivity_updates[key] = current[key] + delta
+                mass_delta = jnp.sum(new_weights * limited_f) - jnp.sum(weights * f)
+                c2_delta = jnp.sum(new_weights * limited_f**2) - jnp.sum(weights * f**2)
+                positivity_updates.update(
+                    {
+                        **{key: value for key, value in current.items() if key.startswith("initial_positivity_")},
+                        "destination_limiter_polynomial_c2_change": current["destination_limiter_polynomial_c2_change"]
+                        + destination["polynomial_c2_change"],
+                        "source_limiter_panels": current["source_limiter_panels"] + info["source_limiter_panels"],
+                        "destination_limiter_panels": current["destination_limiter_panels"]
+                        + destination["limited_panels"],
+                        "positivity_failed_panels": current["positivity_failed_panels"]
+                        + info["positivity_failed_panels"]
+                        + destination["failed_panels"],
+                        "source_limiter_min_theta": jnp.minimum(
+                            current["source_limiter_min_theta"], info["source_limiter_min_theta"]
+                        ),
+                        "destination_limiter_min_theta": jnp.minimum(
+                            current["destination_limiter_min_theta"], destination["min_theta"]
+                        ),
+                        "min_bernstein_coefficient": destination["minimum_coefficient"],
+                    }
+                )
             return {
                 **selected,
+                **positivity_updates,
                 "valid": current["valid"] & info["valid"] & selected["valid"],
                 "capacity_exceeded": current["capacity_exceeded"] | selected["capacity_exceeded"],
                 "remesh_count": current["remesh_count"] + 1,

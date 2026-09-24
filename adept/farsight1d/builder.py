@@ -27,6 +27,7 @@ from adept.core.programs import ScanProgram
 from adept.farsight1d.amr import AdaptiveFarsightSystem, initialize_amr, make_hierarchy
 from adept.farsight1d.config import Farsight1DConfig, SaveCadence
 from adept.farsight1d.numerics import FarsightSystem, diagnose, electric_field, initial_state, make_mesh
+from adept.farsight1d.positivity import initialize_positivity
 from adept.farsight1d.treecode import TreecodeField
 
 
@@ -100,10 +101,13 @@ class Farsight1DAnalyzer:
         if not bool(np.asarray(result.final_state["valid"])):
             raise ArithmeticError(
                 "FARSIGHT evolution encountered invalid panel geometry or nonfinite values, "
-                "or AMR capacity exhaustion; "
+                "AMR capacity exhaustion, or a positivity-limiter failure; "
                 "reduce dt/remesh_every and inspect invalid_panels/max_panel_area_error; "
                 "for capacity_exceeded increase amr.max_panels and inspect requested_panels; "
-                "for remap_gap_nodes inspect max_gap_fraction against amr.max_gap_fraction and refine the mesh"
+                "for remap_gap_nodes inspect max_gap_fraction against amr.max_gap_fraction and refine the mesh; "
+                "for positivity_failed_panels inspect nonnegative finite panel means and limiter-stage budgets, "
+                "then refine the mesh or reduce dt/remesh_every; a negative panel mean cannot be made "
+                "nonnegative while preserving its mass"
             )
         numerical_values = (result.final_state, result.observations, result.times, result.stats)
         if any(not np.all(np.isfinite(np.asarray(value))) for value in jax.tree.leaves(numerical_values)):
@@ -123,9 +127,64 @@ class Farsight1DAnalyzer:
                         "Physical-grid E^2/2 diagnostic; not the exact regularized interaction Hamiltonian"
                     )
                 datasets[name]["c2"].attrs["description"] = (
-                    "Reference-quadrature integral of f^2; constant marker values alone do not guarantee "
-                    "that the moving panel representation remains resolved"
+                    "Native nodal reference-quadrature sum of f^2, including both signs of f; "
+                    "c2 = c2_positive + c2_negative. This is not an exact integral of the squared "
+                    "panel polynomial, and constancy does not establish positivity or resolution"
                 )
+                descriptions = {
+                    "c2_positive": "Native nodal reference-quadrature sum W*max(f,0)^2; not clipped total C2",
+                    "c2_negative": (
+                        "Native nodal reference-quadrature sum W*min(f,0)^2; a nonnegative contribution to C2, "
+                        "not a signed subtraction or an integral over negative polynomial regions"
+                    ),
+                    "positive_mass": "Native nodal sum W*max(f,0); mass = positive_mass - negative_mass",
+                    "negative_mass": ("Native nodal sum W*max(-f,0); does not detect undershoot between stored nodes"),
+                    "negative_node_count": (
+                        "Unweighted number of negative stored nodes, excluding inactive AMR slots but "
+                        "including independent active panel-edge traces"
+                    ),
+                    "min_f": "Minimum active stored nodal value; not a lower bound of the panel polynomial",
+                    "initial_positivity_limited_panels": "Panels limited once after initial mass normalization",
+                    "initial_positivity_failed_panels": "Initial panels failing the positivity-limiter validity check",
+                    "initial_positivity_min_theta": "Minimum initial Bernstein rescaling factor; one means unchanged",
+                    "initial_positivity_polynomial_c2_change": (
+                        "Exact rectangular-panel integral change of f^2 from the initial Bernstein limiter; "
+                        "separate from the native nodal C2 change and excluded from evolution budgets"
+                    ),
+                    "source_limiter_panels": "Cumulative source panels rescaled at remesh candidate locations",
+                    "destination_limiter_panels": "Cumulative destination panels limited after leaf selection",
+                    "positivity_failed_panels": "Cumulative failed positivity-limiter panel checks during remeshing",
+                    "source_limiter_min_theta": "Smallest source sample rescaling factor during evolution",
+                    "destination_limiter_min_theta": "Smallest destination Bernstein rescaling factor during evolution",
+                    "min_bernstein_coefficient": (
+                        "Minimum Bernstein coefficient at the latest rectangular initialization/remesh; "
+                        "not a positivity certificate for a subsequently advected physical-coordinate fit"
+                    ),
+                    "destination_limiter_polynomial_c2_change": (
+                        "Cumulative exact rectangular-panel integral changes of f^2 from destination limiting; "
+                        "not a term in the native nodal remap_c2_change decomposition"
+                    ),
+                }
+                stages = {
+                    "interpolation": "raw candidate interpolation evaluated on the previous leaf layout",
+                    "source_limiter": "source sample limiting evaluated on the previous leaf layout",
+                    "regrid": "selection of the new leaf partition from the sampled candidate values",
+                    "destination_limiter": "Bernstein limiting on the selected rectangular destination panels",
+                }
+                for moment, expression in (("mass", "W*f"), ("c2", "W*f^2")):
+                    descriptions[f"initial_positivity_{moment}_change"] = (
+                        f"Native nodal sum {expression} after-minus-before initial limiting; "
+                        "applied after normalization and excluded from cumulative evolution budgets"
+                    )
+                    for stage, description in stages.items():
+                        descriptions[f"{stage}_{moment}_change"] = (
+                            f"Cumulative native nodal sum {expression} changes from {description}; "
+                            "interpolation + source_limiter + regrid + destination_limiter equals "
+                            f"remap_{moment}_change when positivity limiting is enabled"
+                        )
+                for key, description in descriptions.items():
+                    if key in datasets[name]:
+                        datasets[name][key].attrs["description"] = description
             elif name == "fields":
                 x_axis = np.linspace(grid["xmin"], grid["xmax"], grid["nx"], endpoint=False)
                 datasets[name] = xr.Dataset(
@@ -158,6 +217,14 @@ class Farsight1DAnalyzer:
                 )
             datasets[name].attrs["solver"] = "farsight-1d"
             datasets[name].attrs["normalization"] = "electron plasma units: n0=m_e=|q_e|=epsilon_0=1"
+            limiter = manifest.resolved_config["numerical"].get("positivity_limiter", "none")
+            datasets[name].attrs["positivity_limiter"] = limiter
+            if limiter == "bernstein":
+                datasets[name].attrs["positivity_scope"] = (
+                    "Experimental: nonnegative remesh candidate samples and Bernstein-certified rectangular "
+                    "destination polynomials, to roundoff; independent panel traces can disagree at edges. "
+                    "Not a conservative remap, an advected-fit positivity guarantee, or a C2 repair."
+                )
 
         scalars = result.observations["scalars"]
         values = {f"final_{name}": float(np.asarray(value)[-1]) for name, value in scalars.items()}
@@ -244,9 +311,24 @@ class Farsight1DBuilder:
             if not np.isfinite(float(selected_mass)) or float(selected_mass) <= 0:
                 raise ValueError("Initial distribution is unresolved on the selected AMR panels")
             state = {**state, "f": state["f"] * (length / selected_mass)}
+            if numerical.positivity_limiter == "bernstein":
+                # The limiter preserves each selected panel's Simpson mass.
+                # Never normalize after limiting: its defects must remain visible.
+                state = initialize_positivity(state)
+                if not bool(np.asarray(state["valid"])):
+                    failed = int(np.asarray(state["initial_positivity_failed_panels"]))
+                    raise ValueError(
+                        f"Initial Bernstein positivity limiter failed on {failed} panels; "
+                        "inspect finite, nonnegative panel means and refine the initial mesh. "
+                        "A negative panel mean cannot be made nonnegative while preserving its mass"
+                    )
             weights = state["weights"]
             system = AdaptiveFarsightSystem(
-                hierarchy=hierarchy, max_gap_fraction=amr.max_gap_fraction, **selection_options, **system_options
+                hierarchy=hierarchy,
+                max_gap_fraction=amr.max_gap_fraction,
+                positivity_limiter=numerical.positivity_limiter,
+                **selection_options,
+                **system_options,
             )
         else:
             x, v, weights = make_mesh(
@@ -296,6 +378,12 @@ class Farsight1DBuilder:
             units["amr_gradients"] = (
                 "piecewise derivatives with refinement decisions fixed; thresholds, panel ownership, "
                 "and capacity decisions are discrete"
+            )
+        if numerical.positivity_limiter == "bernstein":
+            units["positivity_limiter"] = (
+                "experimental candidate-sample and rectangular Bernstein limiting; destination Simpson mass "
+                "is preserved without renormalization, but the full remap is not conservative; native nodal "
+                "and polynomial C2 limiter defects are reported separately"
             )
         if field_solver is not None:
             units["treecode_gradients"] = (

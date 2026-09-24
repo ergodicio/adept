@@ -11,6 +11,7 @@ FARSIGHT_OPTION_DEFAULTS = {
     "field_solver": "direct",
     "chunk_size": 64,
     "quadrature": "trapezoid",
+    "positivity_limiter": "none",
     "remesh_every": 1,
     "amr": False,
     "amr_max_level": 1,
@@ -141,6 +142,7 @@ class ComparisonCase:
             "numerical": {
                 "epsilon": self.epsilon,
                 "quadrature": options["quadrature"],
+                "positivity_limiter": options["positivity_limiter"],
                 "remesh_every": options["remesh_every"],
                 "chunk_size": options["chunk_size"],
                 "field_solver": field_solver,
