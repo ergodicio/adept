@@ -614,10 +614,14 @@ def translate_parms(
     else:
         epw_source_window = None
     epw_solver = "combined" if g("lw.solver", "spectral").lower() == "combined" else "separate"
-    if epw_solver == "combined" and "fd" in (g("laser.solver", "static").lower(), g("raman.solver", "static").lower()):
-        # LPSE's fd combined path (ZakharovSolver.cpp:232-238, LwSolver::advanceLW_combinedTPDandSRS_FD)
-        # is not ported: adept runs its spectral combined solver (test_022, test_083)
-        report["unsupported"].append("lw.solver = combined with fd light: adept runs the spectral combined solver")
+    combined_fd = epw_solver == "combined" and g("raman.solver", "static").lower() == "fd"
+    if combined_fd and g("laser.solver", "static").lower() != "fd":
+        # LPSE's fd combined path (ZakharovSolver.cpp:232-238, LwSolver::advanceLW_combinedTPDandSRS_FD) is
+        # ported with an FD pump (core/fd_combined.py, test_022, test_083); a mixed pair is not
+        report["unsupported"].append(
+            "lw.solver = combined with raman.solver = fd and a non-fd laser: adept runs the spectral combined solver"
+        )
+        combined_fd = False
     if g("lw.solver", "spectral").lower() == "fd":
         report["unsupported"].append("lw.solver = fd (LPSE itself disables it); translated as spectral")
     epw = {
@@ -649,7 +653,9 @@ def translate_parms(
     light: dict = {"pump_depletion": laser_evolves}
     # only the evolved fields vote, so a laser-only fd deck (test_016) stays fd
     voters = [s for s, on in ((raman_solver, raman_on), (laser_solver, laser_evolves)) if on]
-    if epw_solver == "combined" or "spectral" in voters:
+    if combined_fd:
+        light["solver"] = "fd"  # LPSE's FD combined solver (core/fd_combined.py)
+    elif epw_solver == "combined" or "spectral" in voters:
         light["solver"] = "spectral"
     else:
         light["solver"] = "fd"

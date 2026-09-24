@@ -32,9 +32,14 @@ class SplitStep:
         # and EPW, required by LPSE whenever TPD and SRS are both on)
         self.epw_solver = str(cfg["terms"]["epw"].get("solver", "separate"))
         if self.epw_solver == "combined":
-            from adept._lpse2d.core.combined import CombinedSolver
+            if str(cfg["terms"].get("light", {}).get("solver", "fd")) == "fd":
+                from adept._lpse2d.core.fd_combined import FDCombinedSolver
 
-            self.combined = CombinedSolver(cfg)
+                self.combined = FDCombinedSolver(cfg)
+            else:
+                from adept._lpse2d.core.combined import CombinedSolver
+
+                self.combined = CombinedSolver(cfg)
         elif self.epw_solver != "separate":
             raise ValueError(f"terms.epw.solver must be 'separate' or 'combined', got {self.epw_solver!r}")
         # the Raman scattered light is evolved iff the SRS source term is on; with

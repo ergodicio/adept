@@ -592,8 +592,13 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "terms.epw.solver: combined needs terms.epw.source.tpd and srs both on or both off "
                 "(LPSE: 'When lw.solver=combined, both SRS and TPD must be enabled or neither')"
             )
-        if light_solver != "spectral":
-            raise ValueError("terms.epw.solver: combined requires terms.light.solver: spectral")
+        if light_solver != "spectral" and not pump_depletion:
+            raise ValueError(
+                "terms.epw.solver: combined with terms.light.solver: fd needs terms.light.pump_depletion "
+                "(the FD combined solver, core/fd_combined.py, evolves the pump)"
+            )
+        if light_solver == "fd" and light.get("transverse_fields", False):
+            raise ValueError("terms.light.transverse_fields would remove the combined field's EPW part")
         if "E2" in cfg["drivers"]:
             raise ValueError("terms.epw.solver: combined does not support the direct EPW driver drivers.E2")
         if cfg["terms"]["epw"].get("energy_ledger", False):
@@ -686,13 +691,25 @@ def get_derived_quantities(cfg: dict) -> dict:
             out_of_plane,
         )
 
-        def _dt_limit(w_carrier: float) -> float:
+        def _dt_limit(w_carrier: float, extra: float = 0.0) -> float:
             detuning = [w_carrier**2 - derived["w0"] ** 2 * n for n in n_endpoints]
-            return 4.0 * w_carrier / max(abs(max(detuning)), abs(derived["c"] ** 2 * k_max - min(detuning)))
+            top = derived["c"] ** 2 * k_max + extra - min(detuning)
+            return 4.0 * w_carrier / max(abs(max(detuning)), abs(top))
 
         dt_limits = []
         evolved_carriers = []
-        if srs_on:
+        if srs_on and epw_solver == "combined":
+            # the FD combined field (core/fd_combined.py): carrier wp0, and the Bohm-Gross grad-div term
+            # adds at most 3 vte^2 times the Laplacian's largest eigenvalue
+            k_lap = curl_curl_max_eigenvalue(
+                cfg["terms"].get("light", {}).get("fd_order", 2),
+                cfg_grid["dx"],
+                cfg_grid["dy"] if cfg_grid["ny"] > 1 else None,
+                True,
+            )
+            dt_limits.append(_dt_limit(derived["wp0"], 3.0 * derived["vte_sq"] * k_lap))
+            evolved_carriers.append("combined")
+        elif srs_on:
             dt_limits.append(_dt_limit(derived["w1"]))
             evolved_carriers.append("Raman")
         if pump_depletion:
