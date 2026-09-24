@@ -364,3 +364,30 @@ def test_one_way_defaults_off_and_requires_pump_depletion():
     cfg["mlflow"]["experiment"] = "test-lpse2d-light-coupling"
     with _pytest.raises(ValueError, match=r"terms\.light\.one_way"):
         ergoExo().setup(cfg)
+
+
+def test_raman_light_absorbs_without_pump_absorption():
+    """LPSE {laser|raman}.evolution.absorption are independent (A21): with only the Raman light's rate
+    set (test_022: laser 0, raman 1) the FD loop damps E1 and leaves E0 alone. With the EPW potential
+    zero and uniform density, the per-sub-step factor commutes with the linear update, so E1 is the
+    non-absorbing result times exp(-rate dt n1^2) (1e-12)."""
+    from copy import deepcopy
+
+    from adept._lpse2d.core.light import CoupledLight
+
+    cfg = _make_cfg(coupling="explicit")
+    plain = CoupledLight(cfg)
+    cfg_abs = deepcopy(cfg)
+    cfg_abs["terms"]["light"]["absorption"] = False
+    cfg_abs["terms"]["light"]["raman_absorption"] = 2.0
+    absorbing = CoupledLight(cfg_abs)
+    assert absorbing.absorption_rate0 is None and absorbing.absorption_rate1 == 2.0
+    E0, E1 = _random_fields(cfg, 11)
+    phi_k = jnp.zeros(plain.k_sq.shape, dtype=jnp.complex128)
+    args = _pump_args(cfg)
+    E0p, E1p = plain(0.0, E0, E1, phi_k, args, None)
+    E0a, E1a = absorbing(0.0, E0, E1, phi_k, args, None)
+    n1 = float(np.asarray(absorbing.n_over_nc1).ravel()[0])
+    np.testing.assert_allclose(np.asarray(E0a), np.asarray(E0p), rtol=1e-12, atol=0.0)
+    factor = np.exp(-2.0 * absorbing.dt_l * n1**2) ** absorbing.n_sub
+    np.testing.assert_allclose(np.asarray(E1a), factor * np.asarray(E1p), rtol=1e-12, atol=1e-14)

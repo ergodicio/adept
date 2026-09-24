@@ -663,14 +663,18 @@ class CoupledLight(RamanLight):
             return E0, E1
 
         def absorption(dn):
+            # each field at its own rate (LPSE {laser|raman}.evolution.absorption); an unset rate is 1
             dn0 = None if dn is None else dn * self.iaw_feedback0 / self.n_over_env
             dn1 = None if dn is None else dn * self.iaw_feedback / self.n_over_env
             n0 = self.n_over_nc0 if dn0 is None else self.n_over_nc0 * (1.0 + dn0)
             n1 = self.n_over_nc1 if dn1 is None else self.n_over_nc1 * (1.0 + dn1)
-            return (
-                jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)[..., None],
-                jnp.exp(-self.absorption_rate1 * self.dt_l * n1**2)[..., None],
+            a0 = (
+                1.0 if self.absorption_rate0 is None else jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)[..., None]
             )
+            a1 = (
+                1.0 if self.absorption_rate1 is None else jnp.exp(-self.absorption_rate1 * self.dt_l * n1**2)[..., None]
+            )
+            return a0, a1
 
         def substep(i, fields):
             E0, E1 = fields
@@ -688,15 +692,15 @@ class CoupledLight(RamanLight):
                 E0 = self.resonance(t_i, i, E0)
             E0 = E0 * self.sub_boundary0[..., None]
             E1 = E1 * self.sub_boundary[..., None]
-            if self.absorption_rate0 is not None:
+            if absorbing:
                 a0, a1 = absorbs if iaw_tl.constant else absorption(dn)
                 E0 = E0 * a0
                 E1 = E1 * a1
             return (E0, E1)
 
-        absorbs = None
-        if self.absorption_rate0 is not None and iaw_tl.constant:
-            absorbs = absorption(iaw_tl.new)
+        # the pump's and the Raman light's rates are independent (A21): either may be unset
+        absorbing = self.absorption_rate0 is not None or self.absorption_rate1 is not None
+        absorbs = absorption(iaw_tl.new) if absorbing and iaw_tl.constant else None
         E0, E1 = lax.fori_loop(0, self.n_sub, substep, (E0, E1))
         if self.one_way_mask is not None:
             E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.one_way_mask, axes=(0, 1))
