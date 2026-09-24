@@ -8,7 +8,7 @@ only when a simulation is prepared or executed.
 from importlib import import_module
 from typing import Any
 
-from .builtin_solvers import PIC1D_CAPABILITIES, TF1D_CAPABILITIES, VFP2D_CAPABILITIES
+from .builtin_solvers import FARSIGHT1D_CAPABILITIES, PIC1D_CAPABILITIES, TF1D_CAPABILITIES, VFP2D_CAPABILITIES
 from .checkpoints import (
     CheckpointCompatibility,
     CheckpointCorruptionError,
@@ -115,6 +115,18 @@ def _load_vfp_2d_builder():
 
     return VFP2DBuilder()
 
+
+def _load_farsight_1d_builder():
+    from adept.farsight1d.builder import Farsight1DBuilder
+
+    return Farsight1DBuilder()
+
+
+solver_registry.register_lazy(
+    "farsight-1d",
+    _load_farsight_1d_builder,
+    capabilities=FARSIGHT1D_CAPABILITIES,
+)
 
 solver_registry.register_lazy(
     "vfp-2d",

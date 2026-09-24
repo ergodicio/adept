@@ -2,6 +2,14 @@
 
 from .contracts import ExecutionKind, Placement, Precision, SolverCapabilities
 
+FARSIGHT1D_CAPABILITIES = SolverCapabilities(
+    execution_kind=ExecutionKind.DISCRETE,
+    precision=Precision.X64,
+    differentiable=True,
+    batchable=False,
+    placements=frozenset({Placement.SINGLE_DEVICE}),
+)
+
 PIC1D_CAPABILITIES = SolverCapabilities(
     execution_kind=ExecutionKind.DISCRETE,
     precision=Precision.X64,
@@ -26,4 +34,4 @@ VFP2D_CAPABILITIES = SolverCapabilities(
     placements=frozenset({Placement.SINGLE_DEVICE, Placement.MULTI_DEVICE}),
 )
 
-__all__ = ["PIC1D_CAPABILITIES", "TF1D_CAPABILITIES", "VFP2D_CAPABILITIES"]
+__all__ = ["FARSIGHT1D_CAPABILITIES", "PIC1D_CAPABILITIES", "TF1D_CAPABILITIES", "VFP2D_CAPABILITIES"]

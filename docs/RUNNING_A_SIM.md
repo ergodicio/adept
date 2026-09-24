@@ -8,6 +8,13 @@ uv run run.py --cfg path_to_my_config
 
 ## Module-Specific Configuration Reference
 
+The new [FARSIGHT-1D solver](source/solvers/farsight1d/overview.md) uses the explicit
+host runtime instead of the legacy command above:
+
+```bash
+uv run python -m adept.farsight1d --cfg configs/farsight-1d/two-stream.yaml --output outputs/farsight-example
+```
+
 - [Vlasov-1D](source/solvers/vlasov1d/config.md) - 1D Vlasov-Poisson/Maxwell solver with Fokker-Planck collisions
 - [Vlasov-1D2V](source/solvers/vlasov1d2v/config.md) - 1D2V Vlasov-Poisson-Fokker-Planck in cylindrical velocity space, with a full-geometry Coulomb collision operator
 - [Vlasov-2D](source/solvers/vlasov2d/config.md) - 2D2V Vlasov-Maxwell solver
@@ -17,6 +24,7 @@ uv run run.py --cfg path_to_my_config
 - [Spectrax-1D](source/solvers/spectrax1d/config.md) - 1D Hermite-Fourier Vlasov-Maxwell solver
 - [Hermite-Legendre-1D](source/solvers/hermite_legendre_1d/config.md) - 1D-1V mixed Hermite-Legendre electrostatic Vlasov-Poisson solver
 - [PIC-1D](source/solvers/pic1d/config.md) - 1D1V electrostatic particle-in-cell solver
+- [FARSIGHT-1D](source/solvers/farsight1d/config.md) - experimental fixed-panel gridless 1D1V Vlasov-Poisson solver
 - [Two-Fluid-1D](source/solvers/tf1d/config.md) - 1D electrostatic two-fluid solver with kinetic closure and particle trapping
 - [OSIRIS wrapper](source/solvers/osiris/config.md) - runs the external OSIRIS PIC code from a native input deck
 - [WarpX wrapper](source/solvers/warpx/config.md) - runs the external WarpX PIC code from a native SI inputs file

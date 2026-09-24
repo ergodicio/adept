@@ -1,0 +1,31 @@
+solver: farsight-1d
+grid:
+  nx: 32
+  nv: 64
+  xmin: 0.0
+  xmax: 20.943951023931955
+  vmin: -4.0
+  vmax: 4.0
+time:
+  tmin: 0.0
+  tmax: 12.0
+  dt: 0.05
+initial:
+  kind: two-stream
+  thermal_speed: 0.3
+  drift: 2.0
+  amplitude: 0.0001
+  mode: 1
+numerical:
+  # Resolved smoothing: epsilon / dx = 2.29; this is a regularized model.
+  epsilon: 1.5
+  quadrature: trapezoid
+  remesh_every: 1
+  chunk_size: 64
+save:
+  scalars:
+    every_steps: 2
+  fields:
+    every_steps: 2
+  distribution:
+    every_steps: 40
