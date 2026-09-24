@@ -183,7 +183,7 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
         try:
             (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
             failure_summary_written = True
-        except Exception as persistence_error:  # noqa: BLE001 — retain the original render or persistence failure
+        except Exception as persistence_error:  # Retain the original render or persistence failure.
             error.add_note(
                 f"Failure summary persistence also failed: {type(persistence_error).__name__}: {persistence_error}"
             )
@@ -191,13 +191,13 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
             try:
                 receipt = sink.put(handle, Artifact(output / "run.json", artifact_path="comparison"))
                 sink.verify(handle, receipt)
-            except Exception as tracking_error:  # noqa: BLE001 — preserve the original render failure
+            except Exception as tracking_error:  # Preserve the original render failure.
                 error.add_note(
                     f"Failure artifact upload also failed: {type(tracking_error).__name__}: {tracking_error}"
                 )
         try:
             tracker.finish(handle, RunStatus.FAILED, error=summary["error"])
-        except Exception as tracking_error:  # noqa: BLE001 — status failure must not replace the render failure
+        except Exception as tracking_error:  # Status failure must not replace the render failure.
             error.add_note(f"Failure status update also failed: {type(tracking_error).__name__}: {tracking_error}")
         raise
     print(json.dumps(summary), flush=True)

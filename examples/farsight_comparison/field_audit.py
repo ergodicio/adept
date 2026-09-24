@@ -335,16 +335,16 @@ def audit_run(
         summary.update(status="FAILED", error=f"{type(error).__name__}: {error}")
         try:
             _write_json(output / "run.json", summary)
-        except Exception as failure:  # noqa: BLE001 — a reporting failure must not replace the original error.
+        except Exception as failure:  # A reporting failure must not replace the original error.
             error.add_note(f"Failure summary persistence also failed: {type(failure).__name__}: {failure}")
         try:
             receipt = sink.put(handle, Artifact(output / "run.json", artifact_path="field-audit"))
             sink.verify(handle, receipt)
-        except Exception as failure:  # noqa: BLE001 — a reporting failure must not replace the original error.
+        except Exception as failure:  # A reporting failure must not replace the original error.
             error.add_note(f"Failure artifact upload also failed: {type(failure).__name__}: {failure}")
         try:
             tracker.finish(handle, RunStatus.FAILED, error=summary["error"])
-        except Exception as failure:  # noqa: BLE001 — a reporting failure must not replace the original error.
+        except Exception as failure:  # A reporting failure must not replace the original error.
             error.add_note(f"Failure status update also failed: {type(failure).__name__}: {failure}")
         raise
     print(json.dumps(summary), flush=True)
