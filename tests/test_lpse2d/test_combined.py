@@ -420,3 +420,34 @@ def test_translator_maps_laser_and_raman_absorption_separately(tmp_path):
     )
     cfg, _ = translate_parms(parse_parms(deck), run="x")
     assert cfg["terms"]["light"]["absorption"] is False and cfg["terms"]["light"]["raman_absorption"] == 1.0
+
+
+def test_combined_iaw_drive_is_the_whole_field_at_wp0():
+    """Inventory A14: LPSE drives the IAW of a combined run with the Raman class's |E1|^2 at its carrier
+    wpe -- the whole field, EPW and Raman light with their cross term -- and no separate EPW term
+    (IawSolver.cpp:211-217, LightSolver.cpp:2405-2420). Tolerance 1e-12 of the drive, fixed in advance (the
+    same arithmetic); the former split (Raman light at w1, EPW at wp0, no cross term) differs by exactly
+    the transverse part's carrier change and the L-T cross term."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    cfg = _cfg(iaw={"active": True, "solver": "spectral"})
+    iaw = IonAcousticWave(cfg)
+    phi = _random_phi(cfg, 1)
+    longitudinal = _field_from_phi(phi, cfg)
+    transverse = _random_transverse(cfg, 2)
+    E1 = longitudinal + transverse
+    E0 = jnp.zeros_like(E1)
+    got = np.asarray(iaw.ponderomotive_drive(phi, E0, E1))
+    want = np.asarray(
+        iaw.ponderomotive_prefactor * jnp.sum(jnp.abs(E1) ** 2, axis=-1) / iaw.wp0**2 * iaw.source_mask_sq
+    )
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=0)
+    # what the former split (Raman light at w1, EPW at wp0) left out: the carrier of the transverse part
+    # and the L-T cross term, exactly (round-off tolerance, as above)
+    pre = iaw.ponderomotive_prefactor * iaw.source_mask_sq
+    t_sq = jnp.sum(jnp.abs(transverse) ** 2, axis=-1)
+    cross = 2.0 * jnp.real(jnp.sum(longitudinal * jnp.conj(transverse), axis=-1))
+    split = pre * (jnp.sum(jnp.abs(longitudinal) ** 2, axis=-1) / iaw.wp0**2 + t_sq / iaw.w1**2)
+    missing = pre * (t_sq * (1.0 / iaw.w1**2 - 1.0 / iaw.wp0**2) - cross / iaw.wp0**2)
+    np.testing.assert_allclose(np.asarray(split) - got, np.asarray(missing), rtol=0, atol=1e-12 * np.max(np.abs(got)))
+    assert np.max(np.abs(np.asarray(missing))) > 1e-3 * np.max(np.abs(got))

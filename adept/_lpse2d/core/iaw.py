@@ -174,6 +174,12 @@ class IonAcousticWave:
         self.wp0 = derived["wp0"]
         self.w0 = derived["w0"]
         self.w1 = derived["w1"]
+        # the combined solver's field is the Raman class with carrier wp0 and carries the EPW as its
+        # longitudinal part (LightSolver.cpp:2405-2420): the drive and the heating take the whole
+        # field at wp0 and no separate EPW term (IawSolver.cpp:211-217; ZakharovSolver.cpp
+        # getThermalFilamentationSource, thermalFil.lw only without the combined solver)
+        self.combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+        self.w_raman = self.wp0 if self.combined else self.w1
         self.ponderomotive_prefactor = (
             cfg["units"]["ionization state"] * derived["e"] ** 2 / (4.0 * derived["me"] * derived["mi"])
         )
@@ -278,6 +284,11 @@ class IonAcousticWave:
         (derived from the heat and momentum equations, not LPSE's ZAK constants)."""
         tf = cfg["terms"]["iaw"].get("thermal_filamentation") or {}
         self.thermal_waves = [w for w in ("laser", "raman", "lw") if tf.get(w, False)]
+        if self.combined and "lw" in self.thermal_waves:
+            # LPSE: thermalFil.lw acts only without the combined solver, whose field (thermalFil.raman)
+            # carries the EPW
+            self.thermal_waves.remove("lw")
+            print("NOTE: terms.iaw.thermal_filamentation.lw is ignored with the combined solver (LPSE); use raman")
         if not self.thermal_waves:
             return
         derived = cfg["units"]["derived"]
@@ -316,7 +327,7 @@ class IonAcousticWave:
         if "raman" in self.thermal_waves:
             if rate1 is None:
                 raise ValueError("terms.iaw.thermal_filamentation.raman needs terms.light.absorption")
-            nc1 = (derived["w1"] / derived["w0"]) ** 2
+            nc1 = (self.w_raman / derived["w0"]) ** 2  # the Raman class's critical density (n_env combined)
             self.thermal_coeff["raman"] = jnp.asarray(base * 2.0 * rate1 * (n_over_nc / nc1) ** 2)
         if "lw" in self.thermal_waves:
             nu_coll = float(derived.get("nu_coll", 0.0))
@@ -373,13 +384,14 @@ class IonAcousticWave:
         ``restrictRange`` squared; ``terms.iaw.source_window``, plan 2 I.3)."""
         # LPSE iaw.sourceTerm.{lw|laser|raman}.enable gate each term (getPonderomotivePotential)
         drive = 0.0
-        if self.drive_on["epw"]:
+        if self.drive_on["epw"] and not self.combined:
             ex, ey = self.epw_fields(phi_k)
             drive = drive + (jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2) / self.wp0**2
         if self.drive_on["pump"]:
             drive = drive + jnp.sum(jnp.abs(E0) ** 2, axis=-1) / self.w0**2
         if self.drive_on["raman"]:
-            drive = drive + jnp.sum(jnp.abs(E1) ** 2, axis=-1) / self.w1**2
+            # with the combined solver E1 is the whole field (Raman light + EPW, cross term included)
+            drive = drive + jnp.sum(jnp.abs(E1) ** 2, axis=-1) / self.w_raman**2
         return jnp.zeros((self.nx, self.ny)) + self.ponderomotive_prefactor * drive * self.source_mask_sq
 
     def ponderomotive_potential(self, phi_k: Array, E0: Array, E1: Array, density: Array) -> Array:

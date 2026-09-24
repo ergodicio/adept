@@ -142,16 +142,15 @@ class SplitStep:
             active = active & gate
         return lax.cond(active, lambda yy: self.iaw(yy, t), lambda yy: yy, y)
 
-    def iaw_first(self, y, t, drive=None):
+    def iaw_first(self, y, t):
         """The IAW step at the start of the EPW step, driven by the fields at ``t`` (LPSE
         ``ZakharovSolver::evolve`` advances the IAW, then the Langmuir waves, then the light).
-        ``drive`` is the state the ponderomotive drive is formed from (default ``y``). Returns the
-        state with the new IAW entries and the ends ``(old, new)`` of the IAW step with the
+        Returns the state with the new IAW entries and the ends ``(old, new)`` of the IAW step with the
         fractions of it this EPW step spans: the IAW advances every ``stride`` EPW steps, and in
         between the waves read the density between ``Nelf_old`` and ``Nelf`` (``linearInterp``)."""
         n = self.iaw.stride
         before = y["iaw_density"]
-        out = self.iaw_step(y if drive is None else drive, t)
+        out = self.iaw_step(y, t)
         y = {**y, **{k: v for k, v in out.items() if k.startswith("iaw_")}}
         if n == 1:
             return y, (before, y["iaw_density"], 0.0, 1.0)
@@ -232,12 +231,8 @@ class SplitStep:
 
         iaw_ends = None
         if self.iaw is not None:
-            drive = None
-            if self.epw_solver == "combined":
-                # the IAW ponderomotive drive sees the Raman light (transverse part) and the
-                # EPW (through the derived potential) separately, not the combined field
-                drive = {**new_y, "E1": self.combined.transverse(new_y["E1"])}
-            new_y, iaw_ends = self.iaw_first(new_y, t, drive)
+            # with the combined solver the IAW sees the whole combined field (iaw.py, A14)
+            new_y, iaw_ends = self.iaw_first(new_y, t)
         light_iaw = None if iaw_ends is None else Linear(*iaw_ends, interpolate=self.interpolate_light)
 
         if self.epw_solver == "combined":
