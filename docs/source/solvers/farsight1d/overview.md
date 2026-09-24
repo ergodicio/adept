@@ -1,7 +1,7 @@
 # FARSIGHT-1D
 
 `farsight-1d` is an experimental, independent JAX implementation of the
-**fixed-panel, direct-sum** variant of the method described by Sandberg, Krasny
+**direct-sum, fixed or adaptive panel** variant of the method described by Sandberg, Krasny
 and Thomas in [The FARSIGHT Vlasov-Poisson code](https://doi.org/10.1016/j.jcp.2024.113664),
 JCP 523 (2025), 113664. It lives in `adept.farsight1d` and uses ADEPT's new
 `SolverBuilder`, `PreparedSimulation`, and `ScanProgram` interfaces.
@@ -9,8 +9,8 @@ JCP 523 (2025), 113664. It lives in `adept.farsight1d` and uses ADEPT's new
 It solves collisionless 1D1V electron Vlasov-Poisson in normalized plasma units,
 with periodic x, a finite velocity interval and a homogeneous neutralizing
 background. It is a reference implementation for independent discretization
-comparisons. Adaptive mesh refinement and the original code's barycentric
-treecode are **not implemented**. It has not been validated for production
+comparisons. Bounded quadtree AMR is optional; the original code's barycentric
+treecode is **not implemented**. It has not been validated for production
 turbulence or benchmarked on GPUs.
 
 ## Numerical method
@@ -53,6 +53,59 @@ invalid result and an analyzer error. Reduce the timestep or remesh interval
 when a panel no longer fits in one nearest-periodic-image neighborhood. The
 current implementation does not use the original code's optional unshearing
 or clipping.
+
+## Adaptive panels
+
+Enable `amr.enabled` for quadtree leaves with nine nodes per panel. At each
+remesh the distribution is reconstructed from the deformed active leaves,
+sampled on a bounded candidate hierarchy, and the leaf partition is rebuilt
+from the roots. A panel refines when its nine-point range exceeds
+`atol + rtol * max(abs(f))`, or it is below `min_level`. With `rtol=0` this
+matches the first trigger in the author's implementation; the relative term
+is an ADEPT extension. Face neighbors are balanced to a level difference of
+at most one, including across the periodic x seam. The current balancing pass
+conservatively considers the whole neighboring subtree, so it can refine more
+than strictly face-local balancing requires. Newly created leaves are tested
+again until indicator and balance decisions reach a fixed point. Rebuilding
+allows coarsening.
+
+Active leaves are packed into `max_panels` fixed-shape slots. Local trapezoid
+or Simpson weights include each incident panel's contribution at duplicated
+nodes, so their sum equals the domain area for every valid partition. Inactive
+slots have zero f and weight and safe finite coordinates. Capacity overflow
+sets persistent failure and the host analyzer raises; a truncated partition
+is never reported as a successful solution. Saturation at `max_level` is a
+separate diagnostic, not evidence that the requested tolerance was met.
+
+Nonconforming straight-edge panels can leave small gaps or overlaps after a
+nonlinear push, even with 2:1 balance. The finest containing leaf owns overlaps.
+Interior gaps use the nearest polygon's physical biquadratic, with distance
+measured in one fixed metric `(x/L, v/(vmax-vmin))`. Gap count and maximum
+extension are recorded, and exceeding `max_gap_fraction` fails the solve.
+This explicit polynomial extension is an **ADEPT-specific approximation** to
+the author's hierarchy/neighbor routing, not an exact port. Only targets beyond
+the actual advected outer velocity edges get zero inflow. Those outer edges
+must remain graphs in x; folds fail. Decrease dt/remesh interval if geometry
+or extension guards fail rather than loosening the guard without validation.
+
+The AMR material C2 is constant between remeshes. At remesh, `remap_*` budgets
+include **both** interpolation and the quadrature change from regridding.
+`regrid_mass_change` and `regrid_c2_change` isolate the latter using the same
+interpolant evaluated on the old partition; subtract them from `remap_*` for
+the interpolation contribution. No post-remesh normalization is applied.
+
+This baseline preallocates all candidate panels, at most 32768. Candidate
+count is `roots * (1 + 4 + ... + 4**max_level)` and all candidates are sampled
+at each remesh; remesh cost does not scale only with active leaves. Direct
+push work still scales with **slot capacity**, including padding. Adaptivity
+does not by itself establish a speedup. Initial nine-node indicators cannot
+detect already unresolved beams or filaments: vary the base mesh, minimum
+level, refinement tolerances and maximum level against refined references.
+`remesh_every=0` selects an initial adaptive partition but never updates it.
+
+`configs/farsight-1d/two-stream-amr.yaml` is a small adaptive execution example,
+not a converged turbulence or general AMR-accuracy benchmark. It also has a
+short independent linear-field regression, described below.
 
 ## Conservation and resolution
 
@@ -137,7 +190,9 @@ are no drivers or runtime parameter controls. Differentiate a chosen initial
 distribution perturbation by constructing the state inside a JAX objective
 and passing it into the program. Hard panel selection is piecewise
 differentiable; gradients at ownership changes, boundary crossings or invalid
-panels are not promised. Batching, sharding, adaptive topology and production
+panels are not promised. Adaptive topology is selected by hard decisions;
+derivatives describe only the current selection, not refinement sensitivity.
+Batching, sharding and production
 gradient validation are not advertised.
 
 ## Verification
@@ -145,7 +200,10 @@ gradient validation are not advertised.
 `tests/test_farsight1d` checks the field against an independent scalar-loop sum,
 periodic seams, quadrature, analytic remeshing, zero inflow, invalid panels,
 remesh error accounting, JIT/grad, explicit host execution, and CLI artifact
-readback. The characteristic integrator converges at fourth order against an
+readback. Adaptive checks include zero-level fixed-grid parity, mixed-level
+quadrature, balancing, constant preservation through an interior interface gap,
+coarsening, explicit overflow, and mass/C2 error-budget telescoping.
+The characteristic integrator converges at fourth order against an
 independent SciPy DOP853 solve; a smooth free-streaming remesh converges close
 to third order in space. These operator checks do not establish fourth-order
 accuracy of repeated remeshing in time.
@@ -167,12 +225,22 @@ The example YAMLs contain the matching physical and numerical parameters.
 These comparisons validate these regularized linear problems; they do not
 measure late-time turbulence, the unregularized limit, or production scaling.
 
+The AMR two-stream example uses base 8 by 16 intervals, maximum level 2,
+atol 0.05 and 512 slots, with the same physical parameters and time interval.
+It retains 320 leaves (versus 512 at uniform finest refinement). Its complex
+field-history error against the same linear reference is 0.836%, relative
+mass change -5.89e-6 and C2 change -1.42e-4. The leaf set remains unchanged;
+192 leaves report maximum-level saturation throughout. Final minimum f is
+-1.70e-5 and integrated negative mass is 1.07e-4. This passes the same field
+and invariant thresholds, but neither demonstrates converged refinement nor
+validates a late-time turbulence case with substantial topology changes.
+
 ## Attribution
 
 The numerical equations and method are credited to the paper above and the
 [author implementation](https://github.com/RTSandberg/FARSIGHT). This JAX code
 was written independently; it is not a source translation or an official port.
-The initial target is the nonadaptive method, rather than the complete feature
-set or performance of FARSIGHT.
+The implementation covers a bounded subset of the method, not the complete
+feature set or performance of FARSIGHT.
 
 See the [configuration reference](config.md) for every option and diagnostic.

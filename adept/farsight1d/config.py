@@ -71,12 +71,35 @@ class InitialConfig(_StrictConfig):
 
 
 class NumericalConfig(_StrictConfig):
-    """Direct regularized field evaluation and uniform panel remeshing controls."""
+    """Direct regularized field evaluation and panel remeshing controls."""
 
     epsilon: float = Field(gt=0)
     quadrature: Literal["trapezoid", "simpson"] = "trapezoid"
     remesh_every: int = Field(default=1, ge=0)
     chunk_size: int = Field(default=64, ge=1)
+
+
+class AMRConfig(_StrictConfig):
+    """Bounded quadtree refinement using the nodal distribution range.
+
+    Each remesh rebuilds leaves from the root panels, permitting both
+    refinement and coarsening. Static candidate and active capacities keep
+    array shapes fixed under JAX transformations.
+    """
+
+    enabled: bool = False
+    max_level: int = Field(default=1, ge=0, le=4)
+    min_level: int = Field(default=0, ge=0, le=4)
+    max_panels: int = Field(default=256, ge=1)
+    atol: float = Field(default=0.05, ge=0)
+    rtol: float = Field(default=0.0, ge=0)
+    max_gap_fraction: float = Field(default=0.01, gt=0)
+
+    @model_validator(mode="after")
+    def validate_levels(self):
+        if self.min_level > self.max_level:
+            raise ValueError("amr.min_level must not exceed amr.max_level")
+        return self
 
 
 class SaveCadence(_StrictConfig):
@@ -98,13 +121,25 @@ class Farsight1DConfig(_StrictConfig):
     time: TimeConfig
     initial: InitialConfig = Field(default_factory=InitialConfig)
     numerical: NumericalConfig
+    amr: AMRConfig = Field(default_factory=AMRConfig)
     save: SaveConfig = Field(default_factory=SaveConfig)
 
     @model_validator(mode="after")
     def validate_mode(self):
         if self.initial.mode >= self.grid.nx // 2:
             raise ValueError("initial mode must lie strictly below the spatial Nyquist mode (nx / 2)")
+        if self.amr.enabled:
+            roots = (self.grid.nx // 2) * (self.grid.nv // 2)
+            minimum = roots * 4**self.amr.min_level
+            if self.amr.max_panels < minimum:
+                raise ValueError(f"amr.max_panels must be at least {minimum} to cover all root panels at amr.min_level")
+            candidates = roots * sum(4**level for level in range(self.amr.max_level + 1))
+            if candidates > 32768:
+                raise ValueError(
+                    f"AMR requires {candidates} candidate panels, exceeding the static scratch limit of 32768; "
+                    "reduce grid.nx/grid.nv or amr.max_level"
+                )
         return self
 
 
-__all__ = ["Farsight1DConfig"]
+__all__ = ["AMRConfig", "Farsight1DConfig"]

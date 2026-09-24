@@ -194,14 +194,20 @@ def diagnose(state, weights):
     Momentum and kinetic energy below assume unit particle mass.
     """
     f, v = state["f"], state["v"]
+    weights = state.get("weights", weights)
+    min_f = jnp.min(jnp.where(state["active"][:, None], f, jnp.inf)) if "active" in state else jnp.min(f)
     return {
         "mass": jnp.sum(weights * f),
         "c2": jnp.sum(weights * f**2),
         "momentum": jnp.sum(weights * f * v),
         "kinetic_energy": 0.5 * jnp.sum(weights * f * v**2),
-        "min_f": jnp.min(f),
+        "min_f": min_f,
         "negative_mass": jnp.sum(weights * jnp.maximum(-f, 0)),
-        **{key: value for key, value in state.items() if key not in ("x", "v", "f")},
+        **{
+            key: value
+            for key, value in state.items()
+            if key not in ("x", "v", "f", "weights", "active", "panel_id", "level")
+        },
     }
 
 

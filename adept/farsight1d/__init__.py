@@ -9,7 +9,10 @@ from typing import Any
 _LAZY_ATTRIBUTES = {
     "Farsight1DBuilder": (".builder", "Farsight1DBuilder"),
     "Farsight1DConfig": (".config", "Farsight1DConfig"),
+    "AMRConfig": (".config", "AMRConfig"),
     "FarsightSystem": (".numerics", "FarsightSystem"),
+    "AdaptiveFarsightSystem": (".amr", "AdaptiveFarsightSystem"),
+    "PanelHierarchy": (".amr", "PanelHierarchy"),
 }
 
 __all__ = list(_LAZY_ATTRIBUTES)
