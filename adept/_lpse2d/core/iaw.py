@@ -149,6 +149,7 @@ class IonAcousticWave:
         # x-space window on the ponderomotive drive, squared (plan 2 I.3); 1.0 when none
         mask = grid.get("iaw_source_mask")
         self.source_mask_sq = 1.0 if mask is None or bool(np.all(np.asarray(mask) == 1.0)) else jnp.asarray(mask) ** 2
+        self.source_mask = 1.0 if isinstance(self.source_mask_sq, float) else jnp.asarray(mask)
         # terms.iaw.t_start / t_stop (ps): the IAW step only acts inside this interval (LPSE
         # iaw.startEvolvingTime / stopEvolvingTime); None means unbounded
         self.t_start = float(iaw["t_start"]) if iaw.get("t_start") is not None else None
@@ -275,14 +276,19 @@ class IonAcousticWave:
         inverse-bremsstrahlung heating by the spatially varying part of each wave's intensity,
         balanced by Spitzer heat conduction, drives the ion flow through the electron pressure:
 
-            d(div v)/dt += Z Q_w / (m_i kappa'),   Q_w = nu_w(n) (|E_w|^2 - <|E_w|^2>) / (8 pi)
+            d(div v)/dt += K_w (n/n_c,w)^2 X_w   (light),   K_lw (n / n_env) X_lw   (EPW)
 
-        with ``kappa'`` the Spitzer conductivity over k_B (1/(cm s)), ``nu_w`` the wave's energy
-        damping rate (light: 2 nu_abs(n_c) (n/n_c)^2; EPW: 2 nu_coll n/n_env), ``<.>`` the box
-        average. ``nonlocal: true`` adds LPSE's k^(4/3) correction: the source's k-space content is
-        multiplied by ``1 + (k lambda_nl)^(4/3)`` with ``lambda_nl = 30 (k_B T_e)^2 / (4 pi e^4
-        sqrt(Z+1) ln Lambda n_e)``. The LPSE form is kept; the normalization is adept's own
-        (derived from the heat and momentum equations, not LPSE's ZAK constants)."""
+        with ``X_w = |E_w|^2 - <|E_w|^2>`` (the average weighted by the IAW source window),
+        ``K_w = Z (2 nu_w) / (8 pi m_i kappa')`` in code units (``nu_w`` the wave's amplitude
+        absorption rate at its critical density, ``nu_coll`` for the EPW), ``kappa'`` the Spitzer
+        conductivity with LPSE's electron-ion Coulomb logarithm and ``n = n_b (1 + Nelf)`` the total
+        density. ``nonlocal: true`` adds LPSE's term
+        ``n^(2/3) Lambda^(4/3) F^-1[|k|^(4/3) F[sum_w K_w X_w RR / n_c,w^2]]`` (cgs densities and k,
+        ``Lambda = 30 (k_B T_e)^2 / (4 pi e^4 sqrt(Z+1) ln Lambda_ee)``, the IAW band only), which is
+        ``(k lambda_nl)^(4/3)`` times the local term at uniform density. The local term carries the
+        IAW source mask squared (window ``RR`` twice, injectors, absorbers), the non-local one ``RR``
+        inside the transform and the mask after it, as LPSE. LPSE leaves the pre-sum's modes outside
+        the IAW band unmultiplied (in its ZAK units); they are dropped here."""
         tf = cfg["terms"]["iaw"].get("thermal_filamentation") or {}
         self.thermal_waves = [w for w in ("laser", "raman", "lw") if tf.get(w, False)]
         if self.combined and "lw" in self.thermal_waves:
@@ -302,57 +308,71 @@ class IonAcousticWave:
         # cgs constants
         e_cgs, me_cgs, mp_cgs, kb_cgs = 4.8032068e-10, 9.10938291e-28, 1.6726219e-24, 1.380649e-16
         te_k = te_kev * 1.0e3 * 1.16045e4
+        te_ev = te_kev * 1.0e3
         lambda_um = 2.0 * np.pi * derived["c"] / derived["w0"]
         nc_cgs = 1.1148e21 / lambda_um**2
-        n_cgs = np.asarray(cfg["grid"]["background_density"]) * nc_cgs
-        n_mean = float(np.mean(n_cgs))
-        log_lambda = max(
-            23.5 - np.log(np.sqrt(n_mean) * te_kev**-1.25 * 1e3**-1.25 * 1e3)
-            if False
-            else 6.68 + np.log(lambda_um * te_kev),
-            2.0,
-        )
+        n_env = float(units["envelope density"])
+        # LPSE's Coulomb logarithms (ParameterManager.cpp:1466-1481, NRL at the envelope density No)
+        no_cgs = n_env * nc_cgs
+        if te_kev < 0.01 * z**2:
+            log_ei = 22.8487 - np.log(np.sqrt(no_cgs) * z / te_ev**1.5)
+        else:
+            log_ei = 24.0 - np.log(np.sqrt(no_cgs) / te_ev)
+        log_ee = 23.5 - np.log(np.sqrt(no_cgs) * te_ev**-1.25) - np.sqrt(1.0e-5 + (np.log(te_ev) - 2.0) ** 2 / 16.0)
+        log_ei, log_ee = max(2.0, float(log_ei)), max(2.0, float(log_ee))
+        self.thermal_log_ei, self.thermal_log_ee = log_ei, log_ee
         g_factor = 1.0 / (1.0 + 3.3 / z)
-        kappa = (8.0 / np.pi) ** 1.5 * g_factor * (kb_cgs * te_k) ** 2.5 / (z * e_cgs**4 * np.sqrt(me_cgs) * log_lambda)
+        kappa = (8.0 / np.pi) ** 1.5 * g_factor * (kb_cgs * te_k) ** 2.5 / (z * e_cgs**4 * np.sqrt(me_cgs) * log_ei)
         kappa *= float(tf.get("conductivity_multiplier", 1.0))
         mi_cgs = mp_cgs * float(units["atomic number"])
         field_scale = float(derived["fieldScale"])  # statV/cm per code field unit
         # d(div v)/dt [1/s^2] = Z nu(n)[1/s] |E|^2_cgs / (8 pi m_i kappa'); -> 1/ps^2 per code |E|^2
         base = z * field_scale**2 / (8.0 * np.pi * mi_cgs * kappa) * 1.0e-24 * 1.0e12  # per (1/ps rate)
-        n_over_nc = np.asarray(cfg["grid"]["background_density"])
-        self.thermal_coeff = {}
+        # wave -> (K_w, critical density / n_c, density power)
+        self.thermal_terms = {}
         if "laser" in self.thermal_waves:
             if rate0 is None:
                 raise ValueError("terms.iaw.thermal_filamentation.laser needs terms.light.absorption")
-            self.thermal_coeff["laser"] = jnp.asarray(base * 2.0 * rate0 * n_over_nc**2)
+            self.thermal_terms["laser"] = (base * 2.0 * rate0, 1.0, 2)
         if "raman" in self.thermal_waves:
             if rate1 is None:
                 raise ValueError("terms.iaw.thermal_filamentation.raman needs terms.light.absorption")
             nc1 = (self.w_raman / derived["w0"]) ** 2  # the Raman class's critical density (n_env combined)
-            self.thermal_coeff["raman"] = jnp.asarray(base * 2.0 * rate1 * (n_over_nc / nc1) ** 2)
+            self.thermal_terms["raman"] = (base * 2.0 * rate1, nc1, 2)
         if "lw" in self.thermal_waves:
             nu_coll = float(derived.get("nu_coll", 0.0))
             if nu_coll <= 0.0:
                 raise ValueError("terms.iaw.thermal_filamentation.lw needs terms.epw.damping.collisions")
-            self.thermal_coeff["lw"] = jnp.asarray(base * 2.0 * nu_coll * n_over_nc / float(units["envelope density"]))
+            self.thermal_terms["lw"] = (base * 2.0 * nu_coll, n_env, 1)
+        self.thermal_nc_cgs = nc_cgs
+        self.thermal_background = jnp.asarray(cfg["grid"]["background_density"])
+        grid = cfg["grid"]
+        window = np.asarray(grid.get("iaw_window", np.ones((self.nx, self.ny))), dtype=np.float64)
+        self.thermal_window = jnp.asarray(window)
+        self.thermal_window_sum = float(np.sum(window))
+        if self.thermal_window_sum <= 0.0:
+            raise ValueError("terms.iaw.source_window leaves no weight for the thermal-filamentation averages")
         self.thermal_nonlocal = bool(tf.get("nonlocal", tf.get("nonlocal_", False)))
         if self.thermal_nonlocal:
-            lambda_nl_cm = (
-                30.0 * (kb_cgs * te_k) ** 2 / (4.0 * np.pi * e_cgs**4 * np.sqrt(z + 1.0) * log_lambda * n_cgs)
-            )
-            lambda_nl_um = lambda_nl_cm * 1.0e4
-            k_mag = np.sqrt(self.k_sq)
-            # (k lambda_nl(n))^(4/3): k^(4/3) in k-space, lambda^(4/3)(x) in x-space
-            self.thermal_k_factor = jnp.asarray(k_mag ** (4.0 / 3.0))
-            self.thermal_lambda_factor = jnp.asarray(lambda_nl_um ** (4.0 / 3.0))
-        print(f"IAW thermal filamentation on ({', '.join(self.thermal_waves)}, nonlocal={self.thermal_nonlocal})")
+            big_lambda = 30.0 * (kb_cgs * te_k) ** 2 / (4.0 * np.pi * e_cgs**4 * np.sqrt(z + 1.0) * log_ee)
+            k_cgs = np.sqrt(np.asarray(self.k_sq)) * 1.0e4
+            band = np.asarray(self.filter) > 0.0
+            self.thermal_k_factor = jnp.asarray(np.where(band, (big_lambda * k_cgs) ** (4.0 / 3.0), 0.0))
+        print(
+            f"IAW thermal filamentation on ({', '.join(self.thermal_waves)}, nonlocal={self.thermal_nonlocal}; "
+            f"ln Lambda_ei {log_ei:.2f}, ln Lambda_ee {log_ee:.2f})"
+        )
 
-    def thermal_filamentation_source(self, phi_k: Array, E0: Array, E1: Array) -> Array:
-        """The heating source on the velocity divergence (1/ps^2), x-space; zero when off."""
+    def thermal_filamentation_source(self, phi_k: Array, E0: Array, E1: Array, density: Array | None = None) -> Array:
+        """The heating source on the velocity divergence (1/ps^2), x-space, with the IAW source mask
+        applied as LPSE (see ``_init_thermal_filamentation``); zero when off. ``density``: the IAW
+        density perturbation Nelf, so that the total density is ``n_b (1 + Nelf)``."""
         if not self.thermal_waves:
             return jnp.zeros((self.nx, self.ny))
-        source = jnp.zeros((self.nx, self.ny))
-        for wave, coeff in self.thermal_coeff.items():
+        n_tot = self.thermal_background if density is None else self.thermal_background * (1.0 + density)
+        local = jnp.zeros((self.nx, self.ny))
+        pre = jnp.zeros((self.nx, self.ny))
+        for wave, (k_w, nc_w, power) in self.thermal_terms.items():
             if wave == "laser":
                 e_sq = jnp.sum(jnp.abs(E0) ** 2, axis=-1)
             elif wave == "raman":
@@ -360,10 +380,14 @@ class IonAcousticWave:
             else:
                 ex, ey = self.epw_fields(phi_k)
                 e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
-            source = source + coeff * (e_sq - jnp.mean(e_sq))
+            x_w = e_sq - jnp.sum(e_sq * self.thermal_window) / self.thermal_window_sum
+            local = local + k_w * (n_tot / nc_w) ** power * x_w
+            if self.thermal_nonlocal:
+                pre = pre + k_w * x_w / (nc_w * self.thermal_nc_cgs) ** 2
+        source = local * self.source_mask_sq
         if self.thermal_nonlocal:
-            nonlocal_part = jnp.real(jnp.fft.ifft2(self.thermal_k_factor * jnp.fft.fft2(source)))
-            source = source + self.thermal_lambda_factor * nonlocal_part
+            nl = jnp.real(jnp.fft.ifft2(self.thermal_k_factor * jnp.fft.fft2(pre * self.thermal_window)))
+            source = source + (n_tot * self.thermal_nc_cgs) ** (2.0 / 3.0) * nl * self.source_mask
         return source
 
     def laplacian(self, field: Array) -> Array:
@@ -420,7 +444,7 @@ class IonAcousticWave:
         velocity_divergence = y["iaw_velocity_divergence"] - self.dt * self.laplacian(potential)
         if self.thermal_waves:
             velocity_divergence = velocity_divergence + self.dt * self.thermal_filamentation_source(
-                y["epw"], y["E0"], y["E1"]
+                y["epw"], y["E0"], y["E1"], y["iaw_density"]
             )
         velocity_k = jnp.fft.fft2(velocity_divergence)
         velocity_k = velocity_k * jnp.exp(-2.0 * self.landau_rate * self.dt) * self.filter
@@ -447,7 +471,9 @@ class IonAcousticWave:
             drive_k = jnp.fft.fft2(self.drive_laplacian(y["epw"], y["E0"], y["E1"]))
         w_new = w_new + self.dt * drive_k
         if self.thermal_waves:
-            w_new = w_new + self.dt * jnp.fft.fft2(self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"]))
+            w_new = w_new + self.dt * jnp.fft.fft2(
+                self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"], y["iaw_density"])
+            )
         if self.noise_enabled:
             w_new = w_new + self.get_noise(t)
 
@@ -470,7 +496,7 @@ class IonAcousticWave:
         # advanceNelfAndDivV_fd); the same k^2 drive as the spectral step
         e2 = self.drive_laplacian(y["epw"], y["E0"], y["E1"])
         if self.thermal_waves:
-            e2 = e2 + self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"])
+            e2 = e2 + self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"], y["iaw_density"])
         n, w = fd.step(t, n, w, upsample(e2, fd.s))
         out = {"iaw_density": downsample(n, fd.s), "iaw_velocity_divergence": downsample(w, fd.s)}
         if fine:

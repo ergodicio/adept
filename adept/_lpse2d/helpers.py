@@ -1148,6 +1148,13 @@ def get_solver_quantities(cfg: dict) -> dict:
     cfg_grid["epw_source_mask"] = source_mask(cfg, cfg_grid, "epw")
     if iaw.get("active", False):
         cfg_grid["iaw_source_mask"] = source_mask(cfg, cfg_grid, "iaw")
+        # the bare window RR (LPSE iawSolver.RR): the thermal-filamentation averages are weighted by it
+        iaw_window = iaw.get("source_window")
+        cfg_grid["iaw_window"] = (
+            range_restriction(np.asarray(cfg_grid["x"]), np.asarray(cfg_grid["y"]), iaw_window)
+            if iaw_window
+            else np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+        )
     # the light fields' own coupling sources (LightSolver::calculateSources): 0 = pump, 1 = Raman light
     cfg_grid["light_source_mask0"] = source_mask(cfg, cfg_grid, "light0")
     cfg_grid["light_source_mask1"] = source_mask(cfg, cfg_grid, "light1")
