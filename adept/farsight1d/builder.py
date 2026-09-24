@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import diffrax
@@ -27,6 +27,7 @@ from adept.core.programs import ScanProgram
 from adept.farsight1d.amr import AdaptiveFarsightSystem, initialize_amr, make_hierarchy
 from adept.farsight1d.config import Farsight1DConfig, SaveCadence
 from adept.farsight1d.numerics import FarsightSystem, diagnose, electric_field, initial_state, make_mesh
+from adept.farsight1d.treecode import TreecodeField
 
 
 class FarsightProgram(ScanProgram):
@@ -51,10 +52,12 @@ class FarsightFieldsObservation(eqx.Module):
     length: float = eqx.field(static=True)
     epsilon: float = eqx.field(static=True)
     chunk_size: int = eqx.field(static=True)
+    field_solver: Any = None
 
     def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, jax.Array]:
         del t, inputs
-        field = electric_field(
+        evaluate = electric_field if self.field_solver is None else self.field_solver
+        field = evaluate(
             self.x,
             state["x"].reshape(-1),
             (-state.get("weights", self.weights) * state["f"]).reshape(-1),
@@ -200,6 +203,9 @@ class Farsight1DBuilder:
         grid, time, numerical = config.grid, config.time, config.numerical
         length = grid.xmax - grid.xmin
         params, inputs = {}, {}
+        field_solver = (
+            TreecodeField(**numerical.treecode.model_dump()) if numerical.field_solver == "treecode" else None
+        )
         system_options = {
             "length": length,
             "dt": time.dt,
@@ -208,6 +214,7 @@ class Farsight1DBuilder:
             "mass": 1.0,
             "remesh_every": numerical.remesh_every,
             "chunk_size": numerical.chunk_size,
+            "field_solver": field_solver,
         }
         if config.amr.enabled:
             amr = config.amr
@@ -248,7 +255,9 @@ class Farsight1DBuilder:
             state = initial_state(x, v, _initial_distribution(config, x, v, weights), weights)
             system = FarsightSystem(x0=x, v0=v, weights=weights, **system_options)
         field_x = jnp.linspace(grid.xmin, grid.xmax, grid.nx + 1)[:-1]
-        fields = FarsightFieldsObservation(field_x, weights, length, numerical.epsilon, numerical.chunk_size)
+        fields = FarsightFieldsObservation(
+            field_x, weights, length, numerical.epsilon, numerical.chunk_size, field_solver
+        )
         functions = {
             "scalars": FarsightScalarsObservation(fields),
             "fields": fields,
@@ -288,6 +297,17 @@ class Farsight1DBuilder:
                 "piecewise derivatives with refinement decisions fixed; thresholds, panel ownership, "
                 "and capacity decisions are discrete"
             )
+        if field_solver is not None:
+            units["treecode_gradients"] = (
+                "theta=0 uses the direct field and supports reverse-mode derivatives"
+                if numerical.treecode.theta == 0
+                else "forward-mode derivatives only within fixed sorting, activity, and opening decisions; "
+                "reverse-mode derivatives through the tree walk are unsupported"
+            )
+            units["treecode_conservation"] = (
+                "with theta>0 the particle-cluster force approximation is not pair-symmetric; exact momentum/energy "
+                "conservation is not enforced, and material C2 alone does not measure phase-space resolution"
+            )
         manifest = RunManifest(
             raw_config=spec.config_dict(),
             resolved_config=resolved,
@@ -303,7 +323,9 @@ class Farsight1DBuilder:
             inputs=inputs,
             manifest=manifest,
             analyzer=Farsight1DAnalyzer(),
-            capabilities=FARSIGHT1D_CAPABILITIES,
+            capabilities=replace(
+                FARSIGHT1D_CAPABILITIES, differentiable=field_solver is None or numerical.treecode.theta == 0
+            ),
             observation_plan=plan,
         )
 

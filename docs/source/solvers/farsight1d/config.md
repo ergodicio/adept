@@ -24,6 +24,10 @@ normalized electron plasma units with `q = -1`, `m = 1`, mean density one.
 | `numerical.quadrature` | `trapezoid` | `trapezoid` or `simpson`; both assemble shared panel weights |
 | `numerical.remesh_every` | 1 | Remesh every this many steps; 0 disables remeshing for diagnostic experiments |
 | `numerical.chunk_size` | 64 | Positive target batch size for field and panel lookup |
+| `numerical.field_solver` | `direct` | `direct` or `treecode`, used for all RK stages and field observations |
+| `numerical.treecode.degree` | 8 | Interpolation polynomial degree, 1–32 (degree+1 nodes) |
+| `numerical.treecode.theta` | 0.5 | Opening ratio in [0,1); 0 dispatches to exact direct evaluation |
+| `numerical.treecode.leaf_size` | 32 | Positive source capacity per direct leaf |
 | `amr.enabled` | false | Use packed adaptive leaves; fixed-grid path is unchanged when false |
 | `amr.max_level` | 1 | Maximum quadtree depth, 0–4; 0 is the fixed root partition |
 | `amr.min_level` | 0 | Force refinement to at least this depth, no greater than max_level |
@@ -45,7 +49,14 @@ The sampled initial distribution is normalized once to `sum(W*f) = L`; no
 normalization is applied during evolution. Two-stream initialization uses equal
 Gaussian beams. This normalization cannot resolve a narrow beam on an inadequate
 velocity grid or restore truncated tails. There are no collisions, multiple
-species, external fields, limiters or treecode configuration fields.
+species, external fields or limiters.
+
+Treecode options are validated even when the direct evaluator is selected, but
+only affect evaluation for `field_solver: treecode`. A positive-theta tree walk
+is not reverse-mode differentiable; its prepared capability says so. Use direct
+evaluation or theta=0 for reverse-mode objectives. Force approximation can add
+momentum drift; compare fields and trajectories against direct sums while
+varying degree/theta, independently of AMR tolerances and softening.
 
 AMR initially samples all candidate nodes, normalizing their finest-level
 quadrature before threshold decisions, then normalizes the selected partition

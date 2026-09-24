@@ -276,6 +276,7 @@ class AdaptiveFarsightSystem(eqx.Module):
     remesh_every: int = eqx.field(static=True, default=1)
     chunk_size: int = eqx.field(static=True, default=64)
     max_gap_fraction: float = eqx.field(static=True, default=0.01)
+    field_solver: Any = None
 
     def step(self, step, state, params, inputs, key):
         del params, inputs, key
@@ -288,6 +289,7 @@ class AdaptiveFarsightSystem(eqx.Module):
             self.epsilon,
             self.charge / self.mass,
             self.chunk_size,
+            field_solver=self.field_solver,
         )
         x, v = jnp.where(state["active"][:, None], x, state["x"]), jnp.where(state["active"][:, None], v, state["v"])
         pushed = {

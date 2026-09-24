@@ -10,6 +10,8 @@ _LAZY_ATTRIBUTES = {
     "Farsight1DBuilder": (".builder", "Farsight1DBuilder"),
     "Farsight1DConfig": (".config", "Farsight1DConfig"),
     "AMRConfig": (".config", "AMRConfig"),
+    "TreecodeConfig": (".config", "TreecodeConfig"),
+    "TreecodeField": (".treecode", "TreecodeField"),
     "FarsightSystem": (".numerics", "FarsightSystem"),
     "AdaptiveFarsightSystem": (".amr", "AdaptiveFarsightSystem"),
     "PanelHierarchy": (".amr", "PanelHierarchy"),

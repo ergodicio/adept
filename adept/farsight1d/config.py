@@ -70,13 +70,23 @@ class InitialConfig(_StrictConfig):
         return self
 
 
+class TreecodeConfig(_StrictConfig):
+    """Barycentric source-cluster interpolation and geometric opening controls."""
+
+    degree: int = Field(default=8, ge=1, le=32)
+    theta: float = Field(default=0.5, ge=0, lt=1)
+    leaf_size: int = Field(default=32, ge=1)
+
+
 class NumericalConfig(_StrictConfig):
-    """Direct regularized field evaluation and panel remeshing controls."""
+    """Regularized field evaluation and panel remeshing controls."""
 
     epsilon: float = Field(gt=0)
     quadrature: Literal["trapezoid", "simpson"] = "trapezoid"
     remesh_every: int = Field(default=1, ge=0)
     chunk_size: int = Field(default=64, ge=1)
+    field_solver: Literal["direct", "treecode"] = "direct"
+    treecode: TreecodeConfig = Field(default_factory=TreecodeConfig)
 
 
 class AMRConfig(_StrictConfig):
@@ -142,4 +152,4 @@ class Farsight1DConfig(_StrictConfig):
         return self
 
 
-__all__ = ["AMRConfig", "Farsight1DConfig"]
+__all__ = ["AMRConfig", "Farsight1DConfig", "TreecodeConfig"]
