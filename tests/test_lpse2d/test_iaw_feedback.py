@@ -249,3 +249,93 @@ def test_feedback_option_is_validated():
     # inactive IAW or the prototype form: no factor
     assert iaw_feedback_factor({"terms": {}, "grid": {}, "units": {}}) == 1.0
     assert iaw_feedback_factor({"terms": {"iaw": {"active": True, "feedback": "envelope"}}}) == 1.0
+
+
+# ---- LPSE's per-wave coupling switches (inventory A7): {lw|laser|raman}.ionAcousticPerturbations
+# and iaw.sourceTerm.{lw|laser|raman}. A switched-off coupling removes its term exactly.
+
+
+def test_epw_ignores_the_iaw_density_when_its_perturbation_switch_is_off():
+    from adept._lpse2d.core.epw import SpectralEPWSolver
+
+    cfg = _fd_cfg("local")
+    cfg["terms"]["iaw"]["perturbs"] = {"epw": False, "pump": True, "raman": True}
+    solver = SpectralEPWSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128).at[3, 0].set(1.0 + 0.5j)
+    common = {"epw": phi_k, "E0": jnp.zeros((nx, ny, 2), jnp.complex128), "E1": jnp.zeros((nx, ny, 2), jnp.complex128)}
+    out_zero = solver(jnp.asarray(0.0), {**common, "iaw_density": jnp.zeros((nx, ny))}, None)
+    out_dn = solver(jnp.asarray(0.0), {**common, "iaw_density": jnp.full((nx, ny), 0.03)}, None)
+    np.testing.assert_array_equal(np.asarray(out_dn), np.asarray(out_zero))
+
+
+def test_spectral_pump_ignores_the_iaw_density_while_the_raman_light_sees_it():
+    """test_010's switches: laser.ionAcousticPerturbations.enable = false with an evolved pump."""
+    from adept._lpse2d.core.spectral_light import SpectralCoupledLight
+
+    cfg = _spectral_cfg("local", absorption=1.0)
+    cfg["terms"]["iaw"]["perturbs"] = {"epw": True, "pump": False, "raman": True}
+    light = SpectralCoupledLight(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    x = np.asarray(cfg["grid"]["x"])
+    wave = np.exp(1j * 2.0 * np.pi * 20 / (nx * cfg["grid"]["dx"]) * x)[:, None] * np.ones((1, ny))
+    E0 = jnp.zeros((nx, ny, 3), jnp.complex128).at[..., 1].set(jnp.asarray(wave))
+    E1 = jnp.zeros((nx, ny, 3), jnp.complex128).at[..., 1].set(jnp.asarray(0.3 * np.conj(wave)))
+    phi_k = jnp.zeros((nx, ny), jnp.complex128)
+    pump_args = {
+        **cfg["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.zeros((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    a0, a1 = light(0.0, E0, E1, phi_k, pump_args, None)
+    b0, b1 = light(0.0, E0, E1, phi_k, pump_args, None, jnp.full((nx, ny), 0.04))
+    np.testing.assert_array_equal(np.asarray(b0), np.asarray(a0))
+    assert not np.allclose(np.asarray(b1), np.asarray(a1))
+
+
+def test_ponderomotive_drive_keeps_only_the_enabled_channels():
+    """ZakharovSolver::getPonderomotivePotential: each of |E_lw|^2, |E0|^2, |E1|^2 only with its
+    iaw.sourceTerm switch; all off leaves the IAW undriven."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    cfg = _fd_cfg("local")
+    rng = np.random.default_rng(3)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    phi_k = jnp.asarray(rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny)))
+    E0 = jnp.asarray(rng.normal(size=(nx, ny, 2)) + 1j * rng.normal(size=(nx, ny, 2)))
+    E1 = jnp.asarray(rng.normal(size=(nx, ny, 2)) + 1j * rng.normal(size=(nx, ny, 2)))
+    cfg["terms"]["iaw"]["drive"] = {"epw": False, "pump": True, "raman": False}
+    iaw = IonAcousticWave(cfg)
+    expected = iaw.ponderomotive_prefactor * jnp.sum(jnp.abs(E0) ** 2, axis=-1) / iaw.w0**2 * iaw.source_mask_sq
+    # round-off only (operation order); a leaked EPW or Raman term would differ at O(1)
+    np.testing.assert_allclose(np.asarray(iaw.ponderomotive_drive(phi_k, E0, E1)), np.asarray(expected), rtol=1e-14)
+    cfg["terms"]["iaw"]["drive"] = {"epw": False, "pump": False, "raman": False}
+    np.testing.assert_array_equal(np.asarray(IonAcousticWave(cfg).ponderomotive_drive(phi_k, E0, E1)), 0.0)
+
+
+def _translate(tmp_path, extra):
+    from adept._lpse2d.lpse_deck import parse_parms, translate_parms
+
+    deck = tmp_path / "lpse.parms"
+    deck.write_text(
+        "grid.sizes = 20 10;\ngrid.nodes = 200 100;\nsimulation.time.end = 1;\nlw.enable = true;\n"
+        "laser.enable = true;\nlaser.nBeams = 1;\nlaser.1.intensity = 1e15;\niaw.enable = true;\n" + extra
+    )
+    return translate_parms(parse_parms(deck), run="x")
+
+
+def test_translator_maps_the_coupling_switches_with_lpse_defaults(tmp_path):
+    cfg, report = _translate(tmp_path, "")
+    assert cfg["terms"]["iaw"]["perturbs"] == {"epw": False, "pump": False, "raman": False}
+    assert cfg["terms"]["iaw"]["drive"] == {"epw": False, "pump": False, "raman": False}
+    assert any("driven by noise only" in n for n in report["notes"])
+    cfg, _ = _translate(
+        tmp_path,
+        "laser.solver = spectral;\nlw.ionAcousticPerturbations.enable = true;\n"
+        "iaw.sourceTerm.lw.enable = true;\niaw.sourceTerm.laser.enable = true;\n",
+    )
+    assert cfg["terms"]["iaw"]["perturbs"] == {"epw": True, "pump": False, "raman": False}
+    assert cfg["terms"]["iaw"]["drive"] == {"epw": True, "pump": True, "raman": False}
+    with pytest.raises(ValueError, match="static laser"):
+        _translate(tmp_path, "laser.ionAcousticPerturbations.enable = true;\n")

@@ -306,23 +306,43 @@ def translate_parms(
         report["notes"].append("densityProfile.shape = file: density.file must point at the LPSE grid file")
 
     # ---- EPW terms
-    labc_x = float(g("lw.Labc.min.x", g("lw.Labc", "0")))
-    labc_y = float(g("lw.Labc.min.y", g("lw.Labc", "0")))
-    # the light fields' absorbing layers (adept derives them from the EPW boundary): a
-    # light-only deck (lw.enable = false) has only laser.evolution.Labc, and an evolved pump
-    # needs an absorbing x boundary to exit the box
-    if laser_evolves:
-        labc_x = max(labc_x, float(g("laser.evolution.Labc.min.x", g("laser.evolution.Labc", "0"))))
-        labc_y = max(labc_y, float(g("laser.evolution.Labc.min.y", g("laser.evolution.Labc", "0"))))
+    # ---- absorbing layers, one per field (LPSE lw.Labc, {laser|raman}.evolution.Labc, iaw.Labc --
+    # ParameterManager.cpp:799-813 / 922-936, LightSolver.cpp:1296-1330; each defaults to 0, no
+    # layer): adept keeps one width per field (the x-min one) and reports per-side / x-y differences
+    def labc(prefix, axis):
+        base = g(f"{prefix}Labc", "0")
+        lo, hi = float(g(f"{prefix}Labc.min.{axis}", base)), float(g(f"{prefix}Labc.max.{axis}", base))
+        if lo != hi:
+            report["unsupported"].append(
+                f"{prefix}Labc.min.{axis} = {lo} != max.{axis} = {hi}: adept uses one width per field (min)"
+            )
+        return lo
+
+    layers = {
+        "lw": ("lw.", True),
+        "laser": ("laser.evolution.", laser_evolves),
+        "raman": ("raman.evolution.", raman_on),
+        "iaw": ("iaw.", _bool(g("iaw.enable"))),
+    }
+    widths = {k: (labc(prefix, "x"), labc(prefix, "y") if ny > 1 else 0.0) for k, (prefix, _) in layers.items()}
+    active_layers = [k for k, (_, on) in layers.items() if on]
+    labc_x = max((widths[k][0] for k in active_layers), default=0.0)
+    labc_y = max((widths[k][1] for k in active_layers), default=0.0)
+    deepest_layer = labc_x
     boundary = {"x": "absorbing" if labc_x > 0 else "periodic", "y": "absorbing" if labc_y > 0 else "periodic"}
     if ny == 1:
         # a 1-D deck: LPSE's scalar Labc names no y layer; adept's one-cell y axis would sit
         # entirely inside one (test_030: the whole box damped at 0.78 per light sub-step)
         boundary["y"] = "periodic"
-        labc_y = 0.0
-    boundary_width = max(labc_x, labc_y, dx)
-    if labc_x > 0 and labc_y > 0 and labc_x != labc_y:
-        report["notes"].append("different x/y absorber widths: adept uses one boundary_width (the larger)")
+    for k in active_layers:
+        wx, wy = widths[k]
+        if boundary["y"] == "absorbing" and wy != wx:
+            report["unsupported"].append(f"{layers[k][0]}Labc x {wx} / y {wy} um: adept uses one width per field (x)")
+    boundary_width = widths["lw"][0]
+    lam = float(g("lw.abc.lambda", "7"))
+    for prefix in ("laser.evolution.", "raman.evolution.", "iaw."):
+        if float(g(f"{prefix}abc.lambda", "7")) != lam:
+            report["unsupported"].append(f"{prefix}abc.lambda != lw.abc.lambda: adept uses one layer steepness")
     landau_on = _bool(g("lw.landauDamping.enable"), True)
     relativity = _bool(g("physical.isRelativistic", g("isRelativistic")), True)
     if _bool(g("lw.collisionalDampingRate.isCalculated")):
@@ -433,6 +453,10 @@ def translate_parms(
     ):
         rate = float(g(key, "0"))
         light[target] = True if rate < 0 else (rate if rate > 0 else False)
+    light["boundary_width"] = f"{widths['laser'][0]}um"
+    light["raman_boundary_width"] = f"{widths['raman'][0]}um"
+    light["boundary_max_rate"] = float(g("laser.evolution.abc.maxDampingRate", "5000"))
+    light["raman_boundary_max_rate"] = float(g("raman.evolution.abc.maxDampingRate", "5000"))
     if "raman.spectral.maxWavenumber" in parms:
         light["max_wavenumber"] = float(parms["raman.spectral.maxWavenumber"])
     abc_type = str(g("laser.evolution.abc.type", g("raman.evolution.abc.type", "exp"))).lower()
@@ -576,9 +600,27 @@ def translate_parms(
             },
         }
     }
+
+    def injector_cells(prefix, side):
+        """LPSE's injector plane, ``int(Labc / h) + int(Loff / h)`` nodes in from the face
+        (SchrodingerSolver3::setAbcParameters / completeBoundaryConditions)."""
+        width = float(g(f"{prefix}Labc.{side}.x", g(f"{prefix}Labc", "0")))
+        loff = float(g(f"{prefix}Loff.{side}.x", g(f"{prefix}Loff", "0")))
+        for name, v in (("Labc", width), ("Loff", loff)):
+            if v > 0 and abs(v / dx - round(v / dx)) < 1e-4:
+                report["notes"].append(
+                    f"{prefix}{name} / h = {v / dx:.6f}: LPSE's single-precision index may differ by one"
+                )
+        return int(width / dx) + int(loff / dx)
+
+    # adept's drivers.E*.offset names the plane's last scattered-field row: the row before LPSE's
+    # first injected node from x-min, the first injected node itself from x-max (cell-centred x)
+    leftward_only = bool(beams) and all(abs(float(b["angle"])) > 90.0 for b in beams)
+    n_pump = injector_cells("laser.evolution.", "max" if leftward_only else "min") if laser_evolves else 0
     if laser_evolves:
-        labc_light = float(g("laser.evolution.Labc.min.x", g("laser.evolution.Labc", str(labc_x))))
-        drivers["E0"]["offset"] = f"{2.0 * max(labc_light, dx)}um"
+        drivers["E0"]["offset"] = f"{(n_pump + 0.5 if leftward_only else n_pump - 0.5) * dx}um"
+        if not leftward_only and any(abs(float(b["angle"])) > 90.0 for b in beams):
+            report["notes"].append("beams from both x faces: adept places the x-max plane one cell off LPSE's")
         # LPSE laser.evolution.riseTime (fs, default 30): the 1 - exp(-(t/rise)^2) ramp on every
         # pump source (SchrodingerSolver3::addInjectorSources)
         drivers["E0"]["turn_on_time"] = f"{float(g('laser.evolution.riseTime', '30'))}fs"
@@ -614,12 +656,7 @@ def translate_parms(
             # from the face (SchrodingerSolver3::completeBoundaryConditions); the file's first plane
             # sits on it. adept's drivers.E0.offset names the plane's last scattered-field row
             # (rightward: the row before the first injected row; leftward: the first injected row).
-            labc_light = float(g(f"laser.evolution.Labc.{side}.x", g("laser.evolution.Labc", str(labc_x))))
-            n_abc = int(labc_light / dx)
-            if abs(labc_light / dx - round(labc_light / dx)) < 1e-4:
-                report["notes"].append(
-                    f"laser.evolution.Labc / h = {labc_light / dx:.6f}: LPSE's single-precision index may differ by one"
-                )
+            n_abc = injector_cells("laser.evolution.", side)
             offset_cells = n_abc - 0.5 if side == "min" else n_abc + 0.5
             drivers["E0"]["offset"] = f"{offset_cells * dx}um"
             drivers["E0"]["injector_file"] = {"side": f"{side}.x", "files": files}
@@ -635,10 +672,22 @@ def translate_parms(
             w0 = 2.0 * np.pi * C_CGS / (wavelength_um * 1e-4)
             intensity = (peak * ME_CGS * w0 * C_CGS / QE_CGS) ** 2 * C_CGS / (8.0 * np.pi) * 1e-7
             drivers["E0"].pop("beams", None)
+    if raman_on and epw_solver != "combined" and not _bool(g("raman.sourceTerm.lw.enable"), True):
+        report["unsupported"].append(
+            "raman.sourceTerm.lw.enable = false: adept's Raman light is always driven by the EPW"
+        )
+    n_seed = 0
     if raman_on and int(float(g("raman.nBeams", "0"))) > 0:
+        # the seed from x-max at LPSE's plane, with raman.evolution.riseTime (default 30 fs,
+        # LightSolver.cpp:1288) as its turn-on
+        if str(g("raman.1.evolution.source", "max.x")).lower() != "max.x":
+            report["unsupported"].append("raman.1.evolution.source != max.x: adept's seed enters from x-max")
+        n_seed = injector_cells("raman.evolution.", "max")
         drivers["E1"] = {
             "intensity": f"{float(g('raman.1.intensity', '0'))}W/cm^2",
             "polarization": float(g("raman.1.polarization", "0")),
+            "offset": f"{(n_seed + 0.5) * dx}um",
+            "turn_on_time": f"{float(g('raman.evolution.riseTime', '30'))}fs",
         }
 
     # ---- IAW
@@ -655,6 +704,9 @@ def translate_parms(
             },
             "max_density_perturbation": float(g("iaw.amplitudeClamp", "0.9")),
             "noise": _bool(g("iaw.noise.enable")),
+            # LPSE iaw.Labc (default 0: no IAW layer) at iaw.abc.maxDampingRate (default 100)
+            "boundary_width": f"{widths['iaw'][0]}um",
+            "boundary_max_rate": float(g("iaw.abc.maxDampingRate", "100")),
         }
         if iaw_solver == "fd":
             # iaw.fd.* (IawSolver::readParameters; plan 2 I.1)
@@ -714,6 +766,21 @@ def translate_parms(
             report["notes"].append(
                 "thermalFil: LPSE's source form with adept's own normalization (heat + momentum equations)"
             )
+        # which waves see the IAW density and which drive it (LPSE defaults all six off:
+        # {lw|laser|raman}.ionAcousticPerturbations.enable, ParameterManager.cpp:333 / 370 / 734;
+        # iaw.sourceTerm.{lw|laser|raman}.enable, IawSolver.cpp:203-209)
+        pairs = (("epw", "lw"), ("pump", "laser"), ("raman", "raman"))
+        perturbs = {w: _bool(g(f"{p}.ionAcousticPerturbations.enable")) for w, p in pairs}
+        drive = {w: _bool(g(f"iaw.sourceTerm.{p}.enable")) for w, p in pairs}
+        if epw_solver == "combined" and perturbs["epw"] != perturbs["raman"]:
+            raise ValueError("lw/raman.ionAcousticPerturbations.enable differ with lw.solver = combined (LPSE refuses)")
+        if epw_solver == "combined" and drive["epw"] != drive["raman"]:
+            raise ValueError("iaw.sourceTerm.lw/raman.enable differ with lw.solver = combined (LPSE refuses)")
+        if perturbs["pump"] and not laser_evolves and _bool(g("laser.enable")):
+            raise ValueError("laser.ionAcousticPerturbations.enable with a static laser (LPSE refuses)")
+        if not any(drive.values()) and not any(v for k, v in tf.items() if k in ("laser", "raman", "lw")):
+            report["notes"].append("iaw: no iaw.sourceTerm.* enabled -- LPSE's IAW is driven by noise only")
+        iaw["perturbs"], iaw["drive"] = perturbs, drive
         if "fluid.velocity" in parms:
             vel = _floats(parms["fluid.velocity"])
             iaw["flow"] = [vel[0], vel[1] if len(vel) > 1 else 0.0]
@@ -849,7 +916,10 @@ def translate_parms(
             "boundary_abs_coeff": 200.0,
             "boundary_width": f"{boundary_width}um",
             "boundary_profile": "exp",
-            "boundary_max_rate": 200.0,
+            "boundary_max_rate": float(g("lw.abc.maxDampingRate", "200")),
+            "boundary_lambda": lam,
+            # the flux probes 4 cells inside the deepest injector plane and every active layer
+            "probe_offset": f"{max(max(n_pump, n_seed) * dx, deepest_layer) + 4 * dx}um",
             "low_pass_filter": 1.0 - aa_range,
             "dealias": "rectangular",
             "dt": f"{dt}ps",

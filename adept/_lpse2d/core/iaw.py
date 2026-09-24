@@ -56,15 +56,24 @@ IAW_SOLVERS = ("explicit", "spectral", "fd")
 ION_LANDAU_FORMS = ("simplified", "full")
 
 
-def iaw_feedback_factor(cfg: dict):
+IAW_WAVES = ("epw", "pump", "raman")
+
+
+def iaw_feedback_factor(cfg: dict, wave: str = "epw"):
     """The factor that turns ``iaw_density`` (the local fraction ``delta n / n_b``) into the
-    perturbation the waves see in units of the envelope density: ``n_b / n_env`` (LPSE,
-    ``terms.iaw.feedback: local``, the default) or 1 (the MATLAB prototype's
-    ``n_b / n_env + Nelf``, ``feedback: envelope``). Shape ``(nx, ny)`` or a scalar."""
+    perturbation ``wave`` (``epw``, ``pump`` or ``raman``) sees in units of the envelope density:
+    ``n_b / n_env`` (LPSE, ``terms.iaw.feedback: local``, the default) or 1 (the MATLAB prototype's
+    ``n_b / n_env + Nelf``, ``feedback: envelope``); 0 when ``terms.iaw.perturbs.<wave>`` is off
+    (LPSE ``{lw|laser|raman}.ionAcousticPerturbations.enable``: that wave's scattering potential and
+    absorption then ignore the IAW density). Shape ``(nx, ny)`` or a scalar."""
     iaw = cfg["terms"].get("iaw") or {}
     mode = str(iaw.get("feedback", "local"))
     if mode not in ("local", "envelope"):
         raise ValueError(f"terms.iaw.feedback must be local or envelope, got {mode!r}")
+    if wave not in IAW_WAVES:
+        raise ValueError(f"iaw_feedback_factor: wave must be one of {IAW_WAVES}, got {wave!r}")
+    if iaw.get("active", False) and not bool((iaw.get("perturbs") or {}).get(wave, True)):
+        return 0.0
     if not iaw.get("active", False) or mode == "envelope":
         return 1.0
     return jnp.asarray(np.asarray(cfg["grid"]["background_density"]) / float(cfg["units"]["envelope density"]))
@@ -169,6 +178,18 @@ class IonAcousticWave:
             cfg["units"]["ionization state"] * derived["e"] ** 2 / (4.0 * derived["me"] * derived["mi"])
         )
         self._init_thermal_filamentation(cfg)
+        # the ponderomotive drive's channels (LPSE iaw.sourceTerm.{lw|laser|raman}.enable) and the
+        # waves the IAW density feeds back into ({lw|laser|raman}.ionAcousticPerturbations.enable)
+        drive_cfg = iaw.get("drive") or {}
+        self.drive_on = {w: bool(drive_cfg.get(w, True)) for w in IAW_WAVES}
+        perturbs_cfg = iaw.get("perturbs") or {}
+        if cfg["terms"]["epw"].get("solver", "separate") == "combined":
+            # LPSE: the combined field is both the EPW and the Raman light (LightSolver.cpp:1158,
+            # IawSolver.cpp:211-216)
+            if bool(perturbs_cfg.get("epw", True)) != bool(perturbs_cfg.get("raman", True)):
+                raise ValueError("terms.iaw.perturbs: epw and raman must agree with the combined solver (LPSE)")
+            if self.drive_on["epw"] != self.drive_on["raman"]:
+                raise ValueError("terms.iaw.drive: epw and raman must agree with the combined solver (LPSE)")
 
         damping = iaw["damping"]
         k_sq_np = np.asarray(self.k_sq)
@@ -350,14 +371,16 @@ class IonAcousticWave:
         """The EPW/pump/Raman part of the ponderomotive potential (no acoustic term), times the
         square of the IAW source window (LPSE ``getPonderomotivePotential`` applies
         ``restrictRange`` squared; ``terms.iaw.source_window``, plan 2 I.3)."""
-        ex, ey = self.epw_fields(phi_k)
-        epw_intensity = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
-        pump_intensity = jnp.sum(jnp.abs(E0) ** 2, axis=-1)
-        raman_intensity = jnp.sum(jnp.abs(E1) ** 2, axis=-1)
-        drive = self.ponderomotive_prefactor * (
-            epw_intensity / self.wp0**2 + pump_intensity / self.w0**2 + raman_intensity / self.w1**2
-        )
-        return drive * self.source_mask_sq
+        # LPSE iaw.sourceTerm.{lw|laser|raman}.enable gate each term (getPonderomotivePotential)
+        drive = 0.0
+        if self.drive_on["epw"]:
+            ex, ey = self.epw_fields(phi_k)
+            drive = drive + (jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2) / self.wp0**2
+        if self.drive_on["pump"]:
+            drive = drive + jnp.sum(jnp.abs(E0) ** 2, axis=-1) / self.w0**2
+        if self.drive_on["raman"]:
+            drive = drive + jnp.sum(jnp.abs(E1) ** 2, axis=-1) / self.w1**2
+        return jnp.zeros((self.nx, self.ny)) + self.ponderomotive_prefactor * drive * self.source_mask_sq
 
     def ponderomotive_potential(self, phi_k: Array, E0: Array, E1: Array, density: Array) -> Array:
         """Build the acoustic plus EPW/pump/Raman ponderomotive potential."""

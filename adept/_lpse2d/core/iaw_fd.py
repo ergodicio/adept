@@ -234,9 +234,11 @@ class FDIonAcoustic:
         self.boundary = jnp.asarray(self._refine_profile(boundary[..., None])[..., 0])
         edge = np.ones((self.fnx, self.fny))
         epw_boundary = cfg["terms"]["epw"]["boundary"]
-        if str(opts.get("boundary", epw_boundary).get("x", "periodic")) != "periodic":
+        # LPSE zeroOutEdgeCells: only along an axis with an IAW layer (iaw.Labc > 0)
+        has_layer = float(grid.get("iaw_boundary_width_um", 1.0)) > 0.0
+        if has_layer and str(opts.get("boundary", epw_boundary).get("x", "periodic")) != "periodic":
             edge[0, :] = edge[-1, :] = 0.0
-        if self.is_2d and str(opts.get("boundary", epw_boundary).get("y", "periodic")) != "periodic":
+        if has_layer and self.is_2d and str(opts.get("boundary", epw_boundary).get("y", "periodic")) != "periodic":
             edge[:, 0] = edge[:, -1] = 0.0
         self.edge = jnp.asarray(edge)
         fkx = 2.0 * np.pi * np.fft.fftfreq(self.fnx, d=self.h)

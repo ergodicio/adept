@@ -438,7 +438,7 @@ class SpectralEPWSolver:
         # detuning's units (LPSE Nelf * n_b; 1 for terms.iaw.feedback: envelope)
         from adept._lpse2d.core.iaw import iaw_feedback_factor
 
-        self.iaw_feedback = iaw_feedback_factor(cfg)
+        self.iaw_feedback = iaw_feedback_factor(cfg, "epw")
 
         # Landau damping flag (previously ignored -- damping was unconditionally on)
         self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))

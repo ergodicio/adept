@@ -398,6 +398,12 @@ class LightModel(BaseModel):
     # profile (LPSE {laser|raman}.evolution.abc.maxDampingRate, default 5e3); None = 5e3 for the
     # exp profile and the EPW absorber (boundary_abs_coeff) for the tanh profile
     boundary_max_rate: float | None = None
+    # the pump's layer width (LPSE laser.evolution.Labc) and the Raman light's (raman.evolution.Labc,
+    # with raman_boundary_max_rate), exp profile; None = grid.boundary_width / the pump's values.
+    # The combined solver's field gets the EPW layer inside the Raman light's (LPSE double exponential)
+    boundary_width: str | None = None
+    raman_boundary_width: str | None = None
+    raman_boundary_max_rate: float | None = None
     # diagnostic: keep only kx >= 0 in the PUMP spectrum once per EPW step. The pump
     # operator is even in kx, so -k0 is a degenerate freely-propagating mode that the
     # real-space SRS source drives resonantly; this removes it. E1 is untouched.
@@ -469,6 +475,7 @@ class IAWModel(BaseModel):
     solver: Literal["explicit", "spectral", "fd"] = "explicit"
     boundary: BoundaryModel | None = None  # defaults to terms.epw.boundary
     boundary_max_rate: float | None = None  # exp absorber peak rate (1/ps); default half the EPW one
+    boundary_width: str | None = None  # exp absorber width (LPSE iaw.Labc); None = grid.boundary_width, 0 = none
     damping: IAWDampingModel = IAWDampingModel()
     max_density_perturbation: float | None = None
     # [Mach_x, Mach_y] uniform (spectral, fd) or a profile mapping for the fd solver (LPSE
@@ -485,6 +492,11 @@ class IAWModel(BaseModel):
     # n_b (1 + iaw_density), iaw_density being the local fraction) or envelope (the MATLAB
     # prototype: iaw_density added to n_b / n_env, exact only where n_b = n_env)
     feedback: Literal["local", "envelope"] = "local"
+    # which waves see the IAW density (LPSE {lw|laser|raman}.ionAcousticPerturbations.enable) and
+    # which drive it (iaw.sourceTerm.{lw|laser|raman}.enable); all on here, all off by default in
+    # LPSE -- the deck translator writes the deck's values
+    perturbs: dict[str, bool] = {"epw": True, "pump": True, "raman": True}
+    drive: dict[str, bool] = {"epw": True, "pump": True, "raman": True}
     # LPSE iaw.restrictSourceRange (squared on the ponderomotive drive) and
     # iaw.startEvolvingTime / stopEvolvingTime (ps): the IAW step acts only in [t_start, t_stop)
     source_window: SourceWindowModel | None = None

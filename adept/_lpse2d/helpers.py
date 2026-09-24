@@ -715,7 +715,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             min_offset = 1.6 * boundary_width
             if "offset" in cfg["drivers"][k]:
                 offset = _Q(cfg["drivers"][k]["offset"]).to("um").value
-                if offset < min_offset:
+                if offset < min_offset and str(cfg["grid"].get("boundary_profile", "tanh")) == "tanh":
                     print(
                         f"WARNING: drivers.E1.offset = {offset}um is inside the absorbing-boundary skirt "
                         f"(< 1.6 * boundary_width = {min_offset}um); the seed will be damped at the source"
@@ -876,6 +876,70 @@ def _pump_k_support(cfg: dict) -> tuple[float, float]:
     return float(kx_support), float(ky)
 
 
+def _lpse_round(v: float) -> int:
+    """C ``round``: half away from zero (the values here are non-negative)."""
+    return int(np.floor(v + 0.5))
+
+
+def lpse_exp_rate(n: int, d: float, width_min: float, width_max: float, max_rate: float, lam: float) -> np.ndarray:
+    """LPSE ``setupAbsorbingBoundaries`` (absorbingBoundaries.cpp, ``exp``) along one axis of ``n``
+    nodes spaced ``d``: from the start index ``round(L / d)`` (``n - 1 - round(L / d)``) out to the
+    edge node, ``rate = max_rate (e^{lambda s / L} - 1) / (e^lambda - 1)`` with ``s = |start - i| d``;
+    a zero width leaves that side without a layer."""
+    rate = np.zeros(n)
+    if max_rate <= 0.0:
+        return rate
+    coeff = max_rate / np.expm1(lam)
+    i = np.arange(n)
+    for side, width in ((0, width_min), (1, width_max)):
+        if width <= 0.0:
+            continue
+        start = _lpse_round(width / d) if side == 0 else n - 1 - _lpse_round(width / d)
+        inside = i <= start if side == 0 else i >= start
+        rate = np.where(inside, coeff * np.expm1(lam * np.abs(start - i) * d / width), rate)
+    return rate
+
+
+def lpse_double_exp_rate(
+    n: int,
+    d: float,
+    strong: tuple[float, float],
+    weak: tuple[float, float],
+    max1: float,
+    lam1: float,
+    max2: float,
+    lam2: float,
+) -> np.ndarray:
+    """LPSE ``setupAbsorbingBoundaries_doubleExponential`` (absorbingBoundaries.cpp) along one axis:
+    the combined solver's field sees the EPW layer (``weak``, rate ``max2``) inside and the Raman
+    light's layer (``strong``, rate ``max1``) outside it, joined where the strong profile reaches
+    ``max2``; ``strong`` / ``weak`` are the (min, max) side widths."""
+    if max1 < max2:
+        raise ValueError("the combined field's outer (light) absorber must be stronger than the EPW one (LPSE)")
+    coeff1 = max1 / np.expm1(lam1)
+    coeff2 = max2 / np.expm1(lam2)
+    i = np.arange(n)
+    rate = np.zeros(n)
+    d_eq = [strong[s] / lam1 * np.log(max2 / coeff1 + 1.0) if strong[s] > 0.0 else 0.0 for s in (0, 1)]
+    total = [strong[s] + weak[s] - d_eq[s] for s in (0, 1)]
+    start = [_lpse_round(total[0] / d), n - 1 - _lpse_round(total[1] / d)]
+    transition = [_lpse_round((total[0] - weak[0]) / d), n - 1 - _lpse_round((total[1] - weak[1]) / d)]
+    if strong[0] == 0.0:
+        transition = [-1, n + 1]
+    outer = (i <= transition[0]) | (i >= transition[1])
+    for side in (0, 1):
+        if total[side] <= 0.0:
+            continue
+        inside = i <= start[side] if side == 0 else i >= start[side]
+        dist = np.abs(start[side] - i) * d
+        r_outer = (
+            coeff1 * np.expm1(lam1 * (dist - weak[side] + d_eq[side]) / strong[side]) if strong[side] > 0.0 else 0.0
+        )
+        r_inner = coeff2 * np.expm1(lam2 * dist / weak[side]) if weak[side] > 0.0 else 0.0
+        rate = np.where(inside, np.where(outer, r_outer, r_inner), rate)
+    return rate
+
+
 def get_solver_quantities(cfg: dict) -> dict:
     """
     This function just updates the config with the derived quantities that are arrays
@@ -937,13 +1001,34 @@ def get_solver_quantities(cfg: dict) -> dict:
     boundary_profile = str(cfg_grid.get("boundary_profile", "tanh"))
     if boundary_profile not in ("tanh", "exp"):
         raise ValueError(f"grid.boundary_profile must be 'tanh' or 'exp', got {boundary_profile!r}")
+    lam = float(cfg_grid.get("boundary_lambda", 7.0))
 
-    def absorbing_rate(boundary, max_rate=None):
+    def _width(value, default):
+        return default if value is None else float(_Q(value).to("um").value)
+
+    light_cfg = cfg["terms"].get("light", {}) or {}
+    # per-field layer widths (LPSE lw.Labc, laser / raman.evolution.Labc, iaw.Labc)
+    light_width = _width(light_cfg.get("boundary_width"), boundary_width)
+    raman_width = _width(light_cfg.get("raman_boundary_width"), light_width)
+    cfg_grid["light_boundary_width_um"] = light_width
+    cfg_grid["raman_boundary_width_um"] = raman_width
+
+    def axis_rates(boundary, rate_along):
+        """(nx, ny) rate: per absorbing axis, the two axes combined by max (applyAbsorbingBoundaries)."""
+        rate_x = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
+        rate_y = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
+        if boundary["x"] == "absorbing":
+            rate_x = rate_along(cfg_grid["nx"], cfg_grid["dx"])[:, None] * np.ones((1, cfg_grid["ny"]))
+        if boundary["y"] == "absorbing" and cfg_grid["ny"] > 1:
+            rate_y = rate_along(cfg_grid["ny"], cfg_grid["dy"])[None, :] * np.ones((cfg_grid["nx"], 1))
+        return np.maximum(rate_x, rate_y)
+
+    def absorbing_rate(boundary, max_rate=None, width=None):
         """Amplitude damping rate (1/ps) of the absorbing layers, shape (nx, ny).
 
-        ``tanh``: MATLAB's envelope, ``boundary_abs_coeff * (1 - tanh-envelope)``.
-        ``exp``: LPSE absorbingBoundaries.cpp, ``rate = max_rate (e^{lambda s/L} - 1)/(e^lambda - 1)``
-        with s the distance into the layer of width L, per axis, the two axes combined by max.
+        ``tanh``: MATLAB's envelope, ``boundary_abs_coeff * (1 - tanh-envelope)`` over
+        ``grid.boundary_width``.
+        ``exp``: LPSE absorbingBoundaries.cpp (``lpse_exp_rate``) over ``width``.
         """
         if boundary_profile == "tanh":
             if boundary["x"] == "absorbing":
@@ -962,52 +1047,60 @@ def get_solver_quantities(cfg: dict) -> dict:
 
             return float(cfg_grid["boundary_abs_coeff"]) * (1.0 - envelope_x * envelope_y)
 
-        lam = float(cfg_grid.get("boundary_lambda", 7.0))
         gamma_max = float(cfg_grid.get("boundary_max_rate", 200.0)) if max_rate is None else float(max_rate)
-        coeff = gamma_max / np.expm1(lam)
+        w = boundary_width if width is None else float(width)
+        return axis_rates(boundary, lambda n, d: lpse_exp_rate(n, d, w, w, gamma_max, lam))
 
-        def axis_rate(ax, lo, hi):
-            # LPSE measures the distance into the layer in whole cells from the edge cell
-            # (absorbingBoundaries.cpp), so the first/last cell carries the full rate and
-            # the layer spans boundary_width / dx cells
-            half = 0.5 * (ax[1] - ax[0]) if ax.size > 1 else 0.0
-            s = np.maximum(lo + boundary_width + half - ax, ax - (hi - boundary_width - half))
-            s = np.clip(s, 0.0, boundary_width)
-            return coeff * np.expm1(lam * s / boundary_width)
+    def absorbing_boundary(boundary, max_rate=None, width=None):
+        return np.exp(-absorbing_rate(boundary, max_rate, width) * cfg_grid["dt"])
 
-        rate_x = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
-        rate_y = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
-        if boundary["x"] == "absorbing":
-            rate_x = axis_rate(cfg_grid["x"], cfg_grid["xmin"], cfg_grid["xmax"])[:, None] * np.ones(
-                (1, cfg_grid["ny"])
-            )
-        if boundary["y"] == "absorbing":
-            rate_y = axis_rate(cfg_grid["y"], cfg_grid["ymin"], cfg_grid["ymax"])[None, :] * np.ones(
-                (cfg_grid["nx"], 1)
-            )
-        return np.maximum(rate_x, rate_y)
-
-    def absorbing_boundary(boundary, max_rate=None):
-        return np.exp(-absorbing_rate(boundary, max_rate) * cfg_grid["dt"])
-
-    cfg_grid["absorbing_rate"] = absorbing_rate(cfg["terms"]["epw"]["boundary"])
+    epw_boundary = cfg["terms"]["epw"]["boundary"]
+    cfg_grid["absorbing_rate"] = absorbing_rate(epw_boundary)
     cfg_grid["absorbing_boundaries"] = np.exp(-cfg_grid["absorbing_rate"] * cfg_grid["dt"])
     # the light fields get their own absorber strength (LPSE {laser|raman}.evolution.abc.maxDampingRate,
     # default 5e3/ps against 200/ps for the EPW): light crosses a 3 um layer in 0.01 ps, so at the
     # EPW rate the exp profile removes only ~25 % per crossing and the pump builds a coherent
     # standing wave between the walls (1.45x the launched amplitude on the LPSE test_010 deck).
     # The tanh profile keeps boundary_abs_coeff for both (no change for existing configs).
-    light_max_rate = cfg["terms"].get("light", {}).get("boundary_max_rate")
+    light_max_rate = light_cfg.get("boundary_max_rate")
     if light_max_rate is None and boundary_profile == "exp":
         light_max_rate = 5.0e3
-    cfg_grid["light_absorbing_boundaries"] = absorbing_boundary(cfg["terms"]["epw"]["boundary"], light_max_rate)
+    raman_max_rate = light_cfg.get("raman_boundary_max_rate")
+    raman_max_rate = light_max_rate if raman_max_rate is None else raman_max_rate
+    # the pump's layer (laser.evolution.Labc) and the Raman light's (raman.evolution.Labc)
+    cfg_grid["light_absorbing_boundaries"] = absorbing_boundary(epw_boundary, light_max_rate, light_width)
+    cfg_grid["raman_absorbing_boundaries"] = absorbing_boundary(epw_boundary, raman_max_rate, raman_width)
+    if boundary_profile == "exp" and cfg["terms"]["epw"].get("solver", "separate") == "combined":
+        # LPSE LightSolver::setup (combined): the Raman class's field sees the EPW layer inside the
+        # Raman light's layer, setupAbsorbingBoundaries_doubleExponential
+        epw_max = float(cfg_grid.get("boundary_max_rate", 200.0))
+        combined_rate = axis_rates(
+            epw_boundary,
+            lambda n, d: lpse_double_exp_rate(
+                n,
+                d,
+                (raman_width, raman_width),
+                (boundary_width, boundary_width),
+                float(raman_max_rate),
+                lam,
+                epw_max,
+                lam,
+            ),
+        )
+        cfg_grid["combined_absorbing_boundaries"] = np.exp(-combined_rate * cfg_grid["dt"])
     iaw = cfg["terms"].get("iaw", {})
     if iaw.get("active", False):
-        # LPSE's IAW absorber default is half the EPW one (IawSolver.cpp abc.maxDampingRate = 100)
+        # LPSE's IAW absorber: iaw.Labc (default 0 there -- the deck translator passes it) at
+        # iaw.abc.maxDampingRate, default 100 (IawSolver.cpp:228)
         iaw_max_rate = iaw.get("boundary_max_rate")
         if iaw_max_rate is None and boundary_profile == "exp":
             iaw_max_rate = 0.5 * float(cfg_grid.get("boundary_max_rate", 200.0))
-        cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"], iaw_max_rate)
+        iaw_width = _width(iaw.get("boundary_width"), boundary_width)
+        cfg_grid["iaw_boundary_width_um"] = iaw_width
+        if boundary_profile == "exp" and iaw_width <= 0.0:
+            cfg_grid["iaw_absorbing_boundaries"] = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+        else:
+            cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"], iaw_max_rate, iaw_width)
 
     cfg_grid["zero_mask"] = (
         np.where(np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) == 0, 0, 1)

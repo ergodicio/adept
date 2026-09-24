@@ -131,7 +131,8 @@ class CombinedSolver:
         # iaw_density (the local fraction delta n / n_b) in units of n_env: n_b / n_env (LPSE)
         from adept._lpse2d.core.iaw import iaw_feedback_factor
 
-        self.iaw_feedback = iaw_feedback_factor(cfg)
+        self.iaw_feedback = iaw_feedback_factor(cfg, "raman")  # the combined field is the Raman class
+        self.iaw_feedback0 = iaw_feedback_factor(cfg, "pump")
         self.delta_w = self.w0 - 2.0 * self.wp0
 
         # propagators over one sub-step
@@ -148,7 +149,9 @@ class CombinedSolver:
         self.prop_T = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.wp0) * self.k_sq) * self.band
         self.detune = jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * (self.n_over_env - 1.0))
         self.collisional = jnp.exp(-self.nu_raman * self.dt_l * self.n_over_env**2)
-        self.boundary = grid["absorbing_boundaries"] ** (1.0 / self.n_sub)
+        # the combined field: LPSE's double-exponential layer (the EPW layer inside the Raman
+        # light's, setupAbsorbingBoundaries_doubleExponential) with the exp profile
+        self.boundary = grid.get("combined_absorbing_boundaries", grid["absorbing_boundaries"]) ** (1.0 / self.n_sub)
         # the pump is LPSE's laser class: its own (5e3/ps) absorber, not the EPW one -- at the EPW
         # rate the injected pump reflects off both walls into a standing wave (see helpers)
         self.light_boundary = grid["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
@@ -300,7 +303,7 @@ class CombinedSolver:
             detune0 = self.detune0
             if iaw_density is not None:
                 detune0 = detune0 * jnp.exp(
-                    -1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.iaw_feedback * self.dt_l
+                    -1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.iaw_feedback0 * self.dt_l
                 )
 
         def substep(i, fields):

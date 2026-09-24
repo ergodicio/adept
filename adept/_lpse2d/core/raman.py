@@ -147,7 +147,13 @@ class RamanLight:
 
         # absorbing boundaries are applied every sub-step so that light (group velocity ~ c)
         # cannot cross the absorber between damping applications
-        self.sub_boundary = cfg["grid"]["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
+        # the Raman light's layer (LPSE raman.evolution.Labc / abc.maxDampingRate); the pump's own
+        # (laser.evolution.Labc) for an evolved pump (CoupledLight)
+        grid = cfg["grid"]
+        self.sub_boundary = grid.get("raman_absorbing_boundaries", grid["light_absorbing_boundaries"]) ** (
+            1.0 / self.n_sub
+        )
+        self.sub_boundary0 = grid["light_absorbing_boundaries"] ** (1.0 / self.n_sub)
         # terms.light.absorber: pml (LPSE {laser|raman}.evolution.abc.type = pml; plan 2 L.2)
         # replaces the multiplicative layer by a complex coordinate stretch of the Laplacian,
         # v = 1 / (1 + e^{i pi / pml_denominator} delta^4) with delta the depth into the layer
@@ -155,11 +161,17 @@ class RamanLight:
         self.pml = str(cfg["terms"].get("light", {}).get("absorber", "exp")) == "pml"
         if self.pml:
             self.sub_boundary = jnp.ones_like(self.sub_boundary)
+            light_w = float(cfg["grid"].get("light_boundary_width_um", np.nan))
+            raman_w = float(cfg["grid"].get("raman_boundary_width_um", np.nan))
+            if np.isfinite(light_w) and np.isfinite(raman_w) and abs(light_w - raman_w) > 1e-12:
+                raise NotImplementedError(
+                    "terms.light.absorber: pml with different pump and Raman layer widths (one PML profile)"
+                )
             denominator = float(cfg["terms"]["light"].get("pml_denominator", 5.0))
             s_abc = np.exp(1j * np.pi / denominator)
             from astropy.units import Quantity as _Q
 
-            width = _Q(cfg["grid"]["boundary_width"]).to("um").value
+            width = float(cfg["grid"].get("raman_boundary_width_um", _Q(cfg["grid"]["boundary_width"]).to("um").value))
             x = np.asarray(cfg["grid"]["x"], dtype=np.float64)
             y = np.asarray(cfg["grid"]["y"], dtype=np.float64)
             boundary = cfg["terms"]["epw"]["boundary"]
@@ -183,6 +195,7 @@ class RamanLight:
             if y.size > 1 and str(boundary.get("y", "periodic")) == "absorbing":
                 wall[:, 0] = wall[:, -1] = 0.0
             self.sub_boundary = jnp.asarray(wall)
+            self.sub_boundary0 = self.sub_boundary
 
         # collisional (inverse-bremsstrahlung) absorption, terms.light.absorption: the
         # amplitude decays at nu_abs (n/nc_w)^2 per wave, nc_w its own critical density
@@ -192,7 +205,8 @@ class RamanLight:
         # iaw_density (the local fraction delta n / n_b) in units of n_env: n_b / n_env (LPSE)
         from adept._lpse2d.core.iaw import iaw_feedback_factor
 
-        self.iaw_feedback = iaw_feedback_factor(cfg)
+        self.iaw_feedback = iaw_feedback_factor(cfg, "raman")
+        self.iaw_feedback0 = iaw_feedback_factor(cfg, "pump")
         self.n_over_nc0 = background_density  # n / nc (w0)
         self.n_over_nc1 = background_density * (self.w0 / self.w1) ** 2  # n / nc (w1)
         self.absorption_rate0, self.absorption_rate1 = light_absorption_rates(cfg)

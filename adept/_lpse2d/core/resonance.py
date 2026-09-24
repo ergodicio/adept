@@ -86,7 +86,8 @@ class ResonanceAbsorption:
         # masks (LPSE beachSource.halfBeachX / beachRA.fullBeachX): the absorbing layers are
         # boundary_width wide from each x wall; the warm term ramps up quadratically over
         # `edge_width` past the layer, the Landau increment follows an s-curve over the layer
-        boundary_width = _Q(grid["boundary_width"]).to("um").value
+        # the pump's layer (laser.evolution.Labc)
+        boundary_width = float(grid.get("light_boundary_width_um", _Q(grid["boundary_width"]).to("um").value))
         edge_width = _Q(ra["edge_width"]).to("um").value if ra.get("edge_width") is not None else 2.0 * dx
         edge_width = max(edge_width, dx)
         xmin, xmax = float(grid["xmin"]), float(grid["xmax"])

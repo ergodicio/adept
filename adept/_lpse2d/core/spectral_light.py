@@ -117,14 +117,16 @@ class SpectralRamanLight(RamanLight):
         carrier = jnp.exp(-1j * k1 * (self.x - self.x[self.i1]) - 1j * self.w1 * dw1 * t)
         return (amplitude * v_g * self.seed_profile * carrier)[:, None] * envelope_y[None, :]
 
-    def absorption_factor(self, rate, density_ratio, iaw_density):
-        """``exp(-nu dt_l (n/nc_w)^2)`` with the IAW perturbation included."""
+    def absorption_factor(self, rate, density_ratio, iaw_density, feedback=None):
+        """``exp(-nu dt_l (n/nc_w)^2)`` with the IAW perturbation included (``feedback``: the wave's
+        ``iaw_feedback_factor``, the Raman light's by default)."""
         if rate is None:
             return 1.0
+        feedback = self.iaw_feedback if feedback is None else feedback
         if iaw_density is None:
             n_over_nc = density_ratio
         else:
-            n_over_nc = density_ratio * (1.0 + iaw_density * self.iaw_feedback / self.n_over_env)
+            n_over_nc = density_ratio * (1.0 + iaw_density * feedback / self.n_over_env)
         return jnp.exp(-rate * self.dt_l * n_over_nc**2)[..., None]
 
     def __call__(self, t, E1, E0_fn, phi_k, seed_args, iaw_density=None):
@@ -307,10 +309,11 @@ class SpectralCoupledLight(CoupledLight):
         laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
         detune0, detune1 = self.detune0, self.detune1
         if iaw_density is not None:
-            dn = iaw_density * self.iaw_feedback  # in units of n_env (LPSE Nelf * n_b / No)
-            detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn * self.dt_l)
-            detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn * self.dt_l)
-        absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, iaw_density)
+            # in units of n_env (LPSE Nelf * n_b / No), per wave (ionAcousticPerturbations)
+            dn0, dn1 = iaw_density * self.iaw_feedback0, iaw_density * self.iaw_feedback
+            detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn0 * self.dt_l)
+            detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn1 * self.dt_l)
+        absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, iaw_density, self.iaw_feedback0)
         absorb1 = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
         exchange = self.srs_enabled
 
@@ -339,7 +342,7 @@ class SpectralCoupledLight(CoupledLight):
                     E1, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator1, self.light_band, keep_l
                 )
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
-            E0 = E0 * self.sub_boundary[..., None]
+            E0 = E0 * self.sub_boundary0[..., None]
             E1 = E1 * self.sub_boundary[..., None]
             return (E0, E1)
 
