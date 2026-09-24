@@ -123,6 +123,32 @@ target grid. It records absolute and charge-normalized errors, relative errors
 only above a documented reference-norm floor, source hashes, common-grid fields
 and field-energy quadrature. There is no trajectory integration in this audit.
 
+### Conditional uniform-grid control
+
+The planned `amr-uniform-control.json` keeps the direct task's settings from
+`amr-two-stream-movies.json`, changing only `amr_min_level` to 2 and the tracking
+phase. It retains all 8192 finest leaves (uniform 128x256) in the same AMR code
+path, with unchanged capacity and 10752 candidate panels. This tests sensitivity
+to the adaptive pipeline at the same maximum resolution, not convergence or
+regridding alone: coarse coverage, hanging interfaces and initial quadrature
+normalization also change. Compare native and exact polynomial C2 separately;
+the native regrid budget should vanish, but interpolation defects can remain.
+Launch only after preregistration and checking runtime plus artifact-collection
+margin in the existing allocation; match the original runtime/compiler environment:
+
+```bash
+python -m examples.farsight_comparison.scan \
+  --task-file examples/farsight_comparison/amr-uniform-control.json \
+  --output /absolute/new/amr-uniform-control
+```
+
+The candidate limit is 32768: raising the original hierarchy to level 3 would
+request 43520 and is rejected. Possible subsequent directional controls are
+uniform 128x512 or 256x256 with AMR `min_level=max_level=0`, capacity 16384 and
+base intervals equal to the uniform resolution. Each doubles source slots and
+roughly quadruples direct-field arithmetic; measure cost before launch. These
+are proposed controls, not results or automatic follow-up runs.
+
 ## Render and log movies
 
 Pull completed run directories locally or render where an existing ffmpeg is

@@ -1,0 +1,30 @@
+{
+  "defaults": {
+    "solver": "farsight",
+    "case": "two-stream",
+    "nx": 32,
+    "nv": 64,
+    "tmax": 40.0,
+    "dt": 0.05,
+    "frame_dt": 0.5,
+    "epsilon": 0.375,
+    "amr": true,
+    "amr_max_level": 2,
+    "amr_min_level": 2,
+    "amr_max_panels": 8192,
+    "amr_atol": 0.05,
+    "amr_rtol": 0.0,
+    "amr_max_gap_fraction": 0.01,
+    "quadrature": "trapezoid",
+    "remesh_every": 1,
+    "chunk_size": 1024,
+    "tree_degree": 8,
+    "tree_theta": 0.5,
+    "tree_leaf_size": 32,
+    "benchmark": false,
+    "phase": "uniform-control"
+  },
+  "tasks": [
+    {"field_solver": "direct"}
+  ]
+}
