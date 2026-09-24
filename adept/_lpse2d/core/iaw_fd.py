@@ -252,7 +252,9 @@ class FDIonAcoustic:
         k_max_x = float(np.max(np.abs(np.asarray(grid["kx"]))))
         k_max_y = float(np.max(np.abs(np.asarray(grid["ky"])))) if self.is_2d else np.inf
         band = (np.abs(fkx)[:, None] <= k_max_x) & (np.abs(fky)[None, :] <= k_max_y)
-        coarse_filter = np.asarray(grid["low_pass_filter_grid"] * grid["zero_mask"])
+        coarse_filter = np.asarray(
+            grid.get("iaw_low_pass_filter_grid", grid["low_pass_filter_grid"]) * grid["zero_mask"]
+        )
         coarse_k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
         k_cut = np.sqrt(np.max(np.where(coarse_filter > 0.0, coarse_k_sq, 0.0)))
         band = band & (np.sqrt(fk_sq) <= k_cut) & (fk_sq > 0.0)

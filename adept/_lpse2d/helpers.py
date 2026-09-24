@@ -1194,11 +1194,17 @@ def get_solver_quantities(cfg: dict) -> dict:
     elif dealias != "isotropic":
         raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic', 'shifted-band' or 'rectangular'.")
 
-    # LPSE lw.maxWavenumber: an additional hard cap on the retained EPW band, in units
-    # of the vacuum laser wavenumber k0 = w0/c
+    # LPSE lw.maxWavenumber / iaw.maxWavenumber: each wave's own hard cap on its retained band, in
+    # units of the vacuum laser wavenumber k0 = w0/c (ZakharovSolver / IawSolver maxNelfWavenumber);
+    # the IAW keeps the anti-aliased band without the EPW's cap
+    k0_vac = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"]
+    iaw_band = cfg_grid["low_pass_filter_grid"]
+    iaw_max_wavenumber = (cfg["terms"].get("iaw") or {}).get("max_wavenumber")
+    if iaw_max_wavenumber is not None:
+        iaw_band = iaw_band * np.where(k_mag < float(iaw_max_wavenumber) * k0_vac, 1.0, 0.0)
+    cfg_grid["iaw_low_pass_filter_grid"] = iaw_band
     max_wavenumber = cfg["terms"]["epw"].get("max_wavenumber")
     if max_wavenumber is not None:
-        k0_vac = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"]
         cfg_grid["low_pass_filter_grid"] = cfg_grid["low_pass_filter_grid"] * np.where(
             k_mag < float(max_wavenumber) * k0_vac, 1.0, 0.0
         )

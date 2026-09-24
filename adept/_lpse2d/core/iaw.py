@@ -167,7 +167,8 @@ class IonAcousticWave:
         self.kx = grid["kx"]
         self.ky = grid["ky"]
         self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
-        self.filter = grid["low_pass_filter_grid"] * grid["zero_mask"]
+        # the IAW's own band: the anti-aliased band and terms.iaw.max_wavenumber, not the EPW's cap
+        self.filter = grid.get("iaw_low_pass_filter_grid", grid["low_pass_filter_grid"]) * grid["zero_mask"]
         self.boundary = grid["iaw_absorbing_boundaries"]
 
         self.cs = derived["cs"]

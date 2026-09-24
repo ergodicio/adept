@@ -971,6 +971,8 @@ def translate_parms(
                 else "simplified",
             },
             "max_density_perturbation": float(g("iaw.amplitudeClamp", "0.9")),
+            # LPSE iaw.maxWavenumber (IawSolver.cpp:232-234; default none), separate from lw.maxWavenumber
+            "max_wavenumber": float(parms["iaw.maxWavenumber"]) if "iaw.maxWavenumber" in parms else None,
             "noise": _bool(g("iaw.noise.enable")),
             # LPSE iaw.Labc (default 0: no IAW layer) at iaw.abc.maxDampingRate (default 100)
             "boundary_width": f"{widths['iaw'][0]}um",

@@ -8,7 +8,17 @@ import yaml
 from jax import numpy as jnp
 
 
-def _make_cfg(*, solver="spectral", landau=0.0, collisions=0.0, dt="2fs", stride=1, flow=None, **iaw_extra):
+def _make_cfg(
+    *,
+    solver="spectral",
+    landau=0.0,
+    collisions=0.0,
+    dt="2fs",
+    stride=1,
+    flow=None,
+    epw_max_wavenumber=None,
+    **iaw_extra,
+):
     from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
 
     with open("tests/test_lpse2d/configs/epw.yaml") as fi:
@@ -31,6 +41,8 @@ def _make_cfg(*, solver="spectral", landau=0.0, collisions=0.0, dt="2fs", stride
     cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
     cfg["terms"]["epw"]["source"] = {"noise": False, "tpd": False, "srs": False}
     cfg["terms"]["epw"]["density_gradient"] = False
+    if epw_max_wavenumber is not None:
+        cfg["terms"]["epw"]["max_wavenumber"] = epw_max_wavenumber
     cfg["terms"]["iaw"] = {
         "active": True,
         "solver": solver,
@@ -229,3 +241,26 @@ def test_iaw_stride_advances_every_nth_epw_step():
     assert change > 1e-4  # cs k dt_iaw ~ 1: the mode has rotated appreciably
     with pytest.raises(ValueError, match="stride"):
         _make_cfg(solver="explicit", stride=2)
+
+
+def test_iaw_band_has_its_own_cap():
+    """Inventory A25: LPSE caps the IAW band with iaw.maxWavenumber (IawSolver.cpp:232-234,
+    maxNelfWavenumber), not lw.maxWavenumber: an EPW cap leaves the IAW band at the anti-aliased band,
+    an IAW cap removes exactly the modes with |k| >= max_wavenumber k0 (exact mask comparison)."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    base = _make_cfg()
+    k0 = base["units"]["derived"]["w0"] / base["units"]["derived"]["c"]
+    kx, ky = np.asarray(base["grid"]["kx"])[:, None], np.asarray(base["grid"]["ky"])[None, :]
+    k_mag = np.sqrt(kx**2 + ky**2)
+    band = np.asarray(IonAcousticWave(base).filter)
+    capped_epw = _make_cfg(epw_max_wavenumber=0.5)
+    assert np.any(
+        np.asarray(capped_epw["grid"]["low_pass_filter_grid"]) != np.asarray(base["grid"]["low_pass_filter_grid"])
+    )
+    np.testing.assert_array_equal(np.asarray(IonAcousticWave(capped_epw).filter), band)
+    capped_iaw = _make_cfg(max_wavenumber=0.5)
+    np.testing.assert_array_equal(np.asarray(IonAcousticWave(capped_iaw).filter), band * (k_mag < 0.5 * k0))
+    np.testing.assert_array_equal(
+        np.asarray(capped_iaw["grid"]["low_pass_filter_grid"]), np.asarray(base["grid"]["low_pass_filter_grid"])
+    )

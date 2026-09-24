@@ -487,6 +487,9 @@ class IAWModel(BaseModel):
     boundary_width: str | None = None  # exp absorber width (LPSE iaw.Labc); None = grid.boundary_width, 0 = none
     damping: IAWDampingModel = IAWDampingModel()
     max_density_perturbation: float | None = None
+    # LPSE iaw.maxWavenumber: hard cap |k| < max_wavenumber * k0 on the IAW band (independent of
+    # terms.epw.max_wavenumber)
+    max_wavenumber: float | None = None
     # [Mach_x, Mach_y] uniform (spectral, fd) or a profile mapping for the fd solver (LPSE
     # iaw.velocityProfile.*; iaw_fd.flow_profile): {shape: linear | gaussian | log | file,
     # from_location, to_location (um from the box centre), from_mach, to_mach, sg_order,
