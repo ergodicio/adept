@@ -237,7 +237,9 @@ def test_combined_configuration_is_validated_like_lpse():
         raw["terms"]["light"] = {"solver": "spectral"}
         raw["terms"]["epw"]["source"].update({"tpd": True, "srs": False})
         _finish(raw)
-    with pytest.raises(ValueError, match="spectral"):
+    # FD light with the combined solver is LPSE's FD combined path (core/fd_combined.py, A15), which
+    # evolves the pump; with a prescribed pump it is refused
+    with pytest.raises(ValueError, match="pump_depletion"):
         with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
             raw = yaml.safe_load(fi)
         raw["terms"]["epw"]["solver"] = "combined"
