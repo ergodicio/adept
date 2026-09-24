@@ -326,6 +326,70 @@ class IonEuler2D:
         first_stage = conserved + dt * self.rhs(conserved)
         return 0.5 * (conserved + first_stage + dt * self.rhs(first_stage))
 
+    def _passive_flux(self, conserved: Array, passive: Array, mass_flux: Array, axis: int) -> Array:
+        """Advect passive densities with the HLLC mass flux.
+
+        Reconstruct the specific quantities (passive / rho) with one limiter
+        per spatial cell, shared by every real/imaginary component. A common
+        limiter is essential: componentwise limiting would break constant
+        linear moments such as integral(f / rho d^3v), even when every cell
+        initially has the same electron-to-ion number ratio.
+        """
+
+        extra_axes = (None,) * (passive.ndim - 2)
+        rho = jnp.maximum(conserved[..., DENSITY], self.density_floor)
+        specific = passive / rho[(..., *extra_axes)]
+        values = jnp.moveaxis(specific, axis, 0)
+        if self.boundaries[axis] == "periodic":
+            before, after = jnp.roll(values, 1, axis=0), jnp.roll(values, -1, axis=0)
+        else:
+            before = jnp.concatenate((values[:1], values[:-1]), axis=0)
+            after = jnp.concatenate((values[1:], values[-1:]), axis=0)
+        centered = 0.5 * (after - before)
+
+        def limiter(part):
+            slope = part(centered)
+            limited = _minmod3(
+                self.limiter_theta * part(values - before), slope, self.limiter_theta * part(after - values)
+            )
+            return jnp.where(slope != 0.0, limited / jnp.where(slope != 0.0, slope, 1.0), 1.0)
+
+        factor = jnp.minimum(limiter(jnp.real), limiter(jnp.imag))
+        factor = jnp.min(factor, axis=tuple(range(2, passive.ndim)), keepdims=True)
+        slopes = factor * centered
+        lower, upper = values - 0.5 * slopes, values + 0.5 * slopes
+        left_edge = upper[-1:] if self.boundaries[axis] == "periodic" else values[:1]
+        right_edge = lower[:1] if self.boundaries[axis] == "periodic" else values[-1:]
+        left = jnp.moveaxis(jnp.concatenate((left_edge, upper), axis=0), 0, axis)
+        right = jnp.moveaxis(jnp.concatenate((lower, right_edge), axis=0), 0, axis)
+        flux = mass_flux[(..., *extra_axes)]
+        return flux * jnp.where(flux >= 0.0, left, right)
+
+    def rhs_with_passive(self, conserved: Array, passive: Array) -> tuple[Array, Array]:
+        """Return hydro and passive-density rates using the same face fluxes."""
+
+        if passive.ndim < 3 or passive.shape[:2] != conserved.shape[:2]:
+            raise ValueError("passive densities must have shape (nx, ny, ...)")
+        flux_x = self.fluxes(conserved, axis=0)
+        flux_y = self.fluxes(conserved, axis=1)
+        passive_x = self._passive_flux(conserved, passive, flux_x[..., DENSITY], axis=0)
+        passive_y = self._passive_flux(conserved, passive, flux_y[..., DENSITY], axis=1)
+        hydro_rate = -(flux_x[1:] - flux_x[:-1]) / self.dx - (flux_y[:, 1:] - flux_y[:, :-1]) / self.dy
+        passive_rate = -(passive_x[1:] - passive_x[:-1]) / self.dx
+        passive_rate -= (passive_y[:, 1:] - passive_y[:, :-1]) / self.dy
+        return hydro_rate, passive_rate
+
+    def step_with_passive(self, conserved: Array, passive: Array, dt: float | Array) -> tuple[Array, Array]:
+        """Advance ions and passive densities with the same SSPRK2 stages."""
+
+        hydro_rate, passive_rate = self.rhs_with_passive(conserved, passive)
+        first_ions, first_passive = conserved + dt * hydro_rate, passive + dt * passive_rate
+        hydro_rate, passive_rate = self.rhs_with_passive(first_ions, first_passive)
+        return (
+            0.5 * (conserved + first_ions + dt * hydro_rate),
+            0.5 * (passive + first_passive + dt * passive_rate),
+        )
+
     def cfl_timestep(self, conserved: Array, cfl: float = 0.4) -> Array:
         """Return the unsplit acoustic/advection CFL timestep."""
 

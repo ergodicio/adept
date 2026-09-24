@@ -33,6 +33,11 @@ class CoupledIonKineticStep:
     thermal and momentum exchange together with electron-pressure feedback and
     magnetic force/work. Magnetic half-kicks use the old and advanced fields,
     bracketing induction with the same midpoint ion velocity.
+
+    Each hydro half-step also transports the electron coefficients using the
+    ion mass flux and the same SSPRK2 stages. The intervening kinetic step
+    retains relative streaming and frame deformation/acceleration, with its
+    spectral bulk advection disabled to avoid transporting electrons twice.
     """
 
     def __init__(
@@ -71,8 +76,11 @@ class CoupledIonKineticStep:
         self.frame_remap = VelocityFrameRemap(electron_step.ion_frame, electron_mass=electron_mass)
         self.evolve_ions = bool(evolve_ions)
 
-    def _hydro_half_step(self, ions: Array) -> Array:
-        return self.hydro.step(ions, 0.5 * self.dt) if self.evolve_ions else ions
+    def _hydro_half_step(self, flm: Array, ions: Array) -> tuple[Array, Array]:
+        if not self.evolve_ions:
+            return flm, ions
+        ions, flm = self.hydro.step_with_passive(ions, flm, 0.5 * self.dt)
+        return flm, ions
 
     def ion_kinematics(self, ions: Array) -> dict[str, Array]:
         """Return midpoint velocity, gradient, and material acceleration."""
@@ -186,7 +194,7 @@ class CoupledIonKineticStep:
         if "ions" not in state:
             raise ValueError("coupled state must contain the ion conserved array under 'ions'")
         flm = real_to_complex(state["flm"]) if self.electron_step.real_storage else state["flm"]
-        midpoint_ions = self._hydro_half_step(state["ions"])
+        flm, midpoint_ions = self._hydro_half_step(flm, state["ions"])
         flm, midpoint_ions = self._exchange(t + 0.25 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt, state["b"])
         electron_args = self.electron_args(midpoint_ions, args)
         electron_state = {
@@ -196,7 +204,7 @@ class CoupledIonKineticStep:
         }
         if "current_projection_energy" in state:
             electron_state["current_projection_energy"] = state["current_projection_energy"]
-        advanced_electrons = self.electron_step(t, electron_state, electron_args)
+        advanced_electrons = self.electron_step(t, electron_state, electron_args, bulk_transport=not self.evolve_ions)
 
         flm = (
             real_to_complex(advanced_electrons["flm"]) if self.electron_step.real_storage else advanced_electrons["flm"]
@@ -204,7 +212,7 @@ class CoupledIonKineticStep:
         flm, midpoint_ions = self._exchange(
             t + 0.75 * self.dt, flm, midpoint_ions, args, 0.5 * self.dt, advanced_electrons["b"]
         )
-        final_ions = self._hydro_half_step(midpoint_ions)
+        flm, final_ions = self._hydro_half_step(flm, midpoint_ions)
         final_args = self.electron_args(final_ions, args)
         # The source kick translates the peculiar current when the ion frame
         # accelerates. Enforce Ampere at the *returned* time as well, recording

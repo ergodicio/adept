@@ -66,10 +66,18 @@ class HarmonicLayout:
 
 
 def _spectral_derivative(a: Array, k: Array, axis: int) -> Array:
-    """Periodic spectral derivative, preserving complex-valued harmonics."""
+    """Differentiate each real harmonic component with the same real operator.
+
+    Real and imaginary coefficients encode separate real angular components.
+    On an even grid the unresolved Nyquist derivative is zero for each; a
+    complex FFT multiplier there would instead rotate one component into the
+    other and violate the discrete divergence-of-curl identity for density.
+    """
 
     shape = [1] * a.ndim
     shape[axis] = k.size
+    if k.size % 2 == 0:
+        k = k.at[k.size // 2].set(0.0)
     multiplier = 1j * k.reshape(shape)
     return jnp.fft.ifft(multiplier * jnp.fft.fft(a, axis=axis), axis=axis)
 

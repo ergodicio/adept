@@ -159,7 +159,8 @@ def test_collisions_receive_updated_midpoint_ion_density(monkeypatch):
 
     monkeypatch.setattr(moving, "_collide", record_density)
     coupled(0.0, {"flm": flm, "ions": ions, "e": zeros, "b": zeros}, {"ni": 99.0})
-    expected = coupled._hydro_half_step(ions)[..., 0] / mass
+    _, midpoint_ions = coupled._hydro_half_step(flm, ions)
+    expected = midpoint_ions[..., 0] / mass
     assert len(seen_density) == 2
     for measured in seen_density:
         np.testing.assert_allclose(measured, expected, atol=2e-15)
