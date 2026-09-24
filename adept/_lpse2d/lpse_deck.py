@@ -854,6 +854,9 @@ def translate_parms(
             "params": {"phases": {"seed": 42}},
             "angle": angle_deg,
             "polarization": polarization_deg,
+            # the static field's swelling: LPSE's constant (1 - n_env)^(-1/4) unless
+            # laser.static.useSpatiallyVaryingFieldSwelling (LightSolver.cpp:1046-1053)
+            "swelling": "local" if _bool(g("laser.static.useSpatiallyVaryingFieldSwelling")) else "constant",
             **({"beams": beams} if n_beams > 1 else {}),
             **beam_extras,
             # LPSE has no pump envelope (an evolved pump ramps with laser.evolution.riseTime only, a

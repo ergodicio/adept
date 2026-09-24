@@ -118,6 +118,9 @@ class E0DriverModel(BaseModel):
     num_colors: int
     envelope: EnvelopeModel
     speckle: SpeckleModel | None = None
+    # static pump swelling: "constant" (1 - n_env)^(-1/4) (LPSE default) or "local" (1 - n)^(-1/4)
+    # (LPSE laser.static.useSpatiallyVaryingFieldSwelling; the MATLAB prototype)
+    swelling: Literal["constant", "local"] = "constant"
     # in-plane angle of incidence from +x in degrees (LPSE laser.N.direction): the static pump
     # is the grid mode nearest to k0 (cos a, sin a); the spectral injector launches at the
     # y-snapped transverse wavenumber. Not with speckle or the FD injector.

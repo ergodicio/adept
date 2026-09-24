@@ -337,3 +337,34 @@ def test_exact_beam_ky_reproduces_the_seam_hot_spot():
     # the hot spot sits at the periodic seam (the first/last rows)
     peak = int(np.argmax(ripple_exact))
     assert min(peak, ripple_exact.size - peak) <= 3
+
+
+@pytest.mark.parametrize("swelling", ["constant", "local"])
+def test_static_pump_swelling_follows_lpse(swelling):
+    """Inventory A20: LPSE's static field swells by the constant (1 - n_env)^(-1/4)
+    (computeStaticE0_fft / _xSpace) unless laser.static.useSpatiallyVaryingFieldSwelling, when it
+    takes the local (1 - n)^(-1/4). On a linear ramp the pump amplitude follows the chosen factor
+    (1e-12; the same arithmetic)."""
+    from adept._lpse2d.core.laser import Light
+
+    raw = yaml.safe_load(open("tests/test_lpse2d/configs/srs.yaml"))
+    raw = deepcopy(raw)
+    raw["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.2um", "ymin": "-0.2um", "dx": "0.1um"})
+    raw["density"] = {
+        "basis": "lpse-linear",
+        "min": 0.15,
+        "max": 0.22,
+        "min_location": "0um",
+        "max_location": "12.8um",
+    }
+    raw["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    raw["terms"]["epw"]["source"]["noise"] = False
+    raw["drivers"]["E0"]["swelling"] = swelling
+    cfg = _finish(raw)
+    ny = cfg["grid"]["ny"]
+    light_wave = {"delta_omega": jnp.array([0.0]), "intensities": jnp.ones((1, ny)), "phases": jnp.zeros((1, ny))}
+    amplitude = np.abs(np.asarray(Light(cfg).laser_update(0.0, None, light_wave))[..., 1])
+    n = np.asarray(cfg["grid"]["background_density"])
+    n_env = float(cfg["units"]["envelope density"])
+    factor = (1.0 - n) ** -0.25 if swelling == "local" else np.full_like(n, (1.0 - n_env) ** -0.25)
+    np.testing.assert_allclose(amplitude, cfg["units"]["derived"]["E0_source"] * factor, rtol=1e-12)

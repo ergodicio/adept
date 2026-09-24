@@ -24,6 +24,19 @@ class Light:
         self.dy = cfg["grid"]["dy"]
         self.dky = 2.0 * jnp.pi / (self.ny * self.dy)
         self.background_density = cfg["grid"]["background_density"]
+        # static-field swelling (drivers.E0.swelling): LPSE's default is the constant (1 - n_env)^(-1/4)
+        # (LightSolver::computeStaticE0_fft / _xSpace); "local" is its useSpatiallyVaryingFieldSwelling
+        # form (1 - n)^(-1/4), zero from 0.9999 n_c and at most 10 (the MATLAB prototype's convention)
+        swelling = str(cfg["drivers"].get("E0", {}).get("swelling", "constant"))
+        if swelling == "constant":
+            self.swelling = float((1.0 - float(cfg["units"]["envelope density"])) ** -0.25)
+        elif swelling == "local":
+            n = np.asarray(self.background_density, dtype=np.float64)
+            below = n < 0.9999
+            factor = np.where(below, np.minimum((1.0 - np.where(below, n, 0.0)) ** -0.25, 10.0), 0.0)
+            self.swelling = jnp.asarray(factor)
+        else:
+            raise ValueError(f"drivers.E0.swelling must be 'constant' or 'local', got {swelling!r}")
         # in-plane angle of incidence from +x (drivers.E0.angle, degrees; LPSE laser.N.direction).
         # The pump is one k-mode snapped to the grid in kx *and* ky (LPSE makeStaticField),
         # polarised in the plane perpendicular to the snapped k (LPSE polarization 0)
@@ -120,9 +133,8 @@ class Light:
         # k-space -> x-space; the nx factor undoes the 1/nx in ifft (MATLAB line 1569: N*ifft)
         dE0y = self.nx * jnp.fft.ifft(jnp.fft.ifftshift(E0y_k, axes=0), axis=0)
 
-        # local field swelling, applied once to the summed field (MATLAB line 1572: uses local wpe)
-        wpe = self.w0 * jnp.sqrt(self.background_density)
-        dE0y = dE0y * (1.0 - wpe**2 / self.w0**2) ** -0.25
+        # field swelling, applied once to the summed field (drivers.E0.swelling)
+        dE0y = dE0y * self.swelling
 
         # Apply speckle envelope if configured (same for all colors)
         if self.speckle_profile is not None:
@@ -173,8 +185,7 @@ class Light:
                 )
                 carrier = jnp.exp(1j * (kx * xx + ky * yy))
                 E0 = E0 + (amp[None, :] * carrier)[..., None] * pol[None, None, :]
-        wpe = self.w0 * jnp.sqrt(self.background_density)
-        E0 = E0 * ((1.0 - wpe**2 / self.w0**2) ** -0.25)[..., None]
+        E0 = E0 * (self.swelling if isinstance(self.swelling, float) else self.swelling[..., None])
         if self.speckle_profile is not None:
             raise NotImplementedError("drivers.E0.speckle with a non-zero drivers.E0.angle is not supported")
         return E0
