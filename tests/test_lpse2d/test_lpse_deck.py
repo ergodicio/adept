@@ -102,11 +102,10 @@ def test_translate_test_006_builds_a_runnable_config():
     x_nodes = np.asarray(grid["x"]) - 0.5 * grid["dx"]
     np.testing.assert_allclose(n, 0.2 + 0.08 * x_nodes / 20.0, rtol=1e-12)
     assert n.min() >= 0.2 - 1e-12 and n.max() <= 0.28 + 1e-12
-    # rectangular anti-aliasing: outer 33.4 % of each axis zeroed
+    # rectangular anti-aliasing, LPSE's index rounding (A28): 360 points at range 0.334 keep |m| <= 120
     band = np.asarray(grid["low_pass_filter_grid"])
-    kx = np.abs(np.asarray(grid["kx"]))[:, None]
-    ky = np.abs(np.asarray(grid["ky"]))[None, :]
-    expected = (kx < 0.666 * kx.max()) & (ky < 0.666 * ky.max())
+    m = np.abs(np.fft.fftfreq(360, d=1.0 / 360)).astype(int)
+    expected = (m[:, None] <= 120) & (m[None, :] <= 120)
     np.testing.assert_array_equal(band > 0, expected)
 
 
@@ -494,3 +493,25 @@ def test_translator_maps_interpolate_sources_in_time(tmp_path):
     assert cfg["terms"]["light"]["interpolate_sources"] is False
     assert cfg["terms"]["epw"]["interpolate_sources"] is False
     assert any("interpolateSourcesInTime differs" in n for n in report["notes"])
+
+
+@pytest.mark.parametrize(
+    "n, aa, kept",
+    [
+        # worked by hand from Lpse::setupAntiAliasingRange: x0 = int(360 * 0.333) = 119 -> 118 -> +2 = 120,
+        # x1 = int(360 * 0.667) = 240; zeroed 120 < l < 240
+        (360, 0.334, list(range(0, 121)) + list(range(-120, 0))),
+        # odd N: x0 = 119 -> 118 -> 120, x1 = int(239.45) = 239 -> 238; zeroed 121..237 -> m = -121 kept
+        (359, 0.334, list(range(0, 121)) + list(range(-121, 0))),
+        # range 0.5 on 64: x0 = 16, x1 = 48; 17 below, 16 above -> no step; zeroed 17..47
+        (64, 0.5, list(range(0, 17)) + list(range(-16, 0))),
+    ],
+)
+def test_rectangular_dealias_keeps_lpse_index_range(n, aa, kept):
+    """Inventory A28: LPSE's anti-aliasing indices (float32 products, even rounding, symmetry step;
+    insideAntiAliasRegion x0 < l < x1) keep one or two more modes than |k| < (1 - aa) k_Nyquist. The
+    kept sets are exact, worked by hand from the C++ above (no tolerance)."""
+    from adept._lpse2d.helpers import lpse_antialias_retained
+
+    m = np.rint(np.fft.fftfreq(n, d=1.0 / n)).astype(int)
+    np.testing.assert_array_equal(np.sort(m[lpse_antialias_retained(n, aa)]), np.sort(kept))

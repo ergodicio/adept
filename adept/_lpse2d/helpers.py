@@ -1182,15 +1182,13 @@ def get_solver_quantities(cfg: dict) -> dict:
             f"(Nyquist {kx_nyquist:.2f}, {ky_nyquist:.2f}); low_pass_filter caps |k| <= {cutoff:.2f}"
         )
     elif dealias == "rectangular":
-        # the original LPSE mask (grid.antiAliasing.range): the outer fraction of *each* k axis
-        # is zeroed, i.e. |kx| < low_pass_filter * kmax_x and |ky| < low_pass_filter * kmax_y
-        kx_nyquist = float(np.abs(cfg_grid["kx"]).max())
-        ky_nyquist = float(np.abs(cfg_grid["ky"]).max())
-        frac = float(cfg_grid["low_pass_filter"])
-        band = (np.abs(cfg_grid["kx"])[:, None] < frac * kx_nyquist) & (
-            (np.abs(cfg_grid["ky"])[None, :] < frac * ky_nyquist) | (cfg_grid["ny"] == 1)
-        )
-        cfg_grid["low_pass_filter_grid"] = np.where(band, 1.0, 0.0)
+        # the original LPSE mask (grid.antiAliasing.range = 1 - low_pass_filter): the outer fraction of
+        # *each* k axis is zeroed, with LPSE's index rounding (lpse_antialias_retained)
+        aa = 1.0 - float(cfg_grid["low_pass_filter"])
+        band = lpse_antialias_retained(cfg_grid["nx"], aa)[:, None]
+        if cfg_grid["ny"] > 1:
+            band = band & lpse_antialias_retained(cfg_grid["ny"], aa)[None, :]
+        cfg_grid["low_pass_filter_grid"] = np.where(np.broadcast_to(band, (cfg_grid["nx"], cfg_grid["ny"])), 1.0, 0.0)
     elif dealias != "isotropic":
         raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic', 'shifted-band' or 'rectangular'.")
 
@@ -1277,6 +1275,29 @@ def get_solver_quantities(cfg: dict) -> dict:
         cfg["drivers"]["E0"]["derived"]["injector_planes"] = planes
 
     return cfg_grid
+
+
+def lpse_antialias_retained(n: int, aa: float) -> np.ndarray:
+    """The FFT indices one axis keeps under LPSE's anti-aliasing (the same range on both faces):
+    ``Lpse::setupAntiAliasingRange`` -- ``x0 = int(N (1 - aa)/2)``, ``x1 = int(N (1 + aa)/2)`` in single
+    precision, both rounded down to even, ``x0 += 2`` when fewer modes remain below than above -- and
+    ``insideAntiAliasRegion``: indices with ``x0 < l < x1`` are zeroed. Raises where LPSE aborts on an
+    asymmetric band."""
+    if n <= 1 or aa <= 0.0:
+        return np.ones(n, dtype=bool)
+    f32 = np.float32
+    a = f32(aa)
+    x0 = int(f32(n) * ((f32(1.0) - a) / f32(2.0)))
+    x1 = int(f32(n) * ((f32(1.0) + a) / f32(2.0)))
+    x0, x1 = 2 * (x0 // 2), 2 * (x1 // 2)
+    n_below, n_above = x0 + 1, n - x1
+    if n_above > n_below:
+        x0 += 2
+        n_below += 2
+    if (n % 2 == 0 and n_below - n_above != 1) or (n % 2 == 1 and n_below - n_above != 0):
+        raise ValueError(f"anti-aliasing range {aa} on {n} points is not symmetric (LPSE refuses this grid)")
+    index = np.arange(n)
+    return ~((x0 < index) & (index < x1))
 
 
 def get_density_profile(cfg: dict) -> Array:
