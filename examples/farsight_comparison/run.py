@@ -311,7 +311,7 @@ class DiagnosticFileAnalyzer:
         except Exception as error:
             try:
                 _persist_failed_diagnostics(result, self.directory, error)
-            except Exception as diagnostic_error:  # noqa: BLE001 - retain the original numerical/analysis failure
+            except Exception as diagnostic_error:  # Retain the original numerical/analysis failure.
                 error.add_note(f"Failed diagnostic persistence: {type(diagnostic_error).__name__}: {diagnostic_error}")
             raise
         scalars = report.result.get("scalars")
@@ -520,7 +520,7 @@ def run_one(task: dict) -> dict:
         try:
             _write_json(directory / "run.json", summary)
             failure_summary_written = True
-        except Exception as persistence_error:  # noqa: BLE001 - disk failures must not mask the original failure
+        except Exception as persistence_error:  # Disk failures must not mask the original failure.
             error.add_note(
                 f"Failure summary persistence also failed: {type(persistence_error).__name__}: {persistence_error}"
             )
@@ -539,13 +539,13 @@ def run_one(task: dict) -> dict:
                     continue
                 receipt = sink.put(handle, Artifact(directory / filename, artifact_path="comparison"))
                 sink.verify(handle, receipt)
-            except Exception as tracking_error:  # noqa: BLE001 - retain the original solve failure and both causes
+            except Exception as tracking_error:  # Retain the original solve failure and both causes.
                 error.add_note(
                     f"Failure artifact {filename} upload also failed: {type(tracking_error).__name__}: {tracking_error}"
                 )
         try:
             tracker.finish(handle, RunStatus.FAILED, error=summary["error"])
-        except Exception as tracking_error:  # noqa: BLE001 - retain the original solve failure and both causes
+        except Exception as tracking_error:  # Retain the original solve failure and both causes.
             error.add_note(f"Failure status update also failed: {type(tracking_error).__name__}: {tracking_error}")
         raise
     print(json.dumps(summary), flush=True)

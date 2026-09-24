@@ -216,7 +216,7 @@ def main(argv=None):
         for task, future in futures:
             try:
                 summary = future.result()
-            except Exception as error:  # noqa: BLE001 - persist each failed future, then exit nonzero
+            except Exception as error:  # Persist each failed future, then exit nonzero.
                 summary = {"case": task["case"], "solver": task["solver"], "status": "FAILED", "error": str(error)}
                 failures.append(summary)
             summaries.append(summary)
