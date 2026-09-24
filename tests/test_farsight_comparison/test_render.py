@@ -107,6 +107,7 @@ def inputs(tmp_path, monkeypatch):
                         "eulerian": {"relative_mass": [0, 1e-8], "relative_c2": [0, -1e-4]},
                         "farsight": {"relative_mass": [0, -1e-7], "relative_c2": [0, -2e-4]},
                     },
+                    "farsight_representation": {"relative_mass": [0, -3e-7], "relative_c2": [0, -4e-4]},
                 }
             )
         )
@@ -145,6 +146,7 @@ def test_success_links_sources_labels_and_native_metrics(inputs):
     assert all(dataset.sentinel.values.tolist() == [1, 2] for dataset in inputs.calls[0]["datasets"])
     assert inputs.tracker.metrics[0].values["final_relative_l2_distribution_difference"] == 0.02
     assert inputs.tracker.metrics[0].values["farsight_relative_c2_change"] == -2e-4
+    assert inputs.tracker.metrics[0].values["farsight_representation_relative_c2_change"] == -4e-4
     assert inputs.sink.verified == inputs.sink.uploads
     assert {Path(artifact.source).name for artifact in inputs.sink.uploads} == {
         "comparison.mp4",
@@ -152,6 +154,7 @@ def test_success_links_sources_labels_and_native_metrics(inputs):
         "run.json",
         "render.py",
         "movies.py",
+        "representation.py",
     }
 
 
@@ -238,5 +241,37 @@ def test_render_failure_marks_failed_uploads_summary_and_preserves_original_erro
 def test_refuses_existing_output_directory(inputs):
     inputs.output.mkdir()
     with pytest.raises(FileExistsError):
+        render.render_pair(inputs.eulerian, inputs.farsight, inputs.output)
+    assert not inputs.tracker.requests
+
+
+def test_amr_treecode_method_label_and_finer_eulerian_grid_are_preserved(inputs):
+    update_json(inputs.farsight / "config.json", lambda value: value.update(amr={"enabled": True, "max_level": 2}))
+    update_json(inputs.farsight / "config.json", lambda value: value["numerical"].update(field_solver="treecode"))
+    update_json(
+        inputs.farsight / "run.json",
+        lambda value: value.update(method="farsight-amr-treecode", field_solver="treecode", amr_enabled=True),
+    )
+    update_json(inputs.eulerian / "case.json", lambda value: value.update(nx=64, nv=128))
+    update_json(inputs.eulerian / "config.json", lambda value: value["benchmark"]["case"].update(nx=64, nv=128))
+    update_json(inputs.eulerian / "config.json", lambda value: value["grid"].update(nx=64, nv=128))
+    result = render.render_pair(inputs.eulerian, inputs.farsight, inputs.output)
+    assert result["farsight_method"] == "farsight-amr-treecode"
+    assert inputs.tracker.requests[0].tags["comparison.farsight_method"] == "farsight-amr-treecode"
+    assert "farsight-amr-treecode" in inputs.calls[0]["title"]
+    assert inputs.calls[0]["config"]["farsight"]["amr"]["enabled"]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"method": "farsight-amr-treecode"},
+        {"amr_enabled": True},
+        {"field_solver": "treecode"},
+    ],
+)
+def test_rejects_misleading_farsight_method_metadata(inputs, metadata):
+    update_json(inputs.farsight / "run.json", lambda value: value.update(metadata))
+    with pytest.raises(ValueError, match="metadata disagrees"):
         render.render_pair(inputs.eulerian, inputs.farsight, inputs.output)
     assert not inputs.tracker.requests

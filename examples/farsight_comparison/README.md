@@ -2,7 +2,8 @@
 
 Exploratory collisionless two-stream and NLEPW comparisons. Eulerian advection is
 **spectral in x, cubic-spline in v**, with Strang time splitting. FARSIGHT uses
-fixed biquadratic panels, coupled RK4, and remeshing after every step. The
+fixed or adaptive biquadratic panels, coupled RK4, and configurable remeshing.
+The default remains fixed panels/direct fields/remeshing every step. The
 production Eulerian solver is unchanged; the benchmark adapter explicitly sets
 the analytic IC, uniform ions, initial electric field, and step-aligned saves.
 
@@ -28,10 +29,19 @@ Eulerian. Velocity boundaries also differ; inspect tails, mass, negative mass,
 and C2. Both solvers normalize their discrete initial mass once; neither clips
 or renormalizes during evolution.
 
-Native quadrature C2 is reported separately from display-grid quadrature. The
-renderer evaluates the actual fixed-panel biquadratic interpolant on Eulerian
-cell centers, with no scatter interpolation or time interpolation. It rejects
-AMR and moving/deformed saved frames; those need a separate reconstruction.
+Native quadrature C2 is reported separately from display-grid quadrature and
+the exactly integrated saved biquadratic polynomial. The renderer evaluates
+the actual fixed-panel or adaptive-leaf interpolant on Eulerian cell centers,
+with no scatter interpolation or time interpolation. For AMR it validates the
+saved hierarchy IDs, active mask and complete disjoint partition, choosing
+the finest leaf at shared boundaries. Moving/deformed saved frames are still
+rejected: arrange frame saves to coincide with remeshes.
+
+The polynomial mass/C2 diagnostic uses three-point Gaussian quadrature in each
+coordinate, which exactly integrates a biquadratic and its square on rectangular
+leaves. It is not the material/nodal quadrature invariant, a positivity check,
+or a physical convergence estimate. Refinement/coarsening can change native
+quadrature even when the represented polynomial is unchanged.
 
 ## Benchmark and run
 
@@ -65,6 +75,54 @@ run this through `session.sh exec`; use its isolated `outputs/` directory.
 Measure cost at actual shapes before extending duration or resolution. This is
 an interactive development workflow, not an unattended production launch.
 
+### Explicit AMR/direct–treecode pair
+
+```bash
+python -m examples.farsight_comparison.scan \
+  --task-file examples/farsight_comparison/amr-pilot.json \
+  --output /absolute/new/amr-pilot
+```
+
+This preregistered short timing pilot uses base32x64, up to two refinement levels
+(finest equivalent128x256), capacity4096, range threshold .05, fixed epsilon.375,
+and tmax1. The direct and treecode tasks share every other numerical setting.
+It is not a recommended production turbulence configuration. Capacity4096 can
+overflow during nonlinear evolution; the full hierarchy can request8192 leaves.
+Padding affects actual computation even with fewer active leaves. Measure at
+the final capacity before choosing a duration.
+
+Task files accept a nonempty list or `{ "defaults": {...}, "tasks": [...] }`.
+Tasks execute with one Parsl worker, unique campaign-local output directories,
+and distinct method names. `--amr-pair` generates a direct/tree pair per case;
+`--eulerian-nx` and `--eulerian-nv` set independent reference resolutions.
+AMR/treecode/remesh/quadrature options are available on both CLIs; see `--help`
+and the [solver configuration reference](../../docs/source/solvers/farsight1d/config.md).
+
+Inspect active/requested panels, capacity exhaustion, maximum-level saturation,
+gap extension, geometry validity, negativity, and remap/regrid budgets. A finished
+run is not necessarily tolerance-resolved. On analyzer rejection the tracked run
+stays FAILED while `failed_final_state.npz`, `failed_scalars.nc` and
+`failure_diagnostics.json` retain the invalid evidence.
+
+The native field observation grid uses the **base** nx, not the finest AMR nx.
+Compare spectra and electric-field energies only after evaluating both states
+on a common sufficiently resolved x grid. Compare direct and treecode fields on
+the **same** source state to isolate force approximation from trajectory and
+refinement differences.
+
+```bash
+python -m examples.farsight_comparison.field_audit \
+  --source /absolute/completed-amr-run --output /absolute/new/field-audit \
+  --nx 128 --probe-count 257 --chunk-size 512
+```
+
+This creates a separate verified MLflow artifact run, recomputing direct and
+configured treecode fields on identical saved source states at all frame times.
+Off-grid probes at initial/final saves guard against an accidentally favorable
+target grid. It records absolute and charge-normalized errors, relative errors
+only above a documented reference-norm floor, source hashes, common-grid fields
+and field-energy quadrature. There is no trajectory integration in this audit.
+
 ## Render and log movies
 
 Pull completed run directories locally or render where an existing ffmpeg is
@@ -77,7 +135,7 @@ python -m examples.farsight_comparison.render \
   --output /absolute/new/two-stream-poisson-movie
 ```
 
-Outputs: H.264 MP4, initial/midpoint/final contact sheet, native mass/C2 plot, and
+Outputs: H.264 MP4, initial/midpoint/final contact sheet, conservation plot, and
 JSON diagnostics. Shared color limits remain fixed across frames; the difference
 panel is labeled a distribution difference, not an accuracy estimator.
 
@@ -93,4 +151,6 @@ encoder output, failure handling, provenance, and tracking verification.
 
 Bump-on-tail and KEEN are not implemented by this example: FARSIGHT needs a
 mixture initializer and stage-consistent external driving first. AMR/treecode
-performance and late-time convergence require separate comparisons.
+performance and late-time convergence require measured comparisons. Cold,
+long-domain turbulence additionally needs its own initialization, spectral and
+resolution tests; these warm single-mode movies do not establish that readiness.

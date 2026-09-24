@@ -10,6 +10,7 @@ from pathlib import Path
 def _validate_pair(runs, e_config, f_config, e_case, f_case):
     """Reject misleading pairings before creating a tracking run or artifacts."""
     from .cases import ComparisonCase
+    from .movies import farsight_method
 
     for solver, run in runs.items():
         if not isinstance(run.get("run_id"), str) or not run["run_id"].strip():
@@ -29,9 +30,11 @@ def _validate_pair(runs, e_config, f_config, e_case, f_case):
     benchmark = e_config.get("benchmark", {})
     if benchmark.get("field_model") != field_model:
         raise ValueError("Eulerian config and run field_model metadata disagree")
-    if e_case != f_case or benchmark.get("case") != f_case:
+    physical = lambda case: {key: value for key, value in case.items() if key not in {"nx", "nv"}}
+    if physical(e_case) != physical(f_case) or benchmark.get("case") != e_case:
         raise ValueError("Case specifications differ; explicitly review matching before comparison")
     case = ComparisonCase(**f_case)
+    eulerian_case = ComparisonCase(**e_case)
     if any(run.get("case") != case.name for run in runs.values()):
         raise ValueError("Source run case labels disagree with their case specifications")
     if e_config.get("solver") != "vlasov-1d" or f_config.get("solver") != "farsight-1d":
@@ -42,12 +45,27 @@ def _validate_pair(runs, e_config, f_config, e_case, f_case):
     if f_config.get("numerical", {}).get("epsilon") != case.epsilon:
         raise ValueError("FARSIGHT epsilon disagrees with the shared case")
     e_grid = e_config.get("grid", {})
-    expected_e_grid = {**expected["grid"], "tmin": 0.0, "tmax": case.tmax, "dt": case.dt}
+    expected_e_grid = {
+        **eulerian_case.to_farsight_config()["grid"],
+        "tmin": 0.0,
+        "tmax": eulerian_case.tmax,
+        "dt": eulerian_case.dt,
+    }
     if any(e_grid.get(name) != value for name, value in expected_e_grid.items()):
         raise ValueError("Eulerian grid or time config disagrees with the shared case")
     terms = e_config.get("terms", {})
     if terms.get("vdfdx") != "exponential" or terms.get("edfdv") != "cubic-spline":
         raise ValueError("Eulerian source must use the requested spectral-x / cubic-spline-v solver")
+    method = farsight_method(f_config)
+    saved_method = runs["farsight"].get("method")
+    if saved_method is not None and saved_method != method:
+        raise ValueError("FARSIGHT method metadata disagrees with its AMR/field-solver configuration")
+    for key, actual in (
+        ("amr_enabled", f_config.get("amr", {}).get("enabled", False)),
+        ("field_solver", f_config.get("numerical", {}).get("field_solver", "direct")),
+    ):
+        if key in runs["farsight"] and runs["farsight"][key] != actual:
+            raise ValueError(f"FARSIGHT {key} metadata disagrees with its configuration")
     return field_model
 
 
@@ -56,7 +74,7 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
 
     from adept import Artifact, MetricEvent, RunRequest, RunStatus
 
-    from .movies import render_comparison
+    from .movies import farsight_method, render_comparison
     from .run import _services
 
     eulerian, farsight, output = (Path(p).resolve() for p in (eulerian, farsight, output))
@@ -76,7 +94,8 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
     label = (
         "ordinary Poisson" if field_model == "poisson" else f"matched softened ε = {f_config['numerical']['epsilon']:g}"
     )
-    name = f"{runs['farsight']['case']}-movie-{field_model}-{f_config['grid']['nx']}x{f_config['grid']['nv']}"
+    method = farsight_method(f_config)
+    name = f"{runs['farsight']['case']}-movie-{method}-{field_model}-{f_config['grid']['nx']}x{f_config['grid']['nv']}"
     output.mkdir(parents=True, exist_ok=False)
     tracker, sink = _services()
     request = RunRequest(
@@ -88,12 +107,19 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
             "comparison.eulerian_run_id": runs["eulerian"]["run_id"],
             "comparison.farsight_run_id": runs["farsight"]["run_id"],
             "comparison.field_model": field_model,
+            "comparison.farsight_method": method,
         },
     )
     tracker.preflight(request)
     sink.preflight()
     handle = tracker.start(request)
-    summary = {"run_id": handle.run_id, "name": name, "status": "RUNNING", "source_runs": runs}
+    summary = {
+        "run_id": handle.run_id,
+        "name": name,
+        "status": "RUNNING",
+        "source_runs": runs,
+        "farsight_method": method,
+    }
     (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
     print(json.dumps({"run_id": handle.run_id, "name": name}), flush=True)
     try:
@@ -111,7 +137,7 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
             dataset(farsight, "scalars"),
             {"farsight": f_config, "eulerian": {"field_model": label}},
             output,
-            title=f"{runs['farsight']['case']} — FARSIGHT / spectral-x cubic-v",
+            title=f"{runs['farsight']['case']} — {method} / spectral-x cubic-v",
         )
         diagnostic = json.loads(paths["diagnostics"].read_text())
         tracker.log_metrics(
@@ -129,13 +155,25 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
                             for solver in ("eulerian", "farsight")
                             for quantity in ("mass", "c2")
                         },
+                        **{
+                            f"farsight_representation_relative_{quantity}_change": diagnostic[
+                                "farsight_representation"
+                            ][f"relative_{quantity}"][-1]
+                            for quantity in ("mass", "c2")
+                        },
                     }
                 )
             ],
         )
         summary.update(status="FINISHED", artifacts={key: str(path) for key, path in paths.items()})
         (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
-        for path in [*paths.values(), output / "run.json", Path(__file__), Path(__file__).with_name("movies.py")]:
+        for path in [
+            *paths.values(),
+            output / "run.json",
+            Path(__file__),
+            Path(__file__).with_name("movies.py"),
+            Path(__file__).with_name("representation.py"),
+        ]:
             receipt = sink.put(handle, Artifact(path, artifact_path="comparison"))
             sink.verify(handle, receipt)
         tracker.finish(handle, RunStatus.FINISHED)

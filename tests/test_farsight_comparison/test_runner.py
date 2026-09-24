@@ -160,3 +160,141 @@ def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails
     assert tracker.finished == ["FAILED"]
     summary = json.loads((tmp_path / "case" / "run.json").read_text())
     assert summary["status"] == "FAILED" and summary["run_id"] == "early-id"
+
+
+def test_amr_and_tree_options_are_resolved_and_validated():
+    case = get_case("two-stream", nx=8, nv=16)
+    options = {
+        "amr": True,
+        "amr_max_level": 2,
+        "amr_min_level": 1,
+        "amr_max_panels": 512,
+        "amr_atol": 0.025,
+        "amr_rtol": 0.1,
+        "amr_max_gap_fraction": 0.001,
+        "quadrature": "simpson",
+        "remesh_every": 2,
+        "field_solver": "treecode",
+        "tree_degree": 12,
+        "tree_theta": 0.2,
+        "tree_leaf_size": 16,
+    }
+    config = farsight_config(case, **options)
+    assert config["amr"] == {
+        "enabled": True,
+        "max_level": 2,
+        "min_level": 1,
+        "max_panels": 512,
+        "atol": 0.025,
+        "rtol": 0.1,
+        "max_gap_fraction": 0.001,
+    }
+    assert config["numerical"]["treecode"] == {"degree": 12, "theta": 0.2, "leaf_size": 16}
+    assert config["numerical"]["quadrature"] == "simpson"
+    assert config["numerical"]["remesh_every"] == 2
+    with pytest.raises(ValueError, match="max_panels"):
+        farsight_config(case, **{**options, "amr_max_panels": 16})
+    with pytest.raises(ValueError, match="Unknown FARSIGHT"):
+        farsight_config(case, amr_typo=True)
+
+
+def test_amr_pair_changes_only_field_solver_and_allows_independent_eulerian_resolution(tmp_path):
+    from examples.farsight_comparison.scan import build_parser, build_tasks
+
+    args = build_parser().parse_args(
+        [
+            "--output",
+            str(tmp_path),
+            "--cases",
+            "two-stream",
+            "--amr-pair",
+            "--nx",
+            "8",
+            "--nv",
+            "16",
+            "--amr-max-level",
+            "2",
+            "--amr-max-panels",
+            "512",
+            "--eulerian-nx",
+            "128",
+            "--eulerian-nv",
+            "256",
+        ]
+    )
+    tasks = build_tasks(vars(args), tmp_path)
+    assert [task["solver"] for task in tasks] == ["farsight", "farsight", "eulerian-softened", "eulerian-poisson"]
+    assert [task["field_solver"] for task in tasks[:2]] == ["direct", "treecode"]
+    differing = {key for key in tasks[0] if tasks[0][key] != tasks[1][key]}
+    assert differing == {"field_solver", "name", "output"}
+    assert all(task["amr"] for task in tasks[:2])
+    assert all(task["nx"] == 128 and task["nv"] == 256 for task in tasks[2:])
+
+
+def test_task_file_defaults_make_ordered_amr_only_pair(tmp_path):
+    from examples.farsight_comparison.scan import build_parser, build_tasks
+
+    path = tmp_path / "tasks.json"
+    path.write_text(
+        json.dumps(
+            {
+                "defaults": {
+                    "case": "two-stream",
+                    "nx": 8,
+                    "nv": 16,
+                    "amr": True,
+                    "amr_max_panels": 512,
+                    "amr_max_level": 2,
+                },
+                "tasks": [{"field_solver": "direct"}, {"field_solver": "treecode"}],
+            }
+        )
+    )
+    options = vars(build_parser().parse_args(["--output", str(tmp_path / "outputs"), "--task-file", str(path)]))
+    tasks = build_tasks(options, tmp_path / "outputs")
+    assert len(tasks) == 2 and all(task["solver"] == "farsight" for task in tasks)
+    assert "farsight-amr-direct" in tasks[0]["name"]
+    assert "farsight-amr-treecode" in tasks[1]["name"]
+    assert tasks[0]["nx"] == 8 and tasks[0]["amr_max_panels"] == 512
+    path.write_text(json.dumps([{"case": "two-stream", "output": "../escape"}]))
+    with pytest.raises(ValueError, match="relative subdirectory"):
+        build_tasks(options, tmp_path / "outputs")
+
+
+def test_failed_analysis_retains_raw_evidence_and_reraises(tmp_path):
+    from types import SimpleNamespace
+
+    import numpy as np
+    import xarray as xr
+
+    from examples.farsight_comparison.run import DiagnosticFileAnalyzer
+
+    failure = ArithmeticError("invalid panels")
+
+    class RejectingAnalyzer:
+        def analyze(self, result, manifest):
+            raise failure
+
+    result = SimpleNamespace(
+        final_state={
+            "valid": np.array(False),
+            "active_panels": np.array(8),
+            "f": np.array([1.0, np.nan]),
+            "capacity_exceeded": np.array(True),
+        },
+        observations={"scalars": {"valid": np.array([True, False]), "active_panels": np.array([4, 8])}},
+        times={"scalars": np.array([0.0, 0.05])},
+    )
+    with pytest.raises(ArithmeticError) as caught:
+        DiagnosticFileAnalyzer(RejectingAnalyzer(), tmp_path).analyze(result, None)
+    assert caught.value is failure
+    evidence = json.loads((tmp_path / "failure_diagnostics.json").read_text())
+    assert evidence["status"] == "FAILED"
+    assert evidence["first_invalid_saved_time"] == 0.05
+    assert evidence["final_scalars"]["valid"] is False
+    assert evidence["final_state_nonfinite_counts"]["f"] == 1
+    with np.load(tmp_path / "failed_final_state.npz") as saved:
+        assert not saved["valid"] and np.isnan(saved["f"][-1])
+    with xr.open_dataset(tmp_path / "failed_scalars.nc") as saved:
+        assert saved.attrs["status"] == "FAILED"
+        assert saved.valid.values.tolist() == [1, 0]

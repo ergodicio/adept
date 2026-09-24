@@ -7,9 +7,9 @@ containing ``mass(t)`` and ``c2(t)``. Pass ``config={"farsight": resolved_config
 field-model label is mandatory: changing the force model must not be hidden by
 otherwise matched plots. Eulerian coordinates must be uniform cell centers.
 
-Only saved, remeshed FARSIGHT tensor grids are supported. The renderer evaluates
-the actual piecewise biquadratic interpolant, without scatter interpolation,
-clipping, renormalization, temporal interpolation, or velocity extrapolation.
+Saved, remeshed fixed grids and rectilinear AMR leaves are supported. The
+renderer evaluates the actual piecewise biquadratic interpolant, without scatter
+interpolation, clipping, renormalization, temporal interpolation, or velocity extrapolation.
 Native quadrature invariants and common-grid distribution differences are
 reported separately. All output paths are returned for explicit MLflow upload.
 """
@@ -105,6 +105,146 @@ def reconstruct_fixed_panels(dataset, x, v, grid):
     return sampled
 
 
+def reconstruct_amr_panels(dataset, x, v, grid, *, max_level):
+    """Reconstruct genuine post-remesh AMR leaves on the Cartesian product x × v.
+
+    Saved ``panel_id`` and ``level`` must identify a complete, nonoverlapping
+    reference-hierarchy leaf partition. Node order is x-major/v-minor, matching
+    ``make_hierarchy``. On shared edges (including the periodic seam), the finest
+    leaf owns the point; equal-level ties use the smallest reference panel ID.
+    No interpolation across a missing leaf or advected-panel crack is permitted.
+    Inactive slots are ignored, and velocity-exterior queries return zero.
+    """
+    for name in ("x", "v", "f"):
+        if name not in dataset or dataset[name].dims != ("t", "panel", "node"):
+            raise ValueError(f"AMR {name!r} must have dimensions (t, panel, node)")
+    for name in ("active", "level", "panel_id"):
+        if name not in dataset or dataset[name].dims != ("t", "panel"):
+            raise ValueError(f"AMR {name!r} must have dimensions (t, panel)")
+    if dataset.sizes["node"] != 9:
+        raise ValueError("AMR reconstruction requires nine nodes per biquadratic panel")
+    nx, nv = grid["nx"], grid["nv"]
+    integers = (nx, nv, max_level)
+    if any(isinstance(value, bool) or int(value) != value for value in integers):
+        raise ValueError("AMR grid interval counts and max_level must be integers")
+    nx, nv, max_level = (int(value) for value in integers)
+    if nx < 4 or nv < 2 or nx % 2 or nv % 2 or not 0 <= max_level <= 4:
+        raise ValueError("AMR requires even nx >= 4, nv >= 2 and 0 <= max_level <= 4")
+    xmin, xmax, vmin, vmax = (float(grid[key]) for key in ("xmin", "xmax", "vmin", "vmax"))
+    if not np.isfinite([xmin, xmax, vmin, vmax]).all() or xmax <= xmin or vmax <= vmin:
+        raise ValueError("AMR bounds must be finite and increasing")
+    length, span = xmax - xmin, vmax - vmin
+    roots = (nx // 2) * (nv // 2)
+    offsets = np.cumsum([0] + [roots * 4**level for level in range(max_level + 1)])
+    if offsets[-1] > 32768:
+        raise ValueError("AMR reference hierarchy exceeds the production 32768-panel bound")
+    raw_active = np.asarray(dataset["active"])
+    if not np.all((raw_active == 0) | (raw_active == 1)):
+        raise ValueError("AMR active flags must be boolean or 0/1")
+    active = raw_active.astype(bool)
+    arrays = {name: np.asarray(dataset[name]) for name in ("x", "v", "f", "level", "panel_id")}
+    for name, values in arrays.items():
+        _finite(values[active], f"active AMR {name}")
+    x, v = _finite(x, "target x"), _finite(v, "target v")
+    if x.ndim != 1 or v.ndim != 1:
+        raise ValueError("Target x and v must be one-dimensional axes")
+    npx, npv = (nx // 2) * 2**max_level, (nv // 2) * 2**max_level
+    canonical_x = xmin + np.mod(x - xmin, length)
+    cell_x = (canonical_x - xmin) / length * npx
+    cell_v = np.clip((v - vmin) / span * npv, 0, npv)
+    right = np.clip(np.floor(cell_x).astype(int), 0, npx - 1)
+    above = np.clip(np.floor(cell_v).astype(int), 0, npv - 1)
+    # Include both adjacent finest cells only at an actual shared edge. The
+    # lookup map then identifies the coarser/finer containing leaves in O(1).
+    ulp_tolerance = 8 * np.finfo(float).eps
+    edge_x = np.isclose(cell_x, np.rint(cell_x), rtol=0, atol=ulp_tolerance * np.maximum(1.0, np.abs(cell_x)))
+    edge_v = np.isclose(cell_v, np.rint(cell_v), rtol=0, atol=ulp_tolerance * np.maximum(1.0, np.abs(cell_v)))
+    right = np.where(edge_x, np.rint(cell_x).astype(int) % npx, right)
+    above = np.where(edge_v, np.clip(np.rint(cell_v).astype(int), 0, npv - 1), above)
+    left = np.where(edge_x, (np.rint(cell_x).astype(int) - 1) % npx, right)
+    below = np.where(edge_v, np.clip(np.rint(cell_v).astype(int) - 1, 0, npv - 1), above)
+    output = np.zeros((dataset.sizes["t"], x.size, v.size))
+    node_offset = np.arange(3)
+    for frame in range(dataset.sizes["t"]):
+        slots = np.flatnonzero(active[frame])
+        if not slots.size:
+            raise ValueError("AMR frame has no active leaves")
+        levels = arrays["level"][frame, slots]
+        panel_ids = arrays["panel_id"][frame, slots]
+        if np.any(levels != np.floor(levels)) or np.any(panel_ids != np.floor(panel_ids)):
+            raise ValueError("Active AMR levels and panel IDs must be integers")
+        levels, panel_ids = levels.astype(int), panel_ids.astype(int)
+        if np.any((levels < 0) | (levels > max_level)):
+            raise ValueError("Active AMR levels are outside the configured hierarchy")
+        if np.any((panel_ids < offsets[levels]) | (panel_ids >= offsets[levels + 1])):
+            raise ValueError("AMR panel IDs disagree with their saved levels")
+        if np.unique(panel_ids).size != panel_ids.size:
+            raise ValueError("AMR leaf partition contains duplicate panel IDs")
+        level_npv = (nv // 2) * 2**levels
+        relative_id = panel_ids - offsets[levels]
+        ix, iv = relative_id // level_npv, relative_id % level_npv
+        dx, dv = length / (nx * 2**levels), span / (nv * 2**levels)
+        expected_x = xmin + (2 * ix[:, None] + node_offset) * dx[:, None]
+        expected_v = vmin + (2 * iv[:, None] + node_offset) * dv[:, None]
+        px = arrays["x"][frame, slots].reshape(-1, 3, 3)
+        pv = arrays["v"][frame, slots].reshape(-1, 3, 3)
+        for name, actual, expected in (("x", px, expected_x[:, :, None]), ("v", pv, expected_v[:, None, :])):
+            tolerance = 1e-11 * max(1.0, float(np.max(np.abs(expected))))
+            if not np.allclose(actual, expected, rtol=0, atol=tolerance):
+                raise ValueError(
+                    f"AMR {name} coordinates are moving/deformed or disagree with panel_id; "
+                    "only post-remesh reference leaves are supported"
+                )
+        owner_map = np.full((npx, npv), -1, dtype=int)
+        for leaf, (i, j, level) in enumerate(zip(ix, iv, levels, strict=True)):
+            stride = 2 ** (max_level - level)
+            region = owner_map[i * stride : (i + 1) * stride, j * stride : (j + 1) * stride]
+            if np.any(region != -1):
+                raise ValueError("AMR leaf partition has overlapping active interiors")
+            region[:] = leaf
+        if np.any(owner_map == -1):
+            raise ValueError("AMR leaf partition has uncovered reference cells")
+        candidates = np.stack(
+            [
+                owner_map[i[:, None], j[None, :]]
+                for i, j in ((right, above), (left, above), (right, below), (left, below))
+            ]
+        )
+        ranks = levels[candidates] * (offsets[-1] + 1) + offsets[-1] - panel_ids[candidates]
+        owner = np.take_along_axis(candidates, np.argmax(ranks, axis=0)[None, :, :], axis=0)[0]
+        center = px[:, 1, 1][owner]
+        displacement = canonical_x[:, None] - center
+        displacement -= length * np.floor(displacement / length + 0.5)
+        local_x = (center + displacement - px[:, 0, 0][owner]) / dx[owner]
+        local_v = (np.clip(v, vmin, vmax)[None, :] - pv[:, 0, 0][owner]) / dv[owner]
+        values = arrays["f"][frame, slots].reshape(-1, 3, 3)[owner]
+        output[frame] = np.einsum("abij,abi,abj->ab", values, _lagrange_basis(local_x), _lagrange_basis(local_v))
+    output[:, :, (v < vmin) | (v > vmax)] = 0.0
+    return output
+
+
+def farsight_method(config):
+    """Return the explicit discretization/field-evaluation method identifier."""
+    field_solver = config.get("numerical", {}).get("field_solver", "direct")
+    if field_solver not in {"direct", "treecode"}:
+        raise ValueError("Unknown FARSIGHT field solver; expected direct or treecode")
+    mesh = "amr" if config.get("amr", {}).get("enabled", False) else "fixed"
+    return f"farsight-{mesh}-{field_solver}"
+
+
+def iter_validated_amr_frames(dataset, grid, amr):
+    """Yield active x/v/f arrays (N, 9) and levels (N,) after geometry validation.
+
+    Empty target axes exercise the complete reference-partition validation
+    without constructing a display raster. This is also useful for independent
+    exact polynomial quadrature, whose invariant is not the nodal sum.
+    """
+    reconstruct_amr_panels(dataset, np.empty(0), np.empty(0), grid, max_level=amr.get("max_level", 1))
+    for frame in range(dataset.sizes["t"]):
+        active = np.asarray(dataset["active"])[frame].astype(bool)
+        yield tuple(np.asarray(dataset[name])[frame, active] for name in ("x", "v", "f", "level"))
+
+
 def _scalar_data(dataset, name, times):
     scalar_times = _axis(dataset["t"], f"{name} scalar t")
     tolerance = 1e-10 * max(1.0, abs(times[-1]))
@@ -184,6 +324,8 @@ def render_comparison(
     import matplotlib.pyplot as plt
     from matplotlib import animation
 
+    from .representation import representation_integrals
+
     if isinstance(fps, bool) or int(fps) != fps or fps < 1:
         raise ValueError("fps must be a positive integer")
     try:
@@ -194,8 +336,9 @@ def render_comparison(
         raise ValueError("config requires farsight resolved config and eulerian.field_model") from exc
     if not isinstance(field_model, str) or not field_model.strip():
         raise ValueError("eulerian.field_model must explicitly describe the force model")
-    if farsight_config.get("amr", {}).get("enabled", False):
-        raise ValueError("AMR rendering is unsupported; fixed remeshed tensor panels are required")
+    method = farsight_method(farsight_config)
+    amr = farsight_config.get("amr", {})
+    is_amr = amr.get("enabled", False)
     if "f" not in eulerian_ds or eulerian_ds["f"].dims != ("t", "x", "v"):
         raise ValueError("Eulerian dataset requires f(t, x, v)")
     times = _axis(eulerian_ds["t"], "Eulerian t")
@@ -209,11 +352,23 @@ def render_comparison(
     if not np.allclose(bounds, expected_bounds, rtol=1e-10, atol=1e-10):
         raise ValueError("Eulerian cell-center domain must match the configured FARSIGHT domain")
     eulerian = _finite(eulerian_ds["f"], "Eulerian f")
-    farsight = reconstruct_fixed_panels(farsight_ds, x, v, grid)
+    if is_amr:
+        farsight = reconstruct_amr_panels(farsight_ds, x, v, grid, max_level=amr.get("max_level", 1))
+        active_counts = np.asarray(farsight_ds["active"]).astype(bool).sum(axis=1)
+        capacity = farsight_ds.sizes["panel"]
+    else:
+        farsight = reconstruct_fixed_panels(farsight_ds, x, v, grid)
+        active_counts = None
+        capacity = None
     delta = farsight - eulerian
     scalar_data = (
         _scalar_data(eulerian_scalars, "Eulerian", times),
         _scalar_data(farsight_scalars, "FARSIGHT", times),
+    )
+    representation = representation_integrals(farsight_ds, farsight_config)
+    plot_data = (
+        *scalar_data,
+        {name: np.asarray(representation[name]) for name in ("t", "relative_mass", "relative_c2")},
     )
     encoder = _ffmpeg_path() if make_movie else None
     output = Path(output)
@@ -231,21 +386,31 @@ def render_comparison(
     epsilon = float(farsight_config["numerical"]["epsilon"])
     quadrature = farsight_config["numerical"].get("quadrature", "trapezoid")
     eulerian_label = config["eulerian"].get("label", "Eulerian: spectral-x / cubic-spline-v")
+    field_solver = farsight_config.get("numerical", {}).get("field_solver", "direct")
+    mesh_label = "AMR" if is_amr else "fixed panels"
+    method_label = f"FARSIGHT: {mesh_label} / {field_solver}"
+
+    def farsight_label(frame):
+        resolution = f"{grid['nx']} × {grid['nv']} {'base ' if is_amr else ''}intervals; softened ε = {epsilon:g}"
+        if is_amr:
+            resolution += f"\nactive leaves: {active_counts[frame]} / {capacity} slots"
+        return f"{method_label}\n{resolution}"
+
     labels = (
         f"{eulerian_label}\n{x.size} × {v.size} cells; {field_model}",
-        f"FARSIGHT: biquadratic panels\n{grid['nx']} × {grid['nv']} intervals; softened ε = {epsilon:g}",
+        farsight_label(0),
         "FARSIGHT − Eulerian\non Eulerian cell centers",
     )
     footer = (
-        f"FARSIGHT: {quadrature} native quadrature; each solver's mass/C₂ drift is relative to its own initial value. "
-        "No clipping or renormalization."
+        f"Solid: native quadrature ({quadrature} for FARSIGHT). Dashed: exact saved-panel polynomial integral. "
+        "Each relative to its own initial value; no clipping/renormalization."
     )
     f_min = min(0.0, float(eulerian.min()), float(farsight.min()))
     f_max = max(float(eulerian.max()), float(farsight.max()))
     if f_max <= f_min:
         f_max = f_min + 1.0
     delta_limit = max(float(np.max(np.abs(delta))), np.finfo(float).eps)
-    colors = ("#2765a0", "#d36f24")
+    colors = ("#2765a0", "#d36f24", "#8054a0")
 
     def phase_image(ax, values, column, *, heading=True):
         limits = (
@@ -264,9 +429,15 @@ def render_comparison(
         lines, cursors = [], []
         for ax, quantity, math_label in zip(axes, ("mass", "c2"), ("M", "C_2"), strict=True):
             quantity_lines = []
-            for data, color, label in zip(scalar_data, colors, ("Eulerian", "FARSIGHT"), strict=True):
-                ax.plot(data["t"], data[f"relative_{quantity}"], color=color, alpha=0.18, linewidth=1)
-                (line,) = ax.plot([], [], color=color, label=label, linewidth=1.6)
+            for data, color, label, style in zip(
+                plot_data,
+                colors,
+                ("Eulerian native", "FARSIGHT native", "FARSIGHT polynomial"),
+                ("-", "-", "--"),
+                strict=True,
+            ):
+                ax.plot(data["t"], data[f"relative_{quantity}"], color=color, alpha=0.18, linewidth=1, linestyle=style)
+                (line,) = ax.plot([], [], color=color, label=label, linewidth=1.6, linestyle=style)
                 quantity_lines.append(line)
             ax.axhline(0, color="0.5", linewidth=0.6)
             cursors.append(ax.axvline(times[0], color="0.3", linewidth=0.7, linestyle="--"))
@@ -283,9 +454,9 @@ def render_comparison(
     try:
         conservation_lines, _ = conservation_axes(axes)
         for quantity, lines in zip(("mass", "c2"), conservation_lines, strict=True):
-            for data, line in zip(scalar_data, lines, strict=True):
+            for data, line in zip(plot_data, lines, strict=True):
                 line.set_data(data["t"], data[f"relative_{quantity}"])
-        fig.suptitle(title + " — native-quadrature conservation")
+        fig.suptitle(title + " — conservation diagnostics")
         fig.supxlabel(footer, fontsize=8)
         fig.savefig(paths["conservation"], dpi=160)
     finally:
@@ -297,6 +468,10 @@ def render_comparison(
         for row, frame in enumerate(indices):
             for column, values in enumerate((eulerian, farsight, delta)):
                 artist = phase_image(axes[row, column], values[frame], column, heading=(row == 0))
+                if column == 1 and is_amr:
+                    axes[row, column].set_title(
+                        farsight_label(frame) if row == 0 else f"active leaves: {active_counts[frame]}", fontsize=10
+                    )
                 axes[row, column].set_ylabel(f"t = {times[frame]:g}\nv")
                 fig.colorbar(artist, ax=axes[row, column], label="Δf" if column == 2 else "f", shrink=0.85)
         fig.suptitle(title + " — initial / midpoint / final", fontsize=14)
@@ -346,11 +521,13 @@ def render_comparison(
                 )
                 with writer.saving(fig, str(paths["movie"]), dpi=100):
                     for frame, time in enumerate(times):
+                        if is_amr:
+                            phase_axes[1].set_title(farsight_label(frame), fontsize=10)
                         for artist, values in zip(images, (eulerian, farsight, delta), strict=True):
                             artist.set_data(values[frame].T)
                         for quantity, lines, cursor in zip(("mass", "c2"), conservation_lines, cursors, strict=True):
                             cursor.set_xdata([time, time])
-                            for data, line in zip(scalar_data, lines, strict=True):
+                            for data, line in zip(plot_data, lines, strict=True):
                                 selected = data["t"] <= time + 1e-10
                                 line.set_data(data["t"][selected], data[f"relative_{quantity}"][selected])
                         heading.set_text(f"{title}    t = {time:g} ωₚ⁻¹")
@@ -369,7 +546,19 @@ def render_comparison(
     diagnostics = {
         "title": title,
         "config": config,
-        "reconstruction": "piecewise 3x3 biquadratic on fixed post-remesh FARSIGHT panels",
+        "reconstruction": (
+            "piecewise 3x3 biquadratic on post-remesh AMR reference leaves; finest boundary ownership"
+            if is_amr
+            else "piecewise 3x3 biquadratic on fixed post-remesh FARSIGHT panels"
+        ),
+        "farsight_method": method,
+        "farsight_representation": representation,
+        "farsight_amr": {
+            "enabled": bool(is_amr),
+            "active_panels": active_counts.tolist() if is_amr else None,
+            "capacity": capacity,
+            "maximum_level": amr.get("max_level", 1) if is_amr else None,
+        },
         "comparison_note": (
             "Distribution differences are not accuracy estimates when force models or resolutions differ."
         ),

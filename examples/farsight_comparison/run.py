@@ -17,7 +17,7 @@ import socket
 import subprocess
 import time
 import zipfile
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
@@ -118,7 +118,7 @@ def _provenance(directory: Path):
         # This bounded source snapshot includes untracked comparison code, which
         # git diff alone would omit in an isolated development session.
         for path in sorted(Path(__file__).parent.iterdir()):
-            if path.is_file() and path.suffix in {".py", ".md", ".yaml", ".yml"}:
+            if path.is_file() and path.suffix in {".py", ".md", ".yaml", ".yml", ".json"}:
                 relative = path.relative_to(repo).as_posix()
                 hashes[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
                 archive.write(path, relative)
@@ -148,6 +148,16 @@ def _provenance(directory: Path):
         "slurm_job_id": os.environ.get("SLURM_JOB_ID"),
         "devices": [{"platform": dev.platform, "kind": dev.device_kind, "id": dev.id} for dev in jax.devices()],
         "jax_enable_x64": bool(jax.config.jax_enable_x64),
+        "compiler_runtime": {
+            key: os.environ.get(key)
+            for key in (
+                "XLA_FLAGS",
+                "CUDA_MODULE_LOADING",
+                "XLA_PYTHON_CLIENT_PREALLOCATE",
+                "OMP_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+            )
+        },
     }
     _write_json(directory / "provenance.json", info)
     return info
@@ -158,11 +168,25 @@ def _execute_timed(call, *, benchmark, steps, directory):
     import jax
 
     durations = []
-    for _ in range(3 if benchmark else 1):
+    execution_count = 3 if benchmark else 1
+    for _ in range(execution_count):
         started = time.perf_counter()
         result = call()
         jax.block_until_ready(result)
         durations.append(time.perf_counter() - started)
+        print(
+            json.dumps(
+                {
+                    "event": "execution_completed",
+                    "execution": len(durations),
+                    "execution_count": execution_count,
+                    "seconds": durations[-1],
+                    "steps": steps,
+                    "includes_compile": len(durations) == 1,
+                }
+            ),
+            flush=True,
+        )
     memory = []
     for device in jax.devices():
         statistics = device.memory_stats() or {}
@@ -198,9 +222,110 @@ def _execute_timed(call, *, benchmark, steps, directory):
     return result
 
 
-def farsight_config(case, *, field_solver="direct", chunk_size=64):
-    """Build the fixed-panel configuration for the common analytic case."""
-    return case.to_farsight_config(field_solver=field_solver, chunk_size=chunk_size)
+def farsight_config(case, **options):
+    """Build the fixed/adaptive configuration for the common analytic case."""
+    return case.to_farsight_config(**options)
+
+
+def method_label(task):
+    if task["solver"] != "farsight":
+        return task["solver"]
+    return f"farsight-{'amr' if task.get('amr', False) else 'fixed'}-{task.get('field_solver', 'direct')}"
+
+
+def add_farsight_arguments(parser):
+    """Shared CLI options, also available as underscore-separated task keys."""
+    from examples.farsight_comparison.cases import FARSIGHT_OPTION_DEFAULTS
+
+    parser.add_argument("--field-solver", choices=("direct", "treecode"), default="direct")
+    parser.add_argument("--quadrature", choices=("trapezoid", "simpson"), default="trapezoid")
+    parser.add_argument("--amr", action=argparse.BooleanOptionalAction, default=False)
+    for key in (
+        "chunk_size",
+        "remesh_every",
+        "amr_max_level",
+        "amr_min_level",
+        "amr_max_panels",
+        "tree_degree",
+        "tree_leaf_size",
+    ):
+        parser.add_argument("--" + key.replace("_", "-"), type=int, default=FARSIGHT_OPTION_DEFAULTS[key])
+    for key in ("amr_atol", "amr_rtol", "amr_max_gap_fraction", "tree_theta"):
+        parser.add_argument("--" + key.replace("_", "-"), type=float, default=FARSIGHT_OPTION_DEFAULTS[key])
+
+
+def _persist_failed_diagnostics(result, directory, error):
+    """Retain raw invalid evidence without presenting it as a successful solution."""
+    import numpy as np
+    import xarray as xr
+
+    np.savez(directory / "failed_final_state.npz", **result.final_state)
+    observations = result.observations.get("scalars", {})
+    times = np.asarray(result.times.get("scalars", []))
+    scalars = xr.Dataset({key: ("t", np.asarray(value)) for key, value in observations.items()}, coords={"t": times})
+    scalars.attrs.update(
+        status="FAILED", warning="Invalid numerical result: diagnostic evidence only, not validated simulation output."
+    )
+    for key in scalars:
+        if scalars[key].dtype == bool:
+            scalars[key] = scalars[key].astype("int8")
+    scalars.to_netcdf(directory / "failed_scalars.nc", engine="h5netcdf")
+    invalid = np.flatnonzero(~np.asarray(observations.get("valid", []), dtype=bool))
+    first_invalid = float(times[invalid[0]]) if len(invalid) else None
+    final_scalars, nonfinite_counts = {}, {}
+    for key, value in result.final_state.items():
+        value = np.asarray(value)
+        nonfinite_counts[key] = int(np.count_nonzero(~np.isfinite(value)))
+        if value.ndim == 0:
+            final_scalars[key] = value.item() if np.isfinite(value) else None
+    _write_json(
+        directory / "failure_diagnostics.json",
+        {
+            "status": "FAILED",
+            "error": f"{type(error).__name__}: {error}",
+            "first_invalid_saved_time": first_invalid if first_invalid is None or np.isfinite(first_invalid) else None,
+            "final_scalars": final_scalars,
+            "final_state_nonfinite_counts": nonfinite_counts,
+            "warning": (
+                "Raw failed-state evidence. No validity flag has been changed; "
+                "no invalid result is promoted to success."
+            ),
+        },
+    )
+
+
+@dataclass(frozen=True)
+class DiagnosticFileAnalyzer:
+    """Wrap the normal FileAnalyzer, retaining failed-state evidence on rejection."""
+
+    analyzer: Any
+    directory: Path
+
+    def analyze(self, result, manifest):
+        import numpy as np
+
+        try:
+            report = self.analyzer.analyze(result, manifest)
+        except Exception as error:
+            try:
+                _persist_failed_diagnostics(result, self.directory, error)
+            except Exception as diagnostic_error:  # noqa: BLE001 - retain the original numerical/analysis failure
+                error.add_note(f"Failed diagnostic persistence: {type(diagnostic_error).__name__}: {diagnostic_error}")
+            raise
+        scalars = report.result.get("scalars")
+        extra = {}
+        if scalars is not None:
+            for name in ("active_panels", "requested_panels", "refinement_limited_panels"):
+                if name in scalars:
+                    values = np.asarray(scalars[name])
+                    extra.update({f"{name}_min": float(values.min()), f"{name}_max": float(values.max())})
+        if extra:
+            report = replace(report, metrics=(*report.metrics, MetricEvent(extra)))
+            _write_json(
+                self.directory / "metrics.json",
+                {key: value for event in report.metrics for key, value in event.values.items()},
+            )
+        return report
 
 
 def _run_farsight(case, config, directory, handle, tracker, sink, benchmark):
@@ -213,7 +338,8 @@ def _run_farsight(case, config, directory, handle, tracker, sink, benchmark):
     prepared = solver_registry.prepare(SimulationSpec.from_legacy_config(config), key=42)
     client = tracker._get_client()
     client.set_tag(handle.run_id, "adept.structural_fingerprint", prepared.manifest.structural_fingerprint)
-    prepared = replace(prepared, analyzer=FileAnalyzer(prepared.analyzer, directory))
+    _write_json(directory / "manifest.json", prepared.manifest.to_dict())
+    prepared = replace(prepared, analyzer=DiagnosticFileAnalyzer(FileAnalyzer(prepared.analyzer, directory), directory))
 
     def execute(prepared, key):
         return _execute_timed(
@@ -267,7 +393,7 @@ def run_one(task: dict) -> dict:
     import jax
 
     jax.config.update("jax_enable_x64", True)
-    from examples.farsight_comparison.cases import get_case
+    from examples.farsight_comparison.cases import FARSIGHT_OPTION_DEFAULTS, get_case
 
     solver = task["solver"]
     if solver not in {"farsight", "eulerian-softened", "eulerian-poisson"}:
@@ -280,11 +406,12 @@ def run_one(task: dict) -> dict:
     directory.mkdir(parents=True, exist_ok=False)
     phase = task.get("phase", "pilot")
     experiment = task.get("experiment", "farsight-comparison")
-    name = task.get("name") or f"{case.name}-{solver}-{phase}-{case.nx}x{case.nv}"
+    method = method_label(task)
+    name = task.get("name") or f"{case.name}-{method}-{phase}-{case.nx}x{case.nv}"
     field_model = "poisson" if solver == "eulerian-poisson" else "farsight-softened"
     if solver == "farsight":
         config = farsight_config(
-            case, field_solver=task.get("field_solver", "direct"), chunk_size=task.get("chunk_size", 64)
+            case, **{key: task[key] for key in FARSIGHT_OPTION_DEFAULTS if task.get(key) is not None}
         )
     else:
         from examples.farsight_comparison.eulerian import build_eulerian_config
@@ -308,6 +435,9 @@ def run_one(task: dict) -> dict:
         tags={
             "comparison.case": case.name,
             "comparison.solver": solver,
+            "comparison.method": method,
+            "comparison.amr_enabled": str(config.get("amr", {}).get("enabled", False)),
+            "comparison.field_solver": config.get("numerical", {}).get("field_solver", "spectral-poisson"),
             "comparison.phase": phase,
             "comparison.field_model": field_model,
             "comparison.benchmark": str(bool(task.get("benchmark", False))),
@@ -324,6 +454,9 @@ def run_one(task: dict) -> dict:
         "name": name,
         "case": case.name,
         "solver": solver,
+        "method": method,
+        "amr_enabled": config.get("amr", {}).get("enabled", False),
+        "field_solver": config.get("numerical", {}).get("field_solver", "spectral-poisson"),
         "field_model": field_model,
         "phase": phase,
         "status": "RUNNING",
@@ -339,6 +472,14 @@ def run_one(task: dict) -> dict:
             client.set_tag(handle.run_id, "mlflow.source.git.commit", provenance["git_commit"])
         for key, value in asdict(case).items():
             client.log_param(handle.run_id, f"comparison.{key}", value)
+        if solver == "farsight":
+            for section in ("amr", "numerical"):
+                for key, value in config[section].items():
+                    if isinstance(value, dict):
+                        for subkey, subvalue in value.items():
+                            client.log_param(handle.run_id, f"farsight.{section}.{key}.{subkey}", subvalue)
+                    else:
+                        client.log_param(handle.run_id, f"farsight.{section}.{key}", value)
         for file in ("run.json", "case.json", "config.json", "provenance.json", "source.zip"):
             receipt = sink.put(handle, Artifact(directory / file, artifact_path="comparison"))
             sink.verify(handle, receipt)
@@ -366,11 +507,23 @@ def run_one(task: dict) -> dict:
     except Exception as error:
         summary.update(status="FAILED", error=f"{type(error).__name__}: {error}")
         _write_json(directory / "run.json", summary)
-        try:
-            receipt = sink.put(handle, Artifact(directory / "run.json", artifact_path="comparison"))
-            sink.verify(handle, receipt)
-        except Exception as tracking_error:  # noqa: BLE001 - retain the original solve failure and both causes
-            error.add_note(f"Failure artifact upload also failed: {type(tracking_error).__name__}: {tracking_error}")
+        for filename in (
+            "run.json",
+            "timing.json",
+            "manifest.json",
+            "failure_diagnostics.json",
+            "failed_scalars.nc",
+            "failed_final_state.npz",
+        ):
+            if not (directory / filename).exists():
+                continue
+            try:
+                receipt = sink.put(handle, Artifact(directory / filename, artifact_path="comparison"))
+                sink.verify(handle, receipt)
+            except Exception as tracking_error:  # noqa: BLE001 - retain the original solve failure and both causes
+                error.add_note(
+                    f"Failure artifact {filename} upload also failed: {type(tracking_error).__name__}: {tracking_error}"
+                )
         try:
             tracker.finish(handle, RunStatus.FAILED, error=summary["error"])
         except Exception as tracking_error:  # noqa: BLE001 - retain the original solve failure and both causes
@@ -391,12 +544,11 @@ def main(argv=None):
     parser.add_argument("--output", type=Path, required=True, help="New output directory; never overwritten")
     parser.add_argument("--experiment", default="farsight-comparison")
     parser.add_argument("--name")
-    parser.add_argument("--phase", default="pilot", choices=("pilot", "movie"))
+    parser.add_argument("--phase", default="pilot", help="Tracking phase label, e.g. pilot, movie, or amr-pilot")
     parser.add_argument(
         "--benchmark", action="store_true", help="Time compilation and two warmed identical-initial-state executions"
     )
-    parser.add_argument("--field-solver", choices=("direct", "treecode"), default="direct")
-    parser.add_argument("--chunk-size", type=int, default=64)
+    add_farsight_arguments(parser)
     parser.add_argument("--tracking-uri", help="Defaults to MLFLOW_TRACKING_URI")
     args = vars(parser.parse_args(argv))
     ensure_experiment(args["experiment"], tracking_uri=args["tracking_uri"])

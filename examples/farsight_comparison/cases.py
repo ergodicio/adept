@@ -7,6 +7,23 @@ from dataclasses import asdict, dataclass, replace
 
 import numpy as np
 
+FARSIGHT_OPTION_DEFAULTS = {
+    "field_solver": "direct",
+    "chunk_size": 64,
+    "quadrature": "trapezoid",
+    "remesh_every": 1,
+    "amr": False,
+    "amr_max_level": 1,
+    "amr_min_level": 0,
+    "amr_max_panels": 256,
+    "amr_atol": 0.05,
+    "amr_rtol": 0.0,
+    "amr_max_gap_fraction": 0.01,
+    "tree_degree": 8,
+    "tree_theta": 0.5,
+    "tree_leaf_size": 32,
+}
+
 
 @dataclass(frozen=True)
 class ComparisonCase:
@@ -95,12 +112,22 @@ class ComparisonCase:
             "mode": 1,
         }
 
-    def to_farsight_config(self, *, field_solver: str = "direct", chunk_size: int = 64) -> dict:
-        """Build the fixed-panel FARSIGHT half of the matched physical problem."""
+    def to_farsight_config(self, **options) -> dict:
+        """Build a validated fixed/adaptive configuration for the common problem.
+
+        Option names match the runner's flat task keys. Defaults intentionally
+        retain the fixed-panel/direct/trapezoid/every-step-remesh baseline.
+        """
+        from adept.farsight1d.config import Farsight1DConfig
+
+        unknown = set(options) - set(FARSIGHT_OPTION_DEFAULTS)
+        if unknown:
+            raise ValueError(f"Unknown FARSIGHT options: {sorted(unknown)}")
+        options = {**FARSIGHT_OPTION_DEFAULTS, **options}
+        field_solver = options["field_solver"]
         if field_solver not in {"direct", "treecode"}:
             raise ValueError("FARSIGHT field_solver must be 'direct' or 'treecode'")
-        return {
-            "solver": "farsight-1d",
+        config = {
             "grid": {
                 "nx": self.nx,
                 "nv": self.nv,
@@ -113,10 +140,22 @@ class ComparisonCase:
             "initial": self.farsight_initial(),
             "numerical": {
                 "epsilon": self.epsilon,
-                "quadrature": "trapezoid",
-                "remesh_every": 1,
-                "chunk_size": chunk_size,
+                "quadrature": options["quadrature"],
+                "remesh_every": options["remesh_every"],
+                "chunk_size": options["chunk_size"],
                 "field_solver": field_solver,
+                "treecode": {
+                    "degree": options["tree_degree"],
+                    "theta": options["tree_theta"],
+                    "leaf_size": options["tree_leaf_size"],
+                },
+            },
+            "amr": {
+                "enabled": options["amr"],
+                **{
+                    key: options[f"amr_{key}"]
+                    for key in ("max_level", "min_level", "max_panels", "atol", "rtol", "max_gap_fraction")
+                },
             },
             "save": {
                 "scalars": {"every_steps": 1},
@@ -124,6 +163,7 @@ class ComparisonCase:
                 "distribution": {"every_steps": round(self.frame_dt / self.dt)},
             },
         }
+        return {"solver": "farsight-1d", **Farsight1DConfig.model_validate(config).model_dump(mode="json")}
 
 
 def get_case(name: str, **overrides) -> ComparisonCase:
@@ -137,4 +177,4 @@ def get_case(name: str, **overrides) -> ComparisonCase:
     return replace(defaults[name], **overrides)
 
 
-__all__ = ["ComparisonCase", "get_case"]
+__all__ = ["FARSIGHT_OPTION_DEFAULTS", "ComparisonCase", "get_case"]

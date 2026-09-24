@@ -211,3 +211,153 @@ def test_ffmpeg_probe_timeout_is_not_usable(monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", timeout)
     assert not movies._has_h264_encoder("/broken/ffmpeg")
+
+
+@pytest.fixture
+def amr_data():
+    """Independent nx=nv=4 hierarchy: refine root 0, then all four roots."""
+    grid = {"nx": 4, "nv": 4, "xmin": 0.0, "xmax": 4.0, "vmin": -2.0, "vmax": 2.0}
+    capacity, times = 18, [0.0, 0.5]
+    arrays = {name: np.full((2, capacity, 9), np.nan) for name in ("x", "v", "f")}
+    active = np.zeros((2, capacity), dtype=np.int8)
+    levels = np.full((2, capacity), -1, dtype=int)
+    panel_ids = np.full((2, capacity), -1, dtype=int)
+
+    def polynomial(x, v):
+        return 1 + x * (4 - x) * (1 + 0.2 * v + 0.1 * v**2)
+
+    for frame, leaves in enumerate(([1, 2, 3, 4, 5, 8, 9], list(range(4, 20)))):
+        for slot, panel_id in enumerate(leaves):
+            level = int(panel_id >= 4)
+            offset, side = (4, 4) if level else (0, 2)
+            ix, iv = divmod(panel_id - offset, side)
+            x = (2 * ix + np.arange(3)) / 2**level
+            v = -2 + (2 * iv + np.arange(3)) / 2**level
+            px, pv = np.meshgrid(x, v, indexing="ij")
+            arrays["x"][frame, slot] = px.ravel()
+            arrays["v"][frame, slot] = pv.ravel()
+            arrays["f"][frame, slot] = (1 + times[frame]) * polynomial(px, pv).ravel()
+            active[frame, slot], levels[frame, slot], panel_ids[frame, slot] = 1, level, panel_id
+    dataset = xr.Dataset(
+        {
+            **{name: (("t", "panel", "node"), values) for name, values in arrays.items()},
+            "active": (("t", "panel"), active),
+            "level": (("t", "panel"), levels),
+            "panel_id": (("t", "panel"), panel_ids),
+        },
+        coords={"t": times},
+    )
+    return dataset, grid, polynomial
+
+
+def test_amr_exact_biquadratic_across_coarse_fine_boundaries_and_regridding(amr_data):
+    dataset, grid, polynomial = amr_data
+    x = np.array([0, 0.2, 1, 2, 2.00001, 3, 3.9, 4])
+    v = np.array([-2, -1, -0.3, 0, 1, 2])
+    values = movies.reconstruct_amr_panels(dataset, x, v, grid, max_level=1)
+    expected = polynomial(x[:, None], v[None, :])
+    np.testing.assert_allclose(values[0], expected, rtol=2e-15, atol=2e-15)
+    np.testing.assert_allclose(values[1], 1.5 * expected, rtol=2e-15, atol=2e-15)
+    frames = list(movies.iter_validated_amr_frames(dataset, grid, {"max_level": 1}))
+    assert [frame[0].shape for frame in frames] == [(7, 9), (16, 9)]
+    assert all(np.isfinite(frame[2]).all() for frame in frames)
+
+
+def test_amr_finest_boundary_owner_and_deterministic_same_level_ties(amr_data):
+    dataset, grid, _ = amr_data
+    dataset = dataset.isel(t=[0]).copy(deep=True)
+    for slot in np.flatnonzero(dataset.active.values[0]):
+        dataset.f.values[0, slot] = dataset.panel_id.values[0, slot] + 1
+    x, v = np.array([0, 1, 2 - 1e-5, 2, 2 + 1e-5, 4, 8]), np.array([-1.5, -1, 0, 1])
+    result = movies.reconstruct_amr_panels(dataset, x, v, grid, max_level=1)[0]
+    assert result[0, 0] == 5  # fine ID 4 beats coarse periodic neighbor ID 2
+    assert result[1, 1] == 5  # four equal-level leaves: smallest ID 4 wins
+    assert result[2, 0] == pytest.approx(9)
+    assert result[3, 0] == 9  # fine ID 8 beats coarse ID 2 on x=2
+    assert result[4, 0] == pytest.approx(3)
+    assert result[0, 2] == 6  # fine ID 5 beats coarse ID 1 on v=0
+    assert result[0, 3] == 2  # periodic equal-level tie: ID 1 beats ID 3
+    np.testing.assert_array_equal(result[0], result[5])
+    np.testing.assert_array_equal(result[0], result[6])
+    # Packed slots may change after remeshing; reference IDs determine ties.
+    reversed_slots = dataset.isel(panel=slice(None, None, -1))
+    np.testing.assert_array_equal(movies.reconstruct_amr_panels(reversed_slots, x, v, grid, max_level=1)[0], result)
+
+
+def test_amr_velocity_edges_and_zero_exterior(amr_data):
+    dataset, grid, polynomial = amr_data
+    values = movies.reconstruct_amr_panels(dataset, [0.5], [-2.1, -2, 2, 2.1], grid, max_level=1)
+    np.testing.assert_array_equal(values[:, :, [0, -1]], 0)
+    np.testing.assert_allclose(values[0, 0, 1:3], polynomial(0.5, np.array([-2, 2])))
+
+
+def test_amr_rejects_advected_coordinates(amr_data):
+    dataset, grid, _ = amr_data
+    dataset.x.values[0, 0, 4] += 0.001
+    with pytest.raises(ValueError, match="moving/deformed"):
+        movies.reconstruct_amr_panels(dataset, [0], [0], grid, max_level=1)
+
+
+def test_amr_rejects_uncovered_leaf_even_outside_query_region(amr_data):
+    dataset, grid, _ = amr_data
+    dataset.active.values[0, 0] = 0
+    with pytest.raises(ValueError, match="uncovered reference cells"):
+        movies.reconstruct_amr_panels(dataset, [3], [-1], grid, max_level=1)
+
+
+def test_amr_rejects_overlapping_parent_and_child(amr_data):
+    dataset, grid, _ = amr_data
+    dataset.active.values[0, 7] = 1
+    dataset.level.values[0, 7], dataset.panel_id.values[0, 7] = 0, 0
+    x, v = np.meshgrid([0, 1, 2], [-2, -1, 0], indexing="ij")
+    dataset.x.values[0, 7], dataset.v.values[0, 7], dataset.f.values[0, 7] = x.ravel(), v.ravel(), np.ones(9)
+    with pytest.raises(ValueError, match="overlapping active interiors"):
+        movies.reconstruct_amr_panels(dataset, [3], [-1], grid, max_level=1)
+
+
+def test_amr_rejects_mismatched_level_and_panel_id(amr_data):
+    dataset, grid, _ = amr_data
+    dataset.level.values[0, 0] = 1
+    with pytest.raises(ValueError, match="IDs disagree"):
+        movies.reconstruct_amr_panels(dataset, [0], [0], grid, max_level=1)
+
+
+@pytest.mark.parametrize("field_solver", ["direct", "treecode"])
+def test_amr_render_reports_actual_method_and_active_panels(amr_data, tmp_path, field_solver):
+    dataset, grid, polynomial = amr_data
+    x, v = (np.arange(12) + 0.5) / 3, -2 + (np.arange(16) + 0.5) / 4
+    f = np.stack([(1 + time) * polynomial(x[:, None], v[None, :]) for time in dataset.t.values])
+    eulerian = xr.Dataset({"f": (("t", "x", "v"), f)}, coords={"t": dataset.t, "x": x, "v": v})
+    scalars = xr.Dataset({"mass": ("t", [1, 1]), "c2": ("t", [2, 2])}, coords={"t": dataset.t})
+    config = {
+        "farsight": {
+            "grid": grid,
+            "amr": {"enabled": True, "max_level": 1},
+            "numerical": {"epsilon": 0.3, "field_solver": field_solver},
+        },
+        "eulerian": {"field_model": "matched softened ε = 0.3"},
+    }
+    make_movie = field_solver == "treecode" and shutil.which("ffmpeg") is not None
+    paths = render_comparison(eulerian, dataset, scalars, scalars, config, tmp_path, make_movie=make_movie)
+    if make_movie:
+        assert paths["movie"].read_bytes()[4:8] == b"ftyp"
+    diagnostics = json.loads(paths["diagnostics"].read_text())
+    assert diagnostics["farsight_method"] == f"farsight-amr-{field_solver}"
+    assert diagnostics["farsight_amr"]["active_panels"] == [7, 16]
+    assert diagnostics["farsight_amr"]["capacity"] == 18
+    assert "AMR reference leaves" in diagnostics["reconstruction"]
+    assert diagnostics["farsight_representation"]["relative_c2"][-1] == pytest.approx(1.25)
+    np.testing.assert_allclose(diagnostics["relative_l2_distribution_difference"], 0, atol=1e-15)
+
+
+def test_amr_exact_polynomial_integrals_are_independent_of_leaf_partition(amr_data):
+    from examples.farsight_comparison.representation import representation_integrals
+
+    dataset, grid, _ = amr_data
+    result = representation_integrals(dataset, {"grid": grid, "amr": {"enabled": True, "max_level": 1}})
+    # Analytic integrals of 1+x(4-x)(1+v/5+v²/10), x∈[0,4], v∈[-2,2].
+    mass, c2 = 2896 / 45, 1672336 / 5625
+    np.testing.assert_allclose(result["mass"], [mass, 1.5 * mass], rtol=2e-15)
+    np.testing.assert_allclose(result["c2"], [c2, 2.25 * c2], rtol=2e-15)
+    np.testing.assert_allclose(result["relative_mass"], [0, 0.5], atol=1e-15)
+    np.testing.assert_allclose(result["relative_c2"], [0, 1.25], atol=1e-15)
