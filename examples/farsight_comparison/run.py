@@ -230,7 +230,8 @@ def farsight_config(case, **options):
 def method_label(task):
     if task["solver"] != "farsight":
         return task["solver"]
-    return f"farsight-{'amr' if task.get('amr', False) else 'fixed'}-{task.get('field_solver', 'direct')}"
+    method = f"farsight-{'amr' if task.get('amr', False) else 'fixed'}-{task.get('field_solver', 'direct')}"
+    return method + ("-bernstein" if task.get("positivity_limiter", "none") == "bernstein" else "")
 
 
 def add_farsight_arguments(parser):
@@ -239,6 +240,7 @@ def add_farsight_arguments(parser):
 
     parser.add_argument("--field-solver", choices=("direct", "treecode"), default="direct")
     parser.add_argument("--quadrature", choices=("trapezoid", "simpson"), default="trapezoid")
+    parser.add_argument("--positivity-limiter", choices=("none", "bernstein"), default="none")
     parser.add_argument("--amr", action=argparse.BooleanOptionalAction, default=False)
     for key in (
         "chunk_size",

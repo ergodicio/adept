@@ -121,8 +121,69 @@ def test_static_artifacts_and_separate_native_diagnostics(data, tmp_path):
     assert diagnostics["farsight_intervals"] == [8, 6]
     assert diagnostics["farsight_field_model"]["epsilon"] == 0.5
     assert "unsoftened" in diagnostics["eulerian_field_model"]
+    assert "c2_negative" not in diagnostics["native_scalars"]["farsight"]
+    assert diagnostics["native_scalar_notes"]["initial_limiter"] is None
     with pytest.raises(FileExistsError, match="already exist"):
         render_comparison(eulerian, farsight, scalars, scalars, config, tmp_path, make_movie=False)
+
+
+def test_optional_native_sign_and_limiter_scalars_are_not_dropped(data, tmp_path):
+    farsight, eulerian, scalars, config, _ = data
+    diagnostic_names = (
+        "c2_positive",
+        "c2_negative",
+        "positive_mass",
+        "negative_mass",
+        "negative_node_count",
+        "min_f",
+        "positivity_failed_panels",
+        "min_bernstein_coefficient",
+        "initial_positivity_c2_change",
+        "initial_positivity_polynomial_c2_change",
+        "initial_positivity_mass_change",
+        "initial_positivity_limited_panels",
+        "initial_positivity_failed_panels",
+        "initial_positivity_min_theta",
+        "interpolation_c2_change",
+        "source_limiter_c2_change",
+        "source_limiter_mass_change",
+        "source_limiter_panels",
+        "source_limiter_min_theta",
+        "destination_limiter_c2_change",
+        "destination_limiter_mass_change",
+        "destination_limiter_polynomial_c2_change",
+        "destination_limiter_panels",
+        "destination_limiter_min_theta",
+        "regrid_c2_change",
+        "remap_c2_change",
+        "remap_c2_abs_change",
+    )
+    enriched = scalars.copy(deep=True)
+    for index, name in enumerate(diagnostic_names):
+        enriched[name] = ("t", np.array([-0.25, 0.0, 0.5]) + index)
+    paths = render_comparison(eulerian, farsight, scalars, enriched, config, tmp_path, make_movie=False)
+    diagnostic = json.loads(paths["diagnostics"].read_text())
+    native = diagnostic["native_scalars"]
+    for name in diagnostic_names:
+        np.testing.assert_array_equal(native["farsight"][name], enriched[name])
+        assert name not in native["eulerian"]
+    np.testing.assert_array_equal(native["farsight"]["relative_c2"], (scalars.c2 - scalars.c2[0]) / scalars.c2[0])
+    assert "either sign" in diagnostic["native_scalar_notes"]["stage_budgets"]
+    assert "not inferred to be zero" in diagnostic["native_scalar_notes"]["availability"]
+
+
+@pytest.mark.parametrize(
+    "name", ["c2_negative", "negative_mass", "initial_positivity_c2_change", "source_limiter_panels"]
+)
+def test_optional_native_scalars_require_finite_time_series(data, name):
+    _, _, scalars, _, _ = data
+    invalid = scalars.copy(deep=True)
+    invalid[name] = ("t", [0.0, np.nan, 0.0])
+    with pytest.raises(ValueError, match=rf"{name}.*finite"):
+        movies._scalar_data(invalid, "FARSIGHT", np.asarray(scalars.t))
+    invalid[name] = (("t", "extra"), np.zeros((3, 1)))
+    with pytest.raises(ValueError, match=rf"{name} must have dimension"):
+        movies._scalar_data(invalid, "FARSIGHT", np.asarray(scalars.t))
 
 
 def test_rejects_unequal_saved_times(data, tmp_path):
@@ -323,31 +384,60 @@ def test_amr_rejects_mismatched_level_and_panel_id(amr_data):
 
 
 @pytest.mark.parametrize("field_solver", ["direct", "treecode"])
-def test_amr_render_reports_actual_method_and_active_panels(amr_data, tmp_path, field_solver):
+@pytest.mark.parametrize("limiter", ["none", "bernstein"])
+def test_amr_render_reports_actual_method_and_active_panels(amr_data, tmp_path, field_solver, limiter, monkeypatch):
+    from matplotlib.figure import Figure
+
     dataset, grid, polynomial = amr_data
     x, v = (np.arange(12) + 0.5) / 3, -2 + (np.arange(16) + 0.5) / 4
     f = np.stack([(1 + time) * polynomial(x[:, None], v[None, :]) for time in dataset.t.values])
     eulerian = xr.Dataset({"f": (("t", "x", "v"), f)}, coords={"t": dataset.t, "x": x, "v": v})
     scalars = xr.Dataset({"mass": ("t", [1, 1]), "c2": ("t", [2, 2])}, coords={"t": dataset.t})
+    if limiter == "bernstein":
+        scalars["initial_positivity_c2_change"] = ("t", [-0.012, -0.012])
+        scalars["initial_positivity_mass_change"] = ("t", [0.0, 0.0])
+        scalars["initial_positivity_polynomial_c2_change"] = ("t", [-0.01, -0.01])
     config = {
         "farsight": {
             "grid": grid,
             "amr": {"enabled": True, "max_level": 1},
-            "numerical": {"epsilon": 0.3, "field_solver": field_solver},
+            "numerical": {
+                "epsilon": 0.3,
+                "field_solver": field_solver,
+                "positivity_limiter": limiter,
+                "quadrature": "simpson",
+            },
         },
         "eulerian": {"field_model": "matched softened ε = 0.3"},
     }
-    make_movie = field_solver == "treecode" and shutil.which("ffmpeg") is not None
+    footers = []
+    original_supxlabel = Figure.supxlabel
+
+    def capture_footer(figure, text, *args, **kwargs):
+        footers.append(text)
+        return original_supxlabel(figure, text, *args, **kwargs)
+
+    monkeypatch.setattr(Figure, "supxlabel", capture_footer)
+    make_movie = field_solver == "treecode" and limiter == "none" and shutil.which("ffmpeg") is not None
     paths = render_comparison(eulerian, dataset, scalars, scalars, config, tmp_path, make_movie=make_movie)
     if make_movie:
         assert paths["movie"].read_bytes()[4:8] == b"ftyp"
     diagnostics = json.loads(paths["diagnostics"].read_text())
-    assert diagnostics["farsight_method"] == f"farsight-amr-{field_solver}"
+    assert diagnostics["farsight_method"] == f"farsight-amr-{field_solver}" + (
+        "-bernstein" if limiter == "bernstein" else ""
+    )
     assert diagnostics["farsight_amr"]["active_panels"] == [7, 16]
     assert diagnostics["farsight_amr"]["capacity"] == 18
     assert "AMR reference leaves" in diagnostics["reconstruction"]
     assert diagnostics["farsight_representation"]["relative_c2"][-1] == pytest.approx(1.25)
     np.testing.assert_allclose(diagnostics["relative_l2_distribution_difference"], 0, atol=1e-15)
+    if limiter == "bernstein":
+        assert "excluded from relative drift" in diagnostics["native_scalar_notes"]["initial_limiter"]
+        assert any("initial native ΔC2 = -1.200e-02" in text for text in footers)
+        assert any("initial polynomial ΔC2 = -1.000e-02" in text for text in footers)
+    else:
+        assert diagnostics["native_scalar_notes"]["initial_limiter"] is None
+        assert all("Initial limiting" not in text for text in footers)
 
 
 def test_amr_exact_polynomial_integrals_are_independent_of_leaf_partition(amr_data):

@@ -4,7 +4,11 @@ import numpy as np
 import pytest
 import xarray as xr
 
-from examples.farsight_comparison.representation import integrate_rectangles, representation_integrals
+from examples.farsight_comparison.representation import (
+    integrate_rectangles,
+    positivity_bounds,
+    representation_integrals,
+)
 
 
 def test_exact_square_of_biquadratic():
@@ -26,6 +30,33 @@ def test_signed_values_are_not_clipped():
 def test_reject_invalid_geometry():
     with pytest.raises(ValueError, match="positive areas"):
         integrate_rectangles(np.ones((1, 3, 3)), [-1])
+
+
+def test_positive_nodes_do_not_certify_polynomial():
+    # q(v)=2v²-v on [0,1] has nonnegative nodes but minimum -1/8.
+    f = np.broadcast_to([0.0, 0.0, 1.0], (1, 3, 3))
+    result = positivity_bounds(f)
+    assert result["min_bernstein_coefficient"] == -0.5
+    assert result["uncertified_panels"] == 1
+    assert result["negative_mean_panels"] == 0
+    assert result["min_panel_mean"] == pytest.approx(1 / 6)
+
+
+def test_negative_bernstein_bound_is_not_proof_of_negative_f():
+    # q(v)=(v-.5)² is nonnegative everywhere but has a negative Bernstein coefficient.
+    result = positivity_bounds(np.broadcast_to([0.25, 0.0, 0.25], (1, 3, 3)))
+    assert result["min_bernstein_coefficient"] == -0.25
+    assert result["uncertified_panels"] == 1
+
+
+def test_bernstein_certificate_and_scale_relative_tolerance():
+    f = np.stack([np.ones((3, 3)), np.zeros((3, 3)), -np.full((3, 3), 1e-200)])
+    result = positivity_bounds(f)
+    assert result["active_panels"] == 3
+    assert result["uncertified_panels"] == 1
+    assert result["negative_mean_panels"] == 1
+    with pytest.raises(ValueError, match="nonempty finite"):
+        positivity_bounds(np.zeros((0, 3, 3)))
 
 
 def test_fixed_representation_differs_from_nodal_trapezoid():

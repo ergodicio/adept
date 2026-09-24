@@ -149,6 +149,38 @@ base intervals equal to the uniform resolution. Each doubles source slots and
 roughly quadruples direct-field arithmetic; measure cost before launch. These
 are proposed controls, not results or automatic follow-up runs.
 
+### Experimental positivity control
+
+`positivity-pilot.json` benchmarks the opt-in AMR Bernstein limiter at the actual
+8192-panel capacity for tmax1. `positivity-two-stream.json` defines a matched
+tmax40 **Simpson unlimited / Simpson limited** pair: every physical and numerical
+option except `positivity_limiter` is identical. Do not compare directly against
+the earlier trapezoid run and attribute all differences to limiting. Initial
+polynomial limiting can also alter the sampled IC; its defects are logged apart
+from remap defects. Both tasks use the direct field, leaving force approximation
+out of this control.
+
+```bash
+python -m examples.farsight_comparison.scan \
+  --task-file examples/farsight_comparison/positivity-pilot.json \
+  --output /absolute/new/positivity-pilot
+```
+
+Run the full pair only after checking pilot validity, timing and memory against
+the approved allocation. Inspect positive/negative native C2, negative mass,
+initial and cumulative limiter defects, remap mass error, partition saturation
+and gaps. Destination Bernstein scaling preserves panel mass with Simpson
+quadrature but intentionally dissipates C2; the complete remap still need not
+conserve mass. A positive solution or a smaller C2 drift alone is not a fidelity
+or turbulence-readiness result. The Eulerian reference remains spectral-x and
+cubic-spline-v.
+
+Rendered diagnostics include a sufficient Bernstein positivity bound for every
+saved rectangular panel. Nonnegative bounds certify the full polynomial to the
+reported roundoff tolerance; negative bounds are inconclusive, not proof of
+negative f. Nodal sign-split C2 is likewise a native quadrature diagnostic, not an
+exact integral over the negative region of the polynomial.
+
 ## Render and log movies
 
 Pull completed run directories locally or render where an existing ffmpeg is

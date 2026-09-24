@@ -83,6 +83,7 @@ class NumericalConfig(_StrictConfig):
 
     epsilon: float = Field(gt=0)
     quadrature: Literal["trapezoid", "simpson"] = "trapezoid"
+    positivity_limiter: Literal["none", "bernstein"] = "none"
     remesh_every: int = Field(default=1, ge=0)
     chunk_size: int = Field(default=64, ge=1)
     field_solver: Literal["direct", "treecode"] = "direct"
@@ -138,6 +139,11 @@ class Farsight1DConfig(_StrictConfig):
     def validate_mode(self):
         if self.initial.mode >= self.grid.nx // 2:
             raise ValueError("initial mode must lie strictly below the spatial Nyquist mode (nx / 2)")
+        if self.numerical.positivity_limiter == "bernstein":
+            if not self.amr.enabled:
+                raise ValueError("numerical.positivity_limiter='bernstein' requires amr.enabled=true")
+            if self.numerical.quadrature != "simpson":
+                raise ValueError("numerical.positivity_limiter='bernstein' requires numerical.quadrature='simpson'")
         if self.amr.enabled:
             roots = (self.grid.nx // 2) * (self.grid.nv // 2)
             minimum = roots * 4**self.amr.min_level

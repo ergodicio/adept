@@ -229,7 +229,10 @@ def farsight_method(config):
     if field_solver not in {"direct", "treecode"}:
         raise ValueError("Unknown FARSIGHT field solver; expected direct or treecode")
     mesh = "amr" if config.get("amr", {}).get("enabled", False) else "fixed"
-    return f"farsight-{mesh}-{field_solver}"
+    limiter = config.get("numerical", {}).get("positivity_limiter", "none")
+    if limiter not in {"none", "bernstein"}:
+        raise ValueError("Unknown FARSIGHT positivity limiter")
+    return f"farsight-{mesh}-{field_solver}" + ("-bernstein" if limiter == "bernstein" else "")
 
 
 def iter_validated_amr_frames(dataset, grid, amr):
@@ -259,6 +262,29 @@ def _scalar_data(dataset, name, times):
             raise ValueError(f"{name} initial {quantity} must be positive")
         result[quantity] = value
         result[f"relative_{quantity}"] = (value - value[0]) / value[0]
+    optional_names = {
+        "c2_positive",
+        "c2_negative",
+        "positive_mass",
+        "negative_mass",
+        "negative_node_count",
+        "min_f",
+        "positivity_failed_panels",
+        "min_bernstein_coefficient",
+    }
+    optional_prefixes = (
+        "initial_positivity_",
+        "interpolation_",
+        "source_limiter_",
+        "destination_limiter_",
+        "regrid_",
+        "remap_",
+    )
+    for quantity in dataset.data_vars:
+        if quantity in optional_names or quantity.startswith(optional_prefixes):
+            if dataset[quantity].dims != ("t",):
+                raise ValueError(f"{name} optional scalar {quantity} must have dimension (t,)")
+            result[quantity] = _finite(dataset[quantity], f"{name} {quantity}")
     return result
 
 
@@ -389,6 +415,8 @@ def render_comparison(
     field_solver = farsight_config.get("numerical", {}).get("field_solver", "direct")
     mesh_label = "AMR" if is_amr else "fixed panels"
     method_label = f"FARSIGHT: {mesh_label} / {field_solver}"
+    if farsight_config.get("numerical", {}).get("positivity_limiter", "none") == "bernstein":
+        method_label += " / Bernstein limiter"
 
     def farsight_label(frame):
         resolution = f"{grid['nx']} × {grid['nv']} {'base ' if is_amr else ''}intervals; softened ε = {epsilon:g}"
@@ -405,6 +433,20 @@ def render_comparison(
         f"Solid: native quadrature ({quadrature} for FARSIGHT). Dashed: exact saved-panel polynomial integral. "
         "Each relative to its own initial value; no clipping/renormalization."
     )
+    initial_limiting_note = None
+    if farsight_config.get("numerical", {}).get("positivity_limiter", "none") == "bernstein":
+        initial_limiting_note = "Initial limiting precedes t=0; its defects are excluded from relative drift curves."
+        defects = [
+            f"{label} = {scalar_data[1][key][0]:+.3e}"
+            for key, label in (
+                ("initial_positivity_mass_change", "initial ΔM"),
+                ("initial_positivity_c2_change", "initial native ΔC2"),
+                ("initial_positivity_polynomial_c2_change", "initial polynomial ΔC2"),
+            )
+            if key in scalar_data[1]
+        ]
+        footer += "\n" + initial_limiting_note
+        footer += "\n" + ("; ".join(defects) if defects else "Initial limiter budgets unavailable in source scalars.")
     f_min = min(0.0, float(eulerian.min()), float(farsight.min()))
     f_max = max(float(eulerian.max()), float(farsight.max()))
     if f_max <= f_min:
@@ -536,10 +578,7 @@ def render_comparison(
             plt.close(fig)
 
     def native_summary(data):
-        return {
-            "t": data["t"].tolist(),
-            **{name: data[name].tolist() for name in ("mass", "c2", "relative_mass", "relative_c2")},
-        }
+        return {name: value.tolist() for name, value in data.items()}
 
     denominator = np.sum(eulerian**2, axis=(1, 2))
     relative_l2 = np.sqrt(np.sum(delta**2, axis=(1, 2)) / np.maximum(denominator, np.finfo(float).tiny))
@@ -563,6 +602,20 @@ def render_comparison(
             "Distribution differences are not accuracy estimates when force models or resolutions differ."
         ),
         "conservation_note": "Native quadrature drifts; the two native quadratures need not be identical.",
+        "native_scalar_notes": {
+            "sign_split": (
+                "c2_positive + c2_negative = c2; both terms are nonnegative native nodal quadrature "
+                "contributions, not integrals over the positive/negative polynomial regions."
+            ),
+            "initial_limiter": initial_limiting_note,
+            "stage_budgets": (
+                "Initial positivity defects are separate from evolution. Native remap changes decompose into "
+                "interpolation + source_limiter + regrid + destination_limiter. The resampled source_limiter "
+                "C2 term can have either sign; destination limiting dissipates native and polynomial C2. "
+                "Exact polynomial C2 limiter changes are separate, not additional native-budget terms."
+            ),
+            "availability": "Optional diagnostics are retained when present; missing keys are not inferred to be zero.",
+        },
         "eulerian_field_model": field_model,
         "farsight_field_model": {"kind": "softened periodic kernel", "epsilon": epsilon},
         "eulerian_cells": [int(x.size), int(v.size)],
