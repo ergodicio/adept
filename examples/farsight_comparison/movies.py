@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -121,16 +122,40 @@ def _scalar_data(dataset, name, times):
     return result
 
 
+def _has_h264_encoder(binary):
+    """Check codec support rather than assuming every ffmpeg build has x264."""
+    try:
+        result = subprocess.run(
+            [binary, "-hide_banner", "-encoders"], capture_output=True, text=True, check=False, timeout=10
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if result.returncode != 0:
+        return False
+    for line in (result.stdout + "\n" + result.stderr).splitlines():
+        fields = line.split()
+        if len(fields) >= 2 and fields[0].startswith("V") and fields[1] == "libx264":
+            return True
+    return False
+
+
 def _ffmpeg_path():
-    """Use an existing executable; never install an encoder implicitly."""
+    """Select an existing H.264-capable executable; never install implicitly."""
     binary = shutil.which("ffmpeg")
-    if binary:
+    if binary and _has_h264_encoder(binary):
         return binary
     try:
         import imageio_ffmpeg
-    except ImportError as exc:
-        raise RuntimeError("MP4 rendering requires ffmpeg or an existing imageio_ffmpeg installation") from exc
-    return imageio_ffmpeg.get_ffmpeg_exe()
+
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+    except (ImportError, RuntimeError, OSError):
+        bundled = None
+    if bundled and bundled != binary and _has_h264_encoder(bundled):
+        return bundled
+    raise RuntimeError(
+        "MP4 rendering requires ffmpeg with the libx264 encoder; neither system ffmpeg nor an existing "
+        "imageio_ffmpeg installation supplies a usable H.264 encoder"
+    )
 
 
 def render_comparison(
@@ -304,7 +329,16 @@ def render_comparison(
                     fps=int(fps),
                     codec="libx264",
                     bitrate=2500,
-                    extra_args=["-pix_fmt", "yuv420p", "-movflags", "+faststart"],
+                    extra_args=[
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-movflags",
+                        "+faststart",
+                        "-threads",
+                        "2",
+                        "-filter_threads",
+                        "2",
+                    ],
                     metadata={
                         "title": title,
                         "comment": "Native FARSIGHT biquadratic reconstruction; fixed frame color limits",

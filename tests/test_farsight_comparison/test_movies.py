@@ -2,11 +2,15 @@
 
 import json
 import shutil
+import subprocess
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import xarray as xr
 
+from examples.farsight_comparison import movies
 from examples.farsight_comparison.movies import reconstruct_fixed_panels, render_comparison
 
 
@@ -156,3 +160,54 @@ def test_mp4_encoder_smoke(data, tmp_path):
     paths = render_comparison(eulerian, farsight, scalars, scalars, config, tmp_path, fps=6)
     assert paths["movie"].stat().st_size > 1000
     assert paths["movie"].read_bytes()[4:8] == b"ftyp"
+
+
+def test_ffmpeg_prefers_system_with_h264(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda _: "/system/ffmpeg")
+    calls = []
+
+    def encoders(command, **kwargs):
+        calls.append(command)
+        assert kwargs["timeout"] == 10
+        return SimpleNamespace(returncode=0, stdout=" V....D libx264 H.264 encoder\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", encoders)
+    assert movies._ffmpeg_path() == "/system/ffmpeg"
+    assert calls == [["/system/ffmpeg", "-hide_banner", "-encoders"]]
+
+
+def test_ffmpeg_uses_bundled_encoder_when_system_lacks_h264(monkeypatch):
+    monkeypatch.setattr(shutil, "which", lambda _: "/system/ffmpeg")
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", SimpleNamespace(get_ffmpeg_exe=lambda: "/bundled/ffmpeg"))
+    calls = []
+
+    def encoders(command, **kwargs):
+        calls.append(command[0])
+        output = " V....D libx264 H.264 encoder" if command[0] == "/bundled/ffmpeg" else " V..... mpeg4 MPEG-4 encoder"
+        return SimpleNamespace(returncode=0, stdout=output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", encoders)
+    assert movies._ffmpeg_path() == "/bundled/ffmpeg"
+    assert calls == ["/system/ffmpeg", "/bundled/ffmpeg"]
+
+
+@pytest.mark.parametrize("bundled_available", [True, False])
+def test_ffmpeg_without_usable_h264_fails_clearly(monkeypatch, bundled_available):
+    monkeypatch.setattr(shutil, "which", lambda _: "/system/ffmpeg")
+    bundled = SimpleNamespace(get_ffmpeg_exe=lambda: "/bundled/ffmpeg") if bundled_available else None
+    monkeypatch.setitem(sys.modules, "imageio_ffmpeg", bundled)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=" V..... mpeg4 MPEG-4 encoder", stderr=""),
+    )
+    with pytest.raises(RuntimeError, match="libx264 encoder"):
+        movies._ffmpeg_path()
+
+
+def test_ffmpeg_probe_timeout_is_not_usable(monkeypatch):
+    def timeout(command, **kwargs):
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(subprocess, "run", timeout)
+    assert not movies._has_h264_encoder("/broken/ffmpeg")
