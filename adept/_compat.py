@@ -2,16 +2,16 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import jax
 import numpy as np
 from diffrax import Solution
 
-from adept.core import PreparedSimulation, SimulationSpec, run_prepared, solver_registry
+from adept.core import PassthroughAnalyzer, PreparedSimulation, SimulationSpec, run_prepared, solver_registry
 
-_SUPPORTED_SOLVERS = frozenset({"tf-1d", "pic-1d"})
+_SUPPORTED_SOLVERS = frozenset({"tf-1d", "pic-1d", "vfp-2d"})
 
 
 def _legacy_seed(config: dict[str, Any]) -> int:
@@ -128,14 +128,16 @@ class LegacyPreparedExecution:
     def execute(self) -> dict[str, Solution]:
         """Execute via the host runtime and restore ``output['solver result']``."""
 
-        completed = run_prepared(self.prepared, key=self.key)
+        # Legacy post_process owns analysis and artifact export after this call.
+        prepared = replace(self.prepared, analyzer=PassthroughAnalyzer())
+        completed = run_prepared(prepared, key=self.key)
         raw_result = completed.raw_result
         if self.solver == "tf-1d":
             # TF1D historically used one SaveAt schedule shared by all saved trees.
             times = next(iter(raw_result.times.values()))
             stats = raw_result.stats
         else:
-            # PIC1D historically used named SubSaveAt schedules.
+            # Discrete programs expose only a step count; restore Diffrax stats.
             times = raw_result.times
             num_steps = raw_result.stats["num_steps"]
             stats = {
@@ -145,11 +147,16 @@ class LegacyPreparedExecution:
                 "num_steps": num_steps,
             }
 
+        observations = raw_result.observations
+        if self.solver == "vfp-2d":
+            times = raw_result.times["state"]
+            observations = raw_result.observations["state"]
+
         solution = Solution(
             t0=self.t0,
             t1=self.t1,
             ts=times,
-            ys=raw_result.observations,
+            ys=observations,
             interpolation=None,
             stats=stats,
             result=raw_result.status,

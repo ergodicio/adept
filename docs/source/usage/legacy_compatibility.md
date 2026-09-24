@@ -7,11 +7,13 @@ move onto the explicit architecture.
 
 ## Current routing
 
-Supported TF1D and electrostatic PIC1D forward runs are prepared through
+Supported TF1D, electrostatic PIC1D, and VFP2D forward runs are prepared through
 `SimulationSpec` and the solver registry, then executed by `run_prepared`. The façade
 converts the structured result back into the historical
 `{"solver result": diffrax.Solution}` shape before invoking the existing post-processor.
-This routing does not change the three-value return from `ergoExo.__call__`.
+This routing does not change the three-value return from `ergoExo.__call__`. VFP2D
+preserves its flat saved-state dictionary, physical save times (including between-step
+samples), diagnostics, and artifact export.
 
 The façade opts into prepared execution only when preparation reproduces the legacy
 initial state exactly. It uses the legacy path when any compatibility-sensitive input

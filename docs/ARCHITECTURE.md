@@ -2,9 +2,8 @@
 
 ADEPT is incrementally moving toward explicit, logging-free preparation and a pure
 numerical transform boundary. [ADR 0001](adr/0001-explicit-simulation-boundaries.md)
-defines the target contracts and compatibility policy. `tf-1d` and electrostatic
-`pic-1d` are the first registered builder pilots. Their legacy classes remain available
-as parallel fallback paths while downstream workflows migrate.
+defines the target contracts and compatibility policy. `tf-1d`, electrostatic `pic-1d`, and `vfp-2d` have registered builders. Their
+legacy classes remain available as fallback paths while downstream workflows migrate.
 
 ## Explicit preparation and execution
 
@@ -63,8 +62,10 @@ RawResult(
 ```
 
 The `tf-1d` pilot uses the continuous `DiffraxProgram`; the electrostatic `pic-1d`
-pilot uses the discrete `ScanProgram`. Both are parity-tested against their legacy
-numerical maps. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
+pilot and VFP2D use the discrete `ScanProgram`. All three are parity-tested against
+their legacy numerical maps. VFP2D opts into linear state interpolation for physical-time
+observations between steps; its final state is retained independently of the save
+schedule. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
 closures, still produce an actionable error directing callers to `ergoExo`.
 
 `RunPlan` carries JSON-safe solver intent, seed, resources, run identity, and service

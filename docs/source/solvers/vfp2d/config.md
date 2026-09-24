@@ -287,6 +287,12 @@ save:
     nt: 101
 ```
 
+The explicit builder preserves this physical-time schedule, including linear state
+interpolation between complete steps. Its `RawResult.observations["state"]` and
+`RawResult.times["state"]` hold the saved history; `RawResult.final_state` separately
+retains the final step even when `save.t.tmax` is earlier. See the
+[explicit API example](overview.md#explicit-preparation-and-execution).
+
 Post-processing returns an xarray dataset with `flm_real`, `flm_imag`, `e`, `b`, density,
 temperature, current, Nernst velocity, and the traceless pressure-anisotropy moment. Harmonics
 are labeled by the `ell` and `m` coordinates. All field modes save `ampere_target_current`,

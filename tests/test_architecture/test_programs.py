@@ -152,3 +152,60 @@ def test_discrete_program_is_keyed_deterministic_and_vmappable():
     assert not np.allclose(first.final_state, changed.final_state)
     assert batched.final_state.shape == (2, 2)
     assert batched.stats["num_steps"].shape == (2,)
+
+
+def test_scan_interpolates_states_at_multiple_times_per_step_and_differentiates():
+    class Growth(eqx.Module):
+        def step(self, step, state, params, inputs, key):
+            return state * params
+
+    class SquaredState(eqx.Module):
+        def __call__(self, t, state, inputs):
+            return state**2 + t
+
+    times = (2.0, 2.1, 2.25, 2.5, 2.7, 3.0)
+    state = jnp.array(1.0)
+    observation = infer_observation_spec(
+        "squared", SquaredState(), ObservationSchedule.at_times(times), t=2.0, state=state, inputs=()
+    )
+    program = ScanProgram.from_observation_plan(
+        system=Growth(),
+        plan=ObservationPlan((observation,)),
+        state=state,
+        inputs=(),
+        t0=2.0,
+        dt=0.5,
+        num_steps=2,
+        interpolate=True,
+    )
+    result = eqx.filter_jit(run_program)(program, jnp.array(2.0), state, (), jax.random.key(0))
+    expected_states = np.array([1.0, 1.2, 1.5, 2.0, 2.8, 4.0])
+    np.testing.assert_allclose(result.observations["squared"], expected_states**2 + times)
+    np.testing.assert_array_equal(result.times["squared"], times)
+    assert result.final_state == 4.0
+    gradient = jax.grad(lambda rate: program(rate, state, (), jax.random.key(0)).observations["squared"][4])(2.0)
+    # s = .6*r + .4*r**2 at t=2.7; d(s**2)/dr = 2*s*(.6+.8*r).
+    np.testing.assert_allclose(gradient, 2 * 2.8 * 2.2)
+
+
+def test_scan_interpolation_opt_in_preserves_integer_step_observations():
+    class Increment(eqx.Module):
+        def step(self, step, state, params, inputs, key):
+            return state + 1
+
+    state = jnp.asarray(2**60, dtype=jnp.int64)
+    observation = infer_observation_spec(
+        "state", StateObservation(), ObservationSchedule.at_steps((0, 1, 2)), t=0.0, state=state, inputs=()
+    )
+    program = ScanProgram.from_observation_plan(
+        system=Increment(),
+        plan=ObservationPlan((observation,)),
+        state=state,
+        inputs=(),
+        t0=0.0,
+        dt=1.0,
+        num_steps=2,
+        interpolate=True,
+    )
+    result = eqx.filter_jit(run_program)(program, (), state, (), jax.random.key(0))
+    np.testing.assert_array_equal(result.observations["state"], np.asarray([2**60, 2**60 + 1, 2**60 + 2]))

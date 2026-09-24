@@ -89,3 +89,13 @@ device `raw_result` and also returns the host tree as `materialized_result`.
 Durable streaming and multi-host rank policy belong to the later executor and
 checkpoint integrations; they are not inferred from an observation function or a
 Diffrax save buffer.
+
+## Interpolated discrete observations
+
+`ScanProgram.from_observation_plan(..., interpolate=True)` also accepts time
+schedules. It linearly interpolates the complete floating/complex state between
+adjacent steps, then applies the observation function and reduction. Multiple
+observations may fall within one step. This preserves legacy VFP2D saves without
+changing the underlying step map or retaining every timestep. Step schedules keep
+their existing semantics; without this opt-in, the scan adapter requires step
+schedules. Final-state retention is independent of observation times.
