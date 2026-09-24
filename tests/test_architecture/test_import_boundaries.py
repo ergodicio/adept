@@ -65,7 +65,7 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert adept.run_prepared is run_prepared
         assert "adept.core.objectives" not in sys.modules
         assert "adept.core.materialization" not in sys.modules
-        assert adept.solver_registry.names() == ("farsight-1d", "pic-1d", "tf-1d", "vfp-2d")
+        assert adept.solver_registry.names() == ("farsight-1d", "pic-1d", "tf-1d", "vfp-2d", "vlasov-1d")
         """
     )
 

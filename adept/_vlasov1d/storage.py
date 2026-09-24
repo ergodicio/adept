@@ -5,17 +5,22 @@ import warnings
 
 import numpy as np
 import xarray as xr
-from interpax import interp2d
 from jax import numpy as jnp
 
+from adept._vlasov1d.observations import (
+    DistributionObservation,
+    FieldsObservation,
+    InterpolatedDistributionObservation,
+    ScalarsObservation,
+)
 
-def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str) -> dict:
+
+def field_datasets(cfg: dict, fields: dict, this_t: np.ndarray, prefix: str) -> dict:
     """
-    Stores fields to netcdf, handling multispecies data.
+    Construct field datasets in memory, handling multispecies data.
 
     :param prefix:
     :param cfg:
-    :param binary_dir:
     :param fields: dict with species names as keys (each containing moment dicts) and shared field keys at top level
     :param this_t:
     :return: dict mapping species names to xr.Dataset of moments, plus "fields" key for shared fields
@@ -33,7 +38,6 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
             das[f"{prefix}-{k}"] = xr.DataArray(v, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
 
         species_xr = xr.Dataset(das)
-        species_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-{species_name}-t={round(this_t[-1], 4)}.nc"))
         result[species_name] = species_xr
 
     # Store shared field data (at top level of fields dict)
@@ -63,22 +67,29 @@ def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, p
         das[f"{prefix}-em"] = xr.DataArray(em, coords=(("t", this_t), ("x", cfg["grid"]["x"])))
 
     fields_xr = xr.Dataset(das)
-    fields_xr.to_netcdf(os.path.join(binary_dir, f"{prefix}-shared-t={round(this_t[-1], 4)}.nc"))
     result["fields"] = fields_xr
 
     return result
 
 
-def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
+def store_fields(cfg: dict, binary_dir: str, fields: dict, this_t: np.ndarray, prefix: str) -> dict:
+    """Write field datasets for the legacy artifact pipeline."""
+    result = field_datasets(cfg, fields, this_t, prefix)
+    for name, dataset in result.items():
+        label = "shared" if name == "fields" else name
+        dataset.to_netcdf(os.path.join(binary_dir, f"{prefix}-{label}-t={round(this_t[-1], 4)}.nc"))
+    return result
+
+
+def distribution_datasets(cfg: dict, this_t: dict, ys: dict) -> dict:
     """
-    Stores distribution function saves to netcdf.
+    Construct distribution datasets in memory.
 
     Handles species dist saves (keyed by "_species_name") and diagnostic dist saves
-    (keyed by "_diag"), writing one netcdf file per save key.
+    (keyed by "_diag"), returning one dataset per save key.
 
     :param cfg:
     :param this_t:
-    :param td:
     :param ys:
     :return: dict mapping save_key -> xr.Dataset
     """
@@ -110,94 +121,38 @@ def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
             coords = (("t", this_t[save_key]), ("x", cfg["grid"]["x"]), (v_dim, full_v))
 
         f_store = xr.Dataset({save_key: xr.DataArray(ys[save_key], coords=coords)})
-        f_store.to_netcdf(os.path.join(td, "binary", f"dist-{save_key}.nc"))
         result[save_key] = f_store
 
     return result
 
 
+def store_f(cfg: dict, this_t: dict, td: str, ys: dict) -> dict:
+    """Write distribution datasets for the legacy artifact pipeline."""
+    result = distribution_datasets(cfg, this_t, ys)
+    for name, dataset in result.items():
+        dataset.to_netcdf(os.path.join(td, "binary", f"dist-{name}.nc"))
+    return result
+
+
 def get_field_save_func(cfg):
-    """Build the Diffrax save callback for field and species moment snapshots."""
-    if {"t"} == set(cfg["save"]["fields"].keys()):
-        species_grids = cfg["grid"]["species_grids"]
-        species_names = list(species_grids.keys())
-
-        def fields_save_func(t, y, args):
-            """Compute field, moment, and ponderomotive quantities for one save time."""
-            result = {}
-
-            # Compute moments for each species
-            for species_name in species_names:
-                v = species_grids[species_name]["v"]
-                dv = species_grids[species_name]["dv"]
-
-                def _calc_moment_(inp, _dv=dv):
-                    return jnp.sum(inp, axis=1) * _dv
-
-                f = y[species_name]
-                species_moments = {}
-                species_moments["n"] = _calc_moment_(f)
-                species_moments["j"] = _calc_moment_(f * v[None, :])
-                species_moments["v"] = species_moments["j"] / species_moments["n"]
-                v_m_vbar = v[None, :] - species_moments["v"][:, None]
-                species_moments["p"] = _calc_moment_(f * v_m_vbar**2.0)
-                species_moments["q"] = _calc_moment_(f * v_m_vbar**3.0)
-                species_moments["-flogf"] = _calc_moment_(-jnp.abs(f) * jnp.log(jnp.abs(f)))
-                species_moments["f^2"] = _calc_moment_(f * f)
-
-                result[species_name] = species_moments
-
-            # Store shared field data at top level for backward compatibility
-            result["e"] = y["e"]
-            result["de"] = y["de"]
-            result["a"] = y["a"]
-            result["prev_a"] = y["prev_a"]
-            result["pond"] = -0.5 * jnp.gradient(y["a"] ** 2.0, cfg["grid"]["dx"])[1:-1]
-
-            return result
-
-    else:
+    """Build the explicit field and species-moment observation."""
+    if {"t"} != set(cfg["save"]["fields"].keys()):
         raise NotImplementedError
-
-    return fields_save_func
+    return FieldsObservation(cfg["grid"]["species_grids"], cfg["grid"]["dx"])
 
 
 def get_dist_save_func(axes, dist_save_config, dist_key):
-    """Build a save callback for full or interpolated distribution-function output."""
-    if {"t"} == set(dist_save_config.keys()):
-
-        def dist_save_func(t, y, args):
-            """Return the full distribution for this save point."""
-            return y[dist_key]
-
-    elif {"t", "x", "v"} == set(dist_save_config.keys()):
-        xq, vq = jnp.meshgrid(dist_save_config["x"]["ax"], dist_save_config["v"]["ax"], indexing="ij")
-        xq_flat, vq_flat = xq.ravel(), vq.ravel()
-        out_shape = xq.shape
-
-        def dist_save_func(t, y, args):
-            """Return the distribution interpolated on configured x-v sample points."""
-            return interp2d(xq_flat, vq_flat, axes["x"], axes["v"], y[dist_key], method="linear").reshape(out_shape)
-
-    elif {"t", "kx", "v"} == set(dist_save_config.keys()):
-        kxq, vq = jnp.meshgrid(dist_save_config["kx"]["ax"], dist_save_config["v"]["ax"], indexing="ij")
-        kxq_flat, vq_flat = kxq.ravel(), vq.ravel()
-        out_shape = kxq.shape
-
-        def dist_save_func(t, y, args):
-            """Return the distribution spectrum interpolated on configured kx-v points."""
-            fkx = jnp.abs(jnp.fft.rfft(y[dist_key], axes=0))
-            return interp2d(kxq_flat, vq_flat, axes["kx"], axes["v"], fkx, method="linear").reshape(out_shape)
-
-    elif {"t", "x", "kv"} == set(dist_save_config.keys()):
-        pass
-
-    elif {"t", "kx", "kv"} == set(dist_save_config.keys()):
-        pass
-    else:
-        raise NotImplementedError
-
-    return dist_save_func
+    """Build a full or interpolated distribution observation with explicit arrays."""
+    keys = set(dist_save_config)
+    if keys == {"t"}:
+        return DistributionObservation(dist_key)
+    if keys not in ({"t", "x", "v"}, {"t", "kx", "v"}):
+        raise NotImplementedError(f"Unsupported distribution save axes: {sorted(keys)}")
+    spatial = "kx" if "kx" in keys else "x"
+    xq, vq = jnp.meshgrid(dist_save_config[spatial]["ax"], dist_save_config["v"]["ax"], indexing="ij")
+    return InterpolatedDistributionObservation(
+        dist_key, spatial == "kx", xq.shape, axes[spatial], axes["v"], xq.ravel(), vq.ravel()
+    )
 
 
 def _add_dim_axes(save_config: dict) -> None:
@@ -256,7 +211,7 @@ def get_save_quantities(cfg: dict) -> dict:
             for label, label_config in save_config.items():
                 _add_dim_axes(label_config)
                 label_config["func"] = get_dist_save_func(
-                    axes={"x": cfg["grid"]["x"], "v": species_grid["v"], "kx": cfg["grid"]["kx"]},
+                    axes={"x": cfg["grid"]["x"], "v": species_grid["v"], "kx": cfg["grid"]["kxr"]},
                     dist_save_config=label_config,
                     dist_key=save_type,
                 )
@@ -268,7 +223,7 @@ def get_save_quantities(cfg: dict) -> dict:
             _add_dim_axes(save_config)
             electron_grid = cfg["grid"]["species_grids"]["electron"]
             save_config["func"] = get_dist_save_func(
-                axes={"x": cfg["grid"]["x"], "v": electron_grid["v"], "kx": cfg["grid"]["kx"]},
+                axes={"x": cfg["grid"]["x"], "v": electron_grid["v"], "kx": cfg["grid"]["kxr"]},
                 dist_save_config=save_config,
                 dist_key=save_type,
             )
@@ -284,44 +239,5 @@ def get_save_quantities(cfg: dict) -> dict:
 
 
 def get_default_save_func(cfg):
-    """Build the default scalar save callback for species moments and field energies."""
-    species_grids = cfg["grid"]["species_grids"]
-    species_names = list(species_grids.keys())
-
-    def save(t, y, args):
-        """Compute scalar diagnostics at one solver save point."""
-        scalars = {}
-
-        # Compute scalars for each species
-        mean_kinetic_energy = 0.0
-        for species_name in species_names:
-            v = species_grids[species_name]["v"][None, :]
-            dv = species_grids[species_name]["dv"]
-            mass = cfg["grid"]["species_params"][species_name]["mass"]
-
-            def _calc_mean_moment_(inp, _dv=dv):
-                return jnp.mean(jnp.sum(inp, axis=1) * _dv)
-
-            f = y[species_name]
-            scalars[f"mean_P_{species_name}"] = _calc_mean_moment_(f * v**2.0)
-            scalars[f"mean_j_{species_name}"] = _calc_mean_moment_(f * v)
-            scalars[f"mean_n_{species_name}"] = _calc_mean_moment_(f)
-            scalars[f"mean_q_{species_name}"] = _calc_mean_moment_(f * v**3.0)
-            scalars[f"mean_-flogf_{species_name}"] = _calc_mean_moment_(-jnp.log(jnp.abs(f)) * jnp.abs(f))
-            scalars[f"mean_f2_{species_name}"] = _calc_mean_moment_(f * f)
-            mean_kinetic_energy += 0.5 * mass * scalars[f"mean_P_{species_name}"]
-
-        # Shared field scalars (not species-specific)
-        scalars["mean_de2"] = jnp.mean(y["de"] ** 2.0)
-        scalars["mean_e2"] = jnp.mean(y["e"] ** 2.0)
-        scalars["mean_pond"] = jnp.mean(-0.5 * jnp.gradient(y["a"] ** 2.0, cfg["grid"]["dx"])[1:-1])
-
-        # Energy conservation monitor (electrostatic): x-averaged kinetic + E-field
-        # energy density. Transverse (EM) field energy is not included.
-        scalars["mean_kinetic_energy"] = mean_kinetic_energy
-        scalars["mean_field_energy"] = 0.5 * scalars["mean_e2"]
-        scalars["mean_total_energy"] = mean_kinetic_energy + 0.5 * scalars["mean_e2"]
-
-        return scalars
-
-    return save
+    """Build the explicit scalar moment and field-energy observation."""
+    return ScalarsObservation(cfg["grid"]["species_grids"], cfg["grid"]["species_params"], cfg["grid"]["dx"])

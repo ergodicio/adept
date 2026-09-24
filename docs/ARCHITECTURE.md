@@ -2,8 +2,8 @@
 
 ADEPT is incrementally moving toward explicit, logging-free preparation and a pure
 numerical transform boundary. [ADR 0001](adr/0001-explicit-simulation-boundaries.md)
-defines the target contracts and compatibility policy. `tf-1d`, electrostatic `pic-1d`, `vfp-2d`, and
-`farsight-1d` have registered builders. The first three retain legacy classes as fallback
+defines the target contracts and compatibility policy. `tf-1d`, electrostatic `pic-1d`, `vfp-2d`, `vlasov-1d`, and
+`farsight-1d` have registered builders. The first four retain legacy classes as fallback
 paths while downstream workflows migrate. The experimental FARSIGHT solver is native to
 the explicit interface and has no legacy lifecycle wrapper.
 
@@ -64,10 +64,13 @@ RawResult(
 ```
 
 The `tf-1d` pilot uses the continuous `DiffraxProgram`; the electrostatic `pic-1d`
-pilot and VFP2D use the discrete `ScanProgram`. All three are parity-tested against
-their legacy numerical maps. VFP2D opts into linear state interpolation for physical-time
-observations between steps; its final state is retained independently of the save
-schedule. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
+pilot, VFP2D, and Vlasov1D use the discrete `ScanProgram`. Each is parity-tested against
+its legacy numerical map. VFP2D and Vlasov1D use linear state interpolation for physical-time
+observations between steps; their final states are retained independently of the save
+schedule. Vlasov1D shares preparation and numerical observations with its legacy wrapper,
+including multispecies, collisions, electrostatic and transverse fields. Runtime drivers
+are explicit controls, and its analyzer returns field, distribution, and scalar datasets
+without writing artifacts. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
 closures, still produce an actionable error directing callers to `ergoExo`.
 
 The independent [FARSIGHT-1D](source/solvers/farsight1d/overview.md) solver also uses

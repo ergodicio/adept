@@ -2,7 +2,8 @@
 
 ADEPT is introducing a logging-free numerical API alongside `ergoExo`. It is opt-in:
 existing solver entry points and output dictionaries are unchanged. The currently
-registered solvers are `tf-1d`, electrostatic `pic-1d`, and `vfp-2d`.
+registered solvers are `tf-1d`, electrostatic `pic-1d`, `vfp-2d`, `vlasov-1d`,
+and `farsight-1d`.
 Supported forward `ergoExo` calls also use prepared execution through the
 [compatibility façade](legacy_compatibility.md).
 
@@ -141,6 +142,45 @@ objective = WeightedSumObjective(
     names=("fit", "regularization"),
 )
 ```
+
+## Vlasov1D
+
+Use the same preparation call with a `solver: vlasov-1d` configuration. The builder
+shares initialization and timestep operators with `BaseVlasov1D`, including
+multispecies grids, supported advection and field solvers, Fokker–Planck/Krook
+collisions, transverse waves, and stochastic longitudinal forcing. Enable JAX x64
+before preparation. The specialized `vlasov-1d-iaw` module keeps its legacy path.
+
+The driver controls are normalized `EMDriverSet` objects, so select an amplitude with:
+
+```python
+runtime_values = eqx.combine(prepared.params, prepared.inputs)
+selector = jax.tree.map(lambda _: False, runtime_values)
+selector = eqx.tree_at(lambda tree: tree["drivers"].ex[0].a0, selector, True)
+partition = partition_parameters(runtime_values, selector)
+objective = CallableObjective(
+    lambda result, params, inputs: jnp.mean(result.final_state["e"] ** 2)
+)
+```
+
+The initial state, numerical grids, and collision operators are fixed unless explicitly
+replaced. Point-source location is a discrete cell selection; it does not provide a
+useful position gradient. Density noise and precomputed stochastic-driver realizations
+retain their configuration seeds (`noise_seed` and `drivers.ex_stochastic.seed`); the
+preparation key is recorded in the manifest and is not substituted for those seeds.
+
+Observations retain legacy names such as `fields`, `electron.main`, `default`, and
+`diag-fp-dfdt`. Each stream has its own physical times. Between-step samples interpolate
+the state before evaluating diagnostics, matching the legacy Diffrax stepper. The final
+state always includes the complete last timestep, even if a distribution stream stops
+earlier. As in the legacy solver, integration starts at zero and the grid rounds the
+requested duration up to a complete step.
+
+`run_prepared` returns in-memory `fields`, `dists`, and `scalars` xarray datasets in
+`completed.report.result`, plus metrics for the final scalar observation. It performs
+no plot or netCDF writes. Existing `ergoExo` calls retain their artifact pipeline.
+The builder supports the existing `grid.parallel` single-host sharding; multi-host
+execution and batched runs are not advertised.
 
 ## Batched execution
 

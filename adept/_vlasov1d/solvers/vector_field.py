@@ -320,8 +320,14 @@ class VlasovMaxwell:
         nu_K_prof: SpaceTimeEnvelopeFunction | None = None,
     ):
         """Assemble the coupled electrostatic, transverse-wave, and driver operators."""
-        self.cfg = cfg
-        self.grid = grid
+        # Keep the numerical runtime independent of the host-side configuration.
+        self.x = grid.x
+        self.species_names = tuple(cfg["grid"]["species_grids"])
+        electron_grid = cfg["grid"]["species_grids"].get("electron")
+        self.electron_dv = electron_grid["dv"] if electron_grid is not None else None
+        self.electron_charge = cfg["grid"]["species_params"].get("electron", {}).get("charge")
+        self.fp_on = cfg["terms"]["fokker_planck"]["is_on"]
+        self.krook_on = cfg["terms"]["krook"]["is_on"]
         self.nu_fp_prof = nu_fp_prof
         self.nu_K_prof = nu_K_prof
         self.vpfp = VlasovPoissonFokkerPlanck(cfg, grid)
@@ -337,20 +343,24 @@ class VlasovMaxwell:
 
     def total_dex(self, t, args):
         """Evaluate the deterministic plus (optional) stochastic external Ex at time t."""
-        dex = self.ex_driver(t, args)
-        if self.ex_stochastic is not None:
-            dex = dex + self.ex_stochastic(t, self.grid.x)
+        drivers = args.get("drivers") if isinstance(args, dict) else None
+        if isinstance(drivers, EMDriverSet):
+            dex = self.ex_driver(t, args, drivers=drivers.ex)
+            stochastic = drivers.ex_stochastic
+        else:
+            dex = self.ex_driver(t, args)
+            stochastic = self.ex_stochastic
+        if stochastic is not None:
+            dex = dex + stochastic(t, self.x)
         return dex
 
     def compute_electron_charge_density(self, f_dict):
         """Compute charge density from the electron distribution function."""
-        charge_density = jnp.zeros_like(self.grid.x)
+        charge_density = jnp.zeros_like(self.x)
         if "electron" in f_dict:
-            dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
-            charge = self.cfg["grid"]["species_params"]["electron"]["charge"]
             # Sum over velocity axis (axis=1) to get spatial density, then multiply by charge
             f = f_dict["electron"]
-            charge_density += charge * jnp.sum(f, axis=1) * dv
+            charge_density += self.electron_charge * jnp.sum(f, axis=1) * self.electron_dv
         return charge_density
 
     def __call__(self, t, y, args):
@@ -365,21 +375,29 @@ class VlasovMaxwell:
         """
 
         dex = [self.total_dex(t + dt, args) for dt in self.vpfp.vlasov_poisson.dt_array]
-        djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args)
+        drivers = args.get("drivers") if isinstance(args, dict) else None
+        runtime_ey = drivers.ey if isinstance(drivers, EMDriverSet) else None
+        djy = self.ey_driver(t + self.vpfp.vlasov_poisson.dt_array[1], args, drivers=runtime_ey)
 
-        # Evaluate collision frequency profiles at current time
-        if self.cfg["terms"]["fokker_planck"]["is_on"]:
-            nu_fp_val = self.nu_fp_prof(self.grid.x, t)
+        # Legacy callers can disable terms through their runtime args. The
+        # prepared program carries no configuration and uses the stored flags.
+        runtime_terms = args.get("terms", {}) if isinstance(args, dict) else {}
+        fp_on = runtime_terms.get("fokker_planck", {}).get("is_on", self.fp_on)
+        krook_on = runtime_terms.get("krook", {}).get("is_on", self.krook_on)
+
+        # Evaluate collision frequency profiles at current time.
+        if fp_on:
+            nu_fp_val = self.nu_fp_prof(self.x, t)
         else:
             nu_fp_val = None
 
-        if self.cfg["terms"]["krook"]["is_on"]:
-            nu_K_val = self.nu_K_prof(self.grid.x, t)
+        if krook_on:
+            nu_K_val = self.nu_K_prof(self.x, t)
         else:
             nu_K_val = None
 
         # Extract all species distributions from state
-        f_dict = {k: v for k, v in y.items() if k in self.cfg["grid"]["species_grids"]}
+        f_dict = {k: v for k, v in y.items() if k in self.species_names}
 
         electron_charge_density_n = self.compute_electron_charge_density(f_dict)
         e, f_dict_new, diags = self.vpfp(

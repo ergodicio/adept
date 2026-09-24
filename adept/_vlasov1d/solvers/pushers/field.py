@@ -25,10 +25,10 @@ class LongitudinalElectricFieldDriver:
         factor = driver.envelope(self.xax, current_time)
         return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
-    def __call__(self, t, args):
+    def __call__(self, t, args, *, drivers: list[EMDriver] | None = None):
         """Evaluate the total longitudinal driver field at time t."""
         total_de = jnp.zeros_like(self.xax)
-        for pulse in self.drivers:
+        for pulse in self.drivers if drivers is None else drivers:
             total_de += self._single_driver_field(pulse, t)
         return total_de
 
@@ -55,6 +55,8 @@ class TransverseCurrentSourceDriver:
         self.xax = xax
         self.drivers = drivers
         dx = float(xax[1] - xax[0])
+        self.dx = dx
+        self.c = c
 
         self.point_source_masks = []
         self.point_source_scales = []
@@ -83,10 +85,30 @@ class TransverseCurrentSourceDriver:
             factor = driver.envelope(self.xax, current_time)
             return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
 
-    def __call__(self, t, args):
-        """Evaluate the summed transverse current source at time t."""
+    def __call__(self, t, args, *, drivers: list[EMDriver] | None = None):
+        """Evaluate the source, using explicit runtime driver values when supplied.
+
+        Point sources remain attached to the nearest grid cell. Their location
+        is selected from the runtime envelope center, and their amplitude and
+        frequency are evaluated without using the constructor's cached scale.
+        """
         total = jnp.zeros_like(self.xax)
-        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True):
+        if drivers is None:
+            source_data = zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True)
+        else:
+            masks = []
+            scales = []
+            for driver in drivers:
+                if driver.is_point_source:
+                    center = driver.envelope.space_envelope.center
+                    i0 = jnp.argmin(jnp.abs(self.xax - center))
+                    masks.append(jnp.zeros_like(self.xax).at[i0].set(1.0))
+                    scales.append(2.0 * (driver.w0 + driver.dw0) * self.c * driver.a0 / self.dx)
+                else:
+                    masks.append(None)
+                    scales.append(None)
+            source_data = zip(drivers, masks, scales, strict=True)
+        for driver, mask, scale in source_data:
             total += self._single_driver_source(driver, mask, scale, t)
         return total
 
@@ -99,6 +121,7 @@ class WaveSolver:
         super().__init__()
         self.dx = dx
         self.c = c
+        self.waves_on = bool(c > 0)
         self.c_sq = c**2.0
         c_over_dx = c / dx
         self.dt = dt
@@ -142,7 +165,7 @@ class WaveSolver:
 
     def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_density: jnp.ndarray):
         """Advance the vector potential one timestep or preserve it when waves are disabled."""
-        if self.c > 0:
+        if self.waves_on:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
             # d2dx2 = (padded_a[:-2] - 2.0 * padded_a[1:-1] + padded_a[2:]) / self.dx**2.0

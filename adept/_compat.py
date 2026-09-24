@@ -11,7 +11,7 @@ from diffrax import Solution
 
 from adept.core import PassthroughAnalyzer, PreparedSimulation, SimulationSpec, run_prepared, solver_registry
 
-_SUPPORTED_SOLVERS = frozenset({"tf-1d", "pic-1d", "vfp-2d"})
+_SUPPORTED_SOLVERS = frozenset({"tf-1d", "pic-1d", "vfp-2d", "vlasov-1d"})
 
 
 def _legacy_seed(config: dict[str, Any]) -> int:
