@@ -9,14 +9,11 @@ import numpy as np
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
-from matplotlib import pyplot as plt
 from scipy.special import gamma
 
 from adept._vlasov1d.simulation import SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.storage import store_f, store_fields
 from adept.normalization import PlasmaNormalization
-
-from .. import patched_mlflow as mlflow
 
 # gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 # m_ax = gamma_da.coords["m"].data
@@ -163,6 +160,10 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
 
 def post_process(result: Solution, cfg: dict, td: str, args: dict):
     """Write binary output and diagnostic plots from a completed Vlasov-1D solve."""
+    from matplotlib import pyplot as plt
+
+    from adept import patched_mlflow as mlflow
+
     t0 = time()
 
     # Get species names for directory creation

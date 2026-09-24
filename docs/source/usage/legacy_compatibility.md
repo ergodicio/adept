@@ -7,13 +7,14 @@ move onto the explicit architecture.
 
 ## Current routing
 
-Supported TF1D, electrostatic PIC1D, and VFP2D forward runs are prepared through
+Supported TF1D, electrostatic PIC1D, VFP2D, and Vlasov1D forward runs are prepared through
 `SimulationSpec` and the solver registry, then executed by `run_prepared`. The façade
 converts the structured result back into the historical
 `{"solver result": diffrax.Solution}` shape before invoking the existing post-processor.
 This routing does not change the three-value return from `ergoExo.__call__`. VFP2D
 preserves its flat saved-state dictionary, physical save times (including between-step
-samples), diagnostics, and artifact export.
+samples), diagnostics, and artifact export. Vlasov1D preserves its named save streams,
+field/species diagnostics, and existing plot and netCDF export.
 
 The façade opts into prepared execution only when preparation reproduces the legacy
 initial state exactly. It uses the legacy path when any compatibility-sensitive input
@@ -25,7 +26,7 @@ is present, including:
 - TF1D learned trapping closures or unsupported save layouts;
 - PIC1D transverse or stochastic drivers, off-grid saves, or an initialization that
   differs from the legacy seeded state;
-- a solver without an explicit façade adapter, including Vlasov1D and LPSE2D today; or
+- a solver without an explicit façade adapter, including the specialized `vlasov-1d-iaw` module and LPSE2D today; or
 - `ergoExo.val_and_grad`, which continues to call `ADEPTModule.vg`.
 
 No failed prepared solve is silently rerun. Fallback decisions happen before numerical
@@ -36,5 +37,5 @@ execution. After setup or a run, `exo.execution_backend` is either `"prepared"` 
 
 New code should use `SimulationSpec`, `solver_registry.prepare`, and `run_prepared`
 directly. Existing applications can keep using `ergoExo` while solvers migrate. The
-next compatibility slices will add builders for the primary Vlasov1D and LPSE2D paths
+next compatibility slices will add builders for the remaining solver paths
 before removal or deprecation of the legacy API is considered.

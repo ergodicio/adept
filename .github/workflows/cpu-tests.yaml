@@ -60,6 +60,7 @@ jobs:
             - 'tests/conftest.py'
             - 'adept/__init__.py'
             - 'adept/_base_.py'
+            - 'adept/_compat.py'
             - 'adept/utils.py'
             - 'adept/functions.py'
             - 'adept/electrostatic.py'
@@ -79,6 +80,7 @@ jobs:
             - 'tests/test_lpse2d/**'
           vlasov1d:
             - *shared
+            - 'adept/core/**'
             - 'adept/_vlasov1d/**'
             - 'adept/vlasov1d.py'
             - 'tests/test_vlasov1d/**'
