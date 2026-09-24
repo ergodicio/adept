@@ -40,7 +40,7 @@ class FileAnalyzer:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Run the experimental fixed-panel FARSIGHT solver")
+    parser = argparse.ArgumentParser(description="Run the experimental fixed or adaptive panel FARSIGHT solver")
     parser.add_argument("--cfg", required=True, type=Path, help="YAML config, including its .yaml extension")
     parser.add_argument("--output", required=True, type=Path, help="New directory for local datasets and manifest")
     parser.add_argument("--seed", type=int, default=42, help="Recorded PRNG seed (the current solver is deterministic)")

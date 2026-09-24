@@ -24,12 +24,13 @@ from adept.core.builtin_solvers import FARSIGHT1D_CAPABILITIES
 from adept.core.observations_jax import infer_observation_spec
 from adept.core.preparation import normalize_key, structural_fingerprint
 from adept.core.programs import ScanProgram
+from adept.farsight1d.amr import AdaptiveFarsightSystem, initialize_amr, make_hierarchy
 from adept.farsight1d.config import Farsight1DConfig, SaveCadence
 from adept.farsight1d.numerics import FarsightSystem, diagnose, electric_field, initial_state, make_mesh
 
 
 class FarsightProgram(ScanProgram):
-    """Expose invalid panel geometry or nonfinite evolution as a failed result."""
+    """Expose invalid geometry, capacity exhaustion, or nonfinite evolution."""
 
     def __call__(self, params, state, inputs, key):
         if not isinstance(params, dict) or params or not isinstance(inputs, dict) or inputs:
@@ -56,7 +57,7 @@ class FarsightFieldsObservation(eqx.Module):
         field = electric_field(
             self.x,
             state["x"].reshape(-1),
-            (-self.weights * state["f"]).reshape(-1),
+            (-state.get("weights", self.weights) * state["f"]).reshape(-1),
             self.length,
             self.epsilon,
             self.chunk_size,
@@ -70,7 +71,7 @@ class FarsightScalarsObservation(eqx.Module):
     fields: FarsightFieldsObservation
 
     def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, jax.Array]:
-        result = diagnose(state, self.fields.weights)
+        result = diagnose(state, state.get("weights", self.fields.weights))
         field = self.fields(t, state, inputs)["electric_field"]
         result["electric_energy"] = 0.5 * self.fields.length * jnp.mean(field**2)
         result["total_energy"] = result["kinetic_energy"] + result["electric_energy"]
@@ -82,7 +83,8 @@ class FarsightDistributionObservation(eqx.Module):
 
     def __call__(self, t: Any, state: Any, inputs: Any) -> dict[str, jax.Array]:
         del t, inputs
-        return {name: state[name] for name in ("x", "v", "f")}
+        names = ("x", "v", "f", "weights", "active", "panel_id", "level") if "active" in state else ("x", "v", "f")
+        return {name: state[name] for name in names}
 
 
 @dataclass(frozen=True)
@@ -94,8 +96,11 @@ class Farsight1DAnalyzer:
 
         if not bool(np.asarray(result.final_state["valid"])):
             raise ArithmeticError(
-                "FARSIGHT evolution encountered invalid panel geometry or nonfinite values; "
-                "reduce dt/remesh_every and inspect invalid_panels and max_panel_area_error"
+                "FARSIGHT evolution encountered invalid panel geometry or nonfinite values, "
+                "or AMR capacity exhaustion; "
+                "reduce dt/remesh_every and inspect invalid_panels/max_panel_area_error; "
+                "for capacity_exceeded increase amr.max_panels and inspect requested_panels; "
+                "for remap_gap_nodes inspect max_gap_fraction against amr.max_gap_fraction and refine the mesh"
             )
         numerical_values = (result.final_state, result.observations, result.times, result.stats)
         if any(not np.all(np.isfinite(np.asarray(value))) for value in jax.tree.leaves(numerical_values)):
@@ -123,6 +128,21 @@ class Farsight1DAnalyzer:
                 datasets[name] = xr.Dataset(
                     {key: (("t", "x"), np.asarray(value)) for key, value in observations.items()},
                     coords={"t": times, "x": x_axis},
+                )
+            elif "active" in observations:
+                panel_count, node_count = np.shape(observations["f"])[1:]
+                datasets[name] = xr.Dataset(
+                    {
+                        key: (("t", "panel") if np.ndim(value) == 2 else ("t", "panel", "node"), np.asarray(value))
+                        for key, value in observations.items()
+                    },
+                    coords={"t": times, "panel": np.arange(panel_count), "node": np.arange(node_count)},
+                )
+                datasets[name].attrs["description"] = (
+                    "Packed adaptive biquadratic panels; active identifies occupied slots, panel_id identifies "
+                    "the reference hierarchy cell, and weights are material quadrature weights. "
+                    "x and v are moving node coordinates; inactive slots do not contribute. "
+                    "A slot can identify a different panel after remeshing."
                 )
             else:
                 datasets[name] = xr.Dataset(
@@ -179,22 +199,56 @@ class Farsight1DBuilder:
         normalized_key, seed, provenance = normalize_key(key)
         grid, time, numerical = config.grid, config.time, config.numerical
         length = grid.xmax - grid.xmin
-        x, v, weights = make_mesh(grid.nx, grid.nv, grid.xmin, grid.xmax, grid.vmin, grid.vmax, numerical.quadrature)
-        state = initial_state(x, v, _initial_distribution(config, x, v, weights), weights)
         params, inputs = {}, {}
-        system = FarsightSystem(
-            x0=x,
-            v0=v,
-            weights=weights,
-            length=length,
-            dt=time.dt,
-            epsilon=numerical.epsilon,
-            charge=-1.0,
-            mass=1.0,
-            remesh_every=numerical.remesh_every,
-            chunk_size=numerical.chunk_size,
-        )
-        fields = FarsightFieldsObservation(x[:-1, 0], weights, length, numerical.epsilon, numerical.chunk_size)
+        system_options = {
+            "length": length,
+            "dt": time.dt,
+            "epsilon": numerical.epsilon,
+            "charge": -1.0,
+            "mass": 1.0,
+            "remesh_every": numerical.remesh_every,
+            "chunk_size": numerical.chunk_size,
+        }
+        if config.amr.enabled:
+            amr = config.amr
+            hierarchy = make_hierarchy(
+                grid.nx, grid.nv, grid.xmin, grid.xmax, grid.vmin, grid.vmax, amr.max_level, numerical.quadrature
+            )
+            # Only one complete hierarchy level contributes to candidate
+            # normalization; summing all levels would count the domain repeatedly.
+            finest_weights = jnp.where((hierarchy.level == amr.max_level)[:, None], hierarchy.weights, 0.0)
+            candidate_f = _initial_distribution(config, hierarchy.x, hierarchy.v, finest_weights)
+            selection_options = {
+                "max_panels": amr.max_panels,
+                "min_level": amr.min_level,
+                "atol": amr.atol,
+                "rtol": amr.rtol,
+            }
+            state = initialize_amr(hierarchy, candidate_f, **selection_options)
+            if bool(np.asarray(state["capacity_exceeded"])):
+                requested = int(np.asarray(state["requested_panels"]))
+                raise ValueError(
+                    f"Initial AMR hierarchy requests {requested} leaf panels but amr.max_panels={amr.max_panels}; "
+                    "increase amr.max_panels or relax amr.atol/amr.rtol"
+                )
+            # Normalize only the initial selected representation. Subsequent
+            # remesh/regrid defects remain visible in the invariant budgets.
+            selected_mass = jnp.sum(state["weights"] * state["f"])
+            if not np.isfinite(float(selected_mass)) or float(selected_mass) <= 0:
+                raise ValueError("Initial distribution is unresolved on the selected AMR panels")
+            state = {**state, "f": state["f"] * (length / selected_mass)}
+            weights = state["weights"]
+            system = AdaptiveFarsightSystem(
+                hierarchy=hierarchy, max_gap_fraction=amr.max_gap_fraction, **selection_options, **system_options
+            )
+        else:
+            x, v, weights = make_mesh(
+                grid.nx, grid.nv, grid.xmin, grid.xmax, grid.vmin, grid.vmax, numerical.quadrature
+            )
+            state = initial_state(x, v, _initial_distribution(config, x, v, weights), weights)
+            system = FarsightSystem(x0=x, v0=v, weights=weights, **system_options)
+        field_x = jnp.linspace(grid.xmin, grid.xmax, grid.nx + 1)[:-1]
+        fields = FarsightFieldsObservation(field_x, weights, length, numerical.epsilon, numerical.chunk_size)
         functions = {
             "scalars": FarsightScalarsObservation(fields),
             "fields": fields,
@@ -229,6 +283,11 @@ class Farsight1DBuilder:
             "background": "periodic kernel removes the instantaneous mean charge; no net periodic charge mode",
             "field_energy": "physical E^2/2 quadrature, not the exact regularized Hamiltonian",
         }
+        if config.amr.enabled:
+            units["amr_gradients"] = (
+                "piecewise derivatives with refinement decisions fixed; thresholds, panel ownership, "
+                "and capacity decisions are discrete"
+            )
         manifest = RunManifest(
             raw_config=spec.config_dict(),
             resolved_config=resolved,
