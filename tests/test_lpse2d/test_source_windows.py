@@ -169,6 +169,29 @@ def test_iaw_window_squares_the_drive_and_time_gates_hold():
     assert np.any(hist_free[-1]["iaw_density"] != dens[-1])
 
 
+def test_lpse_iaw_solvers_window_the_drive_after_the_laplacian():
+    """Inventory A23: LPSE forms E2 = K^2 PP and then suppresses it -- injectors, restrictRange squared,
+    absorbing regions (getPonderomotivePotential -> suppressSourceInSpecificRegions(pp, false, true)).
+    drive_laplacian = mask^2 * lap(PP) to 1e-12 (the same arithmetic), which is not lap(mask^2 PP)."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    half = {"width": ["1.28um", "0um"], "center": ["-0.64um", "0um"], "edge_width": "0.2um"}
+    cfg = _cfg(iaw={"source_window": half, "solver": "spectral"})
+    iaw = IonAcousticWave(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    rng = np.random.default_rng(3)
+    E0 = jnp.asarray(rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    phi = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    k_sq = np.asarray(iaw.k_sq)
+    mask_sq = np.asarray(iaw.source_mask_sq)
+    pp = np.asarray(iaw.ponderomotive_drive(phi, E0, 0.0 * E0, masked=False))
+    want = np.real(np.fft.ifft2(k_sq * np.fft.fft2(pp))) * mask_sq
+    got = np.asarray(iaw.drive_laplacian(phi, E0, 0.0 * E0))
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12 * np.abs(want).max())
+    before = np.real(np.fft.ifft2(k_sq * np.fft.fft2(pp * mask_sq)))
+    assert np.abs(got - before).max() > 1e-6 * np.abs(want).max()
+
+
 def test_translator_maps_source_windows_and_gates():
     from adept._lpse2d.lpse_deck import translate_parms
 

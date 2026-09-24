@@ -379,10 +379,10 @@ class IonAcousticWave:
         ey = jnp.fft.ifft2(-1j * self.ky[None, :] * phi_k)
         return ex, ey
 
-    def ponderomotive_drive(self, phi_k: Array, E0: Array, E1: Array) -> Array:
+    def ponderomotive_drive(self, phi_k: Array, E0: Array, E1: Array, masked: bool = True) -> Array:
         """The EPW/pump/Raman part of the ponderomotive potential (no acoustic term), times the
-        square of the IAW source window (LPSE ``getPonderomotivePotential`` applies
-        ``restrictRange`` squared; ``terms.iaw.source_window``, plan 2 I.3)."""
+        square of the IAW source window when ``masked`` (the MATLAB explicit path; the LPSE solvers
+        mask the Laplacian instead, ``drive_laplacian``)."""
         # LPSE iaw.sourceTerm.{lw|laser|raman}.enable gate each term (getPonderomotivePotential)
         drive = 0.0
         if self.drive_on["epw"] and not self.combined:
@@ -393,7 +393,16 @@ class IonAcousticWave:
         if self.drive_on["raman"]:
             # with the combined solver E1 is the whole field (Raman light + EPW, cross term included)
             drive = drive + jnp.sum(jnp.abs(E1) ** 2, axis=-1) / self.w_raman**2
-        return jnp.zeros((self.nx, self.ny)) + self.ponderomotive_prefactor * drive * self.source_mask_sq
+        mask = self.source_mask_sq if masked else 1.0
+        return jnp.zeros((self.nx, self.ny)) + self.ponderomotive_prefactor * drive * mask
+
+    def drive_laplacian(self, phi_k: Array, E0: Array, E1: Array) -> Array:
+        """``E2 = k^2 PP`` in x-space with the source suppression applied after the Laplacian, the
+        window squared (LPSE ``getPonderomotivePotential``: ``pp *= K^2``, then
+        ``suppressSourceInSpecificRegions(pp, false, true)``: injectors, ``restrictRange``^2,
+        absorbing regions; ``terms.iaw.source_window``, plan 2 I.3)."""
+        pp_k = jnp.fft.fft2(self.ponderomotive_drive(phi_k, E0, E1, masked=False))
+        return jnp.real(jnp.fft.ifft2(self.k_sq * pp_k)) * self.source_mask_sq
 
     def ponderomotive_potential(self, phi_k: Array, E0: Array, E1: Array, density: Array) -> Array:
         """Build the acoustic plus EPW/pump/Raman ponderomotive potential."""
@@ -432,8 +441,11 @@ class IonAcousticWave:
 
         # split-step pieces in LPSE's order: collisions on div v, ponderomotive kick, noise
         w_new = w_new * self.collisional_w_factor
-        drive_k = jnp.fft.fft2(self.ponderomotive_drive(y["epw"], y["E0"], y["E1"]))
-        w_new = w_new + self.dt * self.k_sq * drive_k
+        if isinstance(self.source_mask_sq, float):
+            drive_k = self.k_sq * jnp.fft.fft2(self.ponderomotive_drive(y["epw"], y["E0"], y["E1"]))
+        else:
+            drive_k = jnp.fft.fft2(self.drive_laplacian(y["epw"], y["E0"], y["E1"]))
+        w_new = w_new + self.dt * drive_k
         if self.thermal_waves:
             w_new = w_new + self.dt * jnp.fft.fft2(self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"]))
         if self.noise_enabled:
@@ -456,8 +468,7 @@ class IonAcousticWave:
         # E2 = -lap(PP) = k^2 PP formed on the EPW grid (+ the thermal-filamentation source), then
         # interpolated to the fine grid (ZakharovSolver::getPonderomotivePotential(pp, false),
         # advanceNelfAndDivV_fd); the same k^2 drive as the spectral step
-        drive_k = jnp.fft.fft2(self.ponderomotive_drive(y["epw"], y["E0"], y["E1"]))
-        e2 = jnp.real(jnp.fft.ifft2(self.k_sq * drive_k))
+        e2 = self.drive_laplacian(y["epw"], y["E0"], y["E1"])
         if self.thermal_waves:
             e2 = e2 + self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"])
         n, w = fd.step(t, n, w, upsample(e2, fd.s))
