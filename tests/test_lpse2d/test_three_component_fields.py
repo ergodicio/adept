@@ -277,9 +277,17 @@ def test_s_polarised_pump_lives_in_ez_on_every_injector(path):
     """``drivers.E0.polarization: 90`` (or ``s``) puts the launched pump entirely in E0z with
     the same amplitude the p-polarised launch puts in the in-plane transverse component."""
     kw = POL_PATHS[path]
-    e0_p, _ = _pump_after(_cfg_pol("p", **kw))
-    e0_s, _ = _pump_after(_cfg_pol("s", **kw))
-    e0_90, _ = _pump_after(_cfg_pol(90.0, **kw))
+
+    def cfg(pol):
+        c = _cfg_pol(pol, **kw)
+        # the same light step for both launches: the FD stability bound gives E_z (the 2-D Laplacian)
+        # about twice the sub-steps of in-plane light (6a73f94), which alone moves the launch by ~0.3 %
+        c["grid"]["light_substeps"] = 40
+        return c
+
+    e0_p, _ = _pump_after(cfg("p"))
+    e0_s, _ = _pump_after(cfg("s"))
+    e0_90, _ = _pump_after(cfg(90.0))
     assert np.abs(e0_p[..., 2]).max() == 0.0
     assert np.abs(e0_s[..., 2]).max() > 0.0
     np.testing.assert_array_equal(e0_s, e0_90)
