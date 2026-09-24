@@ -7,6 +7,7 @@ from adept._base_ import get_envelope
 from adept._lpse2d.core.kap import KapPhases
 from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import RamanLight, transverse_part
+from adept._lpse2d.core.timeline import as_linear
 
 
 def super_gaussian_y(y, width: float, order: float, offset: float) -> np.ndarray:
@@ -611,13 +612,18 @@ class CoupledLight(RamanLight):
         there is no exchange and both settings run the plain staggered update.
         """
         seed_args = seed_args if self.seed_enabled else None
-        laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
+        # the EPW potential and the ion density at the middle of each sub-step (LPSE
+        # interpolateSourcesInTime; plain arrays are held fixed); the Laplacian is interpolated
+        # in x-space so the sub-steps need no FFT
+        phi_tl = as_linear(phi_k)
+        laplacian_tl = phi_tl.map(lambda p: jnp.fft.ifft2(-self.k_sq * p))
+        iaw_tl = as_linear(iaw_density)
         rotate = self.coupling == "rotation" and self.srs_enabled
         couple_in_rhs = not rotate
         # the general injector's spatial pattern once per EPW step (time factors per sub-step)
         patterns = self.pump_pattern(pump_args) if self.fd_general_injector else None
 
-        def propagate(t_i, E0, E1):
+        def propagate(t_i, E0, E1, laplacian_phi, dn, phi_i):
             k_e0, k_e1 = self.coupled_rhs(
                 t_i,
                 E0,
@@ -625,8 +631,8 @@ class CoupledLight(RamanLight):
                 laplacian_phi,
                 pump_args,
                 seed_args,
-                iaw_density,
-                phi_k,
+                dn,
+                phi_i,
                 couple=couple_in_rhs,
                 patterns=patterns,
             )
@@ -639,8 +645,8 @@ class CoupledLight(RamanLight):
                 laplacian_phi,
                 pump_args,
                 seed_args,
-                iaw_density,
-                phi_k,
+                dn,
+                phi_i,
                 couple=couple_in_rhs,
                 patterns=patterns,
             )
@@ -648,32 +654,41 @@ class CoupledLight(RamanLight):
             E1 = E1 + 1j * self.dt_l * jnp.imag(k_e1)
             return E0, E1
 
+        def absorption(dn):
+            dn0 = None if dn is None else dn * self.iaw_feedback0 / self.n_over_env
+            dn1 = None if dn is None else dn * self.iaw_feedback / self.n_over_env
+            n0 = self.n_over_nc0 if dn0 is None else self.n_over_nc0 * (1.0 + dn0)
+            n1 = self.n_over_nc1 if dn1 is None else self.n_over_nc1 * (1.0 + dn1)
+            return (
+                jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)[..., None],
+                jnp.exp(-self.absorption_rate1 * self.dt_l * n1**2)[..., None],
+            )
+
         def substep(i, fields):
             E0, E1 = fields
             t_i = t + i * self.dt_l
+            laplacian_phi = laplacian_tl.substep(i, self.n_sub)
+            phi_i = phi_tl.substep(i, self.n_sub)
+            dn = iaw_tl.substep(i, self.n_sub)
             if rotate:
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
-                E0, E1 = propagate(t_i, E0, E1)
+                E0, E1 = propagate(t_i, E0, E1, laplacian_phi, dn, phi_i)
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
             else:
-                E0, E1 = propagate(t_i, E0, E1)
+                E0, E1 = propagate(t_i, E0, E1, laplacian_phi, dn, phi_i)
             if self.resonance.enabled:
                 E0 = self.resonance(t_i, i, E0)
             E0 = E0 * self.sub_boundary0[..., None]
             E1 = E1 * self.sub_boundary[..., None]
-            if absorb0 is not None:
-                E0 = E0 * absorb0
-                E1 = E1 * absorb1
+            if self.absorption_rate0 is not None:
+                a0, a1 = absorbs if iaw_tl.constant else absorption(dn)
+                E0 = E0 * a0
+                E1 = E1 * a1
             return (E0, E1)
 
-        absorb0 = absorb1 = None
-        if self.absorption_rate0 is not None:
-            dn0 = None if iaw_density is None else iaw_density * self.iaw_feedback0 / self.n_over_env
-            dn1 = None if iaw_density is None else iaw_density * self.iaw_feedback / self.n_over_env
-            n0 = self.n_over_nc0 if dn0 is None else self.n_over_nc0 * (1.0 + dn0)
-            n1 = self.n_over_nc1 if dn1 is None else self.n_over_nc1 * (1.0 + dn1)
-            absorb0 = jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)[..., None]
-            absorb1 = jnp.exp(-self.absorption_rate1 * self.dt_l * n1**2)[..., None]
+        absorbs = None
+        if self.absorption_rate0 is not None and iaw_tl.constant:
+            absorbs = absorption(iaw_tl.new)
         E0, E1 = lax.fori_loop(0, self.n_sub, substep, (E0, E1))
         if self.one_way_mask is not None:
             E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.one_way_mask, axes=(0, 1))

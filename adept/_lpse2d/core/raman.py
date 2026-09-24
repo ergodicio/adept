@@ -3,6 +3,7 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._lpse2d.core.stencils import check_order, first_derivative, injector_weights, second_derivative
+from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import transverse_part  # re-exported for light.py and the tests
 
 
@@ -411,16 +412,27 @@ class RamanLight:
         :param t: time at the start of the EPW step
         :param E1: Raman field, shape (nx, ny, 2), complex
         :param E0_fn: callable t -> pump field of shape (nx, ny, 2)
-        :param phi_k: EPW potential in k-space, held fixed during the sub-steps
+        :param phi_k: EPW potential in k-space: an array (fixed over the sub-steps) or a
+            ``timeline.Linear`` read at the middle of each sub-step (LPSE interpolateSourcesInTime)
         :param seed_args: derived driver parameters for the seed, or None
+        :param iaw_density: ion density perturbation, an array, ``Linear`` or None
         """
         seed_args = seed_args if self.seed_enabled else None
-        laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
+        laplacian_tl = as_linear(phi_k).map(lambda p: jnp.fft.ifft2(-self.k_sq * p))
+        iaw_tl = as_linear(iaw_density)
+
+        def absorption(dn):
+            n_over_nc = (
+                self.n_over_nc1 if dn is None else self.n_over_nc1 * (1.0 + dn * self.iaw_feedback / self.n_over_env)
+            )
+            return jnp.exp(-self.absorption_rate1 * self.dt_l * n_over_nc**2)[..., None]
 
         def substep(i, E1):
             t_i = t + i * self.dt_l
+            laplacian_phi = laplacian_tl.substep(i, self.n_sub)
+            dn = iaw_tl.substep(i, self.n_sub)
             # real-part update with the RHS at t_i (MATLAB lines 1380-1397)
-            k1 = self.rhs(t_i, E1, E0_fn(t_i), laplacian_phi, seed_args, iaw_density)
+            k1 = self.rhs(t_i, E1, E0_fn(t_i), laplacian_phi, seed_args, dn)
             E1 = E1 + self.dt_l * jnp.real(k1)
             # imaginary-part update with the RHS at t_i + dt/2 (MATLAB lines 1400-1421)
             k2 = self.rhs(
@@ -429,23 +441,18 @@ class RamanLight:
                 E0_fn(t_i + self.dt_l / 2.0),
                 laplacian_phi,
                 seed_args,
-                iaw_density,
+                dn,
             )
             E1 = E1 + 1j * self.dt_l * jnp.imag(k2)
             # absorbing boundaries (MATLAB lines 977-983) and collisional absorption
             E1 = E1 * self.sub_boundary[..., None]
-            if absorb is not None:
-                E1 = E1 * absorb
+            if self.absorption_rate1 is not None:
+                E1 = E1 * (absorb if iaw_tl.constant else absorption(dn))
             return E1
 
         absorb = None
-        if self.absorption_rate1 is not None:
-            n_over_nc = (
-                self.n_over_nc1
-                if iaw_density is None
-                else self.n_over_nc1 * (1.0 + iaw_density * self.iaw_feedback / self.n_over_env)
-            )
-            absorb = jnp.exp(-self.absorption_rate1 * self.dt_l * n_over_nc**2)[..., None]
+        if self.absorption_rate1 is not None and iaw_tl.constant:
+            absorb = absorption(iaw_tl.new)
         E1 = lax.fori_loop(0, self.n_sub, substep, E1)
         if self.transverse_fields:
             E1 = transverse_part(E1, self.kx_arr, self.ky_arr, self.one_over_k_sq)

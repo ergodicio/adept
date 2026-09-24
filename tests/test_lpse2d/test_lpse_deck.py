@@ -476,3 +476,21 @@ def test_translator_reproduces_lpse_time_steps(run):
         assert dt_fs / grid["light_substeps"] == pytest.approx(min(light), rel=2e-3)
     if "iaw" in printed and (cfg["terms"].get("iaw") or {}).get("stride", 1) > 1:
         assert dt_fs * cfg["terms"]["iaw"]["stride"] == pytest.approx(printed["iaw"], rel=2e-3)
+
+
+def test_translator_maps_interpolate_sources_in_time(tmp_path):
+    """ParameterManager.cpp:330, 367, 756: {laser|raman|lw}.interpolateSourcesInTime default true; the
+    evolved Raman light's flag sets terms.light.interpolate_sources, a differing pump flag is noted."""
+    base = "lw.enable = true;\nlw.spectral.dt = 0.002;\nraman.enable = true;\nraman.solver = spectral;\n"
+    cfg, _ = _translate_minimal(tmp_path, base)
+    assert cfg["terms"]["light"]["interpolate_sources"] is True
+    assert cfg["terms"]["epw"]["interpolate_sources"] is True
+    cfg, report = _translate_minimal(
+        tmp_path,
+        base
+        + "laser.solver = spectral;\nraman.interpolateSourcesInTime = false;\n"
+        + "lw.interpolateSourcesInTime = false;\n",
+    )
+    assert cfg["terms"]["light"]["interpolate_sources"] is False
+    assert cfg["terms"]["epw"]["interpolate_sources"] is False
+    assert any("interpolateSourcesInTime differs" in n for n in report["notes"])

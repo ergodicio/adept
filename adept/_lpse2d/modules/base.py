@@ -121,6 +121,10 @@ class BaseLPSE2D(ADEPTModule):
             state["iaw_density"] = np.zeros(iaw_shape, dtype=np.float64)
             state["iaw_velocity_divergence"] = np.zeros(iaw_shape, dtype=np.float64)
             iaw_cfg = self.cfg["terms"]["iaw"]
+            if int(iaw_cfg.get("stride", 1) or 1) > 1:
+                # the density at the start of the current IAW step, which the waves interpolate
+                # from in the EPW steps between IAW updates (LPSE Nelf_old)
+                state["iaw_density_old"] = np.zeros(iaw_shape, dtype=np.float64)
             s_fd = int(iaw_cfg.get("super_samples", 2)) if str(iaw_cfg.get("solver", "explicit")) == "fd" else 1
             if s_fd > 1:
                 # the fd solver's super-sampled fields (plan 2 I.1)
@@ -159,7 +163,11 @@ class BaseLPSE2D(ADEPTModule):
                 self.restart_t0 = n_steps * dt
             if self.restart_t0 >= self.cfg["grid"]["tmax"]:
                 raise ValueError(f"restart time {self.restart_t0} ps is not before grid.tmax")
-            missing = [k for k in self.state if k not in loaded.files]
+            loaded = {k: loaded[k] for k in loaded.files}
+            if "iaw_density_old" in self.state and "iaw_density_old" not in loaded and "iaw_density" in loaded:
+                # a checkpoint from before the IAW interpolation: take its step as an IAW step start
+                loaded["iaw_density_old"] = loaded["iaw_density"]
+            missing = [k for k in self.state if k not in loaded]
             if missing:
                 raise ValueError(f"checkpoint {restart['file']} lacks state entries {missing}")
             restored = {}

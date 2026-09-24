@@ -7,6 +7,7 @@ from adept._lpse2d.core import epw, laser
 from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
 from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.raman import RamanLight
+from adept._lpse2d.core.timeline import Linear
 
 
 class SplitStep:
@@ -76,6 +77,10 @@ class SplitStep:
             self.iaw = IonAcousticWave(cfg)
         else:
             self.iaw = None
+        # LPSE interpolateSourcesInTime (default on): the light reads the EPW potential and the ion
+        # density, the EPW the ion density, linearly interpolated in time (core/timeline.py)
+        self.interpolate_light = bool(cfg["terms"].get("light", {}).get("interpolate_sources", True))
+        self.interpolate_epw = bool(cfg["terms"]["epw"].get("interpolate_sources", True))
         # HPE particle/histogram keys are real and stay out of this list
         self.complex_state_vars = ["E0", "epw", "E1"]
         # terms.epw.energy_ledger: accumulate the per-operation EPW energy changes in the state
@@ -137,8 +142,29 @@ class SplitStep:
             active = active & gate
         return lax.cond(active, lambda yy: self.iaw(yy, t), lambda yy: yy, y)
 
-    def light_split_step(self, t, y, driver_args):
-        iaw_density = y.get("iaw_density")
+    def iaw_first(self, y, t, drive=None):
+        """The IAW step at the start of the EPW step, driven by the fields at ``t`` (LPSE
+        ``ZakharovSolver::evolve`` advances the IAW, then the Langmuir waves, then the light).
+        ``drive`` is the state the ponderomotive drive is formed from (default ``y``). Returns the
+        state with the new IAW entries and the ends ``(old, new)`` of the IAW step with the
+        fractions of it this EPW step spans: the IAW advances every ``stride`` EPW steps, and in
+        between the waves read the density between ``Nelf_old`` and ``Nelf`` (``linearInterp``)."""
+        n = self.iaw.stride
+        before = y["iaw_density"]
+        out = self.iaw_step(y if drive is None else drive, t)
+        y = {**y, **{k: v for k, v in out.items() if k.startswith("iaw_")}}
+        if n == 1:
+            return y, (before, y["iaw_density"], 0.0, 1.0)
+        m = jnp.round(t / self.dt).astype(int) % n
+        old = jnp.where(m == 0, before, y["iaw_density_old"])
+        y["iaw_density_old"] = old
+        return y, (old, y["iaw_density"], m / n, (m + 1) / n)
+
+    def light_split_step(self, t, y, driver_args, phi_k=None, iaw_density=None):
+        """The light over the EPW step. ``phi_k`` / ``iaw_density``: the EPW potential and ion
+        density as arrays or ``timeline.Linear`` (default: the state's, held fixed)."""
+        phi_k = y["epw"] if phi_k is None else phi_k
+        iaw_density = y.get("iaw_density") if iaw_density is None else iaw_density
         if self.pump_depletion:
             # the pump is a dynamic field sourced by its boundary injector; both light
             # waves advance inside one staggered update (absorbers applied per sub-step)
@@ -146,7 +172,7 @@ class SplitStep:
                 t,
                 y["E0"],
                 y["E1"],
-                y["epw"],
+                phi_k,
                 driver_args["E0"],
                 driver_args.get("E1"),
                 iaw_density,
@@ -168,15 +194,16 @@ class SplitStep:
 
         if self.raman is not None:
             # evolve the Raman light; absorbing boundaries are applied per light sub-step inside
-            y["E1"] = self.raman(t, y["E1"], E0_fn, y["epw"], driver_args.get("E1"), iaw_density)
+            y["E1"] = self.raman(t, y["E1"], E0_fn, phi_k, driver_args.get("E1"), iaw_density)
         else:
             y["E1"] *= self.boundary_envelope[..., None]
 
         return y
 
-    def combined_step(self, t, y, driver_args):
+    def combined_step(self, t, y, driver_args, iaw_density=None):
         """One EPW step of the combined solver: pump (prescribed or evolved), the combined
-        Raman + EPW field, and the derived potential."""
+        Raman + EPW field, and the derived potential. ``iaw_density``: an array or
+        ``timeline.Linear`` (default: the state's)."""
         if self.pump_depletion:
             E0_fn = None
         elif "E0" in driver_args:
@@ -191,22 +218,30 @@ class SplitStep:
             def E0_fn(this_t):
                 return E0_now
 
-        y["E0"], y["E1"], y["epw"] = self.combined(t, y, driver_args, E0_fn)
+        solver_y = y if iaw_density is None else {**y, "iaw_density": iaw_density}
+        y["E0"], y["E1"], y["epw"] = self.combined(t, solver_y, driver_args, E0_fn)
         return y
 
     def __call__(self, t, y, args):
+        """One EPW step in LPSE's order (``ZakharovSolver::evolve``): the IAW with the fields at
+        ``t``, the EPW with the light at ``t`` and the ion density at the step's middle, then the
+        light with the EPW potential and ion density at each sub-step's middle -- each read
+        linearly between the old and new values (``interpolate_sources``; the new ones without)."""
         # unpack y into complex128
         new_y = self._unpack_y_(y)
 
-        if self.epw_solver == "combined":
-            new_y = self.combined_step(t, new_y, args["drivers"])
-            if self.iaw is not None:
+        iaw_ends = None
+        if self.iaw is not None:
+            drive = None
+            if self.epw_solver == "combined":
                 # the IAW ponderomotive drive sees the Raman light (transverse part) and the
                 # EPW (through the derived potential) separately, not the combined field
-                iaw_in = {**new_y, "E1": self.combined.transverse(new_y["E1"])}
-                iaw_out = self.iaw_step(iaw_in, t)
-                new_y["iaw_density"] = iaw_out["iaw_density"]
-                new_y["iaw_velocity_divergence"] = iaw_out["iaw_velocity_divergence"]
+                drive = {**new_y, "E1": self.combined.transverse(new_y["E1"])}
+            new_y, iaw_ends = self.iaw_first(new_y, t, drive)
+        light_iaw = None if iaw_ends is None else Linear(*iaw_ends, interpolate=self.interpolate_light)
+
+        if self.epw_solver == "combined":
+            new_y = self.combined_step(t, new_y, args["drivers"], light_iaw)
             if self.hpe is not None:
                 new_y = self.hpe(t, new_y)
             if self.qle is not None:
@@ -214,24 +249,24 @@ class SplitStep:
             y, new_y = self._pack_y_(y, new_y)
             return new_y
 
-        # light split step
-        new_y = self.light_split_step(t, new_y, args["drivers"])
-
         driver_delta = 0.0
         if "E2" in args["drivers"]:
             w_before = self.epw.energy(new_y["epw"])
             new_y["epw"] += jnp.fft.fft2(self.dt * self.epw.driver(args["drivers"]["E2"], t))
             driver_delta = self.epw.energy(new_y["epw"]) - w_before
-        # epw split step (with the per-operation energy deltas for the ledger)
-        new_y["epw"], deltas = self.epw.advance(t, new_y, args)
+        # epw split step with the light at t (the per-operation energy deltas for the ledger)
+        phi_old = new_y["epw"]
+        epw_in = new_y
+        if iaw_ends is not None:
+            epw_in = {**new_y, "iaw_density": Linear(*iaw_ends, interpolate=self.interpolate_epw).at(0.5)}
+        new_y["epw"], deltas = self.epw.advance(t, epw_in, args)
         if self.energy_ledger:
             deltas = deltas.at[LEDGER_CHANNELS.index("driver")].set(driver_delta)
             new_y[LEDGER_KEY] = new_y[LEDGER_KEY] + deltas
 
-        # ion-acoustic split step: the updated density is seen by the light and EPW
-        # detuning terms on the next outer step, matching the MATLAB ordering
-        if self.iaw is not None:
-            new_y = self.iaw_step(new_y, t)
+        # light split step with the EPW potential between its values at t and t + dt
+        phi = Linear(phi_old, new_y["epw"], interpolate=self.interpolate_light)
+        new_y = self.light_split_step(t, new_y, args["drivers"], phi, light_iaw)
 
         # particle push + Landau-damping feedback; the gamma_L written here is the
         # rate the EPW update applies on the next step (one-step lag)

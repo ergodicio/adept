@@ -41,6 +41,7 @@ from jax import numpy as jnp
 
 from adept._lpse2d.core.light import CoupledLight, super_gaussian_y
 from adept._lpse2d.core.raman import RamanLight, transverse_part
+from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import fft2c, ifft2c, split_k, with_components
 
 
@@ -131,16 +132,23 @@ class SpectralRamanLight(RamanLight):
 
     def __call__(self, t, E1, E0_fn, phi_k, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None
-        laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
-        detune = self.detune1
-        if iaw_density is not None:
-            detune = detune * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.iaw_feedback * self.dt_l)
-        absorb = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
+        # phi_k / iaw_density: arrays (fixed) or timeline.Linear (read at each sub-step's middle)
+        laplacian_tl = as_linear(phi_k).map(lambda p: jnp.fft.ifft2(-self.k_sq * p))
+        iaw_tl = as_linear(iaw_density)
+
+        def scattering(dn):
+            detune = self.detune1
+            if dn is not None:
+                detune = detune * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn * self.iaw_feedback * self.dt_l)
+            return detune[..., None] * self.absorption_factor(self.absorption_rate1, self.n_over_nc1, dn)
+
+        fixed = scattering(iaw_tl.new) if iaw_tl.constant else None
 
         def substep(i, E1):
             t_i = t + i * self.dt_l
+            laplacian_phi = laplacian_tl.substep(i, self.n_sub)
             # x-space: scattering potential (detuning + absorption), then the sources (Euler)
-            E1 = E1 * detune[..., None] * absorb
+            E1 = E1 * (fixed if fixed is not None else scattering(iaw_tl.substep(i, self.n_sub)))
             E0 = E0_fn(t_i)
             coupling = self.srs_coeff * jnp.conj(laplacian_phi)[..., None] * E0
             if self.transverse_source:
@@ -301,27 +309,38 @@ class SpectralCoupledLight(CoupledLight):
 
     def __call__(self, t, E0, E1, phi_k, pump_args, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None
-        laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
-        detune0, detune1 = self.detune0, self.detune1
-        if iaw_density is not None:
-            # in units of n_env (LPSE Nelf * n_b / No), per wave (ionAcousticPerturbations)
-            dn0, dn1 = iaw_density * self.iaw_feedback0, iaw_density * self.iaw_feedback
-            detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn0 * self.dt_l)
-            detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn1 * self.dt_l)
-        absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, iaw_density, self.iaw_feedback0)
-        absorb1 = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
+        # phi_k / iaw_density: arrays (fixed) or timeline.Linear (read at each sub-step's middle)
+        phi_tl = as_linear(phi_k)
+        laplacian_tl = phi_tl.map(lambda p: jnp.fft.ifft2(-self.k_sq * p))
+        iaw_tl = as_linear(iaw_density)
+
+        def scattering(dn):
+            detune0, detune1 = self.detune0, self.detune1
+            if dn is not None:
+                # in units of n_env (LPSE Nelf * n_b / No), per wave (ionAcousticPerturbations)
+                dn0, dn1 = dn * self.iaw_feedback0, dn * self.iaw_feedback
+                detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn0 * self.dt_l)
+                detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn1 * self.dt_l)
+            absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, dn, self.iaw_feedback0)
+            absorb1 = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, dn)
+            return detune0[..., None] * absorb0, detune1[..., None] * absorb1
+
+        fixed = scattering(iaw_tl.new) if iaw_tl.constant else None
         exchange = self.srs_enabled
 
         def substep(i, fields):
             E0, E1 = fields
             t_i = t + i * self.dt_l
+            laplacian_phi = laplacian_tl.substep(i, self.n_sub)
+            phi_i = phi_tl.substep(i, self.n_sub)
             if exchange:
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
             # x-space: scattering potentials, then the non-exchange sources (Euler)
-            E0 = E0 * detune0[..., None] * absorb0
-            E1 = E1 * detune1[..., None] * absorb1
+            s0, s1 = fixed if fixed is not None else scattering(iaw_tl.substep(i, self.n_sub))
+            E0 = E0 * s0
+            E1 = E1 * s1
             if self.tpd_enabled:
-                E0 = E0 + self.dt_l * with_components(self.calc_tpd_depletion(t_i, phi_k), E0.shape[-1])
+                E0 = E0 + self.dt_l * with_components(self.calc_tpd_depletion(t_i, phi_i), E0.shape[-1])
             E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)
             if seed_args is not None:
                 E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))

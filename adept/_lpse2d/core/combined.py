@@ -57,6 +57,7 @@ from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
 from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import light_absorption_rates
 from adept._lpse2d.core.spectral_light import gaussian_injector_profile
+from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import dot_conj, fft2c, ifft2c, k_dot, split_k
 
 
@@ -288,10 +289,22 @@ class CombinedSolver:
         the injector parameters when it is."""
         E1 = y["E1"]
         E0 = y["E0"]
-        iaw_density = y.get("iaw_density")
-        detune = self.detune
-        if iaw_density is not None:
-            detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * iaw_density * self.iaw_feedback)
+        # an array (fixed) or timeline.Linear read at each sub-step's middle (LPSE
+        # interpolateSourcesInTime, Nelf in LightSolver::calculateScatteringPotential)
+        iaw_tl = as_linear(y.get("iaw_density"))
+
+        def detuning(dn):
+            detune = self.detune
+            if dn is not None:
+                detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * dn * self.iaw_feedback)
+            if not self.pump_depletion:
+                return detune, None
+            detune0 = self.detune0
+            if dn is not None:
+                detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn * self.iaw_feedback0 * self.dt_l)
+            return detune, detune0
+
+        fixed = detuning(iaw_tl.new) if iaw_tl.constant else None
         if self.evolved_landau:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
@@ -299,18 +312,13 @@ class CombinedSolver:
         else:
             gamma_landau = jnp.zeros_like(self.k_sq)
         pump_args = driver_args.get("E0") if self.pump_depletion else None
-        if self.pump_depletion:
-            detune0 = self.detune0
-            if iaw_density is not None:
-                detune0 = detune0 * jnp.exp(
-                    -1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.iaw_feedback0 * self.dt_l
-                )
 
         def substep(i, fields):
             E0, E1 = fields
             t_i = t + i * self.dt_l
             if not self.pump_depletion:
                 E0 = E0_fn(t_i)
+            detune, detune0 = fixed if fixed is not None else detuning(iaw_tl.substep(i, self.n_sub))
             # 1. scattering potential and collisional damping on the combined field
             E1 = E1 * (detune * self.collisional)[..., None]
             # 2. the unified source (and the pump's x-space step)

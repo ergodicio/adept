@@ -1946,8 +1946,8 @@ def get_save_quantities(cfg: dict) -> dict:
 
             save_y = {}
             for k, v in y.items():
-                if k in ("iaw_density_fine", "iaw_velocity_divergence_fine"):
-                    continue  # the fd IAW solver's super-sampled fields; the coarse ones are saved
+                if k in ("iaw_density_fine", "iaw_velocity_divergence_fine", "iaw_density_old"):
+                    continue  # the fd IAW's super-sampled fields and the interpolation start: internal
                 if k in ("vdf", "gamma_L") and qle_on:
                     # the quasilinear VDF (plan 2 K.1; make_vdf_xarray) and its Landau rate on
                     # the k grid (k-fields), verbatim
@@ -1982,7 +1982,7 @@ def get_save_quantities(cfg: dict) -> dict:
             from adept._lpse2d.core.hpe import PARTICLE_KEYS
 
             keep = ("vdf", "gamma_L") if qle_on else ()
-            skip = ("epw_ledger", "iaw_density_fine", "iaw_velocity_divergence_fine")
+            skip = ("epw_ledger", "iaw_density_fine", "iaw_velocity_divergence_fine", "iaw_density_old")
             return {k: v for k, v in y.items() if (k not in PARTICLE_KEYS or k in keep) and k not in skip}
 
     cfg["save"]["fields"]["func"] = save_func

@@ -627,6 +627,8 @@ def translate_parms(
     }
     if "lw.maxWavenumber" in parms:
         epw["max_wavenumber"] = float(parms["lw.maxWavenumber"])
+    # LPSE {lw|laser|raman}.interpolateSourcesInTime, default true (ParameterManager.cpp:330, 367, 756)
+    epw["interpolate_sources"] = _bool(g("lw.interpolateSourcesInTime"), True)
 
     # ---- light
     # LPSE raman.solver defaults to static (ParameterManager.cpp:346); a static Raman light with its
@@ -722,6 +724,18 @@ def translate_parms(
     # absorbing layers only on request (plan 2 I.3)
     light["suppress_sources_at_injectors"] = _bool(g("suppressSourcesAtInjectors", "true"))
     light["suppress_sources_in_absorbers"] = _bool(g("suppressSourcesInAbsorbingRegions"))
+    # one flag for both light fields; only the evolved ones count (LPSE turns it off for a static field)
+    interp = {
+        cls: _bool(g(f"{cls}.interpolateSourcesInTime"), True)
+        for cls, on in (("laser", laser_evolves), ("raman", raman_on and raman_solver != "static"))
+        if on
+    }
+    if interp:
+        light["interpolate_sources"] = interp.get("raman", interp.get("laser"))
+        if len(set(interp.values())) > 1:
+            report["notes"].append(
+                f"interpolateSourcesInTime differs between the light classes {interp}: adept uses the Raman light's"
+            )
 
     # ---- laser beams (static: intensities summed; direction along +x expected)
     n_beams = int(float(g("laser.nBeams", "1")))

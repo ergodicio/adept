@@ -327,6 +327,9 @@ class EPWModel(BaseModel):
     # (transverse part) and the EPW (longitudinal part), required by LPSE when TPD and
     # SRS are both on (see core/combined.py)
     solver: Literal["separate", "combined"] = "separate"
+    # LPSE lw.interpolateSourcesInTime (default true): the EPW step reads the ion density at its
+    # middle, linearly between the IAW step's ends; false: the new density
+    interpolate_sources: bool = True
 
 
 class LightModel(BaseModel):
@@ -410,6 +413,10 @@ class LightModel(BaseModel):
     # operator is even in kx, so -k0 is a degenerate freely-propagating mode that the
     # real-space SRS source drives resonantly; this removes it. E1 is untouched.
     one_way: bool = False
+    # LPSE {laser|raman}.interpolateSourcesInTime (default true): each light sub-step reads the EPW
+    # potential (between its values before and after the EPW step, which LPSE advances first) and
+    # the ion density at the sub-step's middle; false: the new values
+    interpolate_sources: bool = True
 
 
 class QLEModel(BaseModel):
