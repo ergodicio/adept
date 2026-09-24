@@ -397,14 +397,21 @@ def get_derived_quantities(cfg: dict) -> dict:
     ymin = cfg_grid["ymin"] = _Q(cfg_grid["ymin"]).to("um").value
     dx = cfg_grid["dx"] = _Q(cfg_grid["dx"]).to("um").value
 
-    # round to the nearest even number
-    cfg_grid["nx"] = int((xmax - xmin) / dx)
-    cfg_grid["nx"] = next_smooth_fft_size(cfg_grid["nx"], max_prime=5)
-    cfg_grid["dx"] = dx = (xmax - xmin) / cfg_grid["nx"]  # recalculate dx based on optimal nx
+    # grid.smooth_fft_size (default true): grow nx / ny to 5-smooth FFT sizes and rescale dx; false
+    # keeps the requested node counts exactly (LPSE uses the deck's grid.nodes, ParameterManager.cpp
+    # 1285-1300; the deck translator sets it)
+    smooth = bool(cfg_grid.get("smooth_fft_size", True))
+    if smooth:
+        cfg_grid["nx"] = next_smooth_fft_size(int((xmax - xmin) / dx), max_prime=5)
+    else:
+        cfg_grid["nx"] = round((xmax - xmin) / dx)
+    cfg_grid["dx"] = dx = (xmax - xmin) / cfg_grid["nx"]  # recalculate dx based on nx
 
     cfg_grid["dy"] = dx  # we want square cells
-    cfg_grid["ny"] = int((ymax - ymin) / dx)  # recalculate ny based on dx
-    cfg_grid["ny"] = next_smooth_fft_size(cfg_grid["ny"], max_prime=5)
+    if smooth:
+        cfg_grid["ny"] = next_smooth_fft_size(int((ymax - ymin) / dx), max_prime=5)
+    else:
+        cfg_grid["ny"] = max(1, round((ymax - ymin) / dx))
     # ymax and ymin have to be symmetric about 0 and have to be recalculated
     cfg_grid["ymax"] = ymax = dx * cfg_grid["ny"] / 2
     cfg_grid["ymin"] = ymin = -ymax

@@ -197,6 +197,8 @@ class GridModel(BaseModel):
     boundary_profile: Literal["tanh", "exp"] = "tanh"
     boundary_max_rate: float = 200.0  # 1/ps, LPSE lw.abc.maxDampingRate default
     boundary_lambda: float = 7.0  # LPSE abc.lambda default
+    # grow nx / ny to 5-smooth FFT sizes (and rescale dx); false keeps the node counts (LPSE)
+    smooth_fft_size: bool = True
     low_pass_filter: float
     dealias: str = "isotropic"
     dt: str

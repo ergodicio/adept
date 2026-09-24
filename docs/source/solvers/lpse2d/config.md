@@ -110,6 +110,7 @@ Simulation grid parameters. Note: Grid values use physical units as strings.
 | `boundary_lambda` | float | (`exp` profile) Exponential steepness (default `7`, LPSE `abc.lambda`) |
 | `low_pass_filter` | float | Low-pass filter cutoff as fraction of kmax (0-1) |
 | `dealias` | string | Shape of the anti-aliasing mask: `isotropic` (default), `shifted-band` or `rectangular` (LPSE `grid.antiAliasing.range`: the outer `1 - low_pass_filter` of each k axis is zeroed; the deck translator uses it with LPSE's range, `0.3334` when the deck omits the key, ParameterManager.cpp:241) |
+| `smooth_fft_size` | bool | (default `true`) grow `nx` / `ny` to 5-smooth FFT sizes and rescale `dx`; `false` keeps the node counts `(xmax - xmin) / dx`, `(ymax - ymin) / dx` exactly (LPSE runs on `grid.nodes`; the deck translator sets `false`) |
 | `dt` | string | Timestep with unit |
 | `dx` | string | Spatial resolution with unit |
 | `tmax` | string | End time with unit |

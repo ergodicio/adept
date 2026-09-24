@@ -387,6 +387,10 @@ def translate_parms(
     else:
         epw_source_window = None
     epw_solver = "combined" if g("lw.solver", "spectral").lower() == "combined" else "separate"
+    if epw_solver == "combined" and "fd" in (g("laser.solver", "static").lower(), g("raman.solver", "static").lower()):
+        # LPSE's fd combined path (ZakharovSolver.cpp:232-238, LwSolver::advanceLW_combinedTPDandSRS_FD)
+        # is not ported: adept runs its spectral combined solver (test_022, test_083)
+        report["unsupported"].append("lw.solver = combined with fd light: adept runs the spectral combined solver")
     if g("lw.solver", "spectral").lower() == "fd":
         report["unsupported"].append("lw.solver = fd (LPSE itself disables it); translated as spectral")
     epw = {
@@ -958,6 +962,7 @@ def translate_parms(
         "grid": {
             "boundary_abs_coeff": 200.0,
             "boundary_width": f"{boundary_width}um",
+            "smooth_fft_size": False,  # LPSE's grid.nodes, not a 5-smooth size
             "boundary_profile": "exp",
             "boundary_max_rate": float(g("lw.abc.maxDampingRate", "200")),
             "boundary_lambda": lam,

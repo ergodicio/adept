@@ -415,3 +415,21 @@ def test_translator_small_keys_follow_lpse(tmp_path):
     assert cfg["terms"]["epw"]["damping"]["landau"] is False
     with pytest.raises(ValueError, match=r"raman\.solver = static"):
         _translate_minimal(tmp_path, "raman.enable = true;\n")
+
+
+@pytest.mark.skipif(not DECKS.exists(), reason="original-lpse example decks not available")
+@pytest.mark.parametrize("deck", ["test_036", "test_082"])
+def test_translated_grid_keeps_lpse_node_counts(deck):
+    """LPSE runs on grid.nodes (ParameterManager.cpp:1285-1300); adept's 5-smooth resizing grew test_036
+    504x102 -> 512x108 and test_082 528x104 -> 540x108. The translator turns it off."""
+    from adept._lpse2d.helpers import get_derived_quantities, get_solver_quantities, write_units
+    from adept._lpse2d.lpse_deck import parse_parms, translate_parms
+
+    parms = parse_parms(DECKS / deck / "lpse.parms")
+    cfg, _ = translate_parms(parms, run=deck)
+    assert cfg["grid"]["smooth_fft_size"] is False
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    grid = get_solver_quantities(cfg)
+    nodes = [int(v) for v in parms["grid.nodes"].split()[:2]]
+    assert (grid["nx"], grid["ny"]) == tuple(nodes)
