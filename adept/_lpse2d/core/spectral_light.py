@@ -150,7 +150,7 @@ class SpectralRamanLight(RamanLight):
             # x-space: scattering potential (detuning + absorption), then the sources (Euler)
             E1 = E1 * (fixed if fixed is not None else scattering(iaw_tl.substep(i, self.n_sub)))
             E0 = E0_fn(t_i)
-            coupling = self.srs_coeff * jnp.conj(laplacian_phi)[..., None] * E0
+            coupling = (self.srs_coeff * jnp.conj(laplacian_phi) * self.source_mask1)[..., None] * E0
             if self.transverse_source:
                 coupling = transverse_part(coupling, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             E1 = E1 + self.dt_l * coupling
@@ -340,7 +340,10 @@ class SpectralCoupledLight(CoupledLight):
             E0 = E0 * s0
             E1 = E1 * s1
             if self.tpd_enabled:
-                E0 = E0 + self.dt_l * with_components(self.calc_tpd_depletion(t_i, phi_i), E0.shape[-1])
+                tpd_dep = self.calc_tpd_depletion(t_i, phi_i)
+                if not isinstance(self.source_mask0, float):
+                    tpd_dep = tpd_dep * self.source_mask0[..., None]
+                E0 = E0 + self.dt_l * with_components(tpd_dep, E0.shape[-1])
             E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)
             if seed_args is not None:
                 E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))

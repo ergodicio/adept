@@ -7,6 +7,15 @@ from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import transverse_part  # re-exported for light.py and the tests
 
 
+def light_source_mask(cfg: dict, which: int):
+    """``grid.light_source_mask{which}`` (0: the pump's coupling sources, 1: the Raman light's; LPSE
+    ``LightSolver::calculateSources`` suppression), or ``1.0`` when it is all ones."""
+    mask = cfg["grid"].get(f"light_source_mask{which}")
+    if mask is None or bool(np.all(np.asarray(mask) == 1.0)):
+        return 1.0
+    return jnp.asarray(mask)
+
+
 def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
     """Amplitude absorption rates (1/ps) at the critical density of the pump and of the
     Raman light (LPSE's per-class ``{laser|raman}.evolution.absorption``, ``wsAbsorptionAtNc``).
@@ -145,6 +154,8 @@ class RamanLight:
         )
         self.diffraction_coeff = 1j * self.c**2 / (2.0 * self.w1)
         self.srs_coeff = -1j * self.e / (4.0 * self.w0 * self.me)
+        # zero at the pump's injector rows (and in the Raman light's layer on request), as LPSE
+        self.source_mask1 = light_source_mask(cfg, 1)
 
         # absorbing boundaries are applied every sub-step so that light (group velocity ~ c)
         # cannot cross the absorber between damping applications
@@ -380,7 +391,7 @@ class RamanLight:
         # SRS coupling to the EPW (MATLAB lines 1684-1689, potential formulation);
         # CoupledLight switches it off here when it integrates the exchange exactly
         if couple:
-            source = (self.srs_coeff * jnp.conj(laplacian_phi))[..., None] * E0
+            source = (self.srs_coeff * jnp.conj(laplacian_phi) * self.source_mask1)[..., None] * E0
             if self.transverse_source:
                 source = transverse_part(source, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             k_e1 = [k + source[..., i] for i, k in enumerate(k_e1)]

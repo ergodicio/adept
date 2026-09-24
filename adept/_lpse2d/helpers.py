@@ -229,29 +229,44 @@ def range_restriction(x: np.ndarray, y: np.ndarray, window: dict) -> np.ndarray:
 
 
 def source_mask(cfg: dict, cfg_grid: dict, which: str) -> np.ndarray:
-    """The x-space source multiplier of ``which`` (``epw`` or ``iaw``): the range restriction
-    of ``terms.<which>.source_window`` times, with ``terms.light.suppress_sources_in_absorbers``,
-    zero inside the absorbing layers (``boundary_width`` from the walls, LPSE
-    ``suppressSourcesInAbsorbingRegions``) and, with ``terms.light.suppress_sources_at_injectors``
-    (LPSE ``suppressSourcesAtInjectors``), zero across the pump and seed injector rows."""
+    """The x-space source multiplier of ``which``: ``epw`` (TPD / SRS sources), ``iaw`` (ponderomotive
+    drive), ``light0`` (the pump's coupling sources) or ``light1`` (the Raman light's).
+
+    - the range restriction of ``terms.<which>.source_window`` (EPW and IAW);
+    - with ``terms.light.suppress_sources_in_absorbers`` (LPSE ``suppressSourcesInAbsorbingRegions``),
+      zero inside the wave's own absorbing layer: ``grid.boundary_width`` for the EPW, the IAW's,
+      the pump's and the Raman light's widths for the others (``{lw|iaw}Solver.abc.indices``,
+      ``LightSolver::calculateSources`` with the class's ``abc.indices``);
+    - with ``terms.light.suppress_sources_at_injectors`` (LPSE ``suppressSourcesAtInjectors``), zero
+      across the pump and seed injector rows for the EPW and IAW; the light sources are always zeroed
+      at the *partner* field's injector rows (``LightSolver::calculateSources``, no switch)."""
     x = np.asarray(cfg_grid["x"], dtype=np.float64)
     y = np.asarray(cfg_grid["y"], dtype=np.float64)
-    window = cfg["terms"].get(which, {}).get("source_window")
-    mask = range_restriction(x, y, window) if window else np.ones((x.size, y.size))
     light = cfg["terms"].get("light", {})
+    window = cfg["terms"].get(which, {}).get("source_window") if which in ("epw", "iaw") else None
+    mask = range_restriction(x, y, window) if window else np.ones((x.size, y.size))
     if light.get("suppress_sources_in_absorbers", False):
-        boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
-        inside_x = (x < cfg_grid["xmin"] + boundary_width) | (x > cfg_grid["xmax"] - boundary_width)
-        mask = mask * np.where(inside_x, 0.0, 1.0)[:, None]
-        boundary = cfg["terms"][which]["boundary"] if which in cfg["terms"] else cfg["terms"]["epw"]["boundary"]
-        if y.size > 1 and str(boundary.get("y", "periodic")) != "periodic":
-            inside_y = (y < cfg_grid["ymin"] + boundary_width) | (y > cfg_grid["ymax"] - boundary_width)
-            mask = mask * np.where(inside_y, 0.0, 1.0)[None, :]
-    if light.get("suppress_sources_at_injectors", False):
+        width = {
+            "epw": _Q(cfg_grid["boundary_width"]).to("um").value,
+            "iaw": cfg_grid.get("iaw_boundary_width_um"),
+            "light0": cfg_grid.get("light_boundary_width_um"),
+            "light1": cfg_grid.get("raman_boundary_width_um"),
+        }[which]
+        if width is None:
+            width = _Q(cfg_grid["boundary_width"]).to("um").value
+        if width > 0.0:
+            inside_x = (x < cfg_grid["xmin"] + width) | (x > cfg_grid["xmax"] - width)
+            mask = mask * np.where(inside_x, 0.0, 1.0)[:, None]
+            boundary = cfg["terms"]["iaw"]["boundary"] if which == "iaw" else cfg["terms"]["epw"]["boundary"]
+            if y.size > 1 and str(boundary.get("y", "periodic")) != "periodic":
+                inside_y = (y < cfg_grid["ymin"] + width) | (y > cfg_grid["ymax"] - width)
+                mask = mask * np.where(inside_y, 0.0, 1.0)[None, :]
+    at_injectors = light.get("suppress_sources_at_injectors", False) if which in ("epw", "iaw") else True
+    if at_injectors:
         dx = float(cfg_grid["dx"])
         rows = np.ones(x.size)
         pump = cfg["drivers"].get("E0", {}).get("derived", {})
-        if light.get("pump_depletion", False) and "offset" in pump:
+        if which != "light0" and light.get("pump_depletion", False) and "offset" in pump:
             leftward = np.asarray(pump.get("beam_leftward", [False]), dtype=bool)
             if not np.all(leftward):
                 rows = rows * _injector_rows(
@@ -262,7 +277,7 @@ def source_mask(cfg: dict, cfg_grid: dict, which: str) -> np.ndarray:
                     x, cfg_grid["xmax"] - pump["offset"], pump.get("injector_width"), dx, light
                 )
         seed = cfg["drivers"].get("E1", {}).get("derived", {})
-        if "offset" in seed:
+        if which != "light1" and "offset" in seed:
             rows = rows * _injector_rows(x, cfg_grid["xmax"] - seed["offset"], seed.get("injector_width"), dx, light)
         mask = mask * rows[:, None]
     return mask
@@ -1133,6 +1148,9 @@ def get_solver_quantities(cfg: dict) -> dict:
     cfg_grid["epw_source_mask"] = source_mask(cfg, cfg_grid, "epw")
     if iaw.get("active", False):
         cfg_grid["iaw_source_mask"] = source_mask(cfg, cfg_grid, "iaw")
+    # the light fields' own coupling sources (LightSolver::calculateSources): 0 = pump, 1 = Raman light
+    cfg_grid["light_source_mask0"] = source_mask(cfg, cfg_grid, "light0")
+    cfg_grid["light_source_mask1"] = source_mask(cfg, cfg_grid, "light1")
 
     k_mag = np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2)
     kmax = cfg_grid["kx"].max()

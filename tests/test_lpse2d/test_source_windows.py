@@ -213,6 +213,49 @@ def test_tpd_source_is_windowed_after_its_assembly():
     np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12 * np.abs(want).max())
 
 
+def test_light_sources_are_zeroed_at_the_partner_injector_and_in_their_own_layer():
+    """Inventory A27: LPSE zeroes each light field's coupling sources at the *partner* field's injector
+    rows (always) and, with suppressSourcesInAbsorbingRegions, inside its own absorbing layer
+    (LightSolver::calculateSources). The masks follow the rules exactly; with E1 = 0 the Raman light's
+    RHS is its SRS source alone, which vanishes exactly on the pump injector rows -- without the
+    transverse projection, which LPSE (like adept) applies after the suppression and which spreads the
+    source back (takeTransversePartOfSourceTerms, off by default in LPSE)."""
+    from adept._lpse2d.core.light import CoupledLight
+
+    cfg = _cfg(seed=True, light={"transverse_source": False})
+    grid = cfg["grid"]
+    x = np.asarray(grid["x"])
+    m0, m1 = np.asarray(grid["light_source_mask0"]), np.asarray(grid["light_source_mask1"])
+    pump_rows = np.where(m1[:, 0] == 0.0)[0]
+    seed_rows = np.where(m0[:, 0] == 0.0)[0]
+    x_pump = grid["xmin"] + cfg["drivers"]["E0"]["derived"]["offset"]
+    x_seed = grid["xmax"] - cfg["drivers"]["E1"]["derived"]["offset"]
+    assert pump_rows.size >= 2 and np.all(np.abs(x[pump_rows] - x_pump) < 2.0 * grid["dx"])
+    assert seed_rows.size >= 2 and np.all(np.abs(x[seed_rows] - x_seed) < 2.0 * grid["dx"])
+    # the own layers only on request
+    layered = _cfg(seed=True, light={"suppress_sources_in_absorbers": True})["grid"]
+    width = layered["light_boundary_width_um"]
+    inside = (x < width) | (x > grid["xmax"] - width)
+    assert np.all(np.asarray(layered["light_source_mask0"])[inside] == 0.0)
+
+    light = CoupledLight(cfg)
+    nx, ny = grid["nx"], grid["ny"]
+    rng = np.random.default_rng(9)
+    E0 = jnp.asarray(rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    E1 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+    lap = jnp.asarray(rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny)))
+    pump_args = {
+        **cfg["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.zeros((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    _, k_e1 = light.coupled_rhs(0.0, E0, E1, lap, pump_args, None, None, None)
+    k_e1 = np.asarray(k_e1)
+    assert np.all(k_e1[pump_rows] == 0.0)
+    assert np.all(np.abs(k_e1[np.setdiff1d(np.arange(nx), pump_rows)]).max(axis=(1, 2)) > 0.0)
+
+
 def test_translator_maps_source_windows_and_gates():
     from adept._lpse2d.lpse_deck import translate_parms
 

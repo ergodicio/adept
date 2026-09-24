@@ -6,7 +6,7 @@ from jax import numpy as jnp
 from adept._base_ import get_envelope
 from adept._lpse2d.core.kap import KapPhases
 from adept._lpse2d.core.pulse import PulseShape
-from adept._lpse2d.core.raman import RamanLight, transverse_part
+from adept._lpse2d.core.raman import RamanLight, light_source_mask, transverse_part
 from adept._lpse2d.core.timeline import as_linear
 
 
@@ -150,6 +150,11 @@ class CoupledLight(RamanLight):
             raise ValueError(f"terms.light.coupling must be 'explicit' or 'rotation', got {self.coupling!r}")
         # local E0 <-> E1 exchange rate per unit |laplacian phi|: Omega = sqrt(|A B|) |lap phi|
         self.omega_prefactor = self.e / (4.0 * self.me * np.sqrt(self.w0 * self.w1))
+        # the pump's coupling sources are zeroed at the seed injector rows (and in the pump's layer on
+        # request), the Raman light's at the pump's (LPSE LightSolver::calculateSources); the exact
+        # exchange (coupling: rotation) cannot act one-sidedly and is switched off where either is
+        self.source_mask0 = light_source_mask(cfg, 0)
+        self.exchange_mask = self.source_mask0 * self.source_mask1
 
         # optional isotropic low-pass filter on both light fields, applied once per EPW
         # step (terms.light.filter = fraction of the grid Nyquist wavenumber; default off).
@@ -486,7 +491,7 @@ class CoupledLight(RamanLight):
             self.diffraction_coeff0 * cc + linear_coeff0 * e for cc, e in zip(self.curl_curl(E0), comps, strict=True)
         ]
         if self.srs_enabled and couple:
-            depletion = (self.srs_depletion_coeff0 * laplacian_phi)[..., None] * E1
+            depletion = (self.srs_depletion_coeff0 * laplacian_phi * self.source_mask0)[..., None] * E1
             if self.transverse_source:
                 depletion = transverse_part(depletion, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             k_e0 = [k + depletion[..., i] for i, k in enumerate(k_e0)]
@@ -494,6 +499,8 @@ class CoupledLight(RamanLight):
             if phi_k is None:
                 raise ValueError("phi_k is required for TPD pump depletion")
             tpd_dep = self.calc_tpd_depletion(t, phi_k)  # in-plane only: E_h has no z component
+            if not isinstance(self.source_mask0, float):
+                tpd_dep = tpd_dep * self.source_mask0[..., None]
             k_e0[0] = k_e0[0] + tpd_dep[..., 0]
             k_e0[1] = k_e0[1] + tpd_dep[..., 1]
         if self.fd_general_injector:
@@ -582,6 +589,7 @@ class CoupledLight(RamanLight):
         Omega = sqrt(|A B|) |L| = e |L| / (4 me sqrt(w0 w1)). Conserves w1|E0|^2 + w0|E1|^2
         at every point (Manley-Rowe for the light pair) for any tau.
         """
+        laplacian_phi = laplacian_phi * self.exchange_mask
         omega = self.omega_prefactor * jnp.abs(laplacian_phi)
         omega_safe = jnp.where(omega > 0.0, omega, 1.0)
         cos_ = jnp.cos(omega * tau)[..., None]

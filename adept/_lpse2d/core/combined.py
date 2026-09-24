@@ -55,10 +55,15 @@ from jax import numpy as jnp
 from adept._base_ import get_envelope
 from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
 from adept._lpse2d.core.pulse import PulseShape
-from adept._lpse2d.core.raman import light_absorption_rates
+from adept._lpse2d.core.raman import light_absorption_rates, light_source_mask
 from adept._lpse2d.core.spectral_light import gaussian_injector_profile
 from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import dot_conj, fft2c, ifft2c, k_dot, split_k
+
+
+def _masked(field: Array, mask) -> Array:
+    """A vector field times an x-space mask (``1.0`` leaves it untouched)."""
+    return field if isinstance(mask, float) else field * mask[..., None]
 
 
 def longitudinal_transverse(field: Array, kx: Array, ky: Array, one_over_k_sq: Array) -> tuple[Array, Array]:
@@ -94,6 +99,10 @@ class CombinedSolver:
                 "terms.epw.solver: combined needs terms.epw.source.tpd and srs both on or both off "
                 "(LPSE: 'When lw.solver=combined, both SRS and TPD must be enabled or neither')"
             )
+        # the pump's / the combined field's coupling sources (LPSE LightSolver::calculateSources:
+        # zeroed at the partner's injector rows, and in the own layer on request)
+        self.source_mask0 = light_source_mask(cfg, 0)
+        self.source_mask1 = light_source_mask(cfg, 1)
         self.sources_on = self.tpd_enabled
         self.pump_depletion = bool(light_cfg.get("pump_depletion", False))
 
@@ -327,7 +336,7 @@ class CombinedSolver:
                 if self.absorb0 is not None:
                     E0 = E0 * self.absorb0[..., None]
                 if self.sources_on:
-                    E0 = E0 + self.dt_l * self.unified_depletion(t_i, E1)
+                    E0 = E0 + self.dt_l * _masked(self.unified_depletion(t_i, E1), self.source_mask0)
                 pump_source = self.dt_l * self.calc_pump_source(t_i, pump_args)
                 for c, w in zip((1, 2), self.pump_weights, strict=True):
                     if w == 0.0:
@@ -336,7 +345,7 @@ class CombinedSolver:
                         raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
                     E0 = E0.at[..., c].add(w * pump_source)
             if self.sources_on:
-                E1 = E1 + self.dt_l * self.unified_source(t_i, E0, E1)
+                E1 = E1 + self.dt_l * _masked(self.unified_source(t_i, E0, E1), self.source_mask1)
             # 3. k-space propagation with the L/T projector
             E1 = self.propagate_combined(E1, gamma_landau)
             if self.pump_depletion:
