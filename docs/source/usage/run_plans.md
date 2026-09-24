@@ -37,6 +37,11 @@ topology, precision, requested features, and tracker/artifact adapters before it
 loads the solver builder. Submission passes a serialized copy to the worker, which
 performs JAX precision bootstrap before importing a JAX-dependent builder. The
 prepared solver's actual capabilities are checked again before numerical execution.
+An individual configuration may narrow `differentiable` from true to false
+(for example, FARSIGHT's dynamic tree walk). A run requiring differentiation
+then fails at this prepared check, before numerical execution. All other
+prepared capability fields must still match the registry declaration exactly;
+preparation cannot add undeclared differentiability or change bootstrap requirements.
 
 The local adapter supports null or MLflow tracking and null, directory, or MLflow
 artifact sinks. MLflow modules are imported only when an MLflow reference is

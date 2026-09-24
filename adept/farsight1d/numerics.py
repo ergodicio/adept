@@ -66,7 +66,7 @@ def electric_field(targets, sources, charges, length, epsilon, chunk_size=64):
     return values.reshape(targets.shape)
 
 
-def rk4_push(x, v, charge_weights, dt, length, epsilon, charge_to_mass, chunk_size=64):
+def rk4_push(x, v, charge_weights, dt, length, epsilon, charge_to_mass, chunk_size=64, *, field_solver=None):
     """Advance all characteristics together, evaluating E at every RK stage.
 
     Keep x unwrapped so neighboring nodes describe a continuous panel across
@@ -74,7 +74,8 @@ def rk4_push(x, v, charge_weights, dt, length, epsilon, charge_to_mass, chunk_si
     """
 
     def acceleration(position):
-        return charge_to_mass * electric_field(position, position, charge_weights, length, epsilon, chunk_size)
+        evaluate = electric_field if field_solver is None else field_solver
+        return charge_to_mass * evaluate(position, position, charge_weights, length, epsilon, chunk_size)
 
     k1x, k1v = v, acceleration(x)
     k2x, k2v = v + 0.5 * dt * k1v, acceleration(x + 0.5 * dt * k1x)
@@ -224,6 +225,7 @@ class FarsightSystem(eqx.Module):
     mass: float = eqx.field(static=True, default=1.0)
     remesh_every: int = eqx.field(static=True, default=1)
     chunk_size: int = eqx.field(static=True, default=64)
+    field_solver: Any = None
 
     def step(self, step, state, params, inputs, key):
         del params, inputs, key
@@ -236,6 +238,7 @@ class FarsightSystem(eqx.Module):
             self.epsilon,
             self.charge / self.mass,
             self.chunk_size,
+            field_solver=self.field_solver,
         )
         pushed = {**state, "x": x, "v": v}
         pushed["valid"] = state["valid"] & jnp.all(jnp.isfinite(x)) & jnp.all(jnp.isfinite(v))

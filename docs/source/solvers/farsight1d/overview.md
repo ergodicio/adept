@@ -1,7 +1,7 @@
 # FARSIGHT-1D
 
 `farsight-1d` is an experimental, independent JAX implementation of the
-**direct-sum, fixed or adaptive panel** variant of the method described by Sandberg, Krasny
+**fixed or adaptive panel** variant of the method described by Sandberg, Krasny
 and Thomas in [The FARSIGHT Vlasov-Poisson code](https://doi.org/10.1016/j.jcp.2024.113664),
 JCP 523 (2025), 113664. It lives in `adept.farsight1d` and uses ADEPT's new
 `SolverBuilder`, `PreparedSimulation`, and `ScanProgram` interfaces.
@@ -9,9 +9,9 @@ JCP 523 (2025), 113664. It lives in `adept.farsight1d` and uses ADEPT's new
 It solves collisionless 1D1V electron Vlasov-Poisson in normalized plasma units,
 with periodic x, a finite velocity interval and a homogeneous neutralizing
 background. It is a reference implementation for independent discretization
-comparisons. Bounded quadtree AMR is optional; the original code's barycentric
-treecode is **not implemented**. It has not been validated for production
-turbulence or benchmarked on GPUs.
+comparisons. Bounded quadtree AMR and a barycentric field treecode are optional;
+the direct field solver remains the default reference. It has not been
+validated for production turbulence or benchmarked on GPUs.
 
 ## Numerical method
 
@@ -20,7 +20,7 @@ each panel comprises a shared 3 by 3 set of nodes. The duplicated periodic x
 endpoint has half weight, as do the velocity endpoints under the default
 composite trapezoid rule. Composite Simpson quadrature is optional.
 
-The field is calculated directly from the moving nodes, with no deposition
+The field is calculated from the moving nodes, with no deposition
 grid or field interpolation:
 
 $$
@@ -132,7 +132,8 @@ For N phase-space nodes and P panels, direct field evaluation costs O(N²), and
 panel search costs O(NP). Target batching bounds temporary pair arrays but does
 not reduce this work. Reverse-mode differentiation can retain intermediates
 across steps and requires substantially more memory. Large turbulence meshes
-need an accelerated field solver and search before they are practical.
+also need accelerated panel search before they are practical; the optional
+treecode below reduces field work, not the remesh search.
 
 Softening must also be resolved by the source quadrature. Even a spatially
 homogeneous distribution can acquire spurious off-node forces when moving
@@ -142,6 +143,55 @@ field for homogeneous density is about 0.112 at epsilon 0.1, versus
 $5.6\times10^{-7}$ at epsilon 1.5. The continuum field is zero in both cases.
 This is tested explicitly. Reducing epsilon alone is not a convergence study;
 refine the spatial quadrature with it.
+
+## Barycentric field treecode
+
+Set `numerical.field_solver: treecode` to use a sorted binary source hierarchy
+with Chebyshev-Lobatto interpolation charges, following the mathematical
+approach of [Wang, Krasny and Tlupova](https://arxiv.org/abs/1902.02250).
+The default polynomial degree is 8 (nine interpolation nodes), opening ratio
+`theta=0.5`, and leaf size 32. Sources are wrapped and sorted, leaf interpolation
+charges are formed, and parent charges are transferred bottom-up. Each target
+performs a data-dependent threaded tree traversal. This is an independent
+implementation, not a translation of the original CPU/GPU treecode.
+
+A cluster is accepted only when `radius/distance < theta`, its nearest edge
+is farther than epsilon, and the entire interval stays on one smooth branch
+of the nearest-image kernel. These guards keep self interactions, the
+regularized core, and periodic antipodes out of inappropriate far-field
+approximations. Near leaves are summed directly. Signed and cancelling charges
+remain supported; activity depends on individual charges, not their net sum.
+Duplicate AMR nodes retain their separate quadrature contributions. Zero-weight
+slots are skipped during traversal but still incur allocation and sorting cost.
+
+The same evaluator is used at **every RK4 stage and in saved field/energy
+observations**. `theta=0` dispatches exactly to the direct field algorithm.
+Compare against that reference while tightening theta or increasing degree;
+these options control an approximation, not a guaranteed force-error tolerance.
+The particle-cluster approximation is not pair-symmetric, so it introduces a
+momentum/action-reaction defect. No invariant correction hides it. It does not
+make remeshing conservative or repair unresolved phase-space filaments.
+
+Accelerated traversal supports JIT and local forward-mode derivatives, but
+**not reverse-mode differentiation** through its dynamic tree walk. Prepared
+capabilities therefore set `differentiable=False` for positive-theta treecode.
+Use `direct` or `theta=0` for reverse-mode objectives. Sorting, source activity,
+opening decisions and AMR selection remain discrete even for forward mode.
+
+Construction uses O(N log N) sorting and O(N p + tree_nodes p²) interpolation
+work, for degree p. Evaluation can substantially reduce mathematical kernel
+interactions, but worst-case work remains quadratic; clumped sources, broad
+epsilon, and divergent target walks can diminish the benefit. Target batching
+may execute masked branches, so mathematical counters are **not executed
+instruction counts or a speedup estimate**. No GPU or turbulence speedup is
+claimed. AMR candidate remeshing remains a separate expensive operation.
+
+For isolated field checks, `electric_field_treecode_with_info` in
+`adept.farsight1d.treecode` returns the field and `visited_nodes`,
+`accepted_clusters`, `direct_pairs`, `kernel_evaluations`. These count
+evaluation work only, exclude construction, and are not automatically added
+to simulation scalar observations. `configs/farsight-1d/two-stream-treecode.yaml`
+shows the combined AMR/treecode configuration.
 
 ## Run an example
 
@@ -154,7 +204,7 @@ uv run python -m adept.farsight1d \
   --output outputs/farsight-two-stream
 ```
 
-The output directory must be new. The two included examples exercise linear
+The output directory must be new. The fixed-mesh examples exercise linear
 two-stream growth and Landau damping with deliberately resolved softening; they
 are not turbulence configurations or epsilon-to-zero convergence studies. Add `--tracking-uri`
 and optionally `--experiment` and `--name` to record metrics and upload artifacts
@@ -234,6 +284,13 @@ mass change -5.89e-6 and C2 change -1.42e-4. The leaf set remains unchanged;
 -1.70e-5 and integrated negative mass is 1.07e-4. This passes the same field
 and invariant thresholds, but neither demonstrates converged refinement nor
 validates a late-time turbulence case with substantial topology changes.
+
+Using the combined treecode example (degree 8, theta 0.5, leaf size 32) changes
+the complete complex field history by 0.0115% relative to direct AMR; its error
+against the linear reference remains 0.836%. Final momentum is 9.41e-7 versus
+approximately 2.4e-14 for direct AMR, illustrating the lost pair symmetry.
+This small CPU case took roughly 26–28 seconds with treecode versus 14 seconds
+direct; it is an accuracy regression, **not a speedup demonstration**.
 
 ## Attribution
 

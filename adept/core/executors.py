@@ -8,7 +8,7 @@ import re
 import sys
 from collections.abc import Callable, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from threading import Lock, RLock
 from typing import Any, Protocol, runtime_checkable
@@ -359,8 +359,17 @@ class LocalExecutor:
         prepared = self.registry.prepare(plan.simulation, key=key)
         errors = self._compatibility_errors(plan, prepared.capabilities)
         declared = self.registry.capabilities(plan.simulation.solver)
-        if declared is not None and prepared.capabilities != declared:
-            errors.append("prepared solver capabilities differ from its import-light registry declaration")
+        if declared is not None:
+            # A configuration can disable reverse-mode differentiation (e.g.
+            # a dynamic tree walk). Registry metadata describes availability;
+            # the prepared configuration is authoritative for required features
+            # and was checked above. No bootstrap/resource/other capability
+            # change, or undeclared differentiability upgrade, is permitted.
+            narrowed = replace(declared, differentiable=prepared.capabilities.differentiable)
+            if prepared.capabilities != narrowed or (
+                prepared.capabilities.differentiable and not declared.differentiable
+            ):
+                errors.append("prepared solver capabilities differ from its import-light registry declaration")
         if prepared.capabilities.precision is Precision.X64 and precision is not Precision.X64:
             errors.append("solver requires x64 but did not declare that requirement before JAX bootstrap")
         if errors:
