@@ -238,6 +238,44 @@ def test_render_failure_marks_failed_uploads_summary_and_preserves_original_erro
     assert len(error.value.__notes__) == 2
 
 
+@pytest.mark.parametrize("failure_stage", ["initial-summary", "failure-summary"])
+@pytest.mark.parametrize("status_update_fails", [False, True])
+def test_summary_disk_failure_preserves_original_and_attempts_failed_status(
+    inputs, monkeypatch, failure_stage, status_update_fails
+):
+    write_text = Path.write_text
+    summary_path = inputs.output / "run.json"
+    quota_error = OSError("disk quota exceeded")
+    render_error = ArithmeticError("unremeshed geometry")
+
+    def fail_summary(path, text, *args, **kwargs):
+        if path == summary_path and (failure_stage == "initial-summary" or json.loads(text)["status"] == "FAILED"):
+            raise quota_error
+        return write_text(path, text, *args, **kwargs)
+
+    def fail_render(*args, **kwargs):
+        raise render_error
+
+    monkeypatch.setattr(Path, "write_text", fail_summary)
+    monkeypatch.setattr(movies, "render_comparison", fail_render)
+    inputs.tracker.fail_finish = status_update_fails
+    expected = quota_error if failure_stage == "initial-summary" else render_error
+    with pytest.raises(type(expected)) as caught:
+        render.render_pair(inputs.eulerian, inputs.farsight, inputs.output)
+    assert caught.value is expected
+    assert inputs.tracker.finished == ["FAILED"]
+    assert any("Failure summary persistence also failed" in note for note in caught.value.__notes__)
+    if status_update_fails:
+        assert any("Failure status update also failed" in note for note in caught.value.__notes__)
+    # Never upload the old RUNNING summary (or a missing/partial file) after a
+    # failed rewrite. Tracking termination must still be attempted independently.
+    assert not inputs.sink.uploads
+    if failure_stage == "failure-summary":
+        assert json.loads(summary_path.read_text())["status"] == "RUNNING"
+    else:
+        assert not summary_path.exists()
+
+
 def test_refuses_existing_output_directory(inputs):
     inputs.output.mkdir()
     with pytest.raises(FileExistsError):

@@ -120,9 +120,9 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
         "source_runs": runs,
         "farsight_method": method,
     }
-    (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
-    print(json.dumps({"run_id": handle.run_id, "name": name}), flush=True)
     try:
+        (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
+        print(json.dumps({"run_id": handle.run_id, "name": name}), flush=True)
         sink.validate(handle)
 
         # Load into memory and close files before movie encoding.
@@ -179,12 +179,22 @@ def render_pair(eulerian: Path, farsight: Path, output: Path, *, experiment="far
         tracker.finish(handle, RunStatus.FINISHED)
     except Exception as error:
         summary.update(status="FAILED", error=f"{type(error).__name__}: {error}")
-        (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
+        failure_summary_written = False
         try:
-            receipt = sink.put(handle, Artifact(output / "run.json", artifact_path="comparison"))
-            sink.verify(handle, receipt)
-        except Exception as tracking_error:  # noqa: BLE001 — preserve the original render failure
-            error.add_note(f"Failure artifact upload also failed: {type(tracking_error).__name__}: {tracking_error}")
+            (output / "run.json").write_text(json.dumps(summary, indent=2) + "\n")
+            failure_summary_written = True
+        except Exception as persistence_error:  # noqa: BLE001 — retain the original render or persistence failure
+            error.add_note(
+                f"Failure summary persistence also failed: {type(persistence_error).__name__}: {persistence_error}"
+            )
+        if failure_summary_written:
+            try:
+                receipt = sink.put(handle, Artifact(output / "run.json", artifact_path="comparison"))
+                sink.verify(handle, receipt)
+            except Exception as tracking_error:  # noqa: BLE001 — preserve the original render failure
+                error.add_note(
+                    f"Failure artifact upload also failed: {type(tracking_error).__name__}: {tracking_error}"
+                )
         try:
             tracker.finish(handle, RunStatus.FAILED, error=summary["error"])
         except Exception as tracking_error:  # noqa: BLE001 — status failure must not replace the render failure
