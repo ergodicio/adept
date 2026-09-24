@@ -116,22 +116,41 @@ def find_threshold(
 # ---------------------------------------------------------------------------------------
 
 
-def gain_criterion(series: dict, gain: float = 23.026, noise_time_range=(0.01, 0.1)) -> bool:
-    """LPSE ``AbsoluteThreshold::checkIsAboveThreshold``: the run is above threshold when
-    ``log(A_end / A_noise) > gain`` with ``A`` the peak EPW amplitude (``max_phi`` of the
-    default series; LPSE's ``max |rho_k|``) and ``A_noise`` the running mean of ``A`` over the
-    samples before ``noise_time_range[1]`` (LPSE reads only the upper bound)."""
+def gain_criterion(
+    series: dict, gain: float = 23.026, noise_time_range=(0.01, 0.1), statistic: str = "max_rho"
+) -> bool:
+    """LPSE ``AbsoluteThreshold::checkIsAboveThreshold``, sample by sample: from ``noise_time_range[0]``
+    on, the noise level ``A_noise`` is the running mean of the statistic ``A`` over the samples before
+    ``noise_time_range[1]``, and the run is above threshold at the first sample with
+    ``log(A / A_noise) > gain`` (LPSE ends the run there, so a later drop does not undo it). ``A`` is
+    LPSE's ``max |rho|`` in x-space (``max_rho`` of the default series; ``max_nelf`` for an IAW-only
+    deck); samples before ``noise_time_range[0]`` are ignored, as LPSE returns before reading them."""
+    if statistic not in series:
+        raise ValueError(f"gain_criterion: the series has no {statistic!r} (re-run with the current save functions)")
     t = np.asarray(series["t (ps)"], dtype=np.float64)
-    amp = np.asarray(series["max_phi"], dtype=np.float64)
-    noise = amp[t < float(noise_time_range[1])]
-    if noise.size == 0 or not np.all(np.isfinite(noise)) or noise.mean() <= 0.0:
-        raise ValueError("gain_criterion: no finite samples before noise_time_range[1] to set the noise level")
-    return bool(np.log(amp[-1] / noise.mean()) > gain)
+    amp = np.asarray(series[statistic], dtype=np.float64)
+    t0, t1 = float(noise_time_range[0]), float(noise_time_range[1])
+    noise, n = 0.0, 0
+    for time, a in zip(t, amp, strict=True):
+        if time < t0:
+            continue
+        if not np.isfinite(a):
+            raise ValueError(f"gain_criterion: non-finite {statistic} at t = {time} ps")
+        if time < t1:
+            noise = a if n == 0 else n / (n + 1) * (noise + a / n)
+            n += 1
+        if n == 0:
+            raise ValueError("gain_criterion: no samples in noise_time_range to set the noise level")
+        if noise > 0.0 and np.log(a / noise) > gain:
+            return True
+    if n == 0:
+        raise ValueError("gain_criterion: no samples in noise_time_range to set the noise level")
+    return False
 
 
 def run_series_at_intensity(cfg: dict, intensity_w_cm2: float, run_name: str | None = None) -> dict:
     """One ``ergoExo`` run of ``cfg`` at ``intensity_w_cm2``; returns the default series as a
-    dict of numpy arrays (``t (ps)``, ``max_phi``, ...)."""
+    dict of numpy arrays (``t (ps)``, ``max_rho``, ...)."""
     from adept import ergoExo
 
     run_cfg = deepcopy(cfg)
@@ -169,13 +188,14 @@ def find_threshold_lpse(
     gain = float(block.get("gain", gain))
     n_iter = int(block.get("n_iter", n_iter))
     noise_time_range = tuple(block.get("noise_time_range", noise_time_range))
+    statistic = str(block.get("statistic", "max_rho"))
     intensity = _intensity_w_cm2(intensity if intensity is not None else cfg["units"]["laser intensity"])
     base_name = cfg.get("mlflow", {}).get("run", "threshold")
     history = []
 
     def above(value: float, tag: str) -> bool:
         series = runner(cfg, value, f"{base_name}-{tag}")
-        result = gain_criterion(series, gain, noise_time_range)
+        result = gain_criterion(series, gain, noise_time_range, statistic)
         history.append((value, result, series))
         return result
 

@@ -2354,6 +2354,8 @@ def get_default_save_func(cfg):
         one_over_k_sq_c = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
         kx_c, ky_c = jnp.asarray(kx), jnp.asarray(ky)
 
+    k_sq_default = jnp.asarray(np.asarray(kx)[:, None] ** 2 + np.asarray(ky)[None, :] ** 2)
+
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
         ex = -1j * kx[:, None] * phi_k
@@ -2369,6 +2371,11 @@ def get_default_save_func(cfg):
             }
 
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
+        # LPSE's absolute-threshold statistic: max |rho| in x-space, rho = div E = -lap(phi)
+        # (AbsoluteThreshold::checkIsAboveThreshold, Metrics::getGlobalMax(rho_ft)); max |Nelf| with IAWs
+        out["max_rho"] = jnp.max(jnp.abs(jnp.fft.ifft2(k_sq_default * phi_k)))
+        if "iaw_density" in y:
+            out["max_nelf"] = jnp.max(jnp.abs(y["iaw_density"]))
 
         out["epw_energy"] = epw_energy_prefactor * jnp.sum(jnp.mean(e_sq, axis=1))
         if ledger_on:

@@ -1242,6 +1242,8 @@ def translate_parms(
             "dI_fract": float(g("absoluteThreshold.dI_fract", "0.3333")),
             "n_iter": int(float(g("absoluteThreshold.numIterations", "5"))),
             "noise_time_range": [noise_range[0], noise_range[1] if len(noise_range) > 1 else 0.1],
+            # LPSE's statistic: max |rho| with a Langmuir-wave solver, max |Nelf| without one
+            "statistic": "max_rho" if _bool(g("lw.enable")) else "max_nelf",
         }
         report["notes"].append(
             "absoluteThreshold.isFind: run adept._lpse2d.threshold.find_threshold_lpse on this config"
