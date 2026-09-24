@@ -57,6 +57,29 @@ def max_eigenvalue_factor(order: int) -> float:
     return float(-symbol(order, np.pi) / 4.0)
 
 
+def curl_curl_max_eigenvalue(order: int, dx: float, dy: float | None, out_of_plane: bool) -> float:
+    """Largest eigenvalue of the discrete ``curl curl`` of ``RamanLight.curl_curl`` (1 / length^2).
+
+    In-plane (E_x, E_y) the symbol is ``[[b, -m], [-m, a]]`` with ``a, b = -sigma(k h) / h^2`` and
+    ``m`` the cross-derivative symbol; E_z sees the plain Laplacian ``a + b``. ``dy = None`` is the
+    1-D grid (no y derivatives). With E_z never excited (``out_of_plane = False``, LPSE's
+    ``is_pPolarizedIn2D``) the in-plane maximum is 4 / h^2 times 1, 1.4047, 1.6860 at orders 2, 4, 6;
+    LPSE's empirical ``dimensionFactor * solverOrderFactor * extraFactorThatIDoNotUnderstand`` is
+    1, 4/3 / 0.94 = 1.4184, 68/45 / 0.89 = 1.6979 (LightSolver.cpp:2663-2724), about 1 % above it.
+    """
+    c, d = second_derivative(order), first_derivative(order)
+    m = len(c) // 2
+    theta = np.linspace(0.0, np.pi, 1025)  # the symbols are even in theta; theta = pi is on the grid
+    tx = theta[:, None]
+    ty = theta[None, :] if dy is not None else np.zeros((1, 1))
+    a = -sum(c[j + m] * np.cos(j * tx) for j in range(-m, m + 1)) / dx**2
+    b = -sum(c[j + m] * np.cos(j * ty) for j in range(-m, m + 1)) / (dy**2 if dy is not None else 1.0)
+    fx = sum(d[j + m] * np.sin(j * tx) for j in range(-m, m + 1)) / dx
+    fy = sum(d[j + m] * np.sin(j * ty) for j in range(-m, m + 1)) / (dy if dy is not None else 1.0)
+    in_plane = (a + b) / 2.0 + np.sqrt(((a - b) / 2.0) ** 2 + (fx * fy) ** 2)
+    return float(max(in_plane.max(), (a + b).max() if out_of_plane else 0.0))
+
+
 def grid_wavenumber(k_dx: float, order: int) -> float:
     """The grid wavenumber ``k_g dx`` of the stencil's propagating mode at physical ``k dx``:
     the root of ``sigma(theta) = -(k dx)^2`` in ``(0, pi]``, or ``pi`` when the mode is outside

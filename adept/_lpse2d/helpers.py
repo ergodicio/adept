@@ -458,7 +458,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             raise ValueError("terms.iaw.stride must be a positive integer")
         if iaw["solver"] == "explicit":
             if iaw["stride"] != 1:
-                raise ValueError("terms.iaw.stride > 1 requires terms.iaw.solver: spectral")
+                raise ValueError("terms.iaw.stride > 1 requires terms.iaw.solver: spectral or fd")
             if iaw["flow"] is not None:
                 raise ValueError("terms.iaw.flow requires terms.iaw.solver: spectral")
             if omega_max * cfg_grid["dt"] >= 2.0:
@@ -639,40 +639,49 @@ def get_derived_quantities(cfg: dict) -> dict:
     if srs_on or pump_depletion:
         derived = cfg["units"]["derived"]
 
-        # The detuning term's operator norm is set by the density endpoint farthest
-        # from each evolved carrier's critical density, not the largest density.
+        # The explicit light scheme is a staggered (Visscher) leapfrog of dE/dt = -i H E with
+        # H = (c^2 curl curl - D(n)) / (2 w), D = w^2 - w0^2 n: stable for dt |lambda(H)| <= 2.
+        # lambda(H) lies in [-D_max, c^2 K_max - D_min] / (2 w), K_max the largest eigenvalue of
+        # the discrete curl curl (stencils.curl_curl_max_eigenvalue), so
+        #     dt <= 4 w / max(|D_max|, |c^2 K_max - D_min|)
+        # -- LPSE's Tcritical (LightSolver.cpp:2746) with its empirical stencil factors replaced by
+        # the exact K_max. E_z sees the full 2-D Laplacian; with E_z never excited (every pump beam
+        # and the seed p-polarised, no E_z injector file: LPSE's is_pPolarizedIn2D) only the
+        # in-plane curl curl, about half as large.
         if cfg["density"]["basis"] == "uniform":
             n_endpoints = [float(cfg["density"].get("val", 1.0))]
         else:
             n_endpoints = [float(cfg["density"][k]) for k in ("min", "max") if k in cfg["density"]] or [1.0]
+        drivers = cfg["drivers"]
+        e0_cfg = drivers.get("E0", {})
+        polarizations = [e0_cfg.get("polarization", "p")] + [
+            b.get("polarization", e0_cfg.get("polarization", "p")) for b in e0_cfg.get("beams", []) or []
+        ]
+        if "E1" in drivers:
+            polarizations.append(drivers["E1"].get("polarization", "p"))
+        out_of_plane = any(np.sin(_polarization_rad(p)) != 0.0 for p in polarizations) or (
+            "z" in (e0_cfg.get("injector_file") or {}).get("files", {})
+        )
+        from adept._lpse2d.core.stencils import curl_curl_max_eigenvalue
 
-        def _worst_detuning_sq(w_carrier: float) -> float:
-            return max(abs(w_carrier**2 - derived["w0"] ** 2 * n) for n in n_endpoints)
+        k_max = curl_curl_max_eigenvalue(
+            cfg["terms"].get("light", {}).get("fd_order", 2),
+            cfg_grid["dx"],
+            cfg_grid["dy"] if cfg_grid["ny"] > 1 else None,
+            out_of_plane,
+        )
+
+        def _dt_limit(w_carrier: float) -> float:
+            detuning = [w_carrier**2 - derived["w0"] ** 2 * n for n in n_endpoints]
+            return 4.0 * w_carrier / max(abs(max(detuning)), abs(derived["c"] ** 2 * k_max - min(detuning)))
 
         dt_limits = []
         evolved_carriers = []
-        # the stencil's largest eigenvalue per dimension relative to the compact stencil's
-        # 4/dx^2 (1, 4/3, 68/45 at orders 2, 4, 6) scales the propagation term of the bound
-        from adept._lpse2d.core.stencils import max_eigenvalue_factor
-
-        stencil_factor = max_eigenvalue_factor(cfg["terms"].get("light", {}).get("fd_order", 2))
         if srs_on:
-            dt_limits.append(
-                1.0
-                / (
-                    stencil_factor * 2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w1"])
-                    + _worst_detuning_sq(derived["w1"]) / (4.0 * derived["w1"])
-                )
-            )
+            dt_limits.append(_dt_limit(derived["w1"]))
             evolved_carriers.append("Raman")
         if pump_depletion:
-            dt_limits.append(
-                1.0
-                / (
-                    stencil_factor * 2.0 * derived["c"] ** 2 / (cfg_grid["dx"] ** 2 * derived["w0"])
-                    + _worst_detuning_sq(derived["w0"]) / (4.0 * derived["w0"])
-                )
-            )
+            dt_limits.append(_dt_limit(derived["w0"]))
             evolved_carriers.append("pump")
         dt_max = min(dt_limits)
         if light_solver == "spectral":

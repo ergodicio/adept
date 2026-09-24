@@ -344,6 +344,7 @@ def test_translator_maps_polarization_angles():
         "laser.2.polarization": "45",
         "laser.wavelength": "0.351",
         "raman.enable": "true",
+        "raman.solver": "spectral",
         "raman.nBeams": "1",
         "raman.1.intensity": "1e12",
         "raman.1.polarization": "90",

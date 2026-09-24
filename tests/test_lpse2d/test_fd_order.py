@@ -162,6 +162,62 @@ def test_higher_order_tightens_the_light_dt_limit():
     assert subs[6] > subs[2]
 
 
+def _curl_curl_matrix(order, n, ny, n_comp, h=0.1):
+    """-(RamanLight.curl_curl) as a dense matrix on a periodic n x ny grid."""
+    import jax
+    from jax import numpy as jnp
+
+    from adept._lpse2d.core.raman import RamanLight
+
+    ops = object.__new__(RamanLight)
+    ops.fd_order, ops.dx, ops.dy, ops.pml = order, h, h, False
+    m = order // 2
+    c2, c1 = stencils.second_derivative(order), stencils.first_derivative(order)
+    ops._second = [(j, float(c2[j + m])) for j in range(-m, m + 1)]
+    ops._first = [(j, float(c1[j + m])) for j in range(-m, m + 1) if c1[j + m] != 0.0]
+    size = n * ny * n_comp
+
+    def apply(e):
+        return -jnp.stack(ops.curl_curl(e.reshape(n, ny, n_comp)), axis=-1).ravel()
+
+    return np.asarray(jax.vmap(apply)(jnp.eye(size))).T
+
+
+@pytest.mark.parametrize("order", [2, 4, 6])
+@pytest.mark.parametrize("n_comp, ny", [(2, 32), (3, 32), (3, 1)])
+def test_light_dt_bound_uses_the_largest_eigenvalue_of_the_fd_operator(order, n_comp, ny):
+    """stencils.curl_curl_max_eigenvalue (the K_max of the FD light dt limit, helpers.py) against the
+    spectrum of the operator the solver applies: in-plane only (E_z never excited, LPSE's p-polarised
+    case), with E_z (the 2-D Laplacian) and on a 1-D grid. Tolerances fixed in advance: the discrete
+    maximum may not exceed the bound (1e-9), and lies within 1e-9 of it where the maximum is at k h = pi
+    (on the 32-point grid), within 1e-2 in-plane where it can fall between the grid's wavenumbers."""
+    h = 0.1
+    mat = _curl_curl_matrix(order, 32, ny, n_comp, h)
+    np.testing.assert_allclose(mat, mat.T, atol=1e-9 / h**2)
+    lam_max = np.linalg.eigvalsh(0.5 * (mat + mat.T)).max()
+    bound = stencils.curl_curl_max_eigenvalue(order, h, h if ny > 1 else None, out_of_plane=n_comp == 3)
+    assert lam_max <= bound * (1 + 1e-9)
+    rtol = 1e-2 if (n_comp == 2 and order > 2) else 1e-9
+    assert lam_max >= bound * (1 - rtol)
+
+
+def test_s_polarised_light_takes_the_two_dimensional_dt_limit():
+    """With E_z excited the Laplacian's 8/h^2 (2nd order) sets the limit, with in-plane light only the
+    curl curl's 4/h^2 (LPSE is_pPolarizedIn2D): about 2.1x the sub-steps at this dx and density."""
+    from adept._lpse2d.helpers import get_derived_quantities, get_solver_quantities, write_units
+
+    subs = {}
+    for pol in ("p", "s"):
+        cfg = _pump_cfg(2)
+        cfg["grid"]["ymax"], cfg["grid"]["ymin"] = "1um", "-1um"
+        cfg["grid"]["dt"] = "2fs"
+        cfg["drivers"]["E0"]["polarization"] = pol
+        write_units(cfg)
+        cfg = get_derived_quantities(cfg)
+        subs[pol] = get_solver_quantities(cfg)["light_substeps"]
+    assert subs["s"] >= 1.8 * subs["p"]
+
+
 def test_injector_source_mask_covers_the_stencil_rows():
     from adept._lpse2d.helpers import _injector_rows
 

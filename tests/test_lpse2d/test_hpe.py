@@ -750,7 +750,7 @@ def test_energy_conservation_running_average_and_warm_up_gate():
 
 
 def test_translator_maps_the_hpe_controls():
-    from adept._lpse2d.lpse_deck import translate_parms
+    from adept._lpse2d.lpse_deck import ZakUnits, translate_parms
 
     parms = {
         "grid.sizes": "20 5",
@@ -784,7 +784,9 @@ def test_translator_maps_the_hpe_controls():
     h = cfg["terms"]["hpe"]
     assert h["active"] and h["n_particles"] == 12345 and h["nv"] == 128 and h["t_start"] == "0.5ps"
     assert h["thermalization_probability"] == [1.0, 0.1] and h["magnetic_field"] == 50.0
-    assert h["gamma_limit_damping"] == 300.0 and h["gamma_limit_growth"] == 20.0 and h["allow_growth"]
+    zak_per_ps = ZakUnits(2.0, 1.0, 1.0, 1836.0, 0.25, 0.351).zak_per_ps  # the deck defaults
+    assert h["gamma_limit_damping"] == pytest.approx(300.0 * zak_per_ps, rel=1e-12)
+    assert h["gamma_limit_growth"] == pytest.approx(20.0 * zak_per_ps, rel=1e-12) and h["allow_growth"]
     assert h["energy_conservation"] and h["energy_conservation_steps"] == 5.0
     assert h["flux_bins"] == [0.0, 50.0, 1e9] and h["cone_angle"] == 20.0 and h["cone_direction"] == [0.0, 1.0]
 
@@ -908,6 +910,7 @@ def test_translator_maps_hpe_vmin_thermalization_and_gamma_limit(tmp_path):
     deck = tmp_path / "lpse.parms"
     deck.write_text(
         "grid.sizes = 20 10;\ngrid.nodes = 201 101;\nsimulation.time.end = 1;\nlw.enable = true;\n"
+        "lw.spectral.dt = 0.005;\n"
         "physical.Te = 2;\nphysical.Ti = 1;\nlw.envelopeDensity = 0.25;\nlaser.wavelength = 0.351;\n"
         "hpe.enable = true;\nhpe.VminOverVminPhase = 0.5;\nhpe.gammaLimit.damping = 100;\n"
     )

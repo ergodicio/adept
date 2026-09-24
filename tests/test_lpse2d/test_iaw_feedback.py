@@ -320,7 +320,8 @@ def _translate(tmp_path, extra):
     deck = tmp_path / "lpse.parms"
     deck.write_text(
         "grid.sizes = 20 10;\ngrid.nodes = 200 100;\nsimulation.time.end = 1;\nlw.enable = true;\n"
-        "laser.enable = true;\nlaser.nBeams = 1;\nlaser.1.intensity = 1e15;\niaw.enable = true;\n" + extra
+        "laser.enable = true;\nlaser.nBeams = 1;\nlaser.1.intensity = 1e15;\niaw.enable = true;\n"
+        "lw.spectral.dt = 0.005;\niaw.spectral.dt = 0.01;\n" + extra
     )
     return translate_parms(parse_parms(deck), run="x")
 

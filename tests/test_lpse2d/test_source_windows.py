@@ -184,6 +184,7 @@ def test_translator_maps_source_windows_and_gates():
         "lw.restrictSourceRange.center": "1 0 0",
         "lw.restrictSourceRange.edgeWidth": "0.5",
         "iaw.enable": "true",
+        "iaw.spectral.dt": "0.005",
         "iaw.restrictSourceRange.enable": "true",
         "iaw.restrictSourceRange.width": "6 0 0",
         "iaw.startEvolvingTime": "0.25",

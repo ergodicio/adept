@@ -5,6 +5,7 @@ parameter summary for the test_025 deck; the deck parser and translator are chec
 the shipped example decks; the output readers on a reference run when one is present.
 """
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -396,7 +397,7 @@ def test_translator_reports_anti_aliasing_it_cannot_represent(tmp_path):
 def test_translator_maps_hpe_landau_damping_evolution_with_lpse_default(tmp_path, line, feedback):
     """ParameterManager.cpp:272-279: useLDE defaults to false -- the particles then leave the
     Landau rate Maxwellian (ElectronTracker.cu:335)."""
-    cfg, _ = _translate_minimal(tmp_path, "lw.enable = true;\nhpe.enable = true;\n" + line)
+    cfg, _ = _translate_minimal(tmp_path, "lw.enable = true;\nlw.spectral.dt = 0.002;\nhpe.enable = true;\n" + line)
     assert cfg["terms"]["hpe"]["feedback"] is feedback
 
 
@@ -433,3 +434,45 @@ def test_translated_grid_keeps_lpse_node_counts(deck):
     grid = get_solver_quantities(cfg)
     nodes = [int(v) for v in parms["grid.nodes"].split()[:2]]
     assert (grid["nx"], grid["ny"]) == tuple(nodes)
+
+
+_PRINTED_SOLVERS = {"lightSolver": "laser", "ramanSolver": "raman", "lwSolver": "lw", "iawSolver": "iaw"}
+_REFERENCE_RUNS = sorted(
+    p.parent.name for p in (LPSE_ROOT / "runs").glob("*/lpse.out") if (p.parent / "lpse.parms").exists()
+)
+
+
+def _printed_time_steps(out_path: Path) -> dict[str, float]:
+    """The solver steps (fs) of LPSE's "Time step sizes" block (Lpse.cpp printSolverTimeSteps)."""
+    block = out_path.read_text(errors="replace").split("Time step sizes:", 1)[1].split("}", 1)[0]
+    matches = re.finditer(r"(\w+)-timeStep:\s*([0-9.eE+-]+) fs", block)
+    return {_PRINTED_SOLVERS[m.group(1)]: float(m.group(2)) for m in matches if m.group(1) in _PRINTED_SOLVERS}
+
+
+@pytest.mark.skipif(not _REFERENCE_RUNS, reason="original-lpse reference runs (runs/*/lpse.out) not available")
+@pytest.mark.parametrize("run", _REFERENCE_RUNS)
+def test_translator_reproduces_lpse_time_steps(run):
+    """A12: the translator's port of Lpse::computeMicroTimestep / setupSolverTimeSteps and the solvers'
+    Tstep gives the steps each reference run printed (rtol 2e-3, fixed in advance: the printout keeps 4-6
+    significant figures), and adept's schedule built from them (grid.dt, light sub-steps, IAW stride)
+    passes adept's own light-stability check with the same steps."""
+    from adept._lpse2d.helpers import get_derived_quantities, get_solver_quantities, write_units
+    from adept._lpse2d.lpse_deck import parse_parms, translate_parms
+
+    run_dir = LPSE_ROOT / "runs" / run
+    printed = _printed_time_steps(run_dir / "lpse.out")
+    cfg, report = translate_parms(parse_parms(run_dir / "lpse.parms"), run=run)
+    got = report["lpse_time_steps_fs"]
+    assert set(got) == set(printed)
+    for cls, step in printed.items():
+        assert got[cls] == pytest.approx(step, rel=2e-3), cls
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    grid = get_solver_quantities(cfg)
+    dt_fs = grid["dt"] * 1e3
+    assert any(dt_fs == pytest.approx(s, rel=2e-3) for s in printed.values())
+    if cfg["grid"].get("light_substeps"):
+        light = [printed[c] for c in ("laser", "raman") if c in printed]
+        assert dt_fs / grid["light_substeps"] == pytest.approx(min(light), rel=2e-3)
+    if "iaw" in printed and (cfg["terms"].get("iaw") or {}).get("stride", 1) > 1:
+        assert dt_fs * cfg["terms"]["iaw"]["stride"] == pytest.approx(printed["iaw"], rel=2e-3)

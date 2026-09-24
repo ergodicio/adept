@@ -78,9 +78,12 @@ def test_validation_and_translator():
     parms = parse_parms(deck_path("test_011"))
     cfg, report = translate_parms(parms, run="test_011")
     assert cfg["terms"]["light"]["absorber"] == "pml"
-    parms["laser.evolution.abc.SabcDenom"] = "4"
+    parms["laser.SabcDenom"] = "4"  # LPSE's key for both light classes (LightSolver.cpp:943-945)
     cfg, report = translate_parms(parms, run="test_011")
     assert cfg["terms"]["light"]["pml_denominator"] == 4.0
+    parms["laser.evolution.abc.SabcDenom"] = "4"
+    cfg, report = translate_parms(parms, run="test_011")
+    assert any("laser.evolution.abc.SabcDenom" in u for u in report["unsupported"])
     parms["laser.solver"] = "spectral"
     cfg, report = translate_parms(parms, run="test_011")
     assert "absorber" not in cfg["terms"]["light"] and any("pml" in n for n in report["notes"])

@@ -186,6 +186,212 @@ def _bool(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in ("true", "t", "1", "yes")
 
 
+C_UM_PER_PS = 299.792458
+
+
+def lpse_density_max(parms: dict[str, str], lx: float) -> float:
+    """The largest background density on LPSE's grid (n / n_c), which its FD light step uses: a
+    linear profile continues past its locations to the box edges; all are clipped at
+    maxBackgroundDensity (default 1.25)."""
+    g = parms.get
+    n_env = float(g("lw.envelopeDensity", "0.25"))
+    n_min = float(g("densityProfile.NminOverNc", str(n_env)))
+    n_max = float(g("densityProfile.NmaxOverNc", str(n_env)))
+    clip = float(g("densityProfile.maxBackgroundDensity", "1.25"))
+    peak = max(n_min, n_max)
+    if g("densityProfile.shape", "linear").lower() == "linear":
+        x0 = _floats(g("densityProfile.NminLocation", f"{-lx / 2}"))[0]
+        x1 = _floats(g("densityProfile.NmaxLocation", f"{lx / 2}"))[0]
+        if x1 != x0:
+            slope = (n_max - n_min) / (x1 - x0)
+            peak = max(n_min + slope * (x - x0) for x in (-lx / 2.0, lx / 2.0))
+    return min(peak, clip)
+
+
+def lpse_time_steps(parms: dict[str, str], *, dx: float, n_dim: int, n_env: float, n_max: float, aa: float) -> dict:
+    """LPSE's solver time steps (ps), ported from ``Lpse::computeMicroTimestep`` / ``setupSolverTimeSteps``
+    and the solvers' ``Tstep`` (``LightSolver::computeTimeStep``, ``lw.spectral.dt``, ``IawSolver``).
+
+    Returns the global micro step ``dt`` and each solver's ``n`` micro steps per update (laser,
+    raman, lw, iaw), with every step ``n * dt``: what LPSE prints under "Time step sizes"."""
+    g = parms.get
+    wavelength = float(g("laser.wavelength", "0.351"))
+    w0 = 2.0 * np.pi * C_UM_PER_PS / wavelength
+    wpe = w0 * np.sqrt(n_env)
+    combined = g("lw.solver", "spectral").lower() == "combined"
+    use_laser = _bool(g("laser.enable"), False)
+    use_raman = _bool(g("raman.enable"))
+    use_lw = _bool(g("lw.enable"))
+    use_iaw = _bool(g("iaw.enable"))
+    solvers = {"laser": g("laser.solver", "static").lower(), "raman": g("raman.solver", "static").lower()}
+    evolves = {"laser": use_laser and solvers["laser"] != "static", "raman": use_raman and solvers["raman"] != "static"}
+    carrier = {"laser": w0, "raman": wpe if combined else w0 - wpe}
+    perturbs = {
+        "laser": _bool(g("laser.ionAcousticPerturbations.enable")),
+        "raman": _bool(g("raman.ionAcousticPerturbations.enable")),
+    }
+
+    def p_polarized(cls):
+        # LightSolver::getPolarizationState: 2-D and every beam at polarization 0
+        if n_dim != 2:
+            return False
+        n = int(float(g(f"{cls}.nBeams", "0")))
+        pols = [float(g(f"{cls}.{b}.polarization", "0")) for b in range(1, n + 1)]
+        field = str(g("initialPerturbation.field", "")).lower()
+        if _bool(g("initialPerturbation.enable")) and field == ("e0_z" if cls == "laser" else "e1_z"):
+            return False
+        # a z-component injector file (LightSolver::getPolarizationState)
+        if any(re.fullmatch(rf"{cls}\.E_z\.loadInjector\..*\.filename", k) and v for k, v in parms.items()):
+            return False
+        return all(p == 0.0 for p in pols)
+
+    def light_tstep(cls):
+        if not evolves[cls]:
+            # a static field with frequency-shifted beams: the injector's sampling of the shortest
+            # beat period (LightSolver::computeTimeStep, waveInjector.sampleRate default 20)
+            if cls == "laser" and use_laser:
+                n_beams = int(float(g("laser.nBeams", "0")))
+                shift = max(
+                    (abs(float(g(f"laser.{b}.frequencyShift", "0"))) for b in range(1, n_beams + 1)), default=0.0
+                )
+                if shift > 0.0:
+                    rate = int(float(g("laser.waveInjector.sampleRate", "20")))
+                    return 2.0 * np.pi / (carrier[cls] * shift) / rate
+            return 0.0
+        dt_input = float(g(f"{cls}.dt", "0"))
+        if dt_input > 0.0:
+            return dt_input
+        wo = carrier[cls]
+        if solvers[cls] == "spectral":
+            t_crit = 4.0 * wo * dx**2 / (np.pi * C_UM_PER_PS**2 * n_dim * (1.0 - aa) ** 2)
+        else:
+            order = int(float(g(f"{cls}.evolution.solverOrder", "2")))
+            if order not in (2, 4, 6):
+                # LPSE leaves solverOrderFactor unset; the translator reports the order as unsupported
+                # and adept runs its default second-order stencil, whose step this is
+                order = 2
+            p_pol = p_polarized(cls)
+            dim_f = 1.0 if n_dim == 1 or p_pol else 2.0
+            order_f = {2: 1.0, 4: 4.0 / 3.0, 6: 68.0 / 45.0}[order]
+            extra = 1.0
+            if n_dim == 2 and p_pol:
+                extra = {4: 1.0 / 0.94, 6: 1.0 / 0.89}.get(order, 1.0)
+            wpe_max = w0 * np.sqrt((2.0 if perturbs[cls] else 1.0) * n_max)
+            t_crit = 1.0 / (dim_f * order_f * extra * (C_UM_PER_PS / dx) ** 2 / wo - (wo**2 - wpe_max**2) / (4.0 * wo))
+        return float(g(f"{cls}.evolution.dtFraction", "0.95")) * t_crit
+
+    t = {cls: light_tstep(cls) for cls in ("laser", "raman")}
+    t_lw = float(g("lw.spectral.dt", "1e10"))
+    if g("iaw.solver", "spectral").lower() == "fd":
+        t_iaw = float(g("iaw.fd.dt", "0"))
+        if t_iaw <= 0.0:
+            te, ti = float(g("physical.Te", "2")), float(g("physical.Ti", "1"))
+            z, mi = float(g("physical.Z", "1")), float(g("physical.MiOverMe", "1836"))
+            cs = C_UM_PER_PS * np.sqrt((z * te + 3.0 * ti) / (mi * 510.999))
+            u_max = 0.0
+            if _bool(g("iaw.velocityProfile.enable")):
+                u_max = (
+                    max(
+                        abs(float(g("iaw.velocityProfile.from.speed", "0"))),
+                        abs(float(g("iaw.velocityProfile.to.speed", "0"))),
+                    )
+                    * cs
+                )
+            h = dx / int(float(g("iaw.fd.superSamples", "2")))
+            t_iaw = float(g("iaw.fd.dtFraction", "0.95")) * h / (np.sqrt(n_dim) * cs + u_max)
+    else:
+        t_iaw = float(g("iaw.spectral.dt", "1e10"))
+
+    # Lpse::computeMicroTimestep
+    dt = np.inf
+    for cls in ("raman", "laser"):
+        if evolves[cls] and t[cls] > 0.0:
+            dt = min(dt, t[cls])
+    if use_lw and not combined:
+        dt = min(dt, t_lw)
+    if use_iaw:
+        dt = min(dt, t_iaw)
+    if not np.isfinite(dt) and use_laser:
+        zak = ZakUnits(
+            float(g("physical.Te", "2")),
+            float(g("physical.Ti", "1")),
+            float(g("physical.Z", "1")),
+            float(g("physical.MiOverMe", "1836")),
+            n_env,
+            wavelength,
+        )
+        dt = t["laser"] if t["laser"] > 0.0 else 0.01 * zak.ps_per_zak
+    if not np.isfinite(dt) or dt >= 1e9:
+        # every enabled solver kept LPSE's 1e10 placeholder (lw.spectral.dt / iaw.spectral.dt unset)
+        raise ValueError("lpse_time_steps: the deck sets no finite solver time step (lw.spectral.dt, iaw.spectral.dt)")
+    max_raman_per_laser = int(float(g("laser.maxRamanStepsPerStep", "2")))
+    max_laser_per_raman = int(float(g("raman.maxLaserStepsPerStep", "10")))
+    lw_max_light = int(float(g("lw.maxLightStepsPerStep", "10")))
+    iaw_max_light = int(float(g("iaw.maxLightStepsPerStep", "10")))
+    iaw_max_lw = int(float(g("iaw.maxLwStepsPerStep", "2")))
+    if (
+        evolves["laser"]
+        and evolves["raman"]
+        and not combined
+        and solvers["laser"] != "spectral"
+        and solvers["raman"] != "spectral"
+    ):
+        one_to_one = (max_raman_per_laser == 1) or (use_lw and lw_max_light == 1) or (use_iaw and iaw_max_light == 1)
+        if not one_to_one and 2.0 / dt > 3.0 / t["laser"]:
+            dt = t["laser"] / np.ceil(t["laser"] / dt)
+
+    # Lpse::setupSolverTimeSteps
+    n = {"laser": 1, "raman": 1}
+    if t["laser"] > 0.0:
+        n["laser"] = int(np.floor(t["laser"] / dt))
+    if use_laser and use_raman and t["raman"] > 0.0 and t["laser"] > t["raman"]:
+        n["laser"] = min(n["laser"], max_raman_per_laser)
+    n["laser"] = max(n["laser"], 1)
+    if t["raman"] > 0.0:
+        n["raman"] = int(np.floor(t["raman"] * 1.0001 / dt))
+    if use_laser and use_raman and t["raman"] > 0.0 and t["laser"] > 0.0 and t["raman"] > t["laser"]:
+        n["raman"] = min(n["raman"], max_laser_per_raman)
+    n["raman"] = max(n["raman"], 1)
+    if combined:
+        n_lw = lw_max_light * n["raman"]
+    elif use_lw and (use_laser or use_raman):
+        n_lw = int(np.floor(min(t_lw * 1.0001 / dt, float(lw_max_light))))
+    else:
+        n_lw = 1
+    n_lw = max(n_lw, 1)
+    n_iaw = 1
+    if use_iaw:
+        if use_laser or use_raman:
+            n_iaw = int(np.floor(min(t_iaw * 1.0001 / dt, float(iaw_max_light))))
+            if use_lw:
+                iaw_step, lw_step = dt * n_iaw, dt * n_lw
+                if iaw_step / lw_step > iaw_max_lw:
+                    iaw_step *= iaw_max_lw / (iaw_step / lw_step)
+                    n_iaw = int(np.floor(iaw_step * 1.0001 / dt))
+        elif use_lw:
+            n_iaw = int(np.floor(min(t_iaw * 1.0001 / dt, float(iaw_max_lw))))
+    n_iaw = max(n_iaw, 1)
+    if use_iaw:
+        n["laser"], n["raman"], n_lw = min(n["laser"], n_iaw), min(n["raman"], n_iaw), min(n_lw, n_iaw)
+    if use_lw:
+        n["laser"], n["raman"] = min(n["laser"], n_lw), min(n["raman"], n_lw)
+        if use_laser:
+            n_lw -= n_lw % n["laser"]
+        if use_raman:
+            n_lw -= n_lw % n["raman"]
+        n_iaw -= n_iaw % n_lw
+    if use_laser:
+        n_iaw -= n_iaw % n["laser"]
+    if use_raman:
+        n_iaw -= n_iaw % n["raman"]
+    return {
+        "dt": float(dt),
+        "n": {"laser": n["laser"], "raman": n["raman"], "lw": max(n_lw, 1), "iaw": max(n_iaw, 1)},
+        "evolves": evolves,
+        "use": {"laser": use_laser, "raman": use_raman, "lw": use_lw, "iaw": use_iaw},
+    }
+
+
 def translate_parms(
     parms: dict[str, str], *, experiment: str = "lpse-parity", run: str = "translated-deck"
 ) -> tuple[dict, dict]:
@@ -221,23 +427,10 @@ def translate_parms(
     if len(sizes) > 2 and sizes[2] > 0 and len(nodes) > 2 and nodes[2] > 1:
         report["unsupported"].append("3-D grid (grid.sizes/nodes z): adept envelope-2d is 2-D")
 
-    # ---- time stepping
-    lw_dt = float(g("lw.spectral.dt", g("simulation.dt", "0.002")))
-    light_dt = None
-    for key in ("raman.dt", "laser.dt"):
-        if key in parms:
-            light_dt = float(parms[key])
-            break
-    max_light_steps = int(float(g("lw.maxLightStepsPerStep", "10")))
+    # ---- time stepping (the steps themselves: lpse_time_steps, below)
     # LPSE defaults: laser.enable false, laser.solver static (ParameterManager.cpp:268, 343-347)
     laser_evolves = g("laser.solver", "static").lower() != "static" and _bool(g("laser.enable"), False)
     raman_on = _bool(g("raman.enable"))
-    if light_dt is not None and (laser_evolves or raman_on):
-        dt = min(lw_dt, max_light_steps * light_dt)
-        light_substeps = max(1, round(dt / light_dt))
-    else:
-        dt = lw_dt
-        light_substeps = None
     tmax = float(g("simulation.time.end", "1"))
     sample_period = float(g("simulation.samplePeriod", str(tmax)))
 
@@ -341,6 +534,31 @@ def translate_parms(
         if boundary["y"] == "absorbing" and wy != wx:
             report["unsupported"].append(f"{layers[k][0]}Labc x {wx} / y {wy} um: adept uses one width per field (x)")
     boundary_width = widths["lw"][0]
+
+    # ---- time steps: LPSE's own (Lpse::computeMicroTimestep / setupSolverTimeSteps), mapped onto
+    # adept's EPW step (grid.dt), light sub-steps per EPW step and IAW stride in EPW steps -- LPSE
+    # makes each a multiple of the finer one, so the ratios are exact
+    steps = lpse_time_steps(
+        parms, dx=dx, n_dim=2 if ny > 1 else 1, n_env=n_env, n_max=lpse_density_max(parms, lx), aa=aa_range
+    )
+    light_ns = [steps["n"][c] for c in ("laser", "raman") if steps["evolves"][c]]
+    if steps["use"]["lw"]:
+        outer = steps["n"]["lw"]
+    elif steps["use"]["iaw"]:
+        outer = steps["n"]["iaw"]
+    else:
+        outer = max(light_ns, default=1)
+    dt = outer * steps["dt"]
+    light_substeps = outer // min(light_ns) if light_ns else None
+    if len(set(light_ns)) > 1:
+        report["notes"].append(
+            f"LPSE steps the pump and the Raman light differently ({light_ns} micro steps): adept uses the finer"
+        )
+    iaw_stride = max(1, steps["n"]["iaw"] // outer)
+    # what LPSE prints under "Time step sizes" (fs), for the enabled solvers
+    report["lpse_time_steps_fs"] = {
+        cls: steps["n"][cls] * steps["dt"] * 1e3 for cls in ("laser", "raman", "lw", "iaw") if steps["use"][cls]
+    }
     lam = float(g("lw.abc.lambda", "7"))
     for prefix in ("laser.evolution.", "raman.evolution.", "iaw."):
         if float(g(f"{prefix}abc.lambda", "7")) != lam:
@@ -790,16 +1008,8 @@ def translate_parms(
                     ),
                     "temporal_slope": float(g("iaw.velocityProfile.temporalSlope", "0")),
                 }
-        if "iaw.spectral.dt" in parms:
-            # LPSE (Lpse.cpp:1264-1291): the IAW step is its own dt capped by maxLightStepsPerStep
-            # light steps (when light evolves) and by maxLwStepsPerStep (default 2) EPW steps
-            iaw_step = float(parms["iaw.spectral.dt"])
-            if light_dt is not None and (laser_evolves or raman_on):
-                iaw_step = min(iaw_step, int(float(g("iaw.maxLightStepsPerStep", "10"))) * light_dt)
-            iaw_step = min(iaw_step, int(float(g("iaw.maxLwStepsPerStep", "2"))) * dt)
-            stride = max(1, int(np.floor(iaw_step * 1.0001 / dt)))
-            if stride > 1:
-                iaw["stride"] = stride
+        if iaw_stride > 1:
+            iaw["stride"] = iaw_stride  # LPSE's IAW step in EPW steps (lpse_time_steps)
         if _bool(g("iaw.restrictSourceRange.enable")):
             iaw["source_window"] = _source_window(g, "iaw.restrictSourceRange")
         if g("iaw.startEvolvingTime") is not None:
