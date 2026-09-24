@@ -627,7 +627,7 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(the pump is launched by a boundary injector and must exit the box)"
             )
 
-    if srs_on and cfg["terms"]["epw"]["source"].get("srs_k_filter", True):
+    if srs_on and cfg["terms"]["epw"]["source"].get("srs_k_filter", False):
         derived = cfg["units"]["derived"]
 
         # The SRS source filter only passes wavenumbers up to the local Raman light
@@ -746,7 +746,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             min_offset = 1.6 * boundary_width
             if "offset" in cfg["drivers"][k]:
                 offset = _Q(cfg["drivers"][k]["offset"]).to("um").value
-                if offset < min_offset and str(cfg["grid"].get("boundary_profile", "tanh")) == "tanh":
+                if offset < min_offset and str(cfg["grid"].get("boundary_profile", "exp")) == "tanh":
                     print(
                         f"WARNING: drivers.E1.offset = {offset}um is inside the absorbing-boundary skirt "
                         f"(< 1.6 * boundary_width = {min_offset}um); the seed will be damped at the source"
@@ -756,7 +756,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             cfg["drivers"][k]["derived"] = {
                 "amplitude": np.sqrt(8 * np.pi * seed_intensity * 1e7 / c_cgs) / cfg["units"]["derived"]["fieldScale"],
                 "delta_omega": float(cfg["drivers"][k].get("delta_omega", 0.0)),
-                "turn_on_time": _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value,
+                "turn_on_time": _Q(cfg["drivers"][k].get("turn_on_time", "30fs")).to("ps").value,
                 "offset": offset,
                 "yw": _Q(cfg["drivers"][k]["yw"]).to("um").value if "yw" in cfg["drivers"][k] else 0.0,
                 "polarization": _polarization_rad(cfg["drivers"][k].get("polarization", "p")),
@@ -773,7 +773,7 @@ def get_derived_quantities(cfg: dict) -> dict:
             else:
                 cfg["drivers"][k]["derived"]["offset"] = 2.0 * boundary_width
             cfg["drivers"][k]["derived"]["turn_on_time"] = (
-                _Q(cfg["drivers"][k].get("turn_on_time", "10fs")).to("ps").value
+                _Q(cfg["drivers"][k].get("turn_on_time", "30fs")).to("ps").value
             )
             if cfg["drivers"][k].get("injector_width") is not None:
                 cfg["drivers"][k]["derived"]["injector_width"] = _Q(cfg["drivers"][k]["injector_width"]).to("um").value
@@ -1029,7 +1029,7 @@ def get_solver_quantities(cfg: dict) -> dict:
 
     boundary_width = _Q(cfg_grid["boundary_width"]).to("um").value
     rise = boundary_width / 5
-    boundary_profile = str(cfg_grid.get("boundary_profile", "tanh"))
+    boundary_profile = str(cfg_grid.get("boundary_profile", "exp"))
     if boundary_profile not in ("tanh", "exp"):
         raise ValueError(f"grid.boundary_profile must be 'tanh' or 'exp', got {boundary_profile!r}")
     lam = float(cfg_grid.get("boundary_lambda", 7.0))
@@ -1184,7 +1184,7 @@ def get_solver_quantities(cfg: dict) -> dict:
     # range where the asymptotic Landau damping rate in epw.py is still valid. Dealiasing is a
     # separate constraint, and an isotropic circle is the wrong shape for it: the pump translates
     # the spectrum along x only, so the band that has to stay empty is a rectangle, not a disc.
-    dealias = cfg_grid.get("dealias", "isotropic")
+    dealias = cfg_grid.get("dealias", "rectangular")
     if dealias == "shifted-band":
         kx_pump, ky_pump = _pump_k_support(cfg)
         kx_nyquist = float(np.abs(cfg_grid["kx"]).max())

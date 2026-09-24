@@ -165,7 +165,7 @@ class E1DriverModel(BaseModel):
 
     intensity: str  # e.g. "1.0e+12W/cm^2"
     delta_omega: float = 0.0  # seed frequency shift relative to w1 = w0 - wp0 (fraction of w1)
-    turn_on_time: str = "10fs"
+    turn_on_time: str = "30fs"  # LPSE {laser|raman}.evolution.riseTime default
     # distance of the injector from the right boundary; defaults to 1.6 * boundary_width,
     # which places it just inside the absorbing boundary's tanh skirt
     offset: str | None = None
@@ -197,13 +197,13 @@ class GridModel(BaseModel):
     # absorbing-layer profile: "tanh" (the MATLAB envelope, rate boundary_abs_coeff on the
     # plateau) or "exp" (LPSE absorbingBoundaries.cpp: rate = boundary_max_rate *
     # (exp(lambda s/L) - 1)/(exp(lambda) - 1) over the layer, per axis combined by max)
-    boundary_profile: Literal["tanh", "exp"] = "tanh"
+    boundary_profile: Literal["tanh", "exp"] = "exp"  # LPSE absorbingBoundaries (tanh: pre-port adept)
     boundary_max_rate: float = 200.0  # 1/ps, LPSE lw.abc.maxDampingRate default
     boundary_lambda: float = 7.0  # LPSE abc.lambda default
     # grow nx / ny to 5-smooth FFT sizes (and rescale dx); false keeps the node counts (LPSE)
     smooth_fft_size: bool = True
     low_pass_filter: float
-    dealias: str = "isotropic"
+    dealias: str = "rectangular"  # LPSE grid.antiAliasing.range
     dt: str
     dx: str
     tmax: str
@@ -268,7 +268,7 @@ class DampingModel(BaseModel):
 
     collisions: bool | float
     landau: bool
-    landau_form: Literal["matlab", "lpse", "relativistic", "relativistic_2d", "relativistic_3d"] = "matlab"
+    landau_form: Literal["matlab", "lpse", "relativistic", "relativistic_2d", "relativistic_3d"] = "relativistic"
     landau_lower_threshold: float = 0.0
     landau_multiplier: float = 1.0
 
@@ -285,7 +285,7 @@ class SourceModel(BaseModel):
     prototype's ``w0 -> 2 wp0`` form (identical at envelope density 0.25)."""
 
     noise: bool
-    noise_model: Literal["flat", "thermal"] = "flat"
+    noise_model: Literal["flat", "thermal"] = "thermal"
     noise_amplitude: float = 1e-10
     noise_seed: int | None = None
     noise_calibrate: bool | Literal["equipartition", "lpse"] = False
@@ -297,7 +297,7 @@ class SourceModel(BaseModel):
     # high-k filter on the light entering the SRS source (LPSE lw.kFilter.enable / .scale).
     # The cutoff assumes zero detuning, so it removes the resonant mode in boxes below the
     # envelope density; LPSE leaves it off by default and translated decks follow suit.
-    srs_k_filter: bool = True
+    srs_k_filter: bool = False  # LPSE lw.kFilter.enable default false
     srs_k_filter_scale: float = Field(default=1.2, ge=1.0, le=10.0)
 
 
@@ -376,7 +376,7 @@ class LightModel(BaseModel):
     # transverse instead). No light propagator moves the longitudinal part of E1, so
     # without this it accumulates the source and pairs with the EPW in a spurious
     # two-wave instability (41/ps energy growth against LPSE's 5.8/ps in test_006)
-    transverse_source: bool = True
+    transverse_source: bool = False  # LPSE takeTransversePartOfSourceTerms default false
     # fd solver: project the evolved light fields (E0 with pump depletion, E1) onto their
     # transverse part once per EPW step. The FD curl-curl propagator's discrete divergence
     # is not zero, so 2-D-structured transverse fields acquire a longitudinal part every
@@ -452,8 +452,8 @@ class IAWDampingModel(BaseModel):
     ``landau`` is ignored. ``collisions`` (1/ps) damps ``n`` as ``(1 - nu dt)`` in the
     explicit solver and ``div v`` as ``exp(-2 nu dt)`` in the spectral one (LPSE)."""
 
-    collisions: float = 1.0e-5  # density damping rate, 1/ps
-    landau: float = 0.1  # gamma_iaw = landau * cs * |k|
+    collisions: float = 0.0  # density damping rate, 1/ps (LPSE iaw.damping default 0)
+    landau: float = 0.0  # gamma_iaw = landau * cs * |k| (LPSE default 0)
     landau_form: Literal["simplified", "full"] = "simplified"
 
 
@@ -484,7 +484,7 @@ class IAWModel(BaseModel):
     # fd: LPSE's finite-difference solver (iaw.solver = fd; plan 2 I.1): PPM advection by a
     # plasma-flow profile on a grid refined super_samples times, sub-cycled at
     # dt_fraction h/(sqrt(nDim) cs + |U|), Landau damping in k-space every landau_update sub-steps
-    solver: Literal["explicit", "spectral", "fd"] = "explicit"
+    solver: Literal["explicit", "spectral", "fd"] = "spectral"  # LPSE iaw.solver default
     boundary: BoundaryModel | None = None  # defaults to terms.epw.boundary
     boundary_max_rate: float | None = None  # exp absorber peak rate (1/ps); default half the EPW one
     boundary_width: str | None = None  # exp absorber width (LPSE iaw.Labc); None = grid.boundary_width, 0 = none

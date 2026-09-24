@@ -144,7 +144,7 @@ def analytic_landau_rate(cfg: dict) -> Array:
     zero_mask = jnp.where(k_sq > 0, 1.0, 0.0)
     if not damping.get("landau", True):
         return jnp.zeros_like(k_sq)
-    form = str(damping.get("landau_form", "matlab"))
+    form = str(damping.get("landau_form", "relativistic"))
     if form in ("relativistic", "relativistic_2d"):
         rate = jnp.asarray(
             landau_damping_rate_relativistic(np.asarray(k_sq), derived["wp0"], derived["vte_sq"], derived["c"], ndim=2)
@@ -218,7 +218,7 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
         k0 = derived["w0"] / derived["c"]
         band = band * np.where(np.sqrt(k_sq) < float(max_k) * k0, 1.0, 0.0)
 
-    model = str(source.get("noise_model", "flat"))
+    model = str(source.get("noise_model", "thermal"))
     amplitude = float(source.get("noise_amplitude", 1e-10))
     dt = grid["dt"] if dt is None else float(dt)
     if model == "flat":
@@ -384,7 +384,7 @@ class SpectralEPWSolver:
             # above it and the filter then removes the SRS mode altogether (no growth
             # at all at 0.2 nc with envelope density 0.25), so translated LPSE decks
             # turn it off.
-            self.srs_k_filter = bool(source_cfg.get("srs_k_filter", True))
+            self.srs_k_filter = bool(source_cfg.get("srs_k_filter", False))
             max_source_k_multiplier = float(source_cfg.get("srs_k_filter_scale", 1.2))
             n_min = float(np.min(np.array(self.background_density)))
             self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
@@ -413,7 +413,7 @@ class SpectralEPWSolver:
         mask = cfg["grid"].get("epw_source_mask")
         self.source_mask = 1.0 if mask is None or bool(np.all(np.asarray(mask) == 1.0)) else jnp.asarray(mask)
         self.noise_enabled = source_cfg["noise"]
-        self.noise_model = str(source_cfg.get("noise_model", "flat"))
+        self.noise_model = str(source_cfg.get("noise_model", "thermal"))
         if self.noise_model not in NOISE_MODELS:
             raise ValueError(f"terms.epw.source.noise_model must be one of {NOISE_MODELS}, got {self.noise_model!r}")
         self.noise_amplitude = float(source_cfg.get("noise_amplitude", 1e-10))

@@ -133,7 +133,7 @@ class RamanLight:
         # moved by any light propagator, so without the projection it accumulates the
         # source and pairs with the EPW in a spurious two-wave instability (in the test_006
         # cross-check: 41/ps energy growth against LPSE's 5.8/ps)
-        self.transverse_source = bool(cfg["terms"].get("light", {}).get("transverse_source", True))
+        self.transverse_source = bool(cfg["terms"].get("light", {}).get("transverse_source", False))
         # terms.light.transverse_fields: the FD curl-curl propagator (compact 3-point second
         # differences, centred cross difference) has a non-zero discrete divergence, so a
         # 2-D-structured transverse field acquires a longitudinal part at the discretisation

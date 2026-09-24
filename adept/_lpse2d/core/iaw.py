@@ -140,7 +140,7 @@ class IonAcousticWave:
         derived = cfg["units"]["derived"]
         iaw = cfg["terms"]["iaw"]
 
-        self.solver = str(iaw.get("solver", "explicit"))
+        self.solver = str(iaw.get("solver", "spectral"))
         if self.solver not in IAW_SOLVERS:
             raise ValueError(f"terms.iaw.solver must be one of {IAW_SOLVERS}, got {self.solver!r}")
         self.stride = int(iaw.get("stride", 1) or 1)

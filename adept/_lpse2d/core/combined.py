@@ -174,7 +174,7 @@ class CombinedSolver:
         self.rho_factor = 1.0 - self.w0 / self.wp0
         # k-filter on the pump entering the source (LPSE lw.kFilter, off by default there;
         # terms.epw.source.srs_k_filter / srs_k_filter_scale, see SpectralEPWSolver)
-        if bool(source_cfg.get("srs_k_filter", True)):
+        if bool(source_cfg.get("srs_k_filter", False)):
             n_min = float(np.min(np.asarray(self.background_density)))
             scale = float(source_cfg.get("srs_k_filter_scale", 1.2))
             max_k0_sq = scale**2 * (self.w0 / self.c) ** 2 * max(1.0 - n_min, 0.0)

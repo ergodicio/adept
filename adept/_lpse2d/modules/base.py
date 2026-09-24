@@ -125,7 +125,7 @@ class BaseLPSE2D(ADEPTModule):
                 # the density at the start of the current IAW step, which the waves interpolate
                 # from in the EPW steps between IAW updates (LPSE Nelf_old)
                 state["iaw_density_old"] = np.zeros(iaw_shape, dtype=np.float64)
-            s_fd = int(iaw_cfg.get("super_samples", 2)) if str(iaw_cfg.get("solver", "explicit")) == "fd" else 1
+            s_fd = int(iaw_cfg.get("super_samples", 2)) if str(iaw_cfg.get("solver", "spectral")) == "fd" else 1
             if s_fd > 1:
                 # the fd solver's super-sampled fields (plan 2 I.1)
                 from adept._lpse2d.core.iaw_fd import FD_STATE_KEYS
