@@ -303,7 +303,9 @@ def test_fd_pump_propagation_and_the_transverse_fields_projection():
         cfg_i["terms"]["light"]["transverse_fields"] = transverse_fields
         light = CoupledLight(cfg_i)
         assert light.transverse_fields is transverse_fields
+        # absorbers neutralised: the Raman light's and, since the per-field layers (6eda074), the pump's
         light.sub_boundary = jnp.ones_like(light.sub_boundary)
+        light.sub_boundary0 = jnp.ones_like(light.sub_boundary0)
         E0_new, _ = light(0.0, E0, E1, phi_k, pump_args, None, None)
         return E0_new, np.linalg.norm(_longitudinal_part(E0_new, cfg)) / np.linalg.norm(np.asarray(E0_new))
 
