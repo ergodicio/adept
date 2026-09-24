@@ -41,6 +41,20 @@ WALLS = ("left", "right", "bottom", "top")
 DEFAULT_FLUX_BINS_KEV = (0.0, 50.0, 100.0, 1.0e9)
 
 
+def _resonance_frequency(form: str, wp0: float, k_sq, vte_sq: float):
+    """The EPW frequency whose phase velocity sets the resonant particles: ``lpse`` the expanded
+    Bohm-Gross ``wp0 + 3 k^2 vte^2 / (2 wp0)`` (ElectronTracker.cu:5436), ``bohm_gross`` its square-root
+    form ``sqrt(wp0^2 + 3 k^2 vte^2)``, ``wp0`` the bare carrier."""
+    k_sq = np.asarray(k_sq)
+    if form == "lpse":
+        return wp0 + 1.5 * k_sq * vte_sq / wp0
+    if form == "bohm_gross":
+        return np.sqrt(wp0**2 + 3.0 * k_sq * vte_sq)
+    if form == "wp0":
+        return wp0 * np.ones_like(k_sq)
+    raise ValueError(f"terms.hpe.omega_res must be 'lpse', 'bohm_gross' or 'wp0', got {form!r}")
+
+
 def flux_bin_edges(hpe: dict) -> np.ndarray:
     """keV edges of the wall-flux instrument (LPSE hpe.metrics.flux energy.min/max per metric)."""
     edges = hpe.get("flux_bins") or DEFAULT_FLUX_BINS_KEV
@@ -88,19 +102,13 @@ def resonance_arrays(cfg: dict) -> dict:
         n_angles = int(hpe["n_angles"])
         angles = 2.0 * np.pi * np.arange(n_angles) / n_angles
         k_safe = np.where(k_mag > 0.0, k_mag, 1.0)
-        if hpe["omega_res"] == "wp0":
-            omega_res = wp0 * np.ones_like(k_mag)
-        else:
-            omega_res = np.sqrt(wp0**2 + 3.0 * k_sq * derived["vte_sq"])
+        omega_res = _resonance_frequency(hpe["omega_res"], wp0, k_sq, derived["vte_sq"])
         v_phi = np.where(k_mag > 0.0, omega_res / k_safe, 0.0)
     else:
         angles = np.asarray([0.0])
         theta_k = np.zeros((nx, 1))
         kx_safe = np.where(np.abs(kx) > 0.0, kx, 1.0)
-        if hpe["omega_res"] == "wp0":
-            omega_res = wp0 * np.ones_like(kx)
-        else:
-            omega_res = np.sqrt(wp0**2 + 3.0 * kx**2 * derived["vte_sq"])
+        omega_res = _resonance_frequency(hpe["omega_res"], wp0, kx**2, derived["vte_sq"])
         v_phi = np.where(np.abs(kx) > 0.0, omega_res / kx_safe, 0.0)
 
     v_min = float(hpe["v_min"]) * vte

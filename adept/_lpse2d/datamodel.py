@@ -540,7 +540,8 @@ class HPEModel(BaseModel):
     t_start: str = "0ps"  # push/feedback disabled before this time
     feedback: bool = True  # False = control run: particles evolve, damping stays analytic
     seed: int = 42
-    omega_res: str = "bohm_gross"  # resonance v_phi convention: "bohm_gross" or "wp0"
+    # resonance v_phi convention: "lpse" (expanded Bohm-Gross, ElectronTracker.cu), "bohm_gross" or "wp0"
+    omega_res: str = "lpse"
     # ---- LPSE HPE controls and instruments (ElectronTracker.cu readParameters)
     gamma_limit_damping: float = 1500.0  # hpe.gammaLimit.damping, 1/ps: applied rate <= this
     gamma_limit_growth: float = 1500.0  # hpe.gammaLimit.growth, 1/ps: applied rate >= -this when allow_growth

@@ -921,3 +921,18 @@ def test_translator_maps_hpe_vmin_thermalization_and_gamma_limit(tmp_path):
     assert h["thermalization_probability"] == [1.0, 0.0]
     assert h["gamma_limit_damping"] == pytest.approx(100.0 * zak.zak_per_ps, rel=1e-12)
     assert h["gamma_limit_growth"] == pytest.approx(1.0e6 * zak.zak_per_ps, rel=1e-12)
+
+
+def test_resonance_frequency_defaults_to_lpse_expanded_bohm_gross():
+    """Inventory A30: LPSE's tracker resonates particles at v = omega / k with the expanded Bohm-Gross
+    omega = wpe + 3 k^2 Ve^2 / (2 wpe) (ElectronTracker.cu:5436), now the default (exact arithmetic)."""
+    from adept._lpse2d.core.hpe import _resonance_frequency
+    from adept._lpse2d.datamodel import HPEModel
+
+    assert HPEModel().omega_res == "lpse"
+    k_sq = np.linspace(0.0, 4.0, 9)
+    np.testing.assert_allclose(_resonance_frequency("lpse", 2.0, k_sq, 0.01), 2.0 + 1.5 * k_sq * 0.01 / 2.0, rtol=1e-15)
+    np.testing.assert_allclose(_resonance_frequency("bohm_gross", 2.0, k_sq, 0.01), np.sqrt(4.0 + 0.03 * k_sq))
+    np.testing.assert_allclose(_resonance_frequency("wp0", 2.0, k_sq, 0.01), 2.0)
+    with pytest.raises(ValueError, match="omega_res"):
+        _resonance_frequency("sqrt", 2.0, k_sq, 0.01)

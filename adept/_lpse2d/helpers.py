@@ -499,8 +499,8 @@ def get_derived_quantities(cfg: dict) -> dict:
         from adept._lpse2d.datamodel import HPEModel
 
         hpe = {**hpe, **HPEModel(**hpe).model_dump()}
-        if hpe["omega_res"] not in ("bohm_gross", "wp0"):
-            raise ValueError("terms.hpe.omega_res must be 'bohm_gross' or 'wp0'")
+        if hpe["omega_res"] not in ("lpse", "bohm_gross", "wp0"):
+            raise ValueError("terms.hpe.omega_res must be 'lpse', 'bohm_gross' or 'wp0'")
         if hpe["n_angles"] < 4:
             raise ValueError("terms.hpe.n_angles must be at least 4")
         if hpe["v_min"] < 0.0:

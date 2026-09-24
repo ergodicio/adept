@@ -536,7 +536,7 @@ At an absorbing particle wall, outgoing particles are thermalized and reinjected
 | `t_start` | string | Push/feedback disabled before this time (default `"0ps"`); use to let the fluid run reach steady state first |
 | `feedback` | bool | (default `true`) `false` = control run: particles evolve but the damping stays analytic (Follett's control experiment). The deck translator sets it from LPSE `hpe.landauDampingEvolution.enable`, default `false` there (the particles are then diagnostics) |
 | `seed` | int | RNG seed for particle loading and wall re-injection (default `42`) |
-| `omega_res` | string | Resonance convention for `v_phi(k)`: `"bohm_gross"` (default, matches the analytic rate) or `"wp0"` (bare carrier, as in the paper) |
+| `omega_res` | string | Resonance convention for `v_phi(k)`: `"lpse"` (default: LPSE's expanded Bohm-Gross `wp0 + 3 k^2 vte^2/(2 wp0)`, `ElectronTracker.cu`), `"bohm_gross"` (`sqrt(wp0^2 + 3 k^2 vte^2)`, 3.9 % lower at `k lambda_D = 0.5`) or `"wp0"` (bare carrier, as in the paper) |
 | `gamma_limit_damping` | float | (default `1500`, 1/ps) upper clip on the applied kinetic rate (LPSE `hpe.gammaLimit.damping`, a ZAK rate with default 1e6 -- no limit; the deck translator converts it to 1/ps) |
 | `gamma_limit_growth` | float | (default `1500`, 1/ps) lower clip `-gamma_limit_growth` on the applied rate when `allow_growth` is on (LPSE `hpe.gammaLimit.growth`) |
 | `allow_growth` | bool | (default `false`) allow negative (inverse-Landau) rates from an inverted tail; otherwise the rate is clipped at 0 (LPSE `hpe.allowGrowth`) |
