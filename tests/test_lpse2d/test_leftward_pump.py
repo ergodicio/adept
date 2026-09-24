@@ -14,7 +14,11 @@ def _cfg(solver, angle=None, beams=None):
     with open("tests/test_lpse2d/configs/srs.yaml") as fi:
         cfg = yaml.safe_load(fi)
     cfg = deepcopy(cfg)
-    cfg["grid"].update({"ymax": "0.02um", "ymin": "-0.02um", "xmax": "20um", "tmax": "0.3ps"})
+    # the injector tests were calibrated with the tanh layer at boundary_abs_coeff (the pre-C++ default;
+    # LPSE's exp layer at the light's 5e3/ps leaves ~40 % of the wave at x < 1 um on this 3 um layer)
+    cfg["grid"].update(
+        {"ymax": "0.02um", "ymin": "-0.02um", "xmax": "20um", "tmax": "0.3ps", "boundary_profile": "tanh"}
+    )
     cfg["terms"]["light"] = {"pump_depletion": True, "solver": solver}
     cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
     cfg["terms"]["epw"]["source"]["noise"] = False

@@ -33,6 +33,8 @@ def _make_cfg(*, landau=0.0, collisions=0.0, max_density_perturbation=None, with
     cfg["terms"]["epw"]["density_gradient"] = False
     cfg["terms"]["iaw"] = {
         "active": True,
+        # these tests pin the MATLAB split step, now an option (LPSE's spectral solver is the default)
+        "solver": "explicit",
         "boundary": {"x": "periodic", "y": "periodic"},
         "damping": {"collisions": collisions, "landau": landau},
         "max_density_perturbation": max_density_perturbation,

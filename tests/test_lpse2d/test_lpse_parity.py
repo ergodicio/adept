@@ -220,7 +220,18 @@ def test_lpse_landau_form_prefactor_ratio():
 def test_landau_threshold_multiplier_and_form_flow_through_the_solver():
     from adept._lpse2d.core.epw import SpectralEPWSolver, analytic_landau_rate, landau_damping_rate
 
-    cfg = _finish_cfg(_base_cfg())
+    # the default form is LPSE's relativistic one (Phase 3, C1); the MATLAB form stays an option
+    default_cfg = _finish_cfg(_base_cfg())
+    relativistic = deepcopy(_base_cfg())
+    relativistic["terms"]["epw"]["damping"]["landau_form"] = "relativistic"
+    np.testing.assert_allclose(
+        np.asarray(analytic_landau_rate(default_cfg)),
+        np.asarray(analytic_landau_rate(_finish_cfg(relativistic))),
+        rtol=1e-12,
+    )
+    matlab = deepcopy(_base_cfg())
+    matlab["terms"]["epw"]["damping"]["landau_form"] = "matlab"
+    cfg = _finish_cfg(matlab)
     base = np.asarray(analytic_landau_rate(cfg))
     k_sq = jnp.asarray(cfg["grid"]["kx"])[:, None] ** 2 + jnp.asarray(cfg["grid"]["ky"])[None, :] ** 2
     derived = cfg["units"]["derived"]
@@ -440,9 +451,14 @@ def test_exp_absorbing_profile_matches_lpse_formula():
     assert np.asarray(cfg2["grid"]["absorbing_rate"]).max() <= 150.0 * (1.0 + 1e-9)
 
 
-def test_tanh_profile_is_the_default_and_unchanged():
+def test_tanh_profile_is_unchanged_and_exp_is_the_default():
+    """The tanh layer (pre-C++ default) is unchanged as an option; the default is LPSE's exp (C4)."""
+    from adept._lpse2d.datamodel import GridModel
+
+    assert GridModel.model_fields["boundary_profile"].default == "exp"
     cfg = _base_cfg()
     cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+    cfg["grid"]["boundary_profile"] = "tanh"
     cfg = _finish_cfg(cfg)
     from adept._base_ import get_envelope
 

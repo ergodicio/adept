@@ -165,6 +165,8 @@ def test_rotation_matches_explicit_coupling_for_small_angles():
     lap = rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny))
     tau = 1e-4 / (light.omega_prefactor * np.abs(lap).max())
     E0n, E1n = light.couple(E0, E1, lap, tau)
+    # the exchange is off where either field's sources are zeroed (the pump injector rows; A27)
+    lap = lap * np.asarray(light.exchange_mask)
     E0e = E0 + tau * light.srs_depletion_coeff0 * lap[..., None] * E1
     E1e = E1 + tau * light.srs_coeff * np.conj(lap)[..., None] * E0
     assert np.allclose(np.asarray(E0n), E0e, rtol=0, atol=1e-8 * np.abs(E0).max())

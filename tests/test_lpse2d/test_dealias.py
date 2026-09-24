@@ -123,10 +123,11 @@ def test_shifted_band_keeps_more_modes_than_the_isotropic_circle():
     assert retained_shifted > 2.0 * retained_isotropic
 
 
-def test_default_is_unchanged():
-    """Decks that do not opt in keep exactly the mask they had before."""
+def test_default_is_lpse_rectangular():
+    """Decks that do not choose get LPSE's rectangular anti-aliasing mask (the C++ default; isotropic is
+    an option)."""
     _, without = _build_grid()
-    _, explicit = _build_grid(dealias="isotropic")
+    _, explicit = _build_grid(dealias="rectangular")
 
     np.testing.assert_array_equal(
         np.asarray(without["low_pass_filter_grid"]),

@@ -375,7 +375,10 @@ def test_damping_calibration():
     what is being tested is the sampling + the end-to-end extraction)."""
     from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
 
-    cfg = _make_cfg({"n_particles": 4000000})
+    # the extraction is checked against the MATLAB-form rate, whose Bohm-Gross resonance the histogram
+    # shares (the per-k calibration then stays a small correction); the default relativistic form is
+    # up to 40 % lower at the band's low-k edge
+    cfg = _make_cfg({"n_particles": 4000000}, {"terms.epw.damping.landau_form": "matlab"})
     hpe = HybridParticleEvolution(cfg)
     state = load_particles(cfg)
 
