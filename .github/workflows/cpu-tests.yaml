@@ -91,8 +91,12 @@ jobs:
             - *shared
             - 'adept/core/**'
             - 'adept/farsight1d/**'
+            - 'adept/_vlasov1d/**'
+            - 'adept/vlasov1d.py'
             - 'configs/farsight-1d/**'
             - 'tests/test_farsight1d/**'
+            - 'examples/farsight_comparison/**'
+            - 'tests/test_farsight_comparison/**'
           vfp2d:
             - *shared
             - 'adept/vfp2d/**'
@@ -164,7 +168,7 @@ jobs:
       with:
         python-version: '3.11'
     - name: Test with pytest
-      run: uv run --locked pytest tests/test_farsight1d
+      run: uv run --locked pytest tests/test_farsight1d tests/test_farsight_comparison
 
   test-vfp1d:
     needs: changes

@@ -137,3 +137,6 @@ mlflow.db
 .idea
 .vscode
 .DS_Store
+
+# Local copies of tracked FARSIGHT movie data and rendered artifacts
+/workdir/farsight-comparison/
