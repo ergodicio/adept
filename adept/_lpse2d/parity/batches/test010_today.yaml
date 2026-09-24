@@ -1,0 +1,7 @@
+# Control for the commensurate-box run: test_010 on its original box with today's code (the
+# 09-16 relog at 9b4cbf9 gave 0.664 / 0.768).
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: refs-2026-09-21, milestone: M6}
+jobs:
+  - {deck: test_010, run: test_010/control-2026-09-21/1}

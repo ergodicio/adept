@@ -106,7 +106,7 @@ def test_free_streaming():
     u = jnp.array(rng.normal(0.0, 100.0, 1000))
     ex_env = jnp.zeros(hpe.nx_f, dtype=jnp.complex128)
 
-    x_new, u_new = hpe.push(x, u, ex_env, 0.0)
+    x_new, u_new, *_ = hpe.push(x, u, ex_env, 0.0)
 
     gamma = np.sqrt(1.0 + (np.array(u) / hpe.c) ** 2)
     x_expected = np.array(x) + hpe.dt * np.array(u) / gamma
@@ -129,7 +129,7 @@ def test_2d_free_streaming_and_both_field_components():
     u = jnp.asarray(rng.normal(0.0, 100.0, (hpe.n_p, 2)))
     zero_field = jnp.zeros((hpe.nx_f, hpe.ny_f, 2), dtype=jnp.complex128)
 
-    x_new, y_new, u_new = hpe.push_2d(x, y, u, zero_field, 0.0)
+    x_new, y_new, u_new, *_ = hpe.push_2d(x, y, u, zero_field, 0.0)
     gamma = np.sqrt(1.0 + np.sum((np.asarray(u) / hpe.c) ** 2, axis=-1))
     x_expected = np.mod(np.asarray(x) + hpe.dt * np.asarray(u)[:, 0] / gamma - hpe.xmin, hpe.Lx) + hpe.xmin
     y_expected = np.mod(np.asarray(y) + hpe.dt * np.asarray(u)[:, 1] / gamma - hpe.ymin, hpe.Ly) + hpe.ymin
@@ -196,7 +196,7 @@ def test_2d_wall_reinjection_is_flux_weighted():
     y[2 * quarter : 3 * quarter] = hpe.ymin - hpe.dy
     y[3 * quarter :] = hpe.ymax + hpe.dy
     u = jnp.zeros((n_particles, 2))
-    x_new, y_new, u_new = hpe._apply_boundaries_2d(jnp.asarray(x), jnp.asarray(y), u, 0.0)
+    x_new, y_new, u_new, *_ = hpe._apply_boundaries_2d(jnp.asarray(x), jnp.asarray(y), u, 0.0)
     gamma_rel = np.sqrt(1.0 + np.sum((np.asarray(u_new) / hpe.c) ** 2, axis=-1))
     velocity = np.asarray(u_new) / gamma_rel[:, None]
     np.testing.assert_allclose(x_new[:quarter], hpe.xmin, rtol=0.0, atol=0.0)
@@ -248,7 +248,7 @@ def test_bounce_frequency_and_carrier_sign():
 
         push = jax.jit(hpe.push)
         for i in range(n_steps):
-            x, u = push(x, u, ex_env, i * dt)
+            x, u, *_ = push(x, u, ex_env, i * dt)
             us[i] = np.array(u)
         return us
 
@@ -375,7 +375,10 @@ def test_damping_calibration():
     what is being tested is the sampling + the end-to-end extraction)."""
     from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
 
-    cfg = _make_cfg({"n_particles": 4000000})
+    # the extraction is checked against the MATLAB-form rate, whose Bohm-Gross resonance the histogram
+    # shares (the per-k calibration then stays a small correction); the default relativistic form is
+    # up to 40 % lower at the band's low-k edge
+    cfg = _make_cfg({"n_particles": 4000000}, {"terms.epw.damping.landau_form": "matlab"})
     hpe = HybridParticleEvolution(cfg)
     state = load_particles(cfg)
 
@@ -576,3 +579,363 @@ def test_oneil_flattening():
     assert gamma_final < 0.6 * gamma_analytic, (
         f"no damping reduction: gamma {gamma_final:.3g} vs analytic {gamma_analytic:.3g}"
     )
+
+
+# ----------------------------------------------------------------------------------
+# LPSE HPE controls and instruments (plan item D.1)
+
+
+def test_gamma_limits_and_allow_growth():
+    """LPSE hpe.gammaLimit: inside the resonant band the applied rate is clipped at
+    [-growth (if allowed) or 0, damping]; outside it the analytic rate is kept."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    cfg = _make_cfg({"gamma_limit_damping": 0.5})
+    hpe = HybridParticleEvolution(cfg)
+    band = np.asarray(hpe.mask_res)
+    # an inverted (rising) tail on the +v side gives negative raw rates for +k modes
+    v = np.asarray(hpe.v_centers)
+    rising = np.exp(np.clip(v / hpe.vte, -50, 50) * 0.5) * (np.abs(v) > hpe.v_min)
+    rising = rising / (rising.sum() * hpe.dv)
+    gamma = np.asarray(hpe.damping(jnp.asarray(rising)))[:, 0]
+    assert gamma[band].max() <= 0.5 + 1e-12
+    assert gamma[band].min() >= 0.0  # growth not allowed by default
+    cfg2 = _make_cfg({"gamma_limit_damping": 0.5, "allow_growth": True, "gamma_limit_growth": 0.25})
+    hpe2 = HybridParticleEvolution(cfg2)
+    gamma2 = np.asarray(hpe2.damping(jnp.asarray(rising)))[:, 0]
+    assert gamma2[band].min() < 0.0 and gamma2[band].min() >= -0.25 - 1e-12
+
+
+def test_thermalization_probability_zero_passes_through_periodically():
+    """LPSE particle walls: a crossing is counted, then the particle is thermalized with the
+    per-direction probability or else wraps around periodically."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    for p_therm, expect_wrap in ((0.0, True), (1.0, False)):
+        cfg = _make_cfg_2d(
+            {"n_particles": 4000, "thermalization_probability": [p_therm, p_therm]},
+            {"terms.epw.boundary.x": "absorbing", "terms.epw.boundary.y": "absorbing"},
+        )
+        hpe = HybridParticleEvolution(cfg)
+        n = hpe.n_p
+        x = jnp.full((n,), hpe.xmax + 0.1 * hpe.dx)  # all just past the right wall
+        y = jnp.full((n,), 0.5 * (hpe.ymin + hpe.ymax))
+        u = jnp.stack((jnp.full((n,), 3.0 * hpe.vte), jnp.full((n,), 1.0 * hpe.vte)), axis=-1)
+        x2, y2, u2, flux, cone = hpe._apply_boundaries_2d(x, y, u, 0.0)
+        if expect_wrap:
+            np.testing.assert_allclose(np.asarray(x2), hpe.xmin + 0.1 * hpe.dx, rtol=1e-9)
+            np.testing.assert_allclose(np.asarray(u2), np.asarray(u))
+        else:
+            assert float(jnp.max(x2)) <= hpe.xmax
+            assert np.all(np.asarray(u2[:, 0]) < 0.0)  # re-injected inward with resampled speeds
+            assert np.std(np.asarray(u2[:, 1])) > 0.1 * hpe.vte
+        # the wall-flux instrument saw every particle leave through the right wall either way
+        flux = np.asarray(flux)
+        assert flux[1].sum() > 0.0 and flux[0].sum() == 0.0 and flux[2].sum() == 0.0 and flux[3].sum() == 0.0
+    # periodic field boundaries default to pass-through, absorbing ones to thermalization
+    hpe_p = HybridParticleEvolution(_make_cfg_2d({"n_particles": 100}))
+    assert hpe_p.p_therm_x == 0.0 and hpe_p.p_therm_y == 0.0
+    hpe_a = HybridParticleEvolution(_make_cfg_2d({"n_particles": 100}, {"terms.epw.boundary.x": "absorbing"}))
+    assert hpe_a.p_therm_x == 1.0 and hpe_a.p_therm_y == 0.0
+
+
+def test_wall_flux_bins_and_cone_energy():
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    cfg = _make_cfg_2d(
+        {"n_particles": 1000, "flux_bins": [0.0, 20.0, 1.0e9], "cone_angle": 30.0, "cone_direction": [1.0, 0.0]},
+        {"terms.epw.boundary.x": "absorbing", "terms.epw.boundary.y": "absorbing"},
+    )
+    hpe = HybridParticleEvolution(cfg)
+    n = hpe.n_p
+    c = hpe.c
+    # half the particles at 10 keV leaving right along +x (inside the cone), half at 40 keV leaving
+    # through the top wall along +y (outside the cone)
+    gamma_10, gamma_40 = 1.0 + 10.0 / 510.999, 1.0 + 40.0 / 510.999
+    u10, u40 = c * np.sqrt(gamma_10**2 - 1.0), c * np.sqrt(gamma_40**2 - 1.0)
+    half = n // 2
+    x_mid, y_mid = 0.5 * (hpe.xmin + hpe.xmax), 0.5 * (hpe.ymin + hpe.ymax)
+    x = jnp.concatenate((jnp.full((half,), hpe.xmax + 0.1 * hpe.dx), jnp.full((n - half,), x_mid)))
+    y = jnp.concatenate((jnp.full((half,), y_mid), jnp.full((n - half,), hpe.ymax + 0.1 * hpe.dy)))
+    ux = jnp.concatenate((jnp.full((half,), u10), jnp.zeros((n - half,))))
+    uy = jnp.concatenate((jnp.zeros((half,)), jnp.full((n - half,), u40)))
+    _, _, _, flux, cone = hpe._apply_boundaries_2d(x, y, jnp.stack((ux, uy), axis=-1), 0.0)
+    flux = np.asarray(flux)
+    np.testing.assert_allclose(flux[1, 0], 10.0 * half, rtol=1e-6)  # right wall, bin [0, 20) keV
+    np.testing.assert_allclose(flux[3, 1], 40.0 * (n - half), rtol=1e-6)  # top wall, bin [20, inf) keV
+    assert flux[1, 1] == 0.0 and flux[3, 0] == 0.0
+    np.testing.assert_allclose(float(cone[0]), 10.0 * half, rtol=1e-6)
+
+
+def test_magnetic_field_rotates_momentum_without_changing_energy():
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    b_tesla = 2000.0
+    cfg = _make_cfg_2d({"n_particles": 100, "magnetic_field": b_tesla})
+    hpe = HybridParticleEvolution(cfg)
+    n = hpe.n_p
+    x = jnp.full((n,), 0.5 * (hpe.xmin + hpe.xmax))
+    y = jnp.full((n,), 0.5 * (hpe.ymin + hpe.ymax))
+    u = jnp.stack((jnp.full((n,), 2.0 * hpe.vte), jnp.zeros((n,))), axis=-1)
+    zero_field = jnp.zeros((hpe.nx_f, hpe.ny_f, 2), dtype=jnp.complex128)
+    _, _, u2, *_ = hpe.push_2d(x, y, u, zero_field, 0.0)
+    u2 = np.asarray(u2)
+    np.testing.assert_allclose(np.hypot(u2[:, 0], u2[:, 1]), 2.0 * hpe.vte, rtol=1e-9)
+    gamma_rel = np.sqrt(1.0 + (2.0 * hpe.vte / hpe.c) ** 2)
+    theta = 0.175882 * b_tesla * hpe.dt / gamma_rel  # cyclotron angle over one EPW step
+    np.testing.assert_allclose(np.arctan2(u2[:, 1], u2[:, 0]), theta, rtol=1e-6)
+
+
+def test_energy_conservation_multiplier_tracks_the_particle_gain():
+    """Plan 2 N.2: the multiplier solves LPSE's exponential expected-loss form,
+    ``W (1 - exp(-2 dt M gamma)) = gain`` on a single mode, i.e. ``M = -ln(1 - gain/W) / (2 dt gamma)``,
+    to LPSE's 1 % tolerance; the linearised ``gain / (2 dt gamma W)`` is only its small-argument
+    limit and under-estimates ``M`` on strongly damped modes."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    cfg = _make_cfg({"energy_conservation": True, "energy_conservation_steps": 1.0})
+    hpe = HybridParticleEvolution(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128).at[3, 0].set(1.0e-3)
+    wave = float(hpe.wave_energy_scale * jnp.sum(hpe.k_sq * jnp.abs(phi_k) ** 2))
+    scale = hpe.particle_energy_scale
+
+    def exact(gamma, gain):
+        return -np.log(1.0 - gain / wave) / (2.0 * hpe.dt * gamma)
+
+    # weakly damped: the exponential and linear forms agree to 0.1 %
+    gamma_l = jnp.full((nx, ny), 0.1)
+    gain = 2.0 * (2.0 * 0.1 * hpe.dt * wave)
+    m = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(gain / scale))
+    np.testing.assert_allclose(float(m[0]), exact(0.1, gain), rtol=1e-2)
+    assert abs(float(m[0]) - 2.0) < 5e-3
+    assert float(hpe.expected_wave_loss(m[0], gamma_l, phi_k)) == pytest.approx(gain, rel=1e-2)
+    # strongly damped (2 gamma dt = 1): gain = W/2 needs M = ln 2 = 0.693, the linear form says 0.5
+    gamma_s = jnp.full((nx, ny), 0.5 / hpe.dt)
+    m_s = hpe.ld_multiplier(jnp.ones((1,)), gamma_s, phi_k, jnp.asarray(0.5 * wave / scale))
+    np.testing.assert_allclose(float(m_s[0]), np.log(2.0), rtol=1e-2)
+    assert float(m_s[0]) > 0.6
+    # clamped at LPSE's MAX_MULTIPLIER = 10 when the particles gained far more than any loss,
+    # and at 1/10 when they lost energy
+    m_clamped = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(100.0 * gain / scale))
+    np.testing.assert_allclose(float(m_clamped[0]), 10.0, rtol=1e-6)
+    m_floor = hpe.ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(-gain / scale))
+    np.testing.assert_allclose(float(m_floor[0]), 0.1, rtol=1e-6)
+    # with a running average over 4 steps the multiplier moves a quarter of the way
+    cfg4 = _make_cfg({"energy_conservation": True, "energy_conservation_steps": 4.0})
+    m4 = HybridParticleEvolution(cfg4).ld_multiplier(jnp.ones((1,)), gamma_l, phi_k, jnp.asarray(gain / scale))
+    np.testing.assert_allclose(float(m4[0]), 1.0 + (exact(0.1, gain) - 1.0) / 4.0, rtol=1e-2)
+
+
+def test_energy_conservation_running_average_and_warm_up_gate():
+    """LPSE averages the particle energy change over ``numStepsToAverageEnergyChange`` steps
+    and re-solves the multiplier only after that many feedback steps; before that the
+    applied rate is the HPE rate times the previous (initial, 1) multiplier."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg = _make_cfg({"energy_conservation": True, "energy_conservation_steps": 3.0, "n_particles": 2000})
+    hpe = HybridParticleEvolution(cfg)
+    derived = cfg["units"]["derived"]
+    state = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
+    phi_k, _ = _single_mode_phi_k(cfg, 0.28 * derived["wp0"] / np.sqrt(derived["vte_sq"]), 1e-9)
+    state["epw"] = jnp.asarray(phi_k)
+    mults, powers = [], []
+    for i in range(6):
+        state = hpe(i * cfg["grid"]["dt"], state)
+        mults.append(float(state["hpe_ld_multiplier"][0]))
+        powers.append(float(state["hpe_particle_power"][0]))
+    # gate: counts 1, 2, 3 keep the initial multiplier; from the 4th call it is re-solved
+    assert mults[:3] == [1.0, 1.0, 1.0]
+    assert any(m != 1.0 for m in mults[3:])
+    # the running average carries state between calls
+    assert any(powers[i] != powers[i - 1] for i in range(1, 6))
+    assert state["hpe_particle_power"].shape == (1,)
+
+
+def test_translator_maps_the_hpe_controls():
+    from adept._lpse2d.lpse_deck import ZakUnits, translate_parms
+
+    parms = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "laser.enable": "true",
+        "lw.enable": "true",
+        "lw.spectral.dt": "0.005",
+        "simulation.time.end": "1",
+        "laser.1.intensity": "1e15",
+        "hpe.enable": "true",
+        "hpe.nElectrons": "12345",
+        "hpe.velocityGrid": "128",
+        "hpe.startEvolutionAt": "0.5",
+        "hpe.thermalizationProbability": "1 0.1 0.1",
+        "hpe.magneticField": "0 0 50",
+        "hpe.gammaLimit.damping": "300",
+        "hpe.gammaLimit.growth": "20",
+        "hpe.allowGrowth": "true",
+        "hpe.enforceEnergyConservation": "true",
+        "hpe.numStepsToAverageEnergyChange": "5",
+        "hpe.metrics.nFluxMetrics": "2",
+        "hpe.metrics.fluxMetric.1.energy.min": "0",
+        "hpe.metrics.fluxMetric.1.energy.max": "50",
+        "hpe.metrics.fluxMetric.2.energy.min": "50",
+        "hpe.metrics.fluxMetric.2.energy.max": "1e9",
+        "hpe.metrics.nPowerMetrics": "1",
+        "hpe.metrics.powerMetric.1.angle": "20",
+        "hpe.metrics.powerMetric.1.direction": "0 1 0",
+    }
+    cfg, report = translate_parms(parms, experiment="x", run="y")
+    h = cfg["terms"]["hpe"]
+    assert h["active"] and h["n_particles"] == 12345 and h["nv"] == 128 and h["t_start"] == "0.5ps"
+    assert h["thermalization_probability"] == [1.0, 0.1] and h["magnetic_field"] == 50.0
+    zak_per_ps = ZakUnits(2.0, 1.0, 1.0, 1836.0, 0.25, 0.351).zak_per_ps  # the deck defaults
+    assert h["gamma_limit_damping"] == pytest.approx(300.0 * zak_per_ps, rel=1e-12)
+    assert h["gamma_limit_growth"] == pytest.approx(20.0 * zak_per_ps, rel=1e-12) and h["allow_growth"]
+    assert h["energy_conservation"] and h["energy_conservation_steps"] == 5.0
+    assert h["flux_bins"] == [0.0, 50.0, 1e9] and h["cone_angle"] == 20.0 and h["cone_direction"] == [0.0, 1.0]
+
+
+# ---------------------------------------------- in-plane magnetic field, p_z (plan 2 F.4) --
+
+
+def test_in_plane_magnetic_field_rotates_momentum_into_pz():
+    """``magnetic_field: [B_x, 0, 0]``: the 2-D tracker carries p_z and a free-streaming
+    particle's momentum turns about x by omega_c dt / gamma -- after a quarter cyclotron
+    period p_y has become p_z, with |p| and the kinetic energy unchanged."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg = _make_cfg_2d({"n_particles": 64, "magnetic_field": [1.0, 0.0, 0.0]})
+    hpe = HybridParticleEvolution(cfg)
+    assert hpe.u_dim == 3 and hpe.in_plane_b
+    state = load_particles(cfg)
+    assert state["u_e"].shape == (64, 3) and np.all(state["u_e"][:, 2] == 0.0)
+    # quarter period over one HPE step: omega_c dt / gamma = pi / 2 -> choose B accordingly
+    u_y = 30.0  # um/ps, non-relativistic (gamma ~ 1 + 5e-9)
+    gamma = np.sqrt(1.0 + (u_y / hpe.c) ** 2)
+    omega_needed = 0.5 * np.pi * gamma / hpe.dt
+    cfg = _make_cfg_2d({"n_particles": 64, "magnetic_field": [omega_needed / 0.175882, 0.0, 0.0]})
+    hpe = HybridParticleEvolution(cfg)
+    rng = np.random.default_rng(1)
+    x = jnp.asarray(rng.uniform(cfg["grid"]["xmin"] + 1.0, cfg["grid"]["xmax"] - 1.0, 64))
+    y = jnp.asarray(rng.uniform(0.5 * cfg["grid"]["ymin"], 0.5 * cfg["grid"]["ymax"], 64))  # clear of the walls
+    u = jnp.asarray(np.tile([0.0, u_y, 0.0], (64, 1)))
+    zero_field = jnp.zeros((hpe.nx_f, hpe.ny_f, 2), dtype=jnp.complex128)
+    x_new, y_new, u_new, flux, cone, d_kinetic = hpe.push_2d(x, y, u, zero_field, 0.0)
+    u_new = np.asarray(u_new)
+    np.testing.assert_allclose(u_new[:, 2], u_y, rtol=1e-9)
+    np.testing.assert_allclose(u_new[:, 1], 0.0, atol=1e-9 * u_y)
+    np.testing.assert_allclose(u_new[:, 0], 0.0, atol=1e-12)
+    np.testing.assert_allclose(np.linalg.norm(u_new, axis=-1), u_y, rtol=1e-12)
+    assert abs(float(d_kinetic)) < 1e-12
+    # the in-plane displacement follows the in-plane momentum: each sub-step rotates u_half
+    # by d_theta and advances y with the rotated p_y, so dy = sum_i dtp u_y cos(i d_theta) / gamma
+    # (the discrete form of the quarter-turn integral (2/pi) u_y dt)
+    d_theta = 0.5 * np.pi / hpe.n_sub
+    expected_dy = hpe.dtp * u_y / gamma * np.sum(np.cos(d_theta * np.arange(1, hpe.n_sub + 1)))
+    dy = np.asarray(y_new) - np.asarray(y)
+    np.testing.assert_allclose(dy, expected_dy, rtol=1e-9)
+    assert abs(expected_dy - 2.0 / np.pi * u_y * hpe.dt / gamma) < 0.1 * expected_dy
+    assert np.all(np.abs(np.asarray(x_new) - np.asarray(x)) < 1e-12)
+
+
+def test_out_of_plane_field_keeps_the_two_momentum_tracker():
+    """``[0, 0, B_z]`` is the float form ``B_z`` bit for bit, with (p_x, p_y) particles."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg_f = _make_cfg_2d({"n_particles": 256, "magnetic_field": 2.0})
+    cfg_l = _make_cfg_2d({"n_particles": 256, "magnetic_field": [0.0, 0.0, 2.0]})
+    hpe_f, hpe_l = HybridParticleEvolution(cfg_f), HybridParticleEvolution(cfg_l)
+    assert hpe_f.u_dim == hpe_l.u_dim == 2 and not hpe_l.in_plane_b
+    s_f, s_l = load_particles(cfg_f), load_particles(cfg_l)
+    assert s_f["u_e"].shape == (256, 2)
+    np.testing.assert_array_equal(s_f["u_e"], s_l["u_e"])
+    rng = np.random.default_rng(2)
+    x = jnp.asarray(rng.uniform(cfg_f["grid"]["xmin"], cfg_f["grid"]["xmax"], 256))
+    y = jnp.asarray(rng.uniform(cfg_f["grid"]["ymin"], cfg_f["grid"]["ymax"], 256))
+    u = jnp.asarray(rng.normal(0.0, 30.0, (256, 2)))
+    zero_field = jnp.zeros((hpe_f.nx_f, hpe_f.ny_f, 2), dtype=jnp.complex128)
+    out_f = hpe_f.push_2d(x, y, u, zero_field, 0.0)
+    out_l = hpe_l.push_2d(x, y, u, zero_field, 0.0)
+    for a, b in zip(out_f, out_l, strict=True):
+        np.testing.assert_array_equal(np.asarray(a), np.asarray(b))
+    # and it does rotate in the plane
+    assert np.abs(np.asarray(out_f[2]) - np.asarray(u)).max() > 0.0
+
+
+def test_translator_maps_the_full_magnetic_field_vector():
+    from adept._lpse2d.lpse_deck import translate_parms
+
+    base = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "laser.enable": "true",
+        "laser.wavelength": "0.351",
+        "lw.envelopeDensity": "0.25",
+        "hpe.enable": "true",
+        "hpe.nElectrons": "1000",
+        "simulation.time.end": "1",
+    }
+    cfg, report = translate_parms({**base, "hpe.magneticField": "0 0 3"}, run="bz")
+    assert cfg["terms"]["hpe"]["magnetic_field"] == 3.0
+    cfg, report = translate_parms({**base, "hpe.magneticField": "1.5 0 3"}, run="bx")
+    assert cfg["terms"]["hpe"]["magnetic_field"] == [1.5, 0.0, 3.0]
+    assert not any("magneticField" in u for u in report["unsupported"])
+
+
+@pytest.mark.parametrize("make", ["_make_cfg", "_make_cfg_2d"])
+def test_whole_maxwellian_tracking_like_lpse_vmin_zero(make):
+    """LPSE's default hpe.VminOverVminPhase = 0 tracks the whole Maxwellian (ElectronTracker.cu:3382):
+    v_min = 0 loads particles down to v = 0, keeps the histogram normalized and steps finitely."""
+    import jax
+
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles, resonance_arrays
+
+    cfg = globals()[make]({"n_particles": 20000, "v_min": 0.0})
+    state = load_particles(cfg)
+    arrays = resonance_arrays(cfg)
+    # one normalized histogram per projection angle in 2-D (test_2d_loading_is_one_box_averaged_ensemble)
+    np.testing.assert_allclose(np.sum(state["epw_hist"], axis=-1) * arrays["dv"], 1.0, rtol=2.0e-4)
+    vte = np.sqrt(cfg["units"]["derived"]["vte_sq"])
+    speed = np.abs(np.asarray(state["u_e"])).reshape(len(np.asarray(state["x_e"])), -1)
+    assert np.min(np.linalg.norm(speed, axis=-1) if speed.shape[-1] > 1 else speed) < 0.5 * vte
+    hpe = HybridParticleEvolution(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    y = {k: jnp.asarray(v) for k, v in state.items()}
+    y["epw"] = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    out = jax.jit(hpe)(0.0, y)
+    assert all(bool(jnp.all(jnp.isfinite(v))) for v in out.values() if jnp.issubdtype(v.dtype, jnp.floating))
+
+
+def test_translator_maps_hpe_vmin_thermalization_and_gamma_limit(tmp_path):
+    """VminOverVminPhase r -> v_min = r h / (2 pi lambda_D) in vte; thermalization default (1, 0, 0);
+    gammaLimit (ZAK rates, default 1e6) converted to 1/ps."""
+    from adept._lpse2d.lpse_deck import ZakUnits, parse_parms, translate_parms
+
+    deck = tmp_path / "lpse.parms"
+    deck.write_text(
+        "grid.sizes = 20 10;\ngrid.nodes = 201 101;\nsimulation.time.end = 1;\nlw.enable = true;\n"
+        "lw.spectral.dt = 0.005;\n"
+        "physical.Te = 2;\nphysical.Ti = 1;\nlw.envelopeDensity = 0.25;\nlaser.wavelength = 0.351;\n"
+        "hpe.enable = true;\nhpe.VminOverVminPhase = 0.5;\nhpe.gammaLimit.damping = 100;\n"
+    )
+    cfg, _ = translate_parms(parse_parms(deck), run="x")
+    zak = ZakUnits(2.0, 1.0, 1.0, 1836.0, 0.25, 0.351)
+    h = cfg["terms"]["hpe"]
+    assert h["v_min"] == pytest.approx(0.5 * 0.1 / (2.0 * np.pi * zak.debye_length_cm * 1e4), rel=1e-9)
+    assert h["thermalization_probability"] == [1.0, 0.0]
+    assert h["gamma_limit_damping"] == pytest.approx(100.0 * zak.zak_per_ps, rel=1e-12)
+    assert h["gamma_limit_growth"] == pytest.approx(1.0e6 * zak.zak_per_ps, rel=1e-12)
+
+
+def test_resonance_frequency_defaults_to_lpse_expanded_bohm_gross():
+    """Inventory A30: LPSE's tracker resonates particles at v = omega / k with the expanded Bohm-Gross
+    omega = wpe + 3 k^2 Ve^2 / (2 wpe) (ElectronTracker.cu:5436), now the default (exact arithmetic)."""
+    from adept._lpse2d.core.hpe import _resonance_frequency
+    from adept._lpse2d.datamodel import HPEModel
+
+    assert HPEModel().omega_res == "lpse"
+    k_sq = np.linspace(0.0, 4.0, 9)
+    np.testing.assert_allclose(_resonance_frequency("lpse", 2.0, k_sq, 0.01), 2.0 + 1.5 * k_sq * 0.01 / 2.0, rtol=1e-15)
+    np.testing.assert_allclose(_resonance_frequency("bohm_gross", 2.0, k_sq, 0.01), np.sqrt(4.0 + 0.03 * k_sq))
+    np.testing.assert_allclose(_resonance_frequency("wp0", 2.0, k_sq, 0.01), 2.0)
+    with pytest.raises(ValueError, match="omega_res"):
+        _resonance_frequency("sqrt", 2.0, k_sq, 0.01)
