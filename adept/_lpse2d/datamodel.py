@@ -557,9 +557,9 @@ class TermsModel(BaseModel):
 
 
 class UnitsModel(BaseModel):
-    atomic_number: int
+    atomic_number: float
     envelope_density: float
-    ionization_state: int
+    ionization_state: float
     laser_intensity: str
     laser_wavelength: str
     reference_electron_temperature: str

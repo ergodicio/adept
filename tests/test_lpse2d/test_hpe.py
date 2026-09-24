@@ -874,3 +874,47 @@ def test_translator_maps_the_full_magnetic_field_vector():
     cfg, report = translate_parms({**base, "hpe.magneticField": "1.5 0 3"}, run="bx")
     assert cfg["terms"]["hpe"]["magnetic_field"] == [1.5, 0.0, 3.0]
     assert not any("magneticField" in u for u in report["unsupported"])
+
+
+@pytest.mark.parametrize("make", ["_make_cfg", "_make_cfg_2d"])
+def test_whole_maxwellian_tracking_like_lpse_vmin_zero(make):
+    """LPSE's default hpe.VminOverVminPhase = 0 tracks the whole Maxwellian (ElectronTracker.cu:3382):
+    v_min = 0 loads particles down to v = 0, keeps the histogram normalized and steps finitely."""
+    import jax
+
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles, resonance_arrays
+
+    cfg = globals()[make]({"n_particles": 20000, "v_min": 0.0})
+    state = load_particles(cfg)
+    arrays = resonance_arrays(cfg)
+    # one normalized histogram per projection angle in 2-D (test_2d_loading_is_one_box_averaged_ensemble)
+    np.testing.assert_allclose(np.sum(state["epw_hist"], axis=-1) * arrays["dv"], 1.0, rtol=2.0e-4)
+    vte = np.sqrt(cfg["units"]["derived"]["vte_sq"])
+    speed = np.abs(np.asarray(state["u_e"])).reshape(len(np.asarray(state["x_e"])), -1)
+    assert np.min(np.linalg.norm(speed, axis=-1) if speed.shape[-1] > 1 else speed) < 0.5 * vte
+    hpe = HybridParticleEvolution(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    y = {k: jnp.asarray(v) for k, v in state.items()}
+    y["epw"] = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    out = jax.jit(hpe)(0.0, y)
+    assert all(bool(jnp.all(jnp.isfinite(v))) for v in out.values() if jnp.issubdtype(v.dtype, jnp.floating))
+
+
+def test_translator_maps_hpe_vmin_thermalization_and_gamma_limit(tmp_path):
+    """VminOverVminPhase r -> v_min = r h / (2 pi lambda_D) in vte; thermalization default (1, 0, 0);
+    gammaLimit (ZAK rates, default 1e6) converted to 1/ps."""
+    from adept._lpse2d.lpse_deck import ZakUnits, parse_parms, translate_parms
+
+    deck = tmp_path / "lpse.parms"
+    deck.write_text(
+        "grid.sizes = 20 10;\ngrid.nodes = 201 101;\nsimulation.time.end = 1;\nlw.enable = true;\n"
+        "physical.Te = 2;\nphysical.Ti = 1;\nlw.envelopeDensity = 0.25;\nlaser.wavelength = 0.351;\n"
+        "hpe.enable = true;\nhpe.VminOverVminPhase = 0.5;\nhpe.gammaLimit.damping = 100;\n"
+    )
+    cfg, _ = translate_parms(parse_parms(deck), run="x")
+    zak = ZakUnits(2.0, 1.0, 1.0, 1836.0, 0.25, 0.351)
+    h = cfg["terms"]["hpe"]
+    assert h["v_min"] == pytest.approx(0.5 * 0.1 / (2.0 * np.pi * zak.debye_length_cm * 1e4), rel=1e-9)
+    assert h["thermalization_probability"] == [1.0, 0.0]
+    assert h["gamma_limit_damping"] == pytest.approx(100.0 * zak.zak_per_ps, rel=1e-12)
+    assert h["gamma_limit_growth"] == pytest.approx(1.0e6 * zak.zak_per_ps, rel=1e-12)

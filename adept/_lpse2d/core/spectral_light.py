@@ -295,14 +295,9 @@ class SpectralCoupledLight(CoupledLight):
         return with_components(source, E0.shape[-1])
 
     def kap_phase(self, t, beam: int):
-        """Kubo-Anderson process (LPSE bandwidth.KAP.frequency): the phase jumps to a new uniform
-        random value every 2 pi / (kap_bandwidth w0), with a deterministic hash of the interval."""
-        if self.kap_bandwidth <= 0.0:
-            return 0.0
-        tau = 2.0 * jnp.pi / (self.kap_bandwidth * self.w0)
-        index = jnp.floor(t / tau)
-        seed = 12.9898 * (index + 1.0) + 78.233 * (beam + 1.0) + 37.719 * self.kap_seed
-        return 2.0 * jnp.pi * jnp.mod(jnp.sin(seed) * 43758.5453, 1.0)
+        """Kubo-Anderson process (LPSE laser.N.bandwidth.KAP.frequency): random dwell times per beam,
+        2 Exp(1) / (bandwidth w0), each followed by a new uniform phase (core/kap.py)."""
+        return self.kap.phase(t, beam)
 
     def __call__(self, t, E0, E1, phi_k, pump_args, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None

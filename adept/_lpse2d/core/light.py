@@ -4,6 +4,7 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
+from adept._lpse2d.core.kap import KapPhases
 from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import RamanLight, transverse_part
 
@@ -212,6 +213,14 @@ class CoupledLight(RamanLight):
         self.pump_turn_on_time = pump["turn_on_time"]
         # LPSE laser.pulseShape: every injected source carries sqrt(shape) (core/pulse.py)
         self.pulse = PulseShape(pump)
+        # LPSE KAP bandwidth on every injector (core/kap.py)
+        self.kap = KapPhases(
+            float(pump.get("kap_bandwidth", 0.0) or 0.0),
+            self.w0,
+            len(np.atleast_1d(pump.get("beam_fraction", [1.0]))),
+            cfg["grid"]["tmax"],
+            int(pump.get("kap_seed", 0) or 0),
+        )
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
 
         # ---- resonance absorption (plan 2 L.3; LPSE laser.evolution.resonanceAbsorption) on the
@@ -385,7 +394,9 @@ class CoupledLight(RamanLight):
 
         amp = self.source_prefactor0 * self.E0_source * jnp.sqrt(intensities) * time_factor  # (nc, ny)
 
-        color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
+        color_phase = jnp.exp(
+            -1j * self.w0 * delta_omega[:, None] * t + 1j * (phases + self.kap.phase(t, 0))
+        )  # (nc, ny)
 
         sign = self.pump_direction
 
@@ -438,7 +449,9 @@ class CoupledLight(RamanLight):
         color_time = jnp.exp(-1j * self.w0 * delta_omega * t)  # (nc,)
         rows: dict[int, Array] = {}
         for b, pattern in enumerate(patterns):
-            beam_time = jnp.exp(1j * (self.beam_phase[b] - self.w0 * self.beam_delta_omega[b] * t))
+            beam_time = jnp.exp(
+                1j * (self.beam_phase[b] - self.w0 * self.beam_delta_omega[b] * t + self.kap.phase(t, b))
+            )
             scale = self.diffraction_coeff0 * self.E0_source * time_factor * np.sqrt(self.beam_fraction[b]) * beam_time
             block = scale * jnp.sum(pattern * color_time[:, None, None, None], axis=0)  # (n_rows, ny, 3)
             for r, i in enumerate(self.beam_rows[b]):

@@ -230,13 +230,32 @@ def test_transverse_profile_kap_and_pulse_file(tmp_path):
     light2 = SpectralCoupledLight(_finish(raw2))
     s2 = np.asarray(light2.calc_pump_source(0.05, pa))
     np.testing.assert_allclose(np.abs(s), 0.5 * np.abs(s2), rtol=1e-9)
-    # KAP: the phase is piecewise constant with correlation time 2 pi / (kap_bandwidth w0)
-    w0 = cfg["units"]["derived"]["w0"]
-    tau = 2.0 * np.pi / (0.02 * w0)
-    phases = [float(light.kap_phase(t, 0)) for t in np.arange(0.0, 20.0 * tau, tau / 4.0)]
-    jumps = np.sum(np.abs(np.diff(phases)) > 1e-9)
-    assert 15 <= jumps <= 21  # one jump per correlation time
-    assert float(light2.kap_phase(0.3, 0)) == 0.0
+    # KAP is on this injector (its phase changes within the run) and absent without bandwidth
+    assert light.kap.active and float(light2.kap_phase(0.3, 0)) == 0.0
+
+
+def test_kap_process_is_lpse_random_dwell():
+    """LightSolver::computeKapTransitionTime: dwell 2 Exp(1) / dW, dW = bandwidth w0, a new uniform
+    phase each time, beams independent. Over T = 400 / dW the jump count is Poisson with mean 200:
+    200 +- 40 (2.8 sigma); the mean dwell 2 / dW within 20 %. Tolerances fixed in advance."""
+    from adept._lpse2d.core.kap import KapPhases
+
+    bandwidth, w0 = 0.02, 5367.0
+    dw = bandwidth * w0
+    t_end = 400.0 / dw
+    kap = KapPhases(bandwidth, w0, 2, t_end, seed=7)
+    t = np.linspace(0.0, t_end, 200001)
+    for beam in (0, 1):
+        phases = np.asarray([float(p) for p in np.asarray(kap.phases[beam])])
+        times = np.asarray(kap.times[beam])
+        jumps = int(np.sum(times < t_end))
+        assert 160 <= jumps <= 240
+        assert np.mean(np.diff(times[: jumps + 1])) == pytest.approx(2.0 / dw, rel=0.2)
+        assert 0.0 <= phases.min() and phases.max() < 2.0 * np.pi
+    sampled = np.asarray([float(kap.phase(x, 0)) for x in t[::1000]])
+    assert len(np.unique(sampled)) > 20
+    np.testing.assert_array_equal(np.asarray(KapPhases(bandwidth, w0, 2, t_end, seed=7).times), np.asarray(kap.times))
+    assert not np.allclose(np.asarray(kap.times[0][:10]), np.asarray(kap.times[1][:10]))
 
 
 def test_translator_maps_multi_beam_decks():
@@ -259,12 +278,15 @@ def test_translator_maps_multi_beam_decks():
         "laser.1.evolution.width": "3",
         "laser.1.evolution.sgOrder": "4",
         "laser.1.evolution.offset": "0 1 0",
-        "laser.bandwidth.KAP.frequency": "0.005",
+        "laser.1.bandwidth.KAP.frequency": "0.005",
+        "laser.2.bandwidth.KAP.frequency": "0.005",
     }
     cfg, report = translate_parms(parms, experiment="x", run="y")
     e0 = cfg["drivers"]["E0"]
     assert len(e0["beams"]) == 2 and e0["beams"][0]["intensity"] == 1e15 and e0["beams"][1]["delta_omega"] == 0.01
-    assert abs(e0["beams"][1]["angle"] + e0["beams"][0]["angle"]) < 1e-9 and e0["beams"][0]["phase"] == 0.5
+    assert abs(e0["beams"][1]["angle"] + e0["beams"][0]["angle"]) < 1e-9 and e0["beams"][0]["phase"] == pytest.approx(
+        np.deg2rad(0.5)
+    )  # LPSE: degrees
     # LPSE exp(-(r / 3)^4) is adept's sigma = 3 / sqrt(2)
     assert e0["beam_width"] == f"{3.0 / np.sqrt(2.0)}um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
     assert e0["kap_bandwidth"] == 0.005

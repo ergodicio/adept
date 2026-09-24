@@ -229,7 +229,8 @@ def translate_parms(
             light_dt = float(parms[key])
             break
     max_light_steps = int(float(g("lw.maxLightStepsPerStep", "10")))
-    laser_evolves = g("laser.solver", "static").lower() != "static" and _bool(g("laser.enable"), True)
+    # LPSE defaults: laser.enable false, laser.solver static (ParameterManager.cpp:268, 343-347)
+    laser_evolves = g("laser.solver", "static").lower() != "static" and _bool(g("laser.enable"), False)
     raman_on = _bool(g("raman.enable"))
     if light_dt is not None and (laser_evolves or raman_on):
         dt = min(lw_dt, max_light_steps * light_dt)
@@ -288,7 +289,8 @@ def translate_parms(
         "max_location_y": f"{y_max_loc[1] if len(y_max_loc) > 1 else 0.0}um",
         "geometry": "spherical" if g("densityProfile.geometry", "cartesian").lower() == "spherical" else "cartesian",
         "origin": f"{lx / 2.0}um",
-        "max_density": min(float(g("densityProfile.maxBackgroundDensity", "1.25")), 1.25),
+        # LPSE densityProfile.maxBackgroundDensity: default 1.25 n_c, up to 1000 (ParameterManager.cpp:610, 619)
+        "max_density": float(g("densityProfile.maxBackgroundDensity", "1.25")),
     }
     sg = g("densityProfile.sgOrder", g("densityProfile.sgPower", g("densityProfile.power")))
     if shape == "inversesquare":
@@ -343,7 +345,7 @@ def translate_parms(
     for prefix in ("laser.evolution.", "raman.evolution.", "iaw."):
         if float(g(f"{prefix}abc.lambda", "7")) != lam:
             report["unsupported"].append(f"{prefix}abc.lambda != lw.abc.lambda: adept uses one layer steepness")
-    landau_on = _bool(g("lw.landauDamping.enable"), True)
+    landau_on = _bool(g("lw.landauDamping.enable"), False)  # LPSE default false (ParameterManager.cpp:782-787)
     relativity = _bool(g("physical.isRelativistic", g("isRelativistic")), True)
     if _bool(g("lw.collisionalDampingRate.isCalculated")):
         collisions: bool | float = True
@@ -354,6 +356,11 @@ def translate_parms(
     noise_on = _bool(g("lw.noise.enable"))
     noise_amp_lpse = float(g("lw.noise.amplitude", "1" if _bool(g("lw.noise.isCalculated")) else "0"))
     noise_calculated = _bool(g("lw.noise.isCalculated"))
+    for key in ("lw.noise.isSymmetric", "lw.noise.isAnalytic"):
+        if _bool(g(key)):
+            report["unsupported"].append(f"{key}: adept draws LPSE's default (random, non-symmetric) noise")
+    if float(g("densityProfile.temporalSlope", "0")) != 0.0:
+        report["unsupported"].append("densityProfile.temporalSlope: adept's background density is static")
     source = {
         "noise": noise_on,
         "noise_model": "thermal",
@@ -361,6 +368,8 @@ def translate_parms(
         # isCalculated: LPSE's own calcNoiseAmp_K0 constant (ZakUnits.noise_amp_k0) with the
         # deck amplitude as multiplier; otherwise the plain amplitude converted to adept units
         "noise_calibrate": "lpse" if noise_calculated else False,
+        # LPSE lw.noise.maxWavenumber (units of k0, default unbounded; ParameterManager.cpp:767, 1498)
+        **({"noise_max_wavenumber": float(g("lw.noise.maxWavenumber"))} if "lw.noise.maxWavenumber" in parms else {}),
         "noise_amplitude": float(
             noise_amp_lpse if noise_calculated else noise_amp_lpse * zak.zak_per_um * zak.potential_zak_to_adept
         ),
@@ -398,11 +407,14 @@ def translate_parms(
         epw["max_wavenumber"] = float(parms["lw.maxWavenumber"])
 
     # ---- light
-    raman_solver = g("raman.solver", "spectral").lower()
+    # LPSE raman.solver defaults to static (ParameterManager.cpp:346); a static Raman light with its
+    # EPW source (raman.sourceTerm.lw.enable, default true) is refused (LightSolver.cpp:195)
+    raman_solver = g("raman.solver", "static").lower()
     laser_solver = g("laser.solver", "static").lower()
+    if raman_on and raman_solver == "static" and _bool(g("raman.sourceTerm.lw.enable"), True):
+        raise ValueError("raman.enable with raman.solver = static and its lw source term (LPSE refuses)")
     light: dict = {"pump_depletion": laser_evolves}
-    # only the evolved fields vote: raman.solver defaults to spectral in LPSE whether or not
-    # the Raman field is on, and a laser-only fd deck (test_016) must stay fd
+    # only the evolved fields vote, so a laser-only fd deck (test_016) stays fd
     voters = [s for s, on in ((raman_solver, raman_on), (laser_solver, laser_evolves)) if on]
     if epw_solver == "combined" or "spectral" in voters:
         light["solver"] = "spectral"
@@ -463,8 +475,12 @@ def translate_parms(
     if abc_type == "pml":
         if light["solver"] == "fd":
             light["absorber"] = "pml"
+            # LPSE reads the PML denominator as laser.SabcDenom for both light classes
+            # (LightSolver.cpp:938-945, default 5, range 2-10)
+            if "laser.SabcDenom" in parms:
+                light["pml_denominator"] = float(parms["laser.SabcDenom"])
             if "laser.evolution.abc.SabcDenom" in parms:
-                light["pml_denominator"] = float(parms["laser.evolution.abc.SabcDenom"])
+                report["unsupported"].append("laser.evolution.abc.SabcDenom: not an LPSE key (laser.SabcDenom)")
         else:
             report["notes"].append("abc.type = pml with a spectral light solver: adept keeps the exp layer")
     elif abc_type not in ("exp",):
@@ -512,7 +528,8 @@ def translate_parms(
             {
                 "intensity": i_b,
                 "angle": beam_angle,
-                "phase": float(g(f"laser.{b}.phase", "0")),
+                # LPSE laser.N.phase is in degrees (LightSolver.cpp:1716-1717)
+                "phase": float(np.deg2rad(float(g(f"laser.{b}.phase", "0")))),
                 "delta_omega": float(g(f"laser.{b}.frequencyShift", "0")),
                 # LPSE rotateBeam: degrees about the beam axis, 0 in-plane (p), 90 along z (s)
                 "polarization": float(g(f"laser.{b}.polarization", "0")),
@@ -550,9 +567,20 @@ def translate_parms(
                     f"laser.{b}.evolution.width/sgOrder/offset differ from beam 1: one adept profile"
                 )
                 break
-    kap = float(g("laser.bandwidth.KAP.frequency", "0"))
-    if kap > 0:
-        beam_extras["kap_bandwidth"] = kap
+    # LPSE KAP bandwidth is per beam, laser.N.bandwidth.KAP.frequency (dW/W0, LightSolver.cpp:1743);
+    # each beam its own group unless laser.N.group joins them (LightSolver.cpp:1628)
+    if "laser.bandwidth.KAP.frequency" in parms:
+        report["unsupported"].append("laser.bandwidth.KAP.frequency: not an LPSE key (laser.N.bandwidth.KAP.frequency)")
+    kaps = [float(g(f"laser.{b}.bandwidth.KAP.frequency", "0")) for b in range(1, n_beams + 1)]
+    if kaps and max(kaps) > 0:
+        beam_extras["kap_bandwidth"] = kaps[0]
+        if len(set(kaps)) > 1:
+            report["unsupported"].append("per-beam KAP bandwidths differ: adept uses beam 1's for every beam")
+        groups = [g(f"laser.{b}.group") for b in range(1, n_beams + 1) if g(f"laser.{b}.group") is not None]
+        if len(groups) != len(set(groups)):
+            report["unsupported"].append(
+                "laser.N.group: beams sharing a KAP group jump together in LPSE; adept's are independent"
+            )
     # LPSE laser.pulseShape.{enable, shape, file, period, dutyCycle} (LightSolver.cpp:1175-1214):
     # a power factor, shape file (default; two columns t_ps scale, LightSolver::loadPulseShapingData,
     # resolved relative to the deck's directory), square or sin; period in ps
@@ -700,7 +728,11 @@ def translate_parms(
             "damping": {
                 "landau": float(g("iaw.landauDampingRate", g("iaw.dampingRate", "0"))),
                 "collisions": float(g("iaw.collisionalDampingRate", "0")),
-                "landau_form": "simplified" if _bool(g("iaw.fd.damping.isSimplified"), True) else "full",
+                # the full Krall-Trivelpiece rate only on the fd path (iaw.fd.damping.isSimplified;
+                # the spectral step always uses nu |k|, ZakharovSolver.cpp:2083)
+                "landau_form": "full"
+                if iaw_solver == "fd" and not _bool(g("iaw.fd.damping.isSimplified"), True)
+                else "simplified",
             },
             "max_density_perturbation": float(g("iaw.amplitudeClamp", "0.9")),
             "noise": _bool(g("iaw.noise.enable")),
@@ -719,7 +751,19 @@ def translate_parms(
         if _bool(g("iaw.velocityProfile.enable")):
             shape = str(g("iaw.velocityProfile.shape", "linear")).lower()
             if iaw_solver != "fd":
-                report["unsupported"].append("iaw.velocityProfile with iaw.solver = spectral (LPSE refuses it too)")
+                # LPSE's spectral IAW takes the mean flow and needs from.speed == to.speed
+                # (IawSolver.cpp:340-356)
+                v_from = float(g("iaw.velocityProfile.from.speed", "0"))
+                v_to = float(g("iaw.velocityProfile.to.speed", "0"))
+                if shape == "file" or v_from != v_to:
+                    raise ValueError(
+                        "iaw.velocityProfile with spectral IAWs needs from.speed == to.speed (LPSE refuses)"
+                    )
+                a = _floats(g("iaw.velocityProfile.from.location", "0 0"))
+                b = _floats(g("iaw.velocityProfile.to.location", "1 0"))
+                d = np.array([b[0] - a[0], (b[1] if len(b) > 1 else 0.0) - (a[1] if len(a) > 1 else 0.0)])
+                d = d / np.linalg.norm(d)
+                iaw["flow"] = [float(d[0] * v_from), float(d[1] * v_from)]
             elif shape == "file":
                 report["unsupported"].append(
                     "iaw.velocityProfile.shape = file (convert the LPSE binary to an .npz with ux, uy)"
@@ -782,6 +826,7 @@ def translate_parms(
             report["notes"].append("iaw: no iaw.sourceTerm.* enabled -- LPSE's IAW is driven by noise only")
         iaw["perturbs"], iaw["drive"] = perturbs, drive
         if "fluid.velocity" in parms:
+            report["unsupported"].append("fluid.velocity: not an LPSE deck key (LPSE sets it from iaw.velocityProfile)")
             vel = _floats(parms["fluid.velocity"])
             iaw["flow"] = [vel[0], vel[1] if len(vel) > 1 else 0.0]
 
@@ -803,24 +848,22 @@ def translate_parms(
             hpe["nv"] = int(float(parms["hpe.velocityGrid"]))
         if "hpe.startEvolutionAt" in parms:
             hpe["t_start"] = f"{float(parms['hpe.startEvolutionAt'])}ps"
-        if "hpe.VminOverVminPhase" in parms and float(parms["hpe.VminOverVminPhase"]) == 0.0:
-            report["notes"].append(
-                "hpe.VminOverVminPhase = 0 (LPSE tracks the whole Maxwellian): adept keeps its tail cutoff "
-                "(terms.hpe.v_min, 2.5 vte); set v_min: 0.05 to reproduce LPSE's wall-flux bins below ~6 keV "
-                "in field-free runs -- the kinetic feedback is calibrated for a tail"
-            )
-        if "hpe.thermalizationProbability" in parms:
-            tp = _floats(parms["hpe.thermalizationProbability"])
-            hpe["thermalization_probability"] = [tp[0], tp[1] if len(tp) > 1 else tp[0]]
+        # the tracked tail: LPSE Vmin = VminOverVminPhase * wpe / (2 pi / h), default 0 -- the whole
+        # Maxwellian (ElectronTracker.cu:3082-3083, 3375-3382); adept's v_min is in vte
+        ratio = float(g("hpe.VminOverVminPhase", "0"))
+        hpe["v_min"] = float(ratio * dx / (2.0 * np.pi * zak.debye_length_cm * 1.0e4))
+        # LPSE thermalizationProbability default (1, 0, 0): x walls thermalize, y wraps (ElectronTracker.cu:3014)
+        tp = _floats(g("hpe.thermalizationProbability", "1 0 0"))
+        hpe["thermalization_probability"] = [tp[0], tp[1] if len(tp) > 1 else 0.0]
         if "hpe.magneticField" in parms:
             b = _floats(parms["hpe.magneticField"])
             b = (list(b) + [0.0, 0.0, 0.0])[:3]
             # B_z alone keeps the (p_x, p_y) tracker; any in-plane component adds p_z (plan 2 F.4)
             hpe["magnetic_field"] = b if any(abs(v) > 0 for v in b[:2]) else b[2]
-        if "hpe.gammaLimit.damping" in parms:
-            hpe["gamma_limit_damping"] = float(parms["hpe.gammaLimit.damping"])
-        if "hpe.gammaLimit.growth" in parms:
-            hpe["gamma_limit_growth"] = float(parms["hpe.gammaLimit.growth"])
+        # LPSE hpe.gammaLimit.{damping, growth} are ZAK rates, default 1e6 -- effectively no limit
+        # (ElectronTracker.cu:3038-3043); converted to 1/ps
+        hpe["gamma_limit_damping"] = float(float(g("hpe.gammaLimit.damping", "1e6")) * zak.zak_per_ps)
+        hpe["gamma_limit_growth"] = float(float(g("hpe.gammaLimit.growth", "1e6")) * zak.zak_per_ps)
         if _bool(g("hpe.allowGrowth")):
             hpe["allow_growth"] = True
         if _bool(g("hpe.enforceEnergyConservation")):
@@ -905,7 +948,7 @@ def translate_parms(
         "units": {
             "atomic number": mi_over_me / 1836.15,
             "envelope density": n_env,
-            "ionization state": round(z),
+            "ionization state": z,  # LPSE's Z is a float (ParameterManager.cpp:487)
             "laser intensity": f"{intensity:.6g}W/cm^2",
             "laser_wavelength": f"{wavelength_um}um",
             "reference electron temperature": f"{te}keV",

@@ -2,6 +2,7 @@ import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
+from adept._lpse2d.core.kap import KapPhases
 from adept._lpse2d.core.pulse import PulseShape
 
 
@@ -39,6 +40,8 @@ class Light:
         )
         self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
         self.kap_seed = int(pump.get("kap_seed", 0) or 0)
+        # LPSE KAP bandwidth: random dwell times per beam (core/kap.py)
+        self.kap = KapPhases(self.kap_bandwidth, self.w0, len(self.beam_angle), cfg["grid"]["tmax"], self.kap_seed)
         # LPSE laser.pulseShape: the static field scales as sqrt(max(shape, 1e-12))
         # (LightSolver::applyPulseShapeStatic)
         self.pulse = PulseShape(pump)
@@ -177,13 +180,8 @@ class Light:
         return E0
 
     def _kap_phase(self, t_ps, beam: int):
-        """Kubo-Anderson phase jumps (see SpectralCoupledLight.kap_phase)."""
-        if self.kap_bandwidth <= 0.0:
-            return 0.0
-        tau = 2.0 * jnp.pi / (self.kap_bandwidth * self.w0)
-        index = jnp.floor(t_ps / tau)
-        seed = 12.9898 * (index + 1.0) + 78.233 * (beam + 1.0) + 37.719 * self.kap_seed
-        return 2.0 * jnp.pi * jnp.mod(jnp.sin(seed) * 43758.5453, 1.0)
+        """Kubo-Anderson phase of ``beam`` at ``t_ps`` (LPSE's process, core/kap.py)."""
+        return self.kap.phase(t_ps, beam)
 
     def calc_ey_at_one_point(self, t: float, density: Array, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """

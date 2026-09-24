@@ -398,3 +398,20 @@ def test_translator_maps_hpe_landau_damping_evolution_with_lpse_default(tmp_path
     Landau rate Maxwellian (ElectronTracker.cu:335)."""
     cfg, _ = _translate_minimal(tmp_path, "lw.enable = true;\nhpe.enable = true;\n" + line)
     assert cfg["terms"]["hpe"]["feedback"] is feedback
+
+
+def test_translator_small_keys_follow_lpse(tmp_path):
+    """LightSolver.cpp:1716 (phase in degrees), ParameterManager.cpp:487 (float Z), 610/619
+    (maxBackgroundDensity up to 1000), 782-787 (lw.landauDamping off by default), 346 / LightSolver.cpp:195
+    (static raman with its lw source refused), 268 (laser.enable default false)."""
+    cfg, _ = _translate_minimal(
+        tmp_path,
+        "physical.Z = 3.5;\nlaser.1.phase = 90;\ndensityProfile.maxBackgroundDensity = 4;\nlaser.nBeams = 2;\n"
+        "laser.2.intensity = 1e15;\nlaser.2.phase = 180;\n",
+    )
+    assert cfg["units"]["ionization state"] == 3.5
+    assert [b["phase"] for b in cfg["drivers"]["E0"]["beams"]] == pytest.approx([np.pi / 2, np.pi])
+    assert cfg["density"]["max_density"] == 4.0
+    assert cfg["terms"]["epw"]["damping"]["landau"] is False
+    with pytest.raises(ValueError, match=r"raman\.solver = static"):
+        _translate_minimal(tmp_path, "raman.enable = true;\n")
