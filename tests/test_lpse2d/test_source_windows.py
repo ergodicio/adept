@@ -27,7 +27,7 @@ def _finish(cfg):
     return cfg
 
 
-def _cfg(*, epw_window=None, iaw=None, light=None, seed=False):
+def _cfg(*, epw_window=None, iaw=None, light=None, seed=False, tpd=False):
     with open("tests/test_lpse2d/configs/srs.yaml") as fi:
         cfg = yaml.safe_load(fi)
     cfg = deepcopy(cfg)
@@ -47,7 +47,7 @@ def _cfg(*, epw_window=None, iaw=None, light=None, seed=False):
     )
     cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
     cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
-    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": False, "srs": True})
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": tpd, "srs": not tpd})
     if epw_window is not None:
         cfg["terms"]["epw"]["source_window"] = epw_window
     cfg["terms"]["light"] = {"solver": "fd", "pump_depletion": True, **(light or {})}
@@ -190,6 +190,27 @@ def test_lpse_iaw_solvers_window_the_drive_after_the_laplacian():
     np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12 * np.abs(want).max())
     before = np.real(np.fft.ifft2(k_sq * np.fft.fft2(pp * mask_sq)))
     assert np.abs(got - before).max() > 1e-6 * np.abs(want).max()
+
+
+def test_tpd_source_is_windowed_after_its_assembly():
+    """Inventory A26: LPSE builds TPD_src in k-space (band, 1/k^2 term) and then suppresses it in x-space
+    (makeTpdSource_fft -> suppressSourceInSpecificRegions), without re-filtering. The windowed source is
+    F(window F^-1(unwindowed source)) to 1e-12 (the same arithmetic), not the source of windowed products."""
+    from adept._lpse2d.core.epw import SpectralEPWSolver
+
+    half = {"width": ["1.28um", "0um"], "center": ["-0.64um", "0um"], "edge_width": "0.2um"}
+    windowed = SpectralEPWSolver(_cfg(epw_window=half, tpd=True))
+    plain = SpectralEPWSolver(_cfg(tpd=True))
+    nx, ny = int(windowed.kx.shape[0]), int(windowed.ky.shape[0])
+    rng = np.random.default_rng(5)
+    phi_k = jnp.asarray(rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny))) * plain.low_pass_filter
+    ex, ey = plain.phi_k_to_e_fields(phi_k)
+    E0 = jnp.asarray(rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    base = np.asarray(plain.calc_tpd_source(0.1, phi_k, ex, ey, E0))
+    got = np.asarray(windowed.calc_tpd_source(0.1, phi_k, ex, ey, E0))
+    window = np.asarray(windowed.source_mask)
+    want = np.fft.fft2(window * np.fft.ifft2(base))
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12 * np.abs(want).max())
 
 
 def test_translator_maps_source_windows_and_gates():

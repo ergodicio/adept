@@ -567,15 +567,14 @@ class SpectralEPWSolver:
             TPD source term in k-space
         """
         e0x, e0y = E0[..., 0], E0[..., 1]
-        window = self.source_mask  # x-space source window (terms.epw.source_window etc.)
 
         # Component 1: F(E0 . conj(E))  (MATLAB line 2011-2012 with E0x = 0)
-        tpd1 = jnp.fft.fft2(window * (e0x * jnp.conj(ex) + e0y * jnp.conj(ey)))
+        tpd1 = jnp.fft.fft2(e0x * jnp.conj(ex) + e0y * jnp.conj(ey))
 
         # Component 2: i k . F(E0 conj(rho)) / k^2  (MATLAB line 2014-2018)
         rho = jnp.fft.ifft2(self.k_sq * phi_k)
-        tpd2_x = jnp.fft.fft2(window * e0x * jnp.conj(rho))
-        tpd2_y = jnp.fft.fft2(window * e0y * jnp.conj(rho))
+        tpd2_x = jnp.fft.fft2(e0x * jnp.conj(rho))
+        tpd2_y = jnp.fft.fft2(e0y * jnp.conj(rho))
         tpd2 = 1j * (self.kx[:, None] * tpd2_x + self.ky[None, :] * tpd2_y) * self.one_over_k_sq
 
         # Combine with prefactor (MATLAB line 2024; LPSE TPD_srcFactor)
@@ -588,6 +587,11 @@ class SpectralEPWSolver:
         # Zero out k=0 (MATLAB line 2035)
         source = source * self.zero_mask
 
+        # the x-space window (terms.epw.source_window, injector rows, absorbers) on the assembled source:
+        # LPSE makeTpdSource_fft builds TPD_src in k-space (band, 1/k^2) and then suppresses it in
+        # x-space (suppressSourceInSpecificRegions), without re-filtering
+        if not isinstance(self.source_mask, float):
+            source = jnp.fft.fft2(self.source_mask * jnp.fft.ifft2(source))
         return source
 
     def calc_srs_source(self, E0: Array, E1: Array) -> Array:
