@@ -41,6 +41,7 @@ Documentation
    solvers/spectrax1d/overview
    solvers/hermite_legendre_1d/overview
    solvers/pic1d/overview
+   solvers/farsight1d/overview
    solvers/lpse2d/overview
    solvers/tf1d/overview
    solvers/osiris/overview
@@ -56,6 +57,7 @@ Documentation
    solvers/spectrax1d/config
    solvers/hermite_legendre_1d/config
    solvers/pic1d/config
+   solvers/farsight1d/config
    solvers/lpse2d/config
    solvers/vfp2d/config
    solvers/tf1d/config

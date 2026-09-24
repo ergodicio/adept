@@ -65,7 +65,7 @@ def test_importing_adept_contracts_does_not_load_numerical_or_tracking_dependenc
         assert adept.run_prepared is run_prepared
         assert "adept.core.objectives" not in sys.modules
         assert "adept.core.materialization" not in sys.modules
-        assert adept.solver_registry.names() == ("pic-1d", "tf-1d", "vfp-2d")
+        assert adept.solver_registry.names() == ("farsight-1d", "pic-1d", "tf-1d", "vfp-2d")
         """
     )
 
@@ -168,6 +168,8 @@ def test_resolving_builtin_builders_does_not_load_mlflow():
         assert solver_registry.resolve("pic-1d").__class__.__name__ == "PIC1DBuilder"
         assert "mlflow" not in sys.modules
         assert solver_registry.resolve("vfp-2d").__class__.__name__ == "VFP2DBuilder"
+        assert "mlflow" not in sys.modules
+        assert solver_registry.resolve("farsight-1d").__class__.__name__ == "Farsight1DBuilder"
         assert "mlflow" not in sys.modules
         assert "adept._base_" not in sys.modules
         assert "adept.vfp2d.plotting" not in sys.modules

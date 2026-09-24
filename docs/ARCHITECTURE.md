@@ -2,8 +2,10 @@
 
 ADEPT is incrementally moving toward explicit, logging-free preparation and a pure
 numerical transform boundary. [ADR 0001](adr/0001-explicit-simulation-boundaries.md)
-defines the target contracts and compatibility policy. `tf-1d`, electrostatic `pic-1d`, and `vfp-2d` have registered builders. Their
-legacy classes remain available as fallback paths while downstream workflows migrate.
+defines the target contracts and compatibility policy. `tf-1d`, electrostatic `pic-1d`, `vfp-2d`, and
+`farsight-1d` have registered builders. The first three retain legacy classes as fallback
+paths while downstream workflows migrate. The experimental FARSIGHT solver is native to
+the explicit interface and has no legacy lifecycle wrapper.
 
 ## Explicit preparation and execution
 
@@ -68,6 +70,11 @@ observations between steps; its final state is retained independently of the sav
 schedule. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
 closures, still produce an actionable error directing callers to `ergoExo`.
 
+The independent [FARSIGHT-1D](source/solvers/farsight1d/overview.md) solver also uses
+`ScanProgram`, with fixed phase-space panels, direct regularized field quadrature,
+coupled RK4 characteristics, and physical-coordinate biquadratic remeshing. Its
+scalar observations expose remesh mass/C2 defects and invalid panel geometry.
+
 `RunPlan` carries JSON-safe solver intent, seed, resources, run identity, and service
 references across an executor boundary. The initial `LocalExecutor` validates declared
 solver and executor capabilities before loading a builder, bootstraps x64 before JAX
@@ -97,6 +104,7 @@ Quick links to configuration references:
 - [Spectrax-1D Config](source/solvers/spectrax1d/config.md)
 - [Hermite-Legendre-1D Config](source/solvers/hermite_legendre_1d/config.md)
 - [PIC-1D Config](source/solvers/pic1d/config.md)
+- [FARSIGHT-1D Config](source/solvers/farsight1d/config.md)
 - [Two-Fluid-1D Config](source/solvers/tf1d/config.md)
 - [OSIRIS Wrapper Config](source/solvers/osiris/config.md)
 - [WarpX Wrapper Config](source/solvers/warpx/config.md)
