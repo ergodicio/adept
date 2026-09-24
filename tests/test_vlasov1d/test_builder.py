@@ -213,6 +213,52 @@ def test_fourier_distribution_save_has_the_known_mode_amplitude_and_coordinates(
     np.testing.assert_allclose(dataset.t, completed.raw_result.times["electron.spectrum"])
 
 
+@pytest.mark.parametrize("spatial_dim", ["kx", "x"])
+def test_ergoexo_exports_distribution_plots_and_netcdf(spatial_dim, tmp_path, monkeypatch):
+    import mlflow
+    import xarray
+
+    config = small_config()
+    spatial_bounds = (
+        {"kxmin": 0.0, "kxmax": 4.0, "nkx": 5} if spatial_dim == "kx" else {"xmin": 0.5, "xmax": 5.5, "nx": 5}
+    )
+    config["save"]["electron"] = {
+        "sampled": {
+            # Four times exercise the initial snapshot and difference panels.
+            "t": {"nt": 4},
+            spatial_dim: spatial_bounds,
+            "v": {"vmin": -6.2, "vmax": 6.2, "nv": 32},
+        }
+    }
+    config["mlflow"] = {"experiment": "vlasov1d-distribution-export", "run": spatial_dim}
+    original_tracking_uri = mlflow.get_tracking_uri()
+    # Isolate both MLflow's process state and its on-disk tracking/artifact store.
+    monkeypatch.setattr(mlflow.tracking.fluent, "_active_experiment_id", None)
+    mlflow.set_tracking_uri((tmp_path / "mlruns").as_uri())
+    try:
+        exo = ergoExo()
+        modules = exo.setup(config)
+        output, datasets, run_id = exo(modules)
+        assert exo.execution_backend == "prepared"
+        dataset = datasets["dists"]["electron.sampled"]
+        assert dataset["electron.sampled"].dims == ("t", spatial_dim, "v_electron")
+        expected_spatial = np.arange(5) if spatial_dim == "kx" else np.linspace(1.0, 5.0, 5)
+        np.testing.assert_allclose(dataset[spatial_dim], expected_spatial)
+        np.testing.assert_allclose(dataset.v_electron, np.linspace(-6.2, 6.2, 32))
+        np.testing.assert_allclose(dataset.t, output["solver result"].ts["electron.sampled"])
+
+        # Read from the run's artifact destination after ergoExo removes its
+        # temporary export directory, proving that export reached MLflow.
+        client = mlflow.tracking.MlflowClient()
+        artifact_root = Path(client.download_artifacts(run_id, ""))
+        with xarray.open_dataset(artifact_root / "binary" / "dist-electron.sampled.nc") as exported:
+            xarray.testing.assert_identical(exported, dataset)
+        plot = artifact_root / "plots" / "dists" / "electron.sampled" / "phase_space.png"
+        assert plot.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    finally:
+        mlflow.set_tracking_uri(original_tracking_uri)
+
+
 def test_explicit_null_save_bounds_default_to_the_resolved_grid():
     config = small_config()
     config["grid"]["tmin"] = 0.05

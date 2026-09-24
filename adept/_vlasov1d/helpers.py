@@ -309,13 +309,17 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
         species_name = cfg["save"][save_key]["_species_name"]
         f_species = f_xr[save_key]
         species_dist_dir = os.path.join(td, "plots", "dists", save_key)
+        spatial_dim = "kx" if "kx" in f_species.dims else "x"
+        spatial_label = r"$k_x$" if spatial_dim == "kx" else "x"
+        value_label = r"$|\hat{f}|$" if spatial_dim == "kx" else "f"
+        difference_label = r"$|\hat{f}| - |\hat{f}(t=0)|$" if spatial_dim == "kx" else "f - f(t=0)"
 
         # Select ~8 time snapshots for facet plot
         t_skip = int(f_species.coords["t"].data.size // 8)
         t_skip = t_skip if t_skip > 1 else 1
         tslice = slice(0, -1, t_skip)
 
-        # Create f(x,v) phase space plot
+        # Plot the saved distribution in (x, v) or its magnitude in (kx, v).
         # First panel: f(t=0), remaining panels: f(t) - f(t=0) with separate color scales
         f_sliced = f_species[tslice]
         f0 = f_species.isel(t=0)
@@ -329,11 +333,11 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
         axes_flat = axes.flatten()
 
         # Plot f(t=0) in first panel with its own colorbar
-        im0 = axes_flat[0].pcolormesh(f0.coords["x"].values, f0.coords[f"v_{species_name}"].values, f0.values.T)
-        axes_flat[0].set_xlabel("x")
+        im0 = axes_flat[0].pcolormesh(f0.coords[spatial_dim].values, f0.coords[f"v_{species_name}"].values, f0.values.T)
+        axes_flat[0].set_xlabel(spatial_label)
         axes_flat[0].set_ylabel("v")
         axes_flat[0].set_title(f"t = {f_sliced.coords['t'].values[0]:.2f}")
-        fig.colorbar(im0, ax=axes_flat[0], label="f")
+        fig.colorbar(im0, ax=axes_flat[0], label=value_label)
 
         # Plot f(t) - f(t=0) in remaining panels with shared color scale
         if n_diff > 0:
@@ -343,18 +347,18 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                 ax = axes_flat[i + 1]
                 data = f_diff.isel(t=i)
                 im = ax.pcolormesh(
-                    data.coords["x"].values,
+                    data.coords[spatial_dim].values,
                     data.coords[f"v_{species_name}"].values,
                     data.values.T,
                     vmin=-vabs,
                     vmax=vabs,
                     cmap="RdBu_r",
                 )
-                ax.set_xlabel("x")
+                ax.set_xlabel(spatial_label)
                 ax.set_ylabel("v")
                 ax.set_title(f"t = {f_diff.coords['t'].values[i]:.2f}")
             # Add shared colorbar for difference panels
-            fig.colorbar(im, ax=axes_flat[1 : n_diff + 1].tolist(), label="f - f(t=0)")
+            fig.colorbar(im, ax=axes_flat[1 : n_diff + 1].tolist(), label=difference_label)
 
         # Hide unused axes
         for i in range(n_total, len(axes_flat)):
