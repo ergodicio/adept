@@ -325,7 +325,15 @@ class DiagnosticFileAnalyzer:
                 self.directory / "metrics.json",
                 {key: value for event in report.metrics for key, value in event.values.items()},
             )
-        return report
+        # The outer runner owns the authoritative comparison/run.json lifecycle.
+        # FileAnalyzer sees its provisional RUNNING copy during analysis; do not
+        # publish a second, permanently stale status under farsight/run.json.
+        return replace(
+            report,
+            artifacts=tuple(
+                artifact for artifact in report.artifacts if Path(artifact.source) != self.directory / "run.json"
+            ),
+        )
 
 
 def _run_farsight(case, config, directory, handle, tracker, sink, benchmark):
@@ -462,9 +470,9 @@ def run_one(task: dict) -> dict:
         "status": "RUNNING",
         "output": str(directory),
     }
-    _write_json(directory / "run.json", summary)
-    print(json.dumps(summary), flush=True)
     try:
+        _write_json(directory / "run.json", summary)
+        print(json.dumps(summary), flush=True)
         sink.validate(handle)
         provenance = _provenance(directory)
         client.set_tag(handle.run_id, "comparison.source_sha256", provenance["source_archive_sha256"])
@@ -506,7 +514,14 @@ def run_one(task: dict) -> dict:
         tracker.finish(handle, RunStatus.FINISHED)
     except Exception as error:
         summary.update(status="FAILED", error=f"{type(error).__name__}: {error}")
-        _write_json(directory / "run.json", summary)
+        failure_summary_written = False
+        try:
+            _write_json(directory / "run.json", summary)
+            failure_summary_written = True
+        except Exception as persistence_error:  # noqa: BLE001 - disk failures must not mask the original failure
+            error.add_note(
+                f"Failure summary persistence also failed: {type(persistence_error).__name__}: {persistence_error}"
+            )
         for filename in (
             "run.json",
             "timing.json",
@@ -515,9 +530,11 @@ def run_one(task: dict) -> dict:
             "failed_scalars.nc",
             "failed_final_state.npz",
         ):
-            if not (directory / filename).exists():
-                continue
             try:
+                if filename == "run.json" and not failure_summary_written:
+                    continue
+                if not (directory / filename).exists():
+                    continue
                 receipt = sink.put(handle, Artifact(directory / filename, artifact_path="comparison"))
                 sink.verify(handle, receipt)
             except Exception as tracking_error:  # noqa: BLE001 - retain the original solve failure and both causes

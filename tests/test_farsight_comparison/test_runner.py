@@ -3,6 +3,7 @@
 import hashlib
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -97,7 +98,8 @@ def test_benchmark_executes_identical_closure_three_times(tmp_path):
     assert timing["steps_per_execution"] == 20
 
 
-def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails(tmp_path, monkeypatch):
+@pytest.fixture
+def offline_services(monkeypatch):
     from examples.farsight_comparison import run
 
     class Tracker:
@@ -130,6 +132,9 @@ def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails
     class Sink:
         fail = False
 
+        def __init__(self):
+            self.uploads = []
+
         def preflight(self):
             pass
 
@@ -139,6 +144,7 @@ def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails
         def put(self, handle, artifact):
             if self.fail:
                 raise OSError("offline")
+            self.uploads.append(artifact)
             return artifact
 
         def verify(self, handle, receipt):
@@ -148,6 +154,13 @@ def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails
     monkeypatch.delenv("NERSC_HOST", raising=False)
     monkeypatch.setattr(run, "_services", lambda _: (tracker, sink))
     monkeypatch.setattr(run, "_provenance", lambda _: {"source_archive_sha256": "test", "git_commit": "test-sha"})
+    return run, tracker, sink
+
+
+def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails(
+    tmp_path, monkeypatch, offline_services
+):
+    run, tracker, sink = offline_services
 
     def fail(*args):
         assert json.loads((tmp_path / "case" / "run.json").read_text())["run_id"] == "early-id"
@@ -160,6 +173,63 @@ def test_failed_solve_records_run_id_and_marks_failed_even_if_error_upload_fails
     assert tracker.finished == ["FAILED"]
     summary = json.loads((tmp_path / "case" / "run.json").read_text())
     assert summary["status"] == "FAILED" and summary["run_id"] == "early-id"
+
+
+@pytest.mark.parametrize("failure_stage", ["initial-summary", "failure-summary"])
+def test_summary_disk_failure_preserves_original_error_and_terminates_tracking(
+    tmp_path, monkeypatch, offline_services, failure_stage
+):
+    run, tracker, sink = offline_services
+    write_json = run._write_json
+    quota_error = OSError("disk quota exceeded")
+    solve_error = ArithmeticError("invalid panels")
+
+    def fail_summary(path, value):
+        if path.name == "run.json" and (failure_stage == "initial-summary" or value["status"] == "FAILED"):
+            raise quota_error
+        write_json(path, value)
+
+    def fail_solve(*args):
+        raise solve_error
+
+    monkeypatch.setattr(run, "_write_json", fail_summary)
+    monkeypatch.setattr(run, "_run_farsight", fail_solve)
+    expected = quota_error if failure_stage == "initial-summary" else solve_error
+    with pytest.raises(type(expected)) as caught:
+        run.run_one({"solver": "farsight", "case": "two-stream", "output": tmp_path / "case"})
+    assert caught.value is expected
+    assert tracker.finished == ["FAILED"]
+    assert any("Failure summary persistence also failed" in note for note in caught.value.__notes__)
+    # A failed rewrite must not re-upload an old RUNNING summary as failure evidence.
+    summary_uploads = [artifact for artifact in sink.uploads if Path(artifact.source).name == "run.json"]
+    assert len(summary_uploads) == (0 if failure_stage == "initial-summary" else 1)
+
+
+def test_analyzer_does_not_upload_provisional_run_summary(tmp_path):
+    from types import SimpleNamespace
+
+    import numpy as np
+    import xarray as xr
+
+    from adept import MetricEvent, Report
+    from adept.farsight1d.__main__ import FileAnalyzer
+    from examples.farsight_comparison.run import DiagnosticFileAnalyzer
+
+    (tmp_path / "run.json").write_text(json.dumps({"run_id": "test", "status": "RUNNING"}))
+    dataset = xr.Dataset({"mass": ("t", [1.0]), "c2": ("t", [1.0])}, coords={"t": [0.0]})
+
+    class Analyzer:
+        def analyze(self, result, manifest):
+            return Report(result={"scalars": dataset}, metrics=(MetricEvent({"final_mass": 1.0}),))
+
+    result = SimpleNamespace(final_state={"valid": np.asarray(True)})
+    manifest = SimpleNamespace(to_dict=dict)
+    report = DiagnosticFileAnalyzer(FileAnalyzer(Analyzer(), tmp_path), tmp_path).analyze(result, manifest)
+    filenames = {Path(artifact.source).name for artifact in report.artifacts}
+    assert filenames == {"scalars.nc", "manifest.json", "metrics.json", "final_state.npz"}
+    assert report.result["scalars"] is dataset
+    assert dict(report.metrics[0].values) == {"final_mass": 1.0}
+    assert json.loads((tmp_path / "run.json").read_text())["status"] == "RUNNING"
 
 
 def test_amr_and_tree_options_are_resolved_and_validated():
