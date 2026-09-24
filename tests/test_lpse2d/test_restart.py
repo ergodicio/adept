@@ -16,6 +16,9 @@ def _cfg(tmax_fs, checkpoint=None, restart=None, run="restart-test"):
     cfg["save"]["fields"]["t"].update({"tmin": "0fs", "tmax": f"{tmax_fs}fs", "dt": "5fs"})
     cfg["terms"]["epw"]["source"]["noise"] = True
     cfg["terms"]["epw"]["source"]["noise_seed"] = 7
+    # the per-step noise stream is what the restart must reproduce; the flat model needs no damping
+    # (the thermal default refuses an undamped EPW, as LPSE)
+    cfg["terms"]["epw"]["source"]["noise_model"] = "flat"
     cfg["mlflow"]["run"] = run
     if checkpoint is not None:
         cfg["save"]["checkpoint"] = checkpoint
