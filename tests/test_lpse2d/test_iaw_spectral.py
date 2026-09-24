@@ -216,6 +216,8 @@ def test_iaw_stride_advances_every_nth_epw_step():
     step = SplitStep(cfg)
     assert step.iaw.stride == 3 and step.iaw.dt == pytest.approx(3.0 * cfg["grid"]["dt"])
     k, state = _single_mode_state(cfg, 4)
+    # with stride > 1 the module's state carries the IAW step's start density (LPSE Nelf_old)
+    state["iaw_density_old"] = state["iaw_density"]
     packed = {key: value.view(jnp.float64) for key, value in state.items()}
     dt = cfg["grid"]["dt"]
     same = step(jnp.asarray(dt), dict(packed), {"drivers": {}})

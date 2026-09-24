@@ -1114,9 +1114,13 @@ def get_solver_quantities(cfg: dict) -> dict:
         iaw_width = _width(iaw.get("boundary_width"), boundary_width)
         cfg_grid["iaw_boundary_width_um"] = iaw_width
         if boundary_profile == "exp" and iaw_width <= 0.0:
-            cfg_grid["iaw_absorbing_boundaries"] = np.ones((cfg_grid["nx"], cfg_grid["ny"]))
+            cfg_grid["iaw_absorbing_rate"] = np.zeros((cfg_grid["nx"], cfg_grid["ny"]))
         else:
-            cfg_grid["iaw_absorbing_boundaries"] = absorbing_boundary(iaw["boundary"], iaw_max_rate, iaw_width)
+            cfg_grid["iaw_absorbing_rate"] = absorbing_rate(iaw["boundary"], iaw_max_rate, iaw_width)
+        # applied once per IAW step, stride EPW steps long (LPSE applyAbsorbingBoundaries(divV, dt) with
+        # the IAW solver's own step; the fd solver re-exponentiates the rate with its sub-step)
+        dt_iaw = cfg_grid["dt"] * int(iaw.get("stride", 1) or 1)
+        cfg_grid["iaw_absorbing_boundaries"] = np.exp(-cfg_grid["iaw_absorbing_rate"] * dt_iaw)
 
     cfg_grid["zero_mask"] = (
         np.where(np.sqrt(cfg_grid["kx"][:, None] ** 2 + cfg_grid["ky"][None, :] ** 2) == 0, 0, 1)

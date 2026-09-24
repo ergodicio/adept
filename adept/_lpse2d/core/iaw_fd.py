@@ -230,8 +230,9 @@ class FDIonAcoustic:
         self.dt_sub = self.dt_iaw / self.n_sub
         self.cs_sq = cs**2
         # boundary profile, edge mask and the k-space damping on the fine grid
-        boundary = np.asarray(grid["iaw_absorbing_boundaries"], dtype=np.float64)
-        self.boundary = jnp.asarray(self._refine_profile(boundary[..., None])[..., 0])
+        # the absorber per fd sub-step (IawSolver::applyAbsorbingBCs with the sub-step dt)
+        rate = np.asarray(grid["iaw_absorbing_rate"], dtype=np.float64)
+        self.boundary = jnp.asarray(np.exp(-self._refine_profile(rate[..., None])[..., 0] * self.dt_sub))
         edge = np.ones((self.fnx, self.fny))
         epw_boundary = cfg["terms"]["epw"]["boundary"]
         # LPSE zeroOutEdgeCells: only along an axis with an IAW layer (iaw.Labc > 0)

@@ -188,3 +188,27 @@ def test_translator_layers_planes_and_seed_rise_follow_lpse(tmp_path):
     assert not report["unsupported"]
     _, report = _translate(tmp_path, "lw.Labc.min.x = 2;\nlw.Labc.max.x = 3;\n")
     assert any("lw.Labc.min.x" in u for u in report["unsupported"])
+
+
+@pytest.mark.parametrize("solver", ["spectral", "fd"])
+def test_iaw_absorber_acts_over_the_iaw_step(solver):
+    """Inventory A24: LPSE damps the IAW with its own step -- advanceNelfAndDivV_fft with
+    dt * numStepsPerStep, the fd solver per sub-step (IawSolver::applyAbsorbingBCs). With stride 2 the
+    spectral factor is exp(-rate 2 dt) (it was exp(-rate dt), half the strength) and the fd factor
+    exp(-rate dt_sub), n_sub dt_sub being the IAW step. Tolerance 1e-12 (exact arithmetic)."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    raw = _raw()
+    raw["terms"]["iaw"] = {"active": True, "solver": solver, "stride": 2, "boundary_width": "1.0um"}
+    cfg = _finish(raw)
+    rate = np.asarray(cfg["grid"]["iaw_absorbing_rate"])
+    assert rate.max() > 0.0
+    iaw = IonAcousticWave(cfg)
+    dt_iaw = 2 * cfg["grid"]["dt"]
+    if solver == "spectral":
+        np.testing.assert_allclose(np.asarray(iaw.boundary), np.exp(-rate * dt_iaw), rtol=1e-12)
+    else:
+        fd = iaw.fd
+        assert fd.n_sub * fd.dt_sub == pytest.approx(dt_iaw, rel=1e-12)
+        fine = fd._refine_profile(rate[..., None])[..., 0]
+        np.testing.assert_allclose(np.asarray(fd.boundary), np.exp(-fine * fd.dt_sub), rtol=1e-12)
