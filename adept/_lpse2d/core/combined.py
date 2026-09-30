@@ -30,7 +30,8 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
    (``LightSolver.cpp:3684-3743``): ``exp(-i dt 3 vte^2 k^2/(2 wp0) - gamma_L dt)`` on
    ``k k/k^2 E1`` (Bohm-Gross dispersion and Landau damping) and
    ``exp(-i dt c^2 k^2/(2 wp0))`` on ``(I - k k/k^2) E1`` (light near its cutoff), with
-   modes outside the retained band zeroed;
+   the k > 0 modes outside the retained band zeroed and the k = 0 mode left untouched, as
+   LPSE (the absolute-SRS light near n_c/4 sits at k_x ~ 0);
 4. the EPW noise source on the longitudinal part (``noise_model`` as in ``epw.py``), built
    for the light sub-step with the Raman rate as its collisional part
    (``LwSolver::addNoise_combinedSolver_spectral(dt)``, ``ZakharovSolver::addNoiseToPotential_fft``);
@@ -123,6 +124,10 @@ class CombinedSolver:
         if cap is not None:
             band = band * np.where(np.sqrt(k_sq_np) < float(cap) * derived["w0"] / derived["c"], 1.0, 0.0)
         self.band = jnp.asarray(band)
+        # the propagators' band: LPSE's LightSolver::evolveSpectral zeroes only k > 0 modes outside
+        # the band and leaves k = 0 untouched ("zeroing out the k=0 component causes problems when
+        # trying to simulate absolute SRS with spectral light"); the longitudinal part is zero there
+        self.propagation_band = jnp.asarray(band + np.where(k_sq_np > 0, 0.0, 1.0))
 
         self.c = derived["c"]
         self.w0 = derived["w0"]
@@ -156,7 +161,7 @@ class CombinedSolver:
         )
         self.landau_rate = analytic_landau_rate(cfg)
         self.disp_L = jnp.exp(-1j * self.dt_l * 1.5 * self.vte_sq / self.wp0 * self.k_sq) * self.band
-        self.prop_T = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.wp0) * self.k_sq) * self.band
+        self.prop_T = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.wp0) * self.k_sq) * self.propagation_band
         self.detune = jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * (self.n_over_env - 1.0))
         self.collisional = jnp.exp(-self.nu_raman * self.dt_l * self.n_over_env**2)
         # the combined field: LPSE's double-exponential layer (the EPW layer inside the Raman
@@ -196,7 +201,7 @@ class CombinedSolver:
             self.E0_source = derived["E0_source"]
             self.linear_coeff0 = 1j * self.w0 / 2.0 * (1.0 - self.wp0**2 / self.w0**2 * self.n_over_env)
             self.detune0 = jnp.exp(self.dt_l * self.linear_coeff0)
-            self.prop0 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w0) * self.k_sq) * self.band
+            self.prop0 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w0) * self.k_sq) * self.propagation_band
             self.depletion_coeff = 1j * self.e / (2.0 * self.me * self.w0)
             rate0, _ = light_absorption_rates(cfg)
             self.absorb0 = None if rate0 is None else jnp.exp(-rate0 * self.dt_l * self.background_density**2)

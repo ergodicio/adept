@@ -453,3 +453,36 @@ def test_combined_iaw_drive_is_the_whole_field_at_wp0():
     missing = pre * (t_sq * (1.0 / iaw.w1**2 - 1.0 / iaw.wp0**2) - cross / iaw.wp0**2)
     np.testing.assert_allclose(np.asarray(split) - got, np.asarray(missing), rtol=0, atol=1e-12 * np.max(np.abs(got)))
     assert np.max(np.abs(np.asarray(missing))) > 1e-3 * np.max(np.abs(got))
+
+
+def test_combined_propagator_keeps_the_k0_mode():
+    """LPSE's LightSolver::evolveSpectral zeroes only the k > 0 modes outside the band and leaves
+    k = 0 untouched ("zeroing out the k=0 component causes problems when trying to simulate
+    absolute SRS with spectral light"): the uniform part of E1 evolves with the x-space detuning
+    alone, and the pump's k = 0 mode passes its propagator unchanged."""
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    density = 0.23
+    cfg = _cfg(sources=False, density=density)
+    combined = CombinedSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    uniform = jnp.asarray([0.3 + 0.1j, -0.2 + 0.4j])
+    E1 = jnp.ones((nx, ny, 2), dtype=jnp.complex128) * uniform + _random_transverse(cfg, 6)
+    E0 = jnp.zeros((nx, ny, 2), dtype=jnp.complex128)
+
+    n_steps = 7
+    y = {"E0": E0, "E1": E1, "epw": jnp.zeros((nx, ny), dtype=jnp.complex128)}
+    for i in range(n_steps):
+        _, y["E1"], y["epw"] = combined(i * cfg["grid"]["dt"], y, {}, lambda tt: E0)
+
+    wp0 = cfg["units"]["derived"]["wp0"]
+    phase = np.exp(-1j * n_steps * cfg["grid"]["dt"] * wp0 / 2.0 * (density / 0.25 - 1.0))
+    np.testing.assert_allclose(
+        np.asarray(jnp.mean(y["E1"], axis=(0, 1))), np.asarray(uniform) * phase, rtol=1e-10, atol=0
+    )
+
+    raw = _combined_raw(pump_depletion=True)
+    raw["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+    pumped = CombinedSolver(_finish(raw))
+    assert complex(pumped.prop0[0, 0]) == 1.0
+    assert complex(pumped.prop_T[0, 0]) == 1.0
