@@ -76,7 +76,7 @@ class PlasmaNormalization:
         return (UREG.Quantity(1, "speed_of_light").to("m/s") / self.v0).to("").magnitude
 
 
-def normalize(s: float | int | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
+def normalize(s: float | str, norm: PlasmaNormalization | None = None, dim: str = "x") -> float:
     if isinstance(s, (int, float)) and not isinstance(s, bool):
         return float(s)
 

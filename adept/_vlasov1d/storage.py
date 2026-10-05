@@ -28,7 +28,7 @@ def field_datasets(cfg: dict, fields: dict, this_t: np.ndarray, prefix: str) -> 
     result = {}
     # Shared field keys at top level
     shared_field_keys = {"e", "de", "a", "prev_a", "pond", "ep", "em"}
-    species_names = [k for k in fields.keys() if k not in shared_field_keys]
+    species_names = [k for k in fields if k not in shared_field_keys]
 
     # Store species-specific moments
     for species_name in species_names:
@@ -93,9 +93,7 @@ def distribution_datasets(cfg: dict, this_t: dict, ys: dict) -> dict:
     :param ys:
     :return: dict mapping save_key -> xr.Dataset
     """
-    dist_save_keys = [
-        k for k in ys.keys() if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})
-    ]
+    dist_save_keys = [k for k in ys if "_species_name" in cfg["save"].get(k, {}) or "_diag" in cfg["save"].get(k, {})]
 
     result = {}
     for save_key in dist_save_keys:
