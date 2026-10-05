@@ -234,7 +234,6 @@ def test_mlflow_callback_preserves_function_metadata():
     @mlflow_callback
     def my_logging_func(value, *, mlflow_run_id: str):
         """This is my docstring."""
-        pass
 
     assert my_logging_func.__name__ == "my_logging_func"
     assert my_logging_func.__doc__ == """This is my docstring."""
