@@ -741,3 +741,32 @@ def test_translator_maps_the_hpe_controls():
     assert h["gamma_limit_damping"] == 300.0 and h["gamma_limit_growth"] == 20.0 and h["allow_growth"]
     assert h["energy_conservation"] and h["energy_conservation_steps"] == 5.0
     assert h["flux_bins"] == [0.0, 50.0, 1e9] and h["cone_angle"] == 20.0 and h["cone_direction"] == [0.0, 1.0]
+
+
+def test_quasi1d_periodic_crossings_reach_the_wall_accounting():
+    """PR #372 / #378 review: the quasi-1D push keeps the unwrapped position until
+    _apply_boundaries, so a periodic crossing is counted by the wall instrument and the
+    configured thermalization probability applies (as in 2-D). Exercised through push()."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    for p_therm in (0.0, 1.0):
+        cfg = _make_cfg({"n_particles": 1000, "thermalization_probability": [p_therm, p_therm]})
+        hpe = HybridParticleEvolution(cfg)
+        assert hpe.periodic_x
+        n = hpe.n_p
+        gamma_10 = 1.0 + 10.0 / 510.999
+        u10 = hpe.c * np.sqrt(gamma_10**2 - 1.0)
+        v10 = u10 / gamma_10
+        # 10 keV electrons half a step from the right wall: every one crosses during this push
+        x = jnp.full((n,), hpe.xmax - 0.5 * hpe.dt * v10)
+        u = jnp.full((n,), u10)
+        x2, u2, flux, cone, _ = hpe.push(x, u, jnp.zeros(hpe.nx_f, dtype=jnp.complex128), 0.0)
+        flux = np.asarray(flux)
+        np.testing.assert_allclose(flux[1].sum(), 10.0 * n, rtol=1e-6)  # right wall
+        assert flux[0].sum() == 0.0
+        if p_therm == 0.0:
+            np.testing.assert_allclose(np.asarray(x2), hpe.xmin + 0.5 * hpe.dt * v10, rtol=0, atol=1e-9)
+            np.testing.assert_allclose(np.asarray(u2), np.asarray(u), rtol=0, atol=0)
+        else:
+            np.testing.assert_allclose(np.asarray(x2), hpe.xmax, rtol=0, atol=0)
+            assert np.all(np.asarray(u2) < 0.0)  # re-injected inward
