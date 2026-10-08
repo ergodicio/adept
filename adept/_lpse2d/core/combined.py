@@ -36,7 +36,9 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
 5. the absorbing layers.
 
 With ``terms.light.pump_depletion`` the pump advances in the same sub-step with the
-spectral propagator and LPSE's unified depletion term (``LightSolver.cpp:4265``)
+spectral propagator, the spectral light solver's injector (``SmoothPumpInjector``: oblique
+and multiple beams, transverse profile, KAP bandwidth, pulse table) and LPSE's unified
+depletion term (``LightSolver.cpp:4265``)
 
     dE0/dt = i e/(2 me w0) e^{+i (w0 - 2 wp0) t} E1 (div E1)
 
@@ -53,7 +55,7 @@ from jax import numpy as jnp
 from adept._base_ import get_envelope
 from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum, noise_step
 from adept._lpse2d.core.raman import light_absorption_rates
-from adept._lpse2d.core.spectral_light import gaussian_injector_profile
+from adept._lpse2d.core.spectral_light import SmoothPumpInjector
 
 
 def longitudinal_transverse(field: Array, kx: Array, ky: Array, one_over_k_sq: Array) -> tuple[Array, Array]:
@@ -79,7 +81,7 @@ def potential_from_field(field: Array, kx: Array, ky: Array, one_over_k_sq: Arra
     return 1j * (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq * band
 
 
-class CombinedSolver:
+class CombinedSolver(SmoothPumpInjector):
     """Advance the combined Raman-light + EPW field E1 (and the pump when it is evolved)."""
 
     def __init__(self, cfg: dict):
@@ -183,11 +185,8 @@ class CombinedSolver:
             if self.n_src >= 1.0:
                 raise ValueError("The pump injector sits at or above critical density")
             self.pump_turn_on_time = pump["turn_on_time"]
-            k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
-            width = pump.get("injector_width", np.pi / k0_inject)
-            self.pump_profile = jnp.asarray(
-                gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
-            )
+            # the same injector as the spectral light solver (beams, profile, KAP, pulse table)
+            self.init_pump_injector(cfg)
 
     # ------------------------------------------------------------- helpers --
 
@@ -236,26 +235,6 @@ class CombinedSolver:
         ey_k = jnp.fft.fft2(E1[..., 1]) - 1j * self.ky[None, :] * phi_kick
         return jnp.stack([jnp.fft.ifft2(ex_k), jnp.fft.ifft2(ey_k)], axis=-1)
 
-    def calc_pump_source(self, t: float, pump_args: dict) -> Array:
-        t_env = get_envelope(
-            pump_args["tr"],
-            pump_args["tr"],
-            pump_args["tc"] - pump_args["tw"] / 2,
-            pump_args["tc"] + pump_args["tw"] / 2,
-            t,
-        )
-        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
-        delta_omega = pump_args["delta_omega"]
-        intensities = pump_args["intensities"]
-        phases = pump_args["phases"]
-        k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.n_src)
-        v_g = self.c**2 * k0 / self.w0
-        amp = self.E0_source * jnp.sqrt(intensities) / (1.0 - self.n_src) ** 0.25 * t_env * turn_on
-        color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)
-        carrier = jnp.exp(1j * k0[:, None] * (self.x[None, :] - self.x[self.i0]))
-        source = (amp * v_g[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[:, :, None]
-        return jnp.sum(source, axis=0)
-
     def propagate_pump(self, E0: Array) -> Array:
         (lx_k, ly_k), (tx_k, ty_k) = longitudinal_transverse(E0, self.kx, self.ky, self.one_over_k_sq)
         fx_k = lx_k + self.prop0 * tx_k
@@ -301,7 +280,7 @@ class CombinedSolver:
                     E0 = E0 * self.absorb0[..., None]
                 if self.sources_on:
                     E0 = E0 + self.dt_l * self.unified_depletion(t_i, E1)
-                E0 = E0.at[..., 1].add(self.dt_l * self.calc_pump_source(t_i, pump_args))
+                E0 = E0 + self.dt_l * self.calc_pump_source(t_i, pump_args)
             if self.sources_on:
                 E1 = E1 + self.dt_l * self.unified_source(t_i, E0, E1)
             # 3. k-space propagation with the L/T projector

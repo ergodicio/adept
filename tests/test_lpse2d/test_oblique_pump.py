@@ -229,3 +229,70 @@ def test_translator_maps_multi_beam_decks():
     assert e0["beam_width"] == "3.0um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
     assert e0["kap_bandwidth"] == 0.005
     assert not any("direction differs" in u for u in report["unsupported"])
+
+
+# ---- the combined solver injects the same pump (PR #372 review) -----------------------------------
+# The combined solver (needed for simultaneous TPD + SRS) used to build only a normal-incidence
+# scalar pump and silently ignore beams, profile, KAP and the pulse table. It now shares
+# SmoothPumpInjector with the spectral light solver. Thresholds as in the spectral tests above.
+
+
+def _combined_beams_cfg(beams, **extra):
+    raw = _beams_cfg(None, beams, **extra)
+    raw["terms"]["epw"]["solver"] = "combined"
+    # both sources on (the combined solver's rule); with no noise and E1 = 0 the unified source
+    # is zero, so the pump propagates alone
+    raw["terms"]["epw"]["source"].update({"tpd": True, "srs": True, "noise": False})
+    return _finish(raw)
+
+
+def test_combined_solver_pump_source_is_the_spectral_injector(tmp_path):
+    from adept._lpse2d.core.combined import CombinedSolver
+    from adept._lpse2d.core.spectral_light import SpectralCoupledLight
+    from adept._lpse2d.modules.driver import UniformDriver
+
+    pulse = tmp_path / "pulse.txt"
+    np.savetxt(pulse, np.array([[0.0, 0.25], [0.05, 1.0], [1.0, 1.0]]))
+    cfg = _combined_beams_cfg(
+        [{"intensity": 1.0, "angle": 20.0, "phase": 0.3}, {"intensity": 0.5, "angle": -15.0}],
+        beam_width="3um",
+        beam_sg_order=4.0,
+        kap_bandwidth=0.02,
+        pulse_file=str(pulse),
+    )
+    combined = CombinedSolver(cfg)
+    spectral = SpectralCoupledLight(cfg)
+    _, args = UniformDriver(cfg)({}, {"drivers": {}})
+    pa = args["drivers"]["E0"]
+    for t in (0.004, 0.03, 0.2):
+        np.testing.assert_array_equal(
+            np.asarray(combined.calc_pump_source(t, pa)), np.asarray(spectral.calc_pump_source(t, pa))
+        )
+    # the oblique beams put power in both components (polarization perpendicular to k)
+    s = np.asarray(combined.calc_pump_source(0.2, pa))
+    assert np.abs(s[..., 0]).max() > 0.1 * np.abs(s[..., 1]).max()
+
+
+def test_combined_solver_launches_both_oblique_beams():
+    from adept._lpse2d.core.combined import CombinedSolver
+    from adept._lpse2d.modules.driver import UniformDriver
+
+    cfg = _combined_beams_cfg([{"intensity": 1.0, "angle": 20.0}, {"intensity": 1.0, "angle": -20.0}])
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    solver = CombinedSolver(cfg)
+    _, args = UniformDriver(cfg)({}, {"drivers": {}})
+    driver_args = {"E0": args["drivers"]["E0"]}
+    y = {"E0": jnp.zeros((nx, ny, 2), dtype=jnp.complex128), "E1": jnp.zeros((nx, ny, 2), dtype=jnp.complex128)}
+    t, dt = 0.0, cfg["grid"]["dt"]
+    for _ in range(int(0.05 / dt)):
+        E0, E1, _ = solver(t, y, driver_args)
+        y = {"E0": E0, "E1": E1}
+        t += dt
+    E0 = np.asarray(y["E0"])
+    power_ky = np.sum(np.abs(np.fft.fft2(E0[..., 0])) ** 2 + np.abs(np.fft.fft2(E0[..., 1])) ** 2, axis=0)
+    ky = np.asarray(cfg["grid"]["ky"])
+    k0 = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"] * np.sqrt(1.0 - float(cfg["density"]["val"]))
+    jp = int(np.argmin(np.abs(ky - k0 * np.sin(np.deg2rad(20.0)))))
+    jm = int(np.argmin(np.abs(ky + k0 * np.sin(np.deg2rad(20.0)))))
+    assert power_ky[jp] + power_ky[jm] > 0.95 * power_ky.sum()
+    np.testing.assert_allclose(power_ky[jp], power_ky[jm], rtol=0.05)
