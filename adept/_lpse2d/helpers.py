@@ -1488,6 +1488,29 @@ def make_field_xarrays(cfg, this_t, state, td):
     return kfields, fields
 
 
+def _raman_light_part(cfg: dict):
+    """``y -> y`` with ``E1`` reduced to the Raman light. The combined solver's ``E1`` also carries
+    the EPW as its longitudinal part (saved separately as ``epw``); the saved ``E1`` fields and
+    everything computed from them (the ``s1`` flux maps) are the transverse part, as in the
+    default series. Identity for the separate solver."""
+    if cfg["terms"]["epw"].get("solver", "separate") != "combined":
+        return lambda y: y
+    from adept._lpse2d.core.combined import transverse_part
+
+    kx = np.asarray(cfg["grid"]["kx"])
+    ky = np.asarray(cfg["grid"]["ky"])
+    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
+    one_over_k_sq = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
+    kx, ky = jnp.asarray(kx), jnp.asarray(ky)
+
+    def apply(y):
+        if "E1" not in y:
+            return y
+        return {**y, "E1": transverse_part(y["E1"].view(jnp.complex128), kx, ky, one_over_k_sq).view(jnp.float64)}
+
+    return apply
+
+
 def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
@@ -1497,6 +1520,7 @@ def get_save_quantities(cfg: dict) -> dict:
     """
 
     # cfg["save"]["func"] = {**cfg["save"]["func"], **{"callable": get_save_func(cfg)}}
+    raman_light_part = _raman_light_part(cfg)
     tmin = _Q(cfg["save"]["fields"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     tmax = _Q(cfg["save"]["fields"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     dt = _Q(cfg["save"]["fields"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
@@ -1550,6 +1574,7 @@ def get_save_quantities(cfg: dict) -> dict:
         def save_func(t, y, args):
             from adept._lpse2d.core.hpe import PARTICLE_KEYS
 
+            y = raman_light_part(y)
             save_y = {}
             for k, v in y.items():
                 if k in PARTICLE_KEYS or k == "epw_ledger":
@@ -1580,6 +1605,7 @@ def get_save_quantities(cfg: dict) -> dict:
         def save_func(t, y, args):
             from adept._lpse2d.core.hpe import PARTICLE_KEYS
 
+            y = raman_light_part(y)
             return {k: v for k, v in y.items() if k not in PARTICLE_KEYS and k != "epw_ledger"}
 
     cfg["save"]["fields"]["func"] = save_func
@@ -1730,12 +1756,7 @@ def get_default_save_func(cfg):
         # sum_k k^2 |phi_k|^2 -> the epw_energy normalization (Parseval, see above)
         ledger_prefactor = epw_energy_prefactor / (nx * ny**2)
 
-    combined_solver = cfg["terms"]["epw"].get("solver", "separate") == "combined"
-    if combined_solver:
-        from adept._lpse2d.core.combined import transverse_part
-
-        one_over_k_sq_c = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
-        kx_c, ky_c = jnp.asarray(kx), jnp.asarray(ky)
+    raman_light_part = _raman_light_part(cfg)
 
     def save_func(t, y, args):
         phi_k = y["epw"].view(jnp.complex128)
@@ -1744,12 +1765,8 @@ def get_default_save_func(cfg):
         ex = jnp.fft.ifft2(ex)
         ey = jnp.fft.ifft2(ey)
         e_sq = jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2
-        if combined_solver:
-            # the Raman-light diagnostics see the transverse part of the combined field only
-            y = {
-                **y,
-                "E1": transverse_part(y["E1"].view(jnp.complex128), kx_c, ky_c, one_over_k_sq_c).view(jnp.float64),
-            }
+        # the Raman-light diagnostics see the transverse part of the combined field only
+        y = raman_light_part(y)
 
         out = {"e_sq": jnp.sum(e_sq * cfg["grid"]["dx"] * cfg["grid"]["dy"]), "max_phi": jnp.max(jnp.abs(phi_k))}
 
