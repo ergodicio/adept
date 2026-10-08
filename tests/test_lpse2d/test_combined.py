@@ -280,3 +280,91 @@ def test_combined_split_step_runs_with_pump_depletion_iaw_noise_and_reports_tran
     assert "e1_sq" in out and bool(jnp.isfinite(out["e1_sq"]))
     # the pump has started to fill the box
     assert float(jnp.max(jnp.abs(state["E0"].view(jnp.complex128)))) > 0.0
+
+
+# ---- noise kick at the light sub-step (PR #372 review) ---------------------------------------------
+# Tolerances fixed before the runs: the steady state is a mean over ~700 retained modes x 150
+# correlated samples, so both the n_sub-independence ratio and the agreement with the analytic
+# random-walk level of diagnostics.expected_noise_energy are set at 15 %. Before the fix the kick
+# was built for the EPW step and applied every sub-step: ratio 8 / 2 sub-steps ~ 4 for both models.
+
+
+def _noise_cfg(n_sub, model):
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    # n = n_env: the combined field's collisional damping exp(-nu dt (n/n_env)^2) is then the
+    # uniform rate the noise kick is balanced against
+    cfg["density"] = {"basis": "uniform", "val": 0.25}
+    cfg["grid"].update(
+        {
+            "boundary_width": "0.6um",
+            "dt": "1fs",
+            "dx": "0.1um",
+            "xmax": "6.4um",
+            "tmax": "10fs",
+            "ymax": "1.6um",
+            "ymin": "-1.6um",
+            "low_pass_filter": 0.6,
+            "light_substeps": n_sub,
+        }
+    )
+    cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
+    cfg["terms"]["epw"]["damping"] = {"collisions": 20.0, "landau": True}
+    cfg["terms"]["epw"]["density_gradient"] = True
+    cfg["terms"]["epw"]["source"].update(
+        {"noise": True, "noise_model": model, "noise_amplitude": 1.0, "noise_seed": 3, "tpd": False, "srs": False}
+    )
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    return _finish(cfg)
+
+
+def _combined_noise_steady_state(cfg, n_steps=450, n_warm=300):
+    """Mean of sum_k k^2 |phi_k|^2 over the last n_steps - n_warm EPW steps from a quiet start."""
+    import jax
+
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    solver = CombinedSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    y = {"E0": jnp.zeros((nx, ny, 2), complex), "E1": jnp.zeros((nx, ny, 2), complex)}
+    step = jax.jit(lambda t, y: solver(t, y, {}, E0_fn=lambda t: y["E0"]))
+    samples = []
+    for i in range(n_steps):
+        E0, E1, phi_k = step(i * cfg["grid"]["dt"], y)
+        y = {"E0": E0, "E1": E1}
+        if i >= n_warm:
+            samples.append(float(jnp.sum(solver.k_sq * jnp.abs(phi_k) ** 2)))
+    return solver, np.mean(samples)
+
+
+@pytest.mark.parametrize("model", ["thermal", "flat"])
+def test_combined_noise_steady_state_is_independent_of_the_light_substeps(model):
+    """The combined solver adds its noise every light sub-step, so the kick is built for that step
+    (LwSolver::addNoise_combinedSolver_spectral(dt)); the seed level cannot depend on n_sub."""
+    levels = {}
+    for n_sub in (2, 8):
+        cfg = _noise_cfg(n_sub, model)
+        solver, levels[n_sub] = _combined_noise_steady_state(cfg)
+        assert solver.n_sub == n_sub
+    assert levels[8] / levels[2] == pytest.approx(1.0, rel=0.15)
+
+
+@pytest.mark.parametrize("model", ["thermal", "flat"])
+def test_combined_noise_matches_the_growth_fit_floor(model):
+    """diagnostics.expected_noise_energy integrates the kick the combined solver applies (at its
+    light sub-step), so the late-time floor equals the simulated steady state."""
+    from adept._lpse2d.core.epw import noise_kick_spectrum, noise_step
+    from adept._lpse2d.diagnostics import expected_noise_energy
+
+    cfg = _noise_cfg(4, model)
+    dt_noise, nu = noise_step(cfg)
+    assert dt_noise == pytest.approx(cfg["grid"]["dt"] / 4, rel=1e-12)
+    solver, level = _combined_noise_steady_state(cfg)
+    np.testing.assert_allclose(
+        np.asarray(solver.noise_kick), noise_kick_spectrum(cfg, dt=dt_noise, nu_coll=nu), rtol=1e-12, atol=0
+    )
+    derived = cfg["units"]["derived"]
+    grid = cfg["grid"]
+    prefactor = 0.25 * grid["dx"] * derived["x_norm"] * derived["e_norm"] ** 2 / (grid["nx"] * grid["ny"] ** 2)
+    assert prefactor * level / expected_noise_energy(cfg, 1.0e3) == pytest.approx(1.0, rel=0.15)

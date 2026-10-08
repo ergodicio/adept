@@ -30,7 +30,9 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
    ``k k/k^2 E1`` (Bohm-Gross dispersion and Landau damping) and
    ``exp(-i dt c^2 k^2/(2 wp0))`` on ``(I - k k/k^2) E1`` (light near its cutoff), with
    modes outside the retained band zeroed;
-4. the EPW noise source on the longitudinal part (``noise_model`` as in ``epw.py``);
+4. the EPW noise source on the longitudinal part (``noise_model`` as in ``epw.py``), built
+   for the light sub-step at which it is applied (``epw.noise_step``;
+   ``LwSolver::addNoise_combinedSolver_spectral(dt)``);
 5. the absorbing layers.
 
 With ``terms.light.pump_depletion`` the pump advances in the same sub-step with the
@@ -49,7 +51,7 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
-from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
+from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum, noise_step
 from adept._lpse2d.core.raman import light_absorption_rates
 from adept._lpse2d.core.spectral_light import gaussian_injector_profile
 
@@ -158,7 +160,9 @@ class CombinedSolver:
         if self.noise_enabled:
             import jax
 
-            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg))
+            # built for the light sub-step at which add_noise applies it, not the EPW step
+            dt_noise, nu_noise = noise_step(cfg)
+            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg, dt=dt_noise, nu_coll=nu_noise))
             seed = source_cfg.get("noise_seed")
             self.noise_key = jax.random.PRNGKey(int(seed) if seed is not None else np.random.randint(2**20))
 
