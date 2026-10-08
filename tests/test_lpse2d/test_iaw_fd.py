@@ -106,6 +106,41 @@ def test_resampling_is_exact_on_band_limited_fields():
     np.testing.assert_allclose(np.asarray(downsample(jnp.asarray(up), 2)), a, atol=1e-13)
 
 
+@pytest.mark.parametrize("shape", [(64, 16), (65, 17), (64, 15), (65, 1), (64, 1)])
+@pytest.mark.parametrize("s", [2, 3])
+def test_resampling_aligns_the_zero_frequency_on_odd_grids(shape, s):
+    """PR #378 review: fftshift puts the zero frequency of a length-n axis at n // 2, so the
+    padded / truncated spectra must be aligned there (the old (s n - n) // 2 offset was one bin
+    off for odd n with even s: a constant came back spatially oscillatory). Exact identities up
+    to FFT round-off, 1e-12 of the field scale (fixed before the run)."""
+    from adept._lpse2d.core.iaw_fd import downsample, upsample
+
+    nx, ny = shape
+    sy = s if ny > 1 else 1
+    # a constant stays constant
+    up = np.asarray(upsample(jnp.full(shape, 2.5), s))
+    assert up.shape == (s * nx, sy * ny)
+    np.testing.assert_allclose(up, 2.5, rtol=0, atol=1e-12 * 2.5)
+    np.testing.assert_allclose(np.asarray(downsample(jnp.asarray(up), s)), 2.5, rtol=0, atol=1e-12 * 2.5)
+    # a resolved Fourier mode is interpolated exactly onto the fine grid
+    mx, my = 3, (2 if ny > 1 else 0)
+    ix, iy = np.arange(nx)[:, None], np.arange(ny)[None, :]
+    mode = np.cos(2.0 * np.pi * (mx * ix / nx + my * iy / ny) + 0.4)
+    fx, fy = np.arange(s * nx)[:, None] / s, np.arange(sy * ny)[None, :] / sy
+    fine = np.cos(2.0 * np.pi * (mx * fx / nx + my * fy / ny) + 0.4)
+    np.testing.assert_allclose(np.asarray(upsample(jnp.asarray(mode), s)), fine, rtol=0, atol=1e-12)
+    np.testing.assert_allclose(np.asarray(downsample(jnp.asarray(fine), s)), mode, rtol=0, atol=1e-12)
+    # a band-limited random field (no Nyquist content) round-trips
+    a_k = np.fft.fft2(np.random.default_rng(1).normal(size=shape))
+    kx = np.abs(np.fft.fftfreq(nx) * nx)[:, None]
+    ky = np.abs(np.fft.fftfreq(ny) * ny)[None, :]
+    a_k[(kx >= nx // 2 - 1) | (ky >= max(ny // 2 - 1, 1))] = 0.0
+    a = np.real(np.fft.ifft2(a_k))
+    np.testing.assert_allclose(
+        np.asarray(downsample(upsample(jnp.asarray(a), s), s)), a, rtol=0, atol=1e-12 * np.abs(a).max()
+    )
+
+
 @pytest.mark.parametrize(
     "ny_box, flow, modes", [("0.02um", None, (8, 0)), ("0.02um", [0.5, 0.0], (8, 0)), ("1.6um", [0.3, 0.4], (10, 4))]
 )

@@ -128,7 +128,9 @@ def upsample(field: Array, s: int) -> Array:
     sy = s if ny > 1 else 1
     f_k = jnp.fft.fftshift(jnp.fft.fft2(field))
     padded = jnp.zeros((s * nx, sy * ny), dtype=f_k.dtype)
-    ox, oy = (s * nx - nx) // 2, (sy * ny - ny) // 2
+    # fftshift puts the zero frequency of a length-n axis at n // 2: align the two origins
+    # ((s n - n) // 2 is off by one for odd n with even s)
+    ox, oy = (s * nx) // 2 - nx // 2, (sy * ny) // 2 - ny // 2
     padded = padded.at[ox : ox + nx, oy : oy + ny].set(f_k)
     return jnp.real(jnp.fft.ifft2(jnp.fft.ifftshift(padded))) * (s * sy)
 
@@ -142,7 +144,7 @@ def downsample(field: Array, s: int) -> Array:
     sy = s if sny > 1 else 1
     nx, ny = snx // s, sny // sy
     f_k = jnp.fft.fftshift(jnp.fft.fft2(field))
-    ox, oy = (snx - nx) // 2, (sny - ny) // 2
+    ox, oy = snx // 2 - nx // 2, sny // 2 - ny // 2  # zero frequencies aligned, as in upsample
     kept = f_k[ox : ox + nx, oy : oy + ny]
     return jnp.real(jnp.fft.ifft2(jnp.fft.ifftshift(kept))) / (s * sy)
 
