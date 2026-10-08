@@ -679,6 +679,26 @@ def ion_acoustic_speeds(run_dir: str | Path) -> list[tuple[str, float]]:
     return out
 
 
+def _require_uniform_time(t: np.ndarray, what: str) -> None:
+    """Raise unless ``t`` is evenly spaced (relative spread of ``diff(t)`` <= 1e-6).
+
+    The ω-k FFT takes ``dt = t[1] - t[0]``; a series with gaps (e.g. one WarpX
+    diagnostic whose ``intervals`` is a union of burst slices) would otherwise be
+    transformed as if it were uniformly sampled and give a wrong spectrum.
+    Write each burst as its own diagnostic instead.
+    """
+    if t.size < 3:
+        return
+    d = np.diff(t.astype(np.float64))
+    mean = float(d.mean())
+    if mean <= 0 or float(np.max(np.abs(d - mean))) > 1e-6 * abs(mean):
+        raise ValueError(
+            f"{what} needs uniformly sampled times; dt ranges over "
+            f"[{float(d.min()):.6g}, {float(d.max()):.6g}] (bursts in one diagnostic? "
+            f"write one diagnostic per burst)"
+        )
+
+
 def plot_omega_k(
     series: xr.DataArray | str | Path,
     ax: plt.Axes | None = None,
@@ -735,6 +755,7 @@ def plot_omega_k(
     x = da.coords[xname].values
     if t.size < 2 or x.size < 2:
         raise ValueError(f"omega-k spectrum needs >=2 samples per axis; got t={t.size}, {xname}={x.size}")
+    _require_uniform_time(t, "omega-k spectrum")
     dt = float(t[1] - t[0])
     dx = float(x[1] - x[0])
     nt = t.size
@@ -875,6 +896,8 @@ def plot_omega_k_figure(
     consequence of the time-sampling, not a plotting fault.
     """
     da = _ensure_series(series)
+    # Check before opening a figure, so a rejected series leaks no Figure.
+    _require_uniform_time(da.coords["t"].values, "omega-k spectrum")
     fig, (ax_top, ax_bot) = plt.subplots(2, 1, figsize=(6, 10))
     plot_omega_k(
         da,
@@ -1473,6 +1496,10 @@ def _omega_k_zoom_window(series: xr.DataArray, requested: float | None) -> float
     xname = next(d for d in series.dims if d != "t")
     x = series.coords[xname].values
     if t.size < 2 or x.size < 2:
+        return None
+    try:
+        _require_uniform_time(t, "omega-k zoom window")
+    except ValueError:
         return None
     k_ny = np.pi / float(x[1] - x[0])
     w_ny = np.pi / float(t[1] - t[0])
