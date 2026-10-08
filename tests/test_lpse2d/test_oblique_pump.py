@@ -113,10 +113,38 @@ def test_fd_injector_refuses_an_oblique_pump():
         _finish(cfg)
 
 
-def test_translator_maps_the_test_010_beam_direction():
+# the beam lines of LPSE's test_010 deck (examples/testRuns/test_010/laser_include.txt) and the
+# main-deck keys the translator needs, checked in so the test runs without an LPSE checkout
+TEST_010_DECK = """grid.sizes = 20 10;
+grid.nodes = 360 180;
+laser.enable = true;
+laser.solver = spectral;
+lw.enable = true;
+lw.spectral.dt = 0.002;
+simulation.time.end = 3;
+#include "laser_include.txt"
+"""
+TEST_010_LASER_INCLUDE = """laser.nBeams= 1;
+laser.wavelength= 0.351;
+laser.1.intensity = 1.5e+15;
+laser.1.phase = 300.26;
+laser.1.polarization = 0;
+laser.1.frequencyShift = 0;
+laser.1.group = 0;
+laser.1.direction = 0.95783 0.28735 0;
+laser.1.evolution.source = min.x;
+laser.1.evolution.offset = 0 0 0;
+laser.1.evolution.width = 0;
+laser.1.evolution.sgOrder = 0;
+"""
+
+
+def test_translator_maps_the_test_010_beam_direction(tmp_path):
     from adept._lpse2d.lpse_deck import parse_parms, translate_parms
 
-    deck = "/home/phil/Desktop/Ergodic-projects/original-lpse/examples/testRuns/test_010/lpse.parms"
+    (tmp_path / "laser_include.txt").write_text(TEST_010_LASER_INCLUDE)
+    deck = tmp_path / "lpse.parms"
+    deck.write_text(TEST_010_DECK)
     cfg, report = translate_parms(parse_parms(deck), experiment="x", run="test_010")
     assert abs(cfg["drivers"]["E0"]["angle"] - np.degrees(np.arctan2(0.28735, 0.95783))) < 1e-3
     assert not any("direction" in u for u in report["unsupported"])
