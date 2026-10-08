@@ -39,7 +39,10 @@ def log_params(cfg):
     flattened_dict = {k: str(v) if isinstance(v, Quantity) else v for k, v in flattened_dict.items()}
 
     if num_entries > 100:
-        num_batches = num_entries % 100
+        # MLflow caps log_params at 100 per call. Ceil-divide: the old
+        # `num_entries % 100` dropped params whenever the remainder was smaller
+        # than the number of batches needed (e.g. 300 entries logged none).
+        num_batches = -(-num_entries // 100)
         fl_list = list(flattened_dict.items())
         for i in range(num_batches):
             end_ind = min((i + 1) * 100, num_entries)
