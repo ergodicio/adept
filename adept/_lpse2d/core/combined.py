@@ -54,10 +54,12 @@ from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
-from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum
+from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum, noise_step
+from adept._lpse2d.core.kap import KapPhases
+from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.pulse import PulseShape
 from adept._lpse2d.core.raman import light_absorption_rates, light_source_mask
-from adept._lpse2d.core.spectral_light import gaussian_injector_profile
+from adept._lpse2d.core.spectral_light import SmoothPumpInjector
 from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import dot_conj, fft2c, ifft2c, k_dot, split_k
 
@@ -84,7 +86,7 @@ def potential_from_field(field: Array, kx: Array, ky: Array, one_over_k_sq: Arra
     return 1j * k_dot(fft2c(field), kx, ky) * one_over_k_sq * band
 
 
-class CombinedSolver:
+class CombinedSolver(SmoothPumpInjector):
     """Advance the combined Raman-light + EPW field E1 (and the pump when it is evolved)."""
 
     def __init__(self, cfg: dict):
@@ -192,7 +194,9 @@ class CombinedSolver:
         if self.noise_enabled:
             import jax
 
-            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg, dt=self.dt_l, nu_coll=self.nu_raman))
+            # built for the light sub-step at which add_noise applies it, with the Raman light's rate
+            dt_noise, nu_noise = noise_step(cfg)
+            self.noise_kick = jnp.asarray(noise_kick_spectrum(cfg, dt=dt_noise, nu_coll=nu_noise))
             seed = source_cfg.get("noise_seed")
             self.noise_key = jax.random.PRNGKey(int(seed) if seed is not None else np.random.randint(2**20))
 
@@ -208,9 +212,6 @@ class CombinedSolver:
             pump = cfg["drivers"]["E0"]["derived"]
             x_inject = grid["xmin"] + pump["offset"]
             self.i0 = int(np.argmin(np.abs(np.asarray(self.x) - x_inject)))
-            # pump polarization (drivers.E0.polarization): cos(psi) to y, sin(psi) to z (plan 2 F.2)
-            psi = float(pump.get("polarization", 0.0))
-            self.pump_weights = (float(np.cos(psi)), float(np.sin(psi)))
             if bool(np.any(cfg["drivers"]["E0"]["derived"].get("beam_leftward", [False]))):
                 raise ValueError("the combined solver's pump injector launches from the x-min face only")
             self.n_src = float(self.background_density[self.i0, 0])
@@ -219,11 +220,17 @@ class CombinedSolver:
             self.pump_turn_on_time = pump["turn_on_time"]
             # LPSE laser.pulseShape: the injected source carries sqrt(shape) (core/pulse.py)
             self.pulse = PulseShape(pump)
-            k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
-            width = pump.get("injector_width", np.pi / k0_inject)
-            self.pump_profile = jnp.asarray(
-                gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
+            # LPSE KAP bandwidth (core/kap.py), as CoupledLight
+            self.kap = KapPhases(
+                float(pump.get("kap_bandwidth", 0.0) or 0.0),
+                self.w0,
+                len(np.atleast_1d(pump.get("beam_fraction", [1.0]))),
+                cfg["grid"]["tmax"],
+                int(pump.get("kap_seed", 0) or 0),
             )
+            # the same injector as the spectral light solver (beams, angles, polarization,
+            # profile, KAP, pulse shape)
+            self.init_pump_injector(cfg)
 
     # ------------------------------------------------------------- helpers --
 
@@ -269,26 +276,8 @@ class CombinedSolver:
         e_k = e_k.at[..., 1].add(-1j * self.ky[None, :] * phi_kick)
         return ifft2c(e_k)
 
-    def calc_pump_source(self, t: float, pump_args: dict) -> Array:
-        t_env = get_envelope(
-            pump_args["tr"],
-            pump_args["tr"],
-            pump_args["tc"] - pump_args["tw"] / 2,
-            pump_args["tc"] + pump_args["tw"] / 2,
-            t,
-        )
-        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
-        delta_omega = pump_args["delta_omega"]
-        intensities = pump_args["intensities"]
-        phases = pump_args["phases"]
-        k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.n_src)
-        v_g = self.c**2 * k0 / self.w0
-        amp = self.E0_source * jnp.sqrt(intensities) / (1.0 - self.n_src) ** 0.25 * t_env * turn_on
-        amp = amp * self.pulse.field_factor(t)
-        color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)
-        carrier = jnp.exp(1j * k0[:, None] * (self.x[None, :] - self.x[self.i0]))
-        source = (amp * v_g[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[:, :, None]
-        return jnp.sum(source, axis=0)
+    # the pump's time factor (envelope, turn-on, pulse shape), as the light solvers
+    pump_time_factor = CoupledLight.pump_time_factor
 
     def propagate_pump(self, E0: Array) -> Array:
         longitudinal_k, transverse_k = longitudinal_transverse(E0, self.kx, self.ky, self.one_over_k_sq)
@@ -342,13 +331,7 @@ class CombinedSolver:
                     E0 = E0 * self.absorb0[..., None]
                 if self.sources_on:
                     E0 = E0 + self.dt_l * _masked(self.unified_depletion(t_i, E1), self.source_mask0)
-                pump_source = self.dt_l * self.calc_pump_source(t_i, pump_args)
-                for c, w in zip((1, 2), self.pump_weights, strict=True):
-                    if w == 0.0:
-                        continue
-                    if c >= E0.shape[-1]:
-                        raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
-                    E0 = E0.at[..., c].add(w * pump_source)
+                E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)
             if self.sources_on:
                 E1 = E1 + self.dt_l * _masked(self.unified_source(t_i, E0, E1), self.source_mask1)
             # 3. k-space propagation with the L/T projector

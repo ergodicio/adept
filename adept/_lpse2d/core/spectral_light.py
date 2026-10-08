@@ -166,21 +166,17 @@ class SpectralRamanLight(RamanLight):
         return lax.fori_loop(0, self.n_sub, substep, E1)
 
 
-class SpectralCoupledLight(CoupledLight):
-    """Evolved pump E0 and Raman light E1, spectral propagators, exact SRS exchange."""
+class SmoothPumpInjector:
+    """LPSE's smooth pump injector for an evolved pump: oblique, multiple and leftward beams
+    (transverse wavenumber snapped to the y grid unless ``terms.light.snap_beam_ky: false``),
+    fractions, phases, frequency offsets, per-beam polarization, the transverse super-Gaussian
+    profile and Kubo-Anderson bandwidth, summed over colors, with the pump's time factor
+    (envelope, turn-on, pulse shape). Shared by ``SpectralCoupledLight`` and the combined solver
+    (``combined.CombinedSolver``), which inject the same pump; the host sets ``w0, c, x, dx, i0,
+    n_src, E0_source, pump_turn_on_time, pulse, kap`` and ``pump_time_factor`` before calling
+    ``init_pump_injector``."""
 
-    def __init__(self, cfg: dict):
-        super().__init__(cfg)
-        grid = cfg["grid"]
-        self.kx_arr = jnp.asarray(grid["kx"])
-        self.ky_arr = jnp.asarray(grid["ky"])
-        k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
-        self.one_over_k_sq = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
-        self.light_band = jnp.asarray(SpectralRamanLight._light_band(cfg, k_sq))
-        self.propagator0 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w0) * jnp.asarray(k_sq)) * self.light_band
-        self.propagator1 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w1) * jnp.asarray(k_sq)) * self.light_band
-        self.detune0 = jnp.exp(self.dt_l * self.linear_coeff0)
-        self.detune1 = jnp.exp(self.dt_l * self.linear_coeff)
+    def init_pump_injector(self, cfg: dict):
         pump = cfg["drivers"]["E0"]["derived"]
         # beams with |angle| > 90 deg are launched leftward from the x-max face (plan 2 L.4a):
         # their injector plane sits at xmax - offset, with that plane's density
@@ -250,16 +246,6 @@ class SpectralCoupledLight(CoupledLight):
         self.pump_profile_max = jnp.asarray(
             gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0_max]), width_max, self.dx)
         )
-        if self.seed_enabled:
-            seed = cfg["drivers"]["E1"]["derived"]
-            width1 = seed.get("injector_width", np.pi / self.k1_inject)
-            self.seed_profile = jnp.asarray(
-                gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i1]), width1, self.dx)
-            )
-
-    # the smooth injectors
-    calc_seed_source = SpectralRamanLight.calc_seed_source
-    absorption_factor = SpectralRamanLight.absorption_factor
 
     def calc_pump_source(self, t: float, pump_args: dict) -> Array:
         """Smooth injector for the (optionally oblique) pump beams, summed over colors: the
@@ -306,6 +292,34 @@ class SpectralCoupledLight(CoupledLight):
         """Kubo-Anderson process (LPSE laser.N.bandwidth.KAP.frequency): random dwell times per beam,
         2 Exp(1) / (bandwidth w0), each followed by a new uniform phase (core/kap.py)."""
         return self.kap.phase(t, beam)
+
+
+class SpectralCoupledLight(SmoothPumpInjector, CoupledLight):
+    """Evolved pump E0 and Raman light E1, spectral propagators, exact SRS exchange."""
+
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        grid = cfg["grid"]
+        self.kx_arr = jnp.asarray(grid["kx"])
+        self.ky_arr = jnp.asarray(grid["ky"])
+        k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
+        self.one_over_k_sq = jnp.asarray(np.where(k_sq > 0, 1.0 / np.where(k_sq > 0, k_sq, 1.0), 0.0))
+        self.light_band = jnp.asarray(SpectralRamanLight._light_band(cfg, k_sq))
+        self.propagator0 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w0) * jnp.asarray(k_sq)) * self.light_band
+        self.propagator1 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w1) * jnp.asarray(k_sq)) * self.light_band
+        self.detune0 = jnp.exp(self.dt_l * self.linear_coeff0)
+        self.detune1 = jnp.exp(self.dt_l * self.linear_coeff)
+        self.init_pump_injector(cfg)
+        if self.seed_enabled:
+            seed = cfg["drivers"]["E1"]["derived"]
+            width1 = seed.get("injector_width", np.pi / self.k1_inject)
+            self.seed_profile = jnp.asarray(
+                gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i1]), width1, self.dx)
+            )
+
+    # the smooth injectors
+    calc_seed_source = SpectralRamanLight.calc_seed_source
+    absorption_factor = SpectralRamanLight.absorption_factor
 
     def __call__(self, t, E0, E1, phi_k, pump_args, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None

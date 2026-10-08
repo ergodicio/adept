@@ -166,16 +166,40 @@ def analytic_landau_rate(cfg: dict) -> Array:
     return rate * multiplier
 
 
+def noise_step(cfg: dict) -> tuple[float, float]:
+    """
+    The time step at which the active EPW solver applies the noise kick, and the collisional
+    rate that damps the noised field over it: the EPW step and ``terms.epw.damping.collisions``
+    for the separate solver; the light sub-step ``dt / grid.light_substeps`` and the Raman
+    light's absorption (``terms.light.raman_absorption``, which damps the combined field) for the
+    combined solver, which adds the kick once per light step (LPSE
+    ``LwSolver::addNoise_combinedSolver_spectral(dt)``, ``ZakharovSolver::addNoiseToPotential_fft``).
+    ``noise_kick_spectrum`` and ``diagnostics.expected_noise_energy`` both take it, so the solver
+    and the growth-fit noise floor stay consistent.
+    """
+    grid = cfg["grid"]
+    nu = float(cfg["units"]["derived"].get("nu_coll", 0.0))
+    if cfg["terms"]["epw"].get("solver", "separate") == "combined":
+        from adept._lpse2d.core.raman import light_absorption_rates
+
+        _, raman_rate = light_absorption_rates(cfg)
+        return grid["dt"] / int(grid.get("light_substeps", 1)), 0.0 if raman_rate is None else float(raman_rate)
+    return grid["dt"], nu
+
+
 def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | None = None) -> np.ndarray:
     """
     Per-step, per-mode EPW noise kick amplitude ``D_k`` (k-space potential units), for both
     noise models. ``get_noise`` multiplies it by a random phase every step; the diagnostics
     (``diagnostics.expected_noise_energy``) integrate the same array, so the two never drift.
 
-    ``noise_model: flat`` (default; the MATLAB source): ``D_k = dt * noise_amplitude`` on
-    every retained mode.
+    ``noise_model: flat`` (the MATLAB source): ``D_k = dt * noise_amplitude`` on
+    every retained mode at the EPW step. A solver that kicks more often (the combined
+    solver, every light sub-step ``dt_l``) gets ``noise_amplitude * sqrt(dt * dt_l)``, which
+    keeps the injected variance per unit time -- and so the seed level -- independent of the
+    sub-step count.
 
-    ``noise_model: thermal`` (LPSE ``lw.noise``, ZakharovSolver::addNoiseToPotential_fft):
+    ``noise_model: thermal`` (default; LPSE ``lw.noise``, ZakharovSolver::addNoiseToPotential_fft):
     a fluctuation-dissipation source balanced against the *frozen* analytic Landau +
     collisional rate ``gamma_k``:
 
@@ -201,9 +225,10 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
     Modes with no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere
     is refused, as in LPSE ("Cannot add LW noise without damping").
 
-    ``dt`` and ``nu_coll`` default to the EPW step and ``terms.epw.damping.collisions``; the
-    combined solver passes its light sub-step and the Raman light's rate, as LPSE's
-    ``addNoise_combinedSolver_spectral(dt)`` / ``addNoiseToPotential_fft`` do in combined mode.
+    ``dt`` and ``nu_coll`` default to the EPW step and ``terms.epw.damping.collisions``; pass
+    ``noise_step(cfg)`` for the step the active solver actually uses (the combined solver: its
+    light sub-step and the Raman light's rate, as LPSE's ``addNoise_combinedSolver_spectral(dt)``
+    / ``addNoiseToPotential_fft`` do in combined mode).
     """
     grid = cfg["grid"]
     source = cfg["terms"]["epw"]["source"]
@@ -222,7 +247,7 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
     amplitude = float(source.get("noise_amplitude", 1e-10))
     dt = grid["dt"] if dt is None else float(dt)
     if model == "flat":
-        return dt * amplitude * band
+        return amplitude * np.sqrt(grid["dt"] * dt) * band
     if model != "thermal":
         raise ValueError(f"terms.epw.source.noise_model must be 'flat' or 'thermal', got {model!r}")
 

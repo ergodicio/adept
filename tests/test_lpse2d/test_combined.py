@@ -486,3 +486,68 @@ def test_combined_propagator_keeps_the_k0_mode():
     pumped = CombinedSolver(_finish(raw))
     assert complex(pumped.prop0[0, 0]) == 1.0
     assert complex(pumped.prop_T[0, 0]) == 1.0
+
+
+# ---- noise kick at the light sub-step (PR #372 review, merged) ------------------------------------
+# Tolerances fixed before the runs: the steady state is a mean over ~700 retained modes x 150
+# correlated samples, so the n_sub-independence ratio and the agreement with the analytic random-walk
+# level of diagnostics.expected_noise_energy are set at 15 %. The flat model's kick is
+# amplitude * sqrt(dt_EPW * dt_l), so its seed level does not depend on n_sub either.
+
+
+def _noise_cfg(n_sub, model):
+    raw = _combined_raw(raman_absorption=20.0, absorption=False)
+    # n = n_env: the combined field's damping exp(-nu_R dt (n/n_env)^2) is then the uniform rate
+    # the noise kick is balanced against
+    raw["density"] = {"basis": "uniform", "val": 0.25}
+    raw["grid"]["light_substeps"] = n_sub
+    raw["terms"]["epw"]["source"].update({"noise": True, "noise_model": model, "noise_amplitude": 1.0, "noise_seed": 3})
+    return _finish(raw)
+
+
+def _combined_noise_steady_state(cfg, n_steps=450, n_warm=300):
+    """Mean of sum_k k^2 |phi_k|^2 over the last n_steps - n_warm EPW steps from a quiet start."""
+    import jax
+
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    solver = CombinedSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    y = {"E0": jnp.zeros((nx, ny, 3), complex), "E1": jnp.zeros((nx, ny, 3), complex)}
+    step = jax.jit(lambda t, y: solver(t, y, {}, E0_fn=lambda t: y["E0"]))
+    samples = []
+    for i in range(n_steps):
+        E0, E1, phi_k = step(i * cfg["grid"]["dt"], y)
+        y = {"E0": E0, "E1": E1}
+        if i >= n_warm:
+            samples.append(float(jnp.sum(solver.k_sq * jnp.abs(phi_k) ** 2)))
+    return solver, np.mean(samples)
+
+
+def test_combined_flat_noise_steady_state_is_independent_of_the_light_substeps():
+    levels = {}
+    for n_sub in (2, 8):
+        solver, levels[n_sub] = _combined_noise_steady_state(_noise_cfg(n_sub, "flat"))
+        assert solver.n_sub == n_sub
+    assert levels[8] / levels[2] == pytest.approx(1.0, rel=0.15)
+
+
+@pytest.mark.parametrize("model", ["thermal", "flat"])
+def test_combined_noise_matches_the_growth_fit_floor(model):
+    """diagnostics.expected_noise_energy integrates the kick the combined solver applies (at its
+    light sub-step, with the Raman rate), so the late-time floor equals the simulated steady state."""
+    from adept._lpse2d.core.epw import noise_kick_spectrum, noise_step
+    from adept._lpse2d.diagnostics import expected_noise_energy
+
+    cfg = _noise_cfg(4, model)
+    dt_noise, nu = noise_step(cfg)
+    assert dt_noise == pytest.approx(cfg["grid"]["dt"] / 4, rel=1e-12)
+    assert nu == pytest.approx(20.0, rel=1e-12)
+    solver, level = _combined_noise_steady_state(cfg)
+    np.testing.assert_allclose(
+        np.asarray(solver.noise_kick), noise_kick_spectrum(cfg, dt=dt_noise, nu_coll=nu), rtol=1e-12, atol=0
+    )
+    derived = cfg["units"]["derived"]
+    grid = cfg["grid"]
+    prefactor = 0.25 * grid["dx"] * derived["x_norm"] * derived["e_norm"] ** 2 / (grid["nx"] * grid["ny"] ** 2)
+    assert prefactor * level / expected_noise_energy(cfg, 1.0e3) == pytest.approx(1.0, rel=0.15)

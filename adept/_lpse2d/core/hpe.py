@@ -443,9 +443,11 @@ class HybridParticleEvolution:
         u_half = u + 0.5 * self.dtp * acceleration
         gamma_rel = jnp.sqrt(1.0 + (u_half / self.c) ** 2)
         x = x + self.dtp * u_half / gamma_rel
-        if self.periodic_x:
-            x = jnp.mod(x - self.xmin, self.Lx) + self.xmin  # sub-step gather needs in-box positions
-        acceleration = self._accel(x, ex_env, t_i + self.dtp)
+        # the gather needs in-box positions; the carried x stays unwrapped so that
+        # _apply_boundaries still sees (and counts / thermalizes) a periodic crossing at the
+        # end of the step, as the 2-D push does
+        x_in = jnp.mod(x - self.xmin, self.Lx) + self.xmin if self.periodic_x else x
+        acceleration = self._accel(x_in, ex_env, t_i + self.dtp)
         u = u_half + 0.5 * self.dtp * acceleration
         return x, u, acceleration
 

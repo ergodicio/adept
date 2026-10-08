@@ -165,3 +165,30 @@ def test_translated_density_sits_on_lpse_nodes():
     x_nodes = np.arange(201) * 0.1 - 10.0
     want = np.clip(0.2 + (0.28 - 0.2) * (x_nodes + 8.0) / 14.0, 0.2, 0.28)  # LPSE clips to [N_min, N_max]
     np.testing.assert_allclose(n, want, rtol=1e-12)
+
+
+def _write_lpse_frame(path, arr):
+    """One real frame in LPSE's binary field format: C order (Nx, Ny), y fastest, single
+    precision (the layout lpse_deck.read_frames verified on runs/test_025)."""
+    nx, ny = arr.shape
+    header = f"# BeginHeaderSegment; Nx = {nx}, Ny = {ny}, Nz = 1, FileType = real, time = 0; # EndHeaderSegment;\n"
+    data = np.ascontiguousarray(np.asarray(arr, dtype="<f4")).tobytes()
+    path.write_bytes(header.encode() + b"# BeginDataSegment;\n" + data)
+
+
+def test_lpse_binary_density_file_keeps_its_orientation(tmp_path):
+    """read_frames returns LPSE files as (Nx, Ny); the loader must not transpose them again
+    (a rectangular file was rejected, a square one rotated x into y). The grid here is 200 x 8;
+    float32 storage, so rtol 1e-6 (fixed before the run)."""
+    from adept._lpse2d.lpse_deck import read_frames
+
+    cfg, lin = _cfg({"basis": "lpse-linear", **BASE})
+    y = np.asarray(cfg["grid"]["y"])
+    profile = lin * (1.0 + 0.05 * np.cos(2.0 * np.pi * (y - y[0]) / (y[-1] - y[0]))[None, :])
+    assert profile.shape[0] != profile.shape[1]
+    path = tmp_path / "density.bin"
+    _write_lpse_frame(path, profile)
+    np.testing.assert_allclose(np.real(read_frames(path)[-1][1]), profile, rtol=1e-6)
+    _, loaded = _cfg({"basis": "lpse-file", "file": str(path)})
+    assert loaded.shape == profile.shape
+    np.testing.assert_allclose(loaded, profile, rtol=1e-6)
