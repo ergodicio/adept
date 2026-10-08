@@ -25,6 +25,7 @@ from .reference import (
     download_run_artifacts,
     find_reference_run,
     lpse_root,
+    metrics_path,
     reference_cache_dir,
     reference_run_dir,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "log_reference",
     "lpse_root",
     "merge_overrides",
+    "metrics_path",
     "parse_windows",
     "read_flux",
     "reference_cache_dir",

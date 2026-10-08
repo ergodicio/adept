@@ -283,7 +283,8 @@ def run_deck(
     return DeckRun(deck, cfg, report, run_id, ppo["series"], ppo["x"], ppo["metrics"], out_dir)
 
 
-REFERENCE_FILES = ("data/lpse.metrics", "lpse.parms", "laser_include.txt")
+# besides lpse.metrics (resolved in either layout by reference.metrics_path)
+REFERENCE_FILES = ("lpse.parms", "laser_include.txt")
 
 
 def log_reference(
@@ -304,6 +305,9 @@ def log_reference(
             mlflow.log_artifacts(str(lpse_dir), artifact_path="lpse_reference")
             mlflow.set_tag("lpse_reference_complete", "true")
         else:
+            from adept._lpse2d.parity.reference import metrics_path
+
+            mlflow.log_artifact(str(metrics_path(lpse_dir)), artifact_path="lpse_reference")
             for rel in REFERENCE_FILES:
                 path = lpse_dir / rel
                 if path.is_file():

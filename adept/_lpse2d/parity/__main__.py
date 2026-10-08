@@ -79,7 +79,7 @@ def cmd_run(args) -> int:
     if lpse_dir is None:
         print(f"no LPSE reference run for {deck}; comparison skipped")
         return 0
-    metrics = harness.compare(result.series, lpse_dir / "data" / "lpse.metrics", _windows_for(deck, args.windows))
+    metrics = harness.compare(result.series, reference.metrics_path(lpse_dir), _windows_for(deck, args.windows))
     _print_metrics(metrics)
     if result.run_id and not args.no_log:
         harness.log_reference(result.run_id, lpse_dir, metrics, deck=deck, full=args.full)
@@ -99,7 +99,7 @@ def cmd_compare(args) -> int:
 
 def cmd_log(args) -> int:
     lpse_dir = Path(args.lpse_dir)
-    metrics = harness.compare(args.series, lpse_dir / "data" / "lpse.metrics", harness.parse_windows(args.windows))
+    metrics = harness.compare(args.series, reference.metrics_path(lpse_dir), harness.parse_windows(args.windows))
     _print_metrics(metrics)
     harness.log_reference(args.run_id, lpse_dir, metrics, deck=args.deck, full=args.full)
     return 0
@@ -181,7 +181,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("log", help="attach an LPSE reference + comparison metrics to an existing adept run")
     p.add_argument("run_id")
     p.add_argument("series")
-    p.add_argument("lpse_dir", help="reference run directory (contains lpse.parms and data/)")
+    p.add_argument("lpse_dir", help="reference run directory (data/lpse.metrics, or a flattened lpse.metrics)")
     p.add_argument("--windows", required=True)
     p.add_argument("--deck")
     p.add_argument("--full", action="store_true")

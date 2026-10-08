@@ -130,6 +130,60 @@ def test_reference_run_dir_without_download(monkeypatch, tmp_path):
     assert reference_run_dir("test_025", download=False) == tmp_path / "runs" / "test_025"
 
 
+def _write_metrics(path, columns):
+    """An LPSE ``lpse.metrics`` table (``# (i) name`` headers, whitespace-separated rows)."""
+    names = list(columns)
+    lines = [f"# ({i + 1}) {name}" for i, name in enumerate(names)]
+    rows = np.column_stack([np.asarray(columns[n]) for n in names])
+    lines += [" ".join(f"{v:.12e}" for v in row) for row in rows]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_metrics_path_resolves_both_reference_layouts(tmp_path):
+    from adept._lpse2d.parity import metrics_path
+
+    tree, flat = tmp_path / "tree", tmp_path / "flat"
+    (tree / "data").mkdir(parents=True)
+    flat.mkdir()
+    (tree / "data" / "lpse.metrics").write_text("# (1) time\n0.0\n")
+    (flat / "lpse.metrics").write_text("# (1) time\n0.0\n")
+    assert metrics_path(tree) == tree / "data" / "lpse.metrics"
+    assert metrics_path(flat) == flat / "lpse.metrics"
+    with pytest.raises(FileNotFoundError, match=r"lpse\.metrics"):
+        metrics_path(tmp_path / "empty")
+
+
+def test_run_command_compares_against_a_flattened_cached_reference(monkeypatch, tmp_path, capsys):
+    """PR #378 review: log_reference(full=False) uploads lpse.metrics flattened under
+    lpse_reference/, download_reference keeps that layout and the resolver accepts it; the
+    ``run`` command must then compare against it (it read data/lpse.metrics only and raised
+    FileNotFoundError after the simulation). run_deck is stubbed with a synthetic series."""
+    from adept._lpse2d.parity import __main__ as cli
+    from adept._lpse2d.parity import harness
+    from adept._lpse2d.parity.harness import DeckRun
+
+    series, lpse = _synthetic()
+    monkeypatch.setenv("LPSE_ROOT", str(tmp_path / "no-lpse-checkout"))
+    monkeypatch.setenv("LPSE_REFERENCE_CACHE", str(tmp_path / "cache"))
+    cached = tmp_path / "cache" / "flat_deck"
+    cached.mkdir(parents=True)
+    _write_metrics(cached / "lpse.metrics", lpse)  # the flattened lpse_reference/ layout
+    deck_dir = tmp_path / "flat_deck"
+    deck_dir.mkdir()
+    (deck_dir / "lpse.parms").write_text("# stub deck\n")
+
+    def fake_run_deck(parms, overrides, out_dir=None, run=None, experiment=None):
+        return DeckRun("flat_deck", {}, {"unsupported": []}, None, series, None, {}, None)
+
+    monkeypatch.setattr(harness, "run_deck", fake_run_deck)
+    rc = cli.main(["run", str(deck_dir / "lpse.parms"), "--windows", "0.5-1.0", "--no-download", "--no-log"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "comparison skipped" not in out
+    ratio = float(out.split("epw_energy_growth_ratio_0.5_1ps:")[1].split()[0])
+    assert ratio == pytest.approx(3.0 / 2.5, rel=1e-5)
+
+
 RUN_036 = reference_run_dir("test_036", download=False)
 
 

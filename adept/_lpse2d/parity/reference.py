@@ -65,8 +65,23 @@ def reference_cache_dir() -> Path:
     return Path(os.environ.get("LPSE_REFERENCE_CACHE", Path.home() / ".cache" / "adept" / "lpse-reference"))
 
 
+METRICS_LAYOUTS = ("data/lpse.metrics", "lpse.metrics")
+
+
+def metrics_path(run_dir: str | Path) -> Path:
+    """``lpse.metrics`` of a reference run in either supported layout: an LPSE run tree
+    (``<dir>/data/lpse.metrics``) or the flattened ``lpse_reference/`` artifact tree that
+    ``harness.log_reference`` uploads by default and ``download_reference`` preserves
+    (``<dir>/lpse.metrics``). Every consumer resolves the file through here."""
+    run_dir = Path(run_dir)
+    for rel in METRICS_LAYOUTS:
+        if (run_dir / rel).is_file():
+            return run_dir / rel
+    raise FileNotFoundError(f"no lpse.metrics under {run_dir} (looked for {', '.join(METRICS_LAYOUTS)})")
+
+
 def _has_reference_outputs(run_dir: Path) -> bool:
-    return (run_dir / "data" / "lpse.metrics").is_file() or (run_dir / "lpse.metrics").is_file()
+    return any((Path(run_dir) / rel).is_file() for rel in METRICS_LAYOUTS)
 
 
 def reference_run_dir(
