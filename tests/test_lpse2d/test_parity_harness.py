@@ -216,13 +216,24 @@ def test_compare_on_the_test_006_reference_against_itself():
     assert m["epw_energy_growth_lpse_2.5_3.5ps"] == pytest.approx(5.707053668690972, rel=1e-9)
 
 
+BASELINE_RUN = "bf56ee6c3072421d80bdcff0080a5c84"
+
+
 @pytest.mark.skipif(not os.environ.get("MLFLOW_TRACKING_URI"), reason="no MLflow tracking environment")
 def test_verify_reproduces_the_stored_baseline_metrics(tmp_path):
     """``verify`` on the test_006 cross-check run (bf56ee6c…): the ratio metrics logged on
-    2026-09-14 by ``log_lpse_reference.py`` are reproduced from the run's own artifacts."""
+    2026-09-14 by ``log_lpse_reference.py`` are reproduced from the run's own artifacts. The
+    run lives on the team tracking server; any other tracking store (CI's) skips."""
+    from mlflow.exceptions import MlflowException
+
+    from adept import patched_mlflow as mlflow
     from adept._lpse2d.parity.__main__ import main
 
-    rc = main(["verify", "bf56ee6c3072421d80bdcff0080a5c84", "--dest", str(tmp_path), "--rtol", "1e-6"])
+    try:
+        mlflow.MlflowClient().get_run(BASELINE_RUN)
+    except MlflowException as exc:
+        pytest.skip(f"baseline run {BASELINE_RUN} is not on this tracking server: {exc}")
+    rc = main(["verify", BASELINE_RUN, "--dest", str(tmp_path), "--rtol", "1e-6"])
     assert rc == 0
     assert (Path(tmp_path) / "binary" / "series.xr").is_file()
 
