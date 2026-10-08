@@ -1,9 +1,10 @@
 import numpy as np
-from jax import Array
+from jax import Array, lax
 from jax import numpy as jnp
 
 from adept._base_ import get_envelope
 from adept._lpse2d.core import epw, laser
+from adept._lpse2d.core.epw import LEDGER_CHANNELS, LEDGER_KEY
 from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.raman import RamanLight
 
@@ -25,15 +26,36 @@ class SplitStep:
         self.wp0 = cfg["units"]["derived"]["wp0"]
         self.epw = epw.SpectralEPWSolver(cfg)
         self.light = laser.Light(cfg)
+        # terms.epw.solver: "separate" (the four envelope equations, MATLAB / LPSE spectral)
+        # or "combined" (LPSE lw.solver = combined: one wp0-enveloped field for Raman light
+        # and EPW, required by LPSE whenever TPD and SRS are both on)
+        self.epw_solver = str(cfg["terms"]["epw"].get("solver", "separate"))
+        if self.epw_solver == "combined":
+            from adept._lpse2d.core.combined import CombinedSolver
+
+            self.combined = CombinedSolver(cfg)
+        elif self.epw_solver != "separate":
+            raise ValueError(f"terms.epw.solver must be 'separate' or 'combined', got {self.epw_solver!r}")
         # the Raman scattered light is evolved iff the SRS source term is on; with
         # terms.light.pump_depletion the pump is evolved too (one coupled solver)
         self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
         srs_on = cfg["terms"]["epw"]["source"].get("srs", False)
+        # terms.light.solver: the MATLAB staggered finite-difference scheme (fd) or the
+        # LPSE spectral propagator (spectral, spectral_light.py)
+        self.light_solver = str(cfg["terms"].get("light", {}).get("solver", "fd"))
+        if self.light_solver == "spectral":
+            from adept._lpse2d.core.spectral_light import SpectralCoupledLight, SpectralRamanLight
+
+            coupled_cls, raman_cls = SpectralCoupledLight, SpectralRamanLight
+        elif self.light_solver == "fd":
+            coupled_cls, raman_cls = CoupledLight, RamanLight
+        else:
+            raise ValueError(f"terms.light.solver must be 'fd' or 'spectral', got {self.light_solver!r}")
         if self.pump_depletion:
-            self.coupled_light = CoupledLight(cfg)
+            self.coupled_light = coupled_cls(cfg)
             self.raman = None
         else:
-            self.raman = RamanLight(cfg) if srs_on else None
+            self.raman = raman_cls(cfg) if srs_on else None
         if cfg["terms"].get("hpe", {}).get("active", False):
             from adept._lpse2d.core.hpe import HybridParticleEvolution
 
@@ -48,6 +70,8 @@ class SplitStep:
             self.iaw = None
         # HPE particle/histogram keys are real and stay out of this list
         self.complex_state_vars = ["E0", "epw", "E1"]
+        # terms.epw.energy_ledger: accumulate the per-operation EPW energy changes in the state
+        self.energy_ledger = bool(cfg["terms"]["epw"].get("energy_ledger", False))
         self.boundary_envelope = cfg["grid"]["absorbing_boundaries"]
         self.one_over_ksq = cfg["grid"]["one_over_ksq"]
         self.zero_mask = cfg["grid"]["zero_mask"]
@@ -124,22 +148,71 @@ class SplitStep:
 
         return y
 
+    def combined_step(self, t, y, driver_args):
+        """One EPW step of the combined solver: pump (prescribed or evolved), the combined
+        Raman + EPW field, and the derived potential."""
+        if self.pump_depletion:
+            E0_fn = None
+        elif "E0" in driver_args:
+
+            def E0_fn(this_t):
+                t_coeff = self.get_envelope_coefficient(driver_args["E0"], this_t)
+                return t_coeff * self.light.laser_update(this_t, y, driver_args["E0"])
+
+        else:
+            E0_now = y["E0"]
+
+            def E0_fn(this_t):
+                return E0_now
+
+        y["E0"], y["E1"], y["epw"] = self.combined(t, y, driver_args, E0_fn)
+        return y
+
     def __call__(self, t, y, args):
         # unpack y into complex128
         new_y = self._unpack_y_(y)
 
+        if self.epw_solver == "combined":
+            new_y = self.combined_step(t, new_y, args["drivers"])
+            if self.iaw is not None:
+                # the IAW ponderomotive drive sees the Raman light (transverse part) and the
+                # EPW (through the derived potential) separately, not the combined field
+                iaw_in = {**new_y, "E1": self.combined.transverse(new_y["E1"])}
+                if self.iaw.stride == 1:
+                    iaw_out = self.iaw(iaw_in, t)
+                else:
+                    step = jnp.round(t / self.dt).astype(int)
+                    iaw_out = lax.cond(step % self.iaw.stride == 0, lambda yy: self.iaw(yy, t), lambda yy: yy, iaw_in)
+                new_y["iaw_density"] = iaw_out["iaw_density"]
+                new_y["iaw_velocity_divergence"] = iaw_out["iaw_velocity_divergence"]
+            if self.hpe is not None:
+                new_y = self.hpe(t, new_y)
+            y, new_y = self._pack_y_(y, new_y)
+            return new_y
+
         # light split step
         new_y = self.light_split_step(t, new_y, args["drivers"])
 
+        driver_delta = 0.0
         if "E2" in args["drivers"]:
+            w_before = self.epw.energy(new_y["epw"])
             new_y["epw"] += jnp.fft.fft2(self.dt * self.epw.driver(args["drivers"]["E2"], t))
-        # epw split step
-        new_y["epw"] = self.epw(t, new_y, args)
+            driver_delta = self.epw.energy(new_y["epw"]) - w_before
+        # epw split step (with the per-operation energy deltas for the ledger)
+        new_y["epw"], deltas = self.epw.advance(t, new_y, args)
+        if self.energy_ledger:
+            deltas = deltas.at[LEDGER_CHANNELS.index("driver")].set(driver_delta)
+            new_y[LEDGER_KEY] = new_y[LEDGER_KEY] + deltas
 
         # ion-acoustic split step: the updated density is seen by the light and EPW
         # detuning terms on the next outer step, matching the MATLAB ordering
         if self.iaw is not None:
-            new_y = self.iaw(new_y)
+            if self.iaw.stride == 1:
+                new_y = self.iaw(new_y, t)
+            else:
+                # LPSE strides the IAW solver: advance by stride*dt every stride-th EPW step
+                step = jnp.round(t / self.dt).astype(int)
+                new_y = lax.cond(step % self.iaw.stride == 0, lambda yy: self.iaw(yy, t), lambda yy: yy, new_y)
 
         # particle push + Landau-damping feedback; the gamma_L written here is the
         # rate the EPW update applies on the next step (one-step lag)

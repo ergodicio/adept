@@ -1,3 +1,4 @@
+import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
@@ -16,7 +17,24 @@ class Light:
         self.Lx = self.nx * self.dx  # box length in x (um)
         self.dE0x = jnp.zeros((cfg["grid"]["nx"], cfg["grid"]["ny"]))
         self.x = cfg["grid"]["x"]
+        self.y = cfg["grid"]["y"]
+        self.dy = cfg["grid"]["dy"]
+        self.dky = 2.0 * jnp.pi / (self.ny * self.dy)
         self.background_density = cfg["grid"]["background_density"]
+        # in-plane angle of incidence from +x (drivers.E0.angle, degrees; LPSE laser.N.direction).
+        # The pump is one k-mode snapped to the grid in kx *and* ky (LPSE makeStaticField),
+        # polarised in the plane perpendicular to the snapped k (LPSE polarization 0)
+        self.angle = float(np.deg2rad(float(cfg["drivers"].get("E0", {}).get("angle", 0.0))))
+        pump = cfg["drivers"].get("E0", {}).get("derived", {})
+        self.beam_angle = np.atleast_1d(np.asarray(pump.get("beam_angle", [self.angle]), dtype=np.float64))
+        self.beam_fraction = np.atleast_1d(np.asarray(pump.get("beam_fraction", [1.0]), dtype=np.float64))
+        self.beam_phase = np.atleast_1d(np.asarray(pump.get("beam_phase", [0.0]), dtype=np.float64))
+        self.beam_delta_omega = np.atleast_1d(np.asarray(pump.get("beam_delta_omega", [0.0]), dtype=np.float64))
+        self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
+        self.kap_seed = int(pump.get("kap_seed", 0) or 0)
+        self.pulse_t = jnp.asarray(pump["pulse_t"]) if "pulse_t" in pump else None
+        self.pulse_amp = jnp.asarray(pump["pulse_amp"]) if "pulse_amp" in pump else None
+        self.multi_beam = len(self.beam_angle) > 1 or float(self.beam_angle[0]) != 0.0
 
         # Speckle state
         self.speckle_profile = None
@@ -63,6 +81,8 @@ class Light:
         # (envelope-density) plasma frequency wp0 and snapped to the nearest FFT grid mode, so the
         # pump is exactly periodic on the grid. The local density swelling is applied as an
         # amplitude factor *after* the transform (not as a spatially-varying phase).
+        if self.multi_beam or self.kap_bandwidth > 0.0 or self.pulse_t is not None:
+            return self._oblique_update(t_ps, light_wave)
         E0y_k = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
             delta_omega = light_wave["delta_omega"][i]
@@ -98,6 +118,48 @@ class Light:
             dE0y = dE0y * (envelope[0, :] / self.speckle_normalization)[None, :]
 
         return jnp.stack([self.dE0x, dE0y], axis=-1)
+
+    def _oblique_update(self, t_ps: float, light_wave: dict) -> jnp.ndarray:
+        """Oblique static pump: each color is the single grid mode nearest to
+        ``k0(delta_omega) (cos a, sin a)`` (LPSE ``makeStaticField`` rounds both components),
+        built in x-space, with the field along ``(-sin a', cos a')`` of the *snapped* direction
+        so that E0 is exactly transverse; the swelling factor is applied as in the normal case."""
+        E0 = jnp.zeros((self.nx, self.ny, 2), dtype=jnp.complex128)
+        xx = self.x[:, None]
+        yy = self.y[None, :]
+        pulse = jnp.interp(t_ps, self.pulse_t, self.pulse_amp) if self.pulse_t is not None else 1.0
+        for b in range(len(self.beam_angle)):
+            angle = float(self.beam_angle[b])
+            dw_b = float(self.beam_delta_omega[b])
+            beam_phase = float(self.beam_phase[b]) + self._kap_phase(t_ps, b)
+            for i in range(len(light_wave["delta_omega"])):
+                delta_omega = light_wave["delta_omega"][i] + dw_b
+                intensity = light_wave["intensities"][i, :] * float(self.beam_fraction[b])  # (ny,)
+                phase = light_wave["phases"][i, :] + beam_phase  # (ny,)
+                k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.wp0**2 / self.w0**2)
+                kx = jnp.round(k0 * jnp.cos(angle) / self.dk) * self.dk
+                ky = jnp.round(k0 * jnp.sin(angle) / self.dky) * self.dky
+                k_snapped = jnp.sqrt(kx**2 + ky**2)
+                pol = jnp.stack([-ky / k_snapped, kx / k_snapped])  # unit vector perpendicular to k
+                amp = (
+                    pulse * self.E0_source * jnp.sqrt(intensity) * jnp.exp(-1j * (delta_omega * self.w0 * t_ps - phase))
+                )
+                carrier = jnp.exp(1j * (kx * xx + ky * yy))
+                E0 = E0 + (amp[None, :] * carrier)[..., None] * pol[None, None, :]
+        wpe = self.w0 * jnp.sqrt(self.background_density)
+        E0 = E0 * ((1.0 - wpe**2 / self.w0**2) ** -0.25)[..., None]
+        if self.speckle_profile is not None:
+            raise NotImplementedError("drivers.E0.speckle with a non-zero drivers.E0.angle is not supported")
+        return E0
+
+    def _kap_phase(self, t_ps, beam: int):
+        """Kubo-Anderson phase jumps (see SpectralCoupledLight.kap_phase)."""
+        if self.kap_bandwidth <= 0.0:
+            return 0.0
+        tau = 2.0 * jnp.pi / (self.kap_bandwidth * self.w0)
+        index = jnp.floor(t_ps / tau)
+        seed = 12.9898 * (index + 1.0) + 78.233 * (beam + 1.0) + 37.719 * self.kap_seed
+        return 2.0 * jnp.pi * jnp.mod(jnp.sin(seed) * 43758.5453, 1.0)
 
     def calc_ey_at_one_point(self, t: float, density: Array, light_wave: dict) -> tuple[jnp.ndarray, jnp.ndarray]:
         """

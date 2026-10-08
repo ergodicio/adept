@@ -3,6 +3,7 @@
 from copy import deepcopy
 
 import numpy as np
+import pytest
 import yaml
 from jax import numpy as jnp
 
@@ -154,15 +155,19 @@ def test_tpd_accepts_box_averaged_2d_particle_feedback():
 
 
 def test_tpd_reciprocal_coupling_conserves_wave_energy():
-    """The new pump term is the exact discrete reciprocal of the existing TPD term.
+    """The pump term is LPSE's (Follett Eqs 53/55): twice the EPW-side TPD coefficient.
 
-    For coupling terms alone, d/dt [|E0|^2 + (wp0/w0)|E_epw|^2] = 0.
-    This locks the coefficient, complex-conjugation convention, and carrier phase.
+    For the coupling terms alone, d/dt [|E0|^2 + (2 wp0/w0)|E_epw|^2] = 0, i.e. the total
+    wave energy at envelope density n_c/4 (two plasmons at wp0 per pump photon at w0).
+    This locks the coefficient, complex-conjugation convention, and carrier phase. The
+    transverse projection is switched off here because the random test pump is not
+    divergence-free; it is checked separately in test_lpse_parity.py.
     """
     from adept._lpse2d.core.epw import SpectralEPWSolver
     from adept._lpse2d.core.light import CoupledLight
 
     cfg = _make_cfg()
+    cfg["terms"]["light"]["tpd_projection"] = False
     pump = CoupledLight(cfg)
     epw = SpectralEPWSolver(cfg)
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
@@ -173,16 +178,21 @@ def test_tpd_reciprocal_coupling_conserves_wave_energy():
     # state in the same band makes the filtered source operator self-adjoint.
     phi_k *= np.asarray(cfg["grid"]["low_pass_filter_grid"] * cfg["grid"]["zero_mask"])
     phi_k = jnp.asarray(phi_k)
-    E0_y = jnp.asarray(rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny)))
+    E0 = jnp.asarray(rng.normal(size=(nx, ny, 2)) + 1j * rng.normal(size=(nx, ny, 2)))
     t = 0.037
 
-    _, ey = epw.phi_k_to_e_fields(phi_k)
-    tpd_epw_rhs = epw.calc_tpd_source(t, phi_k, ey, E0_y)
+    ex, ey = epw.phi_k_to_e_fields(phi_k)
+    tpd_epw_rhs = epw.calc_tpd_source(t, phi_k, ex, ey, E0)
     tpd_pump_rhs = pump.calc_tpd_depletion(t, phi_k)
+    assert tpd_pump_rhs.shape == (nx, ny, 2)
 
-    pump_energy_rate = 2.0 * jnp.real(jnp.mean(jnp.conj(E0_y) * tpd_pump_rhs))
+    pump_energy_rate = 2.0 * jnp.real(jnp.mean(jnp.sum(jnp.conj(E0) * tpd_pump_rhs, axis=-1)))
     epw_energy_rate = 2.0 * jnp.real(jnp.vdot(phi_k * epw.k_sq, tpd_epw_rhs)) / (nx * ny) ** 2
-    total_rate = pump_energy_rate + epw.wp0 / epw.w0 * epw_energy_rate
+    weight = 2.0 * epw.wp0 / epw.w0
+    total_rate = pump_energy_rate + weight * epw_energy_rate
 
-    scale = max(abs(float(pump_energy_rate)), abs(float(epw.wp0 / epw.w0 * epw_energy_rate)))
+    scale = max(abs(float(pump_energy_rate)), abs(float(weight * epw_energy_rate)))
     assert abs(float(total_rate)) < 1.0e-7 * scale
+    # the pump coefficient is exactly twice the EPW source coefficient
+    assert pump.tpd_depletion_coeff0 == pytest.approx(2.0 * epw.tpd_prefactor * epw.w0 / epw.w0)
+    assert pump.tpd_depletion_coeff0 == pytest.approx(1j * epw.e / (2.0 * epw.w0 * epw.me))
