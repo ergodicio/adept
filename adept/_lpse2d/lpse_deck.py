@@ -341,12 +341,19 @@ def translate_parms(
             angle_deg = beam_angle
         if float(g(f"laser.{b}.polarization", "0")) != 0.0:
             report["unsupported"].append(f"laser.{b}.polarization != 0: adept pump is in-plane (p) polarized")
+        # LPSE reads laser.N.phase in degrees (LightSolver.cpp:1716-1717, 1877) and frequencyShift as
+        # dW/W0; a non-zero wavelengthShift (Angstrom) overrides it as -1e-4 dLambda / lambda_um
+        wavelength_shift = float(g(f"laser.{b}.wavelengthShift", "0"))
+        if wavelength_shift != 0.0:
+            delta_omega_b = -(1.0e-4 * wavelength_shift) / wavelength_um
+        else:
+            delta_omega_b = float(g(f"laser.{b}.frequencyShift", "0"))
         beams.append(
             {
                 "intensity": i_b,
                 "angle": beam_angle,
-                "phase": float(g(f"laser.{b}.phase", "0")),
-                "delta_omega": float(g(f"laser.{b}.frequencyShift", "0")),
+                "phase": float(np.deg2rad(float(g(f"laser.{b}.phase", "0")))),
+                "delta_omega": delta_omega_b,
             }
         )
     beam_extras = {}
@@ -368,7 +375,9 @@ def translate_parms(
             "delta_omega_max": 0.0,
             "params": {"phases": {"seed": 42}},
             "angle": angle_deg,
-            **({"beams": beams} if n_beams > 1 else {}),
+            # one beam keeps its list only when it carries a phase or frequency shift (the static,
+            # evolved and combined pumps all honor beams[0]); otherwise the deck stays beam-free
+            **({"beams": beams} if n_beams > 1 or any(b["phase"] or b["delta_omega"] for b in beams) else {}),
             **beam_extras,
             "envelope": {
                 "tw": f"{10 * tmax}ps",

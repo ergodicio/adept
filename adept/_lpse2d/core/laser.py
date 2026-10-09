@@ -83,11 +83,15 @@ class Light:
         # amplitude factor *after* the transform (not as a spatially-varying phase).
         if self.multi_beam or self.kap_bandwidth > 0.0 or self.pulse_t is not None:
             return self._oblique_update(t_ps, light_wave)
+        # one beam at normal incidence: its own frequency shift and phase (drivers.E0.beams[0], LPSE
+        # laser.1.frequencyShift / phase) add to every color's, as in the oblique and evolved paths
+        dw_b = float(self.beam_delta_omega[0])
+        phase_b = float(self.beam_phase[0])
         E0y_k = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
-            delta_omega = light_wave["delta_omega"][i]
+            delta_omega = light_wave["delta_omega"][i] + dw_b
             intensity = light_wave["intensities"][i, :]  # (ny,)
-            phase = light_wave["phases"][i, :]  # (ny,)
+            phase = light_wave["phases"][i, :] + phase_b  # (ny,)
 
             # reference-density wavenumber, snapped to the FFT grid (MATLAB lines 1558-1559)
             k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.wp0**2 / self.w0**2)
