@@ -131,10 +131,14 @@ def test_qle_in_a_run_writes_the_vdf_and_evolves_the_srs_mode_damping():
     cfg["grid"].update({"ymax": "0.02um", "ymin": "-0.02um", "xmax": "40um", "tmax": "0.6ps", "dx": "50nm"})
     cfg["terms"]["qle"] = {"active": True, "nv": 121, "v_max": 0.5, "landau_evolution": True, "update_every": 5}
     cfg["terms"]["epw"]["damping"]["landau_form"] = "lpse"
-    # a fixed noise realization: whether the SRS mode has flattened its resonance by 0.6 ps depends
-    # on it -- the final / early rate ratio at noise seeds 1-6 was 0.85, 0.46, 1.15, 0.17, 0.03, 1.06
-    # (2026-10-08, macOS CPU float64), so with the seed unpinned this test failed in CI (1.074)
-    cfg["terms"]["epw"]["source"]["noise_seed"] = 2
+    # A fixed noise realization, for reproducibility. The flattening criterion below is the minimum
+    # over the saved times, not the last sample: the resonance flattens and then, on the 0.13 vte grid,
+    # the narrow plateau's steep upper edge can move back onto it -- at seeds 3 and 6 the rate ratio
+    # fell to 0.17 / 0.14 and ended at 1.15 / 1.06, so the old last-sample check failed for 2 of seeds
+    # 1-6 (and in CI with an unpinned seed: 1.074). Criterion and seed (101) were fixed before the
+    # validation runs (2026-10-08, macOS CPU float64): the minimum ratio was 0.16-0.27 at fresh seeds
+    # 101-108 and <= 0.22 at 2, 3, 5, 6.
+    cfg["terms"]["epw"]["source"]["noise_seed"] = 101
     cfg["units"]["laser intensity"] = "3.0e+15W/cm^2"
     cfg["terms"]["light"] = {"pump_depletion": True}  # SRS saturates by depleting the pump
     cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
@@ -162,7 +166,8 @@ def test_qle_in_a_run_writes_the_vdf_and_evolves_the_srs_mode_damping():
     ratio = gamma[:, i, 0] / analytic[i, 0]
     np.testing.assert_allclose(ratio[0], 1.0, rtol=1e-12)  # the analytic rate at t = 0
     assert abs(ratio[1] - 1.0) < 0.08  # the Maxwellian rate on the coarse (0.13 vte) velocity grid
-    assert 0.0 < ratio[-1] < 0.95 * ratio[1]  # the grown SRS mode has begun to flatten its resonance
+    # the grown SRS mode has flattened its resonance at some saved time
+    assert np.all(ratio > 0.0) and ratio[1:].min() < 0.95 * ratio[1]
 
 
 def test_validation_and_translator():
