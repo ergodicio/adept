@@ -1,0 +1,12 @@
+# Plan 2 blackbox reference session (2026-09-21), second pass: the light-only decks (LPSE
+# lw.enable = false) that adept refused with "pump_depletion requires srs/tpd" -- now a note --
+# these decks are compared on their own observables (CBET transfer, RA absorbed fraction, pulse
+# position, Raman spectrum) in the investigation note.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: refs-2026-09-21}
+jobs:
+  - {deck: test_001, run: test_001/cbet/1, windows: 1.0-2.0, tags: {milestone: M10}}
+  - {deck: test_003, run: test_003/cbet/1, windows: 1.0-2.0, tags: {milestone: M10}}
+  - {deck: test_011, run: test_011/ra/1, windows: 0.2-0.6, tags: {milestone: M11}}
+  - {deck: test_012, run: test_012/pulse/1, windows: 0.02-0.08, tags: {milestone: M11}}

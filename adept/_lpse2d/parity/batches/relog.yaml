@@ -1,0 +1,19 @@
+# Plan 2 -- the 11-deck ratio table re-logged at the current commit (the 2026-09-14 baseline on
+# MLflow lpse-parity 189060 was logged at plan-1 code). One run per deck, plan-2 naming
+# <deck>/relog/<seed>; DEFAULT_OVERRIDES (test_036 v_min 0.05) apply as on 09-14.
+#   python -m adept._lpse2d.parity batch adept/_lpse2d/parity/batches/relog.yaml --log-dir LOGS --workers 4
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: relog}
+jobs:
+  - {deck: hom_srs_020, run: hom_srs_020/relog/1}
+  - {deck: hom_tpd_023, run: hom_tpd_023/relog/1}
+  - {deck: test_006, run: test_006/relog/1}
+  - {deck: test_025, run: test_025/relog/1}
+  - {deck: test_029, run: test_029/relog/1}
+  - {deck: test_010, run: test_010/relog/1}
+  - {deck: test_032, run: test_032/relog/1}
+  - {deck: test_013, run: test_013/relog/1}
+  - {deck: test_022, run: test_022/relog/1}
+  - {deck: test_036, run: test_036/relog/1}
+  - {deck: test_037, run: test_037/relog/1}
