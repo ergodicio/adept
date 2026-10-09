@@ -473,6 +473,24 @@ class SpectralEPWSolver:
         # state (y["gamma_L"], written by HybridParticleEvolution) instead of the
         # static analytic array
         self.hpe_enabled = bool(cfg["terms"].get("hpe", {}).get("active", False))
+        # HPE with x windows (terms.hpe.n_windows > 1): one rate per window, applied by
+        # windowed_landau_damping; the window square roots and |k| are built once here
+        self.hpe_windows = int((cfg["terms"].get("hpe", {}) or {}).get("n_windows", 1)) if self.hpe_enabled else 1
+        if self.hpe_windows > 1:
+            from adept._lpse2d.core.hpe import window_matrix
+
+            grid = cfg["grid"]
+            weights = window_matrix(
+                np.asarray(grid["x"]),
+                grid["xmin"],
+                grid["xmax"] - grid["xmin"],
+                self.hpe_windows,
+                cfg["terms"]["epw"]["boundary"]["x"] == "periodic",
+            )
+            self.window_sqrt = jnp.asarray(np.sqrt(weights))[:, :, None]  # (n_windows, nx, 1)
+            k_mag = np.sqrt(np.asarray(self.k_sq))
+            self.k_mag = jnp.asarray(k_mag)
+            self.inv_k_mag = jnp.asarray(np.where(k_mag > 0, 1.0 / np.where(k_mag > 0, k_mag, 1.0), 0.0))
         # the quasilinear module writes gamma_L likewise when it evolves the Landau rate
         qle = cfg["terms"].get("qle", {}) or {}
         self.qle_rate_enabled = bool(qle.get("active", False)) and bool(qle.get("landau_evolution", False))
@@ -683,6 +701,23 @@ class SpectralEPWSolver:
         """The same measure evaluated on the real-space fields."""
         return (self.nx * self.ny) * jnp.sum(jnp.abs(ex) ** 2 + jnp.abs(ey) ** 2)
 
+    def windowed_landau_damping(self, phi_k: Array, gamma_windows: Array) -> Array:
+        """Landau damping with one rate per x window (HPE ``n_windows > 1``): on the energy
+        field ``psi = |k| phi``,
+
+            psi <- sum_j sqrt(w_j) IFFT[ exp(-gamma_j(k) dt) FFT(sqrt(w_j) psi) ],
+
+        with ``w_j`` the cos^2 partition of unity of ``hpe.window_matrix``. By Cauchy-Schwarz
+        this never raises the EPW energy ``sum_k k^2 |phi_k|^2`` when every ``gamma_j >= 0``,
+        and it is the plain per-mode multiply when all windows share one k-independent rate. A
+        window resolves k only to ~ 1 / its width, so the rate a wave feels is its window's
+        gamma_j(k) smoothed over that scale. The k = 0 mode is left to the caller."""
+        psi_x = jnp.fft.ifft2(self.k_mag * phi_k)
+        chunks = jnp.fft.fft2(self.window_sqrt * psi_x[None], axes=(1, 2))
+        chunks = chunks * jnp.exp(-gamma_windows * self.dt)
+        psi_k = jnp.fft.fft2(jnp.sum(self.window_sqrt * jnp.fft.ifft2(chunks, axes=(1, 2)), axis=0))
+        return jnp.where(self.k_mag > 0, psi_k * self.inv_k_mag, phi_k)
+
     def __call__(self, t: float, y, args) -> Array:
         """Advance EPW by one timestep; see ``advance``."""
         return self.advance(t, y, args)[0]
@@ -737,14 +772,17 @@ class SpectralEPWSolver:
         book("dispersion", self.energy(phi_k))
 
         # MATLAB line 1981: divE = divE .* exp(-(gammaLandau + nu_coll) * DT)
-        if self.hpe_enabled or self.qle_rate_enabled:
-            gamma_landau = y["gamma_L"]
-        elif self.landau_enabled:
-            gamma_landau = self.landau_rate
+        if self.hpe_windows > 1:
+            phi_k = self.windowed_landau_damping(phi_k, y["gamma_L_windows"]) * jnp.exp(-self.nu_coll * self.dt)
         else:
-            gamma_landau = 0.0
-        damping_factor = jnp.exp(-(gamma_landau + self.nu_coll) * self.dt)
-        phi_k = phi_k * damping_factor
+            if self.hpe_enabled or self.qle_rate_enabled:
+                gamma_landau = y["gamma_L"]
+            elif self.landau_enabled:
+                gamma_landau = self.landau_rate
+            else:
+                gamma_landau = 0.0
+            damping_factor = jnp.exp(-(gamma_landau + self.nu_coll) * self.dt)
+            phi_k = phi_k * damping_factor
         book("damping", self.energy(phi_k))
 
         # ========================================================================

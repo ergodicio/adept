@@ -527,8 +527,8 @@ class HPEModel(BaseModel):
     """Hybrid particle evolution (Follett et al. 2017): test electrons pushed in the
     de-enveloped EPW field feed an evolving Landau damping rate back to the wave
     solver (kinetic inflation + hot electrons). The tracker is 1D1V for ny == 1
-    and 2D2V otherwise; both use one box-averaged ensemble. Requires
-    terms.epw.damping.landau: true."""
+    and 2D2V otherwise; the distribution is box-averaged (n_windows: 1, as LPSE) or
+    resolved in n_windows x windows. Requires terms.epw.damping.landau: true."""
 
     active: bool = False
     n_particles: int = 500000
@@ -537,6 +537,10 @@ class HPEModel(BaseModel):
     v_blend_buffer: float = 0.5  # analytic/HPE blend buffer above v_min, units of vte
     nv: int = 512  # velocity bins spanning (-v_max, v_max)
     n_angles: int = 32  # oriented velocity projections spanning 2pi in 2-D
+    # x windows of the distribution: 1 = one box-averaged ensemble (LPSE); N > 1 = N equal-width,
+    # cos^2-tapered windows, each with its own histogram and Landau rate (adept extension)
+    n_windows: int = 1
+    hist_smooth: int = 0  # binomial [1,2,1]/4 passes along v before the slope is read (0 = off)
     gather_refine: int = 4  # spectral upsampling of Ex/Ey before the particle gather
     substep_courant: float = 0.05  # wp0 * particle substep
     tau_damping: str = "100fs"  # EMA window for the velocity histogram

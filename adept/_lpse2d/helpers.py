@@ -503,6 +503,15 @@ def get_derived_quantities(cfg: dict) -> dict:
             raise ValueError("terms.hpe.omega_res must be 'lpse', 'bohm_gross' or 'wp0'")
         if hpe["n_angles"] < 4:
             raise ValueError("terms.hpe.n_angles must be at least 4")
+        if int(hpe["n_windows"]) < 1:
+            raise ValueError("terms.hpe.n_windows must be a positive integer")
+        if int(hpe["hist_smooth"]) < 0:
+            raise ValueError("terms.hpe.hist_smooth must be a non-negative integer")
+        if int(hpe["n_windows"]) > 1:
+            if cfg["terms"]["epw"].get("solver", "separate") == "combined":
+                raise ValueError("terms.hpe.n_windows > 1 is not implemented for terms.epw.solver: combined")
+            if hpe["energy_conservation"]:
+                raise ValueError("terms.hpe.n_windows > 1 is not implemented with terms.hpe.energy_conservation")
         if hpe["v_min"] < 0.0:
             raise ValueError("terms.hpe.v_min must be non-negative")
         vte = np.sqrt(cfg["units"]["derived"]["vte_sq"])
@@ -514,8 +523,11 @@ def get_derived_quantities(cfg: dict) -> dict:
         hpe["substeps"] = int(np.ceil(wp0 * cfg_grid["dt"] / float(hpe["substep_courant"])))
         cfg["terms"]["hpe"] = hpe
         dimensionality = f"2D2V with {hpe['n_angles']} projections" if cfg_grid["ny"] > 1 else "1D1V"
+        if int(hpe["n_windows"]) > 1:
+            dimensionality += f", {hpe['n_windows']} x windows"
         print(
-            f"HPE is on -- {hpe['n_particles']} box-averaged tail particles ({dimensionality}, "
+            f"HPE is on -- {hpe['n_particles']} {'box-averaged ' if int(hpe['n_windows']) == 1 else ''}tail particles "
+            f"({dimensionality}, "
             f"|v| > {hpe['v_min']} vte), "
             f"{hpe['substeps']} particle substeps per EPW step"
         )
@@ -1752,6 +1764,22 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
         fig.savefig(os.path.join(td, "plots", "hpe_distribution.png"), bbox_inches="tight")
         plt.close(fig)
 
+    if "hpe_hist_windows" in series:
+        # the tail distribution of every x window at the last save (2-D: angular mean)
+        hist_w = np.asarray(series["hpe_hist_windows"].values, dtype=float)[-1]
+        if hist_w.ndim == 3:
+            hist_w = np.mean(hist_w, axis=1)
+        v = np.asarray(series["v (c)"].values, dtype=float)
+        window_x = np.asarray(series["window centre x (um)"].values, dtype=float)
+        fig, ax = plt.subplots(figsize=(6, 3.5))
+        for j, xc in enumerate(window_x):
+            ax.semilogy(v, np.where(hist_w[j] > 0, hist_w[j], np.nan), label=f"x = {xc:.1f} um")
+        ax.set_xlabel("v (c)")
+        ax.set_ylabel(f"f(v), t = {t[-1]:.2f} ps")
+        ax.legend(fontsize=6, ncol=2)
+        fig.savefig(os.path.join(td, "plots", "hpe_distribution_windows.png"), bbox_inches="tight")
+        plt.close(fig)
+
     if "hpe_gamma_ratio_min" in series:
         fig, ax = plt.subplots(1, 1, figsize=(5, 3.5))
         ax.plot(t, np.asarray(series["hpe_gamma_ratio_min"].values, dtype=float))
@@ -1779,7 +1807,19 @@ def make_series_xarrays(cfg, this_t, state, td):
     data = {}
     for k, v in state.items():
         v = np.asarray(v)
-        if k == "hpe_hist":
+        if k == "hpe_hist_windows":
+            # one histogram per x window: (nt, window, nv), 2-D (nt, window, angle, nv)
+            hpe = cfg["terms"]["hpe"]
+            edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
+            centers = 0.5 * (edges[1:] + edges[:-1])
+            n_w = int(hpe["n_windows"])
+            width = (cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) / n_w
+            window_x = cfg["grid"]["xmin"] + (np.arange(n_w) + 0.5) * width
+            dims = [("t (ps)", this_t), ("window centre x (um)", window_x)]
+            if v.ndim == 4:
+                dims.append(("projection angle (rad)", 2.0 * np.pi * np.arange(hpe["n_angles"]) / hpe["n_angles"]))
+            data[k] = xr.DataArray(v, coords=(*dims, ("v (c)", centers)))
+        elif k == "hpe_hist":
             # Quasi-1D stores (nt, nv). The 2-D tracker stores the same global
             # projected distribution at n_angles oriented axes: (nt, angle, nv).
             hpe = cfg["terms"]["hpe"]
@@ -2288,6 +2328,22 @@ def get_default_save_func(cfg):
     # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
     # use the state's rate; also emit the hot-electron scalars and the histogram
     hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
+    n_windows_hpe = int(cfg["terms"].get("hpe", {}).get("n_windows", 1)) if hpe_on else 1
+    if n_windows_hpe > 1:
+        # x windows of the HPE distribution: the series carries each window's histogram, the
+        # box-volume-weighted mean as hpe_hist, and the dissipation through the windowed rates
+        from adept._lpse2d.core.hpe import window_matrix
+
+        hpe_window_w = window_matrix(
+            np.asarray(cfg["grid"]["x"]),
+            cfg["grid"]["xmin"],
+            cfg["grid"]["xmax"] - cfg["grid"]["xmin"],
+            n_windows_hpe,
+            cfg["terms"]["epw"]["boundary"]["x"] == "periodic",
+        )
+        hpe_window_volume = jnp.asarray(hpe_window_w.mean(axis=1))
+        hpe_window_sqrt = jnp.asarray(np.sqrt(hpe_window_w))[:, :, None]
+        hpe_k_mag = jnp.asarray(np.sqrt(np.asarray(kx)[:, None] ** 2 + np.asarray(ky)[None, :] ** 2))
     if hpe_on:
         from adept._lpse2d.core.hpe import resonance_arrays
 
@@ -2430,20 +2486,28 @@ def get_default_save_func(cfg):
         # only the electric part (the OSIRIS field-only convention), so the energy
         # actually handed to electrons -- and the budget sink -- carries the local
         # total-to-electric factor energy_total_factor = 2*(2 - n/n_env)
-        if hpe_on:
-            # the applied rate is dynamic: read it from the state
-            gamma_dyn = y["gamma_L"] + nu_coll_arr
-            loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
+        if n_windows_hpe > 1:
+            # windowed rates (SpectralEPWSolver.windowed_landau_damping): each window's loss
+            # rate on its share sqrt(w_j) psi of the energy field psi = |k| phi
+            chunks = jnp.fft.fft2(hpe_window_sqrt * jnp.fft.ifft2(hpe_k_mag * phi_k)[None], axes=(1, 2))
+            gamma_w = y["gamma_L_windows"] + nu_coll_arr
+            sqrt_loss_w = jnp.sqrt((1.0 - jnp.exp(-2.0 * gamma_w * dt)) / dt)
+            loss_density = jnp.sum(jnp.abs(jnp.fft.ifft2(sqrt_loss_w * chunks, axes=(1, 2))) ** 2, axis=0)
         else:
-            loss_factor = energy_loss_factor
-        # the per-k loss rate does not commute with the x-dependent energy factor, so
-        # build a local electric-energy loss density from the sqrt-weighted fields --
-        # its box integral equals the k-space total exactly (Parseval) and reduces to
-        # the previous 2x k-space sum on a uniform n = n_env box
-        sqrt_loss = jnp.sqrt(loss_factor)
-        ex_loss = jnp.fft.ifft2(-1j * kx[:, None] * phi_k * sqrt_loss)
-        ey_loss = jnp.fft.ifft2(-1j * ky[None, :] * phi_k * sqrt_loss)
-        loss_density = jnp.abs(ex_loss) ** 2 + jnp.abs(ey_loss) ** 2
+            if hpe_on:
+                # the applied rate is dynamic: read it from the state
+                gamma_dyn = y["gamma_L"] + nu_coll_arr
+                loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
+            else:
+                loss_factor = energy_loss_factor
+            # the per-k loss rate does not commute with the x-dependent energy factor, so
+            # build a local electric-energy loss density from the sqrt-weighted fields --
+            # its box integral equals the k-space total exactly (Parseval) and reduces to
+            # the previous 2x k-space sum on a uniform n = n_env box
+            sqrt_loss = jnp.sqrt(loss_factor)
+            ex_loss = jnp.fft.ifft2(-1j * kx[:, None] * phi_k * sqrt_loss)
+            ey_loss = jnp.fft.ifft2(-1j * ky[None, :] * phi_k * sqrt_loss)
+            loss_density = jnp.abs(ex_loss) ** 2 + jnp.abs(ey_loss) ** 2
         out["epw_dissipation"] = epw_energy_prefactor * jnp.sum(jnp.mean(energy_total_factor * loss_density, axis=1))
         out["epw_boundary_loss"] = epw_energy_prefactor * jnp.sum(
             jnp.mean(energy_total_factor * e_sq * boundary_sq_loss, axis=1)
@@ -2475,7 +2539,11 @@ def get_default_save_func(cfg):
             out["fhot_50keV"] = w_tail * jnp.sum(ke_kev > 50.0)
             out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
             out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
-            out["hpe_hist"] = y["epw_hist"]
+            if n_windows_hpe > 1:
+                out["hpe_hist"] = jnp.tensordot(hpe_window_volume, y["epw_hist"], axes=1)
+                out["hpe_hist_windows"] = y["epw_hist"]
+            else:
+                out["hpe_hist"] = y["epw_hist"]
             # LPSE-style instruments: cumulative energy (keV, per real electron via w_tail) out of
             # each wall per energy bin, inside the acceptance cone, and the LD multiplier
             from adept._lpse2d.core.hpe import WALLS

@@ -15,6 +15,13 @@ suite.
 
 The feedback is imaginary-part-only: trapping can reduce Landau damping and
 generate hot electrons, but it does not alter the real EPW dispersion.
+
+With ``n_windows > 1`` (an adept extension; LPSE's tracker is box-averaged) the
+distribution is resolved in x: each particle deposits into the two cos^2-tapered
+windows covering its position (a partition of unity over ``n_windows`` equal-width
+windows), every window keeps its own histogram and Landau rate, and the EPW step
+applies the rates window by window (``SpectralEPWSolver``). ``n_windows == 1`` is the
+box-averaged code path, unchanged.
 """
 
 import jax
@@ -36,6 +43,7 @@ PARTICLE_KEYS = (
     "hpe_cone_energy",
     "hpe_ld_multiplier",
     "hpe_particle_power",
+    "gamma_L_windows",
 )
 WALLS = ("left", "right", "bottom", "top")
 DEFAULT_FLUX_BINS_KEV = (0.0, 50.0, 100.0, 1.0e9)
@@ -59,6 +67,39 @@ def flux_bin_edges(hpe: dict) -> np.ndarray:
     """keV edges of the wall-flux instrument (LPSE hpe.metrics.flux energy.min/max per metric)."""
     edges = hpe.get("flux_bins") or DEFAULT_FLUX_BINS_KEV
     return np.asarray(edges, dtype=np.float64)
+
+
+def window_weights(x, xmin: float, length: float, n_windows: int, periodic: bool):
+    """The two x windows covering each position and their weights: a cos^2-tapered partition
+    of unity over ``n_windows`` equal-width windows with centres ``xmin + (j + 1/2) L / N``.
+    On a periodic box the windows wrap; on a bounded one the edge windows are flat out to the
+    walls. Returns ``(j0, j1, w0, w1)``, ``w0 + w1 = 1`` (``n_windows >= 2``)."""
+    s = (x - xmin) / (length / n_windows) - 0.5
+    if periodic:
+        j0 = jnp.floor(s)
+        frac = s - j0
+        j0 = jnp.mod(j0.astype(jnp.int32), n_windows)
+        j1 = jnp.mod(j0 + 1, n_windows)
+    else:
+        s = jnp.clip(s, 0.0, n_windows - 1.0)
+        j0 = jnp.clip(jnp.floor(s), 0, n_windows - 2)
+        frac = s - j0
+        j0 = j0.astype(jnp.int32)
+        j1 = j0 + 1
+    w1 = jnp.sin(0.5 * np.pi * frac) ** 2
+    return j0, j1, 1.0 - w1, w1
+
+
+def window_matrix(x, xmin: float, length: float, n_windows: int, periodic: bool) -> np.ndarray:
+    """``(n_windows, len(x))`` window weights on the points ``x``; every column sums to 1."""
+    x = np.asarray(x, dtype=np.float64)
+    if n_windows == 1:
+        return np.ones((1, x.size))
+    j0, j1, w0, w1 = (np.asarray(a) for a in window_weights(jnp.asarray(x), xmin, length, n_windows, periodic))
+    w = np.zeros((n_windows, x.size))
+    np.add.at(w, (j0, np.arange(x.size)), w0)
+    np.add.at(w, (j1, np.arange(x.size)), w1)
+    return w
 
 
 def _hpe_cfg(cfg: dict) -> dict:
@@ -215,6 +256,29 @@ def load_particles(cfg: dict) -> dict:
         counts, _ = np.histogram(velocity, bins=nv, range=(-v_max, v_max))
         hist = counts.astype(np.float64) / (n_p * arrays["dv"])
 
+    n_windows = int(hpe.get("n_windows", 1))
+    if n_windows > 1:
+        # one histogram per x window, each particle weighted by its two window weights
+        periodic_x = cfg["terms"]["epw"]["boundary"]["x"] == "periodic"
+        length = cfg["grid"]["xmax"] - cfg["grid"]["xmin"]
+        weights = window_matrix(x, cfg["grid"]["xmin"], length, n_windows, periodic_x)  # (n_windows, n_p)
+        norm = weights.sum(axis=1)
+        samples = projected if is_2d else velocity[:, None]
+        hist = np.stack(
+            [
+                np.stack(
+                    [
+                        np.histogram(samples[:, a], bins=nv, range=(-v_max, v_max), weights=weights[j])[0]
+                        for a in range(samples.shape[1])
+                    ]
+                )
+                / (norm[j] * arrays["dv"])
+                for j in range(n_windows)
+            ]
+        )
+        if not is_2d:
+            hist = hist[:, 0, :]
+
     b_field = hpe.get("magnetic_field", 0.0)
     in_plane_b = isinstance(b_field, (list, tuple, np.ndarray)) and any(float(v) != 0.0 for v in list(b_field)[:2])
     if is_2d and in_plane_b:
@@ -237,6 +301,10 @@ def load_particles(cfg: dict) -> dict:
     }
     if is_2d:
         state["y_e"] = np.asarray(y, dtype=np.float64)
+    if n_windows > 1:
+        state["gamma_L_windows"] = np.broadcast_to(
+            arrays["gamma_analytic"], (n_windows, *arrays["gamma_analytic"].shape)
+        ).copy()
     return state
 
 
@@ -283,6 +351,10 @@ class HybridParticleEvolution:
         self.n_p = int(hpe["n_particles"])
         self.nv = int(hpe["nv"])
         self.v_min = float(hpe["v_min"]) * self.vte
+        # spatial windows of the distribution (n_windows == 1: the box-averaged ensemble)
+        self.n_windows = int(hpe.get("n_windows", 1))
+        self.windowed = self.n_windows > 1
+        self.hist_smooth = int(hpe.get("hist_smooth", 0))
         self.wall_key = jax.random.fold_in(jax.random.PRNGKey(int(hpe["seed"])), 314159)
 
         arrays = resonance_arrays(cfg)
@@ -361,20 +433,26 @@ class HybridParticleEvolution:
 
         if self.is_2d:
             expected = jnp.broadcast_to(jnp.asarray(arrays["f0_expected"]), (self.n_angles, self.nv))
-            gamma_raw0 = np.asarray(self._gamma_raw_2d(expected))
+            gamma_raw0 = np.asarray(self._gamma_raw_2d(self._smooth(expected)))
             gamma_an = np.asarray(arrays["gamma_analytic"])
             mask = np.asarray(arrays["mask_res"])
         else:
-            gamma_raw0 = np.asarray(self._gamma_raw_1d(jnp.asarray(arrays["f0_expected"])))
+            gamma_raw0 = np.asarray(self._gamma_raw_1d(self._smooth(jnp.asarray(arrays["f0_expected"]))))
             gamma_an = np.asarray(arrays["gamma_analytic"][:, 0])
             mask = np.asarray(arrays["mask_res"])
         with np.errstate(divide="ignore", invalid="ignore"):
             calib = np.where(mask & (gamma_raw0 > 0.0), gamma_an / np.where(gamma_raw0 > 0.0, gamma_raw0, 1.0), 1.0)
         self.calibration = jnp.asarray(calib)
+        # fraction of the box in each window: the weights of the box-mean rate and histogram
+        self.window_volume = jnp.asarray(
+            window_matrix(np.asarray(grid["x"]), self.xmin, self.Lx, self.n_windows, self.periodic_x).mean(axis=1)
+        )
 
         c_band = calib[mask & (gamma_an > 1.0e-6 * self.wp0)]
         if c_band.size:
             dimensionality = f"2D2V/{self.n_angles} angles" if self.is_2d else "1D1V"
+            if self.windowed:
+                dimensionality += f", {self.n_windows} x windows"
             print(
                 f"HPE: {self.n_p} particles ({dimensionality}), {self.n_sub} substeps/step, "
                 f"calibration C(k) in [{c_band.min():.3f}, {c_band.max():.3f}] over the resonant band"
@@ -703,7 +781,9 @@ class HybridParticleEvolution:
 
     # ------------------------------------------------- histogram and damping --
 
-    def histogram(self, u: Array) -> Array:
+    def histogram(self, u: Array, x: Array | None = None) -> Array:
+        if self.windowed:
+            return self.window_histogram(u, x)
         if not self.is_2d:
             velocity = u / jnp.sqrt(1.0 + (u / self.c) ** 2)
             counts, _ = jnp.histogram(velocity, bins=self.v_edges)
@@ -717,6 +797,54 @@ class HybridParticleEvolution:
             return counts / (self.n_p * self.dv)
 
         return jax.lax.map(projected_histogram, self.directions)
+
+    def _window_counts(self, v: Array, j0, j1, w0, w1, n_windows: int) -> Array:
+        """``(n_windows, nv)`` weighted counts of the samples ``v``, binned exactly as
+        ``jnp.histogram`` (right-closed last bin, out-of-range samples dropped)."""
+        idx = jnp.searchsorted(self.v_edges, v, side="right")
+        idx = jnp.where(v == self.v_edges[-1], self.nv, idx)
+        valid = (idx >= 1) & (idx <= self.nv)
+        b = jnp.clip(idx - 1, 0, self.nv - 1)
+        counts = jnp.zeros(n_windows * self.nv, dtype=w0.dtype)
+        counts = counts.at[j0 * self.nv + b].add(jnp.where(valid, w0, 0.0))
+        counts = counts.at[j1 * self.nv + b].add(jnp.where(valid, w1, 0.0))
+        return counts.reshape(n_windows, self.nv)
+
+    def window_histogram(self, u: Array, x: Array, n_windows: int | None = None) -> Array:
+        """Per-window normalised histograms: ``(n_windows, nv)`` in 1-D, ``(n_windows, n_angles,
+        nv)`` in 2-D. Each particle counts in the two windows covering ``x`` with its window
+        weights; a window's histogram is divided by its total weight (all particles, as the
+        global ``counts / n_p``) and ``dv``."""
+        n_w = self.n_windows if n_windows is None else int(n_windows)
+        if n_w == 1:
+            j0 = j1 = jnp.zeros(x.shape, dtype=jnp.int32)
+            w0, w1 = jnp.ones_like(x), jnp.zeros_like(x)
+        else:
+            j0, j1, w0, w1 = window_weights(x, self.xmin, self.Lx, n_w, self.periodic_x)
+        norm = jnp.zeros(n_w, dtype=w0.dtype).at[j0].add(w0).at[j1].add(w1)
+        denominator = jnp.where(norm > 0.0, norm, 1.0) * self.dv
+        if not self.is_2d:
+            velocity = u / jnp.sqrt(1.0 + (u / self.c) ** 2)
+            return self._window_counts(velocity, j0, j1, w0, w1, n_w) / denominator[:, None]
+        gamma_rel = jnp.sqrt(1.0 + jnp.sum((u / self.c) ** 2, axis=-1))
+        velocity = (u / gamma_rel[:, None])[:, :2]
+        counts = jax.lax.map(
+            lambda direction: self._window_counts(velocity @ direction, j0, j1, w0, w1, n_w), self.directions
+        )  # (n_angles, n_windows, nv)
+        return jnp.transpose(counts, (1, 0, 2)) / denominator[:, None, None]
+
+    def _smooth(self, hist: Array) -> Array:
+        """``hist_smooth`` passes of a binomial [1, 2, 1]/4 kernel along v (0 = off, the
+        default) before the slope is read. The rate comes from df/dv at one bin per mode, so
+        a noisy slope can trip the ``gamma >= 0`` clamp and leave that mode undamped -- an
+        error that selects for itself rather than averaging out, and one that fewer
+        particles per window make more likely. Bias-free by construction: the per-k
+        calibration is derived through this same operator, so the linear filter divides back
+        out and only the variance reduction remains (ported from lpse2d/srs e7b0903)."""
+        for _ in range(self.hist_smooth):
+            padded = jnp.concatenate([hist[..., :1], hist, hist[..., -1:]], axis=-1)
+            hist = 0.25 * padded[..., :-2] + 0.5 * padded[..., 1:-1] + 0.25 * padded[..., 2:]
+        return hist
 
     def _gamma_raw_1d(self, hist: Array) -> Array:
         dfdv = jnp.gradient(hist, self.dv) * self.f_tail_frac
@@ -753,17 +881,19 @@ class HybridParticleEvolution:
         return jnp.where(k_sq > 0.0, -0.5 * np.pi * self.wp0**3 / k_sq_safe * slope, 0.0)
 
     def _gamma_raw(self, hist: Array) -> Array:
-        return self._gamma_raw_2d(hist) if self.is_2d else self._gamma_raw_1d(hist)
+        single = self._gamma_raw_2d if self.is_2d else self._gamma_raw_1d
+        return jax.vmap(single)(hist) if self.windowed else single(hist)
 
     def damping(self, hist: Array) -> Array:
         # LPSE gammaLimit: clip(-growth, gamma, damping); growth only with allow_growth
         gamma_hpe = jnp.clip(
-            self.calibration * self._gamma_raw(hist), -self.gamma_limit_growth, self.gamma_limit_damping
+            self.calibration * self._gamma_raw(self._smooth(hist)), -self.gamma_limit_growth, self.gamma_limit_damping
         )
         if self.is_2d:
             return jnp.where(self.mask_res, gamma_hpe, self.gamma_analytic)
+        # (nx,) -> (nx, ny); with windows (n_windows, nx) -> (n_windows, nx, ny)
         gamma_1d = jnp.where(self.mask_res, gamma_hpe, self.gamma_analytic[:, 0])
-        return jnp.broadcast_to(gamma_1d[:, None], (self.nx, self.ny))
+        return jnp.broadcast_to(gamma_1d[..., None], (*gamma_1d.shape, self.ny))
 
     # ---------------------------------------------------------------- driver --
 
@@ -773,9 +903,14 @@ class HybridParticleEvolution:
         # of the particle gain and its warm-up gate
         count = jnp.floor((t - self.t_start) / self.dt + 0.5) + 1.0
 
-        def feedback(hist, gamma_l, mult, power, d_kinetic):
+        def feedback(hist, gamma_l, gamma_w, mult, power, d_kinetic):
             if not self.feedback:
-                return gamma_l, mult, power
+                return gamma_l, gamma_w, mult, power
+            if self.windowed:
+                # one rate per window (applied window by window by the EPW step); gamma_L is
+                # their box-volume-weighted mean, for the diagnostics
+                gamma_w = self.damping(hist)
+                return jnp.tensordot(self.window_volume, gamma_w, axes=1), gamma_w, mult, power
             gamma_new = self.damping(hist)
             if self.energy_conservation:
                 # LPSE ElectronTracker: particleEnergyChange averaged over
@@ -785,22 +920,24 @@ class HybridParticleEvolution:
                 power = d_kinetic / n_avg + power * (1.0 - 1.0 / n_avg)
                 mult = jnp.where(count > self.ec_steps, self.ld_multiplier(mult, gamma_new, y["epw"], power), mult)
                 gamma_new = gamma_new * mult[0]
-            return gamma_new, mult, power
+            return gamma_new, gamma_w, mult, power
+
+        gamma_w = y["gamma_L_windows"] if self.windowed else None
 
         if self.is_2d:
 
             def active(operand):
-                x, y_position, u, hist, gamma_l, flux, cone, mult, power = operand
+                x, y_position, u, hist, gamma_l, gamma_w, flux, cone, mult, power = operand
                 x, y_position, u, dflux, dcone, d_kinetic = self.push_2d(x, y_position, u, self.refine_e(y["epw"]), t)
-                hist = (1.0 - self.alpha) * hist + self.alpha * self.histogram(u)
-                gamma_l, mult, power = feedback(hist, gamma_l, mult, power, d_kinetic)
-                return x, y_position, u, hist, gamma_l, flux + dflux, cone + dcone, mult, power
+                hist = (1.0 - self.alpha) * hist + self.alpha * self.histogram(u, x)
+                gamma_l, gamma_w, mult, power = feedback(hist, gamma_l, gamma_w, mult, power, d_kinetic)
+                return x, y_position, u, hist, gamma_l, gamma_w, flux + dflux, cone + dcone, mult, power
 
-            operand = (y["x_e"], y["y_e"], y["u_e"], y["epw_hist"], y["gamma_L"], *instruments)
-            x, y_position, u, hist, gamma_l, flux, cone, mult, power = jax.lax.cond(
+            operand = (y["x_e"], y["y_e"], y["u_e"], y["epw_hist"], y["gamma_L"], gamma_w, *instruments)
+            x, y_position, u, hist, gamma_l, gamma_w, flux, cone, mult, power = jax.lax.cond(
                 t >= self.t_start, active, lambda value: value, operand
             )
-            return {
+            out = {
                 **y,
                 "x_e": x,
                 "y_e": y_position,
@@ -812,19 +949,22 @@ class HybridParticleEvolution:
                 "hpe_ld_multiplier": mult,
                 "hpe_particle_power": power,
             }
+            if self.windowed:
+                out["gamma_L_windows"] = gamma_w
+            return out
 
         def active_1d(operand):
-            x, u, hist, gamma_l, flux, cone, mult, power = operand
+            x, u, hist, gamma_l, gamma_w, flux, cone, mult, power = operand
             x, u, dflux, dcone, d_kinetic = self.push(x, u, self.refine_ex(y["epw"]), t)
-            hist = (1.0 - self.alpha) * hist + self.alpha * self.histogram(u)
-            gamma_l, mult, power = feedback(hist, gamma_l, mult, power, d_kinetic)
-            return x, u, hist, gamma_l, flux + dflux, cone + dcone, mult, power
+            hist = (1.0 - self.alpha) * hist + self.alpha * self.histogram(u, x)
+            gamma_l, gamma_w, mult, power = feedback(hist, gamma_l, gamma_w, mult, power, d_kinetic)
+            return x, u, hist, gamma_l, gamma_w, flux + dflux, cone + dcone, mult, power
 
-        operand = (y["x_e"], y["u_e"], y["epw_hist"], y["gamma_L"], *instruments)
-        x, u, hist, gamma_l, flux, cone, mult, power = jax.lax.cond(
+        operand = (y["x_e"], y["u_e"], y["epw_hist"], y["gamma_L"], gamma_w, *instruments)
+        x, u, hist, gamma_l, gamma_w, flux, cone, mult, power = jax.lax.cond(
             t >= self.t_start, active_1d, lambda value: value, operand
         )
-        return {
+        out = {
             **y,
             "x_e": x,
             "u_e": u,
@@ -835,3 +975,6 @@ class HybridParticleEvolution:
             "hpe_ld_multiplier": mult,
             "hpe_particle_power": power,
         }
+        if self.windowed:
+            out["gamma_L_windows"] = gamma_w
+        return out
