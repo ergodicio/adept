@@ -347,6 +347,11 @@ The density at the injector must be below the `w1` critical density (`n < 0.25 n
 envelope density 0.25), otherwise the seed is evanescent and setup raises an error. Without
 `drivers.E1`, SRS grows from the EPW noise source instead (the noise-seeded configuration).
 
+With `terms.epw.solver: combined` the seed is the spectral solver's smooth injector added to the
+transverse (`y`) component of the combined field at its carrier `wp0` (LPSE's Raman class has
+`W1 = wpe` in combined mode), so `delta_omega` is a fraction of `wp0` and the injector must sit
+below the envelope density (`n < n_env`).
+
 Example:
 ```yaml
 drivers:
