@@ -356,7 +356,7 @@ envelope density 0.25), otherwise the seed is evanescent and setup raises an err
 `drivers.E1`, SRS grows from the EPW noise source instead (the noise-seeded configuration).
 
 With `terms.epw.solver: combined` the seed is the spectral solver's smooth injector added to the
-transverse (`y`) component of the combined field at its carrier `wp0` (LPSE's Raman class has
+transverse components of the combined field (`y`, and `z` by `polarization`) at its carrier `wp0` (LPSE's Raman class has
 `W1 = wpe` in combined mode), so `delta_omega` is a fraction of `wp0` and the injector must sit
 below the envelope density (`n < n_env`).
 
