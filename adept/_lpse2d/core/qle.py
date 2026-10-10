@@ -36,6 +36,7 @@ to the state's ``gamma_L`` that the EPW step applies; modes with ``v_phase > v_m
 undamped, as in LPSE. Every ``update_every`` EPW steps from ``t_start``.
 """
 
+import equinox.internal as eqxi
 import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
@@ -264,9 +265,9 @@ class QuasilinearEvolution:
         dt_max = self.dv**2 / (2.0 * self.ndim * jnp.where(c_max > 0.0, c_max, 1.0))
         n_needed = jnp.where(c_max > 0.0, jnp.ceil(dt / dt_max), 1.0) * self.subcycling
         # LPSE sub-cycles to the diffusion limit however many steps that takes ([qle:N]); the
-        # trip count is data-dependent (a while loop under jit). Beyond max_subcycles -- the
-        # saturated TPD / SRS spectrum on a coarse velocity grid (test_029 at 1.85 ps needed
-        # more than 20000) -- the step is taken implicitly instead (backward Euler, CG)
+        # trip count is data-dependent. Beyond max_subcycles -- the saturated TPD / SRS spectrum
+        # on a coarse velocity grid (test_029 at 1.85 ps needed more than 20000) -- the step is
+        # taken implicitly instead (backward Euler, CG)
         n_sub = jnp.clip(n_needed, 1, self.max_subcycles).astype(jnp.int32)
         dt_sub = dt / n_sub
 
@@ -274,11 +275,23 @@ class QuasilinearEvolution:
             f_new = jnp.maximum(0.0, f_new - step * self.therm_rate * (f_new - self.f0))
             return f_new * (self.volume0 / (jnp.sum(f_new) * self.dv**self.ndim))
 
-        def substep(i, f):
-            return relax(f + dt_sub * self._flux_increment(f, tensor), dt_sub)
+        def substep(carry):
+            i, f = carry
+            return i + 1, relax(f + dt_sub * self._flux_increment(f, tensor), dt_sub)
 
         def explicit(f):
-            return lax.fori_loop(0, n_sub, substep, f)
+            # a data-dependent trip count is a while loop, which JAX cannot transpose; the
+            # checkpointed bounded loop (diffrax's RecursiveCheckpointAdjoint machinery) runs only
+            # the n_sub steps forward and reverse-differentiates by recursive checkpointing, with
+            # max_subcycles (beyond which the step is implicit) as its static bound
+            _, f = eqxi.while_loop(
+                lambda carry: carry[0] < n_sub,
+                substep,
+                (jnp.zeros((), jnp.int32), f),
+                max_steps=self.max_subcycles,
+                kind="checkpointed",
+            )
+            return f
 
         def implicit(f):
             return relax(self._implicit_step(f, tensor, dt), dt)

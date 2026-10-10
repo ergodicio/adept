@@ -122,6 +122,47 @@ def test_a_driven_line_flattens_f_and_reduces_its_landau_rate(ny_box):
     np.testing.assert_allclose(np.sum(np.asarray(f)) * qle.dv**qle.ndim, qle.volume0, rtol=1e-12)
 
 
+# ---- reverse-mode gradients through the explicit update (PR #378 review) ---------------------------
+# The sub-cycle count is data-dependent; as a lax.fori_loop with a traced bound it lowered to a
+# while loop that JAX cannot transpose, so jax.grad raised. Criterion fixed before the run: with the
+# sub-cycle count held (asserted equal at a and a +- h, and > 1 so the loop is exercised) the update
+# is smooth in the line amplitude a, so jax.grad equals the central difference (h = 1e-4 a) to
+# rtol 1e-6 (truncation ~1e-9, round-off ~1e-9) for the heating moment and the line's Landau rate.
+
+
+@pytest.mark.parametrize("ny_box", ["0.02um", "1.6um"])
+def test_explicit_update_is_reverse_mode_differentiable(ny_box):
+    import jax
+
+    from adept._lpse2d.core.qle import QuasilinearEvolution, initial_vdf
+
+    cfg = _cfg(ny_box, thermalization_probability=[0.0, 0.0], nv=121 if ny_box == "0.02um" else 61)
+    qle = QuasilinearEvolution(cfg)
+    phi_k, i, _, _ = _line(cfg, 0.25, 1e-11)
+    f0 = jnp.asarray(initial_vdf(cfg))
+    dt, a0, h = 0.02, 1.0, 1.0e-4
+    v = qle.v
+    v_sq = v**2 if qle.ndim == 1 else v[:, None] ** 2 + v[None, :] ** 2
+
+    def n_needed(a):
+        c_max = float(jnp.max(jnp.abs(qle.diffusion_tensor(a * phi_k))))
+        return np.ceil(dt / (qle.dv**2 / (2.0 * qle.ndim * c_max))) * qle.subcycling
+
+    assert 1 < n_needed(a0) <= qle.max_subcycles
+    assert n_needed(a0 - h * a0) == n_needed(a0) == n_needed(a0 + h * a0)
+
+    objectives = {
+        "heating": jax.jit(lambda a: jnp.sum(v_sq * qle.evolve_vdf(f0, a * phi_k, dt))),
+        "landau": jax.jit(lambda a: qle.landau_rate(qle.evolve_vdf(f0, a * phi_k, dt))[i, 0]),
+    }
+    for name, fun in objectives.items():
+        value = float(fun(a0))
+        grad = float(jax.grad(fun)(a0))
+        fd = (float(fun(a0 + h * a0)) - float(fun(a0 - h * a0))) / (2.0 * h * a0)
+        assert abs(fd) * a0 > 1.0e-8 * abs(value), (name, value, fd)  # the objective responds
+        assert grad == pytest.approx(fd, rel=1.0e-6), (name, grad, fd)
+
+
 def test_qle_in_a_run_writes_the_vdf_and_evolves_the_srs_mode_damping():
     from adept import ergoExo
     from adept._lpse2d.core.epw import analytic_landau_rate

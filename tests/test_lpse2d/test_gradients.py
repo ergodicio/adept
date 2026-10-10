@@ -17,7 +17,9 @@ Paths (``terms.epw.solver`` / ``terms.light.solver`` and extras):
 - ``combined/spectral+iaw``: plus the spectral ion-acoustic solver;
 - ``separate/spectral+thermal-noise``: plus the per-step thermal noise source (a fixed
   seed; the kicks do not depend on the intensity, the response does);
-- ``separate/spectral+hpe``: the hybrid particle push and its Landau feedback.
+- ``separate/spectral+hpe``: the hybrid particle push and its Landau feedback;
+- ``separate/spectral+qle``: the quasilinear VDF update with ``landau_evolution`` (its sub-cycled
+  explicit step is a checkpointed bounded while loop; PR #378 review).
 
 The EPW is seeded with a small band-limited random potential so the parametric SRS / TPD
 response is non-zero from the first step.
@@ -62,6 +64,7 @@ def _cfg(
     noise=False,
     iaw=False,
     hpe=False,
+    qle=False,
     density=0.2,
 ):
     with open("tests/test_lpse2d/configs/srs.yaml") as fi:
@@ -97,6 +100,8 @@ def _cfg(
         cfg["terms"]["iaw"] = {"active": True, "solver": "spectral"}
     if hpe:
         cfg["terms"]["hpe"] = {"active": True, "n_particles": 4000, "seed": 3, "n_angles": 8, "gather_refine": 1}
+    if qle:
+        cfg["terms"]["qle"] = {"active": True, "nv": 41, "v_max": 0.4, "landau_evolution": True}
     return _finish(cfg)
 
 
@@ -127,6 +132,10 @@ def _seed_state(cfg, seed=11, relative_amplitude=1.0e-3):
         state["iaw_velocity_divergence"] = jnp.zeros((nx, ny))
     if cfg["terms"].get("hpe", {}).get("active", False):
         state = state | {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
+    if cfg["terms"].get("qle", {}).get("active", False):
+        from adept._lpse2d.core.qle import load_qle_state
+
+        state = state | {k: jnp.asarray(v) for k, v in load_qle_state(cfg).items()}
     return {k: v.view(jnp.float64) if jnp.iscomplexobj(v) else v for k, v in state.items()}
 
 
@@ -173,6 +182,7 @@ PATHS = {
     "combined/spectral": dict(epw_solver="combined", tpd=True, srs=True, density=0.22),
     "combined/spectral+iaw": dict(epw_solver="combined", tpd=True, srs=True, density=0.22, iaw=True),
     "separate/spectral+thermal-noise": dict(light_solver="spectral", noise=True),
+    "separate/spectral+qle": dict(light_solver="spectral", qle=True),
 }
 
 
