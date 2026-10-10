@@ -111,11 +111,16 @@ class Light:
         nc = int(y["E0"].shape[-1]) if isinstance(y, dict) and "E0" in y else 3
         if self.multi_beam or self.kap_bandwidth > 0.0 or self.pulse.active:
             return self._oblique_update(t_ps, light_wave, nc)
+        # one beam at normal incidence: its own frequency shift, phase and polarization
+        # (drivers.E0.beams[0], LPSE laser.1.frequencyShift / phase / polarization) apply to every
+        # color, as in the oblique and evolved paths
+        dw_b = float(self.beam_delta_omega[0])
+        phase_b = float(self.beam_phase[0])
         E0y_k = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
         for i in range(len(light_wave["delta_omega"])):
-            delta_omega = light_wave["delta_omega"][i]
+            delta_omega = light_wave["delta_omega"][i] + dw_b
             intensity = light_wave["intensities"][i, :]  # (ny,)
-            phase = light_wave["phases"][i, :]  # (ny,)
+            phase = light_wave["phases"][i, :] + phase_b  # (ny,)
 
             # reference-density wavenumber, snapped to the FFT grid (MATLAB lines 1558-1559)
             k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega) ** 2 - self.wp0**2 / self.w0**2)
@@ -144,7 +149,8 @@ class Light:
             # Shape: (1, ny) -> (ny,)
             dE0y = dE0y * (envelope[0, :] / self.speckle_normalization)[None, :]
 
-        cos_psi, sin_psi = float(np.cos(self.polarization)), float(np.sin(self.polarization))
+        psi = float(self.beam_polarization[0])
+        cos_psi, sin_psi = float(np.cos(psi)), float(np.sin(psi))
         if nc == 2:
             if sin_psi != 0.0:
                 raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")

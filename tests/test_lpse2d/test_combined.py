@@ -551,3 +551,122 @@ def test_combined_noise_matches_the_growth_fit_floor(model):
     grid = cfg["grid"]
     prefactor = 0.25 * grid["dx"] * derived["x_norm"] * derived["e_norm"] ** 2 / (grid["nx"] * grid["ny"] ** 2)
     assert prefactor * level / expected_noise_energy(cfg, 1.0e3) == pytest.approx(1.0, rel=0.15)
+
+
+# ---- Raman seed on the combined path (PR #372 review) -----------------------------------------------
+# Tolerances fixed before the run, the same as the separate solver's seed test
+# (test_spectral_light.test_spectral_seed_injector_launches_the_exact_amplitude_leftward): bulk
+# amplitude 1 %, ripple 2 %, wavenumber 1 %. Before the fix the combined solver never read
+# drivers.E1, so with the pump off and noise off E1 stayed identically zero. That test's 1 %
+# rightward-leakage bound is not carried over: in this geometry (n/n_env = 0.8, region > 3.2 sigma
+# right of the injector) the separate spectral solver itself leaves 1.4 % at 180 steps (combined
+# 1.3 %), so the bound measures the geometry, not the wiring. The seed source is instead checked
+# to equal the separate solver's (an identity at n_env = n_c/4, where w1 = wp0; rtol 1e-12).
+
+
+def test_combined_seed_injector_launches_the_exact_amplitude_leftward():
+    """drivers.E1 seeds the transverse part of the combined field at the combined carrier wp0
+    (LPSE's Raman class has W1 = wpe in combined mode): the smooth injector launches
+    |E1_y| = A / eps^(1/4), eps = 1 - n/n_env, as a leftward wave at k = sqrt(wp0^2 - wpe^2)/c,
+    and the purely transverse seed leaves the derived potential at zero."""
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = 0.25
+    cfg["density"] = {"basis": "uniform", "val": 0.2}
+    cfg["grid"].update({"xmax": "20um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    cfg["drivers"]["E1"] = {"intensity": "1.0e+12W/cm^2", "delta_omega": 0.0, "turn_on_time": "10fs", "offset": "7um"}
+    cfg = _finish(cfg)
+    del cfg["drivers"]["E0"]
+
+    step = SplitStep(cfg)
+    assert step.epw_solver == "combined" and step.combined.seed_enabled
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    state = {
+        "epw": jnp.zeros((nx, ny), dtype=jnp.complex128).view(jnp.float64),
+        "E0": jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64),
+        "E1": jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64),
+    }
+    args = {"drivers": {"E1": cfg["drivers"]["E1"]["derived"]}}
+    for i in range(180):
+        state = step(jnp.asarray(i * cfg["grid"]["dt"]), dict(state), args)
+
+    e1y = np.asarray(state["E1"].view(jnp.complex128))[:, 0, 1]
+    x = np.asarray(cfg["grid"]["x"])
+    derived = cfg["units"]["derived"]
+    n_over_env = 0.2 / 0.25
+    eps = 1.0 - n_over_env
+    k_seed = derived["wp0"] * np.sqrt(eps) / derived["c"]
+    bulk = slice(int(np.argmin(np.abs(x - 5.0))), int(np.argmin(np.abs(x - 10.0))))
+    expected = cfg["drivers"]["E1"]["derived"]["amplitude"] / eps**0.25
+    np.testing.assert_allclose(np.mean(np.abs(e1y[bulk])), expected, rtol=0.01)
+    assert np.std(np.abs(e1y[bulk])) < 0.02 * expected
+    k_measured = np.polyfit(x[bulk], np.unwrap(np.angle(e1y[bulk])), 1)[0]
+    assert k_measured < 0
+    np.testing.assert_allclose(abs(k_measured), k_seed, rtol=0.01)
+    # the seed is transverse: no longitudinal (EPW) part, so the derived potential stays zero
+    assert float(jnp.max(jnp.abs(state["epw"]))) < 1e-12 * expected
+
+
+def test_combined_seed_source_equals_the_separate_seed_source_at_quarter_critical():
+    """At n_env = n_c/4 the combined carrier wp0 equals the Raman envelope frequency w1 = w0 - wp0,
+    so the combined seed source is the separate spectral solver's, term for term."""
+    from adept._lpse2d.core.combined import CombinedSolver
+    from adept._lpse2d.core.spectral_light import SpectralRamanLight
+
+    def cfg_for(solver):
+        with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+            cfg = deepcopy(yaml.safe_load(fi))
+        cfg["units"]["envelope density"] = 0.25
+        cfg["density"] = {"basis": "uniform", "val": 0.2}
+        cfg["grid"].update({"xmax": "20um", "tmax": "10fs", "ymax": "0.5um", "ymin": "-0.5um"})
+        cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+        both = solver == "combined"
+        cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": both, "srs": True})
+        if both:
+            cfg["terms"]["epw"]["solver"] = "combined"
+        cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+        cfg["drivers"]["E1"] = {
+            "intensity": "1.0e+12W/cm^2",
+            "delta_omega": 0.003,
+            "turn_on_time": "10fs",
+            "offset": "7um",
+            "yw": "0.6um",
+        }
+        return _finish(cfg)
+
+    combined = CombinedSolver(cfg_for("combined"))
+    cfg_s = cfg_for("separate")
+    separate = SpectralRamanLight(cfg_s)
+    assert combined.wp0 == pytest.approx(separate.w1, rel=1e-12)
+    assert combined.i1 == separate.i1
+    seed_args = cfg_s["drivers"]["E1"]["derived"]
+    for t in (0.004, 0.017, 0.05):
+        np.testing.assert_allclose(
+            np.asarray(combined.calc_seed_source(t, seed_args)),
+            np.asarray(separate.calc_seed_source(t, seed_args)),
+            rtol=1e-12,
+            atol=0,
+        )
+
+
+def test_combined_seed_injector_refuses_an_evanescent_position():
+    """The combined field's light is evanescent where n >= n_env (carrier wp0); setup says so."""
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["grid"].update({"xmax": "20um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    cfg["drivers"]["E1"] = {"intensity": "1.0e+12W/cm^2", "offset": "7um"}
+    cfg = _finish(cfg)  # uniform n = n_env = 0.2
+    with pytest.raises(ValueError, match="evanescent"):
+        CombinedSolver(cfg)

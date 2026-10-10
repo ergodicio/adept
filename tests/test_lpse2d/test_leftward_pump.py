@@ -36,7 +36,7 @@ def _run(cfg):
 
     exo = ergoExo()
     modules = exo.setup(cfg)
-    sol, _, _ = exo(modules)
+    sol, ppo, _ = exo(modules)
     result = sol["solver result"]
     dcfg = exo.adept_module.cfg
     x = np.asarray(dcfg["grid"]["x"])
@@ -44,6 +44,7 @@ def _run(cfg):
     e0 = raw.view(np.complex64 if raw.dtype == np.float32 else np.complex128)[-1, :, 0, :]
     t = np.asarray(result.ts["default"])
     series = {k: np.asarray(v)[t > 0.2] for k, v in result.ys["default"].items() if k.endswith("_flux")}
+    _run.metrics = ppo["metrics"]  # the post-processed scalars of the last run
     return dcfg, x, e0, series
 
 
@@ -77,6 +78,18 @@ def test_fd_leftward_pump_mirrors_the_rightward_one():
     np.testing.assert_allclose(
         abs(np.mean(series["transmitted_flux"])), launched_amplitude_ratio(k0_dx, 2) ** 2, rtol=2e-2
     )
+    # the post-processed laser budget is oriented on the x-max entrance (PR #378 review): a freely
+    # transmitting pump reads T = 1, R = 0, nothing absorbed. Bounds fixed before the run: 2e-2 on
+    # each fraction (the probe agreement above is 1e-2). Before the fix the normal path reported
+    # T < 0 and R > 1. The incident-flux health ratio is checked for its orientation only (> 0;
+    # -0.80 before the fix): a bound to the launched |E|^2 ratio was set first and failed (0.804 vs
+    # 0.979) because the metric averages from 5 % of the run, through the pump turn-on of this
+    # 0.3 ps run -- the mirrored +x run, on the unchanged path, reads the same 0.804.
+    m = _run.metrics
+    assert abs(m["laser_transmissivity"] - 1.0) < 2e-2, m["laser_transmissivity"]
+    assert abs(m["laser_reflectivity"]) < 2e-2, m["laser_reflectivity"]
+    assert abs(m["laser_absorbed_frac"]) < 2e-2, m["laser_absorbed_frac"]
+    assert m["laser_incident_flux_ratio"] > 0.0, m["laser_incident_flux_ratio"]
 
 
 @pytest.mark.parametrize("solver", ["spectral", "fd"])
@@ -105,6 +118,12 @@ def test_counter_propagating_beams_form_a_standing_wave(solver):
     np.testing.assert_allclose(p_plus, p_minus, rtol=0.1)
     # the incident probe (x-min side, clear of both injectors) sees the net flux ~ 0
     assert abs(np.mean(series["incident_flux"])) < 0.1
+    # beams from both faces: the net probes cannot give an incoming / outgoing budget, so no
+    # fraction metric is logged, only the signed net fluxes (PR #378 review)
+    m = _run.metrics
+    for key in ("laser_reflectivity", "laser_transmissivity", "laser_absorbed_frac", "laser_incident_flux_ratio"):
+        assert key not in m, key
+    assert abs(m["laser_net_flux_left"]) < 0.1 and abs(m["laser_net_flux_right"]) < 0.1
 
 
 def test_validation_and_translator():

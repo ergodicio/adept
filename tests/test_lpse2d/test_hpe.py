@@ -667,6 +667,31 @@ def test_wall_flux_bins_and_cone_energy():
     np.testing.assert_allclose(float(cone[0]), 10.0 * half, rtol=1e-6)
 
 
+def test_wall_flux_window_excludes_energies_outside_its_edges():
+    """A finite window counts only the electrons inside it (PR #372 review): of 10 / 70 / 200 keV
+    electrons leaving the right wall, flux_bins [50, 100] records the 70 keV ones alone. Before the
+    fix the clipped bin index folded the 10 and 200 keV electrons into the single bin."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution
+
+    cfg = _make_cfg_2d(
+        {"n_particles": 999, "flux_bins": [50.0, 100.0]},
+        {"terms.epw.boundary.x": "absorbing", "terms.epw.boundary.y": "absorbing"},
+    )
+    hpe = HybridParticleEvolution(cfg)
+    n, c = hpe.n_p, hpe.c
+    third = n // 3
+    energies = np.concatenate((np.full(third, 10.0), np.full(third, 70.0), np.full(n - 2 * third, 200.0)))
+    gamma = 1.0 + energies / 510.999
+    ux = jnp.asarray(c * np.sqrt(gamma**2 - 1.0))
+    x = jnp.full((n,), hpe.xmax + 0.1 * hpe.dx)
+    y = jnp.full((n,), 0.5 * (hpe.ymin + hpe.ymax))
+    _, _, _, flux, _ = hpe._apply_boundaries_2d(x, y, jnp.stack((ux, jnp.zeros((n,))), axis=-1), 0.0)
+    flux = np.asarray(flux)
+    assert flux.shape == (4, 1)
+    np.testing.assert_allclose(flux[1, 0], 70.0 * third, rtol=1e-6)
+    assert flux[0].sum() == 0.0 and flux[2].sum() == 0.0 and flux[3].sum() == 0.0
+
+
 def test_magnetic_field_rotates_momentum_without_changing_energy():
     from adept._lpse2d.core.hpe import HybridParticleEvolution
 

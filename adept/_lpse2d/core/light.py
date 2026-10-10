@@ -228,6 +228,10 @@ class CoupledLight(RamanLight):
             int(pump.get("kap_seed", 0) or 0),
         )
         self.source_prefactor0 = self.c**2 / (2.0 * self.w0) / permittivity0**0.25 / self.dx**2
+        # the single normal-incidence beam's own frequency shift and phase (drivers.E0.beams[0];
+        # oblique or multiple beams are refused on this path by setup)
+        self.beam_delta_omega0 = float(np.atleast_1d(pump.get("beam_delta_omega", [0.0]))[0])
+        self.beam_phase0 = float(np.atleast_1d(pump.get("beam_phase", [0.0]))[0])
 
         # ---- resonance absorption (plan 2 L.3; LPSE laser.evolution.resonanceAbsorption) on the
         # pump, applied every light sub-step after the propagation update
@@ -388,9 +392,9 @@ class CoupledLight(RamanLight):
         """
         time_factor = self.pump_time_factor(t, pump_args)
 
-        delta_omega = pump_args["delta_omega"]  # (nc,)
+        delta_omega = pump_args["delta_omega"] + self.beam_delta_omega0  # (nc,)
         intensities = pump_args["intensities"]  # (nc, ny), fractions summing to 1
-        phases = pump_args["phases"]  # (nc, ny)
+        phases = pump_args["phases"] + self.beam_phase0  # (nc, ny)
 
         # local pump wavenumber per color (MATLAB kSource0). The two-point source
         # launches amplitude E_src * sin(k0 dx)/sin(k_grid dx) / eps^(1/4) -- a ~2%

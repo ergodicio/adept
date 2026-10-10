@@ -34,7 +34,7 @@ With `terms.epw.source.srs` on, the default time series includes OSIRIS-comparab
 | `reflected_flux`, `backrefl_flux` | Raman flux leaving left / right | `R_t` |
 | `reflectivity`, `e1_sq` | legacy probes (unchanged) | — |
 
-`post_process` logs scalar metrics with the same names and definitions as `osiris_lpi` (`laser_reflectivity`, `laser_transmissivity`, `laser_absorbed_frac`, per-quarter `_seg{i}of4` variants, `epw_growth_rate` per $\omega_0$ with the identical automated fit window, `electron_energy_frac_final`, and the `laser_incident_flux_ratio` health check).
+`post_process` logs scalar metrics with the same names and definitions as `osiris_lpi` (`laser_reflectivity`, `laser_transmissivity`, `laser_absorbed_frac`, per-quarter `_seg{i}of4` variants, `epw_growth_rate` per $\omega_0$ with the identical automated fit window, `electron_energy_frac_final`, and the `laser_incident_flux_ratio` health check). The laser budget is oriented on the pump's entrance face: x-min, or x-max when every beam is leftward; with beams entering from both faces the fraction metrics are not logged and `laser_net_flux_left` / `laser_net_flux_right` (signed +x net fluxes in units of the nominal incident flux) are.
 
 ### Electron Plasma Waves
 

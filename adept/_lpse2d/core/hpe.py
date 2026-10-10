@@ -569,10 +569,13 @@ class HybridParticleEvolution:
         gamma_rel = jnp.sqrt(1.0 + jnp.sum((u_vec / self.c) ** 2, axis=-1))
         ke_kev = 510.999 * (gamma_rel - 1.0)
         bins = jnp.clip(jnp.searchsorted(self.flux_edges, ke_kev, side="right") - 1, 0, self.n_flux_bins - 1)
+        # bins are half-open [e_i, e_{i+1}); energies outside [e_0, e_last) belong to no bin (the
+        # clipped index would otherwise fold them into the edge bins)
+        in_range = (ke_kev >= self.flux_edges[0]) & (ke_kev < self.flux_edges[-1])
         wall = jnp.zeros(self.n_p, dtype=jnp.int32)
         for i, mask in enumerate(out_masks):
             wall = jnp.where(mask, i, wall)
-        flux = jnp.zeros((len(WALLS), self.n_flux_bins)).at[wall, bins].add(jnp.where(any_out, ke_kev, 0.0))
+        flux = jnp.zeros((len(WALLS), self.n_flux_bins)).at[wall, bins].add(jnp.where(any_out & in_range, ke_kev, 0.0))
         if self.cone_cos is None:
             cone = jnp.zeros((1,))
         else:
