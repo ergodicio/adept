@@ -37,6 +37,11 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
    (``LwSolver::addNoise_combinedSolver_spectral(dt)``, ``ZakharovSolver::addNoiseToPotential_fft``);
 5. the absorbing layers.
 
+A Raman seed (``drivers.E1``) is the spectral light solver's smooth injector on the transverse
+components (``y``, and ``z`` by ``drivers.E1.polarization``), added with the unified source at the
+combined carrier ``wp0`` (LPSE's Raman class injects at ``W1 = wpe`` in combined mode,
+``LightSolver.cpp:2404-2406``).
+
 With ``terms.light.pump_depletion`` the pump advances in the same sub-step with the
 spectral propagator and LPSE's unified depletion term (``LightSolver.cpp:4265``)
 
@@ -58,8 +63,8 @@ from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum, no
 from adept._lpse2d.core.kap import KapPhases
 from adept._lpse2d.core.light import CoupledLight
 from adept._lpse2d.core.pulse import PulseShape
-from adept._lpse2d.core.raman import light_absorption_rates, light_source_mask
-from adept._lpse2d.core.spectral_light import SmoothPumpInjector
+from adept._lpse2d.core.raman import RamanLight, light_absorption_rates, light_source_mask
+from adept._lpse2d.core.spectral_light import SmoothPumpInjector, gaussian_injector_profile, smooth_seed_source
 from adept._lpse2d.core.timeline import as_linear
 from adept._lpse2d.core.vector import dot_conj, fft2c, ifft2c, k_dot, split_k
 
@@ -200,6 +205,31 @@ class CombinedSolver(SmoothPumpInjector):
             seed = source_cfg.get("noise_seed")
             self.noise_key = jax.random.PRNGKey(int(seed) if seed is not None else np.random.randint(2**20))
 
+        # Raman seed (drivers.E1): the spectral light solver's smooth injector on the transverse
+        # components of the combined field (y, and z by the seed polarization, as RamanLight.add_seed),
+        # at the combined carrier wp0 -- LPSE's Raman class injects at W1 = wpe in combined mode
+        # (LightSolver.cpp:2404-2406)
+        self.seed_enabled = "E1" in cfg["drivers"]
+        psi = float(cfg["drivers"].get("E1", {}).get("derived", {}).get("polarization", 0.0))
+        self.seed_weights = (float(np.cos(psi)), float(np.sin(psi)))
+        if self.seed_enabled:
+            seed = cfg["drivers"]["E1"]["derived"]
+            x_inject = grid["xmax"] - seed["offset"]
+            self.i1 = int(np.argmin(np.abs(np.asarray(self.x) - x_inject)))
+            self.wpe_sq_i1 = float(self.wp0**2 * self.n_over_env[self.i1, 0])
+            if self.wpe_sq_i1 >= self.wp0**2:
+                raise ValueError(
+                    f"The Raman seed injector at x = {float(self.x[self.i1]):.2f} um sits at density "
+                    f"{float(self.background_density[self.i1, 0]):.3f} nc, at or above the envelope density "
+                    f"{self.envelope_density} nc where the combined field's light is evanescent. Move the "
+                    "injector with drivers.E1.offset, or remove drivers.E1 to run noise-seeded."
+                )
+            k_seed = float(np.sqrt(self.wp0**2 - self.wpe_sq_i1) / self.c)
+            width = seed.get("injector_width", np.pi / k_seed)
+            self.seed_profile = jnp.asarray(
+                gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i1]), width, self.dx)
+            )
+
         # evolved pump (spectral) with the unified depletion term
         if self.pump_depletion:
             self.E0_source = derived["E0_source"]
@@ -279,6 +309,24 @@ class CombinedSolver(SmoothPumpInjector):
     # the pump's time factor (envelope, turn-on, pulse shape), as the light solvers
     pump_time_factor = CoupledLight.pump_time_factor
 
+    # the seed polarization: cos(psi) to y, sin(psi) to z (three-component fields)
+    add_seed = RamanLight.add_seed
+
+    def calc_seed_source(self, t: float, seed_args: dict) -> Array:
+        """The leftward Raman seed (``drivers.E1``) at the combined carrier ``wp0``: the (nx, ny)
+        source added to ``E1_y``."""
+        return smooth_seed_source(
+            t,
+            seed_args,
+            w=self.wp0,
+            c=self.c,
+            x=self.x,
+            y=self.y,
+            x_inject=self.x[self.i1],
+            wpe_sq=self.wpe_sq_i1,
+            profile=self.seed_profile,
+        )
+
     def propagate_pump(self, E0: Array) -> Array:
         longitudinal_k, transverse_k = longitudinal_transverse(E0, self.kx, self.ky, self.one_over_k_sq)
         return ifft2c(longitudinal_k + self.prop0[..., None] * transverse_k)
@@ -315,6 +363,7 @@ class CombinedSolver(SmoothPumpInjector):
         else:
             gamma_landau = jnp.zeros_like(self.k_sq)
         pump_args = driver_args.get("E0") if self.pump_depletion else None
+        seed_args = driver_args["E1"] if self.seed_enabled else None
 
         def substep(i, fields):
             E0, E1 = fields
@@ -334,6 +383,8 @@ class CombinedSolver(SmoothPumpInjector):
                 E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)
             if self.sources_on:
                 E1 = E1 + self.dt_l * _masked(self.unified_source(t_i, E0, E1), self.source_mask1)
+            if seed_args is not None:
+                E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))
             # 3. k-space propagation with the L/T projector
             E1 = self.propagate_combined(E1, gamma_landau)
             if self.pump_depletion:

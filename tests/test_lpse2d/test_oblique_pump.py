@@ -396,6 +396,93 @@ def test_static_pump_swelling_follows_lpse(swelling):
     np.testing.assert_allclose(amplitude, cfg["units"]["derived"]["E0_source"] * factor, rtol=1e-12)
 
 
+# ---- one normal-incidence beam keeps its frequency shift and phase (PR #372 review) -----------------
+# Before the fix the static pump's normal-incidence branch read only the color-level delta_omega /
+# phases, the FD evolved pump ignored the beam list, and the translator dropped beams for one beam.
+# A beam's shift and phase add to every color's, so a detuned single beam must equal the same shift
+# and phase given at the color level -- an identity, checked to rtol 1e-12.
+
+SINGLE_BEAM = [{"intensity": 1.0, "angle": 0.0, "delta_omega": 0.01, "phase": 0.3}]
+
+
+def _light_wave(ny, delta_omega=0.0, phase=0.0):
+    return {
+        "delta_omega": jnp.array([delta_omega]),
+        "intensities": jnp.ones((1, ny)),
+        "phases": jnp.full((1, ny), phase),
+    }
+
+
+def test_static_pump_honors_a_single_beam_frequency_shift_and_phase():
+    from adept._lpse2d.core.laser import Light
+
+    cfg_plain = _cfg(0.0)
+    raw = _beams_cfg(cfg_plain, SINGLE_BEAM)
+    raw["terms"]["light"]["pump_depletion"] = False
+    raw["terms"]["epw"]["boundary"]["x"] = "periodic"
+    cfg_beam = _finish(raw)
+    ny = cfg_plain["grid"]["ny"]
+    beam, plain = Light(cfg_beam), Light(cfg_plain)
+    assert not beam.multi_beam  # still the normal-incidence (speckle-capable) branch
+    for t in (0.0, 0.013, 0.05):
+        shifted = np.asarray(beam.laser_update(t, None, _light_wave(ny)))
+        reference = np.asarray(plain.laser_update(t, None, _light_wave(ny, 0.01, 0.3)))
+        np.testing.assert_allclose(shifted, reference, rtol=1e-12, atol=0)
+    unshifted = np.asarray(plain.laser_update(0.05, None, _light_wave(ny)))
+    assert np.max(np.abs(shifted - unshifted)) > 1e-3 * np.max(np.abs(unshifted))
+
+
+def test_fd_evolved_pump_honors_a_single_beam_frequency_shift_and_phase():
+    from adept._lpse2d.core.light import CoupledLight
+
+    def cfg_for(beams):
+        with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+            raw = deepcopy(yaml.safe_load(fi))
+        raw["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.05um", "ymin": "-0.05um"})
+        raw["terms"]["light"] = {"solver": "fd", "pump_depletion": True}
+        raw["terms"]["epw"]["source"]["noise"] = False
+        raw["terms"]["epw"]["boundary"]["x"] = "absorbing"
+        if beams is not None:
+            raw["drivers"]["E0"]["beams"] = beams
+        return _finish(raw)
+
+    cfg_beam, cfg_plain = cfg_for(SINGLE_BEAM), cfg_for(None)
+    beam, plain = CoupledLight(cfg_beam), CoupledLight(cfg_plain)
+    assert not beam.fd_general_injector  # one axial beam keeps the row injector
+    ny = cfg_plain["grid"]["ny"]
+    pump = cfg_plain["drivers"]["E0"]["derived"]
+    for t in (0.013, 0.05):
+        rows_beam = beam.calc_pump_source(t, {**pump, **_light_wave(ny)})
+        rows_plain = plain.calc_pump_source(t, {**pump, **_light_wave(ny, 0.01, 0.3)})
+        assert [i for i, _ in rows_beam] == [i for i, _ in rows_plain]  # (row index, values) pairs
+        for (_, a), (_, b) in zip(rows_beam, rows_plain, strict=True):
+            np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-12, atol=0)
+
+
+def test_translator_keeps_a_single_beam_frequency_shift_and_phase():
+    from adept._lpse2d.lpse_deck import translate_parms
+
+    base = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "laser.enable": "true",
+        "lw.enable": "true",
+        "lw.spectral.dt": "0.005",
+        "simulation.time.end": "1",
+        "laser.nBeams": "1",
+        "laser.1.intensity": "1e15",
+    }
+    cfg, _ = translate_parms({**base, "laser.1.frequencyShift": "0.01", "laser.1.phase": "90"}, run="y")
+    (b,) = cfg["drivers"]["E0"]["beams"]
+    assert b["delta_omega"] == 0.01 and b["phase"] == pytest.approx(np.pi / 2, rel=1e-12)
+    # LPSE's wavelengthShift (Angstrom) overrides frequencyShift: dW/W0 = -1e-4 dLambda / lambda_um
+    cfg, _ = translate_parms({**base, "laser.1.frequencyShift": "0.01", "laser.1.wavelengthShift": "10"}, run="y")
+    assert cfg["drivers"]["E0"]["beams"][0]["delta_omega"] == pytest.approx(-1.0e-3 / 0.351, rel=1e-12)
+    # no shift and no phase: the deck stays beam-free, as before
+    cfg, _ = translate_parms(base, run="y")
+    assert "beams" not in cfg["drivers"]["E0"]
+
+
 # ---- the combined solver injects the same pump (PR #372 review, merged) ---------------------------
 # The combined solver (needed for simultaneous TPD + SRS) used to build only a normal-incidence
 # pump (with polarization and pulse shape) and silently ignore beam angles, fractions, phases,

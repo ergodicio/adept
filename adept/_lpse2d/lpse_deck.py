@@ -775,13 +775,20 @@ def translate_parms(
         beam_angle = float(np.degrees(np.arctan2(dy, direction[0])))
         if b == 1:
             angle_deg = beam_angle
+        # LPSE reads frequencyShift as dW/W0; a non-zero wavelengthShift (Angstrom) overrides it as
+        # -1e-4 dLambda / lambda_um (LightSolver.cpp:1726-1737)
+        wavelength_shift = float(g(f"laser.{b}.wavelengthShift", "0"))
+        if wavelength_shift != 0.0:
+            delta_omega_b = -(1.0e-4 * wavelength_shift) / wavelength_um
+        else:
+            delta_omega_b = float(g(f"laser.{b}.frequencyShift", "0"))
         beams.append(
             {
                 "intensity": i_b,
                 "angle": beam_angle,
                 # LPSE laser.N.phase is in degrees (LightSolver.cpp:1716-1717)
                 "phase": float(np.deg2rad(float(g(f"laser.{b}.phase", "0")))),
-                "delta_omega": float(g(f"laser.{b}.frequencyShift", "0")),
+                "delta_omega": delta_omega_b,
                 # LPSE rotateBeam: degrees about the beam axis, 0 in-plane (p), 90 along z (s)
                 "polarization": float(g(f"laser.{b}.polarization", "0")),
             }
@@ -863,7 +870,9 @@ def translate_parms(
             # the static field's swelling: LPSE's constant (1 - n_env)^(-1/4) unless
             # laser.static.useSpatiallyVaryingFieldSwelling (LightSolver.cpp:1046-1053)
             "swelling": "local" if _bool(g("laser.static.useSpatiallyVaryingFieldSwelling")) else "constant",
-            **({"beams": beams} if n_beams > 1 else {}),
+            # one beam keeps its list only when it carries a phase or frequency shift (the static,
+            # evolved and combined pumps all honor beams[0]); otherwise the deck stays beam-free
+            **({"beams": beams} if n_beams > 1 or any(b["phase"] or b["delta_omega"] for b in beams) else {}),
             **beam_extras,
             # LPSE has no pump envelope (an evolved pump ramps with laser.evolution.riseTime only, a
             # static one is on from t = 0): the window opens 0.1 ps before t = 0, where its 10 fs

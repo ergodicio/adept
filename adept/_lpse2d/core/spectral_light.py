@@ -51,6 +51,26 @@ def gaussian_injector_profile(x: np.ndarray, x_inject: float, width: float, dx: 
     return g / (np.sum(g) * dx)
 
 
+def smooth_seed_source(t, seed_args: dict, *, w: float, c: float, x, y, x_inject, wpe_sq: float, profile) -> Array:
+    """Smooth injector for the leftward Raman seed at carrier ``w``: the (nx, ny) source added
+    to ``E1_y``, launching ``A / eps^(1/4)`` (``eps = 1 - wpe^2/w^2`` at the injector) at the
+    local ``k = w/c sqrt((1 + dw)^2 - wpe^2/w^2)``. ``w`` is the Raman envelope frequency
+    ``w1 = w0 - wp0`` of the separate solvers and ``wp0`` for the combined field (LPSE's
+    ``W1 = wpe`` in combined mode, ``LightSolver.cpp:2404``)."""
+    dw1 = seed_args["delta_omega"]
+    turn_on = 1.0 - jnp.exp(-((t / seed_args["turn_on_time"]) ** 2))
+    if seed_args["yw"] > 0:
+        envelope_y = jnp.exp(-((y / (seed_args["yw"] / 2.0)) ** 4))
+    else:
+        envelope_y = jnp.ones_like(y)
+    k1 = w / c * jnp.sqrt((1.0 + dw1) ** 2 - wpe_sq / w**2)
+    v_g = c**2 * k1 / w
+    eps1 = 1.0 - wpe_sq / w**2
+    amplitude = seed_args["amplitude"] / eps1**0.25 * turn_on
+    carrier = jnp.exp(-1j * k1 * (x - x_inject) - 1j * w * dw1 * t)
+    return (amplitude * v_g * profile * carrier)[:, None] * envelope_y[None, :]
+
+
 def transverse_propagate(
     field: Array,
     kx: Array,
@@ -105,18 +125,17 @@ class SpectralRamanLight(RamanLight):
 
     def calc_seed_source(self, t: float, seed_args: dict) -> Array:
         """Smooth injector for the leftward seed: returns the (nx, ny) source added to E1_y."""
-        dw1 = seed_args["delta_omega"]
-        turn_on = 1.0 - jnp.exp(-((t / seed_args["turn_on_time"]) ** 2))
-        if seed_args["yw"] > 0:
-            envelope_y = jnp.exp(-((self.y / (seed_args["yw"] / 2.0)) ** 4))
-        else:
-            envelope_y = jnp.ones_like(self.y)
-        k1 = self.w1 / self.c * jnp.sqrt((1.0 + dw1) ** 2 - self.wpe_sq_i1 / self.w1**2)
-        v_g = self.c**2 * k1 / self.w1
-        eps1 = 1.0 - self.wpe_sq_i1 / self.w1**2
-        amplitude = seed_args["amplitude"] / eps1**0.25 * turn_on
-        carrier = jnp.exp(-1j * k1 * (self.x - self.x[self.i1]) - 1j * self.w1 * dw1 * t)
-        return (amplitude * v_g * self.seed_profile * carrier)[:, None] * envelope_y[None, :]
+        return smooth_seed_source(
+            t,
+            seed_args,
+            w=self.w1,
+            c=self.c,
+            x=self.x,
+            y=self.y,
+            x_inject=self.x[self.i1],
+            wpe_sq=self.wpe_sq_i1,
+            profile=self.seed_profile,
+        )
 
     def absorption_factor(self, rate, density_ratio, iaw_density, feedback=None):
         """``exp(-nu dt_l (n/nc_w)^2)`` with the IAW perturbation included (``feedback``: the wave's
