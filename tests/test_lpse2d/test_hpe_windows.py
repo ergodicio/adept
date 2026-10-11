@@ -9,6 +9,7 @@ raises the EPW energy; a plateau imposed on half the particles shows up in the w
 rates in proportion to the windows' weight shares.
 """
 
+import copy
 import os
 import tempfile
 
@@ -308,3 +309,52 @@ def test_srs_smoke_with_hpe_windows():
     assert series["hpe_hist"].shape[1:] == (256,)
     for k in ("hpe_hist_windows", "hpe_hist", "epw_energy", "epw_dissipation", "fhot_50keV"):
         assert np.all(np.isfinite(np.asarray(series[k].values, dtype=float))), k
+
+
+@pytest.mark.slow
+def test_hist_save_interval_thins_only_the_histograms():
+    """terms.hpe.hist_save_interval saves the histograms on every n-th step plus the last, on their
+    own t_hist axis, equal to the every-step histograms there; every scalar series is unchanged.
+    Tolerance (fixed in advance): rtol 1e-10 with atol 1e-10 x max|reference| -- the two runs
+    compile different XLA programs, so bit identity is not required."""
+    from adept import ergoExo
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        base = yaml.safe_load(fi)
+    base["grid"]["ymax"] = "0.02um"
+    base["grid"]["ymin"] = "-0.02um"
+    base["grid"]["tmax"] = "0.2ps"
+    base["save"]["fields"]["t"]["tmax"] = "0.2ps"
+    base["save"]["fields"]["t"]["dt"] = "0.05ps"
+    base["terms"]["epw"]["source"]["noise_seed"] = 7
+    hpe = {"active": True, "n_particles": 20000, "nv": 256, "n_windows": 4, "hist_smooth": 2}
+    series = {}
+    for label, extra in (("every", {}), ("thinned", {"hist_save_interval": "0.03ps"})):
+        cfg = copy.deepcopy(base)
+        cfg["terms"]["hpe"] = {**hpe, **extra}
+        cfg["mlflow"]["run"] = f"srs-hpe-hist-interval-{label}"
+        exo = ergoExo()
+        _, ppo, _ = exo(exo.setup(cfg))
+        series[label] = ppo["series"]
+    every, thin = series["every"], series["thinned"]
+
+    def close(actual, reference, what):
+        reference = np.asarray(reference, dtype=float)
+        atol = 1e-10 * float(np.max(np.abs(reference))) if reference.size else 0.0
+        np.testing.assert_allclose(np.asarray(actual, dtype=float), reference, rtol=1e-10, atol=atol, err_msg=what)
+
+    t = np.asarray(every["t (ps)"].values)
+    idx = list(range(0, t.size, 30))  # 0.03 ps / 1 fs
+    if idx[-1] != t.size - 1:
+        idx.append(t.size - 1)
+    assert len(idx) < t.size
+    np.testing.assert_array_equal(np.asarray(thin["t_hist (ps)"].values), t[idx])
+    for k in ("hpe_hist", "hpe_hist_windows"):
+        assert every[k].dims[0] == "t (ps)"
+        assert thin[k].dims[0] == "t_hist (ps)"
+        close(thin[k].values, every[k].values[idx], k)
+    scalars = [k for k, v in every.data_vars.items() if v.dims == ("t (ps)",)]
+    assert scalars
+    for k in scalars:
+        assert thin[k].dims == ("t (ps)",)
+        close(thin[k].values, every[k].values, k)

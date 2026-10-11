@@ -541,6 +541,9 @@ class HPEModel(BaseModel):
     # cos^2-tapered windows, each with its own histogram and Landau rate (adept extension)
     n_windows: int = 1
     hist_smooth: int = 0  # binomial [1,2,1]/4 passes along v before the slope is read (0 = off)
+    # save the velocity histograms (series hpe_hist / hpe_hist_windows) on every n-th EPW step,
+    # n = round(interval / grid.dt), plus the last step, on their own time axis; None = every step
+    hist_save_interval: str | None = None
     gather_refine: int = 4  # spectral upsampling of Ex/Ey before the particle gather
     substep_courant: float = 0.05  # wp0 * particle substep
     tau_damping: str = "100fs"  # EMA window for the velocity histogram

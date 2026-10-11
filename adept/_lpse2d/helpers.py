@@ -518,6 +518,10 @@ def get_derived_quantities(cfg: dict) -> dict:
         if hpe["v_min"] * vte >= 0.99 * cfg["units"]["derived"]["c"]:
             raise ValueError("terms.hpe.v_min * vte must be below the 0.99c particle-speed cap")
         hpe["tau_damping_ps"] = _Q(hpe["tau_damping"]).to("ps").value
+        if hpe["hist_save_interval"] is not None:
+            hpe["hist_save_interval_ps"] = _Q(hpe["hist_save_interval"]).to("ps").value
+            if hpe["hist_save_interval_ps"] <= 0.0:
+                raise ValueError("terms.hpe.hist_save_interval must be a positive time")
         hpe["t_start_ps"] = _Q(hpe["t_start"]).to("ps").value
         wp0 = cfg["units"]["derived"]["wp0"]
         hpe["substeps"] = int(np.ceil(wp0 * cfg_grid["dt"] / float(hpe["substep_courant"])))
@@ -1627,7 +1631,8 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     metrics = {}
     t0 = time.time()
     kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
-    series = make_series_xarrays(cfg, result.ts["default"], result.ys["default"], td)
+    hist = (result.ts["hpe_hist"], result.ys["hpe_hist"]) if "hpe_hist" in result.ys else None
+    series = make_series_xarrays(cfg, result.ts["default"], result.ys["default"], td, hist=hist)
     if "checkpoint" in result.ys:
         target = cfg["save"]["checkpoint"]
         path = target if isinstance(target, str) else os.path.join(td, "binary", "checkpoint.npz")
@@ -1748,16 +1753,17 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
         hist = np.asarray(series["hpe_hist"].values, dtype=float)
         if hist.ndim == 3:
             hist = np.mean(hist, axis=1)
+        t_h = np.asarray(series["hpe_hist"][series["hpe_hist"].dims[0]].values, dtype=float)  # t or t_hist
         v = np.asarray(series["v (c)"].values, dtype=float)
         fig, ax = plt.subplots(1, 2, figsize=(10, 3.5))
         with np.errstate(divide="ignore"):
             log_h = np.log10(np.where(hist > 0, hist, np.nan))
-        pcm = ax[0].pcolormesh(t, v, log_h.T, shading="auto")
+        pcm = ax[0].pcolormesh(t_h, v, log_h.T, shading="auto")
         fig.colorbar(pcm, ax=ax[0], label="log10 f(v)")
         ax[0].set_xlabel("t (ps)")
         ax[0].set_ylabel("v (c)")
-        for it in np.linspace(0, len(t) - 1, 5).astype(int):
-            ax[1].semilogy(v, np.where(hist[it] > 0, hist[it], np.nan), label=f"t = {t[it]:.1f} ps")
+        for it in np.linspace(0, len(t_h) - 1, 5).astype(int):
+            ax[1].semilogy(v, np.where(hist[it] > 0, hist[it], np.nan), label=f"t = {t_h[it]:.1f} ps")
         ax[1].set_xlabel("v (c)")
         ax[1].set_ylabel("f(v)")
         ax[1].legend(fontsize=7)
@@ -1775,7 +1781,8 @@ def plot_srs_diagnostics(series, metrics, cfg, td):
         for j, xc in enumerate(window_x):
             ax.semilogy(v, np.where(hist_w[j] > 0, hist_w[j], np.nan), label=f"x = {xc:.1f} um")
         ax.set_xlabel("v (c)")
-        ax.set_ylabel(f"f(v), t = {t[-1]:.2f} ps")
+        t_last = float(series["hpe_hist_windows"][series["hpe_hist_windows"].dims[0]].values[-1])
+        ax.set_ylabel(f"f(v), t = {t_last:.2f} ps")
         ax.legend(fontsize=6, ncol=2)
         fig.savefig(os.path.join(td, "plots", "hpe_distribution_windows.png"), bbox_inches="tight")
         plt.close(fig)
@@ -1803,38 +1810,39 @@ def plot_series(series, td):
         plt.close()
 
 
-def make_series_xarrays(cfg, this_t, state, td):
+def _hpe_hist_dataarray(cfg, k, v, t_coord):
+    """``hpe_hist`` (quasi-1D ``(nt, nv)``; 2-D ``(nt, angle, nv)``, the global projected
+    distribution at ``n_angles`` oriented axes) or ``hpe_hist_windows`` (one histogram per x
+    window: ``(nt, window, nv)``; 2-D ``(nt, window, angle, nv)``) on the time coordinate
+    ``t_coord``."""
+    hpe = cfg["terms"]["hpe"]
+    edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
+    centers = 0.5 * (edges[1:] + edges[:-1])
+    angles = ("projection angle (rad)", 2.0 * np.pi * np.arange(hpe["n_angles"]) / hpe["n_angles"])
+    dims = [t_coord]
+    if k == "hpe_hist_windows":
+        n_w = int(hpe["n_windows"])
+        width = (cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) / n_w
+        dims.append(("window centre x (um)", cfg["grid"]["xmin"] + (np.arange(n_w) + 0.5) * width))
+    if v.ndim == len(dims) + 2:
+        dims.append(angles)
+    return xr.DataArray(v, coords=(*dims, ("v (c)", centers)))
+
+
+def make_series_xarrays(cfg, this_t, state, td, hist=None):
+    """The default series on ``t (ps)``; ``hist = (t, ys)`` of the ``hpe_hist`` save group
+    (``terms.hpe.hist_save_interval``) adds the HPE histograms on their own ``t_hist (ps)``."""
     data = {}
     for k, v in state.items():
         v = np.asarray(v)
-        if k == "hpe_hist_windows":
-            # one histogram per x window: (nt, window, nv), 2-D (nt, window, angle, nv)
-            hpe = cfg["terms"]["hpe"]
-            edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
-            centers = 0.5 * (edges[1:] + edges[:-1])
-            n_w = int(hpe["n_windows"])
-            width = (cfg["grid"]["xmax"] - cfg["grid"]["xmin"]) / n_w
-            window_x = cfg["grid"]["xmin"] + (np.arange(n_w) + 0.5) * width
-            dims = [("t (ps)", this_t), ("window centre x (um)", window_x)]
-            if v.ndim == 4:
-                dims.append(("projection angle (rad)", 2.0 * np.pi * np.arange(hpe["n_angles"]) / hpe["n_angles"]))
-            data[k] = xr.DataArray(v, coords=(*dims, ("v (c)", centers)))
-        elif k == "hpe_hist":
-            # Quasi-1D stores (nt, nv). The 2-D tracker stores the same global
-            # projected distribution at n_angles oriented axes: (nt, angle, nv).
-            hpe = cfg["terms"]["hpe"]
-            edges = np.linspace(-hpe["v_max"], hpe["v_max"], hpe["nv"] + 1)
-            centers = 0.5 * (edges[1:] + edges[:-1])
-            if v.ndim == 3:
-                angles = 2.0 * np.pi * np.arange(hpe["n_angles"]) / hpe["n_angles"]
-                data[k] = xr.DataArray(
-                    v,
-                    coords=(("t (ps)", this_t), ("projection angle (rad)", angles), ("v (c)", centers)),
-                )
-            else:
-                data[k] = xr.DataArray(v, coords=(("t (ps)", this_t), ("v (c)", centers)))
+        if k in ("hpe_hist", "hpe_hist_windows"):
+            data[k] = _hpe_hist_dataarray(cfg, k, v, ("t (ps)", this_t))
         else:
             data[k] = xr.DataArray(v, coords=(("t (ps)", this_t),))
+    if hist is not None:
+        t_hist, ys = hist
+        for k, v in ys.items():
+            data[k] = _hpe_hist_dataarray(cfg, k, np.asarray(v), ("t_hist (ps)", np.asarray(t_hist)))
     series_xr = xr.Dataset(data)
     series_xr.to_netcdf(os.path.join(td, "binary", "series.xr"), engine="h5netcdf", invalid_netcdf=True)
     return series_xr
@@ -2127,6 +2135,9 @@ def get_save_quantities(cfg: dict) -> dict:
     cfg["save"]["fields"]["func"] = save_func
 
     cfg["save"]["default"] = get_default_save_func(cfg)
+    hpe_cfg = cfg["terms"].get("hpe") or {}
+    if hpe_cfg.get("active", False) and hpe_cfg.get("hist_save_interval") is not None:
+        cfg["save"]["hpe_hist"] = hpe_hist_save(cfg)
 
     for i_probe, probe in enumerate(cfg["save"].get("light_spectrum") or []):
         cfg["save"][f"light_spectrum_{i_probe}"] = light_spectrum_save(cfg, probe)
@@ -2278,6 +2289,41 @@ def make_light_spectrum_xarrays(cfg: dict, result, td: str) -> list[xr.Dataset]:
     return out
 
 
+def _hpe_hist_outputs(cfg):
+    """y -> the HPE velocity histograms of the series: ``hpe_hist`` (with x windows, the
+    box-volume-weighted mean of the window histograms) and, with ``n_windows > 1``,
+    ``hpe_hist_windows``."""
+    n_windows = int(cfg["terms"]["hpe"].get("n_windows", 1))
+    if n_windows == 1:
+        return lambda y: {"hpe_hist": y["epw_hist"]}
+    from adept._lpse2d.core.hpe import window_matrix
+
+    window_w = window_matrix(
+        np.asarray(cfg["grid"]["x"]),
+        cfg["grid"]["xmin"],
+        cfg["grid"]["xmax"] - cfg["grid"]["xmin"],
+        n_windows,
+        cfg["terms"]["epw"]["boundary"]["x"] == "periodic",
+    )
+    volume = jnp.asarray(window_w.mean(axis=1))
+    return lambda y: {"hpe_hist": jnp.tensordot(volume, y["epw_hist"], axes=1), "hpe_hist_windows": y["epw_hist"]}
+
+
+def hpe_hist_save(cfg: dict) -> dict:
+    """The save group of the HPE histograms with ``terms.hpe.hist_save_interval``: every n-th EPW
+    step, n = round(interval / grid.dt) (at least 1), plus the last step. At one histogram of
+    ``nv`` (x ``n_windows``, x ``n_angles`` in 2-D) per step the per-step series dominates the
+    output; ``make_series_xarrays`` puts these on their own ``t_hist (ps)`` axis."""
+    t = np.asarray(cfg["grid"]["t"])
+    stride = max(1, round(cfg["terms"]["hpe"]["hist_save_interval_ps"] / cfg["grid"]["dt"]))
+    idx = np.arange(0, t.size, stride)
+    if idx[-1] != t.size - 1:
+        idx = np.append(idx, t.size - 1)
+    hist_out = _hpe_hist_outputs(cfg)
+    # the grid's own step times (same array type as the default series' axis), not re-rounded
+    return {"t": {"ax": t[idx], "stride": stride}, "func": lambda t, y, args: hist_out(y)}
+
+
 def get_default_save_func(cfg):
     from adept._lpse2d.core.epw import analytic_landau_rate
 
@@ -2341,13 +2387,15 @@ def get_default_save_func(cfg):
             n_windows_hpe,
             cfg["terms"]["epw"]["boundary"]["x"] == "periodic",
         )
-        hpe_window_volume = jnp.asarray(hpe_window_w.mean(axis=1))
         hpe_window_sqrt = jnp.asarray(np.sqrt(hpe_window_w))[:, :, None]
         hpe_k_mag = jnp.asarray(np.sqrt(np.asarray(kx)[:, None] ** 2 + np.asarray(ky)[None, :] ** 2))
     if hpe_on:
         from adept._lpse2d.core.hpe import resonance_arrays
 
         hpe_arrays = resonance_arrays(cfg)
+        # the histograms go in this series on every step unless terms.hpe.hist_save_interval gives
+        # them their own, sparser save group (hpe_hist_save)
+        hpe_hist_out = _hpe_hist_outputs(cfg) if cfg["terms"]["hpe"].get("hist_save_interval") is None else None
         n_p = int(cfg["terms"]["hpe"]["n_particles"])
         w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
         c_light = derived["c"]
@@ -2539,11 +2587,8 @@ def get_default_save_func(cfg):
             out["fhot_50keV"] = w_tail * jnp.sum(ke_kev > 50.0)
             out["fhot_100keV"] = w_tail * jnp.sum(ke_kev > 100.0)
             out["hpe_mean_energy_keV"] = jnp.mean(ke_kev)
-            if n_windows_hpe > 1:
-                out["hpe_hist"] = jnp.tensordot(hpe_window_volume, y["epw_hist"], axes=1)
-                out["hpe_hist_windows"] = y["epw_hist"]
-            else:
-                out["hpe_hist"] = y["epw_hist"]
+            if hpe_hist_out is not None:
+                out.update(hpe_hist_out(y))
             # LPSE-style instruments: cumulative energy (keV, per real electron via w_tail) out of
             # each wall per energy bin, inside the acceptance cone, and the LD multiplier
             from adept._lpse2d.core.hpe import WALLS
