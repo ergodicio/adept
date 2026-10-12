@@ -223,7 +223,7 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     # distribution lineouts) are layered on in osiris-lpi's OsirisLPI subclass.
     # Never let a plotting failure abort metric/artifact logging.
     try:
-        kwargs = _plots.canned_plot_kwargs(cfg.get("output"))
+        kwargs = _plots.canned_plot_kwargs(cfg.get("output"), cfg)
         _plots.save_canned_plots(run_dir, td / "plots", **kwargs)
     except Exception as e:
         print(f"[post] plotting failed: {e}")

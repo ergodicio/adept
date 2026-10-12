@@ -11,7 +11,7 @@ PNGs for the standard set:
       spacetime/<diag>.png                 (t, x) heatmap of every FLD diagnostic
       spacetime_log/<diag>.png             log10|·| of the same
       lineouts/<diag>.png                  value-vs-x snapshots at sampled times
-      omega_k/<diag>.png                   2-D FFT (k, ω) dispersion: full range +
+      omega_k/<comp>/{full_box,burst_<tag>}.png  2-D FFT (k, ω) dispersion: full range +
                                            equal-aspect square window (ω = k at 45°)
       currents/spacetime.png               j1/j2/j3 (J_x/J_y/J_z) side-by-side spacetime
       currents/lineouts.png                j1/j2/j3 profiles vs x (final + late mean)
@@ -875,6 +875,7 @@ def plot_omega_k_figure(
     omega_k_zoom: float | None = 4.0,
     cmap: str = "magma",
     log: bool = True,
+    omega_resolve: float | None = None,
 ) -> plt.Figure:
     """Stacked ``(k, ω)`` spectra: full range on top, equal-aspect below.
 
@@ -894,6 +895,12 @@ def plot_omega_k_figure(
     With a coarse dump cadence the ω-Nyquist is small, so that window is only a
     few k-cells wide and the lower panel looks blocky; that is the expected
     consequence of the time-sampling, not a plotting fault.
+
+    The figure title states the ω-Nyquist ``pi/dt``. ``omega_resolve`` (code
+    units, e.g. the drive frequency ``w_laser/wp0``) is the frequency the dump
+    cadence must resolve: when the Nyquist is below it the title is marked
+    ALIASED in red — power above the Nyquist (e.g. the pump) is folded into the
+    plotted range.
     """
     da = _ensure_series(series)
     # Check before opening a figure, so a rejected series leaks no Figure.
@@ -929,6 +936,16 @@ def plot_omega_k_figure(
         equal_aspect=True,
         title=rf"{_display_name(da)}  —  $(k, \omega)$ (equal aspect)",
     )
+    t = np.asarray(da.coords["t"].values, dtype=float)
+    nyq = float(np.pi / (t[1] - t[0]))
+    note = f"ω-Nyquist = {nyq:.4g} (code units, dump spacing {t[1] - t[0]:.4g})"
+    aliased = omega_resolve is not None and nyq < float(omega_resolve)
+    if aliased:
+        note += (
+            f"\nALIASED: Nyquist < {float(omega_resolve):.4g} (drive ω0) - power above "
+            f"the Nyquist is folded into the plotted range"
+        )
+    fig.suptitle(note, fontsize=9, color="red" if aliased else "black")
     fig.tight_layout()
     return fig
 
@@ -1454,10 +1471,64 @@ def plot_field_lr_decomposition(run_dir: str | Path) -> dict[str, plt.Figure]:
     return figs
 
 
+# --- series tags: full box vs burst ------------------------------------------
+
+# Field series keys are ``FLD/<comp>`` or ``FLD/<comp>-<tag>``: WarpX conversion
+# suffixes a later diag's colliding records with ``-<diag name>`` (e.g. the omega-k
+# bursts wk1..wk5); OSIRIS / WarpX line reports and x2-averages carry ``line…`` /
+# ``savg`` tags. Only the former are "bursts".
+NON_BURST_TAG_PREFIXES = ("line", "savg")
+
+
+def is_burst_tag(tag: str) -> bool:
+    """True for a ``-<tag>`` series suffix that names a sub-box/burst diag."""
+    return bool(tag) and "/" not in tag and not tag.startswith(NON_BURST_TAG_PREFIXES)
+
+
+def omega_k_relpath(comp: str) -> str:
+    """Canned ω-k plot path (no suffix) for a field key ``<comp>[-<tag>]``.
+
+    ``omega_k/<comp>/full_box`` for an untagged series, ``omega_k/<comp>/burst_<tag>``
+    for a burst, ``omega_k/<comp>/<tag>`` for other tagged series (lines, savg).
+    """
+    base, sep, tag = comp.partition("-")
+    if not sep:
+        return f"omega_k/{base}/full_box"
+    if is_burst_tag(tag):
+        return f"omega_k/{base}/burst_{tag}"
+    return f"omega_k/{base}/{tag}"
+
+
+def drive_omega_code(cfg: dict | None) -> float | None:
+    """Drive frequency in code units, ``w_laser / wp0``, from ``cfg['units']['derived']``.
+
+    Both the OSIRIS and the WarpX wrappers derive ``w_laser`` and ``wp0`` in
+    ``write_units`` when the deck launches a laser; returns ``None`` otherwise.
+    """
+    derived = ((cfg or {}).get("units") or {}).get("derived") or {}
+
+    def _f(v):
+        if v is None:
+            return None
+        if hasattr(v, "to"):
+            return float(v.to("rad/s").magnitude)
+        if isinstance(v, str):
+            from adept.normalization import UREG
+
+            return float(UREG.Quantity(v).to("rad/s").magnitude)
+        return float(v)
+
+    try:
+        w, wp0 = _f(derived.get("w_laser")), _f(derived.get("wp0"))
+    except Exception:
+        return None
+    return w / wp0 if w and wp0 else None
+
+
 # --- driver ---------------------------------------------------------------
 
 
-def canned_plot_kwargs(output_cfg: dict | None) -> dict:
+def canned_plot_kwargs(output_cfg: dict | None, cfg: dict | None = None) -> dict:
     """Translate a manifest ``output:`` block into :func:`save_canned_plots` kwargs.
 
     Shared by the live post-processing path (``post.collect``) and the offline
@@ -1470,7 +1541,9 @@ def canned_plot_kwargs(output_cfg: dict | None) -> dict:
     band on the ω-k plots; needs ``v_th``) and ``ion_acoustic`` (bool: draw
     the ω = k c_s line for every ion species found in the run's rendered
     deck — a no-op on ion-free runs). Keys that are absent fall through
-    to the ``save_canned_plots`` defaults.
+    to the ``save_canned_plots`` defaults. With the full run ``cfg``, the
+    drive frequency (:func:`drive_omega_code`) becomes ``omega_resolve``, so
+    ω-k plots whose dump cadence cannot resolve it are marked ALIASED.
     """
     output_cfg = output_cfg or {}
     kwargs: dict = {"v_th": output_cfg.get("v_th")}
@@ -1482,6 +1555,9 @@ def canned_plot_kwargs(output_cfg: dict | None) -> dict:
         kwargs["show_bam"] = bool(output_cfg["bam"])
     if "ion_acoustic" in output_cfg:
         kwargs["show_ion_acoustic"] = bool(output_cfg["ion_acoustic"])
+    omega_resolve = drive_omega_code(cfg)
+    if omega_resolve is not None:
+        kwargs["omega_resolve"] = omega_resolve
     return kwargs
 
 
@@ -1520,6 +1596,7 @@ def save_canned_plots(
     dpi: int = 120,
     n_panels: int = 8,
     omega_k_zoom: float | None = 4.0,
+    omega_resolve: float | None = None,
 ) -> dict[str, Path]:
     """Generate the standard set of PNGs for a finished OSIRIS run.
 
@@ -1543,6 +1620,9 @@ def save_canned_plots(
     :func:`plot_omega_k_figure`). ``show_ion_acoustic`` overlays the
     ω = k c_s line of every ion species found in the run's rendered deck
     (:func:`ion_acoustic_speeds`; silently nothing on ion-free runs).
+    ω-k plots go to ``omega_k/<comp>/full_box.png`` (untagged series) and
+    ``omega_k/<comp>/burst_<tag>.png`` (burst series, :func:`omega_k_relpath`);
+    ``omega_resolve`` marks those whose cadence cannot resolve it as ALIASED.
     """
     run_dir = Path(run_dir)
     out_dir = Path(out_dir)
@@ -1592,7 +1672,8 @@ def save_canned_plots(
             written[f"lineouts/{comp}"] = _write(plot_lineouts(ser, n_panels=n_panels), f"lineouts/{comp}.png")
 
             # Full (k, ω) spectrum on top, equal-aspect square window below.
-            written[f"omega_k/{comp}"] = _write(
+            ok_rel = omega_k_relpath(comp)
+            written[ok_rel] = _write(
                 plot_omega_k_figure(
                     ser,
                     v_th=v_th,
@@ -1600,8 +1681,9 @@ def save_canned_plots(
                     show_bam=show_bam,
                     ion_acoustic=ion_acoustic or None,
                     omega_k_zoom=omega_k_zoom,
+                    omega_resolve=omega_resolve,
                 ),
-                f"omega_k/{comp}.png",
+                f"{ok_rel}.png",
             )
         except Exception as e:
             print(f"[plots] skipping field plots for {diag_rel}: {e}")

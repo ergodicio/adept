@@ -122,7 +122,7 @@ def collect(run_output: dict, cfg: dict, td: str) -> dict[str, Any]:
     try:
         from adept.warpx import plots as _plots
 
-        kwargs = _plots.canned_plot_kwargs(cfg.get("output"))
+        kwargs = _plots.canned_plot_kwargs(cfg.get("output"), cfg)
         _plots.save_canned_plots(td / "binary", td / "plots", **kwargs)
     except Exception as e:
         print(f"[post] plotting failed: {e}")

@@ -229,7 +229,7 @@ These canned plots focus on 1D simulations.
 | --------------------------------------------- | ------------- |
 | `spacetime/<diag>.png`, `spacetime_log/<diag>.png` | `(t, x)` heatmap of each FLD diagnostic (lin + log) |
 | `lineouts/<diag>.png`                         | value-vs-`x` snapshots at sampled times |
-| `omega_k/<diag>.png`                          | 2-D FFT `(k, ω)` dispersion — full Nyquist range on top, plus an equal-aspect square window below where `ω = k` is drawn at a true 45° |
+| `omega_k/<comp>/full_box.png`, `omega_k/<comp>/burst_<tag>.png` | 2-D FFT `(k, ω)` dispersion — full Nyquist range on top, plus an equal-aspect square window below where `ω = k` is drawn at a true 45°. The title states the ω-Nyquist (π/dt); with the drive frequency known (`w_laser/wp0` from the run's derived units) a cadence that cannot resolve it is marked ALIASED in red. Untagged series are `full_box`; `-<tag>` series from a WarpX sub-box/burst diag are `burst_<tag>`; line / savg series keep their tag as the file name. |
 | `currents/spacetime.png`, `currents/lineouts.png` | combined `J_x/J_y/J_z` (`j1/j2/j3`) views |
 | `moments/<species>/…`                         | per-species density-moment spacetime + lineouts |
 | `profiles/<species>/density.png`              | density profile vs `x` (final snapshot + late-time mean) |

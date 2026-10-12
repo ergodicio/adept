@@ -197,7 +197,7 @@ def test_save_canned_plots_emits_full_set(tmp_path: Path) -> None:
         "spacetime/e1",
         "spacetime_log/e1",
         "lineouts/e1",
-        "omega_k/e1",
+        "omega_k/e1/full_box",
         "moments/electron/charge",
         "moments/electron/charge_log",
         "moments/electron/lineouts/charge",
