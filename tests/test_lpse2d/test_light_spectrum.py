@@ -134,3 +134,61 @@ def test_translator_maps_the_spectrum_instruments():
     cfg, report = translate_parms(parms, run="test_030")
     assert len(cfg["save"]["light_spectrum"]) == len(probes)
     assert any("spectrum.1.laser" in n for n in report["notes"])
+
+
+def test_combined_e1_probe_uses_the_combined_carrier(tmp_path):
+    """With terms.epw.solver: combined, E1 is enveloped at wp0, not w1 = w0 - wp0 (PR #372 review,
+    combined Raman carrier): the E1 probe's carrier, frequency axis and Poynting factor follow it.
+    At n_env = 0.2 the two carriers differ by 24 %. Tolerances fixed before the run: the carrier
+    is wp0 exactly; a transverse plane wave A e^{i(k x - W t)} peaks in the bin nearest W / wp0;
+    its s_x is (c^2 / wp0) |A|^2 sin(k dx) / dx (the central difference, exact) to 1e-9."""
+    from types import SimpleNamespace
+
+    from adept._lpse2d.helpers import (
+        get_density_profile,
+        get_derived_quantities,
+        get_save_quantities,
+        get_solver_quantities,
+        make_light_spectrum_xarrays,
+        write_units,
+    )
+
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = 0.2
+    cfg["density"] = {"basis": "uniform", "val": 0.15}
+    cfg["grid"].update({"dx": "0.1um", "xmax": "12.8um", "ymax": "0.02um", "ymin": "-0.02um", "dt": "1fs"})
+    cfg["grid"]["tmax"] = "0.2ps"
+    cfg["save"]["fields"]["t"].update({"tmax": "0.2ps", "dt": "0.1ps"})
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    cfg["save"]["light_spectrum"] = [{"field": "E1", "interval": "1fs", "x": ["-2um", "2um"], "poynting": True}]
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    cfg["grid"] = get_solver_quantities(cfg)
+    cfg["grid"]["background_density"] = get_density_profile(cfg)
+    cfg = get_save_quantities(cfg)
+    d = cfg["units"]["derived"]
+    assert abs(d["w1"] / d["wp0"] - 1.0) > 0.2
+
+    sub = cfg["save"]["light_spectrum_0"]
+    t = np.asarray(sub["t"]["ax"])
+    x = np.asarray(cfg["grid"]["x"])[sub["ix"][0] : sub["ix"][1] + 1]
+    ny_sub = sub["iy"][1] - sub["iy"][0] + 1
+    k = 0.4 * d["wp0"] / d["c"]
+    big_w = 0.05 * d["wp0"]
+    amp = 2.0e-3
+    e = np.zeros((t.size, x.size, ny_sub, 2), dtype=np.complex128)
+    e[..., 1] = amp * np.exp(1j * (k * x[None, :] - big_w * t[:, None]))[..., None]
+    result = SimpleNamespace(ys={"light_spectrum_0": {"E": e.view(np.float64)}}, ts={"light_spectrum_0": t})
+    (tmp_path / "binary").mkdir()
+    (tmp_path / "plots").mkdir()
+    (ds,) = make_light_spectrum_xarrays(cfg, result, str(tmp_path))
+
+    assert ds.attrs["carrier (rad/ps)"] == d["wp0"]
+    omega = ds["delta omega (w_carrier)"].values
+    peak = omega[np.argmax(ds["power"].values)]
+    assert abs(peak - big_w / d["wp0"]) <= 0.5 * (omega[1] - omega[0]) + 1e-12
+    dx = float(cfg["grid"]["dx"])
+    np.testing.assert_allclose(ds["s_x"].values, d["c"] ** 2 / d["wp0"] * amp**2 * np.sin(k * dx) / dx, rtol=1e-9)

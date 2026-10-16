@@ -227,23 +227,24 @@ class RamanLight:
         )
 
         # seed injection (MATLAB lines 1757-1769): a two-point antisymmetric source that
-        # launches a leftward-propagating (-x) wave at x = xmax - offset
+        # launches a leftward-propagating (-x) wave at x = xmax - offset, at the field's carrier
+        self.w_seed = self.seed_carrier()
         if "E1" in cfg["drivers"]:
             seed = cfg["drivers"]["E1"]["derived"]
             x_inject = cfg["grid"]["xmax"] - seed["offset"]
             self.i1 = int(np.argmin(np.abs(np.array(self.x) - x_inject)))
             wpe_i1 = self.w0 * np.sqrt(background_density[self.i1, 0])
             self.wpe_sq_i1 = float(wpe_i1**2)
-            permittivity1 = 1.0 - self.wpe_sq_i1 / self.w1**2
+            permittivity1 = 1.0 - self.wpe_sq_i1 / self.w_seed**2
             if permittivity1 <= 0:
                 raise ValueError(
                     f"The Raman seed injector at x = {float(self.x[self.i1]):.2f} um sits at density "
-                    f"{float(background_density[self.i1, 0]):.3f} nc, above the w1 critical density "
-                    f"{(self.w1 / self.w0) ** 2:.3f} nc where the seed is evanescent. Lower density.max, "
+                    f"{float(background_density[self.i1, 0]):.3f} nc, above its carrier's critical density "
+                    f"{(self.w_seed / self.w0) ** 2:.3f} nc where the seed is evanescent. Lower density.max, "
                     "or move the injector with drivers.E1.offset, or remove drivers.E1 to run noise-seeded."
                 )
-            self.source_prefactor = self.c**2 / (2.0 * self.w1) / permittivity1**0.25 / self.dx**2
-            self.k1_inject = float(np.sqrt(self.w1**2 - self.wpe_sq_i1) / self.c)
+            self.source_prefactor = self.c**2 / (2.0 * self.w_seed) / permittivity1**0.25 / self.dx**2
+            self.k1_inject = float(np.sqrt(self.w_seed**2 - self.wpe_sq_i1) / self.c)
             self.seed_enabled = True
         else:
             self.seed_enabled = False
@@ -251,6 +252,22 @@ class RamanLight:
         # writes cos(psi) to the in-plane transverse component y and sin(psi) to z (plan 2 F.2)
         psi = float(cfg["drivers"].get("E1", {}).get("derived", {}).get("polarization", 0.0))
         self.seed_weights = (float(np.cos(psi)), float(np.sin(psi)))
+
+    def seed_carrier(self) -> float:
+        """The envelope carrier the seed is launched at: the Raman light's ``w1 = w0 - wp0`` (the
+        FD combined solver's field is enveloped at ``wp0``)."""
+        return self.w1
+
+    def add_seed_rows(self, k_e1: list[Array], rows: list[tuple[int, Array]]) -> list[Array]:
+        """Add the seed injector ``rows`` to the per-component RHS list with the seed polarization."""
+        for c, w in zip((1, 2), self.seed_weights, strict=True):
+            if w == 0.0:
+                continue
+            if c >= len(k_e1):
+                raise ValueError("an out-of-plane (s-polarised) seed needs three-component light fields")
+            for i, row in rows:
+                k_e1[c] = k_e1[c].at[i, :].add(w * row)
+        return k_e1
 
     def add_seed(self, E1: Array, source: Array) -> Array:
         """Add a scalar seed source (nx, ny) with the seed polarization: cos(psi) to y, sin(psi) to z."""
@@ -360,10 +377,10 @@ class RamanLight:
             envelope_y = jnp.ones_like(self.y)
 
         # local seed wavenumber (MATLAB line 867)
-        k1 = self.w1 / self.c * jnp.sqrt((1.0 + dw1) ** 2 - self.wpe_sq_i1 / self.w1**2)
+        k1 = self.w_seed / self.c * jnp.sqrt((1.0 + dw1) ** 2 - self.wpe_sq_i1 / self.w_seed**2)
 
         def wave(i):
-            return 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[i] - 1j * self.w1 * dw1 * t)
+            return 1j * amp * envelope_y * jnp.exp(-1j * k1 * self.x[i] - 1j * self.w_seed * dw1 * t)
 
         return self.injector_rows(self.i1, -1, wave)
 
@@ -397,14 +414,7 @@ class RamanLight:
             k_e1 = [k + source[..., i] for i, k in enumerate(k_e1)]
 
         if seed_args is not None:
-            rows = self.calc_seed_source(t, seed_args)
-            for c, w in zip((1, 2), self.seed_weights, strict=True):
-                if w == 0.0:
-                    continue
-                if c >= len(k_e1):
-                    raise ValueError("an out-of-plane (s-polarised) seed needs three-component light fields")
-                for i, row in rows:
-                    k_e1[c] = k_e1[c].at[i, :].add(w * row)
+            k_e1 = self.add_seed_rows(k_e1, self.calc_seed_source(t, seed_args))
 
         return jnp.stack(k_e1, axis=-1)
 

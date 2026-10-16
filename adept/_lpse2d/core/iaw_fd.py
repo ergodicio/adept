@@ -7,8 +7,10 @@ grid refined ``super_samples`` times (``iaw.fd.superSamples``, default 2) in sub
 
 1. ``n`` is advected by the flow ``U(x, t)`` with a dimensionally split PPM sweep per axis
    (``ppmAdvection``: Colella-Woodward parabolas with the van Leer limited slopes, conservative
-   fluxes with the face velocities ``(U_i + U_{i+1})/2``; both upwind states are formed here,
-   LPSE forms only the one of each cell's own flow sign), then ``n -= dt w`` with the
+   fluxes with the face velocities ``(U_i + U_{i+1})/2``; here one flux per face, upwinded by that
+   face velocity's sign and shared by both cells -- LPSE picks both of a cell's face states by the
+   cell's own ``lamPlus + lamMinus`` sign, the same update for a single-signed flow but not
+   conservative where the flow reverses), then ``n -= dt w`` with the
    second-order temporal correction ``+ dt^2/(4h) U . grad w``, the absorbing layer, the amplitude
    clamp, zero edge cells and LPSE's zero average (``IawSolver::oneTimeStep``);
 2. ``w`` is advected likewise, then ``w += dt S`` with ``S = -cs^2 lap n + E2`` and the correction
@@ -184,12 +186,11 @@ def ppm_sweep(f: Array, lam: Array, axis: int) -> Array:
     f6 = 6.0 * (f - 0.5 * (f_l + f_r))
     fbar_plus = f_r - 0.5 * lam * (delta - (1.0 - 2.0 / 3.0 * lam) * f6)
     fbar_minus = f_l - 0.5 * lam * (delta + (1.0 + 2.0 / 3.0 * lam) * f6)
-    lam_minus = 0.5 * (roll(lam, 1) + lam)
-    lam_plus = 0.5 * (lam + roll(lam, -1))
-    rightward = lam_plus + lam_minus > 0.0
-    flux_in = jnp.where(rightward, lam_minus * roll(fbar_plus, 1), -lam_plus * roll(fbar_minus, -1))
-    flux_out = jnp.where(rightward, lam_plus * fbar_plus, -lam_minus * fbar_minus)
-    return f + flux_in - flux_out
+    # the flux through face i+1/2 at its velocity (U_i + U_{i+1})/2, from the upwind cell's state;
+    # both cells difference the same flux, so the sweep conserves f wherever the flow reverses
+    lam_face = 0.5 * (lam + roll(lam, -1))
+    flux = lam_face * jnp.where(lam_face > 0.0, fbar_plus, roll(fbar_minus, -1))
+    return f + roll(flux, 1) - flux
 
 
 # --------------------------------------------------------------------- solver --

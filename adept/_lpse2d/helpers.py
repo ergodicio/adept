@@ -1951,7 +1951,7 @@ def make_field_xarrays(cfg, this_t, state, td):
         derived = cfg["units"]["derived"]
         for name, arr, w in (
             ("s0", np.array(state["E0"]).view(_complex), derived["w0"]),
-            ("s1", np.array(state["E1"]).view(_complex), derived["w1"]),
+            ("s1", np.array(state["E1"]).view(_complex), _raman_carrier(cfg)),
         ):
             dxs = float(xax[1] - xax[0]) if len(xax) > 1 else 1.0
             dys = float(yax[1] - yax[0]) if len(yax) > 1 else 1.0
@@ -2000,6 +2000,15 @@ def make_field_xarrays(cfg, this_t, state, td):
     fields.to_netcdf(os.path.join(td, "binary", "fields.xr"), engine="h5netcdf", invalid_netcdf=True)
 
     return kfields, fields
+
+
+def _raman_carrier(cfg: dict) -> float:
+    """The envelope carrier of the saved ``E1``: ``w1 = w0 - wp0`` for the separate Raman solver,
+    ``wp0`` for the combined one (``CombinedSolver.prop_T`` and its seed both envelope at ``wp0``).
+    The Raman flux ``(c^2/w) Im(E* . grad E)`` and its plane-wave corrections use it; the two agree
+    only at envelope density n_c/4."""
+    derived = cfg["units"]["derived"]
+    return derived["wp0"] if cfg["terms"]["epw"].get("solver", "separate") == "combined" else derived["w1"]
 
 
 def _raman_light_part(cfg: dict):
@@ -2214,9 +2223,10 @@ def make_light_spectrum_xarrays(cfg: dict, result, td: str) -> list[xr.Dataset]:
     """One Dataset per ``save.light_spectrum`` probe: the field components ``e_x, e_y, e_z`` on
     the sub-box against ``t (ps)``, their spectra ``spectrum_x, ...`` against the envelope
     frequency offset ``omega / w`` (``w`` the field's own carrier: ``w0`` for E0, ``w1`` for
-    E1; positive = above the carrier), the box-summed spectral power ``power`` and, with
-    ``poynting``, the Poynting components ``s_x, s_y`` (``(c^2/w) Im(E* . d_j E)``) on the box
-    without its guard cells. Written to ``binary/light_spectrum_<i>.xr``."""
+    E1 -- ``wp0`` with the combined solver, ``_raman_carrier``; positive = above the carrier),
+    the box-summed spectral power ``power`` and, with ``poynting``, the Poynting components
+    ``s_x, s_y`` (``(c^2/w) Im(E* . d_j E)``) on the box without its guard cells. Written to
+    ``binary/light_spectrum_<i>.xr``."""
     derived = cfg["units"]["derived"]
     out = []
     for i_probe, probe in enumerate(cfg["save"].get("light_spectrum") or []):
@@ -2227,7 +2237,7 @@ def make_light_spectrum_xarrays(cfg: dict, result, td: str) -> list[xr.Dataset]:
         t_ax = np.asarray(result.ts[key], dtype=np.float64)
         raw = np.asarray(result.ys[key]["E"])
         arr = raw.view(np.complex64 if raw.dtype == np.float32 else np.complex128)  # (nt, nx_sub, ny_sub, ncomp)
-        w = derived["w0"] if sub["field"] == "E0" else derived["w1"]
+        w = derived["w0"] if sub["field"] == "E0" else _raman_carrier(cfg)
         x_full = np.asarray(cfg["grid"]["x"], dtype=np.float64)
         y_full = np.asarray(cfg["grid"]["y"], dtype=np.float64)
         x_ax = x_full[sub["ix"][0] : sub["ix"][1] + 1]
@@ -2416,7 +2426,7 @@ def get_default_save_func(cfg):
         x_probe = cfg["grid"]["xmin"] + 1.6 * boundary_width
         ix_probe = int(np.argmin(np.abs(np.array(cfg["grid"]["x"]) - x_probe)))
         w0 = derived["w0"]
-        w1 = derived["w1"]
+        w1 = _raman_carrier(cfg)
         n_probe = float(np.mean(np.array(cfg["grid"]["background_density"])[ix_probe, :]))
         sqrt_eps1 = np.sqrt(max(1.0 - n_probe * w0**2 / w1**2, 0.0)) if srs_on else 0.0
         E0_source_sq = derived["E0_source"] ** 2
@@ -2456,7 +2466,7 @@ def get_default_save_func(cfg):
                 ix_inject_max = int(np.argmin(np.abs(x_grid - (cfg["grid"]["xmax"] - pump_offset))))
                 ix_right_e0 = min(ix_right, ix_inject_max - clearance)
         flux_coeff_w0 = derived["c"] ** 2 / (derived["w0"] * cfg["grid"]["dx"])
-        flux_coeff_w1 = derived["c"] ** 2 / (derived["w1"] * cfg["grid"]["dx"])
+        flux_coeff_w1 = derived["c"] ** 2 / (w1 * cfg["grid"]["dx"])
         I0_code = derived["I0_code"]
 
         spectral_light = cfg["terms"].get("light", {}).get("solver", "fd") == "spectral"

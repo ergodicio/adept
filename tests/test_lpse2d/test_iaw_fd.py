@@ -93,6 +93,38 @@ def test_ppm_advects_a_bump_exactly_and_conserves_mass():
     assert g.max() > 0.95 * f.max()
 
 
+@pytest.mark.parametrize(
+    "profile",
+    [
+        lambda i: 0.4 * np.sin(2.0 * np.pi * (i - 0.3) / 256.0),  # zeros at 0.3 and 128.3
+        lambda i: -0.35 * np.tanh((i - 100.7) / 9.0),  # converging at 100.7, diverging at the wrap
+    ],
+    ids=["sine", "tanh"],
+)
+def test_ppm_conserves_mass_where_the_flow_reverses(profile):
+    """One flux per face, upwinded by the face velocity and shared by both cells (PR #378 review):
+    a sign-changing flow whose zero lies on neither a face nor a centre conserves the periodic
+    total of a nonuniform field with structure at the reversals. Tolerance fixed before the run:
+    the uniform-flow test's rtol 1e-12 after 200 sweeps. Before the fix each cell picked both
+    face states by its own sign and the two cells at a reversal differenced different fluxes."""
+    from adept._lpse2d.core.iaw_fd import ppm_sweep
+
+    i = np.arange(256.0)
+    f = (
+        1.0
+        + np.exp(-(((i - 120.0) / 8.0) ** 2))
+        + 0.5 * np.exp(-(((i - 98.0) / 5.0) ** 2))
+        + 0.3 * np.exp(-(((i - 8.0) / 6.0) ** 2))
+    )[:, None]
+    lam = jnp.asarray(profile(i)[:, None])
+    g = jnp.asarray(f)
+    for _ in range(200):
+        g = ppm_sweep(g, lam, 0)
+    g = np.asarray(g)
+    np.testing.assert_allclose(g.sum(), f.sum(), rtol=1e-12)
+    assert np.max(np.abs(g - f)) > 1e-2 * f.max()  # the flow moved the field
+
+
 def test_resampling_is_exact_on_band_limited_fields():
     from adept._lpse2d.core.iaw_fd import downsample, upsample
 

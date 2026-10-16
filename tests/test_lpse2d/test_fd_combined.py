@@ -172,3 +172,69 @@ def test_split_step_runs_the_fd_combined_solver():
     np.testing.assert_allclose(
         np.asarray(state["epw"].view(jnp.complex128)), np.asarray(step.combined.spectral.potential(E1)), rtol=1e-12
     )
+
+
+def test_fd_combined_seed_injector_launches_the_seed_at_the_combined_carrier():
+    """drivers.E1 seeds the FD combined field through the separate FD Raman solver's injector rows
+    at the combined carrier wp0 (LPSE's Raman class injects at W1 = wpe in combined mode;
+    PR #378 review). Pump off (zero beam intensity), noise off, subcritical injector at
+    n = 0.15 nc, n_env = 0.2 (w1 = 1.24 wp0, so a w1-built injector misses the operator by ~20 %
+    and launches at k1 = 0.88 instead of 0.50 wp0/c). Tolerances fixed before the run (k dx = 0.2,
+    FD dispersion < 1 %): in the bulk |E1_y| = A / eps^(1/4), eps = 1 - n/n_env, to 3 %, ripple
+    under 3 %, a leftward wave at k = wp0 sqrt(eps) / c to 2 %, and the transverse seed leaves the
+    derived potential at zero. Before the fix the FD combined path dropped the seed (E1 = 0)."""
+    from adept._lpse2d.core.vector_field import SplitStep
+    from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
+
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["density"] = {"basis": "uniform", "val": 0.15}
+    cfg["units"]["envelope density"] = 0.2
+    cfg["grid"].update(
+        {"boundary_width": "3um", "dt": "1fs", "dx": "0.05um", "xmax": "20um", "tmax": "0.2ps"}
+        | {"ymax": "0.02um", "ymin": "-0.02um", "low_pass_filter": 0.6}
+    )
+    cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "fd", "pump_depletion": True}
+    cfg["drivers"]["E1"] = {"intensity": "1.0e+12W/cm^2", "delta_omega": 0.0, "turn_on_time": "10fs", "offset": "7um"}
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    cfg["grid"] = get_solver_quantities(cfg)
+    cfg["grid"]["background_density"] = get_density_profile(cfg)
+
+    step = SplitStep(cfg)
+    assert step.combined.seed_enabled and step.combined.w_seed == cfg["units"]["derived"]["wp0"]
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    state = {
+        "epw": jnp.zeros((nx, ny), dtype=jnp.complex128).view(jnp.float64),
+        "E0": jnp.zeros((nx, ny, 3), dtype=jnp.complex128).view(jnp.float64),
+        "E1": jnp.zeros((nx, ny, 3), dtype=jnp.complex128).view(jnp.float64),
+    }
+    pump_args = {
+        **cfg["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.zeros((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    args = {"drivers": {"E0": pump_args, "E1": cfg["drivers"]["E1"]["derived"]}}
+    for i in range(180):
+        state = step(jnp.asarray(i * cfg["grid"]["dt"]), dict(state), args)
+
+    e1y = np.asarray(state["E1"].view(jnp.complex128))[:, 0, 1]
+    x = np.asarray(cfg["grid"]["x"])
+    derived = cfg["units"]["derived"]
+    eps = 1.0 - 0.15 / 0.2
+    k_seed = derived["wp0"] * np.sqrt(eps) / derived["c"]
+    bulk = slice(int(np.argmin(np.abs(x - 5.0))), int(np.argmin(np.abs(x - 10.0))))
+    expected = cfg["drivers"]["E1"]["derived"]["amplitude"] / eps**0.25
+    # the pump stays off: only the depletion of the seed's round-off divergence reaches it
+    assert float(jnp.max(jnp.abs(state["E0"].view(jnp.complex128)))) < 1e-12 * expected
+    np.testing.assert_allclose(np.mean(np.abs(e1y[bulk])), expected, rtol=0.03)
+    assert np.std(np.abs(e1y[bulk])) < 0.03 * expected
+    k_measured = np.polyfit(x[bulk], np.unwrap(np.angle(e1y[bulk])), 1)[0]
+    assert k_measured < 0
+    np.testing.assert_allclose(abs(k_measured), k_seed, rtol=0.02)
+    assert float(jnp.max(jnp.abs(state["epw"]))) < 1e-12 * expected
