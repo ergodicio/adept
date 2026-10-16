@@ -168,7 +168,11 @@ def translate_parms(
             light_dt = float(parms[key])
             break
     max_light_steps = int(float(g("lw.maxLightStepsPerStep", "10")))
-    laser_evolves = g("laser.solver", "static").lower() != "static" and _bool(g("laser.enable"), True)
+    # LPSE laser.enable (default false, ParameterManager.cpp:267-275) switches the E0 light off
+    # entirely -- every E0 entry point returns early (LightSolver.cpp:386, 1933) -- so a disabled
+    # laser is no pump and no depletion, whatever beams the deck still lists
+    laser_on = _bool(g("laser.enable"))
+    laser_evolves = laser_on and g("laser.solver", "static").lower() != "static"
     raman_on = _bool(g("raman.enable"))
     if light_dt is not None and (laser_evolves or raman_on):
         dt = min(lw_dt, max_light_steps * light_dt)
@@ -319,13 +323,20 @@ def translate_parms(
     light["transverse_source"] = _bool(
         g("raman.takeTransversePartOfSourceTerms", g("laser.takeTransversePartOfSourceTerms", "false"))
     )
-    if _bool(g("laser.pumpDepletion.TPD.enable")) or _bool(g("laser.pumpDepletion.SRS.enable")):
+    if laser_on and (_bool(g("laser.pumpDepletion.TPD.enable")) or _bool(g("laser.pumpDepletion.SRS.enable"))):
         light["pump_depletion"] = True
     if _bool(g("lw.kFilter.enable")):
         light["tpd_k_filter"] = True
 
-    # ---- laser beams (static: intensities summed; direction along +x expected)
-    n_beams = int(float(g("laser.nBeams", "1")))
+    # ---- laser beams (static: intensities summed; direction along +x expected). A disabled laser
+    # keeps a beam-free E0 driver at zero intensity, the form the shipped laser-off decks take.
+    n_beams = int(float(g("laser.nBeams", "1"))) if laser_on else 0
+    if not laser_on:
+        listed = sum(float(v) for k, v in parms.items() if re.fullmatch(r"laser\.\d+\.intensity", k))
+        report["notes"].append(
+            "laser.enable = false: no pump (zero intensity, no depletion)"
+            + (f"; the listed beam intensities ({listed:.6g} W/cm^2) are not applied" if listed else "")
+        )
     intensity = 0.0
     angle_deg = 0.0
     beams = []
@@ -357,15 +368,15 @@ def translate_parms(
             }
         )
     beam_extras = {}
-    if float(g("laser.1.width", "0")) > 0:
+    if laser_on and float(g("laser.1.width", "0")) > 0:
         beam_extras["beam_width"] = f"{float(g('laser.1.width'))}um"
         beam_extras["beam_sg_order"] = float(g("laser.1.sgOrder", g("laser.1.sgPower", "2")))
         off = _floats(g("laser.1.offset", "0 0"))
         beam_extras["beam_offset"] = f"{off[1] if len(off) > 1 else 0.0}um"
-    kap = float(g("laser.bandwidth.KAP.frequency", "0"))
+    kap = float(g("laser.bandwidth.KAP.frequency", "0")) if laser_on else 0.0
     if kap > 0:
         beam_extras["kap_bandwidth"] = kap
-    if g("laser.pulse.file"):
+    if laser_on and g("laser.pulse.file"):
         beam_extras["pulse_file"] = g("laser.pulse.file")
         report["notes"].append("laser.pulse.file: adept expects a two-column (t_ps, amplitude) text table")
     drivers = {
@@ -425,6 +436,8 @@ def translate_parms(
             if stride > 1:
                 iaw["stride"] = stride
         tf = {w: _bool(g(f"thermalFil.{w}.enable")) for w in ("laser", "raman", "lw")}
+        if tf["laser"] and not laser_on:
+            raise ValueError("thermalFil.laser.enable needs laser.enable = true (LPSE rejects it too)")
         if any(tf.values()):
             tf["nonlocal"] = _bool(g("thermalFil.isNonlocal"))
             tf["conductivity_multiplier"] = float(g("thermalFil.conductivityMultiplier", "1"))

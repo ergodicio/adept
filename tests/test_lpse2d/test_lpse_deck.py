@@ -117,6 +117,45 @@ def test_translate_combined_iaw_deck():
     assert cfg["terms"]["iaw"]["damping"]["landau"] > 0.0
 
 
+def test_translator_disabled_laser_is_no_pump():
+    """LPSE laser.enable = false switches the E0 light off whatever beams the deck keeps (PR #372
+    review): the translation carries no intensity, no beams and no depletion even with both
+    pumpDepletion flags on, and the static pump it sets up is exactly zero. Exact checks."""
+    from adept._lpse2d.core.laser import Light
+    from adept._lpse2d.lpse_deck import translate_parms
+
+    base = {
+        "grid.sizes": "20 5",
+        "grid.nodes": "201 51",
+        "lw.enable": "true",
+        "lw.spectral.dt": "0.005",
+        "simulation.time.end": "1",
+        "laser.solver": "static",
+        "laser.nBeams": "1",
+        "laser.1.intensity": "1e15",
+        "laser.1.frequencyShift": "0.01",
+        "laser.pumpDepletion.TPD.enable": "true",
+        "laser.pumpDepletion.SRS.enable": "true",
+    }
+    on, _ = translate_parms({**base, "laser.enable": "true"}, run="y")
+    assert on["units"]["laser intensity"] == "1e+15W/cm^2" and on["terms"]["light"]["pump_depletion"] is True
+
+    for parms in ({**base, "laser.enable": "false"}, base):  # LPSE's default is false
+        cfg, report = translate_parms(parms, run="y")
+        assert cfg["units"]["laser intensity"] == "0W/cm^2"
+        assert "beams" not in cfg["drivers"]["E0"]
+        assert cfg["terms"]["light"]["pump_depletion"] is False
+        assert any("laser.enable = false" in note for note in report["notes"])
+
+        cfg = _finish(cfg)
+        ny = cfg["grid"]["ny"]
+        wave = {"delta_omega": np.array([0.0]), "intensities": np.ones((1, ny)), "phases": np.zeros((1, ny))}
+        assert np.max(np.abs(np.asarray(Light(cfg).laser_update(0.05, None, wave)))) == 0.0
+
+    with pytest.raises(ValueError, match=r"thermalFil\.laser\.enable"):
+        translate_parms({**base, "iaw.enable": "true", "thermalFil.laser.enable": "true"}, run="y")
+
+
 def test_lpse_exp_profile_and_thermal_noise_without_debye_factor():
     import yaml
 
