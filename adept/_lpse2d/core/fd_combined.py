@@ -69,6 +69,12 @@ class FDCombinedSolver(CoupledLight):
             self.noise_kick_lw = jnp.asarray(noise_kick_spectrum(cfg, dt=self.dt, nu_coll=self.spectral.nu_raman))
         print("combined solver on the FD light propagator (LPSE lw.solver = combined, raman.solver = fd)")
 
+    def seed_carrier(self) -> float:
+        """The seed (``drivers.E1``) enters the combined field at its carrier ``wp0``: LPSE's Raman
+        class injects at ``W1 = wpe`` in combined mode (``LightSolver.cpp:2404-2406``), as the
+        spectral ``CombinedSolver`` does."""
+        return self.wp0
+
     # ------------------------------------------------------------ FD pieces --
 
     def _div(self, E: Array) -> Array:
@@ -119,6 +125,9 @@ class FDCombinedSolver(CoupledLight):
             self.diffraction_coeff * cc + self.grad_div_coeff * gd + linear_coeff * e
             for cc, gd, e in zip(self.curl_curl(E1), self._grad_div(E1), comps, strict=True)
         ]
+        if seed_args is not None:
+            # the FD injector rows of the separate Raman solver, at the combined carrier wp0
+            k_e1 = self.add_seed_rows(k_e1, self.calc_seed_source(t, seed_args))
         k_e1 = jnp.stack(k_e1, axis=-1)
         if self.sources_on:
             depletion = self.unified_depletion_fd(t, E1)
@@ -168,5 +177,7 @@ class FDCombinedSolver(CoupledLight):
             gamma_landau = jnp.zeros_like(self.spectral.k_sq)
         E1 = self.langmuir_step(t, y["E1"], gamma_landau)
         zero_phi = jnp.zeros((self.nx, self.ny), dtype=jnp.complex128)
-        E0, E1 = CoupledLight.__call__(self, t, y["E0"], E1, zero_phi, driver_args["E0"], None, y.get("iaw_density"))
+        E0, E1 = CoupledLight.__call__(
+            self, t, y["E0"], E1, zero_phi, driver_args["E0"], driver_args.get("E1"), y.get("iaw_density")
+        )
         return E0, E1, self.spectral.potential(E1)
