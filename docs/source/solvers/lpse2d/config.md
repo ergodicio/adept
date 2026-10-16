@@ -460,7 +460,7 @@ The IAW state follows the MATLAB LPSE split update for fractional ion-density pe
 | `damping.landau_form` | string | (default `simplified`) `simplified`: the rate above (LPSE `isSimplified`). `full`: the Z-generalized Krall-Trivelpiece expression used by LPSE's IAW solver, `W_i = W_r sqrt(pi/8) L^{-3/2} [(3/(eta-1))^{3/2} exp(-(3/(eta-1))/(2L)) + sqrt(1/(eta M))]`, `W_r = cs |k|/sqrt(L)`, `L = 1 + k^2 lambda_D^2`, `eta = 1 + 3 Ti/(Z Te)`, `M = (mi/me)/(eta Z)`, with `gamma_iaw = W_i/2`; `damping.landau` is then ignored. The real frequency in the spectral propagator stays `cs |k|`, as in LPSE's spectral branch |
 | `max_density_perturbation` | float or null | Optional symmetric limiter on `|delta n_i/n_0|`; unlimited by default |
 | `flow` | list or null | (`spectral` only) Uniform background flow `[Mach_x, Mach_y]` in units of `cs`: every mode acquires the Doppler phase `e^{-i k . V0 dt}` (LPSE `fluid.velocity`) |
-| `stride` | int | (default `1`; `spectral` only) Advance the IAW every `stride` EPW steps with `dt_iaw = stride * grid.dt` (LPSE steps its IAW solver less often than the EPW) |
+| `stride` | int | (default `1`; `spectral` only) Advance the IAW every `stride` EPW steps with `dt_iaw = stride * grid.dt` (LPSE steps its IAW solver less often than the EPW); the IAW absorber applies its damping over the whole `dt_iaw` |
 | `noise` | bool | (default `false`) LPSE `iaw.noise`: a random-phase source on `div v` every IAW step with the fluctuation-dissipation amplitude `noise_amplitude * nx * ny * sqrt(exp(2 dt (gamma_k + nu)) - 1)` on the retained band; requires IAW damping |
 | `noise_amplitude` | float | (default `1.0`) Amplitude of the IAW noise (x-space `div v` units per mode) |
 | `noise_seed` | int or null | Seed of the IAW noise stream |

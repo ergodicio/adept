@@ -129,7 +129,8 @@ class IonAcousticWave:
         self.ky = grid["ky"]
         self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
         self.filter = grid["low_pass_filter_grid"] * grid["zero_mask"]
-        self.boundary = grid["iaw_absorbing_boundaries"]
+        # the absorber factor is exp(-rate grid.dt) per EPW step; a strided update spans stride steps
+        self.boundary = grid["iaw_absorbing_boundaries"] ** self.stride
 
         self.cs = derived["cs"]
         self.wp0 = derived["wp0"]
