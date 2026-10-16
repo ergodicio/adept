@@ -136,20 +136,13 @@ def test_translator_maps_the_spectrum_instruments():
     assert any("spectrum.1.laser" in n for n in report["notes"])
 
 
-def test_combined_e1_probe_uses_the_combined_carrier(tmp_path):
-    """With terms.epw.solver: combined, E1 is enveloped at wp0, not w1 = w0 - wp0 (PR #372 review,
-    combined Raman carrier): the E1 probe's carrier, frequency axis and Poynting factor follow it.
-    At n_env = 0.2 the two carriers differ by 24 %. Tolerances fixed before the run: the carrier
-    is wp0 exactly; a transverse plane wave A e^{i(k x - W t)} peaks in the bin nearest W / wp0;
-    its s_x is (c^2 / wp0) |A|^2 sin(k dx) / dx (the central difference, exact) to 1e-9."""
-    from types import SimpleNamespace
-
+def _combined_probe_cfg():
+    """Combined solver at n_env = 0.2, n = 0.15 nc, one E1 probe with Poynting components."""
     from adept._lpse2d.helpers import (
         get_density_profile,
         get_derived_quantities,
         get_save_quantities,
         get_solver_quantities,
-        make_light_spectrum_xarrays,
         write_units,
     )
 
@@ -168,7 +161,20 @@ def test_combined_e1_probe_uses_the_combined_carrier(tmp_path):
     cfg = get_derived_quantities(cfg)
     cfg["grid"] = get_solver_quantities(cfg)
     cfg["grid"]["background_density"] = get_density_profile(cfg)
-    cfg = get_save_quantities(cfg)
+    return get_save_quantities(cfg)
+
+
+def test_combined_e1_probe_uses_the_combined_carrier(tmp_path):
+    """With terms.epw.solver: combined, E1 is enveloped at wp0, not w1 = w0 - wp0 (PR #372 review,
+    combined Raman carrier): the E1 probe's carrier, frequency axis and Poynting factor follow it.
+    At n_env = 0.2 the two carriers differ by 24 %. Tolerances fixed before the run: the carrier
+    is wp0 exactly; a transverse plane wave A e^{i(k x - W t)} peaks in the bin nearest W / wp0;
+    its s_x is (c^2 / wp0) |A|^2 sin(k dx) / dx (the central difference, exact) to 1e-9."""
+    from types import SimpleNamespace
+
+    from adept._lpse2d.helpers import make_light_spectrum_xarrays
+
+    cfg = _combined_probe_cfg()
     d = cfg["units"]["derived"]
     assert abs(d["w1"] / d["wp0"] - 1.0) > 0.2
 
@@ -192,3 +198,36 @@ def test_combined_e1_probe_uses_the_combined_carrier(tmp_path):
     assert abs(peak - big_w / d["wp0"]) <= 0.5 * (omega[1] - omega[0]) + 1e-12
     dx = float(cfg["grid"]["dx"])
     np.testing.assert_allclose(ds["s_x"].values, d["c"] ** 2 / d["wp0"] * amp**2 * np.sin(k * dx) / dx, rtol=1e-9)
+
+
+def test_combined_e1_probe_records_the_raman_light_only():
+    """The combined field's E1 carries the EPW as its longitudinal part; the E1 probe records its
+    transverse part, as LPSE's Raman spectrum (Instruments.cpp:419-429) and the field saves.
+    Tolerances fixed before the run (those of the field-save test): a pure longitudinal mode
+    records under 1e-9 A, and a mixed field records its transverse part to 1e-9 A."""
+    from jax import numpy as jnp
+
+    cfg = _combined_probe_cfg()
+    sub = cfg["save"]["light_spectrum_0"]
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    x = np.asarray(cfg["grid"]["x"])
+    k = np.asarray(cfg["grid"]["kx"])[6]
+    amp = 2.0e-3
+    wave = amp * np.exp(1j * k * x)[:, None] * np.ones((1, ny))
+    longitudinal = np.zeros((nx, ny, 2), dtype=np.complex128)
+    longitudinal[..., 0] = wave  # E parallel to k: a travelling plasma wave, no light
+    transverse = np.zeros((nx, ny, 2), dtype=np.complex128)
+    transverse[..., 1] = 0.5 * wave
+
+    def recorded(e1):
+        y = {
+            "epw": jnp.zeros((nx, ny), dtype=jnp.complex128).view(jnp.float64),
+            "E0": jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64),
+            "E1": jnp.asarray(e1).view(jnp.float64),
+        }
+        return np.asarray(sub["func"](0.0, y, None)["E"]).view(np.complex128)
+
+    assert np.max(np.abs(recorded(longitudinal))) < 1e-9 * amp
+    rec_t = recorded(transverse)
+    np.testing.assert_allclose(recorded(longitudinal + transverse), rec_t, rtol=0, atol=1e-9 * amp)
+    assert np.max(np.abs(rec_t)) > 0.4 * amp
