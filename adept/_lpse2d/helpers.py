@@ -2172,9 +2172,10 @@ def make_light_spectrum_xarrays(cfg: dict, result, td: str) -> list[xr.Dataset]:
     """One Dataset per ``save.light_spectrum`` probe: the field components ``e_x, e_y, e_z`` on
     the sub-box against ``t (ps)``, their spectra ``spectrum_x, ...`` against the envelope
     frequency offset ``omega / w`` (``w`` the field's own carrier: ``w0`` for E0, ``w1`` for
-    E1; positive = above the carrier), the box-summed spectral power ``power`` and, with
-    ``poynting``, the Poynting components ``s_x, s_y`` (``(c^2/w) Im(E* . d_j E)``) on the box
-    without its guard cells. Written to ``binary/light_spectrum_<i>.xr``."""
+    E1 -- ``wp0`` with the combined solver, ``_raman_carrier``; positive = above the carrier),
+    the box-summed spectral power ``power`` and, with ``poynting``, the Poynting components
+    ``s_x, s_y`` (``(c^2/w) Im(E* . d_j E)``) on the box without its guard cells. Written to
+    ``binary/light_spectrum_<i>.xr``."""
     derived = cfg["units"]["derived"]
     out = []
     for i_probe, probe in enumerate(cfg["save"].get("light_spectrum") or []):
@@ -2185,7 +2186,7 @@ def make_light_spectrum_xarrays(cfg: dict, result, td: str) -> list[xr.Dataset]:
         t_ax = np.asarray(result.ts[key], dtype=np.float64)
         raw = np.asarray(result.ys[key]["E"])
         arr = raw.view(np.complex64 if raw.dtype == np.float32 else np.complex128)  # (nt, nx_sub, ny_sub, ncomp)
-        w = derived["w0"] if sub["field"] == "E0" else derived["w1"]
+        w = derived["w0"] if sub["field"] == "E0" else _raman_carrier(cfg)
         x_full = np.asarray(cfg["grid"]["x"], dtype=np.float64)
         y_full = np.asarray(cfg["grid"]["y"], dtype=np.float64)
         x_ax = x_full[sub["ix"][0] : sub["ix"][1] + 1]
