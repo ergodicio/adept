@@ -487,3 +487,81 @@ def test_combined_seed_injector_refuses_an_evanescent_position():
     cfg = _finish(cfg)  # uniform n = n_env = 0.2
     with pytest.raises(ValueError, match="evanescent"):
         CombinedSolver(cfg)
+
+
+# ---- the combined carrier wp0 outside the combined solver (PR #372 review round 4) -----------------
+
+
+def _off_quarter_cfg(solver, n_env, density, *, iaw=None, absorption=False, wavelength=None, seed=False):
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = n_env
+    if wavelength is not None:
+        cfg["units"]["laser_wavelength"] = wavelength
+    cfg["density"] = {"basis": "uniform", "val": density}
+    cfg["grid"].update({"xmax": "20um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    combined = solver == "combined"
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": combined, "srs": True})
+    cfg["terms"]["epw"]["solver"] = solver
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False, "absorption": absorption}
+    if iaw is not None:
+        cfg["terms"]["iaw"] = iaw
+    if seed:
+        cfg["drivers"]["E1"] = {
+            "intensity": "1.0e+12W/cm^2",
+            "delta_omega": 0.0,
+            "turn_on_time": "10fs",
+            "offset": "7um",
+        }
+    return _finish(cfg)
+
+
+def test_combined_iaw_drive_thermal_term_and_raman_absorption_use_the_combined_carrier():
+    """With terms.epw.solver: combined the IAW sees the Raman light at the combined carrier wp0: its
+    ponderomotive coefficient is 1/wp0^2, the thermal-filamentation Raman term's critical density is
+    n_env and its absorption rate the NRL value at lambda_0 w0/wp0 (a numeric rate scales by
+    (wp0/w0)^2). At n_env = 0.2 (w1 = 1.24 wp0). Exact identities, rtol 1e-12, fixed before the
+    run; the separate solver keeps w1."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+    from adept._lpse2d.core.raman import light_absorption_rates
+
+    iaw = {
+        "active": True,
+        "solver": "spectral",
+        "damping": {"landau": 0.1, "collisions": 0.0},
+        "thermal_filamentation": {"laser": True, "raman": True},
+    }
+    cfg_c = _off_quarter_cfg("combined", 0.2, 0.15, iaw=iaw, absorption=True)
+    cfg_s = _off_quarter_cfg("separate", 0.2, 0.15, iaw=iaw, absorption=True)
+    d = cfg_c["units"]["derived"]
+    assert abs(d["w1"] / d["wp0"] - 1.0) > 0.2
+    nx, ny = cfg_c["grid"]["nx"], cfg_c["grid"]["ny"]
+    amp = 2.0e-3
+    e1 = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).at[..., 1].set(amp)
+    zero_phi = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    zero_e0 = jnp.zeros((nx, ny, 2), dtype=jnp.complex128)
+    for cfg, w_expected in ((cfg_c, d["wp0"]), (cfg_s, d["w1"])):
+        wave = IonAcousticWave(cfg)
+        assert wave.w_raman == w_expected
+        drive = np.asarray(wave.ponderomotive_drive(zero_phi, zero_e0, e1))
+        np.testing.assert_allclose(drive, wave.ponderomotive_prefactor * amp**2 / w_expected**2, rtol=1e-12)
+
+    # NRL Raman rate at the combined wavelength lambda_0 w0/wp0 (the pump rate of a deck at that wavelength)
+    rate0_c, rate1_c = light_absorption_rates(cfg_c)
+    lam_c = 0.351 * d["w0"] / d["wp0"]
+    np.testing.assert_allclose(
+        rate1_c,
+        light_absorption_rates(_off_quarter_cfg("combined", 0.2, 0.15, absorption=True, wavelength=f"{lam_c}um"))[0],
+        rtol=1e-12,
+    )
+    # the thermal Raman/laser coefficient ratio: (rate1 / rate0) / nc1^2, nc1 = n_env combined
+    wave_c = IonAcousticWave(cfg_c)
+    ratio = np.asarray(wave_c.thermal_coeff["raman"]) / np.asarray(wave_c.thermal_coeff["laser"])
+    np.testing.assert_allclose(ratio, (rate1_c / rate0_c) / 0.2**2, rtol=1e-12)
+    # a numeric pump rate scales by the carrier ratio squared
+    for solver, w in (("combined", d["wp0"]), ("separate", d["w1"])):
+        rate0, rate1 = light_absorption_rates(_off_quarter_cfg(solver, 0.2, 0.15, absorption=0.5))
+        assert rate0 == 0.5
+        np.testing.assert_allclose(rate1, 0.5 * (w / d["w0"]) ** 2, rtol=1e-12)
+

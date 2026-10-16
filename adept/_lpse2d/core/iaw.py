@@ -10,7 +10,10 @@ where the ponderomotive potential is
 
     PP = cs^2 n + Z e^2/(4 me mi) [|E_epw|^2/wp0^2
                                     + |E0|^2/w0^2
-                                    + |E1|^2/w1^2].
+                                    + |E1|^2/w_R^2],
+
+``w_R`` the Raman light's carrier: ``w1 = w0 - wp0``, or ``wp0`` with the combined solver, whose
+transverse field (the Raman light) is enveloped there.
 
 Two time integrators are available (``terms.iaw.solver``):
 
@@ -136,6 +139,9 @@ class IonAcousticWave:
         self.wp0 = derived["wp0"]
         self.w0 = derived["w0"]
         self.w1 = derived["w1"]
+        # the Raman light's carrier: the combined solver envelopes its field at wp0
+        self.combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+        self.w_raman = self.wp0 if self.combined else self.w1
         self.ponderomotive_prefactor = (
             cfg["units"]["ionization state"] * derived["e"] ** 2 / (4.0 * derived["me"] * derived["mi"])
         )
@@ -252,7 +258,7 @@ class IonAcousticWave:
         if "raman" in self.thermal_waves:
             if rate1 is None:
                 raise ValueError("terms.iaw.thermal_filamentation.raman needs terms.light.absorption")
-            nc1 = (derived["w1"] / derived["w0"]) ** 2
+            nc1 = (self.w_raman / derived["w0"]) ** 2  # the Raman light's critical density (n_env combined)
             self.thermal_coeff["raman"] = jnp.asarray(base * 2.0 * rate1 * (n_over_nc / nc1) ** 2)
         if "lw" in self.thermal_waves:
             nu_coll = float(derived.get("nu_coll", 0.0))
@@ -310,7 +316,7 @@ class IonAcousticWave:
         pump_intensity = jnp.sum(jnp.abs(E0) ** 2, axis=-1)
         raman_intensity = jnp.sum(jnp.abs(E1) ** 2, axis=-1)
         return self.ponderomotive_prefactor * (
-            epw_intensity / self.wp0**2 + pump_intensity / self.w0**2 + raman_intensity / self.w1**2
+            epw_intensity / self.wp0**2 + pump_intensity / self.w0**2 + raman_intensity / self.w_raman**2
         )
 
     def ponderomotive_potential(self, phi_k: Array, E0: Array, E1: Array, density: Array) -> Array:

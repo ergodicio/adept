@@ -130,7 +130,7 @@ class E1DriverModel(BaseModel):
     """
 
     intensity: str  # e.g. "1.0e+12W/cm^2"
-    delta_omega: float = 0.0  # seed frequency shift relative to w1 = w0 - wp0 (fraction of w1)
+    delta_omega: float = 0.0  # seed frequency shift, a fraction of the Raman carrier (w1 = w0 - wp0; wp0 combined)
     turn_on_time: str = "10fs"
     # distance of the injector from the right boundary; defaults to 1.6 * boundary_width,
     # which places it just inside the absorbing boundary's tanh skirt
