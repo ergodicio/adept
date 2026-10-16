@@ -434,8 +434,11 @@ def translate_parms(
         report["unsupported"].append("3-D grid (grid.sizes/nodes z): adept envelope-2d is 2-D")
 
     # ---- time stepping (the steps themselves: lpse_time_steps, below)
-    # LPSE defaults: laser.enable false, laser.solver static (ParameterManager.cpp:268, 343-347)
-    laser_evolves = g("laser.solver", "static").lower() != "static" and _bool(g("laser.enable"), False)
+    # LPSE defaults: laser.enable false, laser.solver static (ParameterManager.cpp:268, 343-347). A
+    # disabled laser switches the E0 light off entirely -- every E0 entry point returns early
+    # (LightSolver.cpp:386, 1933) -- so it is no pump and no depletion, whatever beams the deck lists
+    laser_on = _bool(g("laser.enable"))
+    laser_evolves = laser_on and g("laser.solver", "static").lower() != "static"
     raman_on = _bool(g("raman.enable"))
     tmax = float(g("simulation.time.end", "1"))
     sample_period = float(g("simulation.samplePeriod", str(tmax)))
@@ -731,7 +734,7 @@ def translate_parms(
     light["transverse_source"] = _bool(
         g("raman.takeTransversePartOfSourceTerms", g("laser.takeTransversePartOfSourceTerms", "false"))
     )
-    if _bool(g("laser.pumpDepletion.TPD.enable")) or _bool(g("laser.pumpDepletion.SRS.enable")):
+    if laser_on and (_bool(g("laser.pumpDepletion.TPD.enable")) or _bool(g("laser.pumpDepletion.SRS.enable"))):
         light["pump_depletion"] = True
     if _bool(g("lw.kFilter.enable")):
         light["tpd_k_filter"] = True
@@ -752,8 +755,15 @@ def translate_parms(
                 f"interpolateSourcesInTime differs between the light classes {interp}: adept uses the Raman light's"
             )
 
-    # ---- laser beams (static: intensities summed; direction along +x expected)
-    n_beams = int(float(g("laser.nBeams", "1")))
+    # ---- laser beams (static: intensities summed; direction along +x expected). A disabled laser
+    # keeps a beam-free E0 driver at zero intensity, the form the shipped laser-off decks take.
+    n_beams = int(float(g("laser.nBeams", "1"))) if laser_on else 0
+    if not laser_on:
+        listed = sum(float(v) for k, v in parms.items() if re.fullmatch(r"laser\.\d+\.intensity", k))
+        report["notes"].append(
+            "laser.enable = false: no pump (zero intensity, no depletion)"
+            + (f"; the listed beam intensities ({listed:.6g} W/cm^2) are not applied" if listed else "")
+        )
     intensity = 0.0
     angle_deg = 0.0
     beams = []
@@ -813,7 +823,7 @@ def translate_parms(
 
     width1, order1, offset1 = beam_profile(1)
     # a zero width or order is LPSE's flat (periodic-injection) beam: no transverse profile
-    if width1 > 0 and order1 != 0:
+    if laser_on and width1 > 0 and order1 != 0:
         # adept's beam_width is the Gaussian standard deviation, exp(-(y^2 / (2 s^2))^(n/2)) =
         # exp(-(|y| / (sqrt(2) s))^n): s = width / sqrt(2) reproduces LPSE's profile for any n
         beam_extras["beam_width"] = f"{width1 / np.sqrt(2.0)}um"
@@ -842,7 +852,7 @@ def translate_parms(
     # LPSE laser.pulseShape.{enable, shape, file, period, dutyCycle} (LightSolver.cpp:1175-1214):
     # a power factor, shape file (default; two columns t_ps scale, LightSolver::loadPulseShapingData,
     # resolved relative to the deck's directory), square or sin; period in ps
-    if _bool(g("laser.pulseShape.enable")):
+    if laser_on and _bool(g("laser.pulseShape.enable")):
         pulse_shape = g("laser.pulseShape.shape", "file").strip().lower()
         if pulse_shape == "file":
             if not g("laser.pulseShape.file"):
@@ -1060,6 +1070,8 @@ def translate_parms(
         if g("iaw.stopEvolvingTime") is not None:
             iaw["t_stop"] = float(g("iaw.stopEvolvingTime"))
         tf = {w: _bool(g(f"thermalFil.{w}.enable")) for w in ("laser", "raman", "lw")}
+        if tf["laser"] and not laser_on:
+            raise ValueError("thermalFil.laser.enable needs laser.enable = true (LPSE rejects it too)")
         if any(tf.values()):
             tf["nonlocal"] = _bool(g("thermalFil.isNonlocal"))
             tf["conductivity_multiplier"] = float(g("thermalFil.conductivityMultiplier", "1"))
