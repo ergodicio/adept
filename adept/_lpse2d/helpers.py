@@ -2108,8 +2108,9 @@ def light_spectrum_save(cfg: dict, probe: dict) -> dict:
     ``E1`` on the sub-box ``x: [xmin, xmax]``, ``y: [ymin, ymax]`` (coordinates from the box
     centre, as LPSE's ``location.min / .max``; nearest grid nodes, a whole axis when omitted),
     sampled every ``interval`` from ``tmin`` (default the grid start) to ``tmax`` (default the
-    grid end). ``poynting: true`` keeps one guard cell on each side so the Poynting components
-    can be differenced in post-processing. The time series and its omega spectrum are
+    grid end); with ``terms.epw.solver: combined`` the ``E1`` probe records the transverse part
+    (the Raman light) of the combined field. ``poynting: true`` keeps one guard cell on each side
+    so the Poynting components can be differenced in post-processing. The time series and its omega spectrum are
     written by ``make_light_spectrum_xarrays``."""
     field = str(probe.get("field", "E0"))
     if field not in ("E0", "E1"):
@@ -2154,9 +2155,13 @@ def light_spectrum_save(cfg: dict, probe: dict) -> dict:
     iy = index_range("y", "y", int(cfg["grid"]["ny"]))
     x_slice = slice(ix[0], ix[1] + 1)
     y_slice = slice(iy[0], iy[1] + 1)
+    # the combined solver's E1 also carries the EPW (its longitudinal part): the probe records the
+    # Raman light, the transverse part of the whole field, as LPSE's Raman spectrum does
+    # (Instruments.cpp:419-429, getTransversePartOfField) and the field saves here do
+    light_part = _raman_light_part(cfg) if field == "E1" else (lambda y: y)
 
     def save_func(t, y, args):
-        return {"E": y[field][x_slice, y_slice, :]}
+        return {"E": light_part(y)[field][x_slice, y_slice, :]}
 
     return {
         "t": {"ax": jnp.asarray(t_ax), "dt": interval},
