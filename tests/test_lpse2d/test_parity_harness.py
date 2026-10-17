@@ -308,3 +308,27 @@ def test_batch_jobs_merge_defaults_and_build_run_commands(tmp_path):
     (tmp_path / "logs" / "a--one.log").unlink()
     summary = run_batch(jobs, tmp_path / "logs", workers=1, python=str(fake), env={}, skip_done=True)
     assert not (tmp_path / "logs" / "a--one.log").exists() and summary["a/fail"]["rc"] == 1
+
+
+def test_batch_dry_run_records_nothing_and_a_resume_runs_every_job(tmp_path):
+    """--dry-run previews the commands without touching summary.json (PR #378 review): a preview
+    before any run leaves no summary, a following --skip-done run executes every previewed job,
+    and a preview after that leaves the recorded entries exactly as they were."""
+    import json
+
+    from adept._lpse2d.parity import run_batch
+
+    fake = tmp_path / "fake.sh"
+    fake.write_text("#!/bin/sh\necho 'mlflow run 0123456789abcdef0123456789abcdef'\n")
+    fake.chmod(0o755)
+    jobs = [{"deck": "d", "run": "b/one"}, {"deck": "d", "run": "b/two"}]
+    logs = tmp_path / "logs"
+    assert run_batch(jobs, logs, python=str(fake), env={}, dry_run=True) == {}
+    assert not (logs / "summary.json").exists()
+    summary = run_batch(jobs, logs, python=str(fake), env={}, skip_done=True)
+    assert {k: v["rc"] for k, v in summary.items()} == {"b/one": 0, "b/two": 0}
+    assert (logs / "b--one.log").exists() and (logs / "b--two.log").exists()
+    recorded = (logs / "summary.json").read_text()
+    preview = run_batch(jobs + [{"deck": "d", "run": "b/three"}], logs, python=str(fake), env={}, dry_run=True)
+    assert (logs / "summary.json").read_text() == recorded and "b/three" not in preview
+    assert json.loads(recorded)["b/one"]["run_id"] == "0123456789abcdef" * 2
