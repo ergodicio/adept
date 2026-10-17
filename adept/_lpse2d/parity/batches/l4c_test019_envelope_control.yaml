@@ -1,0 +1,10 @@
+# test_019 control: the adept pump envelope's tanh rise (translator: at t = 0, 10 fs) moved before t = 0,
+# leaving LPSE's 30 fs riseTime ramp alone -- attributes the 0.05 ps residual of test_019/injector-file/1.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: L.4c, milestone: M11}
+jobs:
+  - deck: test_019
+    run: test_019/injector-file-envelope-control/1
+    windows: 0.05-0.2
+    overrides: {drivers: {E0: {envelope: {tw: 2.2ps, tc: 1.0ps}}}}

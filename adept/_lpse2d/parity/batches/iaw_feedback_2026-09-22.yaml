@@ -1,0 +1,10 @@
+# The IAW feedback fix (2026-09-22): the decks with IAW feedback, rerun against their LPSE
+# references. test_001 (1-D CBET at 0.1 n_c) is where the old coupling was 2.5x too strong;
+# test_029 and test_010 (TPD + IAW, 0.18-0.28 n_c) move by at most +-30 % in the coupling.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: iaw-feedback-2026-09-22}
+jobs:
+  - {deck: test_001, run: test_001/cbet/3, windows: 1.0-2.0, tags: {milestone: M10}}
+  - {deck: test_029, run: test_029/qle/4, windows: 0.2-0.6,0.6-1.0,1.5-2.0, tags: {milestone: M9}}
+  - {deck: test_010, run: test_010/iaw-feedback/1, tags: {milestone: M6}}
