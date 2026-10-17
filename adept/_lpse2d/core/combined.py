@@ -14,8 +14,8 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
 
 1. x-space scattering potential on the whole field, ``exp(-i dt wp0/2 (n_tot/n_env - 1))``
    (the EPW density detuning, identical to the light detuning at carrier ``wp0``), and
-   the collisional damping ``exp(-nu_R dt (n/n_env)^2)`` -- LPSE damps the combined field
-   with the Raman light's absorption (``raman.evolution.absorption``,
+   the collisional damping ``exp(-nu_R dt (n/n_env)^2)``, ``n`` with the IAW perturbation --
+   LPSE damps the combined field with the Raman light's absorption (``raman.evolution.absorption``,
    ``terms.light.raman_absorption``) at the field's own critical density, ``n_env``, and
    ignores ``lw.collisionalDampingRate`` (``LightSolver::calculateScatteringPotential``);
 2. the unified source, forward Euler (``LightSolver.cpp:4239``):
@@ -238,6 +238,7 @@ class CombinedSolver(SmoothPumpInjector):
             self.prop0 = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.w0) * self.k_sq) * self.propagation_band
             self.depletion_coeff = 1j * self.e / (2.0 * self.me * self.w0)
             rate0, _ = light_absorption_rates(cfg)
+            self.absorption_rate0 = rate0
             self.absorb0 = None if rate0 is None else jnp.exp(-rate0 * self.dt_l * self.background_density**2)
             pump = cfg["drivers"]["E0"]["derived"]
             x_inject = grid["xmin"] + pump["offset"]
@@ -344,18 +345,30 @@ class CombinedSolver(SmoothPumpInjector):
         # interpolateSourcesInTime, Nelf in LightSolver::calculateScatteringPotential)
         iaw_tl = as_linear(y.get("iaw_density"))
 
-        def detuning(dn):
+        def x_space_factors(dn):
+            """The sub-step's detuning and collisional damping of the combined field and the evolved
+            pump at the effective density, the IAW perturbation included through each wave's own
+            feedback switch (as RamanLight / CoupledLight): ``(n/n_env + dn f_R)^2`` for the
+            combined field, ``(n/nc (1 + dn f_0 n_env/n))^2`` for the pump."""
             detune = self.detune
+            collisional = self.collisional
             if dn is not None:
                 detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * dn * self.iaw_feedback)
+                if self.nu_raman:
+                    n_eff = self.n_over_env + dn * self.iaw_feedback
+                    collisional = jnp.exp(-self.nu_raman * self.dt_l * n_eff**2)
             if not self.pump_depletion:
-                return detune, None
+                return detune, collisional, None, None
             detune0 = self.detune0
+            absorb0 = self.absorb0
             if dn is not None:
                 detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn * self.iaw_feedback0 * self.dt_l)
-            return detune, detune0
+                if self.absorb0 is not None:
+                    n0 = self.background_density * (1.0 + dn * self.iaw_feedback0 / self.n_over_env)
+                    absorb0 = jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)
+            return detune, collisional, detune0, absorb0
 
-        fixed = detuning(iaw_tl.new) if iaw_tl.constant else None
+        fixed = x_space_factors(iaw_tl.new) if iaw_tl.constant else None
         if self.evolved_landau:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
@@ -370,14 +383,16 @@ class CombinedSolver(SmoothPumpInjector):
             t_i = t + i * self.dt_l
             if not self.pump_depletion:
                 E0 = E0_fn(t_i)
-            detune, detune0 = fixed if fixed is not None else detuning(iaw_tl.substep(i, self.n_sub))
+            detune, collisional, detune0, absorb0 = (
+                fixed if fixed is not None else x_space_factors(iaw_tl.substep(i, self.n_sub))
+            )
             # 1. scattering potential and collisional damping on the combined field
-            E1 = E1 * (detune * self.collisional)[..., None]
+            E1 = E1 * (detune * collisional)[..., None]
             # 2. the unified source (and the pump's x-space step)
             if self.pump_depletion:
                 E0 = E0 * detune0[..., None]
-                if self.absorb0 is not None:
-                    E0 = E0 * self.absorb0[..., None]
+                if absorb0 is not None:
+                    E0 = E0 * absorb0[..., None]
                 if self.sources_on:
                     E0 = E0 + self.dt_l * _masked(self.unified_depletion(t_i, E1), self.source_mask0)
                 E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)

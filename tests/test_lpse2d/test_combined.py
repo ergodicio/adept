@@ -795,3 +795,67 @@ def test_seeded_combined_deck_above_the_separate_cutoff_sets_up_and_runs():
 
     with pytest.raises(ValueError, match="Raman critical density"):
         _off_quarter_cfg("separate", 0.3, 0.25, seed=True)
+
+
+def test_combined_absorption_follows_the_evolved_ion_density():
+    """The combined field's collisional damping and the evolved pump's absorption take the effective
+    density with the IAW perturbation, through each wave's feedback switch, as RamanLight /
+    CoupledLight do (PR #378 review). Sources on but each wave alone (a transverse field cannot
+    deplete the pump, and the unified source needs both); n = 0.15 nc, n_env = 0.2, local feedback.
+    A uniform iaw_density = 0.05 makes every density-dependent factor of the step a uniform scalar,
+    so one EPW step with it over the same step without it is exactly
+    exp(-nu_R dt ((n/n_env)^2 (1 + dn)^2 - (n/n_env)^2)) for a transverse E1 plane wave and
+    exp(-nu_0 dt ((n (1 + dn))^2 - n^2)) for a pump plane wave, in modulus. Exact identities,
+    rtol 1e-10, fixed before the run; before the fix both ratios were 1.
+    Disclosure: the first version compared one step's absolute interior decay with the absorption
+    law and missed it by 3e-4 -- the absorbing x layers act in x-space and the spectral propagator
+    carries their deficit into the interior within the step. The with/without-IAW ratio cancels the
+    layers exactly; the tolerance is unchanged."""
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = 0.2
+    cfg["density"] = {"basis": "uniform", "val": 0.15}
+    cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": False}
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {
+        "solver": "spectral",
+        "pump_depletion": True,
+        "absorption": 300.0,
+        "raman_absorption": 200.0,
+    }
+    cfg["terms"]["iaw"] = {"active": True, "solver": "spectral", "damping": {"landau": 0.1, "collisions": 0.0}}
+    cfg = _finish(cfg)
+    solver = CombinedSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    x = np.asarray(cfg["grid"]["x"])
+    dt = cfg["grid"]["dt"]
+    dn = 0.05
+    n_over_env = 0.15 / 0.2
+    pump_args = {
+        **cfg["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.zeros((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    k = float(np.asarray(cfg["grid"]["kx"])[8])
+    zero = jnp.zeros((nx, ny, 2), dtype=jnp.complex128)
+    plane = zero.at[..., 1].set(jnp.asarray(1.0e-3 * np.exp(1j * k * x)[:, None] * np.ones((1, ny))))
+    epw = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    with_iaw = {"epw": epw, "iaw_density": jnp.full((nx, ny), dn)}
+    without = {"epw": epw}
+
+    def modulus_ratio(index, with_args):
+        a = np.asarray(solver(0.0, {**with_iaw, **with_args}, {"E0": pump_args})[index])[..., 1]
+        b = np.asarray(solver(0.0, {**without, **with_args}, {"E0": pump_args})[index])[..., 1]
+        kept = np.abs(b) > 1.0e-3 * np.abs(b).max()
+        return np.abs(a[kept]) / np.abs(b[kept])
+
+    ratio1 = modulus_ratio(1, {"E0": zero, "E1": plane})
+    np.testing.assert_allclose(ratio1, np.exp(-200.0 * dt * n_over_env**2 * ((1.0 + dn) ** 2 - 1.0)), rtol=1e-10)
+    ratio0 = modulus_ratio(0, {"E0": plane, "E1": zero})
+    np.testing.assert_allclose(ratio0, np.exp(-300.0 * dt * 0.15**2 * ((1.0 + dn) ** 2 - 1.0)), rtol=1e-10)
