@@ -1,0 +1,21 @@
+# Plan 2 blackbox reference session (2026-09-21): the adept side of the decks whose LPSE
+# reference runs were made today (original-lpse/runs/<deck>, CPU binary, 12 ranks). Growth-
+# ratio comparisons where the deck is an instability problem:
+#   test_006_spol  -- M8: s-polarised test_006 (laser.1.polarization = 90), test_006 windows
+#   test_010_comm  -- M6 follow-up: test_010 on a k_y-commensurate box (Ny 178), test_010 windows
+#   test_029       -- M9: the existing 2 ps reference (QLE from 1.5 ps), full length
+# test_001 / test_003 (CBET, M10) and the tier-L decks (test_011 RA, test_012 pulse, test_016
+# threshold, test_019 beam, test_030 spectrum) need their own observables, not growth ratios:
+# run here for the series and fields, compared in the investigation note.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: refs-2026-09-21}
+jobs:
+  - {deck: test_006_spol, run: test_006_spol/ref/1, windows: 2.5-3.5,3.0-4.0, tags: {milestone: M8}}
+  - {deck: test_010_comm, run: test_010_comm/ref/1, windows: 0.3-0.9,0.9-1.5, tags: {milestone: M6}}
+  - {deck: test_029, run: test_029/qle/1, windows: 0.2-0.6,0.6-1.0,1.5-2.0, tags: {milestone: M9}}
+  - {deck: test_001, run: test_001/cbet/1, windows: 1.0-2.0, tags: {milestone: M10}}
+  - {deck: test_003, run: test_003/cbet/1, windows: 1.0-2.0, tags: {milestone: M10}}
+  - {deck: test_011, run: test_011/ra/1, windows: 0.2-0.6, tags: {milestone: M11}}
+  - {deck: test_012, run: test_012/pulse/1, windows: 0.02-0.08, tags: {milestone: M11}}
+  - {deck: test_030, run: test_030/spectrum/1, windows: 0.5-1.5, tags: {milestone: M11}}
