@@ -141,17 +141,18 @@ def fit_epw_growth(t: np.ndarray, W: np.ndarray, floor: float | None = None) -> 
 def expected_noise_energy(cfg: dict, t_ps: float) -> float:
     """Expected EPW energy of the pure noise-driven field at time ``t_ps`` (OSIRIS units).
 
-    Each retained k-mode is a damped random walk: the solver adds ``dt * A * e^{i phi}``
-    every step and damps by ``e^{-(gamma_k + nu) dt}``, so
+    Each retained k-mode is a damped random walk: the solver adds ``D_k e^{i phi}`` every
+    noise step ``dt`` (``epw.noise_step``: the EPW step, or the light sub-step for the combined
+    solver) and damps by ``e^{-(gamma_k + nu) dt}``, so
 
-        <|phi_k|^2>(t) = (dt A)^2 * (1 - e^{-2 g t}) / (1 - e^{-2 g dt}),   g = gamma_k + nu
+        <|phi_k|^2>(t) = D_k^2 * (1 - e^{-2 g t}) / (1 - e^{-2 g dt}),   g = gamma_k + nu
 
-    with the ``g -> 0`` limit ``(dt A)^2 * t/dt``. Summed to the same OSIRIS-normalized
+    with the ``g -> 0`` limit ``D_k^2 * t/dt``. Summed to the same OSIRIS-normalized
     energy as the ``epw_energy`` save quantity (Parseval). Absorbing boundaries and
     detuning-induced mode mixing are neglected, so on absorbing/ramped boxes this is a
     mild overestimate -- conservative for use as a growth-fit noise floor.
     """
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum, noise_step
 
     grid = cfg["grid"]
     derived = cfg["units"]["derived"]
@@ -159,15 +160,14 @@ def expected_noise_energy(cfg: dict, t_ps: float) -> float:
     ky = np.array(grid["ky"])
     k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
     zero_mask = np.where(k_sq > 0, 1.0, 0.0)
-    if cfg["terms"]["epw"]["damping"].get("landau", True):
-        gamma = np.array(landau_damping_rate(k_sq, derived["wp0"], derived["vte_sq"], zero_mask))
-    else:
-        gamma = np.zeros_like(k_sq)
-    g = gamma + derived.get("nu_coll", 0.0) * zero_mask
 
-    dt = grid["dt"]
-    amp = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
-    mode_amp_sq = (dt * amp) ** 2 * np.array(grid["low_pass_filter_grid"]) ** 2 * zero_mask
+    # the step at which the active solver kicks and damps the noise (the EPW step, or the light
+    # sub-step for the combined solver) and the collisional rate it damps with
+    dt, nu = noise_step(cfg)
+    g = np.asarray(analytic_landau_rate(cfg)) + nu * zero_mask
+    # per-step kick amplitude of the configured noise model (flat: amplitude * sqrt(dt_EPW * dt)
+    # on the retained band; thermal: the fluctuation-dissipation kick), squared
+    mode_amp_sq = np.asarray(noise_kick_spectrum(cfg, dt=dt, nu_coll=nu)) ** 2
 
     small = 2.0 * g * dt < 1.0e-12  # undamped modes: plain random walk, variance ~ t
     denom = np.where(small, 1.0, 1.0 - np.exp(-2.0 * g * dt))
