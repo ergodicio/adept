@@ -17,6 +17,7 @@ def _make_cfg(
     stride=1,
     flow=None,
     epw_max_wavenumber=None,
+    grid_extra=None,
     **iaw_extra,
 ):
     from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
@@ -37,6 +38,7 @@ def _make_cfg(
             "low_pass_filter": 1.0,
         }
     )
+    cfg["grid"].update(grid_extra or {})
     cfg["terms"]["zero_mask"] = True
     cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
     cfg["terms"]["epw"]["source"] = {"noise": False, "tpd": False, "srs": False}
@@ -264,3 +266,42 @@ def test_iaw_band_has_its_own_cap():
     np.testing.assert_array_equal(
         np.asarray(capped_iaw["grid"]["low_pass_filter_grid"]), np.asarray(base["grid"]["low_pass_filter_grid"])
     )
+
+
+def test_iaw_stride_applies_the_absorber_over_the_whole_iaw_step():
+    """The IAW absorber removes exp(-rate grid.dt) per EPW step; an update of stride * grid.dt
+    applies it stride times (PR #372 review). Tolerances fixed before the run: the boundary factor
+    is the per-step factor to the stride power (rtol 1e-14), and a velocity-divergence mode run
+    24 fs through an absorbing x boundary at stride 2 matches stride 1 to 1 % of its initial
+    amplitude (the absorber/propagator splitting at a 100/ps absorber, cs k dt << 1, is ~0.2 %);
+    the per-step factor applied once per strided update leaves ~20 % more at the wall.
+    Disclosure: the first run used this config's default tanh absorber, which peaks at 1e4/ps, not
+    the 100/ps the 1 % bound was derived for; at rate dt ~ 20 the splitting at the layer's inner
+    edge alone gave 1.4 %. The exp profile at boundary_max_rate 100/ps now sets the rate the bound
+    assumes; the bound is unchanged."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    def cfg_for(stride):
+        return _make_cfg(
+            stride=stride,
+            dt="1fs",
+            boundary={"x": "absorbing", "y": "periodic"},
+            boundary_max_rate=100.0,
+            grid_extra={"boundary_width": "1um", "boundary_profile": "exp"},
+        )
+
+    per_step = np.asarray(cfg_for(1)["grid"]["iaw_absorbing_boundaries"])
+    np.testing.assert_allclose(-np.log(np.min(per_step)) / cfg_for(1)["grid"]["dt"], 100.0, rtol=1e-9)
+    assert np.min(per_step) ** 24 < 0.5  # the absorber removes most of the wall field in 24 fs
+    one, two = IonAcousticWave(cfg_for(1)), IonAcousticWave(cfg_for(2))
+    np.testing.assert_allclose(np.asarray(two.boundary), per_step**2, rtol=1e-14)
+
+    cfg = cfg_for(1)
+    x = np.asarray(cfg["grid"]["x"])
+    k = float(np.asarray(cfg["grid"]["kx"])[1])
+    amplitude = 0.01
+    w0 = jnp.asarray(amplitude * np.cos(k * (x - x[0])))[:, None] * jnp.ones((1, cfg["grid"]["ny"]))
+    state = {**_zero_fields(cfg), "iaw_density": jnp.zeros_like(w0), "iaw_velocity_divergence": w0}
+    w_one = np.asarray(_run(one, dict(state), 24)["iaw_velocity_divergence"])
+    w_two = np.asarray(_run(two, dict(state), 12)["iaw_velocity_divergence"])
+    np.testing.assert_allclose(w_two, w_one, rtol=0, atol=1e-2 * amplitude)

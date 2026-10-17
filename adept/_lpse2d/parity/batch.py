@@ -121,7 +121,9 @@ def run_batch(
     env: dict | None = None,
 ) -> dict[str, dict]:
     """Run ``jobs`` on ``workers`` concurrent subprocesses; returns the summary
-    ``{run name: {rc, seconds, run_id, metrics, log}}`` (also written to ``summary.json``)."""
+    ``{run name: {rc, seconds, run_id, metrics, log}}`` (also written to ``summary.json``).
+    ``dry_run`` prints each command and records nothing: ``summary.json`` is the completion
+    state ``skip_done`` reads, so a preview neither marks a job done nor replaces a real entry."""
     log_dir = Path(log_dir)
     log_dir.mkdir(parents=True, exist_ok=True)
     summary_path = log_dir / "summary.json"
@@ -155,19 +157,18 @@ def run_batch(
             print(f"[batch] start {name} on {where} -> {log}", flush=True)
             if dry_run:
                 print("        " + " ".join(shlex.quote(c) for c in cmd), flush=True)
-                rc, seconds = 0, 0.0
-            else:
-                t0 = time.time()
-                with open(log, "w") as fo:
-                    fo.write("# " + " ".join(shlex.quote(c) for c in cmd) + "\n")
-                    fo.flush()
-                    try:
-                        rc = subprocess.call(cmd, stdout=fo, stderr=subprocess.STDOUT, env=job_env)
-                    except OSError as exc:  # interpreter missing / not executable: record, do not die
-                        fo.write(f"[batch] could not start: {exc}\n")
-                        rc = -1
-                seconds = time.time() - t0
-            parsed = parse_log(log) if not dry_run else {"run_id": None, "metrics": {}}
+                continue
+            t0 = time.time()
+            with open(log, "w") as fo:
+                fo.write("# " + " ".join(shlex.quote(c) for c in cmd) + "\n")
+                fo.flush()
+                try:
+                    rc = subprocess.call(cmd, stdout=fo, stderr=subprocess.STDOUT, env=job_env)
+                except OSError as exc:  # interpreter missing / not executable: record, do not die
+                    fo.write(f"[batch] could not start: {exc}\n")
+                    rc = -1
+            seconds = time.time() - t0
+            parsed = parse_log(log)
             entry = {"rc": rc, "seconds": round(seconds, 1), "log": str(log), **parsed, "deck": job["deck"]}
             with lock:
                 summary[name] = entry
@@ -217,6 +218,8 @@ def main(argv=None) -> int:
         skip_done=args.skip_done,
         dry_run=args.dry_run,
     )
+    if args.dry_run:
+        return 0
     print_summary({j["run"]: summary[j["run"]] for j in jobs if j["run"] in summary})
     return 0 if all(summary.get(j["run"], {}).get("rc") == 0 for j in jobs) else 1
 

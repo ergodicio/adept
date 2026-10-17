@@ -670,3 +670,192 @@ def test_combined_seed_injector_refuses_an_evanescent_position():
     cfg = _finish(cfg)  # uniform n = n_env = 0.2
     with pytest.raises(ValueError, match="evanescent"):
         CombinedSolver(cfg)
+
+
+# ---- the combined carrier wp0 outside the combined solver (PR #372 review round 4) -----------------
+
+
+def _off_quarter_cfg(solver, n_env, density, *, iaw=None, absorption=False, wavelength=None, seed=False):
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = n_env
+    if wavelength is not None:
+        cfg["units"]["laser_wavelength"] = wavelength
+    cfg["density"] = {"basis": "uniform", "val": density}
+    cfg["grid"].update({"xmax": "20um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    combined = solver == "combined"
+    # srs_k_filter on (plan 2's default is off): the k-filter cutoff check is exercised on both solvers
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": combined, "srs": True, "srs_k_filter": True})
+    cfg["terms"]["epw"]["solver"] = solver
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False, "absorption": absorption}
+    if iaw is not None:
+        cfg["terms"]["iaw"] = iaw
+    if seed:
+        cfg["drivers"]["E1"] = {
+            "intensity": "1.0e+12W/cm^2",
+            "delta_omega": 0.0,
+            "turn_on_time": "10fs",
+            "offset": "7um",
+        }
+    return _finish(cfg)
+
+
+def test_combined_iaw_drive_thermal_term_and_raman_absorption_use_the_combined_carrier():
+    """With terms.epw.solver: combined the IAW sees the Raman light at the combined carrier wp0: its
+    ponderomotive coefficient is 1/wp0^2, the thermal-filamentation Raman term's critical density is
+    n_env and its absorption rate the NRL value at lambda_0 w0/wp0 (a numeric rate scales by
+    (wp0/w0)^2). At n_env = 0.2 (w1 = 1.24 wp0). Exact identities, rtol 1e-12, fixed before the
+    run; the separate solver keeps w1."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+    from adept._lpse2d.core.raman import light_absorption_rates
+
+    iaw = {
+        "active": True,
+        "solver": "spectral",
+        "damping": {"landau": 0.1, "collisions": 0.0},
+        "thermal_filamentation": {"laser": True, "raman": True},
+    }
+    cfg_c = _off_quarter_cfg("combined", 0.2, 0.15, iaw=iaw, absorption=True)
+    cfg_s = _off_quarter_cfg("separate", 0.2, 0.15, iaw=iaw, absorption=True)
+    d = cfg_c["units"]["derived"]
+    assert abs(d["w1"] / d["wp0"] - 1.0) > 0.2
+    nx, ny = cfg_c["grid"]["nx"], cfg_c["grid"]["ny"]
+    amp = 2.0e-3
+    e1 = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).at[..., 1].set(amp)
+    zero_phi = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    zero_e0 = jnp.zeros((nx, ny, 2), dtype=jnp.complex128)
+    for cfg, w_expected in ((cfg_c, d["wp0"]), (cfg_s, d["w1"])):
+        wave = IonAcousticWave(cfg)
+        assert wave.w_raman == w_expected
+        drive = np.asarray(wave.ponderomotive_drive(zero_phi, zero_e0, e1))
+        np.testing.assert_allclose(drive, wave.ponderomotive_prefactor * amp**2 / w_expected**2, rtol=1e-12)
+
+    # NRL Raman rate at the combined wavelength lambda_0 w0/wp0 (the pump rate of a deck at that wavelength)
+    rate0_c, rate1_c = light_absorption_rates(cfg_c)
+    lam_c = 0.351 * d["w0"] / d["wp0"]
+    np.testing.assert_allclose(
+        rate1_c,
+        light_absorption_rates(_off_quarter_cfg("combined", 0.2, 0.15, absorption=True, wavelength=f"{lam_c}um"))[0],
+        rtol=1e-12,
+    )
+    # the thermal Raman term: (coefficient * rate1, nc1 = n_env combined, power 2) against the laser's
+    wave_c = IonAcousticWave(cfg_c)
+    coeff_r, nc1, power_r = wave_c.thermal_terms["raman"]
+    coeff_l, nc0, power_l = wave_c.thermal_terms["laser"]
+    assert (power_r, power_l, nc0) == (2, 2, 1.0)
+    np.testing.assert_allclose(nc1, 0.2, rtol=1e-12)
+    np.testing.assert_allclose(coeff_r / coeff_l, rate1_c / rate0_c, rtol=1e-12)
+    # a numeric pump rate scales by the carrier ratio squared
+    for solver, w in (("combined", d["wp0"]), ("separate", d["w1"])):
+        rate0, rate1 = light_absorption_rates(_off_quarter_cfg(solver, 0.2, 0.15, absorption=0.5))
+        assert rate0 == 0.5
+        np.testing.assert_allclose(rate1, 0.5 * (w / d["w0"]) ** 2, rtol=1e-12)
+    # the combined field's damping and its noise calibration read that rate (PR #378 review): a
+    # numeric pump rate alone, no raman_absorption
+    from adept._lpse2d.core.combined import CombinedSolver
+    from adept._lpse2d.core.epw import noise_step
+
+    cfg_n = _off_quarter_cfg("combined", 0.2, 0.15, absorption=0.5)
+    nu_expected = 0.5 * (d["wp0"] / d["w0"]) ** 2
+    np.testing.assert_allclose(CombinedSolver(cfg_n).nu_raman, nu_expected, rtol=1e-12)
+    np.testing.assert_allclose(noise_step(cfg_n)[1], nu_expected, rtol=1e-12)
+
+
+def test_seeded_combined_deck_above_the_separate_cutoff_sets_up_and_runs():
+    """n_env = 0.3: the combined light is cut off at n_env = 0.3 nc, the separate Raman light at
+    (w1/w0)^2 = 0.205 nc. A seeded box at 0.25 nc is valid for the combined solver; before the fix
+    the separate SRS k-filter check refused the box and the never-stepped separate Raman solver
+    refused the seed. Through setup and SplitStep (tolerance fixed before the run): the separate
+    light solvers are not built and after 80 steps the seed reaches the bulk at A / eps^(1/4),
+    eps = 1 - n/n_env, to 5 %. The separate solver still refuses the same box."""
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    cfg = _off_quarter_cfg("combined", 0.3, 0.25, seed=True)
+    del cfg["drivers"]["E0"]
+    step = SplitStep(cfg)
+    assert step.raman is None and step.coupled_light is None and step.combined.seed_enabled
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    state = {
+        "epw": jnp.zeros((nx, ny), dtype=jnp.complex128).view(jnp.float64),
+        "E0": jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64),
+        "E1": jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64),
+    }
+    args = {"drivers": {"E1": cfg["drivers"]["E1"]["derived"]}}
+    for i in range(80):
+        state = step(jnp.asarray(i * cfg["grid"]["dt"]), dict(state), args)
+    e1y = np.asarray(state["E1"].view(jnp.complex128))[:, 0, 1]
+    x = np.asarray(cfg["grid"]["x"])
+    x_inj = float(x[step.combined.i1])
+    bulk = (x > x_inj - 4.0) & (x < x_inj - 2.0)
+    eps = 1.0 - 0.25 / 0.3
+    np.testing.assert_allclose(
+        np.mean(np.abs(e1y[bulk])), cfg["drivers"]["E1"]["derived"]["amplitude"] / eps**0.25, rtol=0.05
+    )
+
+    with pytest.raises(ValueError, match="Raman critical density"):
+        _off_quarter_cfg("separate", 0.3, 0.25, seed=True)
+
+
+def test_combined_absorption_follows_the_evolved_ion_density():
+    """The combined field's collisional damping and the evolved pump's absorption take the effective
+    density with the IAW perturbation, through each wave's feedback switch, as RamanLight /
+    CoupledLight do (PR #378 review). Sources on but each wave alone (a transverse field cannot
+    deplete the pump, and the unified source needs both); n = 0.15 nc, n_env = 0.2, local feedback.
+    A uniform iaw_density = 0.05 makes every density-dependent factor of the step a uniform scalar,
+    so one EPW step with it over the same step without it is exactly
+    exp(-nu_R dt ((n/n_env)^2 (1 + dn)^2 - (n/n_env)^2)) for a transverse E1 plane wave and
+    exp(-nu_0 dt ((n (1 + dn))^2 - n^2)) for a pump plane wave, in modulus. Exact identities,
+    rtol 1e-10, fixed before the run; before the fix both ratios were 1.
+    Disclosure: the first version compared one step's absolute interior decay with the absorption
+    law and missed it by 3e-4 -- the absorbing x layers act in x-space and the spectral propagator
+    carries their deficit into the interior within the step. The with/without-IAW ratio cancels the
+    layers exactly; the tolerance is unchanged."""
+    from adept._lpse2d.core.combined import CombinedSolver
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = 0.2
+    cfg["density"] = {"basis": "uniform", "val": 0.15}
+    cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": False}
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {
+        "solver": "spectral",
+        "pump_depletion": True,
+        "absorption": 300.0,
+        "raman_absorption": 200.0,
+    }
+    cfg["terms"]["iaw"] = {"active": True, "solver": "spectral", "damping": {"landau": 0.1, "collisions": 0.0}}
+    cfg = _finish(cfg)
+    solver = CombinedSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    x = np.asarray(cfg["grid"]["x"])
+    dt = cfg["grid"]["dt"]
+    dn = 0.05
+    n_over_env = 0.15 / 0.2
+    pump_args = {
+        **cfg["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.zeros((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    k = float(np.asarray(cfg["grid"]["kx"])[8])
+    zero = jnp.zeros((nx, ny, 2), dtype=jnp.complex128)
+    plane = zero.at[..., 1].set(jnp.asarray(1.0e-3 * np.exp(1j * k * x)[:, None] * np.ones((1, ny))))
+    epw = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    with_iaw = {"epw": epw, "iaw_density": jnp.full((nx, ny), dn)}
+    without = {"epw": epw}
+
+    def modulus_ratio(index, with_args):
+        a = np.asarray(solver(0.0, {**with_iaw, **with_args}, {"E0": pump_args})[index])[..., 1]
+        b = np.asarray(solver(0.0, {**without, **with_args}, {"E0": pump_args})[index])[..., 1]
+        kept = np.abs(b) > 1.0e-3 * np.abs(b).max()
+        return np.abs(a[kept]) / np.abs(b[kept])
+
+    ratio1 = modulus_ratio(1, {"E0": zero, "E1": plane})
+    np.testing.assert_allclose(ratio1, np.exp(-200.0 * dt * n_over_env**2 * ((1.0 + dn) ** 2 - 1.0)), rtol=1e-10)
+    ratio0 = modulus_ratio(0, {"E0": plane, "E1": zero})
+    np.testing.assert_allclose(ratio0, np.exp(-300.0 * dt * 0.15**2 * ((1.0 + dn) ** 2 - 1.0)), rtol=1e-10)

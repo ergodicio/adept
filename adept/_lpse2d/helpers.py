@@ -648,12 +648,13 @@ def get_derived_quantities(cfg: dict) -> dict:
                 "(the pump is launched by a boundary injector and must exit the box)"
             )
 
-    if srs_on and cfg["terms"]["epw"]["source"].get("srs_k_filter", False):
+    if srs_on and epw_solver != "combined" and cfg["terms"]["epw"]["source"].get("srs_k_filter", False):
         derived = cfg["units"]["derived"]
 
-        # The SRS source filter only passes wavenumbers up to the local Raman light
-        # wavenumber k1(n_min). If the box's minimum density reaches the w1 critical
-        # density, that band is empty and E1_filter (epw.py) silently zeroes every
+        # The separate EPW solver's SRS source filter only passes wavenumbers up to the local
+        # Raman light wavenumber k1(n_min) (the combined solver filters the pump instead and its
+        # light is cut off at n_env, not at the w1 critical density). If the box's minimum density
+        # reaches the w1 critical density, that band is empty and E1_filter (epw.py) silently zeroes every
         # mode of the source -- the run completes with reflectivity ~0 and reads as
         # "below threshold". The seeded path already dies with a clear error at the
         # injector; fail the noise-seeded path just as loudly here.

@@ -10,7 +10,10 @@ where the ponderomotive potential is
 
     PP = cs^2 n + Z e^2/(4 me mi) [|E_epw|^2/wp0^2
                                     + |E0|^2/w0^2
-                                    + |E1|^2/w1^2].
+                                    + |E1|^2/w_R^2],
+
+``w_R`` the Raman light's carrier: ``w1 = w0 - wp0``, or ``wp0`` with the combined solver, whose
+transverse field (the Raman light) is enveloped there.
 
 Two time integrators are available (``terms.iaw.solver``):
 
