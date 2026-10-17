@@ -57,7 +57,13 @@ class SplitStep:
             coupled_cls, raman_cls = CoupledLight, RamanLight
         else:
             raise ValueError(f"terms.light.solver must be 'fd' or 'spectral', got {self.light_solver!r}")
-        if self.pump_depletion:
+        if self.epw_solver == "combined":
+            # the combined solver evolves the pump and the Raman light itself; the separate light
+            # solvers are never stepped, and their w1-carrier setup (the seed injector's cutoff)
+            # would refuse combined decks the combined carrier wp0 accepts
+            self.coupled_light = None
+            self.raman = None
+        elif self.pump_depletion:
             self.coupled_light = coupled_cls(cfg)
             self.raman = None
         else:

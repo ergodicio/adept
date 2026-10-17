@@ -25,8 +25,9 @@ def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
     ln(lambda_um Te^1.5 / Z)``, with the wave's own wavelength) or a number.
     ``terms.light.raman_absorption`` is the Raman light's, the same choices; when it is absent
     the Raman rate follows the pump's (the NRL formula at the Raman wavelength, or a number scaled
-    by ``(lambda_1/lambda_0)^-2 = (w1/w0)^2``, the formula's leading dependence). The combined
-    solver's field is the Raman class with carrier ``wp0``: its wavelength is ``lambda_0 w0/wp0``."""
+    by ``(lambda_1/lambda_0)^-2 = (w_R/w0)^2``, the formula's leading dependence), ``w_R`` the
+    Raman light's carrier: ``w1``, or ``wp0`` for the combined solver's field (the Raman class),
+    whose wavelength is ``lambda_0 w0/wp0``."""
     from astropy.units import Quantity as _Q
 
     light = cfg["terms"].get("light", {})
@@ -35,7 +36,8 @@ def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
     te = _Q(cfg["units"]["reference electron temperature"]).to("keV").value
     lambda0 = _Q(cfg["units"]["laser_wavelength"]).to("um").value
     combined = cfg["terms"]["epw"].get("solver", "separate") == "combined"
-    lambda1 = lambda0 * derived["w0"] / (derived["wp0"] if combined else derived["w1"])
+    w_raman = derived["wp0"] if combined else derived["w1"]
+    lambda1 = lambda0 * derived["w0"] / w_raman
 
     def nrl(lam_um):
         if te > 0.01 * z**2:
@@ -61,7 +63,7 @@ def light_absorption_rates(cfg: dict) -> tuple[float | None, float | None]:
     elif absorption is True:
         rate1 = float(nrl(lambda1))
     else:
-        rate1 = None if rate0 is None else rate0 * (derived["w1"] / derived["w0"]) ** 2
+        rate1 = None if rate0 is None else rate0 * (w_raman / derived["w0"]) ** 2
     return rate0, rate1
 
 
