@@ -48,9 +48,14 @@ def slug(run_name: str) -> str:
     return run_name.replace("/", "--").replace(" ", "_")
 
 
+JOB_KEYS = ("deck", "run", "overrides", "windows", "experiment", "tags", "no_log", "full")
+
+
 def load_jobs(path: str | Path) -> list[dict]:
     """The job list of a batch file with ``defaults`` merged under each job (a job's own
-    keys win; ``overrides`` and ``tags`` merge recursively)."""
+    keys win; ``overrides`` and ``tags`` merge recursively). Unknown keys are refused: in a YAML
+    flow mapping an unquoted ``windows: 0.2-0.6,0.6-1.0`` ends at the comma and leaves a stray
+    ``0.6-1.0`` key -- quote multi-window specs."""
     import yaml
 
     with open(path) as fi:
@@ -66,6 +71,12 @@ def load_jobs(path: str | Path) -> list[dict]:
                 job[k] = v
         if "deck" not in job or "run" not in job:
             raise ValueError(f"every job needs 'deck' and 'run': {raw}")
+        unknown = sorted(str(k) for k in job if k not in JOB_KEYS)
+        if unknown:
+            raise ValueError(
+                f"{path}: job {job['run']} has unknown keys {unknown} (known: {', '.join(JOB_KEYS)}); "
+                'a multi-window spec in a flow mapping must be quoted: windows: "0.2-0.6,0.6-1.0"'
+            )
         jobs.append(job)
     return jobs
 

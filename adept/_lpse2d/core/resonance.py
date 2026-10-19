@@ -20,7 +20,9 @@ component there and is damped:
    whatever ``lw.landauDamping.enable``), masked with an s-curve over the absorbers
    (``Beach::fullBeachX``); then, optionally, a radial low-pass filter on the field
    (``Beach::fullRadialK``: 1 below ``filter_width * K_nyq - W``, an s-curve to 0 at
-   ``filter_width * K_nyq``, ``W = K_nyq (1 - 1/sqrt(2))`` in 2-D).
+   ``filter_width * K_nyq``, ``W = K_nyq (1 - 1/sqrt(2))`` in 2-D; in quasi-1D, where ``W = 0``,
+   a sharp passband ``|k| <= filter_width * K_nyq`` -- LPSE's zero-width s-curve there zeroes the
+   whole field).
 
 LPSE applies the k-space part on its first active sub-step and then every ``LdUpdate`` active
 sub-steps (``raLdCounter``, kept across steps) and re-uses the increment in between; here it is
@@ -139,7 +141,12 @@ class ResonanceAbsorption:
             k_nyq = np.sqrt(kx.max() ** 2 + (ky.max() ** 2 if ny > 1 else 0.0))
             width = k_nyq * (1.0 - 1.0 / np.sqrt(2.0 if ny > 1 else 1.0))
             radius = filter_width * k_nyq
-            self.k_filter = jnp.asarray(1.0 - s_curve(np.sqrt(k_sq), radius - width, width))[..., None]
+            if width > 0.0:
+                self.k_filter = jnp.asarray(1.0 - s_curve(np.sqrt(k_sq), radius - width, width))[..., None]
+            else:
+                # quasi-1D: the transition has zero width; a sharp passband |k| <= radius (LPSE's
+                # sCurve returns 1 for a zero width, so its 1-D filter zeroes the whole field)
+                self.k_filter = jnp.asarray(np.where(np.sqrt(k_sq) <= radius, 1.0, 0.0))[..., None]
         else:
             self.k_filter = None
 

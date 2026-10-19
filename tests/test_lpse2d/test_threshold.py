@@ -88,3 +88,42 @@ def test_gain_criterion_is_lpse_running_check():
     assert gain_criterion({"t (ps)": t, "max_rho": growth}, gain=5.0, noise_time_range=(0.01, 0.1))
     with pytest.raises(ValueError, match="max_rho"):
         gain_criterion({"t (ps)": t, "max_phi": base}, gain=5.0)
+
+
+def test_a_zero_lower_bound_is_rejected_before_any_run():
+    """The geometric midpoint sqrt(lo hi) of a zero lower bound never moves, so the bracket would
+    never narrow and the reported threshold would be 0 (PR #372 review): the bracket needs
+    0 < intensity_lo < intensity_hi, checked before a single run; a positive bracket still bisects."""
+    from adept._lpse2d.threshold import find_threshold
+
+    calls = []
+
+    def runner(cfg, intensity, name):
+        calls.append(intensity)
+        return {"epw_growth_measurable": 1.0, "epw_growth_rate_per_ps": 2.0 * (intensity / 3.0e14 - 1.0)}
+
+    cfg = {"units": {"laser intensity": "1e15W/cm^2"}, "mlflow": {"run": "t"}}
+    for lo in (0.0, "0W/cm^2", -1.0e14):
+        with pytest.raises(ValueError, match="0 < intensity_lo"):
+            find_threshold(cfg, lo, 1e15, n_iter=3, runner=runner, log_mlflow=False)
+    assert calls == []
+    result = find_threshold(cfg, 1e13, 1e15, n_iter=12, runner=runner, log_mlflow=False)
+    assert abs(result["threshold"] - 3.0e14) / 3.0e14 < 0.01
+
+
+def test_lpse_search_refuses_a_zero_start_before_any_run():
+    """find_threshold_lpse steps by dI_fract * intensity, so a zero (or negative) start never moves and
+    stage 1 would re-run the same point until its step budget ran out: it is refused before a run."""
+    from adept._lpse2d.threshold import find_threshold_lpse
+
+    calls = []
+
+    def runner(cfg, intensity, run_name):
+        calls.append(intensity)
+        return {"t (ps)": np.linspace(0.0, 1.0, 11), "max_rho": np.full(11, 1e-10)}
+
+    for start in ("0W/cm^2", "-1e14W/cm^2"):
+        cfg = {"units": {"laser intensity": start}, "mlflow": {"run": "t"}}
+        with pytest.raises(ValueError, match="positive starting intensity"):
+            find_threshold_lpse(cfg, n_iter=2, runner=runner)
+    assert calls == []

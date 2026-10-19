@@ -4,7 +4,10 @@
 group unless ``laser.N.group`` says otherwise -- holds a uniform random phase for a dwell time
 ``2 X / dW`` with ``X ~ Exp(1)`` and ``dW = bandwidth * w0`` (``KAP.frequency`` is ``dW / W0``), then
 jumps to a new uniform phase. The mean dwell is ``2 / dW``. The transition times and phases are
-drawn once, from ``kap_seed``, for the length of the run.
+drawn once, from ``kap_seed``, for the length of the run: each beam draws its dwell times and its
+phases from its own streams (``SeedSequence(kap_seed).spawn``), so a beam's history depends on the
+seed and the beam index only and a longer run only appends to it -- a run resumed from a
+checkpoint with a larger ``tmax`` sees the same pump phases as the unbroken run.
 """
 
 import numpy as np
@@ -19,14 +22,20 @@ class KapPhases:
         if not self.active:
             return
         rate = float(bandwidth) * float(w0)  # dW, rad / ps
-        rng = np.random.default_rng(int(seed))
         n = int(np.ceil(3.0 * float(t_end) * rate / 2.0)) + 64  # 3x the expected number of jumps
-        dwell = 2.0 * rng.exponential(1.0 / rate, size=(n_beams, n))  # 2 Exp(dW), LPSE
-        times = np.cumsum(dwell, axis=1)
+        times, phases = [], []
+        # one dwell stream and one phase stream per beam: draw k of either depends on (seed, beam, k)
+        # only, so the table is prefix-stable as n (the horizon) grows
+        for beam_seq in np.random.SeedSequence(int(seed)).spawn(n_beams):
+            dwell_seq, phase_seq = beam_seq.spawn(2)
+            dwell = 2.0 * np.random.default_rng(dwell_seq).exponential(1.0 / rate, size=n)  # 2 Exp(dW), LPSE
+            times.append(np.cumsum(dwell))
+            phases.append(2.0 * np.pi * np.random.default_rng(phase_seq).uniform(size=n + 1))
+        times = np.stack(times)
         if np.any(times[:, -1] < t_end):
             raise RuntimeError("KapPhases: the drawn transition table does not cover the run")
         self.times = jnp.asarray(times)
-        self.phases = jnp.asarray(2.0 * np.pi * rng.uniform(size=(n_beams, n + 1)))
+        self.phases = jnp.asarray(np.stack(phases))
 
     def phase(self, t, beam: int):
         if not self.active:

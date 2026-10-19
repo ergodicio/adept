@@ -5,4 +5,4 @@ defaults:
   experiment: lpse-parity
   tags: {plan2_item: refs-2026-09-21, milestone: M9}
 jobs:
-  - {deck: test_029, run: test_029/qle/2, windows: 0.2-0.6,0.6-1.0,1.5-2.0}
+  - {deck: test_029, run: test_029/qle/2, windows: "0.2-0.6,0.6-1.0,1.5-2.0"}
