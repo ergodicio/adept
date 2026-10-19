@@ -185,12 +185,37 @@ class BaseLPSE2D(ADEPTModule):
                 if isinstance(sub, dict) and isinstance(sub.get("t"), dict) and "tmin" in sub["t"]:
                     if _Q(sub["t"]["tmin"]).to("ps").value < self.restart_t0:
                         sub["t"]["tmin"] = f"{self.restart_t0:.9g}ps"
+            self._rebase_light_spectrum_probes()
             # the default series samples the grid's time axis: keep only the resumed interval
             t_axis = np.asarray(self.cfg["grid"]["t"])
             kept = t_axis[t_axis >= self.restart_t0 - 1.0e-12]
             self.cfg["grid"]["t"] = kept if kept.size else np.asarray([self.cfg["grid"]["tmax"]])
             print(f"restarting from {restart['file']} at t = {self.restart_t0:.6g} ps")
         self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
+
+    def _rebase_light_spectrum_probes(self):
+        """On restart, start each ``save.light_spectrum`` probe (a list of probes with a top-level,
+        optional ``tmin``) at its first own sample ``tmin + k interval`` inside the resumed interval,
+        so it continues the unbroken run's sample times; a probe whose window has ended is dropped."""
+
+        def ps(value):
+            return float(value) if isinstance(value, (int, float)) else _Q(value).to("ps").value
+
+        probes = self.cfg["save"].get("light_spectrum") or []
+        kept = []
+        for probe in probes:
+            interval = ps(probe["interval"])
+            t_first = ps(probe["tmin"]) if probe.get("tmin") is not None else ps(self.cfg["grid"]["tmin"])
+            if t_first < self.restart_t0:
+                t_first += math.ceil((self.restart_t0 - t_first) / interval - 1.0e-9) * interval
+            t_last = ps(probe["tmax"]) if probe.get("tmax") is not None else ps(self.cfg["grid"]["tmax"])
+            if t_first > t_last + 1.0e-12:
+                field = probe.get("field", "E0")
+                print(f"restart: save.light_spectrum probe on {field} ended before the restart; dropped")
+                continue
+            kept.append({**probe, "tmin": f"{t_first:.12g}ps"})
+        if probes:
+            self.cfg["save"]["light_spectrum"] = kept
 
     @filter_jit
     def __call__(self, trainable_modules: dict, args: dict | None = None) -> dict:
