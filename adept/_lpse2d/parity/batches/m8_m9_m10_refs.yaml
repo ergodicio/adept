@@ -11,9 +11,9 @@ defaults:
   experiment: lpse-parity
   tags: {plan2_item: refs-2026-09-21}
 jobs:
-  - {deck: test_006_spol, run: test_006_spol/ref/1, windows: 2.5-3.5,3.0-4.0, tags: {milestone: M8}}
-  - {deck: test_010_comm, run: test_010_comm/ref/1, windows: 0.3-0.9,0.9-1.5, tags: {milestone: M6}}
-  - {deck: test_029, run: test_029/qle/1, windows: 0.2-0.6,0.6-1.0,1.5-2.0, tags: {milestone: M9}}
+  - {deck: test_006_spol, run: test_006_spol/ref/1, windows: "2.5-3.5,3.0-4.0", tags: {milestone: M8}}
+  - {deck: test_010_comm, run: test_010_comm/ref/1, windows: "0.3-0.9,0.9-1.5", tags: {milestone: M6}}
+  - {deck: test_029, run: test_029/qle/1, windows: "0.2-0.6,0.6-1.0,1.5-2.0", tags: {milestone: M9}}
   - {deck: test_001, run: test_001/cbet/1, windows: 1.0-2.0, tags: {milestone: M10}}
   - {deck: test_003, run: test_003/cbet/1, windows: 1.0-2.0, tags: {milestone: M10}}
   - {deck: test_011, run: test_011/ra/1, windows: 0.2-0.6, tags: {milestone: M11}}

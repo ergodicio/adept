@@ -332,3 +332,28 @@ def test_batch_dry_run_records_nothing_and_a_resume_runs_every_job(tmp_path):
     preview = run_batch(jobs + [{"deck": "d", "run": "b/three"}], logs, python=str(fake), env={}, dry_run=True)
     assert (logs / "summary.json").read_text() == recorded and "b/three" not in preview
     assert json.loads(recorded)["b/one"]["run_id"] == "0123456789abcdef" * 2
+
+
+def test_batch_files_keep_every_window_and_refuse_unknown_keys(tmp_path):
+    """In a YAML flow mapping an unquoted multi-window spec ends at the comma (`windows: 2.5-3.5,3.0-4.0`
+    is windows 2.5-3.5 plus a stray key 3.0-4.0), and load_jobs passed the stray key through, so such
+    jobs scored only their first window. load_jobs now refuses unknown keys, and every shipped batch
+    file loads with its multi-window jobs whole."""
+    from adept._lpse2d.parity import load_jobs
+
+    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d" / "parity" / "batches"
+    windows = {}
+    for f in sorted(root.glob("*.yaml")):
+        for job in load_jobs(f):
+            windows[job["run"]] = job.get("windows")
+    assert windows["test_006_spol/ref/1"] == "2.5-3.5,3.0-4.0"
+    assert windows["test_010_comm/ref/1"] == "0.3-0.9,0.9-1.5"
+    for run in ("test_029/qle/1", "test_029/qle/2", "test_029/qle/3", "test_029/qle/4"):
+        assert windows[run] == "0.2-0.6,0.6-1.0,1.5-2.0"
+
+    spec = tmp_path / "jobs.yaml"
+    spec.write_text("jobs:\n  - {deck: test_006, run: test_006/x/1, windows: 2.5-3.5,3.0-4.0}\n")
+    with pytest.raises(ValueError, match="unknown keys"):
+        load_jobs(spec)
+    spec.write_text('jobs:\n  - {deck: test_006, run: test_006/x/1, windows: "2.5-3.5,3.0-4.0"}\n')
+    assert load_jobs(spec)[0]["windows"] == "2.5-3.5,3.0-4.0"
