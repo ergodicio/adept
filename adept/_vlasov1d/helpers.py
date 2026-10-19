@@ -12,14 +12,11 @@ import xarray
 from diffrax import Solution
 from jax import numpy as jnp
 from jax import tree_util as jtu
-from matplotlib import pyplot as plt
 from scipy.special import gamma
 
 from adept._vlasov1d.simulation import SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.storage import store_f, store_fields
 from adept.normalization import UREG, PlasmaNormalization, normalize
-
-from .. import patched_mlflow as mlflow
 
 # gamma_da = xarray.open_dataarray(os.path.join(os.path.dirname(__file__), "gamma_func_for_sg.nc"))
 # m_ax = gamma_da.coords["m"].data
@@ -227,6 +224,8 @@ def plot_driver_spectra(cfg: dict, td: str, args: dict):
     optimizer produces structure, since I ~ A^2 doubles the span), and phi_j.
     Single-line (monochromatic) drivers are skipped.
     """
+    from matplotlib import pyplot as plt
+
     drivers = (args or {}).get("drivers")
     if drivers is None:
         return
