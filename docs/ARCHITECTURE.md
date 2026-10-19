@@ -2,9 +2,10 @@
 
 ADEPT is incrementally moving toward explicit, logging-free preparation and a pure
 numerical transform boundary. [ADR 0001](adr/0001-explicit-simulation-boundaries.md)
-defines the target contracts and compatibility policy. `tf-1d` and electrostatic
-`pic-1d` are the first registered builder pilots. Their legacy classes remain available
-as parallel fallback paths while downstream workflows migrate.
+defines the target contracts and compatibility policy. `tf-1d`, electrostatic `pic-1d`, `vfp-2d`, `vlasov-1d`, and
+`farsight-1d` have registered builders. The first four retain legacy classes as fallback
+paths while downstream workflows migrate. The experimental FARSIGHT solver is native to
+the explicit interface and has no legacy lifecycle wrapper.
 
 ## Explicit preparation and execution
 
@@ -63,9 +64,19 @@ RawResult(
 ```
 
 The `tf-1d` pilot uses the continuous `DiffraxProgram`; the electrostatic `pic-1d`
-pilot uses the discrete `ScanProgram`. Both are parity-tested against their legacy
-numerical maps. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
+pilot, VFP2D, and Vlasov1D use the discrete `ScanProgram`. Each is parity-tested against
+its legacy numerical map. VFP2D and Vlasov1D use linear state interpolation for physical-time
+observations between steps; their final states are retained independently of the save
+schedule. Vlasov1D shares preparation and numerical observations with its legacy wrapper,
+including multispecies, collisions, electrostatic and transverse fields. Runtime drivers
+are explicit controls, and its analyzer returns field, distribution, and scalar datasets
+without writing artifacts. PIC transverse (`ey`) and stochastic forcing, and TF learned trapping
 closures, still produce an actionable error directing callers to `ergoExo`.
+
+The independent [FARSIGHT-1D](source/solvers/farsight1d/overview.md) solver also uses
+`ScanProgram`, with fixed phase-space panels, direct regularized field quadrature,
+coupled RK4 characteristics, and physical-coordinate biquadratic remeshing. Its
+scalar observations expose remesh mass/C2 defects and invalid panel geometry.
 
 `RunPlan` carries JSON-safe solver intent, seed, resources, run identity, and service
 references across an executor boundary. The initial `LocalExecutor` validates declared
@@ -96,5 +107,7 @@ Quick links to configuration references:
 - [Spectrax-1D Config](source/solvers/spectrax1d/config.md)
 - [Hermite-Legendre-1D Config](source/solvers/hermite_legendre_1d/config.md)
 - [PIC-1D Config](source/solvers/pic1d/config.md)
+- [FARSIGHT-1D Config](source/solvers/farsight1d/config.md)
 - [Two-Fluid-1D Config](source/solvers/tf1d/config.md)
 - [OSIRIS Wrapper Config](source/solvers/osiris/config.md)
+- [WarpX Wrapper Config](source/solvers/warpx/config.md)

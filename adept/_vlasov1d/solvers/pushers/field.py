@@ -26,10 +26,10 @@ class LongitudinalElectricFieldDriver:
         factor = driver.envelope(self.xax, current_time)
         return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
-    def __call__(self, t, args):
+    def __call__(self, t, args, *, drivers: list[EMDriver] | None = None):
         """Evaluate the total longitudinal driver field at time t."""
         total_de = jnp.zeros_like(self.xax)
-        for pulse in self.drivers:
+        for pulse in self.drivers if drivers is None else drivers:
             total_de += self._single_driver_field(pulse, t)
         return total_de
 
@@ -55,8 +55,9 @@ class TransverseCurrentSourceDriver:
         """Precompute point-source masks and scales for transverse drivers."""
         self.xax = xax
         self.drivers = drivers
+        dx = float(xax[1] - xax[0])
+        self.dx = dx
         self.c = c
-        self.dx = float(xax[1] - xax[0])
 
     def make_scales(self, driver: EMDriver, dw: Array, amplitude: Array):
         if driver.is_point_source:
@@ -90,8 +91,13 @@ class TransverseCurrentSourceDriver:
                 * jnp.sin(kk * self.xax[None, :] - (w_total * current_time)[:, None] + phase[:, None])
             )
 
-    def __call__(self, t, args):
-        """Evaluate the summed transverse current source at time t."""
+    def __call__(self, t, args, *, drivers: list[EMDriver] | None = None):
+        """Evaluate the source, using explicit runtime driver values when supplied.
+
+        Point sources remain attached to the nearest grid cell. Their location
+        is selected from the runtime envelope center, and their amplitude and
+        frequency are evaluated without using the constructor's cached scale.
+        """
         total = jnp.zeros_like(self.xax)
         # A pusher constructed with no ey drivers returns zeros without touching
         # args, so driverless configs (and tests that call the vector field with
@@ -124,6 +130,7 @@ class WaveSolver:
         super().__init__()
         self.dx = dx
         self.c = c
+        self.waves_on = bool(c > 0)
         self.c_sq = c**2.0
         c_over_dx = c / dx
         self.dt = dt
@@ -167,7 +174,7 @@ class WaveSolver:
 
     def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_density: jnp.ndarray):
         """Advance the vector potential one timestep or preserve it when waves are disabled."""
-        if self.c > 0:
+        if self.waves_on:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
             # d2dx2 = (padded_a[:-2] - 2.0 * padded_a[1:-1] + padded_a[2:]) / self.dx**2.0

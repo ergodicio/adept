@@ -8,6 +8,7 @@ import diffrax
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .contracts import RawResult
 from .observations import ObservationPlan, ObservationReduction, ScheduleKind
@@ -123,6 +124,9 @@ class ScanProgram(eqx.Module):
     observations: tuple[_ObservationAdapter, ...] = ()
     observation_steps: tuple[tuple[int, ...], ...] = eqx.field(static=True, default=())
     observation_names: tuple[str, ...] = eqx.field(static=True, default=())
+    observation_times: tuple[jax.Array, ...] = ()
+    observation_fractions: tuple[jax.Array | None, ...] = ()
+    samples_per_step: tuple[int, ...] = eqx.field(static=True, default=())
 
     @classmethod
     def from_observation_plan(
@@ -135,27 +139,62 @@ class ScanProgram(eqx.Module):
         t0: float,
         dt: float,
         num_steps: int,
+        interpolate: bool = False,
     ) -> ScanProgram:
-        """Validate and compile a host plan into bounded scan buffers."""
+        """Compile bounded buffers, optionally interpolating time-scheduled states.
+
+        ``interpolate=True`` accepts physical times between steps using linear
+        interpolation of the complete state, as in the legacy ``Stepper``. This
+        requires floating/complex state leaves and does not change the step map.
+        """
 
         adapters = []
         schedules = []
         names = []
+        times = []
+        fractions = []
+        counts = []
         for spec in plan.observations:
-            if spec.schedule.kind is not ScheduleKind.STEP:
+            if spec.schedule.kind is not ScheduleKind.STEP and not interpolate:
                 raise ValueError(f"discrete observation {spec.name!r} requires a step schedule")
             validate_observation_spec(spec, t=t0, state=state, inputs=inputs)
-            points = tuple(int(point) for point in spec.schedule.retained_points(spec.retention))
+            retained = spec.schedule.retained_points(spec.retention)
+            if spec.schedule.kind is ScheduleKind.TIME:
+                if dt <= 0:
+                    raise ValueError("interpolated observations require dt > 0")
+                if any(not jnp.issubdtype(leaf.dtype, jnp.inexact) for leaf in jax.tree.leaves(state)):
+                    raise TypeError("interpolated observations require floating or complex state leaves")
+                sample_times = np.asarray(retained, dtype=float)
+                if sample_times[0] < t0 or sample_times[-1] > t0 + dt * num_steps:
+                    raise ValueError(f"observation {spec.name!r} is scheduled outside the simulation interval")
+                positions = (sample_times - t0) / dt
+                # Avoid assigning an on-grid sample to the following step due to
+                # division roundoff; retain the requested physical output times.
+                nearest = np.rint(positions)
+                positions = np.where(np.isclose(positions, nearest, rtol=0, atol=1e-10), nearest, positions)
+                points = tuple(int(point) for point in np.ceil(positions))
+                weights = np.where(np.asarray(points) == 0, 0.0, positions - np.asarray(points) + 1.0)
+            else:
+                points = tuple(int(point) for point in retained)
+                sample_times = t0 + dt * np.asarray(points)
+                weights = None
             if points[-1] > num_steps:
                 raise ValueError(f"observation {spec.name!r} step {points[-1]} exceeds final step {num_steps}")
             adapters.append(_ObservationAdapter(spec.function, spec.reduction))
             schedules.append(points)
             names.append(spec.name)
+            if interpolate:
+                times.append(jnp.asarray(sample_times))
+                fractions.append(None if weights is None else jnp.asarray(weights))
+                counts.append(int(np.max(np.unique(points, return_counts=True)[1])))
         return cls(
             system=system,
             t0=t0,
             dt=dt,
             num_steps=num_steps,
+            observation_times=tuple(times),
+            observation_fractions=tuple(fractions),
+            samples_per_step=tuple(counts),
             observations=tuple(adapters),
             observation_steps=tuple(schedules),
             observation_names=tuple(names),
@@ -171,15 +210,47 @@ class ScanProgram(eqx.Module):
             for example, steps in zip(examples, self.observation_steps, strict=True)
         )
 
-        def record(step, current_state, current_buffers):
+        def record(step, previous_state, current_state, current_buffers):
             time = self.t0 + step * self.dt
             updated = []
-            for observation, steps, buffer in zip(
-                self.observations,
-                self.observation_steps,
-                current_buffers,
-                strict=True,
+            for index, (observation, steps, buffer) in enumerate(
+                zip(
+                    self.observations,
+                    self.observation_steps,
+                    current_buffers,
+                    strict=True,
+                )
             ):
+                if self.observation_times and self.observation_fractions[index] is not None:
+                    sample_times = self.observation_times[index]
+                    weights = self.observation_fractions[index]
+                    sample_steps = jnp.asarray(steps)
+                    first = jnp.searchsorted(sample_steps, step, side="left")
+                    for offset in range(self.samples_per_step[index]):
+                        slot = first + offset
+                        safe_slot = jnp.minimum(slot, len(steps) - 1)
+
+                        def write_interpolated(
+                            target,
+                            weight=weights[safe_slot],
+                            observed=observation,
+                            sample_time=sample_times[safe_slot],
+                            target_slot=safe_slot,
+                        ):
+                            interpolated = jax.tree.map(
+                                lambda left, right: left + weight * (right - left), previous_state, current_state
+                            )
+                            value = observed(sample_time, interpolated, inputs)
+                            return jax.tree.map(lambda leaf, sample: leaf.at[target_slot].set(sample), target, value)
+
+                        buffer = jax.lax.cond(
+                            (slot < len(steps)) & (sample_steps[safe_slot] == step),
+                            write_interpolated,
+                            lambda target: target,
+                            buffer,
+                        )
+                    updated.append(buffer)
+                    continue
                 matches = jnp.asarray(steps) == step
                 slot = jnp.argmax(matches)
 
@@ -194,13 +265,13 @@ class ScanProgram(eqx.Module):
                 updated.append(jax.lax.cond(jnp.any(matches), write, lambda target: target, buffer))
             return tuple(updated)
 
-        buffers = record(jnp.asarray(0), state, buffers)
+        buffers = record(jnp.asarray(0), state, state, buffers)
 
         def advance(step, carry):
             current_state, current_buffers = carry
             step_key = jax.random.fold_in(key, step)
             next_state = self.system.step(step, current_state, params, inputs, step_key)
-            next_buffers = record(step + 1, next_state, current_buffers)
+            next_buffers = record(step + 1, current_state, next_state, current_buffers)
             return next_state, next_buffers
 
         final_state, buffers = jax.lax.fori_loop(0, self.num_steps, advance, (state, buffers))
@@ -208,8 +279,10 @@ class ScanProgram(eqx.Module):
             final_state=final_state,
             observations=dict(zip(self.observation_names, buffers, strict=True)),
             times={
-                name: self.t0 + self.dt * jnp.asarray(steps)
-                for name, steps in zip(self.observation_names, self.observation_steps, strict=True)
+                name: self.observation_times[index]
+                if self.observation_times
+                else self.t0 + self.dt * jnp.asarray(steps)
+                for index, (name, steps) in enumerate(zip(self.observation_names, self.observation_steps, strict=True))
             },
             status=diffrax.RESULTS.successful,
             stats={"num_steps": jnp.asarray(self.num_steps)},
