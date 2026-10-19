@@ -292,8 +292,9 @@ def test_combined_split_step_runs_with_pump_depletion_iaw_noise_and_reports_tran
 def _noise_cfg(n_sub, model):
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
         cfg = deepcopy(yaml.safe_load(fi))
-    # n = n_env: the combined field's collisional damping exp(-nu dt (n/n_env)^2) is then the
-    # uniform rate the noise kick is balanced against
+    # n = n_env: the combined field's damping exp(-nu_R dt (n/n_env)^2) is then the uniform rate the
+    # noise kick is balanced against; nu_R is the Raman absorption at the combined carrier,
+    # terms.light.absorption (wp0/w0)^2 = 80/ps x n_env = 20/ps (the EPW collisions do not act on it)
     cfg["density"] = {"basis": "uniform", "val": 0.25}
     cfg["grid"].update(
         {
@@ -309,13 +310,13 @@ def _noise_cfg(n_sub, model):
         }
     )
     cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
-    cfg["terms"]["epw"]["damping"] = {"collisions": 20.0, "landau": True}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
     cfg["terms"]["epw"]["density_gradient"] = True
     cfg["terms"]["epw"]["source"].update(
         {"noise": True, "noise_model": model, "noise_amplitude": 1.0, "noise_seed": 3, "tpd": False, "srs": False}
     )
     cfg["terms"]["epw"]["solver"] = "combined"
-    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False, "absorption": 80.0}
     return _finish(cfg)
 
 
@@ -360,6 +361,7 @@ def test_combined_noise_matches_the_growth_fit_floor(model):
     cfg = _noise_cfg(4, model)
     dt_noise, nu = noise_step(cfg)
     assert dt_noise == pytest.approx(cfg["grid"]["dt"] / 4, rel=1e-12)
+    assert nu == pytest.approx(20.0, rel=1e-12)
     solver, level = _combined_noise_steady_state(cfg)
     np.testing.assert_allclose(
         np.asarray(solver.noise_kick), noise_kick_spectrum(cfg, dt=dt_noise, nu_coll=nu), rtol=1e-12, atol=0
@@ -599,3 +601,44 @@ def test_seeded_combined_deck_above_the_separate_cutoff_sets_up_and_runs():
 
     with pytest.raises(ValueError, match="Raman critical density"):
         _off_quarter_cfg("separate", 0.3, 0.25, seed=True)
+
+
+def test_the_combined_field_is_damped_at_the_raman_absorption():
+    """LPSE damps the combined field with the Raman light's absorption at the combined carrier and the
+    field's own critical density n_env, not with the EPW collisions (PR #372 review). Collisions
+    off, terms.light.absorption 300/ps (Raman rate at wp0: 300 (wp0/w0)^2), n = 0.15 nc, n_env = 0.2,
+    a periodic box: one EPW step multiplies a transverse E1 plane wave by exp(-nu_R dt (n/n_env)^2),
+    with a uniform iaw_density dn by exp(-nu_R dt (n/n_env + dn)^2), and noise_step returns nu_R.
+    Exact identities, rtol 1e-10, fixed before the run; before the fix the field kept its amplitude."""
+    from adept._lpse2d.core.combined import CombinedSolver
+    from adept._lpse2d.core.epw import noise_step
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = 0.2
+    cfg["density"] = {"basis": "uniform", "val": 0.15}
+    cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": False}
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False, "absorption": 300.0}
+    cfg = _finish(cfg)
+    d = cfg["units"]["derived"]
+    nu_r = 300.0 * (d["wp0"] / d["w0"]) ** 2
+    assert noise_step(cfg)[1] == pytest.approx(nu_r, rel=1e-12)
+    solver = CombinedSolver(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    x = np.asarray(cfg["grid"]["x"])
+    k = float(np.asarray(cfg["grid"]["kx"])[8])
+    zero = jnp.zeros((nx, ny, 2), dtype=jnp.complex128)
+    plane = zero.at[..., 1].set(jnp.asarray(1.0e-3 * np.exp(1j * k * x)[:, None] * np.ones((1, ny))))
+    epw = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    dt = cfg["grid"]["dt"]
+    for dn, n_eff in ((None, 0.75), (0.05, 0.75 + 0.05)):
+        y = {"epw": epw, "E0": zero, "E1": plane}
+        if dn is not None:
+            y["iaw_density"] = jnp.full((nx, ny), dn)
+        _, E1, _ = solver(0.0, y, {}, lambda t: zero)
+        decay = np.abs(np.asarray(E1)[..., 1]) / 1.0e-3
+        np.testing.assert_allclose(decay, np.exp(-nu_r * dt * n_eff**2), rtol=1e-10)

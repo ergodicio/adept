@@ -170,8 +170,9 @@ def noise_step(cfg: dict) -> tuple[float, float]:
     """
     The time step at which the active EPW solver applies the noise kick, and the collisional
     rate that damps the noised field over it: the EPW step and ``terms.epw.damping.collisions``
-    for the separate solver; the light sub-step ``dt / grid.light_substeps`` for the combined
-    solver, which adds the kick once per light step (LPSE
+    for the separate solver; the light sub-step ``dt / grid.light_substeps`` and the Raman light's
+    absorption (``terms.light.absorption`` at the combined carrier, which damps the combined field)
+    for the combined solver, which adds the kick once per light step (LPSE
     ``LwSolver::addNoise_combinedSolver_spectral(dt)``). ``noise_kick_spectrum`` and
     ``diagnostics.expected_noise_energy`` both take it, so the solver and the growth-fit noise
     floor stay consistent.
@@ -179,7 +180,10 @@ def noise_step(cfg: dict) -> tuple[float, float]:
     grid = cfg["grid"]
     nu = float(cfg["units"]["derived"].get("nu_coll", 0.0))
     if cfg["terms"]["epw"].get("solver", "separate") == "combined":
-        return grid["dt"] / int(grid.get("light_substeps", 1)), nu
+        from adept._lpse2d.core.raman import light_absorption_rates
+
+        _, raman_rate = light_absorption_rates(cfg)
+        return grid["dt"] / int(grid.get("light_substeps", 1)), 0.0 if raman_rate is None else float(raman_rate)
     return grid["dt"], nu
 
 

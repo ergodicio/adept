@@ -14,9 +14,11 @@ Per light sub-step (``LightSolver::evolveSpectral``, ``LightSolver.cpp:3600-3779
 
 1. x-space scattering potential on the whole field, ``exp(-i dt wp0/2 (n_tot/n_env - 1))``
    (the EPW density detuning, identical to the light detuning at carrier ``wp0``), and
-   the collisional damping ``exp(-nu_coll dt (n/n_env)^2)`` -- LPSE damps the combined
-   field with its Raman absorption coefficient evaluated at the field's own critical
-   density, which is ``n_env``;
+   the collisional damping ``exp(-nu_R dt (n/n_env)^2)``, ``n`` with the IAW perturbation --
+   LPSE damps the combined field with its Raman absorption coefficient (``terms.light.absorption``
+   at the combined carrier, ``raman.light_absorption_rates``) evaluated at the field's own
+   critical density, which is ``n_env``, and ignores ``lw.collisionalDampingRate``
+   (``LightSolver::calculateScatteringPotential``);
 2. the unified source, forward Euler (``LightSolver.cpp:4239``):
 
        dE1/dt = -i e/(4 me w0) e^{-i (w0 - 2 wp0) t} [ grad(E0 . E1*) + (1 - w0/wp0) E0 (div E1)* ]
@@ -129,7 +131,6 @@ class CombinedSolver(SmoothPumpInjector):
         self.vte_sq = derived["vte_sq"]
         self.e = derived["e"]
         self.me = derived["me"]
-        self.nu_coll = derived.get("nu_coll", 0.0)
         self.envelope_density = cfg["units"]["envelope density"]
         self.background_density = grid["background_density"]
         self.n_over_env = self.background_density / self.envelope_density
@@ -142,7 +143,11 @@ class CombinedSolver(SmoothPumpInjector):
         self.disp_L = jnp.exp(-1j * self.dt_l * 1.5 * self.vte_sq / self.wp0 * self.k_sq) * self.band
         self.prop_T = jnp.exp(-1j * self.dt_l * self.c**2 / (2.0 * self.wp0) * self.k_sq) * self.band
         self.detune = jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * (self.n_over_env - 1.0))
-        self.collisional = jnp.exp(-self.nu_coll * self.dt_l * self.n_over_env**2)
+        # the Raman light's absorption at the combined carrier and the field's own critical density
+        # (n_env), not the EPW's collisions
+        _, raman_rate = light_absorption_rates(cfg)
+        self.nu_raman = 0.0 if raman_rate is None else float(raman_rate)
+        self.collisional = jnp.exp(-self.nu_raman * self.dt_l * self.n_over_env**2)
         self.boundary = grid["absorbing_boundaries"] ** (1.0 / self.n_sub)
         # the pump is LPSE's laser class: its own (5e3/ps) absorber, not the EPW one -- at the EPW
         # rate the injected pump reflects off both walls into a standing wave (see helpers)
@@ -203,6 +208,7 @@ class CombinedSolver(SmoothPumpInjector):
             self.depletion_coeff = 1j * self.e / (2.0 * self.me * self.w0)
             self.tpd_projection = bool(light_cfg.get("tpd_projection", True))
             rate0, _ = light_absorption_rates(cfg)
+            self.absorption_rate0 = rate0
             self.absorb0 = None if rate0 is None else jnp.exp(-rate0 * self.dt_l * self.background_density**2)
             pump = cfg["drivers"]["E0"]["derived"]
             x_inject = grid["xmin"] + pump["offset"]
@@ -293,8 +299,12 @@ class CombinedSolver(SmoothPumpInjector):
         E0 = y["E0"]
         iaw_density = y.get("iaw_density")
         detune = self.detune
+        collisional = self.collisional
         if iaw_density is not None:
+            # the IAW perturbation in units of n_env, as the detuning: absorption at the effective density
             detune = detune * jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * iaw_density)
+            if self.nu_raman:
+                collisional = jnp.exp(-self.nu_raman * self.dt_l * (self.n_over_env + iaw_density) ** 2)
         if self.hpe_enabled:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
@@ -305,8 +315,12 @@ class CombinedSolver(SmoothPumpInjector):
         seed_args = driver_args["E1"] if self.seed_enabled else None
         if self.pump_depletion:
             detune0 = self.detune0
+            absorb0 = self.absorb0
             if iaw_density is not None:
                 detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.dt_l)
+                if self.absorb0 is not None:
+                    n0 = self.background_density * (1.0 + iaw_density / self.n_over_env)
+                    absorb0 = jnp.exp(-self.absorption_rate0 * self.dt_l * n0**2)
 
         def substep(i, fields):
             E0, E1 = fields
@@ -314,12 +328,12 @@ class CombinedSolver(SmoothPumpInjector):
             if not self.pump_depletion:
                 E0 = E0_fn(t_i)
             # 1. scattering potential and collisional damping on the combined field
-            E1 = E1 * (detune * self.collisional)[..., None]
+            E1 = E1 * (detune * collisional)[..., None]
             # 2. the unified source (and the pump's x-space step)
             if self.pump_depletion:
                 E0 = E0 * detune0[..., None]
-                if self.absorb0 is not None:
-                    E0 = E0 * self.absorb0[..., None]
+                if absorb0 is not None:
+                    E0 = E0 * absorb0[..., None]
                 if self.sources_on:
                     E0 = E0 + self.dt_l * self.unified_depletion(t_i, E1)
                 E0 = E0 + self.dt_l * self.calc_pump_source(t_i, pump_args)
