@@ -538,7 +538,7 @@ terms:
 
 ## Absolute-threshold bisection (`adept._lpse2d.threshold`)
 
-`find_threshold(cfg, intensity_lo, intensity_hi, n_iter=6)` bisects the pump intensity (geometric midpoints) between a stable and an unstable bracket, running the configuration once per point with `ergoExo` and deciding "unstable" from the run's metrics (default: a measurable EPW energy growth fit with a positive rate, `growth_min` adjustable; any callable of the metrics dict can be passed as `criterion`). The bracket endpoints are run first and must straddle the criterion, as in LPSE's `AbsoluteThreshold`. The result holds the threshold (midpoint of the final bracket), the bracket and the per-run history; the bisection is logged as an MLflow run (`<run>-bisection`) next to the individual runs.
+`find_threshold(cfg, intensity_lo, intensity_hi, n_iter=6)` bisects the pump intensity (geometric midpoints) between a stable and an unstable bracket, running the configuration once per point with `ergoExo` and deciding "unstable" from the run's metrics (default: a measurable EPW energy growth fit with a positive rate, `growth_min` adjustable; any callable of the metrics dict can be passed as `criterion`). The bracket needs `0 < intensity_lo < intensity_hi` (a zero lower bound never moves a geometric midpoint); its endpoints are run first and must straddle the criterion, as in LPSE's `AbsoluteThreshold`. The result holds the threshold (midpoint of the final bracket), the bracket and the per-run history; the bisection is logged as an MLflow run (`<run>-bisection`) next to the individual runs.
 
 ### Example: TPD Simulation
 
