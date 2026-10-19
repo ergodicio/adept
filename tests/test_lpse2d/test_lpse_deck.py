@@ -188,6 +188,37 @@ def test_translator_runs_lpse_square_cells():
         translate_parms({**base, "grid.sizes": "20 9.8"}, run="y")  # dy = 2 dx
 
 
+def test_fd_pump_injector_refuses_the_time_controls_it_does_not_apply(tmp_path):
+    """The FD two-point pump injector (terms.light.pump_depletion with terms.light.solver: fd) reads
+    neither drivers.E0.pulse_file nor kap_bandwidth; setup refuses them there instead of injecting the
+    unmodulated pump (PR #372 review), and the spectral injector, which applies both, accepts them.
+    A normal-incidence pump with a zero-amplitude pulse segment and a nonzero KAP bandwidth."""
+    import yaml
+
+    pulse = tmp_path / "pulse.txt"
+    pulse.write_text("0.0 1.0\n0.01 1.0\n0.011 0.0\n1.0 0.0\n")
+
+    def cfg_for(solver, **e0):
+        with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+            cfg = yaml.safe_load(fi)
+        cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um", "dx": "0.1um"})
+        cfg["terms"]["light"] = {"solver": solver, "pump_depletion": True}
+        cfg["terms"]["epw"]["source"]["noise"] = False
+        cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+        cfg["drivers"]["E0"].update(e0)
+        return cfg
+
+    for e0 in (
+        {"pulse_file": str(pulse)},
+        {"kap_bandwidth": 0.005},
+        {"pulse_file": str(pulse), "kap_bandwidth": 0.005},
+    ):
+        with pytest.raises(ValueError, match=r"terms\.light\.solver: spectral"):
+            _finish(cfg_for("fd", **e0))
+        _finish(cfg_for("spectral", **e0))
+    _finish(cfg_for("fd"))
+
+
 def test_lpse_exp_profile_and_thermal_noise_without_debye_factor():
     import yaml
 

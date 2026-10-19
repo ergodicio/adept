@@ -601,6 +601,20 @@ def get_derived_quantities(cfg: dict) -> dict:
                     raise ValueError("drivers.E0.pulse_file must be a two-column (t_ps, amplitude) table")
                 cfg["drivers"][k]["derived"]["pulse_t"] = table[:, 0]
                 cfg["drivers"][k]["derived"]["pulse_amp"] = table[:, 1]
+            if pump_depletion and cfg["terms"].get("light", {}).get("solver", "fd") != "spectral":
+                unused = [
+                    key
+                    for key, on in (
+                        ("drivers.E0.kap_bandwidth", float(e0_cfg.get("kap_bandwidth", 0.0) or 0.0) > 0.0),
+                        ("drivers.E0.pulse_file", bool(e0_cfg.get("pulse_file"))),
+                    )
+                    if on
+                ]
+                if unused:
+                    raise ValueError(
+                        f"{' and '.join(unused)} with terms.light.pump_depletion need terms.light.solver: spectral "
+                        "(the FD two-point pump injector applies neither the pulse table nor the KAP phases)"
+                    )
             multi = len(beams) > 1 or any(float(b.get("angle", angle_deg)) != 0.0 for b in beams)
             angle_deg = angle_deg if not multi else 1.0  # trips the same checks below
             if angle_deg != 0.0:
