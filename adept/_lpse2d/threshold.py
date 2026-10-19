@@ -193,6 +193,11 @@ def find_threshold_lpse(
     noise_time_range = tuple(block.get("noise_time_range", noise_time_range))
     statistic = str(block.get("statistic", "max_rho"))
     intensity = _intensity_w_cm2(intensity if intensity is not None else cfg["units"]["laser intensity"])
+    if not intensity > 0.0:
+        raise ValueError(
+            f"find_threshold_lpse needs a positive starting intensity (got {intensity:.3e} W/cm^2): its step "
+            "dI_fract * intensity is zero otherwise and stage 1 never moves"
+        )
     base_name = cfg.get("mlflow", {}).get("run", "threshold")
     history = []
 

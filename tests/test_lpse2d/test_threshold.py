@@ -109,3 +109,21 @@ def test_a_zero_lower_bound_is_rejected_before_any_run():
     assert calls == []
     result = find_threshold(cfg, 1e13, 1e15, n_iter=12, runner=runner, log_mlflow=False)
     assert abs(result["threshold"] - 3.0e14) / 3.0e14 < 0.01
+
+
+def test_lpse_search_refuses_a_zero_start_before_any_run():
+    """find_threshold_lpse steps by dI_fract * intensity, so a zero (or negative) start never moves and
+    stage 1 would re-run the same point until its step budget ran out: it is refused before a run."""
+    from adept._lpse2d.threshold import find_threshold_lpse
+
+    calls = []
+
+    def runner(cfg, intensity, run_name):
+        calls.append(intensity)
+        return {"t (ps)": np.linspace(0.0, 1.0, 11), "max_rho": np.full(11, 1e-10)}
+
+    for start in ("0W/cm^2", "-1e14W/cm^2"):
+        cfg = {"units": {"laser intensity": start}, "mlflow": {"run": "t"}}
+        with pytest.raises(ValueError, match="positive starting intensity"):
+            find_threshold_lpse(cfg, n_iter=2, runner=runner)
+    assert calls == []
