@@ -552,7 +552,9 @@ def get_derived_quantities(cfg: dict) -> dict:
         )
     if light.get("absorber", "exp") == "pml" and light.get("solver", "fd") != "fd":
         raise ValueError("terms.light.absorber: pml is an option of the fd light solver")
-    if light.get("resonance_absorption"):
+    from adept._lpse2d.core.resonance import resonance_absorption_enabled
+
+    if resonance_absorption_enabled(light.get("resonance_absorption")):
         if not pump_depletion or light.get("solver", "fd") != "fd":
             raise ValueError(
                 "terms.light.resonance_absorption needs terms.light.pump_depletion with the fd light solver "

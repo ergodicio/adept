@@ -14,7 +14,7 @@ component there and is damped:
    (``Beach::halfBeachX``);
 2. Landau damping of the longitudinal part, in k-space,
 
-       E_k -= dt min(gamma_L(k), 1/dt) k (k . E_k) / k^2,
+       E_k -= T min(gamma_L(k), 1/T) k (k . E_k) / k^2,   T = landau_update dt,
 
    at the EPW Landau rate (the same table as the EPW step; LPSE builds it whenever RA is on,
    whatever ``lw.landauDamping.enable``), masked with an s-curve over the absorbers
@@ -22,9 +22,13 @@ component there and is damped:
    (``Beach::fullRadialK``: 1 below ``filter_width * K_nyq - W``, an s-curve to 0 at
    ``filter_width * K_nyq``, ``W = K_nyq (1 - 1/sqrt(2))`` in 2-D).
 
-LPSE applies the k-space part every ``LdUpdate`` sub-steps and re-uses the increment in
-between; here it is applied every ``landau_update`` sub-steps without the stale increment
-(``landau_update: 1`` is exact). LPSE refuses RA with its spectral solver, as does this.
+LPSE applies the k-space part on its first active sub-step and then every ``LdUpdate`` active
+sub-steps (``raLdCounter``, kept across steps) and re-uses the increment in between; here it is
+applied on the same light sub-steps -- counted from the first active one by the absolute
+light-step index, across EPW steps and restarts -- over the whole interval ``T`` without the
+stale increment, with the rate capped at ``1/T`` so one application removes at most the
+longitudinal part (``landau_update: 1`` is LPSE's step exactly). LPSE refuses RA with its
+spectral solver, as does this.
 """
 
 import numpy as np
@@ -44,16 +48,21 @@ def quadratic_ramp(x, start, width):
     return 1.0 - (1.0 - y) ** 2
 
 
+def resonance_absorption_enabled(value) -> bool:
+    """``terms.light.resonance_absorption`` is on for ``true`` or a mapping (``{}`` included)."""
+    return value is True or isinstance(value, dict)
+
+
 class ResonanceAbsorption:
     def __init__(self, cfg: dict, light, dt_l: float, landau_rate: Array):
         from astropy.units import Quantity as _Q
 
         ra = cfg["terms"].get("light", {}).get("resonance_absorption", None)
-        if ra is True:
-            ra = {}
-        self.enabled = isinstance(ra, dict)
+        self.enabled = resonance_absorption_enabled(ra)
         if not self.enabled:
             return
+        if ra is True:
+            ra = {}
         derived = cfg["units"]["derived"]
         grid = cfg["grid"]
         self.light = light
@@ -62,6 +71,8 @@ class ResonanceAbsorption:
         self.c0 = derived["vte_sq"] / (2.0j * self.w)
         self.t_start = _Q(ra.get("t_start", "0ps")).to("ps").value
         self.t_stop = _Q(ra["t_stop"]).to("ps").value if ra.get("t_stop") is not None else np.inf
+        # the first active light sub-step (sub-steps sit at multiples of dt_l from t = 0)
+        self.k_start = int(np.ceil(self.t_start / self.dt_l - 1.0e-9))
         self.landau_update = int(ra.get("landau_update", 1))
         if self.landau_update < 0:
             raise ValueError(
@@ -111,14 +122,18 @@ class ResonanceAbsorption:
         self.warm_mask = jnp.asarray(warm)[..., None]
         self.landau_mask = jnp.asarray(landau)[..., None]
 
-        # k-space: -dt min(gamma_L, 1/dt) / k^2 on the longitudinal projector k k
+        # k-space: -T min(gamma_L, 1/T) / k^2 on the longitudinal projector k k over the update
+        # interval T = landau_update dt_l (bounded: one application removes at most the mode)
         kx = np.asarray(grid["kx"], dtype=np.float64)
         ky = np.asarray(grid["ky"], dtype=np.float64)
         k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
-        gamma = np.minimum(np.asarray(landau_rate, dtype=np.float64), 1.0 / self.dt_l)
+        interval = self.dt_l * max(self.landau_update, 1)
+        gamma = np.minimum(np.asarray(landau_rate, dtype=np.float64), 1.0 / interval)
+        if not np.all(np.isfinite(gamma)):
+            raise ValueError("resonance absorption: the Landau-rate table is not finite")
         self.kx, self.ky = jnp.asarray(kx), jnp.asarray(ky)
         self.damping_over_k_sq = jnp.asarray(
-            np.where(k_sq > 0.0, self.dt_l * self.landau_update * gamma / np.where(k_sq > 0.0, k_sq, 1.0), 0.0)
+            np.where(k_sq > 0.0, interval * gamma / np.where(k_sq > 0.0, k_sq, 1.0), 0.0)
         )
         if filter_on:
             k_nyq = np.sqrt(kx.max() ** 2 + (ky.max() ** 2 if ny > 1 else 0.0))
@@ -156,14 +171,20 @@ class ResonanceAbsorption:
             E = jnp.fft.ifft2(jnp.fft.fft2(E, axes=(0, 1)) * self.k_filter, axes=(0, 1))
         return E
 
-    def __call__(self, t, i_sub, E: Array) -> Array:
-        """Both split-step terms on the light field over one sub-step (LPSE's order: the warm
-        term as an explicit x-space increment, then the k-space damping every
-        ``landau_update`` sub-steps)."""
+    def landau_due(self, t):
+        """The k-space term acts on the first active light sub-step and every ``landau_update``
+        sub-steps after it, by the absolute light-step index of the sub-step starting at ``t``."""
+        step = jnp.round(t / self.dt_l).astype(jnp.int64) - self.k_start
+        return (step % self.landau_update) == 0
+
+    def __call__(self, t, E: Array) -> Array:
+        """Both split-step terms on the light field over the light sub-step starting at ``t``
+        (LPSE's order: the warm term as an explicit x-space increment, then the k-space damping
+        every ``landau_update`` sub-steps)."""
         on = self.active(t)
         E_warm = E + self.dt_l * self.warm_term(E)
         if self.landau_update > 0:
-            do_landau = jnp.logical_and(on, (i_sub % self.landau_update) == 0)
+            do_landau = jnp.logical_and(on, self.landau_due(t))
             E_new = jnp.where(do_landau, self.landau_step(E_warm), E_warm)
         else:
             E_new = E_warm

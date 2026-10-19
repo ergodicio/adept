@@ -161,6 +161,38 @@ def test_translator_disabled_laser_is_no_pump():
         translate_parms({**base, "iaw.enable": "true", "thermalFil.laser.enable": "true"}, run="y")
 
 
+def test_translator_runs_lpse_square_cells():
+    """LPSE runs square cells h = min(size / (nodes - 1)) over the deck's axes, rescales the box to
+    h (nodes - 1) and refuses a mismatch above 10 % of h (ParameterManager.cpp:1258-1281; PR #372
+    review). Exact checks: a deck finer in y runs at h = dy on both axes (the old translation used
+    dx), a deck coarser in y keeps h = dx with LPSE's rescaled y box, each with a report note, and a
+    100 % mismatch raises."""
+    from adept._lpse2d.lpse_deck import translate_parms
+
+    base = {
+        "laser.enable": "true",
+        "lw.enable": "true",
+        "lw.spectral.dt": "0.005",
+        "simulation.time.end": "1",
+        "laser.nBeams": "1",
+        "laser.1.intensity": "1e15",
+        "grid.nodes": "201 50",
+    }
+    # the translated grid (adept's own setup may still round nx to an FFT-friendly size)
+    for size_y, h in (("4.851", 0.099), ("5.049", 0.1)):  # dy = 0.099 < dx = 0.1, dy = 0.10304 > dx
+        cfg, report = translate_parms({**base, "grid.sizes": f"20 {size_y}"}, run="y")
+        assert any("square cells" in note for note in report["notes"])
+        grid = cfg["grid"]
+        assert float(grid["dx"].removesuffix("um")) == pytest.approx(h, rel=1e-12)
+        assert float(grid["xmax"].removesuffix("um")) == pytest.approx(201 * h, rel=1e-12)
+        assert float(grid["ymax"].removesuffix("um")) == pytest.approx(0.5 * 50 * h, rel=1e-12)
+        assert float(grid["ymin"].removesuffix("um")) == pytest.approx(-0.5 * 50 * h, rel=1e-12)
+    cfg, report = translate_parms({**base, "grid.sizes": "20 4.9"}, run="y")  # dy = dx: no note
+    assert not any("square cells" in note for note in report["notes"])
+    with pytest.raises(ValueError, match="square-cell"):
+        translate_parms({**base, "grid.sizes": "20 9.8"}, run="y")  # dy = 2 dx
+
+
 def test_lpse_exp_profile_and_thermal_noise_without_debye_factor():
     import yaml
 

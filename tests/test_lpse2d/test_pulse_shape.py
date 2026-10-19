@@ -251,3 +251,32 @@ def test_translator_maps_every_lpse_pulse_shape(tmp_path):
     assert "pulse_file" not in cfg["drivers"]["E0"] and "pulse_shape" not in cfg["drivers"]["E0"]
     _, report = _translate(tmp_path, "raman.pulseShape.enable = true;\n")
     assert any("raman.pulseShape" in u for u in report["unsupported"])
+
+
+def test_fd_pump_applies_a_zero_pulse_segment_and_kap_phases(tmp_path):
+    """The FD two-point pump injector consumes the pulse table and the KAP phases (PR #372 review:
+    on #372 setup refuses them there; here the FD injector applies both). A normal-incidence FD pump
+    with a zero-power pulse segment and a nonzero KAP bandwidth: exact checks (rtol 1e-12, fixed
+    before the run) -- inside the zero segment every injector row is zero, outside it the KAP rows
+    are the KAP-free rows times exp(i phi_KAP(t)), with phi_KAP non-zero at some sampled time."""
+    from adept._lpse2d.core.light import CoupledLight
+
+    pulse_file = tmp_path / "gate.txt"
+    pulse_file.write_text("0.0 1.0\n0.004 1.0\n0.0041 0.0\n0.006 0.0\n0.0061 1.0\n1.0 1.0\n")
+
+    def rows(**e0):
+        cfg = _finish(_raw("fd", pulse_file=str(pulse_file), **e0))
+        light, pa = CoupledLight(cfg), _pump_args(cfg)
+        assert not light.fd_general_injector
+        return light, lambda t: np.stack([np.asarray(v) for _, v in light.calc_pump_source(t, pa)])
+
+    light_kap, with_kap = rows(kap_bandwidth=0.005)
+    _, without_kap = rows()
+    assert np.max(np.abs(with_kap(0.005))) == 0.0 and np.max(np.abs(without_kap(0.005))) == 0.0
+    phases = []
+    for t in (0.002, 0.008, 0.02, 0.05):
+        phase = float(light_kap.kap.phase(t, 0))
+        phases.append(phase)
+        np.testing.assert_allclose(with_kap(t), without_kap(t) * np.exp(1j * phase), rtol=1e-12, atol=0)
+        assert np.max(np.abs(without_kap(t))) > 0.0
+    assert any(abs(p) > 1e-6 for p in phases)

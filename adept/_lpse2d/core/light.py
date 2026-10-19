@@ -236,10 +236,10 @@ class CoupledLight(RamanLight):
         # ---- resonance absorption (plan 2 L.3; LPSE laser.evolution.resonanceAbsorption) on the
         # pump, applied every light sub-step after the propagation update
         from adept._lpse2d.core.epw import analytic_landau_rate
-        from adept._lpse2d.core.resonance import ResonanceAbsorption
+        from adept._lpse2d.core.resonance import ResonanceAbsorption, resonance_absorption_enabled
 
         ra_cfg = light_cfg.get("resonance_absorption", None)
-        if ra_cfg:
+        if resonance_absorption_enabled(ra_cfg):
             # LPSE builds the Landau table whenever RA is on, whatever lw.landauDamping.enable
             cfg_ld = {
                 **cfg,
@@ -693,7 +693,7 @@ class CoupledLight(RamanLight):
             else:
                 E0, E1 = propagate(t_i, E0, E1, laplacian_phi, dn, phi_i)
             if self.resonance.enabled:
-                E0 = self.resonance(t_i, i, E0)
+                E0 = self.resonance(t_i, E0)
             E0 = E0 * self.sub_boundary0[..., None]
             E1 = E1 * self.sub_boundary[..., None]
             if absorbing:
