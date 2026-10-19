@@ -28,8 +28,8 @@ def _cfg(angle, ramp, ra, tmax=0.4):
         }
     )
     cfg["terms"]["light"] = {"pump_depletion": True, "solver": "fd", "fd_order": 4}
-    if ra:
-        cfg["terms"]["light"]["resonance_absorption"] = True
+    if ra is not False and ra is not None:
+        cfg["terms"]["light"]["resonance_absorption"] = ra
     cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
     cfg["terms"]["epw"]["source"].update({"noise": False, "srs": False, "tpd": True})
     cfg["units"]["envelope density"] = 0.25
@@ -120,3 +120,93 @@ def test_validation_and_translator():
     )
     assert abs(cfg["drivers"]["E0"]["angle"] - np.degrees(np.arctan2(0.1676, 0.98586))) < 1e-6
     assert not any("resonanceAbsorption" in u for u in report["unsupported"])
+
+
+def _finish(cfg):
+    from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
+
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    cfg["grid"] = get_solver_quantities(cfg)
+    cfg["grid"]["background_density"] = get_density_profile(cfg)
+    return cfg
+
+
+def test_an_empty_mapping_enables_resonance_absorption_like_true():
+    """``resonance_absorption: {}`` is on, as ``true`` (PR #378 review): setup builds the same finite
+    Landau-rate table for both, and a short run with ``{}`` stays finite (before the fix the
+    light solver built the table only for a truthy option and handed the enabled RA no rates)."""
+    from adept._lpse2d.core.light import CoupledLight
+
+    tables = []
+    for ra in (True, {}):
+        light = CoupledLight(_finish(_cfg(11.0, ramp=True, ra=ra, tmax=0.02)))
+        assert light.resonance.enabled
+        tables.append(np.asarray(light.resonance.damping_over_k_sq))
+    assert np.all(np.isfinite(tables[1])) and np.max(tables[1]) > 0.0
+    np.testing.assert_array_equal(tables[1], tables[0])
+    short = _cfg(11.0, ramp=True, ra={}, tmax=0.02)
+    short["save"]["fields"]["t"]["dt"] = "0.01ps"  # a field frame inside the short run
+    _, net, _, energy = _run(short)
+    assert np.all(np.isfinite(net)) and np.all(np.isfinite(energy))
+
+
+def _resonance(landau_update, dt_l, rate=None, filter_on=False):
+    """A ResonanceAbsorption on the RA test box with its own update interval, sub-step and rate."""
+    from adept._lpse2d.core.epw import analytic_landau_rate
+    from adept._lpse2d.core.light import CoupledLight
+    from adept._lpse2d.core.resonance import ResonanceAbsorption
+
+    cfg = _cfg(11.0, ramp=False, ra={"landau_update": landau_update, "filter": filter_on})
+    cfg = _finish(cfg)
+    light = CoupledLight(cfg)
+    k_shape = (cfg["grid"]["nx"], cfg["grid"]["ny"])
+    rates = np.asarray(analytic_landau_rate(cfg)) if rate is None else np.full(k_shape, float(rate))
+    return cfg, ResonanceAbsorption(cfg, light, dt_l, rates)
+
+
+@pytest.mark.parametrize(("landau_update", "n_sub", "n_epw"), [(10, 1, 20), (5, 3, 5)])
+def test_resonance_landau_cadence_runs_over_absolute_light_steps(landau_update, n_sub, n_epw):
+    """The k-space term acts on every ``landau_update``-th light sub-step counted across EPW steps
+    (LPSE raLdCounter; PR #378 review), also when the interval exceeds and does not divide the
+    sub-steps per EPW step. With the warm term zeroed and the k-space step marked by +1, the count
+    over n_epw EPW steps of n_sub sub-steps is len(range(0, n_epw n_sub, landau_update)) exactly
+    (before the fix the local sub-step index restarted every EPW step: 20 and 5 here, not 2 and 3)."""
+    from jax import numpy as jnp
+
+    dt = 1.0e-3  # the RA test box's EPW step (ps)
+    dt_l = dt / n_sub
+    _, ra = _resonance(landau_update, dt_l)
+    ra.warm_term = lambda E: jnp.zeros_like(E)
+    ra.landau_step = lambda E: E + 1.0
+    E = jnp.zeros((4, 1, 2), dtype=jnp.complex128)
+    for n in range(n_epw):
+        for i in range(n_sub):
+            E = ra(n * dt + i * dt_l, E)
+    assert float(jnp.real(E[0, 0, 0])) == len(range(0, n_epw * n_sub, landau_update))
+
+
+def test_resonance_landau_damping_is_bounded_over_the_update_interval():
+    """Over the update interval T = landau_update dt_l the k-space term removes at most the
+    longitudinal part (PR #378 review): the rate is capped at 1/T, not 1/dt_l. A longitudinal plane
+    wave in the unmasked interior with landau_update = 10 is removed (|E| < 1e-12 A) at a huge rate,
+    where the old cap multiplied it by 1 - 10 = -9, and halved at gamma T = 0.5 (rtol 1e-12)."""
+    from jax import numpy as jnp
+
+    dt_l = 1.0e-4
+    for rate, factor in ((1.0e9, 0.0), (0.5 / (10 * dt_l), 0.5)):
+        cfg, ra = _resonance(10, dt_l, rate=rate)
+        x = np.asarray(cfg["grid"]["x"])
+        k = float(np.asarray(cfg["grid"]["kx"])[5])
+        ny = cfg["grid"]["ny"]
+        amp = 1.0e-3
+        E = np.zeros((x.size, ny, 2), dtype=np.complex128)
+        E[..., 0] = amp * np.exp(1j * k * x)[:, None]
+        out = np.asarray(ra.landau_step(jnp.asarray(E)))
+        interior = np.asarray(ra.landau_mask)[:, 0, 0] == 1.0
+        assert interior.sum() > 10
+        got = np.abs(out[interior, :, 0])
+        if factor == 0.0:
+            assert np.max(got) < 1e-12 * amp
+        else:
+            np.testing.assert_allclose(got, factor * amp, rtol=1e-12)
