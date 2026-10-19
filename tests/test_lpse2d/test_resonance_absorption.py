@@ -210,3 +210,35 @@ def test_resonance_landau_damping_is_bounded_over_the_update_interval():
             assert np.max(got) < 1e-12 * amp
         else:
             np.testing.assert_allclose(got, factor * amp, rtol=1e-12)
+
+
+def test_the_quasi_1d_resonance_filter_keeps_the_retained_band():
+    """In quasi-1D (ny == 1) the RA filter's transition has zero width; it is a sharp passband
+    |k| <= filter_width K_nyq, not an all-zero mask (PR #378 review: the zero-width s-curve made the
+    default filter erase the pump on every damping update). A transverse (y-polarised) mode along x
+    passes landau_step with the default filter unchanged (rtol 1e-12, fixed before the run), and a
+    narrower filter_width keeps exactly the modes with |k| <= filter_width K_nyq."""
+    from jax import numpy as jnp
+
+    from adept._lpse2d.core.epw import analytic_landau_rate
+    from adept._lpse2d.core.light import CoupledLight
+    from adept._lpse2d.core.resonance import ResonanceAbsorption
+
+    for filter_width in (1.0, 0.5):
+        cfg = _cfg(0.0, ramp=False, ra={"filter_width": filter_width})
+        cfg["grid"].update({"ymax": "0.02um", "ymin": "-0.02um"})
+        cfg["drivers"]["E0"].pop("beam_width")
+        cfg = _finish(cfg)
+        assert cfg["grid"]["ny"] == 1
+        light = CoupledLight(cfg)
+        ra = ResonanceAbsorption(cfg, light, light.dt_l, np.asarray(analytic_landau_rate(cfg)))
+        x = np.asarray(cfg["grid"]["x"])
+        kx = np.asarray(cfg["grid"]["kx"])
+        k_nyq = np.abs(kx).max()
+        for ik in (3, len(kx) // 3):
+            k = float(kx[ik])
+            E = np.zeros((x.size, 1, 2), dtype=np.complex128)
+            E[:, 0, 1] = 1.0e-3 * np.exp(1j * k * x)
+            out = np.asarray(ra.landau_step(jnp.asarray(E)))
+            expected = E if abs(k) <= filter_width * k_nyq else 0.0 * E
+            np.testing.assert_allclose(out, expected, rtol=1e-12, atol=1e-12 * 1.0e-3)
