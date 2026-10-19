@@ -145,13 +145,26 @@ def translate_parms(
     zak = ZakUnits(te, ti, z, mi_over_me, n_env, wavelength_um)
     report["units"] = zak.summary()
 
-    # ---- grid: LPSE nodes span the size with both end nodes, dx = L / (N - 1)
+    # ---- grid: LPSE nodes span the size with both end nodes, d = L / (N - 1) per axis. LPSE runs
+    # square cells: h = min(d) over the deck's dimensions, a mismatch sqrt(sum (h - d)^2) above
+    # 0.1 h is refused, and the box becomes h (N - 1) per axis (ParameterManager.cpp:1258-1281)
     sizes = _floats(g("grid.sizes", "0 0"))
     nodes = [int(v) for v in _floats(g("grid.nodes", "0 0"))]
-    lx = sizes[0]
     nx = nodes[0]
-    dx = lx / (nx - 1)
     ny = nodes[1] if len(nodes) > 1 else 1
+    spacings = [sizes[i] / (nodes[i] - 1) for i in range(min(len(sizes), len(nodes))) if nodes[i] > 1]
+    dx = min(spacings)
+    if np.sqrt(sum((dx - d) ** 2 for d in spacings)) > 0.1 * dx:
+        raise ValueError(
+            f"grid.sizes {sizes} / grid.nodes {nodes}: cell sizes {spacings} differ by more than LPSE's 10 % "
+            "square-cell tolerance (LPSE refuses the deck); adjust grid.nodes"
+        )
+    if any(abs(d / dx - 1.0) > 1e-9 for d in spacings):
+        report["notes"].append(
+            f"grid: LPSE runs square cells h = min(size / (nodes - 1)) = {dx:.6g} um and rescales the box to "
+            f"h (nodes - 1) = {[round(dx * (n - 1), 6) for n in nodes if n > 1]} um (deck grid.sizes {sizes})"
+        )
+    lx = dx * (nx - 1)
     xmax = nx * dx
     if ny > 1:
         half_y = 0.5 * ny * dx
