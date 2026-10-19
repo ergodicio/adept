@@ -69,8 +69,11 @@ def find_threshold(
     Returns ``{"threshold", "bracket", "history": [(intensity, unstable, metrics), ...]}``."""
     crit = criterion or (lambda m: default_criterion(m, growth_min))
     lo, hi = _intensity_w_cm2(intensity_lo), _intensity_w_cm2(intensity_hi)
-    if not lo < hi:
-        raise ValueError("intensity_lo must be below intensity_hi")
+    if not 0.0 < lo < hi:
+        raise ValueError(
+            "the bracket needs 0 < intensity_lo < intensity_hi: the geometric midpoint sqrt(lo hi) of a zero "
+            "lower bound never moves; start from a small positive stable intensity"
+        )
     base_name = cfg.get("mlflow", {}).get("run", "threshold")
     history = []
 
