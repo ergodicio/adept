@@ -236,7 +236,7 @@ def post_process(soln: Solution, cfg: dict, td: str, args: dict | None = None) -
         if k.startswith("field"):
             fields_xr = store_fields(cfg, binary_dir, soln.ys[k], soln.ts[k], k)
             t_skip = int(fields_xr.coords["t (ps)"].data.size // 8)
-            t_skip = t_skip if t_skip > 1 else 1
+            t_skip = max(1, t_skip)
             tslice = slice(0, -1, t_skip)
 
             for nm, fld in fields_xr.items():
@@ -274,7 +274,7 @@ def post_process(soln: Solution, cfg: dict, td: str, args: dict | None = None) -
     f_xr = store_f(cfg, soln.ts, td, soln.ys)
 
     t_skip = int(f_xr.coords["t (ps)"].data.size // 4)
-    t_skip = t_skip if t_skip > 1 else 1
+    t_skip = max(1, t_skip)
     tslice = slice(0, -1, t_skip)
 
     for k in ["f0", "f10"]:
