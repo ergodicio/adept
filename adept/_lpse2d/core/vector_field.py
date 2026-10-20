@@ -25,12 +25,15 @@ class SplitStep:
         self.cfg = cfg
         self.dt = cfg["grid"]["dt"]
         self.wp0 = cfg["units"]["derived"]["wp0"]
-        self.epw = epw.SpectralEPWSolver(cfg)
         self.light = laser.Light(cfg)
         # terms.epw.solver: "separate" (the four envelope equations, MATLAB / LPSE spectral)
         # or "combined" (LPSE lw.solver = combined: one wp0-enveloped field for Raman light
         # and EPW, required by LPSE whenever TPD and SRS are both on)
         self.epw_solver = str(cfg["terms"]["epw"].get("solver", "separate"))
+        # the separate EPW solver only on the separate path: in combined mode it is never stepped,
+        # and its setup (e.g. the thermal noise's EPW-damping requirement) would judge the
+        # combined field by the separate solver's damping
+        self.epw = epw.SpectralEPWSolver(cfg) if self.epw_solver == "separate" else None
         if self.epw_solver == "combined":
             if str(cfg["terms"].get("light", {}).get("solver", "fd")) == "fd":
                 from adept._lpse2d.core.fd_combined import FDCombinedSolver
