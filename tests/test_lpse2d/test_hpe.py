@@ -771,15 +771,17 @@ def test_energy_conservation_multiplier_tracks_the_particle_gain():
     np.testing.assert_allclose(float(m4[0]), 1.25, rtol=1e-6)
 
 
-def test_energy_conservation_multiplier_scales_the_clipped_rate_like_lpse():
+def test_gamma_limits_bound_the_rate_after_the_energy_conservation_multiplier():
     """Through __call__ with gamma limits and energy conservation both on (PR #372 review): the rate
-    handed to the solver is the energy-conservation multiplier times the clipped HPE rate, as LPSE
-    (ElectronTracker.cu:2792 clips LDgammaE; LwSolver.cpp:823 / LightSolver.cpp:3707 apply
-    LD_multiplier * LDgammaE with no second clip), so the limits bound the HPE rate before the
-    global correction. rtol 1e-12."""
+    handed to the solver is the multiplier times the HPE rate, clipped again to the configured limits
+    on the resonant modes; the non-resonant modes keep the multiplier times their analytic rate (no
+    clip). LPSE clips only before its LD_multiplier (ElectronTracker.cu:2792, LwSolver.cpp:823); adept
+    departs from it here. The multiplier is held near 5 (a long running average from 5) so the limit
+    binds. rtol 1e-12."""
     from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
 
-    cfg = _make_cfg({"gamma_limit_damping": 0.5, "energy_conservation": True, "energy_conservation_steps": 1.0})
+    limit = 0.5
+    cfg = _make_cfg({"gamma_limit_damping": limit, "energy_conservation": True, "energy_conservation_steps": 1.0e6})
     hpe = HybridParticleEvolution(cfg)
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
     rng = np.random.default_rng(29)
@@ -787,14 +789,17 @@ def test_energy_conservation_multiplier_scales_the_clipped_rate_like_lpse():
     phi_k = phi_k * np.asarray(cfg["grid"]["low_pass_filter_grid"])
     zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
     y = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
-    y.update({"epw": jnp.asarray(phi_k), "E0": zeros, "E1": zeros})
+    y.update({"epw": jnp.asarray(phi_k), "E0": zeros, "E1": zeros, "hpe_ld_multiplier": jnp.full((1,), 5.0)})
     out = hpe(max(hpe.t_start, 0.0) + hpe.dt, y)
-    clipped = np.asarray(hpe.damping(out["epw_hist"]))
-    resonant = np.broadcast_to(np.asarray(hpe.mask_res).reshape(nx, -1), (nx, ny))
-    assert clipped[resonant].max() <= 0.5 + 1e-12
+    rate = np.asarray(hpe.damping(out["epw_hist"]))
     mult = float(np.asarray(out["hpe_ld_multiplier"])[0])
-    assert 0.1 <= mult <= 10.0 and abs(mult - 1.0) > 1e-3  # a non-trivial multiplier
-    np.testing.assert_allclose(np.asarray(out["gamma_L"]), mult * clipped, rtol=1e-12, atol=0.0)
+    assert mult == pytest.approx(5.0, rel=1e-4)
+    resonant = np.broadcast_to(np.asarray(hpe.mask_res).reshape(nx, -1), (nx, ny))
+    want = np.where(resonant, np.clip(mult * rate, -hpe.gamma_limit_growth, limit), mult * rate)
+    gamma_l = np.asarray(out["gamma_L"])
+    np.testing.assert_allclose(gamma_l, want, rtol=1e-12, atol=0.0)
+    assert gamma_l[resonant].max() <= limit + 1e-12
+    assert np.any(mult * rate[resonant] > limit)  # the limit binds after the multiplier
 
 
 def test_translator_maps_the_hpe_controls():
