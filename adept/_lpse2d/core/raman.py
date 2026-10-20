@@ -177,7 +177,12 @@ class RamanLight:
             self.sub_boundary = jnp.ones_like(self.sub_boundary)
             light_w = float(cfg["grid"].get("light_boundary_width_um", np.nan))
             raman_w = float(cfg["grid"].get("raman_boundary_width_um", np.nan))
-            if np.isfinite(light_w) and np.isfinite(raman_w) and abs(light_w - raman_w) > 1e-12:
+            # the Raman light is evolved with SRS or as the combined field; a light-only run has the
+            # pump alone, and its one PML profile is the pump's layer
+            raman_evolved = bool(cfg["terms"]["epw"]["source"].get("srs", False)) or (
+                cfg["terms"]["epw"].get("solver", "separate") == "combined"
+            )
+            if raman_evolved and np.isfinite(light_w) and np.isfinite(raman_w) and abs(light_w - raman_w) > 1e-12:
                 raise NotImplementedError(
                     "terms.light.absorber: pml with different pump and Raman layer widths (one PML profile)"
                 )
@@ -185,7 +190,9 @@ class RamanLight:
             s_abc = np.exp(1j * np.pi / denominator)
             from astropy.units import Quantity as _Q
 
-            width = float(cfg["grid"].get("raman_boundary_width_um", _Q(cfg["grid"]["boundary_width"]).to("um").value))
+            width = raman_w if raman_evolved else light_w
+            if not np.isfinite(width):
+                width = _Q(cfg["grid"]["boundary_width"]).to("um").value
             x = np.asarray(cfg["grid"]["x"], dtype=np.float64)
             y = np.asarray(cfg["grid"]["y"], dtype=np.float64)
             boundary = cfg["terms"]["epw"]["boundary"]

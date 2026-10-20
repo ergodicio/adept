@@ -87,3 +87,30 @@ def test_validation_and_translator():
     parms["laser.solver"] = "spectral"
     cfg, report = translate_parms(parms, run="test_011")
     assert "absorber" not in cfg["terms"]["light"] and any("pml" in n for n in report["notes"])
+
+
+def test_light_only_pml_uses_the_pump_layer():
+    """A light-only run (SRS off) has the pump alone: its one PML profile is the pump's layer, whatever
+    terms.light.raman_boundary_width says (the LPSE light-only decks test_003 / test_011 / test_019
+    set laser.evolution.Labc only and were refused for "different pump and Raman layer widths").
+    Exact: the profile equals the one built from the pump's width; with SRS on, the differing widths
+    are still refused (one PML profile for both fields)."""
+    from adept._lpse2d.core.light import CoupledLight
+    from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
+
+    def finish(srs, raman_width):
+        cfg = _cfg("pml")
+        cfg["terms"]["epw"]["source"].update({"srs": srs, "tpd": not srs})
+        if raman_width is not None:
+            cfg["terms"]["light"]["raman_boundary_width"] = raman_width
+        write_units(cfg)
+        cfg = get_derived_quantities(cfg)
+        cfg["grid"] = get_solver_quantities(cfg)
+        cfg["grid"]["background_density"] = get_density_profile(cfg)
+        return cfg
+
+    reference = CoupledLight(finish(False, None))  # pump and Raman layers both 1.5 um
+    light_only = CoupledLight(finish(False, "3um"))
+    np.testing.assert_array_equal(np.asarray(light_only.pml_v), np.asarray(reference.pml_v))
+    with pytest.raises(NotImplementedError, match="different pump and Raman layer widths"):
+        CoupledLight(finish(True, "3um"))
