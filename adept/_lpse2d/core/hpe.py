@@ -758,6 +758,16 @@ class HybridParticleEvolution:
     def _gamma_raw(self, hist: Array) -> Array:
         return self._gamma_raw_2d(hist) if self.is_2d else self._gamma_raw_1d(hist)
 
+    def limit_resonant(self, gamma: Array) -> Array:
+        """The configured limits (``gamma_limit_damping`` / ``-gamma_limit_growth``) on the resonant
+        modes of an applied rate; the non-resonant modes keep theirs. Re-applied after the
+        energy-conservation multiplier, so the rate handed to the solver respects the limits (LPSE
+        clips only before its LD_multiplier)."""
+        resonant = jnp.asarray(self.mask_res)
+        if not self.is_2d:
+            resonant = jnp.broadcast_to(resonant[:, None], (self.nx, self.ny))
+        return jnp.where(resonant, jnp.clip(gamma, -self.gamma_limit_growth, self.gamma_limit_damping), gamma)
+
     def damping(self, hist: Array) -> Array:
         # LPSE gammaLimit: clip(-growth, gamma, damping); growth only with allow_growth
         gamma_hpe = jnp.clip(
@@ -787,7 +797,7 @@ class HybridParticleEvolution:
                 n_avg = jnp.minimum(self.ec_steps, count)
                 power = d_kinetic / n_avg + power * (1.0 - 1.0 / n_avg)
                 mult = jnp.where(count > self.ec_steps, self.ld_multiplier(mult, gamma_new, y["epw"], power), mult)
-                gamma_new = gamma_new * mult[0]
+                gamma_new = self.limit_resonant(gamma_new * mult[0])
             return gamma_new, mult, power
 
         if self.is_2d:
