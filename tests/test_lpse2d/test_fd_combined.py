@@ -193,6 +193,19 @@ def test_langmuir_step_damps_only_the_longitudinal_part():
     np.testing.assert_allclose(out_t, np.asarray(e_t), rtol=1e-12, atol=1e-14)
 
 
+def test_langmuir_step_grows_negative_rates_exponentially():
+    """A negative (inverse-Landau, QLE / HPE allow_growth) rate outside the small-step regime takes the
+    exponential, E_L -> exp(|gamma| dt) E_L, not LPSE's linearised 1 + |gamma| dt (PR #378 review);
+    |gamma dt| < 1e-3 keeps the linear coefficient for either sign, as LPSE for damping. rtol 1e-12."""
+    cfg, solver = _solver()
+    _, e_l = _wave(cfg, 5, 0)
+    dt = solver.dt
+    for rate_dt, factor in ((-0.1, np.exp(0.1)), (-5e-4, 1.0 + 5e-4), (5e-4, 1.0 - 5e-4), (0.1, np.exp(-0.1))):
+        gamma = jnp.full(solver.spectral.k_sq.shape, rate_dt / dt)
+        out = np.asarray(solver.langmuir_step(0.0, e_l, gamma))
+        np.testing.assert_allclose(out, factor * np.asarray(e_l), rtol=1e-12, atol=1e-14)
+
+
 def test_fd_combined_light_step_respects_the_combined_field_bound_with_the_sources_off():
     """The FD combined solver evolves E1 (light operator + Bohm-Gross grad-div) with TPD and SRS both
     off too, so setup must sub-cycle the light to the combined field's stability bound then as well

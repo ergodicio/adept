@@ -567,3 +567,25 @@ def test_fd_restriction_to_the_epw_grid_keeps_only_the_iaw_band():
     spec_n = np.abs(np.fft.fft2(np.asarray(out["iaw_density"])))
     assert spec_n[tuple(kept)] > 1e-3 * spec_n.max()
     assert float(iaw.restriction_band[0, 0]) == 1.0
+
+
+def test_fd_noise_stays_inside_the_iaw_wavenumber_cap():
+    """The FD noise kick lies in LPSE's noise disc intersected with the retained band (PR #378 review): with
+    terms.iaw.max_wavenumber 1 (k0, inside the disc), one k-space step from rest leaves w_k zero above the
+    cap (1e-9 of the largest) and nonzero below it; before the fix the disc alone set the support."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+    from adept._lpse2d.core.iaw_fd import FD_STATE_KEYS
+
+    cfg = _cfg_extra("fd", landau=0.2, collisions=0.5, noise=True, noise_amplitude=1e-6, max_wavenumber=1.0)
+    iaw = IonAcousticWave(cfg)
+    fd = iaw.fd
+    nx = cfg["grid"]["nx"]
+    k0 = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"]
+    fk = np.abs(2.0 * np.pi * np.fft.fftfreq(fd.fnx, d=fd.h))
+    k_noise = float(cfg["grid"]["low_pass_filter"]) * float(np.max(np.abs(np.asarray(cfg["grid"]["kx"]))))
+    assert k0 < k_noise  # the cap is the tighter bound
+    y = _state(cfg, iaw, np.zeros((nx, 1)), np.zeros((nx, 1)))
+    w_k = np.abs(np.fft.fft2(np.asarray(iaw(y, 0.0)[FD_STATE_KEYS[1]])))[:, 0]
+    above = fk >= k0
+    assert w_k[above].max() <= 1e-9 * w_k.max()
+    assert np.all(w_k[(fk > 0.0) & (fk < 0.9 * k0)] > 0.0)

@@ -297,7 +297,9 @@ class FDIonAcoustic:
         self.noise = bool(iaw.noise_enabled) and self.kspace_step
         if self.noise:
             k_noise = float(grid.get("low_pass_filter", 1.0)) * k_max_x
-            noise_band = (np.sqrt(fk_sq) < k_noise) & (fk_sq > 0.0)
+            # LPSE's noise disc within the retained band (the coarse mask and terms.iaw.max_wavenumber,
+            # as the spectral solver's noise), so the kick cannot repopulate modes the band excludes
+            noise_band = (np.sqrt(fk_sq) < k_noise) & band
             amplitude = float(opts.get("noise_amplitude", 1.0))
             kick = amplitude * float(self.fnx * self.fny) * np.sqrt(np.expm1(2.0 * self.dt_damp * (gamma + nu_coll)))
             self.noise_kick = jnp.asarray(np.where(noise_band, kick, 0.0))
