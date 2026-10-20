@@ -148,6 +148,22 @@ class CoupledLight(RamanLight):
         self.coupling = str(light_cfg.get("coupling", "explicit"))
         if self.coupling not in ("explicit", "rotation"):
             raise ValueError(f"terms.light.coupling must be 'explicit' or 'rotation', got {self.coupling!r}")
+        if (
+            self.coupling == "rotation"
+            and self.srs_enabled
+            and self.transverse_source
+            and str(light_cfg.get("solver", "fd")) == "fd"
+        ):
+            # the exact exchange rotates E0 and E1 pointwise; the transverse projection of its
+            # sources is a k-space operation it cannot apply (the spectral solver keeps the fields
+            # transverse instead), and the FD rotation path used to skip it silently
+            raise ValueError(
+                "terms.light.coupling: rotation with the fd light solver cannot apply "
+                "terms.light.transverse_source: true: use coupling: explicit or terms.light.solver: "
+                "spectral to keep the projection, terms.light.transverse_fields: true to project the "
+                "fields once per EPW step instead, or transverse_source: false (the default; the "
+                "longitudinal E1 then stays in the SRS exchange)"
+            )
         # local E0 <-> E1 exchange rate per unit |laplacian phi|: Omega = sqrt(|A B|) |lap phi|
         self.omega_prefactor = self.e / (4.0 * self.me * np.sqrt(self.w0 * self.w1))
         # the pump's coupling sources are zeroed at the seed injector rows (and in the pump's layer on

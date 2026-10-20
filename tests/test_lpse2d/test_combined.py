@@ -495,8 +495,9 @@ def test_combined_propagator_keeps_the_k0_mode():
 # amplitude * sqrt(dt_EPW * dt_l), so its seed level does not depend on n_sub either.
 
 
-def _noise_cfg(n_sub, model):
+def _noise_cfg(n_sub, model, landau=True):
     raw = _combined_raw(raman_absorption=20.0, absorption=False)
+    raw["terms"]["epw"]["damping"]["landau"] = landau
     # n = n_env: the combined field's damping exp(-nu_R dt (n/n_env)^2) is then the uniform rate
     # the noise kick is balanced against
     raw["density"] = {"basis": "uniform", "val": 0.25}
@@ -522,6 +523,22 @@ def _combined_noise_steady_state(cfg, n_steps=450, n_warm=300):
         if i >= n_warm:
             samples.append(float(jnp.sum(solver.k_sq * jnp.abs(phi_k) ** 2)))
     return solver, np.mean(samples)
+
+
+def test_combined_thermal_noise_needs_only_the_raman_absorption():
+    """The combined field's damping is the Raman absorption, so thermal noise with the EPW Landau
+    damping and collisions both off and terms.light.raman_absorption > 0 is a valid combined deck
+    (PR #372 review): SplitStep sets up (before the fix it also built the never-stepped separate EPW
+    solver, whose thermal noise refused the deck for lack of EPW damping), and the combined noise kick
+    is nonzero and balanced against nu_R."""
+    from adept._lpse2d.core.epw import noise_step
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    cfg = _noise_cfg(1, "thermal", landau=False)
+    step = SplitStep(cfg)
+    assert step.epw is None
+    assert noise_step(cfg)[1] == pytest.approx(20.0, rel=1e-12)
+    assert float(jnp.max(jnp.abs(step.combined.noise_kick))) > 0.0
 
 
 def test_combined_flat_noise_steady_state_is_independent_of_the_light_substeps():

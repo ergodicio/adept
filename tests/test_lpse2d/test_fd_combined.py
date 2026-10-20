@@ -13,7 +13,7 @@ import yaml
 from jax import numpy as jnp
 
 
-def _cfg():
+def _cfg(source_window=None, srs_k_filter=False):
     from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
 
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
@@ -35,7 +35,9 @@ def _cfg():
     cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
     cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
     cfg["terms"]["epw"]["density_gradient"] = True
-    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True, "srs_k_filter": srs_k_filter})
+    if source_window is not None:
+        cfg["terms"]["epw"]["source_window"] = source_window
     cfg["terms"]["epw"]["solver"] = "combined"
     cfg["terms"]["light"] = {"solver": "fd", "pump_depletion": True}
     write_units(cfg)
@@ -128,6 +130,54 @@ def test_unified_couplings_use_the_fd_derivatives():
     want = np.zeros_like(src)
     want[..., 0] = -1j * d["e"] / (4.0 * d["me"] * d["w0"]) * 1j * kd * scalar
     np.testing.assert_allclose(src, want, rtol=1e-10, atol=1e-10 * np.abs(want).max())
+
+
+def test_fd_unified_source_takes_the_epw_window_and_the_pump_k_filter():
+    """terms.epw.source_window and terms.epw.source.srs_k_filter act on the FD combined unified source
+    as on CombinedSolver.unified_source (PR #378 review; before the fix the FD path read neither): a
+    window outside the box leaves no drive in the coupled RHS, a partial window multiplies the source
+    by the EPW mask, and the filter removes the pump's modes above its cutoff before the product.
+    Identities on random fields, 1e-12, fixed in advance."""
+    from adept._lpse2d.core.fd_combined import FDCombinedSolver
+    from adept._lpse2d.core.vector import fft2c, ifft2c
+
+    cfg, base = _solver()
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    rng = np.random.default_rng(11)
+    E0 = jnp.asarray(rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    E1 = jnp.asarray(rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    t = 0.37 * cfg["grid"]["dt"]
+    src = np.asarray(base.unified_source_fd(t, E0, E1))
+    assert base.epw_source_mask is None and base.E0_filter is None
+
+    partial = _cfg(source_window={"width": ["2um", "0um"], "center": ["3.2um", "0um"], "edge_width": "0.5um"})
+    mask = np.asarray(partial["grid"]["epw_source_mask"])
+    assert 0.1 < mask.mean() < 0.9 and np.any(mask == 0.0) and np.any((mask > 0.0) & (mask < 1.0))
+    got = np.asarray(FDCombinedSolver(partial).unified_source_fd(t, E0, E1))
+    np.testing.assert_allclose(got, mask[..., None] * src, rtol=1e-12, atol=1e-12 * np.abs(src).max())
+
+    outside = _cfg(source_window={"width": ["1um", "0um"], "center": ["50um", "0um"], "edge_width": "0um"})
+    assert not np.any(np.asarray(outside["grid"]["epw_source_mask"]))
+    solver = FDCombinedSolver(outside)
+    assert float(jnp.max(jnp.abs(solver.unified_source_fd(t, E0, E1)))) == 0.0
+    pump_args = {
+        **outside["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.ones((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    _, k_windowed = solver.coupled_rhs(t, E0, E1, None, pump_args, None)
+    solver.sources_on = False
+    _, k_no_source = solver.coupled_rhs(t, E0, E1, None, pump_args, None)
+    np.testing.assert_array_equal(np.asarray(k_windowed), np.asarray(k_no_source))
+
+    filtered = FDCombinedSolver(_cfg(srs_k_filter=True))
+    keep = np.asarray(filtered.E0_filter)
+    assert 0.0 < keep.mean() < 1.0
+    E0f = ifft2c(fft2c(E0) * jnp.asarray(keep)[..., None])
+    want = np.asarray(base.unified_source_fd(t, E0f, E1))
+    got = np.asarray(filtered.unified_source_fd(t, E0, E1))
+    np.testing.assert_allclose(got, want, rtol=1e-12, atol=1e-12 * np.abs(want).max())
 
 
 def test_langmuir_step_damps_only_the_longitudinal_part():
