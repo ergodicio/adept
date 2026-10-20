@@ -163,7 +163,9 @@ class FDCombinedSolver(CoupledLight):
         band = self.spectral.band
         e_k = fft2c(E1)
         rate_dt = gamma_landau * self.dt
-        coeff = jnp.where(rate_dt < 1.0e-3, rate_dt, 1.0 - jnp.exp(-rate_dt)) * band
+        # LPSE's linearised coefficient only for |gamma dt| < 1e-3: a negative (inverse-Landau) rate of
+        # any size takes the exponential, -expm1(-gamma dt) (LPSE tests the signed rate, PR #378 review)
+        coeff = jnp.where(jnp.abs(rate_dt) < 1.0e-3, rate_dt, -jnp.expm1(-rate_dt)) * band
         kx, ky = self.spectral.kx[:, None], self.spectral.ky[None, :]
         k_dot_e = k_dot(e_k, self.spectral.kx, self.spectral.ky)
         e_long = [kx * k_dot_e * self.spectral.one_over_k_sq, ky * k_dot_e * self.spectral.one_over_k_sq]
