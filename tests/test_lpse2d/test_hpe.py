@@ -820,6 +820,32 @@ def test_energy_conservation_running_average_and_warm_up_gate():
     assert state["hpe_particle_power"].shape == (1,)
 
 
+def test_energy_conservation_multiplier_scales_the_clipped_rate_like_lpse():
+    """Through __call__ with gamma limits and energy conservation both on (PR #372 review): the rate
+    handed to the solver is the energy-conservation multiplier times the clipped HPE rate, as LPSE
+    (ElectronTracker.cu:2792 clips LDgammaE; LwSolver.cpp:823 / LightSolver.cpp:3707 apply
+    LD_multiplier * LDgammaE with no second clip), so the limits bound the HPE rate before the
+    global correction. rtol 1e-12."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles
+
+    cfg = _make_cfg({"gamma_limit_damping": 0.5, "energy_conservation": True, "energy_conservation_steps": 1.0})
+    hpe = HybridParticleEvolution(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    rng = np.random.default_rng(29)
+    phi_k = 1e-3 * (rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny)))
+    phi_k = phi_k * np.asarray(cfg["grid"]["low_pass_filter_grid"])
+    zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+    y = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
+    y.update({"epw": jnp.asarray(phi_k), "E0": zeros, "E1": zeros})
+    out = hpe(max(hpe.t_start, 0.0) + hpe.dt, y)
+    clipped = np.asarray(hpe.damping(out["epw_hist"]))
+    resonant = np.broadcast_to(np.asarray(hpe.mask_res).reshape(nx, -1), (nx, ny))
+    assert clipped[resonant].max() <= 0.5 + 1e-12
+    mult = float(np.asarray(out["hpe_ld_multiplier"])[0])
+    assert 0.1 <= mult <= 10.0 and abs(mult - 1.0) > 1e-3  # a non-trivial multiplier
+    np.testing.assert_allclose(np.asarray(out["gamma_L"]), mult * clipped, rtol=1e-12, atol=0.0)
+
+
 def test_translator_maps_the_hpe_controls():
     from adept._lpse2d.lpse_deck import ZakUnits, translate_parms
 
