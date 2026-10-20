@@ -1042,16 +1042,15 @@ def make_series_xarrays(cfg, this_t, state, td):
 def make_field_xarrays(cfg, this_t, state, td):
     """Build (and write) the x-space ``fields`` and k-space ``kfields`` datasets of the field save.
 
-    Full-grid save: ``state["epw"]`` is the solver's k-space potential phi_k; phi, ex and ey
-    are derived from it here. The x-space ex and ey carry a factor 4 / (nx * ny).
+    Full-grid save: ``state["epw"]`` is the solver's k-space potential phi_k; phi = ifft2(phi_k)
+    and ex, ey = ifft2(-i k phi_k) (the solver's own field) are derived from it here.
 
     Interpolated save (``save.fields.x`` / ``y``): the save function has already put every field
-    in x-space on the save grid (``phi``, ``ex``, ``ey`` from the full-grid spectral fields). ex and
-    ey get the same 4 / (nx * ny) with the *simulation* nx, ny, so both saves report the same field
-    at the same point. The k-space fields are the DFT on the save grid, scaled by
-    (nx * ny) / (nx_save * ny_save) so that a mode resolved on both grids has the coefficient it
-    has in the full-grid save (up to the phase of the save grid's first point), on the save grid's
-    k axes.
+    in x-space on the save grid (``phi``, ``ex``, ``ey`` from the full-grid spectral fields), so
+    both saves report the same field at the same point. The k-space fields are the DFT on the save
+    grid, scaled by (nx * ny) / (nx_save * ny_save) so that a mode resolved on both grids has the
+    coefficient it has in the full-grid save (up to the phase of the save grid's first point), on
+    the save grid's k axes.
     """
     fld_save = cfg["save"]["fields"]
     interpolated = "x" in fld_save
@@ -1093,15 +1092,16 @@ def make_field_xarrays(cfg, this_t, state, td):
         phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2)) * k_norm
         ex_k_np = np.fft.fft2(ex_vs_t, axes=(1, 2)) * k_norm
         ey_k_np = np.fft.fft2(ey_vs_t, axes=(1, 2)) * k_norm
-        ex_np = ex_vs_t / nx_grid / ny_grid * 4
-        ey_np = ey_vs_t / nx_grid / ny_grid * 4
+        ex_np = ex_vs_t
+        ey_np = ey_vs_t
     else:
         phi_k_np = np.array(state["epw"]).view(_complex)
         phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
         ex_k_np = -1j * kx[None, :, None] * phi_k_np
         ey_k_np = -1j * ky[None, None, :] * phi_k_np
-        ex_np = np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4
-        ey_np = np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4
+        # E = -grad(phi) = ifft2(-i k phi_k), the solver's own field (SpectralEPWSolver.phi_k_to_e_fields)
+        ex_np = np.fft.ifft2(ex_k_np, axes=(1, 2))
+        ey_np = np.fft.ifft2(ey_k_np, axes=(1, 2))
 
     phi_k = xr.DataArray(
         np.fft.fftshift(phi_k_np, axes=(1, 2)),

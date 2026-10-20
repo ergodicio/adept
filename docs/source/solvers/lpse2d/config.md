@@ -229,8 +229,7 @@ fields are saved on a coarser grid:
   `phi`, `ex`, `ey` are computed on the full grid (spectrally, as the solver does) and then interpolated, as
   are `e0_*`, `e1_*` and the IAW fields. This is point sampling, not a filtered downsample: content above
   the save grid's Nyquist wavenumber `pi / (L / n_save)` aliases.
-- The saved x-space values are the full-grid save's values linearly interpolated to the save points, including
-  the `4 / (nx * ny)` factor on `ex`/`ey`, which uses the simulation `nx`, `ny`.
+- The saved x-space values are the full-grid save's values linearly interpolated to the save points.
 - `k-fields.xr` is the DFT on the save grid, on its own k axes (`n_save` points, the same spacing `2 pi / L` as the
   full grid), scaled by `(nx * ny) / (nx_save * ny_save)` so that a resolved mode has the same coefficient as in
   the full-grid save (its phase is referenced to the first save point instead of the first grid point).

@@ -34,7 +34,7 @@ KY = r"ky ($kc\omega_0^{-1}$)"
 #   * query-coordinate rounding: |df/dx| * |x| * eps / 2 <= (pi / dx) * L * eps / 2 * max|f|
 #     = pi * nx / 2 * eps ~ 200 eps for nx = 128 (band-limited field, |k| <= pi / dx),
 #   * the x-space FFT of phi (XLA vs numpy FFT): ~ log2(nx * ny) eps ~ 12 eps,
-#   * the interpolation weights and the 4 / (nx * ny) scaling: a few eps.
+#   * the interpolation weights: a few eps.
 # ~ 220 eps in total; 2000 eps leaves a 9x margin and is still > 1e10 below the O(1) defect.
 ROUNDOFF_EPS = 2000.0
 
@@ -203,9 +203,8 @@ def test_interpolated_save_of_band_limited_state(geometry, tmp_path):
     fields are other plane waves of the grid.
 
     Expected, on the save grid (x_s, y_s):
-      * x-space: phi(x_s), ex = -i kx phi(x_s) * 4 / (nx ny), ey = -i ky phi(x_s) * 4 / (nx ny)
-        -- the full-grid save's normalization with the SIMULATION nx, ny, so both saves report the
-        same field -- and E0, E1, IAW at x_s.
+      * x-space: phi(x_s), ex = -i kx phi(x_s), ey = -i ky phi(x_s) -- the solver's field, as in
+        the full-grid save -- and E0, E1, IAW at x_s.
       * k-space at the mode's bin of the save grid: phi_k = A nx ny exp(i(kx (x_s0 - x0) + ky (y_s0 - y0)))
         (the full-grid coefficient; the phase is the DFT origin moving to the first save point),
         ex_k = -i kx phi_k, ey_k = -i ky phi_k.
@@ -258,12 +257,11 @@ def test_interpolated_save_of_band_limited_state(geometry, tmp_path):
         interp_bound = np.sqrt(2.0) * (qx**2 + qy**2) * h**2 / 8.0
         return (interp_bound + ROUNDOFF_EPS * np.finfo(dtype).eps) * scale
 
-    norm = 4.0 / (nx * ny)
     phi_s = at_save(amp, kx, ky)
     expected_x = {
         "phi": (phi_s, kx, ky),
-        "ex": (-1j * kx * phi_s * norm, kx, ky),
-        "ey": (-1j * ky * phi_s * norm, kx, ky),
+        "ex": (-1j * kx * phi_s, kx, ky),
+        "ey": (-1j * ky * phi_s, kx, ky),
         "e0_x": (np.zeros_like(phi_s), 0.0, 0.0),
         "e0_y": (at_save(1.0e-2, q0x, q0y), q0x, q0y),
         "e1_x": (at_save(3.0e-4, q1x, q1y), q1x, q1y),
