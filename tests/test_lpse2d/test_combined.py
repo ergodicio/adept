@@ -289,7 +289,7 @@ def test_combined_split_step_runs_with_pump_depletion_iaw_noise_and_reports_tran
 # was built for the EPW step and applied every sub-step: ratio 8 / 2 sub-steps ~ 4 for both models.
 
 
-def _noise_cfg(n_sub, model):
+def _noise_cfg(n_sub, model, landau=True):
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
         cfg = deepcopy(yaml.safe_load(fi))
     # n = n_env: the combined field's damping exp(-nu_R dt (n/n_env)^2) is then the uniform rate the
@@ -310,7 +310,7 @@ def _noise_cfg(n_sub, model):
         }
     )
     cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
-    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": landau}
     cfg["terms"]["epw"]["density_gradient"] = True
     cfg["terms"]["epw"]["source"].update(
         {"noise": True, "noise_model": model, "noise_amplitude": 1.0, "noise_seed": 3, "tpd": False, "srs": False}
@@ -337,6 +337,23 @@ def _combined_noise_steady_state(cfg, n_steps=450, n_warm=300):
         if i >= n_warm:
             samples.append(float(jnp.sum(solver.k_sq * jnp.abs(phi_k) ** 2)))
     return solver, np.mean(samples)
+
+
+def test_combined_thermal_noise_needs_only_the_raman_absorption():
+    """The combined field's damping is the Raman absorption, so thermal noise with the EPW Landau
+    damping and collisions both off and terms.light.absorption > 0 is a valid combined deck (PR #372
+    review): SplitStep sets up (before the fix it also built the never-stepped separate EPW solver,
+    whose thermal noise refused the deck for lack of EPW damping), and the combined noise kick is
+    nonzero and balanced against nu_R."""
+    from adept._lpse2d.core.epw import noise_step
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    cfg = _noise_cfg(1, "thermal", landau=False)
+    step = SplitStep(cfg)
+    assert step.epw is None
+    d = cfg["units"]["derived"]
+    assert noise_step(cfg)[1] == pytest.approx(80.0 * (d["wp0"] / d["w0"]) ** 2, rel=1e-12)
+    assert float(jnp.max(jnp.abs(step.combined.noise_kick))) > 0.0
 
 
 @pytest.mark.parametrize("model", ["thermal", "flat"])
