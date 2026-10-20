@@ -886,6 +886,10 @@ def get_solver_quantities(cfg: dict) -> dict:
     elif dealias != "isotropic":
         raise ValueError(f"Unknown grid.dealias '{dealias}'. Choose 'isotropic', 'shifted-band' or 'rectangular'.")
 
+    # the separate light solvers keep the anti-aliased band without the EPW's cap (their own cap is
+    # terms.light.max_wavenumber; LPSE LightSolver::evolveSpectral takes lw.maxWavenumber only in
+    # combined mode, LightSolver.cpp:3689)
+    cfg_grid["light_low_pass_filter_grid"] = cfg_grid["low_pass_filter_grid"]
     # LPSE lw.maxWavenumber: an additional hard cap on the retained EPW band, in units
     # of the vacuum laser wavenumber k0 = w0/c
     max_wavenumber = cfg["terms"]["epw"].get("max_wavenumber")
