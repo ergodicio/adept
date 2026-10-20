@@ -236,3 +236,58 @@ def test_validation_and_translator():
     assert qle["active"] and qle["landau_evolution"] and qle["nv"] == 96 and qle["v_max"] == 0.5
     assert qle["t_start"] == 1.5 and qle["thermalization_probability"] == [1.0, 0.1]
     assert not any("qle" in u for u in report["unsupported"])
+
+
+def test_dissipation_diagnostic_follows_the_evolved_qle_rate():
+    """With terms.qle.landau_evolution (HPE off) the EPW solver applies the state's gamma_L, which can be
+    negative; epw_dissipation must follow it (PR #387 review), signed: prefactor * factor *
+    sum_k L_k k^2 |phi_k|^2 / (nx ny^2), L = (1 - exp(-2 (gamma_L + nu_coll) dt)) / dt, for two different
+    mixed-sign rate arrays (uniform box: constant total-to-electric factor). Before the fix the series
+    used the static analytic rate. rtol 1e-12, fixed before the run."""
+    from adept._lpse2d.core.qle import load_qle_state
+    from adept._lpse2d.helpers import (
+        get_default_save_func,
+        get_density_profile,
+        get_derived_quantities,
+        get_save_quantities,
+        get_solver_quantities,
+        write_units,
+    )
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        raw = deepcopy(yaml.safe_load(fi))
+    raw["density"] = {"basis": "uniform", "val": 0.22}
+    raw["grid"].update(
+        {"ymax": "0.02um", "ymin": "-0.02um", "xmax": "12.8um", "dx": "0.05um", "tmax": "10fs", "dt": "1fs"}
+    )
+    raw["terms"]["qle"] = {"active": True, "nv": 121, "v_max": 0.4, "landau_evolution": True}
+    raw["terms"]["epw"]["damping"]["landau_form"] = "lpse"
+    write_units(raw)
+    cfg = get_derived_quantities(raw)
+    cfg["grid"] = get_solver_quantities(cfg)
+    cfg["grid"]["background_density"] = get_density_profile(cfg)
+    cfg = get_save_quantities(cfg)
+    assert not cfg["terms"].get("hpe", {}).get("active", False)
+    grid, d = cfg["grid"], cfg["units"]["derived"]
+    nx, ny, dt = grid["nx"], grid["ny"], grid["dt"]
+    rng = np.random.default_rng(31)
+    phi_k = (
+        1e-3 * (rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny))) * np.asarray(grid["low_pass_filter_grid"])
+    )
+    zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+    save = get_default_save_func(cfg)["func"]
+    k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
+    factor = 2.0 * (2.0 - np.asarray(grid["background_density"]) / cfg["units"]["envelope density"])
+    assert np.ptp(factor) == 0.0
+    prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
+    for scale in (20.0, -35.0):
+        gamma = scale * rng.normal(size=(nx, ny))
+        state = {k: jnp.asarray(v) for k, v in load_qle_state(cfg).items()}
+        state.update(
+            {"gamma_L": jnp.asarray(gamma), "epw": jnp.asarray(phi_k).view(jnp.float64), "E0": zeros, "E1": zeros}
+        )
+        got = float(save(0.0, state, None)["epw_dissipation"])
+        loss = (1.0 - np.exp(-2.0 * (gamma + d.get("nu_coll", 0.0) * (k_sq > 0)) * dt)) / dt
+        assert np.sum(loss * k_sq * np.abs(phi_k) ** 2 * (loss < 0)) < 0.0  # gain modes present
+        want = prefactor * float(factor.flat[0]) * np.sum(loss * k_sq * np.abs(phi_k) ** 2) / (nx * ny**2)
+        assert got == pytest.approx(want, rel=1e-12)

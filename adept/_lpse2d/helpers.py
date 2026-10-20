@@ -2328,8 +2328,15 @@ def get_default_save_func(cfg):
     # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
     # use the state's rate; also emit the hot-electron scalars and the histogram
     hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
-    # with terms.hpe.allow_growth the applied rate can be negative (inverse Landau damping)
-    signed_loss = bool(hpe_on and cfg["terms"]["hpe"].get("allow_growth", False))
+    # the EPW solvers' own dynamic-rate condition (SpectralEPWSolver, CombinedSolver.evolved_landau):
+    # HPE, or the quasilinear VDF with landau_evolution, writes the applied Landau rate to y["gamma_L"]
+    qle_terms = cfg["terms"].get("qle") or {}
+    qle_rate = bool(qle_terms.get("active", False)) and bool(qle_terms.get("landau_evolution", False))
+    dynamic_rate = bool(hpe_on) or qle_rate
+    nu_coll_arr = 0.0 if combined_epw else derived.get("nu_coll", 0.0) * zero_mask
+    # the applied rate can be negative (inverse Landau damping) with terms.hpe.allow_growth and with
+    # the QLE rate (a rising slope of the evolved VDF)
+    signed_loss = bool(hpe_on and cfg["terms"]["hpe"].get("allow_growth", False)) or qle_rate
     if hpe_on:
         from adept._lpse2d.core.hpe import resonance_arrays
 
@@ -2337,7 +2344,6 @@ def get_default_save_func(cfg):
         n_p = int(cfg["terms"]["hpe"]["n_particles"])
         w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
         c_light = derived["c"]
-        nu_coll_arr = 0.0 if combined_epw else derived.get("nu_coll", 0.0) * zero_mask
         gamma_an = np.array(hpe_arrays["gamma_analytic"])
         mask_res = np.array(hpe_arrays["mask_res"])
         if mask_res.ndim == 1:
@@ -2472,8 +2478,8 @@ def get_default_save_func(cfg):
         # only the electric part (the OSIRIS field-only convention), so the energy
         # actually handed to electrons -- and the budget sink -- carries the local
         # total-to-electric factor energy_total_factor = 2*(2 - n/n_env)
-        if hpe_on:
-            # the applied rate is dynamic: read it from the state
+        if dynamic_rate:
+            # the applied rate is dynamic (HPE or QLE): read it from the state
             gamma_dyn = y["gamma_L"] + nu_coll_arr
             loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
         else:
