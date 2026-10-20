@@ -2562,8 +2562,15 @@ def get_default_save_func(cfg):
             # rate on its share sqrt(w_j) psi of the energy field psi = |k| phi
             chunks = jnp.fft.fft2(hpe_window_sqrt * jnp.fft.ifft2(hpe_k_mag * phi_k)[None], axes=(1, 2))
             gamma_w = y["gamma_L_windows"] + nu_coll_arr
-            sqrt_loss_w = jnp.sqrt((1.0 - jnp.exp(-2.0 * gamma_w * dt)) / dt)
-            loss_density = jnp.sum(jnp.abs(jnp.fft.ifft2(sqrt_loss_w * chunks, axes=(1, 2))) ** 2, axis=0)
+            loss_w = (1.0 - jnp.exp(-2.0 * gamma_w * dt)) / dt
+
+            def window_density(weight):
+                return jnp.sum(jnp.abs(jnp.fft.ifft2(weight * chunks, axes=(1, 2))) ** 2, axis=0)
+
+            loss_density = window_density(jnp.sqrt(jnp.maximum(loss_w, 0.0)))
+            if signed_loss:
+                # terms.hpe.allow_growth: each window's gain modes enter with a minus sign (as below)
+                loss_density = loss_density - window_density(jnp.sqrt(jnp.maximum(-loss_w, 0.0)))
         else:
             if hpe_on:
                 # the applied rate is dynamic: read it from the state
