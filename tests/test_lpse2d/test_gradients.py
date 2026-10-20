@@ -148,6 +148,9 @@ def _objective(cfg, n_steps=N_STEPS):
     ny = cfg["grid"]["ny"]
     dt = cfg["grid"]["dt"]
     pump = {**cfg["drivers"]["E0"]["derived"], "delta_omega": jnp.zeros(1), "phases": jnp.zeros((1, ny))}
+    # SpectralEPWSolver.energy, sum_k k^2 |phi_k|^2, from the grid: the combined paths build no
+    # separate EPW solver
+    k_sq = jnp.asarray(cfg["grid"]["kx"])[:, None] ** 2 + jnp.asarray(cfg["grid"]["ky"])[None, :] ** 2
 
     def f(s):
         args = {"drivers": {"E0": {**pump, "intensities": s * jnp.ones((1, ny))}}}
@@ -156,7 +159,7 @@ def _objective(cfg, n_steps=N_STEPS):
             return step(i * dt, state, args)
 
         state = lax.fori_loop(0, n_steps, body, dict(state0))
-        return step.epw.energy(state["epw"].view(jnp.complex128))
+        return jnp.sum(k_sq * jnp.abs(state["epw"].view(jnp.complex128)) ** 2)
 
     return jax.jit(f)
 
