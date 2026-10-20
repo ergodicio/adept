@@ -506,8 +506,8 @@ At an absorbing particle wall, outgoing particles are thermalized and reinjected
 | `feedback` | bool | (default `true`) `false` = control run: particles evolve but the damping stays analytic (Follett's control experiment) |
 | `seed` | int | RNG seed for particle loading and wall re-injection (default `42`) |
 | `omega_res` | string | Resonance convention for `v_phi(k)`: `"bohm_gross"` (default, matches the analytic rate) or `"wp0"` (bare carrier, as in the paper) |
-| `gamma_limit_damping` | float | (default `1500`, 1/ps) upper clip on the applied kinetic rate (LPSE `hpe.gammaLimit.damping`) |
-| `gamma_limit_growth` | float | (default `1500`, 1/ps) lower clip `-gamma_limit_growth` on the applied rate when `allow_growth` is on (LPSE `hpe.gammaLimit.growth`) |
+| `gamma_limit_damping` | float | (default `1500`, 1/ps) upper clip on the HPE kinetic rate (LPSE `hpe.gammaLimit.damping`); with `energy_conservation` the solver applies the multiplier times the clipped rate, as LPSE (no second clip) |
+| `gamma_limit_growth` | float | (default `1500`, 1/ps) lower clip `-gamma_limit_growth` on the HPE rate when `allow_growth` is on (LPSE `hpe.gammaLimit.growth`); before the `energy_conservation` multiplier, as `gamma_limit_damping` |
 | `allow_growth` | bool | (default `false`) allow negative (inverse-Landau) rates from an inverted tail; otherwise the rate is clipped at 0 (LPSE `hpe.allowGrowth`). The series `epw_dissipation` is then signed: modes with a negative applied rate count as energy handed from the electrons to the EPW |
 | `thermalization_probability` | list | probability that a particle crossing an x / y side is thermalized and re-injected from the tail; otherwise it passes through periodically. Every crossing is counted by the wall-flux instrument, on all four sides, independently of the field boundaries (LPSE particle walls, `hpe.thermalizationProbability`). Default: 1 at absorbing field boundaries, 0 at periodic ones |
 | `magnetic_field` | float | (default `0`, tesla) uniform out-of-plane B: the 2-D push rotates the momentum by the cyclotron angle each sub-step (LPSE `hpe.magneticField`, z component) |
