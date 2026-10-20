@@ -49,7 +49,7 @@ def _srs_cfg():
         cfg = yaml.safe_load(fi)
     cfg = deepcopy(cfg)
     cfg["grid"].update({"boundary_width": "2um", "xmax": "16um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
-    cfg["terms"]["light"] = {"pump_depletion": True, "coupling": "rotation"}
+    cfg["terms"]["light"] = {"pump_depletion": True, "coupling": "rotation", "transverse_source": False}
     cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
     cfg["terms"]["epw"]["source"].update({"noise_seed": 4, "noise_amplitude": 1e-4})
     cfg["terms"]["epw"]["energy_ledger"] = True
