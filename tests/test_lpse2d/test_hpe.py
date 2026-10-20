@@ -510,12 +510,14 @@ def test_linear_closure():
     t = np.array(result.ts["default"])
     e_sq = np.array(result.ys["default"]["e_sq"])
 
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate
 
-    d = exo.adept_module.cfg["units"]["derived"]
-    kx = np.array(exo.adept_module.cfg["grid"]["kx"])
+    # the configured analytic rate (terms.epw.damping.landau_form and its threshold / multiplier):
+    # the rate HPE is calibrated to and the solver applies without HPE
+    run = exo.adept_module.cfg
+    kx = np.array(run["grid"]["kx"])
     m = int(np.argmin(np.abs(kx - k0)))
-    gamma_k = float(np.array(landau_damping_rate(jnp.array(kx[m] ** 2), d["wp0"], d["vte_sq"], jnp.array(1.0))))
+    gamma_k = float(np.asarray(analytic_landau_rate(run))[m, 0])
 
     # driver is fully off past 0.31 ps; fit ~5 e-folds of clean decay
     fit = (t > 0.315) & (t < 0.40)
