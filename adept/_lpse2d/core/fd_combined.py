@@ -61,6 +61,13 @@ class FDCombinedSolver(CoupledLight):
         if self.depletion_coeff is None:
             self.depletion_coeff = 1j * self.e / (2.0 * self.me * self.w0)
         self.rho_factor = 1.0 - self.w0 / self.wp0
+        # the unified source's EPW-side restrictions, as CombinedSolver.unified_source applies them: the
+        # x-space EPW source mask (terms.epw.source_window and the EPW's absorber / injector-row
+        # suppression) and the k-filter on the pump entering it (terms.epw.source.srs_k_filter, LPSE
+        # lw.kFilter in LwSolver::make_E0E1, on the FD path as on the spectral one)
+        self.epw_source_mask = self.spectral.source_mask
+        e0_filter = np.asarray(self.spectral.E0_filter)
+        self.E0_filter = None if bool(np.all(e0_filter == 1.0)) else jnp.asarray(e0_filter)
         # Landau damping / noise once per EPW step (the LW step)
         self.noise_enabled = self.spectral.noise_enabled
         if self.noise_enabled:
@@ -89,13 +96,18 @@ class FDCombinedSolver(CoupledLight):
 
     def unified_source_fd(self, t: float, E0: Array, E1: Array) -> Array:
         """``-i e/(4 me w0) e^{-i dw t} [grad(E0 . E1*) + (1 - w0/wp0) E0 (div E1)*]`` with the FD
-        stencils (LPSE ``gradE`` / ``divergence``)."""
+        stencils (LPSE ``gradE`` / ``divergence``), the pump k-filtered and the result multiplied by
+        the EPW source mask as in ``CombinedSolver.unified_source``."""
+        if self.E0_filter is not None:
+            E0 = ifft2c(fft2c(E0) * self.E0_filter[..., None])
         scalar = jnp.sum(E0 * jnp.conj(E1), axis=-1)
         grad = [self._dx(scalar), self._dy(scalar)]
         if E1.shape[-1] == 3:
             grad.append(jnp.zeros_like(scalar))
         div1 = self._div(E1)
         term = jnp.stack(grad, axis=-1) + self.rho_factor * E0 * jnp.conj(div1)[..., None]
+        if self.epw_source_mask is not None:
+            term = term * self.epw_source_mask[..., None]
         return self.source_coeff * jnp.exp(-1j * self.delta_w * t) * term
 
     def unified_depletion_fd(self, t: float, E1: Array) -> Array:
