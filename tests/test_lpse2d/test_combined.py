@@ -879,6 +879,44 @@ def test_combined_dissipation_diagnostic_uses_the_combined_damping():
     assert float(out["epw_dissipation"]) == pytest.approx(want, rel=1e-12)
 
 
+def test_combined_boundary_loss_diagnostic_uses_the_combined_layer():
+    """epw_boundary_loss in combined mode is the loss in the combined field's own absorbing layer
+    (LPSE's double-exponential one, grid.combined_absorbing_boundaries), which the combined solver
+    applies, not the EPW layer: prefactor * sum_x <factor |E|^2 (1 - B_c^2) / dt>_y. Exact, rtol 1e-12,
+    fixed before the run; the two layers differ on this grid."""
+    from adept._lpse2d.helpers import get_default_save_func, get_save_quantities
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["units"]["envelope density"] = 0.2
+    cfg["density"] = {"basis": "uniform", "val": 0.15}
+    cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+    cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
+    cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": False}
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    cfg = get_save_quantities(_finish(cfg))
+    grid, d = cfg["grid"], cfg["units"]["derived"]
+    b_c = np.asarray(grid["combined_absorbing_boundaries"])
+    assert np.max(np.abs(b_c - np.asarray(grid["absorbing_boundaries"]))) > 1e-6
+    nx, ny = grid["nx"], grid["ny"]
+    rng = np.random.default_rng(17)
+    phi_k = (
+        1e-3 * (rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny))) * np.asarray(grid["low_pass_filter_grid"])
+    )
+    zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+    out = get_default_save_func(cfg)["func"](
+        0.0, {"epw": jnp.asarray(phi_k).view(jnp.float64), "E0": zeros, "E1": zeros}, None
+    )
+    kx, ky = np.asarray(grid["kx"]), np.asarray(grid["ky"])
+    e_sq = np.abs(np.fft.ifft2(-1j * kx[:, None] * phi_k)) ** 2 + np.abs(np.fft.ifft2(-1j * ky[None, :] * phi_k)) ** 2
+    factor = 2.0 * (2.0 - np.asarray(grid["background_density"]) / cfg["units"]["envelope density"])
+    prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
+    want = prefactor * np.sum(np.mean(factor * e_sq * (1.0 - b_c**2) / grid["dt"], axis=1))
+    assert float(out["epw_boundary_loss"]) == pytest.approx(want, rel=1e-12)
+
+
 def test_combined_absorption_follows_the_evolved_ion_density():
     """The combined field's collisional damping and the evolved pump's absorption take the effective
     density with the IAW perturbation, through each wave's feedback switch, as RamanLight /
