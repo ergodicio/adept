@@ -449,8 +449,13 @@ def test_srs_smoke_with_hpe():
     assert "fhot_50keV" in series
     assert "hpe_gamma_ratio_kpeak" in series
     assert "hpe_hist" in series
+    # hpe_gamma_ratio_kpeak is NaN by design while the EPW has no energy in the resonant band
+    # (1989b5e: the reduction metrics nanmin over it); the EPW starts at zero, so only t = 0
     for k in series:
-        assert np.all(np.isfinite(series[k].values)), f"non-finite values in {k}"
+        values = np.asarray(series[k].values)
+        if k == "hpe_gamma_ratio_kpeak":
+            values = values[1:]
+        assert np.all(np.isfinite(values)), f"non-finite values in {k}"
     # nothing exciting happens in 0.1 ps: damping at the dominant band mode should
     # still be ~analytic (the band-min is shot-noise-limited at 20k particles)
     ratio = np.asarray(series["hpe_gamma_ratio_kpeak"].values, dtype=float)
@@ -551,13 +556,10 @@ def test_oneil_flattening():
     e_amp = w_b**2 / (e_over_m * k)
     phi_k, k = _single_mode_phi_k(cfg, k_target, e_amp)
 
-    y = {
-        "epw": jnp.array(phi_k),
-        "x_e": jnp.array(state["x_e"]),
-        "u_e": jnp.array(state["u_e"]),
-        "epw_hist": jnp.array(state["epw_hist"]),
-        "gamma_L": jnp.array(state["gamma_L"]),
-    }
+    # the complete loaded state (the push also carries the wall-flux, cone-energy and multiplier
+    # instruments), with the driven wave
+    y = {k: jnp.asarray(v) for k, v in state.items()}
+    y["epw"] = jnp.array(phi_k)
 
     step = jax.jit(hpe.__call__)
     dt = cfg["grid"]["dt"]
