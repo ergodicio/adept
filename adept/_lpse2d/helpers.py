@@ -1693,6 +1693,8 @@ def get_default_save_func(cfg):
     # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
     # use the state's rate; also emit the hot-electron scalars and the histogram
     hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
+    # with terms.hpe.allow_growth the applied rate can be negative (inverse Landau damping)
+    signed_loss = bool(hpe_on and cfg["terms"]["hpe"].get("allow_growth", False))
     if hpe_on:
         from adept._lpse2d.core.hpe import resonance_arrays
 
@@ -1816,14 +1818,22 @@ def get_default_save_func(cfg):
             loss_factor = (1.0 - jnp.exp(-2.0 * gamma_dyn * dt)) / dt
         else:
             loss_factor = energy_loss_factor
+
         # the per-k loss rate does not commute with the x-dependent energy factor, so
         # build a local electric-energy loss density from the sqrt-weighted fields --
         # its box integral equals the k-space total exactly (Parseval) and reduces to
         # the previous 2x k-space sum on a uniform n = n_env box
-        sqrt_loss = jnp.sqrt(loss_factor)
-        ex_loss = jnp.fft.ifft2(-1j * kx[:, None] * phi_k * sqrt_loss)
-        ey_loss = jnp.fft.ifft2(-1j * ky[None, :] * phi_k * sqrt_loss)
-        loss_density = jnp.abs(ex_loss) ** 2 + jnp.abs(ey_loss) ** 2
+        def weighted_density(weight):
+            ex_loss = jnp.fft.ifft2(-1j * kx[:, None] * phi_k * weight)
+            ey_loss = jnp.fft.ifft2(-1j * ky[None, :] * phi_k * weight)
+            return jnp.abs(ex_loss) ** 2 + jnp.abs(ey_loss) ** 2
+
+        loss_density = weighted_density(jnp.sqrt(jnp.maximum(loss_factor, 0.0)))
+        if signed_loss:
+            # terms.hpe.allow_growth: a negative applied rate hands energy from the electrons to
+            # the EPW; those modes enter with a minus sign, so the box integral stays
+            # sum_k L_k |E_k|^2 and epw_dissipation is the signed net transfer
+            loss_density = loss_density - weighted_density(jnp.sqrt(jnp.maximum(-loss_factor, 0.0)))
         out["epw_dissipation"] = epw_energy_prefactor * jnp.sum(jnp.mean(energy_total_factor * loss_density, axis=1))
         out["epw_boundary_loss"] = epw_energy_prefactor * jnp.sum(
             jnp.mean(energy_total_factor * e_sq * boundary_sq_loss, axis=1)
