@@ -498,3 +498,38 @@ def test_force_average_to_zero_rescales_the_dominant_sign_like_lpse():
     out = np.asarray(iaw.fd._average_to_zero(f))
     np.testing.assert_allclose(out[:, 0], [1.5, -1.0, 0.0, -0.5], rtol=1e-12)
     assert abs(out.sum()) < 1e-12
+
+
+def test_fd_kspace_band_is_the_coarse_mask_mode_by_mode():
+    """The fine grid's k-space step keeps exactly the coarse grid's retained modes (PR #378 review): for
+    grid.dealias: rectangular a mode outside the per-axis rectangle but inside the radius of its farthest
+    corner is removed (damping factor 0), as LPSE's per-axis rescaled range does (IawSolver.cpp:312); the
+    fine band restricted to the coarse frequencies equals the coarse mask and is zero beyond them.
+    Before the fix the band was the disc of the farthest retained mode. Exact (0/1)."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    cfg = _cfg("fd", ny_box="0.4um", landau=0.05)
+    assert cfg["grid"]["ny"] > 1  # the default dealias (rectangular); corner_gap below shows it is no disc
+    fd = IonAcousticWave(cfg).fd
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    coarse = np.asarray(cfg["grid"].get("iaw_low_pass_filter_grid", cfg["grid"]["low_pass_filter_grid"]))
+    coarse = (coarse * np.asarray(cfg["grid"]["zero_mask"])) > 0.0
+    band = np.asarray(fd.band) > 0.0
+    mx = np.round(np.fft.fftfreq(fd.fnx) * fd.fnx).astype(int)
+    my = np.round(np.fft.fftfreq(fd.fny) * fd.fny).astype(int)
+    cx = np.round(np.fft.fftfreq(nx) * nx).astype(int)
+    cy = np.round(np.fft.fftfreq(ny) * ny).astype(int)
+    for i, m in enumerate(mx):
+        for j, n in enumerate(my):
+            hit_x, hit_y = np.flatnonzero(cx == m), np.flatnonzero(cy == n)
+            expected = bool(coarse[hit_x[0], hit_y[0]]) if hit_x.size and hit_y.size else False
+            assert band[i, j] == expected, (m, n)
+    # a mode the rectangle excludes but the farthest-corner disc admits, and its damping factor
+    kx, ky = np.asarray(cfg["grid"]["kx"]), np.asarray(cfg["grid"]["ky"])
+    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
+    k_cut_sq = np.max(np.where(coarse, k_sq, 0.0))
+    corner_gap = (~coarse) & (k_sq <= k_cut_sq) & (k_sq > 0.0)
+    assert corner_gap.any()
+    i_c, j_c = (int(a[0]) for a in np.nonzero(corner_gap))
+    i_f, j_f = int(np.flatnonzero(mx == cx[i_c])[0]), int(np.flatnonzero(my == cy[j_c])[0])
+    assert not band[i_f, j_f] and float(np.asarray(fd.damping_factor)[i_f, j_f]) == 0.0

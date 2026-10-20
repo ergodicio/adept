@@ -8,7 +8,7 @@ import yaml
 from jax import numpy as jnp
 
 
-def _cfg(tf, absorption=True, collisions=1.0):
+def _cfg(tf, absorption=True, collisions=1.0, epw_solver="separate"):
     from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
 
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
@@ -19,6 +19,10 @@ def _cfg(tf, absorption=True, collisions=1.0):
     cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": False})
     cfg["terms"]["epw"]["damping"]["collisions"] = collisions
     cfg["terms"]["light"] = {"absorption": absorption}
+    if epw_solver == "combined":
+        cfg["terms"]["epw"]["solver"] = "combined"
+        cfg["terms"]["epw"]["source"]["srs"] = False
+        cfg["terms"]["light"]["solver"] = "spectral"
     cfg["terms"]["iaw"] = {
         "active": True,
         "solver": "spectral",
@@ -80,6 +84,20 @@ def test_nonlocal_correction_scales_as_k_to_the_four_thirds():
     # the excess over the local source grows as k^(4/3): ratio of excesses = 2^(4/3)
     np.testing.assert_allclose(ratios[1] / ratios[0], 2.0 ** (4.0 / 3.0), rtol=1e-6)
     assert ratios[0] > 0.0
+
+
+def test_combined_mode_heating_ignores_the_epw_collisions():
+    """With terms.epw.solver: combined LPSE applies thermalFil.lw only without the combined solver; the
+    combined field (EPW included) is heated through the raman term at the Raman absorption, so the EPW
+    collisions play no part (PR #372 review, the same class as the dissipation diagnostic): lw is
+    dropped and the raman term is identical with EPW collisions 1 and 5."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    a = IonAcousticWave(_cfg({"lw": True, "raman": True}, collisions=1.0, epw_solver="combined"))
+    b = IonAcousticWave(_cfg({"lw": True, "raman": True}, collisions=5.0, epw_solver="combined"))
+    assert "lw" not in a.thermal_waves and "lw" not in a.thermal_terms
+    assert a.thermal_terms.keys() == b.thermal_terms.keys() == {"raman"}
+    assert a.thermal_terms["raman"] == b.thermal_terms["raman"]
 
 
 def test_requirements_and_translator():

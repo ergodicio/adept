@@ -91,6 +91,15 @@ def potential_from_field(field: Array, kx: Array, ky: Array, one_over_k_sq: Arra
     return 1j * k_dot(fft2c(field), kx, ky) * one_over_k_sq * band
 
 
+def combined_collision_rate(cfg: dict) -> float:
+    """``nu_R`` (1/ps): the combined field's collisional damping rate at ``n = n_env``, the Raman light's
+    absorption (``terms.light.raman_absorption``, following ``absorption``) at its own critical density.
+    The field is damped by ``exp(-nu_R dt (n/n_env + dn f_R)^2)`` in x-space (``f_R`` the Raman
+    class's IAW feedback factor); the EPW collisions play no part."""
+    _, raman_rate = light_absorption_rates(cfg)
+    return 0.0 if raman_rate is None else float(raman_rate)
+
+
 class CombinedSolver(SmoothPumpInjector):
     """Advance the combined Raman-light + EPW field E1 (and the pump when it is evolved)."""
 
@@ -145,8 +154,7 @@ class CombinedSolver(SmoothPumpInjector):
         self.me = derived["me"]
         # the Raman light's absorption at its own critical density (n_env for this field), not
         # the EPW's collisions (LightSolver::calculateScatteringPotential, raman class)
-        _, raman_rate = light_absorption_rates(cfg)
-        self.nu_raman = 0.0 if raman_rate is None else float(raman_rate)
+        self.nu_raman = combined_collision_rate(cfg)
         self.envelope_density = cfg["units"]["envelope density"]
         self.background_density = grid["background_density"]
         self.n_over_env = self.background_density / self.envelope_density

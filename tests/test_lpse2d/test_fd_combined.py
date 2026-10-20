@@ -13,7 +13,7 @@ import yaml
 from jax import numpy as jnp
 
 
-def _cfg(source_window=None, srs_k_filter=False):
+def _cfg(source_window=None, srs_k_filter=False, sources=True):
     from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
 
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
@@ -35,7 +35,7 @@ def _cfg(source_window=None, srs_k_filter=False):
     cfg["terms"]["epw"]["boundary"] = {"x": "absorbing", "y": "periodic"}
     cfg["terms"]["epw"]["damping"] = {"collisions": False, "landau": True}
     cfg["terms"]["epw"]["density_gradient"] = True
-    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True, "srs_k_filter": srs_k_filter})
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": sources, "srs": sources, "srs_k_filter": srs_k_filter})
     if source_window is not None:
         cfg["terms"]["epw"]["source_window"] = source_window
     cfg["terms"]["epw"]["solver"] = "combined"
@@ -191,6 +191,43 @@ def test_langmuir_step_damps_only_the_longitudinal_part():
     out_t = np.asarray(solver.langmuir_step(0.0, e_t, gamma))
     np.testing.assert_allclose(out_l, np.exp(-50.0 * solver.dt) * np.asarray(e_l), rtol=1e-12, atol=1e-14)
     np.testing.assert_allclose(out_t, np.asarray(e_t), rtol=1e-12, atol=1e-14)
+
+
+def test_fd_combined_light_step_respects_the_combined_field_bound_with_the_sources_off():
+    """The FD combined solver evolves E1 (light operator + Bohm-Gross grad-div) with TPD and SRS both
+    off too, so setup must sub-cycle the light to the combined field's stability bound then as well
+    (PR #378 review; before the fix the bound entered only with SRS on and the pump's alone set the
+    sub-step). Setup: the sources-off sub-step count equals the sources-on one, whose bound includes
+    the combined field's. Propagation, criterion fixed before the run: full-spectrum noise in E1 with
+    the pump off stays bounded, max |E1| after 20 EPW steps <= 2 x its initial value."""
+    import jax
+
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    on, off = _cfg(), _cfg(sources=False)
+    assert off["grid"]["light_substeps"] == on["grid"]["light_substeps"]
+    step = SplitStep(off)
+    assert not step.combined.sources_on
+    nx, ny = off["grid"]["nx"], off["grid"]["ny"]
+    rng = np.random.default_rng(23)
+    e1 = 1e-6 * (rng.normal(size=(nx, ny, 3)) + 1j * rng.normal(size=(nx, ny, 3)))
+    state = {
+        "epw": jnp.zeros((nx, ny), dtype=jnp.complex128).view(jnp.float64),
+        "E0": jnp.zeros((nx, ny, 3), dtype=jnp.complex128).view(jnp.float64),
+        "E1": jnp.asarray(e1).view(jnp.float64),
+    }
+    pump_args = {
+        **off["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.zeros((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    advance = jax.jit(lambda t, y: step(t, y, {"drivers": {"E0": pump_args}}))
+    for i in range(20):
+        state = advance(jnp.asarray(i * off["grid"]["dt"]), dict(state))
+    e1_end = np.asarray(state["E1"].view(jnp.complex128))
+    assert np.all(np.isfinite(e1_end))
+    assert np.abs(e1_end).max() <= 2.0 * np.abs(e1).max()
 
 
 def test_split_step_runs_the_fd_combined_solver():
