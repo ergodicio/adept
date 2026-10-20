@@ -606,6 +606,49 @@ def test_gamma_limits_and_allow_growth():
     assert gamma2[band].min() < 0.0 and gamma2[band].min() >= -0.25 - 1e-12
 
 
+def test_dissipation_diagnostic_is_signed_with_allow_growth():
+    """With terms.hpe.allow_growth the applied rate gamma_L + nu_coll can be negative (energy from the
+    electrons to the EPW). The default save's epw_dissipation is then the signed sum
+    prefactor * factor * sum_k L_k k^2 |phi_k|^2 / (nx ny^2), L_k = (1 - exp(-2 rate dt)) / dt (Parseval;
+    uniform box, so the total-to-electric factor 2 (2 - n/n_env) is a constant) -- before the fix
+    sqrt(L < 0) made it NaN (PR #387 review). With non-negative rates the series is bitwise the same
+    with and without allow_growth. rtol 1e-12, fixed in advance."""
+    from adept._lpse2d.core.hpe import load_particles
+    from adept._lpse2d.helpers import get_default_save_func, get_save_quantities
+
+    def dissipation(allow_growth, signed_rates):
+        cfg = get_save_quantities(_make_cfg({"allow_growth": allow_growth}))
+        nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        rng = np.random.default_rng(3)
+        phi_k = 1e-3 * (rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny)))
+        phi_k = phi_k * np.asarray(cfg["grid"]["low_pass_filter_grid"])
+        state = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
+        rate = rng.normal(size=state["gamma_L"].shape) * 50.0
+        gamma = rate if signed_rates else np.abs(rate)
+        zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+        state.update(
+            {"gamma_L": jnp.asarray(gamma), "epw": jnp.asarray(phi_k).view(jnp.float64), "E0": zeros, "E1": zeros}
+        )
+        out = get_default_save_func(cfg)["func"](0.0, state, None)
+        return cfg, phi_k, gamma, float(out["epw_dissipation"])
+
+    cfg, phi_k, gamma, got = dissipation(True, True)
+    assert np.isfinite(got)
+    d, grid = cfg["units"]["derived"], cfg["grid"]
+    nx, ny, dt = grid["nx"], grid["ny"], grid["dt"]
+    k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
+    rate = gamma + d.get("nu_coll", 0.0) * (k_sq > 0)
+    assert np.any(rate * (np.abs(phi_k) > 0) < 0.0)
+    loss = (1.0 - np.exp(-2.0 * rate * dt)) / dt
+    factor = 2.0 * (2.0 - np.asarray(grid["background_density"]) / cfg["units"]["envelope density"])
+    assert np.ptp(factor) == 0.0
+    prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
+    want = prefactor * float(factor.flat[0]) * np.sum(loss * k_sq * np.abs(phi_k) ** 2) / (nx * ny**2)
+    assert got == pytest.approx(want, rel=1e-12)
+    assert np.sum(loss * k_sq * np.abs(phi_k) ** 2 * (loss < 0)) < 0.0  # the gain modes contribute
+    assert dissipation(True, False)[3] == dissipation(False, False)[3]
+
+
 def test_thermalization_probability_zero_passes_through_periodically():
     """LPSE particle walls: a crossing is counted, then the particle is thermalized with the
     per-direction probability or else wraps around periodically."""
