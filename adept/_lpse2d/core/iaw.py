@@ -260,7 +260,20 @@ class IonAcousticWave:
                 raise ValueError("terms.iaw.thermal_filamentation.raman needs terms.light.absorption")
             nc1 = (self.w_raman / derived["w0"]) ** 2  # the Raman light's critical density (n_env combined)
             self.thermal_coeff["raman"] = jnp.asarray(base * 2.0 * rate1 * (n_over_nc / nc1) ** 2)
-        if "lw" in self.thermal_waves:
+        if "lw" in self.thermal_waves and self.combined:
+            # the combined solver damps the EPW (its field's longitudinal part) with the Raman absorption
+            # nu_R (n/n_env)^2, not the EPW collisions: the raman term's coefficient on that part
+            from adept._lpse2d.core.combined import combined_collision_rate
+
+            nu_c = combined_collision_rate(cfg)
+            if nu_c <= 0.0:
+                raise ValueError(
+                    "terms.iaw.thermal_filamentation.lw with terms.epw.solver: combined needs terms.light.absorption "
+                    "(the combined field's damping; the EPW collisions do not act on it)"
+                )
+            n_over_env = n_over_nc / float(units["envelope density"])
+            self.thermal_coeff["lw"] = jnp.asarray(base * 2.0 * nu_c * n_over_env**2)
+        elif "lw" in self.thermal_waves:
             nu_coll = float(derived.get("nu_coll", 0.0))
             if nu_coll <= 0.0:
                 raise ValueError("terms.iaw.thermal_filamentation.lw needs terms.epw.damping.collisions")

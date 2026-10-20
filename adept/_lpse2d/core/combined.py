@@ -87,6 +87,14 @@ def potential_from_field(field: Array, kx: Array, ky: Array, one_over_k_sq: Arra
     return 1j * (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq * band
 
 
+def combined_collision_rate(cfg: dict) -> float:
+    """``nu_R`` (1/ps): the combined field's collisional damping rate at ``n = n_env``, the Raman light's
+    absorption (``terms.light.absorption``) at the combined carrier. The field is damped by
+    ``exp(-nu_R dt (n/n_env + dn)^2)`` in x-space; the EPW collisions play no part."""
+    _, raman_rate = light_absorption_rates(cfg)
+    return 0.0 if raman_rate is None else float(raman_rate)
+
+
 class CombinedSolver(SmoothPumpInjector):
     """Advance the combined Raman-light + EPW field E1 (and the pump when it is evolved)."""
 
@@ -145,8 +153,7 @@ class CombinedSolver(SmoothPumpInjector):
         self.detune = jnp.exp(-1j * self.dt_l * self.wp0 / 2.0 * (self.n_over_env - 1.0))
         # the Raman light's absorption at the combined carrier and the field's own critical density
         # (n_env), not the EPW's collisions
-        _, raman_rate = light_absorption_rates(cfg)
-        self.nu_raman = 0.0 if raman_rate is None else float(raman_rate)
+        self.nu_raman = combined_collision_rate(cfg)
         self.collisional = jnp.exp(-self.nu_raman * self.dt_l * self.n_over_env**2)
         self.boundary = grid["absorbing_boundaries"] ** (1.0 / self.n_sub)
         # the pump is LPSE's laser class: its own (5e3/ps) absorber, not the EPW one -- at the EPW
