@@ -114,9 +114,10 @@ class SpectralRamanLight(RamanLight):
 
     @staticmethod
     def _light_band(cfg: dict, k_sq: np.ndarray) -> np.ndarray:
-        """Retained light band: the grid's anti-aliasing mask, optionally capped at
-        ``terms.light.max_wavenumber * k0`` (LPSE ``{laser|raman}.maxWavenumber``)."""
-        band = np.asarray(cfg["grid"]["low_pass_filter_grid"]) > 0.0
+        """Retained light band: the grid's anti-aliasing mask (without the EPW's
+        ``terms.epw.max_wavenumber``), optionally capped at ``terms.light.max_wavenumber * k0``
+        (LPSE ``{laser|raman}.maxWavenumber``)."""
+        band = np.asarray(cfg["grid"]["light_low_pass_filter_grid"]) > 0.0
         cap = cfg["terms"].get("light", {}).get("max_wavenumber")
         if cap is not None:
             k0 = cfg["units"]["derived"]["w0"] / cfg["units"]["derived"]["c"]

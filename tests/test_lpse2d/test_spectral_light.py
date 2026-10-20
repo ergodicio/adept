@@ -24,7 +24,17 @@ def _finish(cfg):
     return cfg
 
 
-def _srs_cfg(solver="spectral", *, seed=False, pump_depletion=False, absorption=False, xmax="20um", periodic=False):
+def _srs_cfg(
+    solver="spectral",
+    *,
+    seed=False,
+    pump_depletion=False,
+    absorption=False,
+    xmax="20um",
+    periodic=False,
+    epw_max_wavenumber=None,
+    light_max_wavenumber=None,
+):
     with open("tests/test_lpse2d/configs/srs.yaml") as fi:
         cfg = yaml.safe_load(fi)
     cfg = deepcopy(cfg)
@@ -32,6 +42,10 @@ def _srs_cfg(solver="spectral", *, seed=False, pump_depletion=False, absorption=
     cfg["terms"]["light"] = {"solver": solver, "pump_depletion": pump_depletion, "absorption": absorption}
     if pump_depletion:
         cfg["terms"]["light"]["coupling"] = "rotation"
+    if epw_max_wavenumber is not None:
+        cfg["terms"]["epw"]["max_wavenumber"] = epw_max_wavenumber
+    if light_max_wavenumber is not None:
+        cfg["terms"]["light"]["max_wavenumber"] = light_max_wavenumber
     cfg["terms"]["epw"]["source"]["noise"] = False
     cfg["terms"]["epw"]["boundary"]["x"] = "periodic" if periodic else "absorbing"
     if seed:
@@ -235,6 +249,28 @@ def test_light_solver_option_is_validated():
 
     with pytest.raises(pydantic.ValidationError):
         _srs_cfg("implicit", periodic=True, xmax="8um")
+
+
+def test_light_band_is_independent_of_the_epw_cutoff():
+    """terms.epw.max_wavenumber caps only the EPW band (LPSE lw.maxWavenumber); the separate spectral
+    light solvers keep the anti-aliased band and their own terms.light.max_wavenumber (LPSE
+    {laser|raman}.maxWavenumber; LightSolver::evolveSpectral takes the EPW cap only in combined mode,
+    LightSolver.cpp:3689). PR #387 review: before the fix an EPW cap also zeroed the light modes above
+    it. 0/1 masks, compared exactly."""
+    from adept._lpse2d.core.spectral_light import SpectralCoupledLight, SpectralRamanLight
+
+    for cls, pump_depletion in ((SpectralRamanLight, False), (SpectralCoupledLight, True)):
+        base = _srs_cfg(pump_depletion=pump_depletion)
+        capped = _srs_cfg(pump_depletion=pump_depletion, epw_max_wavenumber=0.5)
+        epw_base = np.asarray(base["grid"]["low_pass_filter_grid"])
+        epw_capped = np.asarray(capped["grid"]["low_pass_filter_grid"])
+        assert epw_capped.sum() < epw_base.sum()  # the EPW band did shrink
+        light_base = np.asarray(cls(base).light_band)
+        np.testing.assert_array_equal(np.asarray(cls(capped).light_band), light_base)
+        assert light_base.sum() > epw_capped.sum()
+        # the light's own cap still acts
+        light_capped = np.asarray(cls(_srs_cfg(pump_depletion=pump_depletion, light_max_wavenumber=0.5)).light_band)
+        np.testing.assert_array_equal(light_capped > 0, (light_base > 0) & (epw_capped > 0))
 
 
 def _srs_cfg_2d(solver="spectral", transverse_source=True):
