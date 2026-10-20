@@ -28,7 +28,7 @@ With `terms.epw.source.srs` on, the default time series includes OSIRIS-comparab
 | series | meaning | OSIRIS scan2 counterpart |
 |---|---|---|
 | `epw_energy` | $\frac{1}{4}\,dx \sum_x \langle\|E_{epw}\|^2\rangle_y$ (cycle-averaged field energy) | `W(t) = 1/2 dx sum e1^2` |
-| `epw_dissipation` | total EPW energy handed to electrons per ps (Landau + collisional, the solver's own rates -- with `terms.epw.solver: combined` the Landau rate plus the combined field's Raman absorption `nu_R (n/n_env + dn)^2` on the EPW energy density, not the EPW collisions; includes the kinetic half; signed with `terms.hpe.allow_growth`, negative = net transfer from the electrons to the EPW) | absorbed fraction / hot-electron source |
+| `epw_dissipation` | total EPW energy handed to electrons per ps (Landau + collisional, the solver's own rates -- with `terms.epw.solver: combined` the Landau rate plus the combined field's Raman absorption `nu_R (n/n_env + dn)^2` on the EPW energy density, not the EPW collisions; includes the kinetic half; the state's `gamma_L` when HPE or `terms.qle.landau_evolution` evolves it; signed with `terms.hpe.allow_growth` and with the QLE rate, negative = net transfer from the electrons to the EPW) | absorbed fraction / hot-electron source |
 | `epw_boundary_loss` | total EPW energy removed by the absorbing boundaries per ps | — |
 | `incident_flux`, `transmitted_flux` | pump flux at probes near each edge | `incident_t`, `T_t` |
 | `reflected_flux`, `backrefl_flux` | Raman flux leaving left / right | `R_t` |
