@@ -173,6 +173,15 @@ class IonAcousticWave:
         self.k_sq = self.kx[:, None] ** 2 + self.ky[None, :] ** 2
         # the IAW's own band: the anti-aliased band and terms.iaw.max_wavenumber, not the EPW's cap
         self.filter = grid.get("iaw_low_pass_filter_grid", grid["low_pass_filter_grid"]) * grid["zero_mask"]
+        # the same band with k = 0 kept: the fd solver's restriction to the EPW grid (its mean is the
+        # average control's, LPSE forceAverageToZero, off with thermal filamentation)
+        self.restriction_band = jnp.asarray(
+            np.where(
+                np.asarray(self.k_sq) > 0.0,
+                np.asarray(grid.get("iaw_low_pass_filter_grid", grid["low_pass_filter_grid"])) > 0.0,
+                1.0,
+            ).astype(np.float64)
+        )
         self.boundary = grid["iaw_absorbing_boundaries"]
 
         self.cs = derived["cs"]
@@ -501,7 +510,14 @@ class IonAcousticWave:
         if self.thermal_waves:
             e2 = e2 + self.thermal_filamentation_source(y["epw"], y["E0"], y["E1"], y["iaw_density"])
         n, w = fd.step(t, n, w, upsample(e2, fd.s))
-        out = {"iaw_density": downsample(n, fd.s), "iaw_velocity_divergence": downsample(w, fd.s)}
+
+        # the coarse fields the light, the EPW and the saves see keep only the IAW band (PR #378
+        # review; the fine density is never masked, as LPSE's isAntiAliasNelf = false, and its coarse
+        # transfer there is point sampling -- adept masks the restriction like the spectral solver)
+        def restrict(f):
+            return jnp.real(jnp.fft.ifft2(jnp.fft.fft2(downsample(f, fd.s)) * self.restriction_band))
+
+        out = {"iaw_density": restrict(n), "iaw_velocity_divergence": restrict(w)}
         if fine:
             out[FD_STATE_KEYS[0]], out[FD_STATE_KEYS[1]] = n, w
         return out

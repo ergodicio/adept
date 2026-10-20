@@ -533,3 +533,37 @@ def test_fd_kspace_band_is_the_coarse_mask_mode_by_mode():
     i_c, j_c = (int(a[0]) for a in np.nonzero(corner_gap))
     i_f, j_f = int(np.flatnonzero(mx == cx[i_c])[0]), int(np.flatnonzero(my == cy[j_c])[0])
     assert not band[i_f, j_f] and float(np.asarray(fd.damping_factor)[i_f, j_f]) == 0.0
+
+
+def test_fd_restriction_to_the_epw_grid_keeps_only_the_iaw_band():
+    """The coarse iaw_density / iaw_velocity_divergence the light, the EPW and the saves see keep only
+    the coarse IAW band (PR #378 review): a mode the rectangular mask excludes, present on the fine
+    grid (the fine density is never masked, and with landau 0 there is no k-space step), is removed by
+    the restriction; a retained mode passes, and the restriction mask leaves k = 0 to the FD average
+    control (forceAverageToZero, which zeroes the mean here: no thermal filamentation). The excluded
+    mode's coefficient is 0 to 1e-12 of the field's largest; before the fix it was carried."""
+    from adept._lpse2d.core.iaw import IonAcousticWave
+
+    cfg = _cfg("fd", ny_box="0.4um", landau=0.0)
+    iaw = IonAcousticWave(cfg)
+    assert not iaw.fd.kspace_step
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    kx, ky = np.asarray(cfg["grid"]["kx"]), np.asarray(cfg["grid"]["ky"])
+    k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
+    coarse = np.asarray(cfg["grid"].get("iaw_low_pass_filter_grid", cfg["grid"]["low_pass_filter_grid"])) > 0.0
+    k_cut_sq = np.max(np.where(coarse, k_sq, 0.0))
+    gap = np.argwhere((~coarse) & (k_sq <= k_cut_sq) & (k_sq > 0.0))[0]
+    kept = np.argwhere(coarse & (k_sq > 0.0))[0]
+    x, y = np.asarray(cfg["grid"]["x"]), np.asarray(cfg["grid"]["y"])
+
+    def phase(i, j):
+        return np.cos(kx[i] * x[:, None] + ky[j] * y[None, :])
+
+    n0 = 1e-3 * (phase(*gap) + phase(*kept) + 0.5)
+    out = iaw(_state(cfg, iaw, n0, np.zeros((nx, ny))), 0.0)
+    for key in ("iaw_density", "iaw_velocity_divergence"):
+        spec = np.abs(np.fft.fft2(np.asarray(out[key])))
+        assert spec[tuple(gap)] <= 1e-12 * spec.max(), key
+    spec_n = np.abs(np.fft.fft2(np.asarray(out["iaw_density"])))
+    assert spec_n[tuple(kept)] > 1e-3 * spec_n.max()
+    assert float(iaw.restriction_band[0, 0]) == 1.0
