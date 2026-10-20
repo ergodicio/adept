@@ -282,24 +282,27 @@ def test_invalid_coupling_and_filter_are_rejected():
 
 def test_fd_rotation_refuses_the_transverse_source_projection_it_cannot_apply():
     """The fd rotation exchange is pointwise and never applied terms.light.transverse_source (PR #372
-    review): with SRS on, the default true is refused instead of silently ignored; false sets up, and
-    so do coupling: explicit and the spectral solver (which keeps the fields transverse instead)."""
+    review): with SRS on, true is refused instead of silently ignored; false (the default) sets up,
+    and so do coupling: explicit and the spectral solver (which keeps the fields transverse instead)
+    with true, and rotation with transverse_fields: true."""
     from adept._lpse2d.core.light import CoupledLight
     from adept._lpse2d.core.spectral_light import SpectralCoupledLight
 
     cfg = _make_cfg(coupling="rotation")
     assert cfg["terms"]["light"]["transverse_source"] is False
     assert CoupledLight(cfg).coupling == "rotation"
-    for value in (True, None):
-        refused = deepcopy(cfg)
-        if value is None:
-            del refused["terms"]["light"]["transverse_source"]
-        else:
-            refused["terms"]["light"]["transverse_source"] = value
-        with pytest.raises(ValueError, match=r"transverse_source"):
-            CoupledLight(refused)
+    default = deepcopy(cfg)
+    del default["terms"]["light"]["transverse_source"]
+    assert not CoupledLight(default).transverse_source
+    refused = deepcopy(cfg)
+    refused["terms"]["light"]["transverse_source"] = True
+    with pytest.raises(ValueError, match=r"transverse_source"):
+        CoupledLight(refused)
+    fields = deepcopy(cfg)
+    fields["terms"]["light"]["transverse_fields"] = True
+    assert CoupledLight(fields).transverse_fields
     explicit = _make_cfg(coupling="explicit")
-    assert explicit["terms"]["light"]["transverse_source"] is True
+    explicit["terms"]["light"]["transverse_source"] = True
     assert CoupledLight(explicit).transverse_source
     spectral = deepcopy(cfg)
     spectral["terms"]["light"].update({"solver": "spectral", "transverse_source": True})

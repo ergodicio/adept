@@ -159,10 +159,10 @@ class CoupledLight(RamanLight):
             # transverse instead), and the FD rotation path used to skip it silently
             raise ValueError(
                 "terms.light.coupling: rotation with the fd light solver cannot apply "
-                "terms.light.transverse_source: true (the default): use coupling: explicit or "
-                "terms.light.solver: spectral to keep the projection, or set transverse_source: false "
-                "explicitly -- what fd rotation runs did so far, with the longitudinal E1 left in the SRS "
-                "exchange"
+                "terms.light.transverse_source: true: use coupling: explicit or terms.light.solver: "
+                "spectral to keep the projection, terms.light.transverse_fields: true to project the "
+                "fields once per EPW step instead, or transverse_source: false (the default; the "
+                "longitudinal E1 then stays in the SRS exchange)"
             )
         # local E0 <-> E1 exchange rate per unit |laplacian phi|: Omega = sqrt(|A B|) |lap phi|
         self.omega_prefactor = self.e / (4.0 * self.me * np.sqrt(self.w0 * self.w1))
