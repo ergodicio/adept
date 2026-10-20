@@ -2306,6 +2306,24 @@ def get_default_save_func(cfg):
     # low-density end, which the previously hard-coded 2 understated by ~28%.
     energy_total_factor = 2.0 * (2.0 - np.array(cfg["grid"]["background_density"]) / cfg["units"]["envelope density"])
 
+    # terms.epw.solver: combined -- the EPW is the combined field's longitudinal part, damped by the
+    # Landau rate in k-space and, with the whole field, by the Raman absorption nu_R (n/n_env + dn)^2
+    # in x-space (CombinedSolver); the EPW collisions play no part
+    combined_epw = cfg["terms"]["epw"].get("solver", "separate") == "combined"
+    if combined_epw:
+        from adept._lpse2d.core.combined import combined_collision_rate
+        from adept._lpse2d.core.iaw import iaw_feedback_factor
+
+        nu_combined = combined_collision_rate(cfg)
+        n_over_env = jnp.asarray(np.array(cfg["grid"]["background_density"]) / cfg["units"]["envelope density"])
+        # the IAW perturbation through the Raman class's feedback switch, as the combined solver
+        combined_iaw_feedback = iaw_feedback_factor(cfg, "raman")
+        # the combined field's own absorbing layer (LPSE's double-exponential one), not the EPW's
+        boundary_sq_loss = (
+            1.0 - np.array(cfg["grid"].get("combined_absorbing_boundaries", cfg["grid"]["absorbing_boundaries"])) ** 2
+        ) / dt
+        energy_loss_factor = (1.0 - np.exp(-2.0 * np.array(analytic_landau_rate(cfg)) * dt)) / dt
+
     # HPE: the damping is dynamic (y["gamma_L"]), so the dissipation diagnostic must
     # use the state's rate; also emit the hot-electron scalars and the histogram
     hpe_on = cfg["terms"].get("hpe", {}).get("active", False)
@@ -2318,7 +2336,7 @@ def get_default_save_func(cfg):
         n_p = int(cfg["terms"]["hpe"]["n_particles"])
         w_tail = hpe_arrays["f_tail_frac"] / n_p  # fraction of all electrons per particle
         c_light = derived["c"]
-        nu_coll_arr = derived.get("nu_coll", 0.0) * zero_mask
+        nu_coll_arr = 0.0 if combined_epw else derived.get("nu_coll", 0.0) * zero_mask
         gamma_an = np.array(hpe_arrays["gamma_analytic"])
         mask_res = np.array(hpe_arrays["mask_res"])
         if mask_res.ndim == 1:
@@ -2475,6 +2493,12 @@ def get_default_save_func(cfg):
             # the EPW; those modes enter with a minus sign, so the box integral stays
             # sum_k L_k |E_k|^2 and epw_dissipation is the signed net transfer
             loss_density = loss_density - weighted_density(jnp.sqrt(jnp.maximum(-loss_factor, 0.0)))
+        if combined_epw and nu_combined:
+            # the x-space collisional damping of the combined field acts on the EPW energy density
+            # locally (the light's share is the Raman absorption, not EPW dissipation)
+            dn = y.get("iaw_density")
+            n_eff = n_over_env if dn is None else n_over_env + dn * combined_iaw_feedback
+            loss_density = loss_density + (1.0 - jnp.exp(-2.0 * nu_combined * n_eff**2 * dt)) / dt * e_sq
         out["epw_dissipation"] = epw_energy_prefactor * jnp.sum(jnp.mean(energy_total_factor * loss_density, axis=1))
         out["epw_boundary_loss"] = epw_energy_prefactor * jnp.sum(
             jnp.mean(energy_total_factor * e_sq * boundary_sq_loss, axis=1)

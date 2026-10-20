@@ -814,6 +814,71 @@ def test_seeded_combined_deck_above_the_separate_cutoff_sets_up_and_runs():
         _off_quarter_cfg("separate", 0.3, 0.25, seed=True)
 
 
+def test_combined_dissipation_diagnostic_uses_the_combined_damping():
+    """epw_dissipation in combined mode is the combined solver's own damping of the EPW (PR #372 review):
+    the Landau rate in k-space plus the Raman absorption nu_R (n/n_env + dn f_R)^2 on the EPW energy
+    density in x-space -- not the EPW collisions, which the combined solver ignores. Uniform box
+    (n = 0.15 nc, n_env = 0.2, dn = 0.05), terms.light.raman_absorption 300/ps, EPW collisions on: with
+    Landau off, epw_dissipation = 2 (2 - n/n_env) L_c epw_energy, L_c = (1 - exp(-2 nu_R n_eff^2 dt)) / dt;
+    with Landau on, plus the k-space Landau term (Parseval). Exact identities, rtol 1e-12, fixed before
+    the run. Before the fix the first case reported the EPW collisional loss."""
+    from adept._lpse2d.core.epw import analytic_landau_rate
+    from adept._lpse2d.core.iaw import iaw_feedback_factor
+    from adept._lpse2d.helpers import get_default_save_func, get_save_quantities
+
+    def run(landau):
+        with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+            cfg = deepcopy(yaml.safe_load(fi))
+        cfg["units"]["envelope density"] = 0.2
+        cfg["density"] = {"basis": "uniform", "val": 0.15}
+        cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.02um", "ymin": "-0.02um"})
+        cfg["terms"]["epw"]["boundary"] = {"x": "periodic", "y": "periodic"}
+        cfg["terms"]["epw"]["damping"] = {"collisions": True, "landau": landau}
+        cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+        cfg["terms"]["epw"]["solver"] = "combined"
+        cfg["terms"]["light"] = {
+            "solver": "spectral",
+            "pump_depletion": False,
+            "absorption": False,
+            "raman_absorption": 300.0,
+        }
+        cfg = get_save_quantities(_finish(cfg))
+        nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        rng = np.random.default_rng(13)
+        phi_k = 1e-3 * (rng.normal(size=(nx, ny)) + 1j * rng.normal(size=(nx, ny)))
+        phi_k = phi_k * np.asarray(cfg["grid"]["low_pass_filter_grid"])
+        zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+        state = {
+            "epw": jnp.asarray(phi_k).view(jnp.float64),
+            "E0": zeros,
+            "E1": zeros,
+            "iaw_density": jnp.full((nx, ny), 0.05),
+        }
+        out = get_default_save_func(cfg)["func"](0.0, state, None)
+        return cfg, phi_k, out
+
+    cfg, _, out = run(landau=False)
+    d, grid = cfg["units"]["derived"], cfg["grid"]
+    dt = grid["dt"]
+    assert d.get("nu_coll", 0.0) > 0.0  # the EPW collisions are configured, and must not count
+    f_r = np.asarray(iaw_feedback_factor(cfg, "raman"))
+    assert np.ptp(f_r) == 0.0
+    loss_c = (1.0 - np.exp(-2.0 * 300.0 * (0.75 + 0.05 * float(f_r.flat[0])) ** 2 * dt)) / dt
+    factor = 2.0 * (2.0 - 0.75)
+    assert float(out["epw_dissipation"]) == pytest.approx(factor * loss_c * float(out["epw_energy"]), rel=1e-12)
+
+    cfg, phi_k, out = run(landau=True)
+    grid = cfg["grid"]
+    nx, ny = grid["nx"], grid["ny"]
+    k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
+    loss_l = (1.0 - np.exp(-2.0 * np.asarray(analytic_landau_rate(cfg)) * dt)) / dt
+    assert np.any(loss_l * np.abs(phi_k) > 0.0)
+    prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
+    landau_part = prefactor * factor * np.sum(loss_l * k_sq * np.abs(phi_k) ** 2) / (nx * ny**2)
+    want = landau_part + factor * loss_c * float(out["epw_energy"])
+    assert float(out["epw_dissipation"]) == pytest.approx(want, rel=1e-12)
+
+
 def test_combined_absorption_follows_the_evolved_ion_density():
     """The combined field's collisional damping and the evolved pump's absorption take the effective
     density with the IAW perturbation, through each wave's feedback switch, as RamanLight /
