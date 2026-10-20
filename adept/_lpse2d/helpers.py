@@ -701,9 +701,10 @@ def get_derived_quantities(cfg: dict) -> dict:
 
         dt_limits = []
         evolved_carriers = []
-        if srs_on and epw_solver == "combined":
+        if epw_solver == "combined":
             # the FD combined field (core/fd_combined.py): carrier wp0, and the Bohm-Gross grad-div term
-            # adds at most 3 vte^2 times the Laplacian's largest eigenvalue
+            # adds at most 3 vte^2 times the Laplacian's largest eigenvalue. The field is evolved with the
+            # sources off too (only the unified couplings are disabled), so its bound always applies
             k_lap = curl_curl_max_eigenvalue(
                 cfg["terms"].get("light", {}).get("fd_order", 2),
                 cfg_grid["dx"],
