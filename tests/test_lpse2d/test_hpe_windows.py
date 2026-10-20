@@ -403,3 +403,25 @@ def test_windowed_dissipation_is_signed_with_allow_growth():
     prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
     assert got == pytest.approx(prefactor * float(factor.flat[0]) * np.sum(weighted) / (nx * ny**2), rel=1e-12)
     assert dissipation(True, False)[3] == dissipation(False, False)[3]
+
+
+@pytest.mark.parametrize("two_d", [False, True])
+def test_sparse_loading_leaves_empty_windows_finite(two_d):
+    """3 particles in 7 windows: each particle weighs at most two adjacent windows, so at least one
+    window is empty. Its initial histogram is zero (the runtime window_histogram policy), not 0/0 NaN
+    (PR #387 review); the loaded epw_hist equals the runtime histogram of the same particles (1e-12)."""
+    from adept._lpse2d.core.hpe import HybridParticleEvolution, load_particles, window_matrix
+
+    cfg_over = {"grid.ymin": "-0.4um", "grid.ymax": "0.4um"} if two_d else None
+    hpe_over = {"n_windows": 7, "n_particles": 3, **({"n_angles": 8} if two_d else {})}
+    cfg = _make_cfg(hpe_over, cfg_over)
+    state = load_particles(cfg)
+    hpe = HybridParticleEvolution(cfg)
+    norm = window_matrix(np.asarray(state["x_e"]), hpe.xmin, hpe.Lx, 7, hpe.periodic_x).sum(axis=1)
+    empty = norm == 0.0
+    assert empty.any()
+    hist = np.asarray(state["epw_hist"])
+    assert np.all(np.isfinite(hist))
+    assert np.all(hist[empty] == 0.0) and np.all(hist[~empty].sum(axis=-1) > 0.0)
+    runtime = np.asarray(hpe.window_histogram(jnp.asarray(state["u_e"]), jnp.asarray(state["x_e"])))
+    np.testing.assert_allclose(hist, runtime, rtol=1e-12, atol=1e-12)

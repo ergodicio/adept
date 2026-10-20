@@ -262,7 +262,10 @@ def load_particles(cfg: dict) -> dict:
         periodic_x = cfg["terms"]["epw"]["boundary"]["x"] == "periodic"
         length = cfg["grid"]["xmax"] - cfg["grid"]["xmin"]
         weights = window_matrix(x, cfg["grid"]["xmin"], length, n_windows, periodic_x)  # (n_windows, n_p)
+        # an unpopulated window (sparse loading) gets a zero histogram, not 0/0: the same policy as
+        # HybridParticleEvolution.window_histogram
         norm = weights.sum(axis=1)
+        denominator = np.where(norm > 0.0, norm, 1.0) * arrays["dv"]
         samples = projected if is_2d else velocity[:, None]
         hist = np.stack(
             [
@@ -272,7 +275,7 @@ def load_particles(cfg: dict) -> dict:
                         for a in range(samples.shape[1])
                     ]
                 )
-                / (norm[j] * arrays["dv"])
+                / denominator[j]
                 for j in range(n_windows)
             ]
         )
