@@ -452,8 +452,13 @@ def test_srs_smoke_with_hpe():
     assert "fhot_50keV" in series
     assert "hpe_gamma_ratio_kpeak" in series
     assert "hpe_hist" in series
+    # hpe_gamma_ratio_kpeak is NaN by design while the EPW has no energy in the resonant band
+    # (1989b5e: the reduction metrics nanmin over it); the EPW starts at zero, so only t = 0
     for k in series:
-        assert np.all(np.isfinite(series[k].values)), f"non-finite values in {k}"
+        values = np.asarray(series[k].values)
+        if k == "hpe_gamma_ratio_kpeak":
+            values = values[1:]
+        assert np.all(np.isfinite(values)), f"non-finite values in {k}"
     # nothing exciting happens in 0.1 ps: damping at the dominant band mode should
     # still be ~analytic (the band-min is shot-noise-limited at 20k particles)
     ratio = np.asarray(series["hpe_gamma_ratio_kpeak"].values, dtype=float)
@@ -508,12 +513,14 @@ def test_linear_closure():
     t = np.array(result.ts["default"])
     e_sq = np.array(result.ys["default"]["e_sq"])
 
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate
 
-    d = exo.adept_module.cfg["units"]["derived"]
-    kx = np.array(exo.adept_module.cfg["grid"]["kx"])
+    # the configured analytic rate (terms.epw.damping.landau_form and its threshold / multiplier):
+    # the rate HPE is calibrated to and the solver applies without HPE
+    run = exo.adept_module.cfg
+    kx = np.array(run["grid"]["kx"])
     m = int(np.argmin(np.abs(kx - k0)))
-    gamma_k = float(np.array(landau_damping_rate(jnp.array(kx[m] ** 2), d["wp0"], d["vte_sq"], jnp.array(1.0))))
+    gamma_k = float(np.asarray(analytic_landau_rate(run))[m, 0])
 
     # driver is fully off past 0.31 ps; fit ~5 e-folds of clean decay
     fit = (t > 0.315) & (t < 0.40)
@@ -554,13 +561,10 @@ def test_oneil_flattening():
     e_amp = w_b**2 / (e_over_m * k)
     phi_k, k = _single_mode_phi_k(cfg, k_target, e_amp)
 
-    y = {
-        "epw": jnp.array(phi_k),
-        "x_e": jnp.array(state["x_e"]),
-        "u_e": jnp.array(state["u_e"]),
-        "epw_hist": jnp.array(state["epw_hist"]),
-        "gamma_L": jnp.array(state["gamma_L"]),
-    }
+    # the complete loaded state (the push also carries the wall-flux, cone-energy and multiplier
+    # instruments), with the driven wave
+    y = {k: jnp.asarray(v) for k, v in state.items()}
+    y["epw"] = jnp.array(phi_k)
 
     step = jax.jit(hpe.__call__)
     dt = cfg["grid"]["dt"]
