@@ -151,6 +151,23 @@ def downsample(field: Array, s: int) -> Array:
     return jnp.real(jnp.fft.ifft2(jnp.fft.ifftshift(kept))) / (s * sy)
 
 
+def coarse_band_on_fine_grid(coarse: np.ndarray, fnx: int, fny: int) -> np.ndarray:
+    """The coarse ``(nx, ny)`` k-space mask on the fine ``(fnx, fny)`` grid, mode by mode: both grids
+    span the same box, so a coarse mode is the fine mode of the same integer frequency; fine modes
+    beyond the coarse grid's frequencies (those ``downsample`` drops) are outside it. Boolean, FFT
+    order."""
+
+    def coarse_index(n_coarse: int, n_fine: int) -> np.ndarray:
+        lookup = {int(m): i for i, m in enumerate(np.round(np.fft.fftfreq(n_coarse) * n_coarse).astype(int))}
+        return np.array([lookup.get(int(m), -1) for m in np.round(np.fft.fftfreq(n_fine) * n_fine).astype(int)])
+
+    nx, ny = coarse.shape
+    ix, iy = coarse_index(nx, fnx), coarse_index(ny, fny)
+    inside = (ix[:, None] >= 0) & (iy[None, :] >= 0)
+    values = np.asarray(coarse)[np.maximum(ix, 0)[:, None], np.maximum(iy, 0)[None, :]]
+    return inside & (values > 0.0)
+
+
 # ------------------------------------------------------------------------ PPM --
 
 
@@ -251,16 +268,14 @@ class FDIonAcoustic:
         from adept._lpse2d.core.iaw import ion_landau_rate
 
         gamma = ion_landau_rate(cfg, fk_sq)
-        # the same physical band as the coarse grid (LPSE rescales the anti-aliasing range)
+        # the coarse grid's actual retained band (the anti-aliasing rectangle or disc, iaw.max_wavenumber,
+        # k != 0) mapped mode by mode: LPSE rescales the anti-aliasing range per axis on the fine grid
+        # (IawSolver.cpp:312), the same physical rectangle; a radius would admit its excluded axis modes
         k_max_x = float(np.max(np.abs(np.asarray(grid["kx"]))))
-        k_max_y = float(np.max(np.abs(np.asarray(grid["ky"])))) if self.is_2d else np.inf
-        band = (np.abs(fkx)[:, None] <= k_max_x) & (np.abs(fky)[None, :] <= k_max_y)
         coarse_filter = np.asarray(
             grid.get("iaw_low_pass_filter_grid", grid["low_pass_filter_grid"]) * grid["zero_mask"]
         )
-        coarse_k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
-        k_cut = np.sqrt(np.max(np.where(coarse_filter > 0.0, coarse_k_sq, 0.0)))
-        band = band & (np.sqrt(fk_sq) <= k_cut) & (fk_sq > 0.0)
+        band = coarse_band_on_fine_grid(coarse_filter, self.fnx, self.fny) & (fk_sq > 0.0)
         # k-space step every landau_update sub-steps over their combined length (LPSE
         # applyFFTDampingAndNoise(stepSize * numStepsPerLandauDampingUpdate)): w_k *= exp(-W_i dt)
         # with W_i = 2 gamma_L + 2 nu_coll; modes outside the band are zeroed
