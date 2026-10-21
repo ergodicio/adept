@@ -114,3 +114,23 @@ The log-scaled space-time plots are the ones to read for instability growth rate
 ## Configuration Reference
 
 See the [Configuration Reference](config.md) for complete YAML schema documentation.
+
+## Departures from LPSE
+
+The LPSE-parity solver paths follow the original LPSE C++ code (`original-lpse/src`) unless the
+configuration reference says otherwise. The intentional departures known as of 2026-10-21, each
+also noted in the configuration-reference row of the option it concerns:
+
+| Area | LPSE | adept | Decided by / commit |
+|------|------|-------|---------------------|
+| HPE rate limits with `terms.hpe.energy_conservation` | clips the HPE rate (`ElectronTracker.cu:2792`) before the energy-conservation multiplier, which is applied with no second clip (`LwSolver.cpp:823`, `LightSolver.cpp:3707`); the applied rate can exceed `gamma_limit_damping` / `-gamma_limit_growth` | clips the resonant modes again after the multiplier; the multiplier's energy balance then holds only where the limits do not bind | user decision (PR #372 review), 971f999 |
+| FD IAW fine-to-coarse transfer (`terms.iaw.solver: fd`, `super_samples > 1`) | point-samples the fine grid (`SuperSampleGrid_1f1::copyFineToCoarse`) and never masks the density (`isAntiAliasNelf = false`, `IawSolver.cpp:887`) | FFT truncation to the EPW grid, multiplied by the coarse IAW band (k = 0 kept) | user decision (PR #378 review), 1d2bac5 (the FFT truncation predates it) |
+| FD combined Landau step (`terms.epw.solver: combined`, `terms.light.solver: fd`) | linear coefficient `gamma dt` whenever `gamma dt < 1e-3`, i.e. for every negative rate (`LwSolver.cpp:825`) | linear only for `abs(gamma dt) < 1e-3`, `-expm1(-gamma dt)` otherwise; differs only for negative rates (QLE `landau_evolution`, HPE `allow_growth`) | PR #378 / #387 review, 85f29cc |
+| FD IAW noise support | the disc `abs(k) < (1 - antiAliasing.range) pi / h_coarse`, `abs(k) < iaw.maxWavenumber`, `k != 0` (`IawSolver::addNoise`, `IawSolver.cpp:2580`) | the same disc intersected with the retained band (anti-aliasing mask and `max_wavenumber`); differs only where the disc reaches past the anti-aliasing mask (e.g. `grid.dealias: rectangular` with `dy > dx`) | PR #378 review, 85f29cc |
+| `terms.epw.source_window` with the combined solver | the combined path applies no `restrictRange` (`LightSolver::calculateSources`, `LwSolver::make_E0E1`) | the window multiplies the combined unified source, with either light solver | adept extension; fd path adec784 |
+| `terms.epw.source.srs_k_filter` with the combined solver | `LwSolver::make_E0E1` filters only the `E0 . E1*` product, `E0` and `E1` each at its own cutoff | filters `E0` in both terms of the unified source, `E1` unfiltered | pre-existing; recorded in adec784 |
+| Quasi-1D resonance-absorption k filter (`ny = 1`) | the zero-width transition makes the filter all-zero and erases the pump every damping update | a sharp passband `abs(k) <= filter_width K_nyq` | PR #378 review, 8b1430b |
+
+The lpse2d branch with the MATLAB-prototype conventions (`lpse2d/lpse-parity`, PR #372) differs from
+LPSE by design and is not covered by this table.
+
