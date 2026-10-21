@@ -204,6 +204,8 @@ No LPSE behaviour to depart from: `grid.boundary_profile: tanh`, `boundary_abs_c
 `noise_model: flat`, `tpd_form: matlab`; light `coupling: rotation`, `filter`, `transverse_fields`;
 IAW `solver: explicit`, `feedback: envelope`; QLE `max_subcycles`; HPE `v_blend_buffer`,
 `gather_refine`, `substep_courant`, `tau_damping`, `n_angles`, `omega_res: bohm_gross | wp0`.
+On this branch also `terms.hpe.n_windows` (spatially windowed distributions; LPSE's tracker is
+box-averaged) and `hist_smooth` (its LPSE analogue `hpe.vdf.smoothing` is not mapped by the translator).
 
 The lpse2d branch with the MATLAB-prototype conventions (`lpse2d/lpse-parity`, PR #372) differs from
 LPSE by design and is not covered by this section.
