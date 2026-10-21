@@ -128,11 +128,12 @@ def analytic_landau_rate(cfg: dict) -> Array:
     """
     The static Landau damping rate array (nx, ny) selected by ``terms.epw.damping``:
 
-    - ``landau_form``: ``matlab`` (default), ``lpse`` or ``relativistic`` (LPSE 2-D Bessel form;
-      ``relativistic_3d`` for the 3-D velocity-space integral)
+    - ``landau_form``: ``relativistic`` (default; LPSE 2-D Bessel form), ``matlab``, ``lpse``, or
+      ``relativistic_3d`` (the 3-D velocity-space integral)
     - ``landau_lower_threshold`` (1/ps): modes damped below it are treated as undamped
       (LPSE ``lw.landauDamping.lowerThreshold``)
-    - ``landau_multiplier``: static scalar on the rate (LPSE ``LD_multiplier``)
+    - ``landau_multiplier``: static scalar on the rate (adept-only; LPSE's ``LD_multiplier`` is the HPE
+      energy-conservation multiplier)
 
     Returns zeros when ``terms.epw.damping.landau`` is off.
     """

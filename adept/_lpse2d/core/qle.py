@@ -304,7 +304,7 @@ class QuasilinearEvolution:
         """Backward Euler ``(1 - dt L) f_new = f`` with ``L`` the conservative flux operator
         (symmetric, negative semi-definite: ``1 - dt L`` is SPD), solved matrix-free by
         conjugate gradients. Unconditionally stable, density-exact (``L`` conserves the sum);
-        first order in ``dt`` like LPSE's implicit theta scheme at theta = 1."""
+        first order in ``dt`` (theta = 1; LPSE's implicit ADI scheme defaults to theta = 0.5 in 2-D, 0.67 in 3-D)."""
         from jax.scipy.sparse.linalg import cg
 
         def operator(x):

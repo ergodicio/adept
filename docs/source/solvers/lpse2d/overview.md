@@ -62,7 +62,7 @@ Set per axis under `terms.epw.boundary`:
 
 | Value | Behaviour |
 |---|---|
-| `absorbing` | A damping layer of width `grid.boundary_width` is applied at both ends of that axis. The mask is $\exp(-\alpha \, dt \, (1 - \text{env}_x \text{env}_y))$ with $\alpha =$ `grid.boundary_abs_coeff` and a tanh ramp over `boundary_width / 5`, so the envelope is attenuated smoothly rather than clipped. |
+| `absorbing` | A damping layer of width `grid.boundary_width` is applied at both ends of that axis. By default (`grid.boundary_profile: exp`) it is LPSE's exponential layer (see the configuration reference); with `boundary_profile: tanh` the mask is $\exp(-\alpha \, dt \, (1 - \text{env}_x \text{env}_y))$ with $\alpha =$ `grid.boundary_abs_coeff` and a tanh ramp over `boundary_width / 5`, so the envelope is attenuated smoothly rather than clipped. |
 | anything else | **Periodic** — the underlying representation is spectral, so this is the default behaviour when no absorbing layer is requested. |
 
 `x` and `y` are configured independently, which is the usual arrangement for TPD: absorbing along the
@@ -117,19 +117,93 @@ See the [Configuration Reference](config.md) for complete YAML schema documentat
 
 ## Departures from LPSE
 
-The LPSE-parity solver paths follow the original LPSE C++ code (`original-lpse/src`) unless the
-configuration reference says otherwise. The intentional departures known as of 2026-10-21, each
-also noted in the configuration-reference row of the option it concerns:
+The LPSE-parity solver paths follow the original LPSE C++ code (`original-lpse/src`) unless noted.
+This section collects the differences known from an audit on 2026-10-21 (the configuration
+reference, code comments, commit messages and the LPSE sources). It may still be incomplete; add
+any new departure here. LPSE source lines marked "unverified" were not checked against the C++.
+
+### Intentional departures
 
 | Area | LPSE | adept | Decided by / commit |
 |------|------|-------|---------------------|
-| HPE rate limits with `terms.hpe.energy_conservation` | clips the HPE rate (`ElectronTracker.cu:2792`) before the energy-conservation multiplier, which is applied with no second clip (`LwSolver.cpp:823`, `LightSolver.cpp:3707`); the applied rate can exceed `gamma_limit_damping` / `-gamma_limit_growth` | clips the resonant modes again after the multiplier; the multiplier's energy balance then holds only where the limits do not bind | user decision (PR #372 review), 971f999 |
-| FD IAW fine-to-coarse transfer (`terms.iaw.solver: fd`, `super_samples > 1`) | point-samples the fine grid (`SuperSampleGrid_1f1::copyFineToCoarse`) and never masks the density (`isAntiAliasNelf = false`, `IawSolver.cpp:887`) | FFT truncation to the EPW grid, multiplied by the coarse IAW band (k = 0 kept) | user decision (PR #378 review), 1d2bac5 (the FFT truncation predates it) |
+| HPE rate limits with `terms.hpe.energy_conservation` | clips the HPE rate (`ElectronTracker.cu:2792`) before the energy-conservation multiplier, applied with no second clip (`LwSolver.cpp:823`, `LightSolver.cpp:3707`) | clips the resonant modes again after the multiplier; the energy balance then holds only where the limits do not bind | user decision (PR #372 review), 971f999 |
+| FD IAW fine-to-coarse transfer (`terms.iaw.solver: fd`, `super_samples > 1`) | point-samples the fine grid (`SuperSampleGrid_1f1::copyFineToCoarse`), never masks the density (`isAntiAliasNelf = false`, `IawSolver.cpp:887`) | FFT truncation to the EPW grid, multiplied by the coarse IAW band (k = 0 kept) | user decision (PR #378 review), 1d2bac5 |
 | FD combined Landau step (`terms.epw.solver: combined`, `terms.light.solver: fd`) | linear coefficient `gamma dt` whenever `gamma dt < 1e-3`, i.e. for every negative rate (`LwSolver.cpp:825`) | linear only for `abs(gamma dt) < 1e-3`, `-expm1(-gamma dt)` otherwise; differs only for negative rates (QLE `landau_evolution`, HPE `allow_growth`) | PR #378 / #387 review, 85f29cc |
-| FD IAW noise support | the disc `abs(k) < (1 - antiAliasing.range) pi / h_coarse`, `abs(k) < iaw.maxWavenumber`, `k != 0` (`IawSolver::addNoise`, `IawSolver.cpp:2580`) | the same disc intersected with the retained band (anti-aliasing mask and `max_wavenumber`); differs only where the disc reaches past the anti-aliasing mask (e.g. `grid.dealias: rectangular` with `dy > dx`) | PR #378 review, 85f29cc |
+| FD IAW noise support | the disc `abs(k) < (1 - antiAliasing.range) pi / h_coarse` with `abs(k) < iaw.maxWavenumber`, `k != 0` (`IawSolver.cpp:2580`) | the same disc intersected with the retained band; differs only where the disc reaches past the anti-aliasing mask (e.g. `grid.dealias: rectangular` with `dy > dx`) | PR #378 review, 85f29cc |
 | `terms.epw.source_window` with the combined solver | the combined path applies no `restrictRange` (`LightSolver::calculateSources`, `LwSolver::make_E0E1`) | the window multiplies the combined unified source, with either light solver | adept extension; fd path adec784 |
 | `terms.epw.source.srs_k_filter` with the combined solver | `LwSolver::make_E0E1` filters only the `E0 . E1*` product, `E0` and `E1` each at its own cutoff | filters `E0` in both terms of the unified source, `E1` unfiltered | pre-existing; recorded in adec784 |
 | Quasi-1D resonance-absorption k filter (`ny = 1`) | the zero-width transition makes the filter all-zero and erases the pump every damping update | a sharp passband `abs(k) <= filter_width K_nyq` | PR #378 review, 8b1430b |
+| Resonance absorption with `landau_update > 1` | the increment is computed every `LdUpdate` sub-steps and re-applied on each sub-step in between, rate capped at `1/dt` (`LightSolver.cpp:4670-4674`, `:4820-4831`, `:4682`) | applied on the due sub-steps over the whole interval `T`, rate capped at `1/T`; identical at `landau_update: 1` (LPSE's default) | ae0bfe6 |
+| QLE resonance Jacobian with `thermal_correction` | the cold `1/v` in the diffusion coefficient (`QuasilinearEvolution.cpp:1012-1017`, `:1044`) | the group-velocity Jacobian `1/abs(v - v_g)`, `v_g = 3 vte^2 k_par / w_k` | 078ec22 |
+| QLE Fokker-Planck update | explicit `C d2f + D df` with `D = d_i C_ij` (`QuasilinearEvolution.cpp:332-341`; `qle.includeDerivativeInDiffusionTensor`) | conservative flux form `d_i (C_ij d_j f)` with zero-flux walls; `derivative_in_tensor` accepted and ignored | 078ec22 |
+| QLE Landau-rate gradient | spectral derivative of `f` with the default `qle.solver = spectral` (`QuasilinearEvolution.cpp:1132-1138`) | `f d(ln f)` by central differences, the plain difference where a neighbour sits at the floor | 078ec22, 621b27b |
+| QLE sub-cycling and `qle.solver = implicit` | explicit sub-cycles without a cap (`QuasilinearEvolution.cpp:264-277`); `implicit` is an ADI theta scheme, theta 0.5 in 2-D, 0.67 in 3-D (`ParameterManager.cpp:1063-1067`) | beyond `max_subcycles` a backward-Euler (theta = 1) step solved by CG; the translator maps `implicit` to it, `qle.theta` is not translated | 0a9a3d0 |
+| FD IAW PPM upwinding | both face fluxes of a cell chosen by the cell's own flow sign (`IawSolver.cpp:1179-1195`) | one flux per face, upwinded by the face velocity; identical for single-signed flow, conservative where it reverses | 962e2a1 |
+| Non-local thermal filamentation | modes outside the IAW band are left unmultiplied by `abs(k)^(4/3)` (`ZakharovSolver.cpp:2546-2559`) | those modes are dropped | b4828ad |
+| Thermal-filamentation normalisation | `coeff3 = 2 dimensionsCoeff2 totalDensity / conductivity` (`ZakharovSolver.cpp:2567-2600`) | adept's own normalisation of the same source form (agreement unverified) | a498561 |
+| Spectral light injectors | tanh sigmoid of width `laser.spectral.injectorWidth`, default `lambda_vac / 2` (`SchrodingerSolver3.cpp:5567-5590`, `LightSolver.cpp:1033-1039`) | Gaussian source of default width `pi / k(n_inject)`; `injectorWidth` is not translated | 32f8c44 |
+| `terms.light.snap_beam_ky` (default `true`) | launches `k0 sin(angle)` exactly (unverified) | snaps `k_y` to the periodic grid; the translator does not override it | b3b89cb |
+| Pump and Raman light time steps | a separate `numStepsPerStep` per light class (`Lpse.cpp:1217-1238`) | both at the finer step | 6a73f94 |
+| Beams entering from the x-max face | (unverified) | the injector plane sits one cell off LPSE's (translator note) | 6eda074 |
+| HPE tracker | a boxcar VDF over `stepsPerLandauUpdate` steps, filtered and integrated over the resonant plane with no calibration, `blend.gamma`, the whole Maxwellian loaded (`ElectronTracker.cu`) | an exponential-moving-average histogram (`tau_damping`) every EPW step, 1-D or `n_angles` projections, per-k calibration to the analytic rate, the analytic rate below `v_min + v_blend_buffer`, tail-only loading | fcf7295, 9b78d9b |
+
+### Differences found by the 2026-10-21 audit, not yet decided
+
+These are not documented as intended and may be unintended.
+
+- **KAP phase groups on the evolved pump.** LPSE groups an evolved pump's beams by side, frequency
+  shift and offset unless `laser.N.group` is set, and a group jumps together (`LightSolver.cpp:1536-1557`,
+  `sortBeamsDynamic`; `updateInjectorPhases`); only its static pump makes each beam its own group.
+  adept makes every beam independent on every pump path (46833f9). Multi-beam KAP decks with an
+  evolved pump differ.
+- **IAW amplitude clamp.** LPSE applies `iaw.amplitudeClamp` (default 0.9) only on the fd path
+  (`IawSolver.cpp:932`; the spectral call is commented out, `ZakharovSolver.cpp:2057`). The translator
+  writes `max_density_perturbation: 0.9` for every IAW solver, and adept also clips after the spectral
+  and explicit steps. It acts only at `abs(dn/n) > 0.9`.
+- **Landau lower threshold with HPE or QLE.** LPSE applies `lw.landauDamping.lowerThreshold` to
+  `LDgammaE * LD_multiplier` in the EPW step (`ZakharovSolver.cpp:2880-2883`); adept applies it only to
+  the static analytic rate, so evolved rates are not thresholded. Only with `landau_lower_threshold > 0`.
+- **`hpe.dampingRateMinFraction`** (LPSE floors evolved rates at a fraction of the static rate;
+  default 0, off; `LwSolver.cpp:2366-2379`) is not ported and the translator does not report it.
+- **HPE energy-conservation gate.** LPSE re-solves the multiplier only while the averaged particle
+  energy change is nonzero (`ZakharovSolver.cpp:2855`); adept has no such gate.
+
+### Defaults that differ from LPSE
+
+The deck translator writes LPSE's value except where noted, so these matter for hand-written configs.
+
+| Option | adept default | LPSE default |
+|--------|---------------|--------------|
+| `grid.smooth_fft_size` | `true` | the deck's `grid.nodes` (the translator writes `false`) |
+| `terms.light.suppress_sources_at_injectors` | `false` | `true` |
+| `terms.iaw.boundary_width` | `grid.boundary_width` | `iaw.Labc` 0 |
+| `terms.iaw.perturbs` / `drive` | all `true` | all `false` |
+| `terms.epw.source.noise_debye_factor` | `true` | the Debye factor only with `isCalculated` |
+| `terms.epw.source.noise_amplitude` | `1e-10` | 0 (1 with `isCalculated`) |
+| `terms.hpe.v_min` | 2.5 vte (tail only) | the whole Maxwellian |
+| `terms.hpe.feedback` | `true` | `false` |
+| `terms.hpe.gamma_limit_damping` / `gamma_limit_growth` | 1500 /ps | 1e6 (ZAK units) |
+| `terms.hpe.energy_conservation_steps` | 1 | 10 |
+| `terms.hpe.nv` | 512 (also for translated decks without `hpe.velocityGrid`) | 300 |
+| `terms.hpe.thermalization_probability` | follows the field boundaries | (1, 0, 0) (the translator writes (1, 0)) |
+
+### Translator restrictions
+
+The deck translator reports decks it cannot represent exactly: one light solver, FD stencil order,
+`interpolate_sources` flag and beam profile for both light classes; one `abc.lambda`, one `Labc` per
+field and one anti-aliasing mask; PPM as the only FD-IAW advection scheme; no Raman resonance
+absorption, per-beam KAP bandwidths, Raman pulse shape or `raman.sourceTerm.lw = false`; no y-face
+beams or beams at 90 degrees. Not translated and not reported: `laser.spectral.injectorWidth`,
+`qle.theta`, `hpe.dampingRateMinFraction`.
+
+### adept-only options
+
+No LPSE behaviour to depart from: `grid.boundary_profile: tanh`, `boundary_abs_coeff`,
+`dealias: isotropic | shifted-band`; `drivers.E0.envelope`, `speckle`, `drivers.E2`; EPW
+`hyperviscosity`, `density_gradient`, `linear`, `landau_form: matlab`, `landau_multiplier`,
+`noise_model: flat`, `tpd_form: matlab`; light `coupling: rotation`, `filter`, `transverse_fields`;
+IAW `solver: explicit`, `feedback: envelope`; QLE `max_subcycles`; HPE `v_blend_buffer`,
+`gather_refine`, `substep_courant`, `tau_damping`, `n_angles`, `omega_res: bohm_gross | wp0`.
 
 The lpse2d branch with the MATLAB-prototype conventions (`lpse2d/lpse-parity`, PR #372) differs from
-LPSE by design and is not covered by this table.
+LPSE by design and is not covered by this section.
