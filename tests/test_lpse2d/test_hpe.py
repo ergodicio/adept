@@ -432,7 +432,12 @@ def _run_exo(cfg):
 @pytest.mark.slow
 def test_srs_smoke_with_hpe():
     """End-to-end: the SRS growth box with HPE active runs, stays finite, and emits
-    the hot-electron series/metrics."""
+    the hot-electron series/metrics.
+
+    The final hpe_gamma_ratio_kpeak is shot-noise limited: over EPW noise seeds 1-10 it spanned
+    0.0-2.39 at 20k particles (4/10 above 0.5). The criterion (ratio[-1] > 0.5), 1M particles and the
+    pinned noise seed 7919 were fixed before validation; on fresh seeds 7919 and 11-16 the final ratio
+    was 0.59-1.33 (7/7 above 0.5)."""
     with open("tests/test_lpse2d/configs/srs.yaml") as fi:
         cfg = yaml.safe_load(fi)
     cfg["grid"]["ymax"] = "0.02um"
@@ -440,7 +445,8 @@ def test_srs_smoke_with_hpe():
     cfg["grid"]["tmax"] = "0.1ps"
     cfg["save"]["fields"]["t"]["tmax"] = "0.1ps"
     cfg["save"]["fields"]["t"]["dt"] = "0.05ps"
-    cfg["terms"]["hpe"] = {"active": True, "n_particles": 20000, "nv": 256}
+    cfg["terms"]["hpe"] = {"active": True, "n_particles": 1000000, "nv": 256}
+    cfg["terms"]["epw"]["source"]["noise_seed"] = 7919
     cfg["mlflow"]["run"] = "srs-hpe-smoke"
 
     exo, sol, ppo = _run_exo(cfg)
@@ -457,7 +463,7 @@ def test_srs_smoke_with_hpe():
             values = values[1:]
         assert np.all(np.isfinite(values)), f"non-finite values in {k}"
     # nothing exciting happens in 0.1 ps: damping at the dominant band mode should
-    # still be ~analytic (the band-min is shot-noise-limited at 20k particles)
+    # still be ~analytic (see the docstring for its shot noise)
     ratio = np.asarray(series["hpe_gamma_ratio_kpeak"].values, dtype=float)
     assert ratio[-1] > 0.5
 
