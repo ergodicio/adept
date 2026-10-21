@@ -133,4 +133,3 @@ also noted in the configuration-reference row of the option it concerns:
 
 The lpse2d branch with the MATLAB-prototype conventions (`lpse2d/lpse-parity`, PR #372) differs from
 LPSE by design and is not covered by this table.
-
