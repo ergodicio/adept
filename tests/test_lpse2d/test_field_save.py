@@ -22,6 +22,9 @@ EXPECTED_FIELDS = {
     "e0_y",
     "e1_x",
     "e1_y",
+    # the out-of-plane light components this branch's state carries (plan 2 F.1)
+    "e0_z",
+    "e1_z",
     "background_density",
     "iaw_density",
     "iaw_velocity_divergence",
@@ -40,7 +43,9 @@ ROUNDOFF_EPS = 2000.0
 
 
 def _box_cfg(geometry: str, save_spacing: str | None, run_name: str) -> dict:
-    """A small TPD+SRS+IAW box: noise-seeded EPW, static uniform pump, 6 fs."""
+    """A small TPD+IAW box: noise-seeded EPW, static uniform pump, 6 fs. SRS is off: on this branch the
+    separate EPW solver refuses TPD and SRS together, as LPSE (the combined solver would also save E1
+    as its transverse part, which the analytic longitudinal E1 below would not survive)."""
     with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
         cfg = yaml.safe_load(fi)
     half = Y_HALF_WIDTH_UM[geometry]
@@ -60,7 +65,7 @@ def _box_cfg(geometry: str, save_spacing: str | None, run_name: str) -> dict:
     if save_spacing is not None:
         cfg["save"]["fields"]["x"] = {"dx": save_spacing}
         cfg["save"]["fields"]["y"] = {"dy": save_spacing}
-    cfg["terms"]["epw"]["source"].update({"noise": True, "noise_seed": 5, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["source"].update({"noise": True, "noise_seed": 5, "tpd": True, "srs": False})
     cfg["terms"]["iaw"] = {
         "active": True,
         "boundary": {"x": "absorbing", "y": "periodic"},

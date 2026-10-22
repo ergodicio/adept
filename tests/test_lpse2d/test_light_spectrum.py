@@ -157,6 +157,10 @@ def _combined_probe_cfg():
     cfg["terms"]["epw"]["solver"] = "combined"
     cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
     cfg["save"]["light_spectrum"] = [{"field": "E1", "interval": "1fs", "x": ["-2um", "2um"], "poynting": True}]
+    # the full-grid field save (tpd.yaml's 0.08 um save spacing is finer than this grid, which the
+    # interpolated save refuses since PR #388)
+    cfg["save"]["fields"].pop("x", None)
+    cfg["save"]["fields"].pop("y", None)
     write_units(cfg)
     cfg = get_derived_quantities(cfg)
     cfg["grid"] = get_solver_quantities(cfg)
