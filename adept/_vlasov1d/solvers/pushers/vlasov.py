@@ -12,6 +12,8 @@ from jax import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
 
+from adept._vlasov1d.solvers.pushers.conservative import conservative_remap
+
 
 class VlasovExternalE(eqx.Module):
     """Split Vlasov pusher for externally supplied electric fields."""
@@ -231,6 +233,18 @@ class VelocityLagrange7(_VelocityInterpolation):
     interpolate = staticmethod(_uniform_lagrange7_interp)
 
 
+class VelocityPFC3(_VelocityInterpolation):
+    """Positive conservative quadratic velocity remap with zero boundary inflow."""
+
+    interpolate = staticmethod(partial(conservative_remap, method="pfc3", periodic=False))
+
+
+class VelocitySLWENO5(_VelocityInterpolation):
+    """Positive conservative WENO5 velocity remap with zero boundary inflow."""
+
+    interpolate = staticmethod(partial(conservative_remap, method="sl-weno5", periodic=False))
+
+
 class HouLiFilter:
     """Hou-Li spectral filter.
 
@@ -296,3 +310,30 @@ class SpaceExponential:
             else:
                 result[species_name] = self.push(f, v)
         return result
+
+
+class _SpaceConservative(SpaceExponential):
+    """Share species dispatch and v-axis sharding with the spectral pusher."""
+
+    def __init__(self, x, species_grids, parallel=False):
+        self.dx = x[1] - x[0]
+        self.species_grids = species_grids
+        self.parallel = parallel
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+
+    def push(self, f, v):
+        """Remap periodic x lines; v is the per-line physical displacement."""
+        return conservative_remap(f.T, v, self.dx, method=self.method, periodic=True).T
+
+
+class SpacePFC3(_SpaceConservative):
+    """Positive conservative quadratic advection in periodic configuration space."""
+
+    method = "pfc3"
+
+
+class SpaceSLWENO5(_SpaceConservative):
+    """Positive conservative WENO5 advection in periodic configuration space."""
+
+    method = "sl-weno5"

@@ -1,0 +1,43 @@
+solver: farsight-1d
+grid:
+  nx: 8
+  nv: 16
+  xmin: 0.0
+  xmax: 20.943951023931955
+  vmin: -4.0
+  vmax: 4.0
+time:
+  tmin: 0.0
+  tmax: 12.0
+  dt: 0.05
+initial:
+  kind: two-stream
+  thermal_speed: 0.3
+  drift: 2.0
+  amplitude: 0.0001
+  mode: 1
+numerical:
+  epsilon: 1.5
+  quadrature: trapezoid
+  remesh_every: 1
+  chunk_size: 32
+  field_solver: treecode
+  treecode:
+    degree: 8
+    theta: 0.5
+    leaf_size: 32
+    # theta: 0.0 selects exact direct evaluation and restores reverse-mode AD.
+amr:
+  enabled: true
+  max_level: 2
+  min_level: 0
+  max_panels: 512
+  atol: 0.05
+  rtol: 0.0
+save:
+  scalars:
+    every_steps: 2
+  fields:
+    every_steps: 2
+  distribution:
+    every_steps: 40

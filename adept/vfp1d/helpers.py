@@ -7,7 +7,7 @@ from jax import Array
 from jax import numpy as jnp
 from scipy.special import gamma
 
-from adept._base_ import get_envelope
+from adept._jax_helpers import get_envelope
 from adept.normalization import UREG, PlasmaNormalization, normalize
 
 # ideally this should be passed as as an argument and not re-initialised

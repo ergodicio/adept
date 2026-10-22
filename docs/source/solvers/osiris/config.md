@@ -42,6 +42,7 @@ output:
 | `stage_root` | string | Optional fast ephemeral filesystem (e.g. `/dev/shm/osiris`) to run OSIRIS on, draining dumps to `run_root` in the background. Requires `stream_convert: true`. See [Ramdisk staging](overview.md#ramdisk-staging-osirisstage_root). |
 | `stream_convert` | bool | Convert `MS/` HDF5 dumps to `binary/*.nc` concurrently with the run (default `true`); `false` restores the batch conversion at job end. See [the overview](overview.md#concurrent-h5--netcdf-conversion-osirisstream_convert). |
 | `stream_poll_s` | float | Watcher poll interval in seconds (default `10.0`) |
+| `stream_workers` | int | Number of drain-worker subprocesses to shard diagnostics across (default `0` = drain in-thread; env fallback `ADEPT_STREAM_WORKERS`). Use when OSIRIS out-produces the single drain loop (small fast boxes at high dump cadence): each worker owns a disjoint set of diagnostics, so per-file conversion cost parallelizes while every NetCDF keeps one writer. Workers are light (no jax import); the converter falls back to in-thread draining if the pool cannot start. |
 | `density` | mapping | Adaptive box sizing from a target gradient scale length (1D). See [below](#density-adaptive-box-sizing). |
 | `overrides` | mapping | Deck patches applied before rendering. See [below](#overrides-patching-the-deck). |
 
