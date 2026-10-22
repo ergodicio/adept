@@ -133,6 +133,10 @@ def test_ledger_reported_in_epw_energy_units():
     from adept._lpse2d.helpers import get_default_save_func, get_save_quantities
 
     cfg = _tpd_cfg()
+    # the full-grid field save (tpd.yaml's 0.08 um save spacing is finer than this 0.1 um grid, which
+    # the interpolated save refuses since PR #388)
+    cfg["save"]["fields"].pop("x", None)
+    cfg["save"]["fields"].pop("y", None)
     cfg = get_save_quantities(cfg)
     save = get_default_save_func(cfg)["func"]
     step, state = _run(cfg, _state(cfg, 2), 10)
@@ -159,6 +163,10 @@ def test_ledger_off_leaves_state_and_series_unchanged():
     step = SplitStep(cfg)
     out = step(jnp.asarray(0.0), dict(state), {"drivers": {"E0": _pump_args(cfg)}})
     assert "epw_ledger" not in out
+    # the full-grid field save (tpd.yaml's 0.08 um save spacing is finer than this 0.1 um grid, which
+    # the interpolated save refuses since PR #388)
+    cfg["save"]["fields"].pop("x", None)
+    cfg["save"]["fields"].pop("y", None)
     cfg = get_save_quantities(cfg)
     series = get_default_save_func(cfg)["func"](0.0, out, None)
     assert not any(k.startswith("epw_ledger") for k in series)
