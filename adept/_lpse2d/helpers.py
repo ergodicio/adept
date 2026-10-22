@@ -1,5 +1,4 @@
 import os
-from functools import partial
 
 import matplotlib.pyplot as plt
 import scienceplots
@@ -1856,14 +1855,29 @@ def make_series_xarrays(cfg, this_t, state, td, hist=None):
 
 
 def make_field_xarrays(cfg, this_t, state, td):
+    """Build (and write) the x-space ``fields`` and k-space ``kfields`` datasets of the field save.
+
+    Full-grid save: ``state["epw"]`` is the solver's k-space potential phi_k; phi = ifft2(phi_k)
+    and ex, ey = ifft2(-i k phi_k) (the solver's own field) are derived from it here.
+
+    Interpolated save (``save.fields.x`` / ``y``): the save function has already put every field
+    in x-space on the save grid (``phi``, ``ex``, ``ey`` from the full-grid spectral fields), so
+    both saves report the same field at the same point. The k-space fields are the DFT on the save
+    grid, scaled by (nx * ny) / (nx_save * ny_save) so that a mode resolved on both grids has the
+    coefficient it has in the full-grid save (up to the phase of the save grid's first point), on
+    the save grid's k axes.
+    """
     fld_save = cfg["save"]["fields"]
-    if "x" in fld_save:
+    interpolated = "x" in fld_save
+    if interpolated:
         kx = fld_save["kx"]
         ky = fld_save["ky"]
         xax = fld_save["x"]["ax"]
         yax = fld_save["y"]["ax"]
         nx = fld_save["x"]["ax"].size
         ny = fld_save["y"]["ax"].size
+        nx_grid, ny_grid = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        k_norm = nx_grid * ny_grid / (nx * ny)
 
     else:
         kx = cfg["grid"]["kx"]
@@ -1881,15 +1895,28 @@ def make_field_xarrays(cfg, this_t, state, td):
     yax_tuple = ("y (um)", yax)
 
     # the state is stored as a float view of a complex array; pick the matching complex dtype
-    if state["epw"].dtype in (np.float64, np.complex128):
+    if state["phi" if interpolated else "epw"].dtype in (np.float64, np.complex128):
         _complex = np.complex128
     else:
         _complex = np.complex64
 
-    phi_k_np = np.array(state["epw"]).view(_complex)
-    phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
-    ex_k_np = -1j * kx[None, :, None] * phi_k_np
-    ey_k_np = -1j * ky[None, None, :] * phi_k_np
+    if interpolated:
+        phi_vs_t = np.array(state["phi"]).view(_complex)
+        ex_vs_t = np.array(state["ex"]).view(_complex)
+        ey_vs_t = np.array(state["ey"]).view(_complex)
+        phi_k_np = np.fft.fft2(phi_vs_t, axes=(1, 2)) * k_norm
+        ex_k_np = np.fft.fft2(ex_vs_t, axes=(1, 2)) * k_norm
+        ey_k_np = np.fft.fft2(ey_vs_t, axes=(1, 2)) * k_norm
+        ex_np = ex_vs_t
+        ey_np = ey_vs_t
+    else:
+        phi_k_np = np.array(state["epw"]).view(_complex)
+        phi_vs_t = np.fft.ifft2(np.array(state["epw"]).view(_complex), axes=(1, 2))
+        ex_k_np = -1j * kx[None, :, None] * phi_k_np
+        ey_k_np = -1j * ky[None, None, :] * phi_k_np
+        # E = -grad(phi) = ifft2(-i k phi_k), the solver's own field (SpectralEPWSolver.phi_k_to_e_fields)
+        ex_np = np.fft.ifft2(ex_k_np, axes=(1, 2))
+        ey_np = np.fft.ifft2(ey_k_np, axes=(1, 2))
 
     phi_k = xr.DataArray(
         np.fft.fftshift(phi_k_np, axes=(1, 2)),
@@ -1904,8 +1931,8 @@ def make_field_xarrays(cfg, this_t, state, td):
         coords=(tax_tuple, (r"kx ($kc\omega_0^{-1}$)", shift_kx), (r"ky ($kc\omega_0^{-1}$)", shift_ky)),
     )
     phi_x = xr.DataArray(phi_vs_t, coords=(tax_tuple, xax_tuple, yax_tuple))
-    ex = xr.DataArray(np.fft.ifft2(ex_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
-    ey = xr.DataArray(np.fft.ifft2(ey_k_np, axes=(1, 2)) / nx / ny * 4, coords=(tax_tuple, xax_tuple, yax_tuple))
+    ex = xr.DataArray(ex_np, coords=(tax_tuple, xax_tuple, yax_tuple))
+    ey = xr.DataArray(ey_np, coords=(tax_tuple, xax_tuple, yax_tuple))
     e0_all = np.array(state["E0"]).view(_complex)
     e1_all = np.array(state["E1"]).view(_complex)
     e0x = xr.DataArray(e0_all[..., 0], coords=(tax_tuple, xax_tuple, yax_tuple))
@@ -1946,9 +1973,15 @@ def make_field_xarrays(cfg, this_t, state, td):
 
     kfield_data = {"phi": phi_k, "ex": ex_k, "ey": ey_k}
     if "gamma_L" in state:
-        # the evolved Landau rate of the quasilinear module (1/ps) on the k grid
+        # the evolved Landau rate of the quasilinear module (1/ps) on the k grid; an interpolated save
+        # keeps it at the save grid's k modes (the simulation-grid modes of the same integer frequency)
+        gamma_l = np.asarray(state["gamma_L"])
+        if interpolated:
+            ix = _grid_index_of_save_modes(cfg["grid"]["nx"], nx)
+            iy = _grid_index_of_save_modes(cfg["grid"]["ny"], ny)
+            gamma_l = gamma_l[:, ix][:, :, iy]
         kfield_data["gamma_L"] = xr.DataArray(
-            np.fft.fftshift(np.asarray(state["gamma_L"]), axes=(1, 2)),
+            np.fft.fftshift(gamma_l, axes=(1, 2)),
             coords=(tax_tuple, (r"kx ($kc\omega_0^{-1}$)", shift_kx), (r"ky ($kc\omega_0^{-1}$)", shift_ky)),
         )
     poynting = {}
@@ -1994,11 +2027,14 @@ def make_field_xarrays(cfg, this_t, state, td):
             (r"kx ($kc\omega_0^{-1}$)", shift_kx),
             (r"ky ($kc\omega_0^{-1}$)", shift_ky),
         )
-        kfield_data["iaw_density"] = xr.DataArray(
-            np.fft.fftshift(np.fft.fft2(iaw_density_np, axes=(1, 2)), axes=(1, 2)), coords=k_coords
-        )
+        iaw_density_k = np.fft.fft2(iaw_density_np, axes=(1, 2))
+        iaw_velocity_k = np.fft.fft2(iaw_velocity_np, axes=(1, 2))
+        if interpolated:
+            iaw_density_k = iaw_density_k * k_norm
+            iaw_velocity_k = iaw_velocity_k * k_norm
+        kfield_data["iaw_density"] = xr.DataArray(np.fft.fftshift(iaw_density_k, axes=(1, 2)), coords=k_coords)
         kfield_data["iaw_velocity_divergence"] = xr.DataArray(
-            np.fft.fftshift(np.fft.fft2(iaw_velocity_np, axes=(1, 2)), axes=(1, 2)), coords=k_coords
+            np.fft.fftshift(iaw_velocity_k, axes=(1, 2)), coords=k_coords
         )
 
     kfields = xr.Dataset(kfield_data)
@@ -2041,6 +2077,125 @@ def _raman_light_part(cfg: dict):
     return apply
 
 
+def _grid_index_of_save_modes(n_grid: int, n_save: int) -> np.ndarray:
+    """Indices (FFT order) of the simulation-grid modes with the save grid's integer frequencies: both
+    grids span the box, so save mode m is grid mode m (``n_save <= n_grid``)."""
+    m_grid = np.round(np.fft.fftfreq(n_grid) * n_grid).astype(int)
+    lookup = {int(m): i for i, m in enumerate(m_grid)}
+    return np.array([lookup[int(m)] for m in np.round(np.fft.fftfreq(n_save) * n_save).astype(int)])
+
+
+def _interpolated_save_axis(grid_axis: np.ndarray, lo: float, hi: float, d_requested: float, name: str):
+    """Cell-centred save axis of n_save = round((hi - lo) / d_requested) points spanning [lo, hi].
+
+    Returns the axis and its actual spacing (hi - lo) / n_save. Refuses a save grid with more
+    points than the simulation grid: it would be finer than the grid, and its outermost points
+    would fall outside the outermost cell centres, where linear interpolation is undefined.
+    """
+    key = f"save.fields.{name}.d{name}"
+    n_grid = grid_axis.size
+    length = hi - lo
+    if not d_requested > 0.0:
+        raise ValueError(f"{key} must be positive, got {d_requested} um")
+    n_save = max(1, round(length / d_requested))
+    if n_save > n_grid:
+        raise ValueError(
+            f"{key} = {d_requested:.4g} um is finer than the simulation grid (d{name} = {length / n_grid:.4g} um): "
+            f"it gives {n_save} save points along {name} for {n_grid} cells. An interpolated field save must not be "
+            f"finer than the grid -- use {key} >= {length / n_grid:.4g} um, or drop save.fields.x and "
+            "save.fields.y to save the full grid."
+        )
+    d_save = length / n_save
+    axis = np.linspace(lo + d_save / 2.0, hi - d_save / 2.0, n_save)
+    # n_save <= n_grid puts every save point inside [grid_axis[0], grid_axis[-1]]; clip only the
+    # last-bit rounding (n_save == n_grid), where interpax would otherwise return NaN
+    return np.clip(axis, grid_axis[0], grid_axis[-1]), d_save
+
+
+def _interpolated_field_save(cfg: dict):
+    """Set up the save grid of ``save.fields.x.dx`` / ``save.fields.y.dy`` and return its save function.
+
+    Every saved field is put on the save grid by linear interpolation in x-space:
+
+    - ``epw``: the state is the k-space potential phi_k. It is transformed to x-space with the
+      solver's convention (``SpectralEPWSolver.phi_k_to_e_fields``: phi = ifft2(phi_k),
+      E = ifft2(-i k phi_k)) on the full grid, and phi, ex and ey are interpolated and saved as
+      ``phi``, ``ex`` and ``ey``. The fields are differentiated spectrally on the full grid rather
+      than on the save grid: the save grid's spectral derivative would multiply the interpolation
+      error by k and assign the wrong k to any content above the save grid's Nyquist wavenumber.
+    - ``E0``, ``E1`` and the real x-space fields (IAW) are interpolated directly.
+
+    The axes and k axes of the save grid go in ``cfg["save"]["fields"]``; ``make_field_xarrays``
+    builds k-space fields from them.
+    """
+    from adept._lpse2d.core.hpe import PARTICLE_KEYS
+
+    fld = cfg["save"]["fields"]
+    grid = cfg["grid"]
+    spatial_scale = cfg["units"]["derived"]["spatialScale"]
+    dx_requested = _Q(fld["x"]["dx"]).to("m").value / spatial_scale * 100
+    dy_requested = _Q(fld["y"]["dy"]).to("m").value / spatial_scale * 100
+    x_save, dx_save = _interpolated_save_axis(grid["x"], grid["xmin"], grid["xmax"], dx_requested, "x")
+    y_save, dy_save = _interpolated_save_axis(grid["y"], grid["ymin"], grid["ymax"], dy_requested, "y")
+    nx_save, ny_save = x_save.size, y_save.size
+
+    fld["x"]["dx"] = dx_save
+    fld["x"]["ax"] = x_save
+    fld["kx"] = np.fft.fftfreq(nx_save, d=dx_save / 2.0 / np.pi)
+    fld["y"]["dy"] = dy_save
+    fld["y"]["ax"] = y_save
+    fld["ky"] = np.fft.fftfreq(ny_save, d=dy_save / 2.0 / np.pi)
+    print(
+        f"interpolated field save: {nx_save}x{ny_save} points (dx = {dx_save:.4g} um, dy = {dy_save:.4g} um) "
+        f"from the {grid['nx']}x{grid['ny']} grid"
+    )
+
+    x_src = jnp.asarray(grid["x"])
+    kx = jnp.asarray(grid["kx"])[:, None]
+    ky = jnp.asarray(grid["ky"])[None, :]
+    if grid["ny"] == 1:
+        # Quasi-1D (single transverse cell; ny_save is then 1 too): interpax.interp2d needs
+        # >= 2 nodes per axis, so interpolate in x only and keep the single y-row.
+        def to_save_grid(f):
+            return interpax.interp1d(jnp.asarray(x_save), x_src, f[:, 0], method="linear")[:, None]
+    else:
+        xq, yq = np.meshgrid(x_save, y_save, indexing="ij")
+        xq, yq = jnp.asarray(xq.ravel()), jnp.asarray(yq.ravel())
+        y_src = jnp.asarray(grid["y"])
+
+        def to_save_grid(f):
+            values = interpax.interp2d(xq, yq, x_src, y_src, f, method="linear")
+            return jnp.reshape(values, (nx_save, ny_save) + f.shape[2:])
+
+    def as_complex(v):
+        return v.view(jnp.complex128 if v.dtype == jnp.float64 else jnp.complex64)
+
+    def save_func(t, y, args):
+        save_y = {}
+        for k, v in y.items():
+            if k in PARTICLE_KEYS:
+                # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
+                # none of them fit the spatial interpolator; the histogram and the
+                # damping-reduction scalars are saved through the default series
+                continue
+            if k == "epw":
+                phi_k = as_complex(v)
+                x_space = jnp.stack(
+                    [jnp.fft.ifft2(phi_k), jnp.fft.ifft2(-1j * kx * phi_k), jnp.fft.ifft2(-1j * ky * phi_k)], axis=-1
+                )
+                on_save_grid = to_save_grid(x_space)
+                for i, name in enumerate(("phi", "ex", "ey")):
+                    save_y[name] = on_save_grid[..., i].view(v.dtype)
+            elif k in ("E0", "E1"):
+                save_y[k] = to_save_grid(as_complex(v)).view(v.dtype)
+            else:
+                save_y[k] = to_save_grid(v)
+
+        return save_y
+
+    return save_func
+
+
 def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
@@ -2060,83 +2215,23 @@ def get_save_quantities(cfg: dict) -> dict:
     cfg["save"]["fields"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
     qle_on = bool((cfg["terms"].get("qle") or {}).get("active", False))
 
+    if ("x" in cfg["save"]["fields"]) != ("y" in cfg["save"]["fields"]):
+        raise NotImplementedError("Must specify both save.fields.x and save.fields.y for an interpolated field save")
+
     if "x" in cfg["save"]["fields"]:
-        xmin = cfg["grid"]["xmin"]
-        xmax = cfg["grid"]["xmax"]
-        dx = _Q(cfg["save"]["fields"]["x"]["dx"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
-        nx = cfg["grid"]["nx"]
-        # nx = int((xmax - xmin) / dx)
-        cfg["save"]["fields"]["x"]["dx"] = dx
-        cfg["save"]["fields"]["x"]["ax"] = jnp.linspace(xmin + dx / 2.0, xmax - dx / 2.0, nx)
-        cfg["save"]["fields"]["kx"] = np.fft.fftfreq(nx, d=dx / 2.0 / np.pi)
-
-        if "y" in cfg["save"]["fields"]:
-            ymin = cfg["grid"]["ymin"]
-            ymax = cfg["grid"]["ymax"]
-            dy = _Q(cfg["save"]["fields"]["y"]["dy"]).to("m").value / cfg["units"]["derived"]["spatialScale"] * 100
-            ny = cfg["grid"]["ny"]
-            cfg["save"]["fields"]["y"]["dy"] = dy
-            cfg["save"]["fields"]["y"]["ax"] = jnp.linspace(ymin + dy / 2.0, ymax - dy / 2.0, ny)
-            cfg["save"]["fields"]["ky"] = np.fft.fftfreq(ny, d=dy / 2.0 / np.pi)
-        else:
-            raise NotImplementedError("Must specify y in save")
-
-        xq, yq = jnp.meshgrid(cfg["save"]["fields"]["x"]["ax"], cfg["save"]["fields"]["y"]["ax"], indexing="ij")
-
-        if ny == 1:
-            # Quasi-1D (single transverse cell): interpax.interp2d needs >=2 nodes per
-            # axis and returns NaN off the lone y-node, so interpolate in x only and
-            # keep the single y-row. save_func reshapes the flat (nx,) result to (nx, 1).
-            x_save = cfg["save"]["fields"]["x"]["ax"]
-            x_src = cfg["grid"]["x"]
-
-            def interpolator(f):
-                return interpax.interp1d(x_save, x_src, jnp.reshape(f, (-1,)), method="linear")
-        else:
-            interpolator = partial(
-                interpax.interp2d,
-                xq=jnp.reshape(xq, (nx * ny), order="F"),
-                yq=jnp.reshape(yq, (nx * ny), order="F"),
-                x=cfg["grid"]["x"],
-                y=cfg["grid"]["y"],
-                method="linear",
-            )
+        interpolate = _interpolated_field_save(cfg)
 
         def save_func(t, y, args):
-            from adept._lpse2d.core.hpe import PARTICLE_KEYS
-
+            # the combined solver's E1 is saved as its transverse (Raman-light) part, as in the
+            # full-grid save; the energy ledger is a series quantity
             y = raman_light_part(y)
-            save_y = {}
-            for k, v in y.items():
-                if k in ("iaw_density_fine", "iaw_velocity_divergence_fine", "iaw_density_old"):
-                    continue  # the fd IAW's super-sampled fields and the interpolation start: internal
-                if k in ("vdf", "gamma_L") and qle_on:
-                    # the quasilinear VDF (plan 2 K.1; make_vdf_xarray) and its Landau rate on
-                    # the k grid (k-fields), verbatim
-                    save_y[k] = v
-                    continue
-                if k in PARTICLE_KEYS or k == "epw_ledger":
-                    # particle arrays are (Np,) and gamma_L/epw_hist live in k/v space --
-                    # none of them fit the spatial interpolator; the histogram and the
-                    # damping-reduction scalars are saved through the default series
-                    continue
-                if k in ["E0", "E1"]:
-                    cmplx_fld = v.view(jnp.complex128)
-                    save_y[k] = jnp.concatenate(
-                        [
-                            jnp.reshape(interpolator(f=cmplx_fld[..., ivec]), (nx, ny), order="F")[..., None]
-                            for ivec in range(2)
-                        ],
-                        axis=-1,
-                    ).view(jnp.float64)
-
-                elif k == "epw":
-                    cmplx_fld = v.view(jnp.complex128)
-                    save_y[k] = jnp.reshape(interpolator(f=cmplx_fld), (nx, ny), order="F").view(jnp.float64)
-                else:
-                    save_y[k] = jnp.reshape(interpolator(f=v), (nx, ny), order="F")
-
-            return save_y
+            # the fd IAW's super-sampled fields and its interpolation start are internal; the
+            # quasilinear VDF (plan 2 K.1; make_vdf_xarray) and its Landau rate on the k grid
+            # (k-fields) are saved verbatim, not interpolated
+            skip = ("epw_ledger", "iaw_density_fine", "iaw_velocity_divergence_fine", "iaw_density_old")
+            verbatim = {k: y[k] for k in ("vdf", "gamma_L") if qle_on and k in y}
+            fields = {k: v for k, v in y.items() if k not in skip and k not in verbatim}
+            return {**interpolate(t, fields, args), **verbatim}
 
     else:
 

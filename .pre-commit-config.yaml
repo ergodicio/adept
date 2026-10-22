@@ -18,6 +18,8 @@ repos:
   - id: end-of-file-fixer
 
   - id: trailing-whitespace
+    # Verbatim WarpX run output (stdout.log etc.) checked in as test fixtures.
+    exclude: ^tests/test_warpx/fixtures/
 
 
 - repo: https://github.com/henryiii/validate-pyproject-schema-store

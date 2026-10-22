@@ -34,9 +34,14 @@ Documentation
    solvers/vfp1d/overview
    solvers/vfp2d/overview
    solvers/vfp2d/joglekar2014
+   solvers/vfp2d/magpie_geometry
+   solvers/vfp2d/reservoirs
+   solvers/vfp2d/magpie_analysis
+   solvers/vfp2d/electric_work
    solvers/spectrax1d/overview
    solvers/hermite_legendre_1d/overview
    solvers/pic1d/overview
+   solvers/farsight1d/overview
    solvers/lpse2d/overview
    solvers/tf1d/overview
    solvers/osiris/overview
@@ -52,10 +57,12 @@ Documentation
    solvers/spectrax1d/config
    solvers/hermite_legendre_1d/config
    solvers/pic1d/config
+   solvers/farsight1d/config
    solvers/lpse2d/config
    solvers/vfp2d/config
    solvers/tf1d/config
    solvers/osiris/config
+   solvers/warpx/config
 
 .. toctree::
    :maxdepth: 2

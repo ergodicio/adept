@@ -82,12 +82,15 @@ contracted $\langle\mathbf{vvv}\rangle:\mathbf E$ term used to derive the displa
 The current projection also exchanges a small amount of kinetic energy with the unresolved
 constraint system. Both effects must be measured in convergence tests.
 
-The higher-fidelity `implicit-current` mode remains to be implemented. It should solve the
-electric field as a Lagrange multiplier that makes the implicit kinetic current response agree
-with Ampere's current. That retains electron inertia when requested and avoids using the
-displayed Ohm law as an evolution closure. The solve should use matrix-free JAX
-Jacobian-vector products and a Krylov method, with a custom VJP or implicit differentiation
-rather than differentiating through every iteration.
+The implemented `oshun-implicit` alternative solves a local discrete $3\times3$
+kinetic-current response for the electric field enforcing Ampere's current, without
+projecting `f1` or using the algebraic Ohm law. Faraday and non-electric transport remain
+explicit, so this is not a fully implicit Maxwell solve. It currently supports stationary
+ions without spatial sharding. `ampere` provides a second alternative: an explicit
+Ampere residual divided by a configurable relative permittivity, with correspondingly
+slower light and plasma frequencies. See the [field-mode configuration](config.md).
+A fully implicit field/transport solve and long-time validation of the full published
+geometry remain future work.
 
 ## The 2.5D Biermann source
 
@@ -133,6 +136,23 @@ opposite work and momentum exchange. Its update splits naturally into:
   of the ion frame;
 - implicit collisions and laser heating.
 
+The coupled source half-steps include $\mathbf j\times\mathbf B$, with
+$\mathbf j=c^2\nabla\times\mathbf B$ in code units, and midpoint ion mechanical
+work $\mathbf u_i\cdot(\mathbf j\times\mathbf B)$. The first half-step uses the
+initial magnetic field and the second uses the field after the kinetic/Faraday step.
+Each source update remaps the electrons into the updated ion frame. Electron
+pressure contributes ion mechanical work $-\mathbf u_i\cdot\nabla\cdot\mathbf P_e$;
+electron peculiar pressure work $-\mathbf P_e:\nabla\mathbf u_i$ is supplied once,
+by the moving-frame deformation operator. Their sum is the pressure-flux divergence
+$-\nabla\cdot(\mathbf P_e\cdot\mathbf u_i)$, not pointwise cancellation of thermal
+and mechanical work. No additional pressure source is applied to electron `f00`.
+Collision and inverse-bremsstrahlung inputs use the midpoint ion number density $n_i=\rho_i/m_i$.
+Setting `ion_fluid.frozen: true` suppresses both hydro and coupled ion source updates.
+Coupled ion runs require `grid.lmax >= 1` and `grid.mmax >= 1` so frame remaps can
+preserve all three momentum components. They reject active hidden density gradients:
+the ion continuity and pressure operators only include x/y derivatives. The hidden-gradient
+workflow remains available with `ion_fluid.active: false`.
+
 For the first coupled milestone, an isothermal or adiabatic ion pressure law is adequate.
 The acceptance tests should verify total particle number, total momentum, total energy, and
 $\nabla\cdot\mathbf B$ across the kinetic--fluid exchange. A prescribed bulk velocity is a
@@ -147,7 +167,8 @@ useful operator test, but it should not be presented as the physical coupling.
    the local $B_z$ quadrupole score.
 3. Fully implicit kinetic-current response and mapped/stretched $x$ mesh with non-periodic
    thermal boundaries for the full published box.
-4. Conservative ion-fluid coupling and moving-ion comparison.
+4. Conservative ion-fluid coupling. **Implemented with local and nonlinear refinement tests;**
+   production-scale moving-ion comparisons remain.
 5. Higher $\ell_{max}$, convergence scans, and differentiable parameter inference.
 
 The benchmark should first lock the published $\ell_{max}=2$ result, then demonstrate that

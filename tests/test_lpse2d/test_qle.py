@@ -291,3 +291,40 @@ def test_dissipation_diagnostic_follows_the_evolved_qle_rate():
         assert np.sum(loss * k_sq * np.abs(phi_k) ** 2 * (loss < 0)) < 0.0  # gain modes present
         want = prefactor * float(factor.flat[0]) * np.sum(loss * k_sq * np.abs(phi_k) ** 2) / (nx * ny**2)
         assert got == pytest.approx(want, rel=1e-12)
+
+
+def test_qle_rate_is_saved_on_an_interpolated_save_grid(tmp_path):
+    """With save.fields.x / y (a save grid coarser than the simulation grid, PR #388) the quasilinear
+    VDF and gamma_L are saved verbatim and gamma_L enters the k-fields at the save grid's k modes, the
+    simulation-grid modes of the same integer frequency (exact); before, the coarse k axes did not
+    match the full-grid gamma_L and the k-fields could not be built."""
+    from adept._lpse2d.core.qle import load_qle_state
+    from adept._lpse2d.helpers import get_save_quantities, make_field_xarrays
+
+    cfg = _cfg()
+    cfg["save"]["fields"]["x"] = {"dx": "0.08um"}
+    cfg["save"]["fields"]["y"] = {"dy": "0.04um"}
+    cfg = get_save_quantities(cfg)
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    nx_save = cfg["save"]["fields"]["x"]["ax"].size
+    assert nx_save < nx
+    rng = np.random.default_rng(37)
+    gamma = rng.normal(size=(nx, ny))
+    zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+    state = {k: jnp.asarray(v) for k, v in load_qle_state(cfg).items()}
+    state.update(
+        {
+            "gamma_L": jnp.asarray(gamma),
+            "epw": jnp.zeros((nx, ny), dtype=jnp.complex128).view(jnp.float64),
+            "E0": zeros,
+            "E1": zeros,
+        }
+    )
+    saved = cfg["save"]["fields"]["func"](0.0, state, None)
+    np.testing.assert_array_equal(np.asarray(saved["gamma_L"]), gamma)
+    saved = {k: np.asarray(v)[None] for k, v in saved.items()}
+    (tmp_path / "binary").mkdir()
+    kfields, _ = make_field_xarrays(cfg, np.array([0.0]), saved, str(tmp_path))
+    m_save = np.round(np.fft.fftfreq(nx_save) * nx_save).astype(int)
+    want = gamma[m_save % nx][:, [0]]
+    np.testing.assert_array_equal(np.asarray(kfields["gamma_L"].values)[0], np.fft.fftshift(want, axes=(0, 1)))

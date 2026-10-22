@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import pytest
 
@@ -174,3 +174,54 @@ def test_failed_local_execution_is_retrievable_by_status():
         assert executor.status(handle) is ExecutionState.FAILED
 
     assert builder.calls == ["fake"]
+
+
+def test_configuration_may_disable_differentiation_when_not_required():
+    registry, builder = _registry()
+    builder.capabilities = replace(builder.capabilities, differentiable=False)
+    with LocalExecutor(registry=registry, execute_prepared=_direct) as executor:
+        result = executor.execute(RunPlan(SimulationSpec("fake", {"initial": 2})))
+    assert result.raw_result.final_state == 3
+
+
+def test_prepared_configuration_cannot_bypass_a_differentiation_requirement():
+    registry, builder = _registry()
+    builder.capabilities = replace(builder.capabilities, differentiable=False)
+    executed = []
+
+    def record(prepared, key):
+        executed.append(True)
+        return _direct(prepared, key)
+
+    plan = RunPlan(
+        SimulationSpec("fake", {"initial": 2}),
+        resources=ResourceRequirements(features={ExecutionFeature.DIFFERENTIABLE}),
+    )
+    with LocalExecutor(registry=registry, execute_prepared=record) as executor:
+        executor.validate(plan)  # Registry preflight cannot know the selected algorithm.
+        with pytest.raises(CapabilityMismatchError, match="solver is not differentiable"):
+            executor.execute(plan)
+    assert not executed
+
+
+@pytest.mark.parametrize(
+    "change", [{"batchable": True}, {"precision": Precision.X64}, {"execution_kind": ExecutionKind.CONTINUOUS}]
+)
+def test_other_prepared_capability_changes_still_fail(change):
+    registry, builder = _registry()
+    builder.capabilities = replace(builder.capabilities, differentiable=False, **change)
+    with (
+        LocalExecutor(registry=registry, execute_prepared=_direct) as executor,
+        pytest.raises(CapabilityMismatchError, match="differ from its import-light registry declaration"),
+    ):
+        executor.execute(RunPlan(SimulationSpec("fake", {"initial": 2})))
+
+
+def test_preparation_cannot_add_undeclared_differentiability():
+    registry, builder = _registry(differentiable=False)
+    builder.capabilities = replace(builder.capabilities, differentiable=True)
+    with (
+        LocalExecutor(registry=registry, execute_prepared=_direct) as executor,
+        pytest.raises(CapabilityMismatchError, match="differ from its import-light registry declaration"),
+    ):
+        executor.execute(RunPlan(SimulationSpec("fake", {"initial": 2})))

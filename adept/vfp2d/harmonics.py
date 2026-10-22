@@ -66,10 +66,18 @@ class HarmonicLayout:
 
 
 def _spectral_derivative(a: Array, k: Array, axis: int) -> Array:
-    """Periodic spectral derivative, preserving complex-valued harmonics."""
+    """Differentiate each real harmonic component with the same real operator.
+
+    Real and imaginary coefficients encode separate real angular components.
+    On an even grid the unresolved Nyquist derivative is zero for each; a
+    complex FFT multiplier there would instead rotate one component into the
+    other and violate the discrete divergence-of-curl identity for density.
+    """
 
     shape = [1] * a.ndim
     shape[axis] = k.size
+    if k.size % 2 == 0:
+        k = k.at[k.size // 2].set(0.0)
     multiplier = 1j * k.reshape(shape)
     return jnp.fft.ifft(multiplier * jnp.fft.fft(a, axis=axis), axis=axis)
 
@@ -161,6 +169,7 @@ class TzoufrasVlasov:
         dx: float | None = None,
         dy: float | None = None,
         mesh: Mesh | None = None,
+        conserve_electric_work: bool = True,
     ):
         self.layout = layout
         self.v = jnp.asarray(v)
@@ -168,6 +177,13 @@ class TzoufrasVlasov:
         self.kx = jnp.asarray(kx)
         self.ky = jnp.asarray(ky)
         self.streaming_speed = self.v if streaming_speed is None else jnp.asarray(streaming_speed)
+        self.conserve_electric_work = bool(conserve_electric_work)
+        if (
+            self.conserve_electric_work
+            and streaming_speed is not None
+            and not np.array_equal(np.asarray(self.v), np.asarray(self.streaming_speed))
+        ):
+            raise ValueError("electric-work conservation requires nonrelativistic streaming_speed=v")
         self.dx = None if dx is None else float(dx)
         self.dy = None if dy is None else float(dy)
         self.mesh = mesh
@@ -179,6 +195,23 @@ class TzoufrasVlasov:
         right = jnp.zeros_like(f[..., :1])
         padded = jnp.concatenate((left, f, right), axis=-1)
         return (padded[..., 2:] - padded[..., :-2]) / (2.0 * self.dv)
+
+    def spatial_derivative(self, f: Array, axis: int) -> Array:
+        """Differentiate a VFP-grid field along ``x`` (0) or ``y`` (1)."""
+
+        if axis == 0:
+            return (
+                _spectral_derivative(f, self.kx, axis=0)
+                if self.dx is None
+                else periodic_central_derivative(f, self.dx, axis=0, mesh=self.mesh)
+            )
+        if axis == 1:
+            return (
+                _spectral_derivative(f, self.ky, axis=1)
+                if self.dy is None
+                else periodic_central_derivative(f, self.dy, axis=1)
+            )
+        raise ValueError("VFP-2D spatial derivative axis must be 0 (x) or 1 (y)")
 
     def gh(self, f: Array) -> tuple[Array, Array]:
         """Return the radial operators ``G_l`` and ``H_l`` from Eqs. (20)--(22)."""
@@ -200,16 +233,8 @@ class TzoufrasVlasov:
         for an integrable 2.5D density gradient without allocating a z grid.
         """
 
-        dfdx = (
-            _spectral_derivative(f, self.kx, axis=0)
-            if self.dx is None
-            else periodic_central_derivative(f, self.dx, axis=0, mesh=self.mesh)
-        )
-        dfdy = (
-            _spectral_derivative(f, self.ky, axis=1)
-            if self.dy is None
-            else periodic_central_derivative(f, self.dy, axis=1)
-        )
+        dfdx = self.spatial_derivative(f, axis=0)
+        dfdy = self.spatial_derivative(f, axis=1)
         if dfdz is None:
             dfdz = jnp.zeros_like(f)
         transverse_minus = dfdy - 1j * dfdz
@@ -253,7 +278,14 @@ class TzoufrasVlasov:
         return out
 
     def electric(self, f: Array, electric_field: Array) -> Array:
-        """Electric-force contribution, Eqs. (20)--(22)."""
+        """Electric force with optional nonrelativistic discrete work correction.
+
+        The centered H1 derivative has an interior energy-moment defect of
+        ``-(8*pi/3)*dv**2 * integral(v E.f1_cartesian dv)``. Correct that known
+        truncation term in f00 without changing density, other harmonics, or the
+        upper-velocity boundary flux. This is an operator discretization fix;
+        it does not correct measured total energy after a time step.
+        """
 
         g, h = self.gh(f)
         ex = electric_field[..., 0, None]
@@ -294,7 +326,28 @@ class TzoufrasVlasov:
                 value += jnp.real(ey_plus_iez * transverse)
 
             out = out.at[..., target, :].set(value)
+        if self.conserve_electric_work:
+            out += self.electric_work_correction(f, electric_field)
         return out
+
+    def electric_work_correction(self, f: Array, electric_field: Array) -> Array:
+        """Remove only the derived interior H1 work defect, preserving tail flux.
+
+        A density-neutral local f00 basis supplies the correction. Its energy
+        response vanishes for a zero or monoenergetic f00; in that degenerate
+        case no representable correction is applied. Physical runs require a
+        resolved, nonnegative electron distribution with radial energy spread.
+        """
+
+        i10, i11 = self.layout.index(1, 0), self.layout.index(1, 1)
+        if i10 < 0:
+            return jnp.zeros_like(f)
+        contracted_f1 = electric_field[..., 0, None] * jnp.real(f[..., i10, :])
+        if i11 >= 0:
+            transverse_field = (electric_field[..., 1] + 1j * electric_field[..., 2])[..., None]
+            contracted_f1 += 2.0 * jnp.real(transverse_field * f[..., i11, :])
+        correction_energy = (8.0 * jnp.pi / 3.0) * self.dv**3 * jnp.sum(self.v * contracted_f1, axis=-1)
+        return electron_energy_moment_correction(f, self.layout, self.v, self.dv, correction_energy, 1.0)
 
     def magnetic(self, f: Array, magnetic_field: Array) -> Array:
         """Magnetic-rotation contribution, Eqs. (23)--(24)."""
@@ -471,6 +524,38 @@ def scalar_velocity_moment(f: Array, layout: HarmonicLayout, v: Array, dv: float
     f00 = jnp.real(f[..., layout.index(0, 0), :])
     numerator = 4.0 * jnp.pi * jnp.sum(f00 * v ** (power + 2), axis=-1) * dv
     return numerator / jnp.maximum(ne, jnp.finfo(ne.dtype).tiny)
+
+
+def electron_energy_moment_correction(
+    f: Array,
+    layout: HarmonicLayout,
+    v: Array,
+    dv: float,
+    energy_correction: Array,
+    electron_mass: float,
+) -> Array:
+    """Return a density-neutral ``f00`` correction with a prescribed energy."""
+
+    i00 = layout.index(0, 0)
+    f00 = jnp.real(f[..., i00, :])
+    density_weights = f00 * v**2 * dv
+    weight_sum = jnp.sum(density_weights, axis=-1)
+    safe_weight_sum = jnp.where(weight_sum > 0.0, weight_sum, 1.0)
+    mean_square_speed = jnp.sum(density_weights * v**2, axis=-1) / safe_weight_sum
+    centered_speed = v**2 - mean_square_speed[..., None]
+    # Recenter before normalization to suppress cancellation in nearly cold
+    # distributions, where an otherwise tiny density residual is amplified.
+    centered_speed -= (jnp.sum(density_weights * centered_speed, axis=-1) / safe_weight_sum)[..., None]
+    density_neutral_basis = centered_speed * f00
+    response = 2.0 * jnp.pi * electron_mass * jnp.sum(density_neutral_basis * v**4, axis=-1) * dv
+    variance = jnp.sum(density_weights * centered_speed**2, axis=-1)
+    variance_scale = jnp.sum(jnp.abs(density_weights) * v**4, axis=-1)
+    resolution_floor = 64.0 * jnp.finfo(response.dtype).eps * variance_scale
+    resolved = (weight_sum > 0.0) & (variance > resolution_floor)
+    resolved &= jnp.abs(response) > 2.0 * jnp.pi * electron_mass * resolution_floor
+    safe_response = jnp.where(resolved, response, 1.0)
+    amplitude = jnp.where(resolved, energy_correction / safe_response, 0.0)
+    return jnp.zeros_like(f).at[..., i00, :].set(amplitude[..., None] * density_neutral_basis)
 
 
 def vector_velocity_moment(f: Array, layout: HarmonicLayout, v: Array, dv: float, power: int) -> Array:
