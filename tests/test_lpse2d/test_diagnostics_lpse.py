@@ -31,6 +31,10 @@ def _cfg(**save):
     cfg["density"] = {"basis": "uniform", "val": 0.2}
     cfg["grid"].update({"dx": "0.1um", "xmax": "12.8um", "ymax": "3.2um", "ymin": "-3.2um", "dt": "1fs", "tmax": "2fs"})
     cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": False})
+    # the full-grid field save (tpd.yaml's 0.08 um save spacing is finer than this 0.1 um grid, which
+    # the interpolated save refuses since PR #388)
+    cfg["save"]["fields"].pop("x", None)
+    cfg["save"]["fields"].pop("y", None)
     cfg["save"].update(save)
     return _finish(cfg)
 

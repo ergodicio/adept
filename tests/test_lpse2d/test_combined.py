@@ -250,6 +250,10 @@ def test_combined_split_step_runs_with_pump_depletion_iaw_noise_and_reports_tran
     cfg = _cfg(
         density=0.22, pump_depletion=True, periodic=False, noise=True, iaw={"active": True, "solver": "spectral"}
     )
+    # the full-grid field save (tpd.yaml's 0.08 um save spacing is finer than this 0.1 um grid, which
+    # the interpolated save refuses since PR #388)
+    cfg["save"]["fields"].pop("x", None)
+    cfg["save"]["fields"].pop("y", None)
     cfg = get_save_quantities(cfg)
     step = SplitStep(cfg)
     assert step.epw_solver == "combined"
