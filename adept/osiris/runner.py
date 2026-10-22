@@ -123,6 +123,7 @@ def run_osiris(
     extra_mpi_args: list[str] | None = None,
     stream_convert: bool = True,
     stream_poll_s: float = 10.0,
+    stream_workers: int | None = None,
     stage_root: str | Path | None = None,
     stage_discard_h5: bool = False,
 ) -> dict[str, Any]:
@@ -219,6 +220,7 @@ def run_osiris(
                 poll_s=stream_poll_s,
                 persist_dir=run_dir if staging else None,
                 discard_grid_h5=staging and stage_discard_h5,
+                workers=stream_workers,
             )
         except Exception as e:  # never let the converter block the run
             print(f"[stream] disabled (init failed): {e}")

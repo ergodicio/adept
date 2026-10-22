@@ -90,13 +90,13 @@ def test_reuse_config_dict():
     exo = ergoExo()
     exo.setup(cfg)
     assert cfg == original
-    assert exo.execution_backend == "legacy"
-    assert "not yet enabled" in exo.compatibility_fallback_reason
+    assert exo.execution_backend == "prepared"
+    assert exo.compatibility_fallback_reason is None
 
     exo = ergoExo()
     exo.setup(cfg)
     assert cfg == original
-    assert exo.execution_backend == "legacy"
+    assert exo.execution_backend == "prepared"
 
 
 def test_tf1d_forward_run_uses_prepared_compatibility_path(tmp_path):

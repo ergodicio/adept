@@ -115,7 +115,13 @@ def _vector_potential(bx: np.ndarray, by: np.ndarray, dx: float, dy: float) -> n
 
 
 def add_reconnection_diagnostics(ds: xr.Dataset) -> xr.Dataset:
-    """Add topology diagnostics, gated so Biermann rings are not called reconnection."""
+    """Diagnose a centered sheet, gated so Biermann rings are not called reconnection.
+
+    The fixed center is a candidate X-point, not a search for arbitrary nulls.
+    The periodic A_z reconstruction excludes net mean in-plane magnetic flux.
+    """
+
+    from adept.vfp2d.analysis import add_flow_diagnostics
 
     bx = np.asarray(ds.b.sel(component="x"))
     by = np.asarray(ds.b.sel(component="y"))
@@ -209,7 +215,7 @@ def add_reconnection_diagnostics(ds: xr.Dataset) -> xr.Dataset:
         & (sheet_dominance >= 0.25)
     )
     peak_upstream_vn = np.max(upstream_vn, initial=0.0)
-    rate_normalization_valid = reconnection_valid & (upstream_vn >= 0.1 * peak_upstream_vn)
+    rate_normalization_valid = reconnection_valid & (upstream_vn > 0.0) & (upstream_vn >= 0.1 * peak_upstream_vn)
     scale = upstream_bx * upstream_vn
     normalized_rate = np.divide(
         ez_x,
@@ -249,6 +255,7 @@ def add_reconnection_diagnostics(ds: xr.Dataset) -> xr.Dataset:
     result.current_sheet_rms_width.attrs["definition"] = "central-window |j_z|-weighted RMS y width at x=0"
     result.bz_quadrupole_purity.attrs["definition"] = "absolute L1 projection of local Bz onto sign(x*y)"
     for name in (
+        "ohm_bulk",
         "ohm_resistive",
         "ohm_hall",
         "ohm_nernst",
@@ -257,7 +264,7 @@ def add_reconnection_diagnostics(ds: xr.Dataset) -> xr.Dataset:
     ):
         if name in result:
             result[f"xpoint_{name}"] = ("t", np.asarray(result[name].sel(component="z"))[:, ix0, iy0])
-    return result
+    return add_flow_diagnostics(result, ix0=ix0, iy0=iy0, lower_iy=lower_iy, upper_iy=upper_iy)
 
 
 def _write_binary(ds: xr.Dataset, binary_dir: str) -> None:
@@ -349,7 +356,7 @@ def _plot_reconnection_region(
         "v_nernst_y": (ds.v_nernst.sel(component="y"), True),
         "vector_potential": (ds.az, True),
     }
-    ohm_terms = ("ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure")
+    ohm_terms = ("ohm_bulk", "ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure")
     for name in ohm_terms:
         if name in ds:
             fields[f"{name}_z"] = (ds[name].sel(component="z"), True)
@@ -371,7 +378,7 @@ def _plot_xpoint_history(ds: xr.Dataset, path: str) -> None:
     _, _, t = _physical_axes(ds)
     fig, axes = plt.subplots(4, 1, figsize=(8, 12), constrained_layout=True, sharex=True)
     axes[0].plot(t, ds.xpoint_ez, color="black", linewidth=2, label="total E_z")
-    for name in ("ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure"):
+    for name in ("ohm_bulk", "ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure"):
         xpoint_name = f"xpoint_{name}"
         if xpoint_name in ds:
             axes[0].plot(t, ds[xpoint_name], label=name.removeprefix("ohm_").replace("_", " "))
@@ -380,6 +387,9 @@ def _plot_xpoint_history(ds: xr.Dataset, path: str) -> None:
     axes[0].grid(alpha=0.3)
 
     axes[1].plot(t, ds.normalized_reconnection_rate, label="E_z/(B_up v_N,in)")
+    if "normalized_reconnection_rate_alfven" in ds:
+        axes[1].plot(t, ds.normalized_reconnection_rate_alfven, label="E_z / mean(B_up v_A)")
+        axes[1].plot(t, ds.normalized_reconnection_rate_bulk, label="E_z / mean(B_up u_i,in)")
     axes[1].plot(t, ds.reconnected_flux, label="reconnected flux")
     axes[1].set_ylabel("reconnection diagnostics")
     axes[1].legend()
@@ -389,6 +399,9 @@ def _plot_xpoint_history(ds: xr.Dataset, path: str) -> None:
     axes[2].plot(t, ds.current_sheet_rms_width * length_um, label="current-sheet RMS width")
     axes[2].plot(t, ds.upstream_bx, label="upstream |B_x|")
     axes[2].plot(t, ds.upstream_v_nernst_y, label="inflow |v_N,y|")
+    if "upstream_ion_inflow_y" in ds:
+        axes[2].plot(t, ds.upstream_ion_inflow_y, label="ion inflow u_i,y")
+        axes[2].plot(t, ds.centerline_ion_outflow_speed, label="peak ion outflow u_i,x")
     axes[2].set_ylabel("width [μm] / normalized amplitude")
     axes[2].legend()
     axes[2].grid(alpha=0.3)
@@ -420,7 +433,14 @@ def _plot_ohm_lineouts(ds: xr.Dataset, path: str, n_panels: int) -> None:
     fig, axes = plt.subplots(indices.size, 1, figsize=(8, 2.8 * indices.size), constrained_layout=True, squeeze=False)
     for ax, index in zip(axes[:, 0], indices, strict=True):
         ax.plot(y, ds.e.isel(t=index, x=ix0).sel(component="z"), color="black", linewidth=2, label="total E_z")
-        for name in ("ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure"):
+        for name in (
+            "ohm_bulk",
+            "ohm_resistive",
+            "ohm_hall",
+            "ohm_nernst",
+            "ohm_scalar_pressure",
+            "ohm_tensor_pressure",
+        ):
             if name in ds:
                 ax.plot(
                     y,
@@ -436,14 +456,15 @@ def _plot_ohm_lineouts(ds: xr.Dataset, path: str, n_panels: int) -> None:
     plt.close(fig)
 
 
-def _plot_topology(ds: xr.Dataset, path: str) -> None:
+def _plot_topology(ds: xr.Dataset, path: str, *, velocity_name: str = "v_nernst") -> None:
     x, y, t = _physical_axes(ds)
-    rate_valid_indices = np.flatnonzero(np.asarray(ds.rate_normalization_valid))
+    validity = "alfven_rate_normalization_valid" if velocity_name == "ion_velocity" else "rate_normalization_valid"
+    rate_valid_indices = np.flatnonzero(np.asarray(ds[validity]))
     index = int(rate_valid_indices[-1]) if rate_valid_indices.size else ds.sizes["t"] - 1
     bmag = np.sqrt(np.asarray((ds.b.isel(t=index) ** 2).sum("component")))
     az = np.asarray(ds.az.isel(t=index))
-    vx = np.asarray(ds.v_nernst.isel(t=index).sel(component="x"))
-    vy = np.asarray(ds.v_nernst.isel(t=index).sel(component="y"))
+    vx = np.asarray(ds[velocity_name].isel(t=index).sel(component="x"))
+    vy = np.asarray(ds[velocity_name].isel(t=index).sel(component="y"))
     central_half_width = 3.0 * max(abs(float(y[0])), abs(float(y[-1])))
     central_x_indices = np.flatnonzero(np.abs(x) <= central_half_width)
     fig, ax = plt.subplots(figsize=(8, 6), constrained_layout=True)
@@ -465,10 +486,11 @@ def _plot_topology(ds: xr.Dataset, path: str) -> None:
         scale=22.0,
         width=0.0025,
     )
-    ax.set_title(f"|B|, A_z contours, and Nernst velocity at t={t[index]:.3g} ps")
+    velocity_label = "ion velocity" if velocity_name == "ion_velocity" else "Nernst velocity"
+    ax.set_title(f"|B|, A_z contours, and {velocity_label} at t={t[index]:.3g} ps")
     ax.set_xlabel("x [μm]")
     ax.set_ylabel("y [μm]")
-    ax.set_xlim(-central_half_width, central_half_width)
+    ax.set_xlim(max(float(x[0]), -central_half_width), min(float(x[-1]), central_half_width))
     ax.set_aspect("equal")
     fig.colorbar(image, ax=ax, label="|B| [norm.]")
     fig.savefig(path, dpi=160, bbox_inches="tight")
@@ -491,6 +513,43 @@ def _plot_sheet_lineouts(ds: xr.Dataset, path: str, n_panels: int) -> None:
         ax.set_xlabel("y [μm]")
         ax.set_ylabel("B_x", color="tab:blue")
         twin.set_ylabel("j_z", color="tab:red")
+        ax.grid(alpha=0.3)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _plot_flow_history(ds: xr.Dataset, path: str) -> None:
+    """Keep physical velocity, pressures and dimensionless rates on separate axes."""
+    _, _, time = _physical_axes(ds)
+    velocity_unit = float(ds.attrs.get("velocity_unit_m_s", np.nan))
+    velocity_scale = velocity_unit / 1e3 if np.isfinite(velocity_unit) else 1.0
+    velocity_label = "speed [km/s]" if np.isfinite(velocity_unit) else "speed [normalized]"
+    fig, axes = plt.subplots(4, 1, figsize=(8, 12), constrained_layout=True, sharex=True)
+    for name, label in (
+        ("upstream_ion_inflow_y", "signed ion inflow"),
+        ("upstream_alfven_speed", "upstream Alfvén"),
+        ("centerline_ion_outflow_speed", "peak ion outflow"),
+        ("upstream_v_nernst_y", "Nernst inflow"),
+    ):
+        axes[0].plot(time, ds[name] * velocity_scale, label=label)
+    axes[0].set_ylabel(velocity_label)
+    for name, label in (("upstream_dynamic_beta", "ram / magnetic"), ("upstream_thermal_beta", "thermal / magnetic")):
+        if name in ds:
+            axes[1].plot(time, ds[name], label=label)
+    axes[1].set_ylabel("pressure ratio")
+    for name, label in (
+        ("normalized_reconnection_rate_bulk", "bulk-normalized E_z"),
+        ("normalized_reconnection_rate_alfven", "Alfvén-normalized E_z"),
+        ("normalized_reconnection_rate", "Nernst-normalized E_z"),
+    ):
+        axes[2].plot(time, ds[name], label=label)
+    axes[2].set_ylabel("signed gated rate")
+    axes[3].plot(time, ds.upstream_electric_flux_inflow, label="total electric flux inflow")
+    axes[3].plot(time, ds.upstream_bulk_flux_inflow, label="bulk-ion flux inflow")
+    axes[3].set_ylabel("flux/time [normalized]")
+    axes[3].set_xlabel("t [ps]")
+    for ax in axes:
+        ax.legend(fontsize=8)
         ax.grid(alpha=0.3)
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -546,7 +605,7 @@ def save_artifacts(ds: xr.Dataset, td: str, *, n_panels: int = 9) -> None:
         title="reconnection-region B_z quadrupole",
         xlim=reconnection_xlim,
     )
-    for name in ("ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure"):
+    for name in ("ohm_bulk", "ohm_resistive", "ohm_hall", "ohm_nernst", "ohm_scalar_pressure", "ohm_tensor_pressure"):
         if name in ds:
             save_xy_facet(
                 ds[name].sel(component="z"),
@@ -559,6 +618,9 @@ def save_artifacts(ds: xr.Dataset, td: str, *, n_panels: int = 9) -> None:
     _plot_ohm_lineouts(ds, os.path.join(reconnection_dir, "ohm_z_lineouts_x0.png"), n_panels)
     _plot_sheet_lineouts(ds, os.path.join(reconnection_dir, "bx_jz_sheet_lineouts_x0.png"), n_panels)
     _plot_topology(ds, os.path.join(reconnection_dir, "topology_nernst_final.png"))
+    if "ion_velocity" in ds:
+        _plot_flow_history(ds, os.path.join(reconnection_dir, "flow_history.png"))
+        _plot_topology(ds, os.path.join(reconnection_dir, "topology_ion_final.png"), velocity_name="ion_velocity")
 
 
 def reconnection_metrics(ds: xr.Dataset) -> dict[str, float]:
@@ -570,7 +632,7 @@ def reconnection_metrics(ds: xr.Dataset) -> dict[str, float]:
     finite_flux = flux[np.isfinite(flux)]
     final_valid = bool(ds.reconnection_valid[-1])
     final_rate_valid = bool(ds.rate_normalization_valid[-1])
-    return {
+    metrics = {
         "vfp2d_peak_abs_b": float(np.max(np.abs(ds.b))),
         "vfp2d_peak_temperature": float(np.max(ds.temperature)),
         "vfp2d_peak_abs_reconnection_rate": float(np.max(np.abs(finite_rate))) if finite_rate.size else 0.0,
@@ -586,3 +648,26 @@ def reconnection_metrics(ds: xr.Dataset) -> dict[str, float]:
         "vfp2d_final_bz_quadrupole_purity": float(ds.bz_quadrupole_purity[-1]),
         "vfp2d_peak_abs_reconnected_flux": float(np.max(np.abs(finite_flux))) if finite_flux.size else 0.0,
     }
+
+    for normalization in ("bulk", "alfven"):
+        variable = f"normalized_reconnection_rate_{normalization}"
+        if variable not in ds:
+            continue
+        values = np.asarray(ds[variable])
+        finite = values[np.isfinite(values)]
+        metrics[f"vfp2d_{normalization}_rate_valid_fraction"] = float(
+            np.mean(ds[f"{normalization}_rate_normalization_valid"])
+        )
+        if finite.size:
+            metrics[f"vfp2d_peak_abs_{normalization}_reconnection_rate"] = float(np.max(np.abs(finite)))
+        if np.isfinite(values[-1]):
+            metrics[f"vfp2d_final_{normalization}_reconnection_rate"] = float(values[-1])
+    for name in (
+        "upstream_ion_inflow_y",
+        "centerline_ion_outflow_speed",
+        "upstream_dynamic_beta",
+        "upstream_thermal_beta",
+    ):
+        if name in ds and np.isfinite(ds[name][-1]):
+            metrics[f"vfp2d_final_{name}"] = float(ds[name][-1])
+    return metrics

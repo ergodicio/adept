@@ -19,6 +19,7 @@ at the top of a configuration file selects which one runs.
 | `pic-1d` | [PIC-1D](solvers/pic1d/overview.md) | 1D1V electrostatic particle-in-cell |
 | `tf-1d` | [Two-Fluid 1D](solvers/tf1d/overview.md) | 1D warm two-fluid Poisson with kinetic closures |
 | `osiris` | [OSIRIS wrapper](solvers/osiris/overview.md) | Runs the external OSIRIS PIC code from a native input deck, with MLflow logging and post-processing |
+| `warpx` | [WarpX wrapper](solvers/warpx/config.md) | Runs the external WarpX PIC code from a native (SI, ParmParse) inputs file, with MLflow logging |
 
 ## Kinetic Solvers
 
@@ -129,3 +130,12 @@ logging. Requires a separately built OSIRIS binary.
 
 - [Usage Overview](solvers/osiris/overview.md)
 - [Configuration Reference](solvers/osiris/config.md)
+
+### [WarpX](solvers/warpx/config.md)
+
+Wrapper that runs the external [WarpX](https://warpx.readthedocs.io/) PIC code under the `ergoExo`
+lifecycle, mirroring the OSIRIS wrapper module-for-module but WarpX-native throughout: the SI
+ParmParse inputs file is the source of truth, and the manifest supplies the reference density that
+fixes the normalization. Requires a separately built WarpX executable.
+
+- [Configuration Reference](solvers/warpx/config.md)

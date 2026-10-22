@@ -101,6 +101,8 @@ The HPE particle tracker supplies self-consistent Landau-damping feedback and ho
 
 When IAWs are active, `fields.xr` and `k-fields.xr` also contain `iaw_density` and `iaw_velocity_divergence`; `series.xr` includes `iaw_density_sq` and `iaw_density_abs_max`.
 
+The plasma-wave entries are built from the solver state, the k-space potential `phi_k` (numpy FFT convention). In a full-grid save (no `save.fields.x` / `y`), `k-fields.xr` holds `phi = phi_k`, `ex = -1j * kx * phi_k` and `ey = -1j * ky * phi_k` (fftshifted), and `fields.xr` holds their `ifft2`, so its `ex`, `ey` are $-\partial_x \phi$, $-\partial_y \phi$ of its `phi`, the same field the solver evolves and that the `series.xr` quantities `e_sq` and `epw_energy` integrate. An interpolated save does not satisfy these identities: its `fields.xr` `phi`, `ex`, `ey` are the full-grid fields interpolated to the save points, and its `k-fields.xr` is their DFT on the save grid scaled by `(nx * ny) / (nx_save * ny_save)`, so neither the `ifft2` of its `k-fields.xr` nor a derivative of its coarse `phi` reproduces its `fields.xr` (see [`save.fields`](config.md#fields)). Field saves written before this was fixed (October 2026) carry an extra factor `4 / (nx * ny)` on `fields.xr` `ex` and `ey` only.
+
 **`plots/`**, per field `k`:
 
 | File | Contents |

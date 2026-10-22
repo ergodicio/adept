@@ -201,8 +201,8 @@ save:
 | Field | Type | Description |
 |-------|------|-------------|
 | `t` | object | Temporal save configuration |
-| `x` | object | Optional spatial subsampling in x |
-| `y` | object | Optional spatial subsampling in y |
+| `x` | object | Optional interpolated (coarser) save grid in x; requires `y` |
+| `y` | object | Optional interpolated (coarser) save grid in y; requires `x` |
 
 #### t (temporal)
 
@@ -216,13 +216,29 @@ save:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dx` | string | Spatial resolution for saved data, with unit |
+| `dx` | string | Target spacing of the saved field grid in x, with unit; must not be finer than `grid.dx` |
 
 #### y (optional)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dy` | string | Spatial resolution for saved data, with unit |
+| `dy` | string | Target spacing of the saved field grid in y, with unit; must not be finer than the grid's `dy` (= `grid.dx`) |
+
+Without `x`/`y`, `fields.xr` and `k-fields.xr` are saved on the full simulation grid. With them, the
+fields are saved on a coarser grid:
+
+- The save grid has `n_save = round(L / dx)` cell-centred points per axis (`L` is the box length,
+  `xmax - xmin` or `ymax - ymin`), so the actual spacing is `L / n_save` (printed at setup). A spacing that
+  would give more points than the simulation grid raises a `ValueError` at setup. In a quasi-1D box
+  (`ny = 1`) the y save grid is the single row.
+- Every field is linearly interpolated onto the save grid in real space: the EPW potential and its fields
+  `phi`, `ex`, `ey` are computed on the full grid (spectrally, as the solver does) and then interpolated, as
+  are `e0_*`, `e1_*` and the IAW fields. This is point sampling, not a filtered downsample: content above
+  the save grid's Nyquist wavenumber `pi / (L / n_save)` aliases.
+- The saved x-space values are the full-grid save's values linearly interpolated to the save points.
+- `k-fields.xr` is the DFT on the save grid, on its own k axes (`n_save` points, the same spacing `2 pi / L` as the
+  full grid), scaled by `(nx * ny) / (nx_save * ny_save)` so that a resolved mode has the same coefficient as in
+  the full-grid save (its phase is referenced to the first save point instead of the first grid point).
 
 ## mlflow
 

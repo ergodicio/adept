@@ -343,6 +343,9 @@ class ergoExo:
         elif cfg["solver"] == "osiris":
             from adept.osiris import BaseOsiris as this_module
 
+        elif cfg["solver"] == "warpx":
+            from adept.warpx import BaseWarpX as this_module
+
         elif cfg["solver"] == "hermite-legendre-1d":
             from adept.hermite_legendre_1d import BaseHermiteLegendre1D as this_module
 
