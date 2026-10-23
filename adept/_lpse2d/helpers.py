@@ -2220,6 +2220,14 @@ def get_save_quantities(cfg: dict) -> dict:
 
     if "x" in cfg["save"]["fields"]:
         interpolate = _interpolated_field_save(cfg)
+        n_save_x = cfg["save"]["fields"]["x"]["ax"].size
+        if cfg["save"]["fields"].get("poynting", False) and n_save_x < 2:
+            # the flux maps differentiate along x on the save grid; refuse here rather than after the solve
+            raise ValueError(
+                f"save.fields.poynting needs at least two saved x points, but save.fields.x.dx = "
+                f"{cfg['save']['fields']['x']['dx']:.4g} um gives {n_save_x}: use a smaller save.fields.x.dx, "
+                "or drop save.fields.x / y to save the full grid"
+            )
 
         def save_func(t, y, args):
             # the combined solver's E1 is saved as its transverse (Raman-light) part, as in the

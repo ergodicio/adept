@@ -194,14 +194,21 @@ def hpe_wall_power(series, cfg: dict, window: tuple[float, float]) -> dict[tuple
 
 def compare_hpe_flux(series, cfg: dict, flux_path: str | Path, window: tuple[float, float]) -> dict[str, float]:
     """adept / LPSE wall-flux ratios per ``(wall, bin)`` as ``hpe_flux_ratio_<wall>_bin<i>``,
-    with the two absolute values alongside (``compare_m5.py``)."""
-    _, flux = read_flux(flux_path)
+    with the two absolute values alongside (``compare_m5.py``). Both sides cover the same interval
+    ``lo < t <= hi`` (ps): adept's slope fit and the mean of LPSE's flux samples in it."""
+    t_lpse, flux = read_flux(flux_path)
+    lo, hi = window
+    in_window = (t_lpse > lo) & (t_lpse <= hi)
+    if not np.any(in_window):
+        raise ValueError(
+            f"no LPSE flux samples in the window ({lo}, {hi}] ps; {flux_path} spans {t_lpse[0]}-{t_lpse[-1]} ps"
+        )
     adept_power = hpe_wall_power(series, cfg, window)
     out = {}
     for (wall, i), power in adept_power.items():
         if i >= flux.shape[1]:
             continue
-        lpse = float(np.mean(flux[:, i, LPSE_FLUX_FACE[ADEPT_WALL_FACE[wall]]]))
+        lpse = float(np.mean(flux[in_window, i, LPSE_FLUX_FACE[ADEPT_WALL_FACE[wall]]]))
         out[f"hpe_flux_adept_{wall}_bin{i}"] = power
         out[f"hpe_flux_lpse_{wall}_bin{i}"] = lpse
         if lpse:
