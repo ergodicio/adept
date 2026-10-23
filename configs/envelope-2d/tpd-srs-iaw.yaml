@@ -63,6 +63,10 @@ terms:
       landau: true
     density_gradient: true
     linear: true
+    # TPD and SRS together need LPSE's combined formulation (the separate envelope equations
+    # are not valid for both at once; plan 2 N.4): one wp0-enveloped field carries the EPW
+    # and the Raman light, with the spectral light propagator
+    solver: combined
     source:
       noise: true
       noise_seed: 42
@@ -85,6 +89,7 @@ terms:
     t_start: 0ps
   light:
     pump_depletion: true
+    solver: spectral
   zero_mask: true
 units:
   atomic number: 40

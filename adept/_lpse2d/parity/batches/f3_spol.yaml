@@ -1,0 +1,10 @@
+# Plan 2 F.3 / M8 -- test_006 (static pump, spectral Raman light, noise-seeded SRS) with the pump
+# s-polarised (LPSE laser.1.polarization = 90): the Raman field must be pure E_z and the growth
+# rate is compared with the p-polarised reference and its seed spread. The LPSE s-pol reference
+# run (blackbox binaries) is a separate step.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: F.3}
+jobs:
+  - {deck: test_006, run: test_006/f3-spol/1, overrides: {drivers: {E0: {polarization: 90.0}}}, tags: {variable: polarization}}
+  - {deck: test_006, run: test_006/f3-ppol-seed/2, overrides: {terms: {epw: {source: {noise_seed: 2}}}}, tags: {variable: seed}}
