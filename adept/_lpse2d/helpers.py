@@ -2533,6 +2533,8 @@ def get_default_save_func(cfg):
         )
         hpe_window_sqrt = jnp.asarray(np.sqrt(hpe_window_w))[:, :, None]
         hpe_k_mag = jnp.asarray(np.sqrt(np.asarray(kx)[:, None] ** 2 + np.asarray(ky)[None, :] ** 2))
+        hpe_zero_mask = jnp.asarray(zero_mask)
+        hpe_collision_factor = float(np.exp(-derived.get("nu_coll", 0.0) * dt)) if not combined_epw else 1.0
     if hpe_on:
         from adept._lpse2d.core.hpe import resonance_arrays
 
@@ -2678,19 +2680,19 @@ def get_default_save_func(cfg):
         # actually handed to electrons -- and the budget sink -- carries the local
         # total-to-electric factor energy_total_factor = 2*(2 - n/n_env)
         if n_windows_hpe > 1:
-            # windowed rates (SpectralEPWSolver.windowed_landau_damping): each window's loss
-            # rate on its share sqrt(w_j) psi of the energy field psi = |k| phi
-            chunks = jnp.fft.fft2(hpe_window_sqrt * jnp.fft.ifft2(hpe_k_mag * phi_k)[None], axes=(1, 2))
-            gamma_w = y["gamma_L_windows"] + nu_coll_arr
-            loss_w = (1.0 - jnp.exp(-2.0 * gamma_w * dt)) / dt
-
-            def window_density(weight):
-                return jnp.sum(jnp.abs(jnp.fft.ifft2(weight * chunks, axes=(1, 2))) ** 2, axis=0)
-
-            loss_density = window_density(jnp.sqrt(jnp.maximum(loss_w, 0.0)))
-            if signed_loss:
-                # terms.hpe.allow_growth: each window's gain modes enter with a minus sign (as below)
-                loss_density = loss_density - window_density(jnp.sqrt(jnp.maximum(-loss_w, 0.0)))
+            # the energy the windowed damping step removes (SpectralEPWSolver.windowed_landau_damping,
+            # then the collisions), from the energy field psi = |k| phi before and after it: the damped
+            # windows are recombined as fields before their energy counts, which the sum of per-window
+            # losses would miss (PR #387 review). Signed with negative (growth) rates
+            psi_x = jnp.fft.ifft2(hpe_k_mag * phi_k)
+            chunks = jnp.fft.fft2(hpe_window_sqrt * psi_x[None], axes=(1, 2))
+            recombined = jnp.sum(
+                hpe_window_sqrt * jnp.fft.ifft2(chunks * jnp.exp(-y["gamma_L_windows"] * dt), axes=(1, 2)), axis=0
+            )
+            # as the solver: the recombined field's k = 0 part has no phi (it is dropped), and the
+            # collisions damp the whole field after the windows
+            psi_after = jnp.fft.ifft2(jnp.fft.fft2(recombined) * hpe_zero_mask) * hpe_collision_factor
+            loss_density = (jnp.abs(psi_x) ** 2 - jnp.abs(psi_after) ** 2) / dt
         else:
             if dynamic_rate:
                 # the applied rate is dynamic (HPE or QLE): read it from the state

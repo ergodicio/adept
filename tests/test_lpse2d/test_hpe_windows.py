@@ -360,31 +360,47 @@ def test_hist_save_interval_thins_only_the_histograms():
         close(thin[k].values, every[k].values, k)
 
 
-def test_windowed_dissipation_is_signed_with_allow_growth():
-    """terms.hpe.allow_growth with n_windows > 1: epw_dissipation from the windowed rates is the signed
-    sum prefactor * factor * sum_j sum_k L_jk |chunk_jk|^2 / (nx ny^2), chunk_j = fft2(sqrt(w_j) psi),
-    psi = ifft2(|k| phi_k), L = (1 - exp(-2 rate dt)) / dt (Parseval; uniform box, constant
-    total-to-electric factor). Before the fix sqrt(L < 0) made it NaN (PR #387 review). With
-    non-negative rates the series is bitwise the same with and without allow_growth. rtol 1e-12,
-    fixed in advance."""
+def test_windowed_dissipation_is_the_energy_the_damping_step_removes():
+    """n_windows > 1: epw_dissipation is the energy SpectralEPWSolver.windowed_landau_damping (then the
+    collisions) removes, prefactor * factor * (W(phi) - W(phi')) / (dt nx ny^2) with W = sum_k k^2
+    |phi_k|^2 (Parseval; uniform box, constant total-to-electric factor) -- including the loss of
+    recombining the damped overlapping windows, which a sum of per-window losses misses (PR #387
+    review): for unequal k-independent positive rates per window the two differ. Signed with negative
+    rates (terms.hpe.allow_growth); non-negative rates give the same series bitwise with and without
+    allow_growth. rtol 1e-12, fixed in advance."""
+    from adept._lpse2d.core.epw import SpectralEPWSolver
     from adept._lpse2d.core.hpe import load_particles, window_matrix
     from adept._lpse2d.helpers import get_default_save_func, get_save_quantities
 
-    def dissipation(allow_growth, signed_rates):
+    def dissipation(allow_growth, gamma_of):
         cfg = get_save_quantities(_make_cfg({"n_windows": 3, "allow_growth": allow_growth}))
         nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
         phi_k = 1e-3 * _random_phi(cfg, 5)
         state = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
-        rate = np.random.default_rng(7).normal(size=state["gamma_L_windows"].shape) * 50.0
-        gamma = rate if signed_rates else np.abs(rate)
+        gamma = gamma_of(state["gamma_L_windows"].shape)
         zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
         state.update({"gamma_L_windows": jnp.asarray(gamma), "epw": phi_k.view(jnp.float64), "E0": zeros, "E1": zeros})
         out = get_default_save_func(cfg)["func"](0.0, state, None)
-        return cfg, np.asarray(phi_k), gamma, float(out["epw_dissipation"])
+        return cfg, phi_k, gamma, float(out["epw_dissipation"])
 
-    cfg, phi_k, gamma, got = dissipation(True, True)
-    assert np.isfinite(got)
-    d, grid = cfg["units"]["derived"], cfg["grid"]
+    def expected(cfg, phi_k, gamma):
+        d, grid = cfg["units"]["derived"], cfg["grid"]
+        nx, ny, dt = grid["nx"], grid["ny"], grid["dt"]
+        k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
+        damped = SpectralEPWSolver(cfg).windowed_landau_damping(phi_k, jnp.asarray(gamma))
+        damped = np.asarray(damped) * np.exp(-d.get("nu_coll", 0.0) * dt)
+        removed = np.sum(k_sq * np.abs(np.asarray(phi_k)) ** 2) - np.sum(k_sq * np.abs(damped) ** 2)
+        factor = 2.0 * (2.0 - np.asarray(grid["background_density"]) / cfg["units"]["envelope density"])
+        assert np.ptp(factor) == 0.0
+        prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
+        return prefactor * float(factor.flat[0]) * removed / (dt * nx * ny**2), prefactor * float(factor.flat[0])
+
+    # unequal k-independent positive rates per overlapping window
+    rates = np.array([5.0, 40.0, 120.0])
+    cfg, phi_k, gamma, got = dissipation(False, lambda shape: np.broadcast_to(rates.reshape(3, 1, 1), shape).copy())
+    want, scale = expected(cfg, phi_k, gamma)
+    assert got == pytest.approx(want, rel=1e-12)
+    grid, d = cfg["grid"], cfg["units"]["derived"]
     nx, ny, dt = grid["nx"], grid["ny"], grid["dt"]
     k_sq = np.asarray(grid["kx"])[:, None] ** 2 + np.asarray(grid["ky"])[None, :] ** 2
     w = window_matrix(
@@ -394,15 +410,23 @@ def test_windowed_dissipation_is_signed_with_allow_growth():
         3,
         cfg["terms"]["epw"]["boundary"]["x"] == "periodic",
     )
-    chunks = np.fft.fft2(np.sqrt(w)[:, :, None] * np.fft.ifft2(np.sqrt(k_sq) * phi_k)[None], axes=(1, 2))
+    chunks = np.fft.fft2(np.sqrt(w)[:, :, None] * np.fft.ifft2(np.sqrt(k_sq) * np.asarray(phi_k))[None], axes=(1, 2))
     loss = (1.0 - np.exp(-2.0 * (gamma + d.get("nu_coll", 0.0) * (k_sq > 0)) * dt)) / dt
-    weighted = loss * np.abs(chunks) ** 2
-    assert np.sum(weighted * (loss < 0)) < 0.0  # the gain modes contribute
-    factor = 2.0 * (2.0 - np.asarray(grid["background_density"]) / cfg["units"]["envelope density"])
-    assert np.ptp(factor) == 0.0
-    prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
-    assert got == pytest.approx(prefactor * float(factor.flat[0]) * np.sum(weighted) / (nx * ny**2), rel=1e-12)
-    assert dissipation(True, False)[3] == dissipation(False, False)[3]
+    per_window = scale * np.sum(loss * np.abs(chunks) ** 2) / (nx * ny**2)
+    # in energy removed (the total-to-electric factor in `scale` is negative on this box): the true loss
+    # exceeds the per-window sum by the recombination loss
+    assert want / scale > (per_window / scale) * (1.0 + 1e-6)
+
+    # mixed-sign rates (growth), and the allow_growth switch leaves non-negative rates bitwise alone
+    def signed(shape):
+        return np.random.default_rng(7).normal(size=shape) * 50.0
+
+    def positive(shape):
+        return np.abs(signed(shape))
+
+    cfg, phi_k, gamma, got = dissipation(True, signed)
+    assert np.isfinite(got) and got == pytest.approx(expected(cfg, phi_k, gamma)[0], rel=1e-12)
+    assert dissipation(True, positive)[3] == dissipation(False, positive)[3]
 
 
 @pytest.mark.parametrize("two_d", [False, True])
