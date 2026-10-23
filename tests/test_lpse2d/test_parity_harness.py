@@ -357,3 +357,56 @@ def test_batch_files_keep_every_window_and_refuse_unknown_keys(tmp_path):
         load_jobs(spec)
     spec.write_text('jobs:\n  - {deck: test_006, run: test_006/x/1, windows: "2.5-3.5,3.0-4.0"}\n')
     assert load_jobs(spec)[0]["windows"] == "2.5-3.5,3.0-4.0"
+
+
+def test_hpe_flux_compares_the_same_time_window(tmp_path):
+    """compare_hpe_flux averages LPSE's wall flux over the same lo < t <= hi as adept's slope fit
+    (PR #378 review): a reference whose -x bin-0 flux is 1 inside the window and 100 outside gives
+    exactly 1, and an empty window is refused. Before, the whole run was averaged."""
+    from adept._lpse2d.parity.harness import TIME_KEY, compare_hpe_flux
+
+    t = np.round(np.arange(0.0, 0.5001, 0.05), 10)
+    inside = (t > 0.12) & (t <= 0.30)
+    rows = []
+    for ti, w in zip(t, inside, strict=True):
+        faces = np.zeros((1, 6))
+        faces[0, 1] = 1.0 if w else 100.0  # -x, i.e. adept's left wall
+        rows.append(" ".join(str(v) for v in [ti, 1, *faces.ravel()]))
+    path = tmp_path / "lpse.flux"
+    path.write_text("# t n_metric flux...\n" + "\n".join(rows) + "\n")
+    cfg = {
+        "units": {"laser_wavelength": "0.351um"},
+        "density": {"max": 0.2},
+        "grid": {"xmax": "10um", "ymax": "2um"},
+        "terms": {"hpe": {"flux_bins": [0.0, 1.0e9]}},
+    }
+    series = {TIME_KEY: t, "hpe_wall_energy_left_bin0": 2.0e-3 * t}
+    out = compare_hpe_flux(series, cfg, path, (0.12, 0.30))
+    assert out["hpe_flux_lpse_left_bin0"] == 1.0
+    assert out["hpe_flux_ratio_left_bin0"] == pytest.approx(out["hpe_flux_adept_left_bin0"], rel=1e-12)
+    with pytest.raises(ValueError, match="no LPSE flux samples"):
+        compare_hpe_flux(series, cfg, path, (0.31, 0.32))
+
+
+def test_verify_fails_when_a_recomputed_metric_is_non_finite(monkeypatch, tmp_path):
+    """cmd_verify exits nonzero when a finite stored metric recomputes as NaN, even with every other
+    metric matching (PR #378 review; a NaN relative difference used to leave the running maximum
+    finite and print PASS)."""
+    from types import SimpleNamespace
+
+    import adept.patched_mlflow
+    from adept._lpse2d.parity import __main__ as cli
+
+    stored = {"iaw_max_adept": 0.3, "epw_energy_growth_0.3-0.9": 4.0}
+    run = SimpleNamespace(data=SimpleNamespace(tags={}, metrics=stored), info=SimpleNamespace(run_name="test_x"))
+    monkeypatch.setattr(
+        adept.patched_mlflow, "MlflowClient", lambda: SimpleNamespace(get_run=lambda _id: run), raising=False
+    )
+    monkeypatch.setattr(cli.reference, "download_run_artifacts", lambda *a, **k: None)
+    args = SimpleNamespace(run_id="r1", dest=str(tmp_path), windows="0.3-0.9", rtol=1e-9)
+    monkeypatch.setattr(
+        cli.harness, "compare", lambda *a, **k: {"iaw_max_adept": float("nan"), "epw_energy_growth_0.3-0.9": 4.0}
+    )
+    assert cli.cmd_verify(args) == 1
+    monkeypatch.setattr(cli.harness, "compare", lambda *a, **k: dict(stored))
+    assert cli.cmd_verify(args) == 0

@@ -125,24 +125,39 @@ def cmd_verify(args) -> int:
     computed = harness.compare(
         dest / "binary" / "series.xr", dest / "lpse_reference" / "lpse.metrics", _windows_for(deck, args.windows)
     )
+    return _verify_report(stored, computed, args.rtol, f"{deck} ({args.run_id})")
+
+
+def _verify_report(stored: dict, computed: dict, rtol: float, label: str) -> int:
+    """Print the stored-vs-recomputed comparison; 0 if every stored metric is recomputed, finite on
+    both sides and within ``rtol``, else 1. Failures are counted per metric, so a non-finite value
+    (whose relative difference is NaN) cannot hide behind a finite running maximum."""
     worst = 0.0
-    missing = []
+    missing, failed = [], []
     for k, v in sorted(stored.items()):
         if k not in computed:
             missing.append(k)
             continue
         c = computed[k]
+        if not (np.isfinite(v) and np.isfinite(c)):
+            failed.append(k)
+            print(f"  {k}: stored {v:.10g}  recomputed {c:.10g}   <-- NON-FINITE")
+            continue
         err = abs(c - v) / max(abs(v), 1e-300)
         worst = max(worst, err)
-        flag = "" if err <= args.rtol else "   <-- MISMATCH"
+        if err > rtol:
+            failed.append(k)
+        flag = "" if err <= rtol else "   <-- MISMATCH"
         print(f"  {k}: stored {v:.10g}  recomputed {c:.10g}  rel {err:.2e}{flag}")
     extra = sorted(set(computed) - set(stored))
-    print(f"{deck} ({args.run_id}): {len(stored)} stored metrics, worst relative difference {worst:.2e}")
+    print(f"{label}: {len(stored)} stored metrics, worst finite relative difference {worst:.2e}")
     if missing:
         print("stored but not recomputed:", missing)
+    if failed:
+        print("failed:", failed)
     if extra:
         print("recomputed but not stored:", extra)
-    ok = worst <= args.rtol and not missing
+    ok = not missing and not failed
     print("PASS" if ok else "FAIL")
     return 0 if ok else 1
 
