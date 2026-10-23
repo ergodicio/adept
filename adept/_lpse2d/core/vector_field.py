@@ -173,6 +173,10 @@ class SplitStep:
         y["iaw_density_old"] = old
         return y, (old, y["iaw_density"], m / n, (m + 1) / n)
 
+    def prescribed_pump(self, t, y, pump_args):
+        """The prescribed (undepleted) pump ``E0`` at time ``t``."""
+        return self.get_envelope_coefficient(pump_args, t) * self.light.laser_update(t, y, pump_args)
+
     def light_split_step(self, t, y, driver_args, phi_k=None, iaw_density=None):
         """The light over the EPW step. ``phi_k`` / ``iaw_density``: the EPW potential and ion
         density as arrays or ``timeline.Linear`` (default: the state's, held fixed)."""
@@ -195,8 +199,7 @@ class SplitStep:
         if "E0" in driver_args:
 
             def E0_fn(this_t):
-                t_coeff = self.get_envelope_coefficient(driver_args["E0"], this_t)
-                return t_coeff * self.light.laser_update(this_t, y, driver_args["E0"])
+                return self.prescribed_pump(this_t, y, driver_args["E0"])
 
             y["E0"] = E0_fn(t)
         else:
@@ -242,6 +245,12 @@ class SplitStep:
         linearly between the old and new values (``interpolate_sources``; the new ones without)."""
         # unpack y into complex128
         new_y = self._unpack_y_(y)
+        if not self.pump_depletion and "E0" in args["drivers"]:
+            # the prescribed pump at the step's start t for every consumer (IAW, EPW / combined field,
+            # light). LPSE writes its static pump after the LW step at the step's start time
+            # (LightSolver::computeFields), so its IAW and LW read the previous step's pump, zero on
+            # the first step; adept departs there (PR #387 review, see Departures from LPSE)
+            new_y["E0"] = self.prescribed_pump(t, new_y, args["drivers"]["E0"])
 
         iaw_ends = None
         if self.iaw is not None:

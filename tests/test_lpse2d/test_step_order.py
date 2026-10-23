@@ -34,6 +34,24 @@ def _cfg(iaw=None, **light):
     return cfg
 
 
+def _cfg_combined():
+    """The combined solver (TPD and SRS on, spectral light) with a prescribed pump and spectral IAWs."""
+    from adept._lpse2d.helpers import get_density_profile, get_derived_quantities, get_solver_quantities, write_units
+
+    with open("tests/test_lpse2d/configs/srs.yaml") as fi:
+        cfg = deepcopy(yaml.safe_load(fi))
+    cfg["grid"].update({"xmax": "8um", "dx": "0.1um", "tmax": "10fs", "dt": "2fs"})
+    cfg["terms"]["epw"]["source"].update({"noise": False, "tpd": True, "srs": True})
+    cfg["terms"]["epw"]["solver"] = "combined"
+    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    cfg["terms"]["iaw"] = {"active": True, "solver": "spectral"}
+    write_units(cfg)
+    cfg = get_derived_quantities(cfg)
+    cfg["grid"] = get_solver_quantities(cfg)
+    cfg["grid"]["background_density"] = get_density_profile(cfg)
+    return cfg
+
+
 def _state(cfg, seed=0):
     rng = np.random.default_rng(seed)
     nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
@@ -121,6 +139,38 @@ def test_step_advances_iaw_then_epw_with_light_at_t_then_light():
     for k in ("E0", "E1"):
         scale = float(jnp.max(jnp.abs(light_y[k])))
         np.testing.assert_allclose(got[k], light_y[k], rtol=1e-12, atol=1e-12 * scale)
+
+
+@pytest.mark.parametrize("solver", ["separate", "combined"])
+def test_prescribed_pump_is_refreshed_before_the_iaw_and_epw(solver):
+    """With an undepleted, prescribed pump the IAW and the EPW (or the combined field) read the pump
+    at the step's start t, not the state's E0 -- the previous step's, zero on the first step (PR #387
+    review; LPSE's static pump lags by one step, see Departures from LPSE). One step inside the
+    pump's rise (envelope coefficient differs between t - dt and t) from states whose E0 is zero, the
+    pump at t - dt or the pump at t: every output identical (exact)."""
+    from adept._lpse2d.core.vector_field import SplitStep
+
+    cfg = _cfg_combined() if solver == "combined" else _cfg(iaw={})
+    step = SplitStep(cfg)
+    assert not step.pump_depletion
+    ny = cfg["grid"]["ny"]
+    pump = {
+        **cfg["drivers"]["E0"]["derived"],
+        "delta_omega": jnp.zeros(1),
+        "intensities": jnp.ones((1, ny)),
+        "phases": jnp.zeros((1, ny)),
+    }
+    args = {"drivers": {"E0": pump}}
+    dt = cfg["grid"]["dt"]
+    t = 0.05
+    assert step.get_envelope_coefficient(pump, t) != step.get_envelope_coefficient(pump, t - dt)
+    y = _state(cfg)
+    outs = []
+    for e0 in (jnp.zeros_like(y["E0"]), step.prescribed_pump(t - dt, y, pump), step.prescribed_pump(t, y, pump)):
+        outs.append(_unpack(step(t, _pack({**y, "E0": e0}), args)))
+    for k in outs[0]:
+        np.testing.assert_array_equal(np.asarray(outs[1][k]), np.asarray(outs[0][k]), err_msg=k)
+        np.testing.assert_array_equal(np.asarray(outs[2][k]), np.asarray(outs[0][k]), err_msg=k)
 
 
 @pytest.mark.parametrize("index", [0, 1])
