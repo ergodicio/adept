@@ -188,3 +188,25 @@ def test_combined_raman_flux_uses_the_combined_carrier_away_from_quarter_critica
         out = save_func(0.0, y, args)
         np.testing.assert_allclose(float(out[key]), d["c"] * np.sqrt(eps) * amp**2 / d["I0_code"], rtol=1e-9)
         np.testing.assert_allclose(float(out["reflectivity"]), np.sqrt(eps) * amp**2 / d["E0_source"] ** 2, rtol=1e-9)
+
+
+def test_poynting_refuses_a_single_point_x_save_grid():
+    """An interpolated save of one x point (save.fields.x.dx the box length) cannot take the flux maps'
+    d/dx: with save.fields.poynting it is refused at setup, not after the solve (PR #372 review); two or
+    more points are accepted."""
+    import pytest
+
+    with open("tests/test_lpse2d/configs/tpd.yaml") as fi:
+        base = yaml.safe_load(fi)
+    base["density"] = {"basis": "uniform", "val": 0.2}
+    base["grid"].update(
+        {"dx": "0.1um", "xmax": "12.8um", "ymax": "3.2um", "ymin": "-3.2um", "dt": "1fs", "tmax": "2fs"}
+    )
+    base["terms"]["epw"]["source"].update({"noise": False, "tpd": False})
+    single = deepcopy(base)
+    single["save"]["fields"].update({"x": {"dx": "12.8um"}, "y": {"dy": "0.2um"}, "poynting": True})
+    with pytest.raises(ValueError, match="at least two saved x points"):
+        _finish(single)
+    two = deepcopy(base)
+    two["save"]["fields"].update({"x": {"dx": "6.4um"}, "y": {"dy": "0.2um"}, "poynting": True})
+    assert _finish(two)["save"]["fields"]["x"]["ax"].size == 2
