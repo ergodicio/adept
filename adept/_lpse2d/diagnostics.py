@@ -141,17 +141,18 @@ def fit_epw_growth(t: np.ndarray, W: np.ndarray, floor: float | None = None) -> 
 def expected_noise_energy(cfg: dict, t_ps: float) -> float:
     """Expected EPW energy of the pure noise-driven field at time ``t_ps`` (OSIRIS units).
 
-    Each retained k-mode is a damped random walk: the solver adds ``dt * A * e^{i phi}``
-    every step and damps by ``e^{-(gamma_k + nu) dt}``, so
+    Each retained k-mode is a damped random walk: the solver adds ``D_k e^{i phi}`` every
+    noise step ``dt`` (``epw.noise_step``: the EPW step, or the light sub-step for the combined
+    solver) and damps by ``e^{-(gamma_k + nu) dt}``, so
 
-        <|phi_k|^2>(t) = (dt A)^2 * (1 - e^{-2 g t}) / (1 - e^{-2 g dt}),   g = gamma_k + nu
+        <|phi_k|^2>(t) = D_k^2 * (1 - e^{-2 g t}) / (1 - e^{-2 g dt}),   g = gamma_k + nu
 
-    with the ``g -> 0`` limit ``(dt A)^2 * t/dt``. Summed to the same OSIRIS-normalized
+    with the ``g -> 0`` limit ``D_k^2 * t/dt``. Summed to the same OSIRIS-normalized
     energy as the ``epw_energy`` save quantity (Parseval). Absorbing boundaries and
     detuning-induced mode mixing are neglected, so on absorbing/ramped boxes this is a
     mild overestimate -- conservative for use as a growth-fit noise floor.
     """
-    from adept._lpse2d.core.epw import landau_damping_rate
+    from adept._lpse2d.core.epw import analytic_landau_rate, noise_kick_spectrum, noise_step
 
     grid = cfg["grid"]
     derived = cfg["units"]["derived"]
@@ -159,15 +160,14 @@ def expected_noise_energy(cfg: dict, t_ps: float) -> float:
     ky = np.array(grid["ky"])
     k_sq = kx[:, None] ** 2 + ky[None, :] ** 2
     zero_mask = np.where(k_sq > 0, 1.0, 0.0)
-    if cfg["terms"]["epw"]["damping"].get("landau", True):
-        gamma = np.array(landau_damping_rate(k_sq, derived["wp0"], derived["vte_sq"], zero_mask))
-    else:
-        gamma = np.zeros_like(k_sq)
-    g = gamma + derived.get("nu_coll", 0.0) * zero_mask
 
-    dt = grid["dt"]
-    amp = float(cfg["terms"]["epw"]["source"].get("noise_amplitude", 1e-10))
-    mode_amp_sq = (dt * amp) ** 2 * np.array(grid["low_pass_filter_grid"]) ** 2 * zero_mask
+    # the step at which the active solver kicks and damps the noise (the EPW step, or the light
+    # sub-step for the combined solver) and the collisional rate it damps with
+    dt, nu = noise_step(cfg)
+    g = np.asarray(analytic_landau_rate(cfg)) + nu * zero_mask
+    # per-step kick amplitude of the configured noise model (flat: amplitude * sqrt(dt_EPW * dt)
+    # on the retained band; thermal: the fluctuation-dissipation kick), squared
+    mode_amp_sq = np.asarray(noise_kick_spectrum(cfg, dt=dt, nu_coll=nu)) ** 2
 
     small = 2.0 * g * dt < 1.0e-12  # undamped modes: plain random walk, variance ~ t
     denom = np.where(small, 1.0, 1.0 - np.exp(-2.0 * g * dt))
@@ -259,14 +259,43 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
     # estimators are meaningful; with pump depletion on, the net-Poynting R/T/absorbed
     # match osiris_lpi/laser_budget.py exactly (R = 1 - S_left/I0, T = S_right/I0,
     # absorbed = (S_left - S_right)/I0, so R + T + absorbed == 1 identically).
+    #
+    # The flux probes are signed +x fluxes (incident / transmitted: the pump at the left / right
+    # probe; reflected: minus the Raman flux at the left; backrefl: the Raman flux at the right),
+    # so the budget above assumes illumination from x-min. A pump entering at x-max (every beam
+    # leftward, drivers.E0 beam_leftward) is the mirror image x -> -x: its incident flux is minus
+    # the right probe's, its transmitted flux minus the left probe's, and the reflected / forward
+    # Raman probes swap, after which the same budget applies. With beams entering from both faces
+    # the net probes cannot separate incoming from outgoing power: the fraction metrics are not
+    # logged, only the signed net fluxes at both faces (laser_net_flux_left / _right).
     pump_evolved = bool(cfg["terms"].get("light", {}).get("pump_depletion", False))
     have_flux = all(k in series for k in ("incident_flux", "reflected_flux", "transmitted_flux", "backrefl_flux"))
+    leftward = np.atleast_1d(
+        np.asarray(cfg["drivers"].get("E0", {}).get("derived", {}).get("beam_leftward", [False]), dtype=bool)
+    )
+    two_sided = bool(np.any(leftward)) and not bool(np.all(leftward))
     if have_flux:
         inc = np.asarray(series["incident_flux"].values, dtype=float)
         refl = np.asarray(series["reflected_flux"].values, dtype=float)
         trans = np.asarray(series["transmitted_flux"].values, dtype=float)
         backrefl = np.asarray(series["backrefl_flux"].values, dtype=float)
-        s_left = inc - refl  # F0_left + F1_left, in units of I0_code
+        if two_sided:
+            for win in segment_windows(t_ps, last_frac=0.25, n_segments=4):
+                suffix = "" if win["is_last"] else f"_seg{win['index']}of{win['n']}"
+                net_left = _wmean(inc - refl, win["mask"])
+                if net_left is None:
+                    continue
+                metrics[f"laser_net_flux_left{suffix}"] = net_left
+                metrics[f"laser_net_flux_right{suffix}"] = _wmean(trans + backrefl, win["mask"])
+                if "epw_dissipation" in series and I0_osiris > 0:
+                    d = _wmean(np.asarray(series["epw_dissipation"].values, dtype=float), win["mask"])
+                    if d is not None:
+                        metrics[f"laser_absorbed_frac_epw{suffix}"] = d / w0 / I0_osiris
+            have_flux = False
+        elif bool(np.all(leftward)):
+            inc, trans, refl, backrefl = -trans, -inc, backrefl, refl
+    if have_flux:
+        s_left = inc - refl  # F0_left + F1_left, in units of I0_code (entrance face)
         s_right = trans + backrefl
 
         # With an evolved pump the injector's launched amplitude carries a small grid-

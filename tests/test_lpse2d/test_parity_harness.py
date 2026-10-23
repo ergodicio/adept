@@ -1,0 +1,412 @@
+"""The parity harness (adept/_lpse2d/parity): reference-run location and the comparison
+metrics that reproduce the 2026-09-14 ``log_lpse_reference.py`` baseline on MLflow."""
+
+import os
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+from adept._lpse2d.parity import (
+    DEFAULT_WINDOWS,
+    compare,
+    deck_path,
+    energy_floor_crossings,
+    growth_rate,
+    lpse_root,
+    parse_windows,
+    read_flux,
+    reference_run_dir,
+)
+
+
+def test_parse_windows_and_growth_rate():
+    assert parse_windows("0.3-0.9,0.9-1.5") == ((0.3, 0.9), (0.9, 1.5))
+    t = np.linspace(0.0, 2.0, 201)
+    e = 1e-3 * np.exp(4.0 * t)
+    assert growth_rate(t, e, 0.5, 1.5) == pytest.approx(4.0, rel=1e-10)
+    # fewer than four positive samples in the window -> nan, as the reference script
+    assert np.isnan(growth_rate(t, e, 0.5, 0.52))
+    assert np.isnan(growth_rate(t, np.zeros_like(t), 0.5, 1.5))
+
+
+def _synthetic(gamma_adept=3.0, gamma_lpse=2.5, gamma_raman=4.0):
+    t = np.linspace(0.0, 2.0, 401)
+    tl = np.linspace(0.0, 2.0, 201)
+    series = {
+        "t (ps)": t,
+        "epw_energy": 1e-4 * np.exp(gamma_adept * t),
+        "e1_sq": 1e-6 * np.exp(gamma_raman * t),
+        "iaw_density_abs_max": 1e-3 * (1.0 + t),
+    }
+    lpse = {
+        "time": tl,
+        "EPW_energy": 1e-4 * np.exp(gamma_lpse * tl),
+        "E1_energy": 1e-6 * np.exp(gamma_raman * tl),
+        "Nelf_max": 2e-3 * (1.0 + tl),
+    }
+    return series, lpse
+
+
+def test_compare_keys_and_values_match_the_reference_script():
+    series, lpse = _synthetic()
+    m = compare(series, lpse, "0.5-1.0,1.0-1.5")
+    assert set(m) == {
+        "epw_energy_growth_adept_0.5_1ps",
+        "epw_energy_growth_lpse_0.5_1ps",
+        "epw_energy_growth_ratio_0.5_1ps",
+        "raman_energy_growth_adept_0.5_1ps",
+        "raman_energy_growth_lpse_0.5_1ps",
+        "raman_energy_growth_ratio_0.5_1ps",
+        "epw_energy_growth_adept_1_1.5ps",
+        "epw_energy_growth_lpse_1_1.5ps",
+        "epw_energy_growth_ratio_1_1.5ps",
+        "raman_energy_growth_adept_1_1.5ps",
+        "raman_energy_growth_lpse_1_1.5ps",
+        "raman_energy_growth_ratio_1_1.5ps",
+        "epw_half_max_time_adept_ps",
+        "epw_half_max_time_lpse_ps",
+        "iaw_max_adept",
+        "iaw_max_lpse",
+    }
+    assert m["epw_energy_growth_ratio_0.5_1ps"] == pytest.approx(3.0 / 2.5, rel=1e-9)
+    assert m["raman_energy_growth_ratio_1_1.5ps"] == pytest.approx(1.0, rel=1e-9)
+    # half max of exp(g t) on [0, 2]: t = 2 - ln 2 / g
+    assert m["epw_half_max_time_adept_ps"] == pytest.approx(2.0 - np.log(2.0) / 3.0, abs=0.01)
+    assert m["epw_half_max_time_lpse_ps"] == pytest.approx(2.0 - np.log(2.0) / 2.5, abs=0.01)
+    assert m["iaw_max_adept"] == pytest.approx(3e-3) and m["iaw_max_lpse"] == pytest.approx(6e-3)
+    # windows as tuples give the same result
+    assert compare(series, lpse, ((0.5, 1.0), (1.0, 1.5))) == m
+
+
+def test_compare_without_raman_or_iaw_columns():
+    series, lpse = _synthetic()
+    del series["e1_sq"], lpse["Nelf_max"]
+    m = compare(series, lpse, ((0.5, 1.0),))
+    assert not any(k.startswith(("raman", "iaw")) for k in m)
+    crossings = energy_floor_crossings(series, lpse, floor_window=(0.0, 0.2), factors=(10,))
+    # floor = median of exp(g t) on (0, 0.2) ~ exp(0.1 g); 10x floor at t = 0.1 + ln 10 / g
+    assert crossings["epw_10x_floor_time_adept_ps"] == pytest.approx(0.1 + np.log(10.0) / 3.0, abs=0.02)
+
+
+def test_default_windows_cover_the_baseline_decks():
+    assert set(DEFAULT_WINDOWS) == {
+        "hom_srs_020", "hom_tpd_023", "test_006", "test_025", "test_029", "test_010",
+        "test_032", "test_013", "test_022", "test_036", "test_037",
+    }  # fmt: skip
+    for windows in DEFAULT_WINDOWS.values():
+        assert all(lo < hi for lo, hi in windows)
+
+
+def test_lpse_root_honours_the_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv("LPSE_ROOT", str(tmp_path))
+    assert lpse_root() == tmp_path
+    monkeypatch.setenv("LPSE_ROOT", str(tmp_path / "missing"))
+    assert lpse_root() is None
+    assert deck_path("test_006") is None
+    monkeypatch.delenv("LPSE_ROOT")
+    root = lpse_root()
+    assert root is None or (root / "examples").is_dir() or (root / "runs").is_dir()
+
+
+def test_deck_path_falls_back_to_the_reference_run_copy(tmp_path):
+    root = tmp_path / "lpse"
+    (root / "examples" / "testRuns" / "test_006").mkdir(parents=True)
+    (root / "examples" / "testRuns" / "test_006" / "lpse.parms").write_text("x")
+    (root / "runs" / "hom_srs_020").mkdir(parents=True)
+    (root / "runs" / "hom_srs_020" / "lpse.parms").write_text("x")
+    assert deck_path("test_006", root) == root / "examples" / "testRuns" / "test_006" / "lpse.parms"
+    assert deck_path("hom_srs_020", root) == root / "runs" / "hom_srs_020" / "lpse.parms"
+    assert deck_path("nope", root) is None
+
+
+def test_reference_run_dir_without_download(monkeypatch, tmp_path):
+    monkeypatch.setenv("LPSE_ROOT", str(tmp_path))
+    monkeypatch.setenv("LPSE_REFERENCE_CACHE", str(tmp_path / "cache"))
+    assert reference_run_dir("test_025", download=False) is None
+    run = tmp_path / "runs" / "test_025" / "data"
+    run.mkdir(parents=True)
+    (run / "lpse.metrics").write_text("# (1) time\n0.0\n")
+    assert reference_run_dir("test_025", download=False) == tmp_path / "runs" / "test_025"
+
+
+def _write_metrics(path, columns):
+    """An LPSE ``lpse.metrics`` table (``# (i) name`` headers, whitespace-separated rows)."""
+    names = list(columns)
+    lines = [f"# ({i + 1}) {name}" for i, name in enumerate(names)]
+    rows = np.column_stack([np.asarray(columns[n]) for n in names])
+    lines += [" ".join(f"{v:.12e}" for v in row) for row in rows]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_metrics_path_resolves_both_reference_layouts(tmp_path):
+    from adept._lpse2d.parity import metrics_path
+
+    tree, flat = tmp_path / "tree", tmp_path / "flat"
+    (tree / "data").mkdir(parents=True)
+    flat.mkdir()
+    (tree / "data" / "lpse.metrics").write_text("# (1) time\n0.0\n")
+    (flat / "lpse.metrics").write_text("# (1) time\n0.0\n")
+    assert metrics_path(tree) == tree / "data" / "lpse.metrics"
+    assert metrics_path(flat) == flat / "lpse.metrics"
+    with pytest.raises(FileNotFoundError, match=r"lpse\.metrics"):
+        metrics_path(tmp_path / "empty")
+
+
+def test_run_command_compares_against_a_flattened_cached_reference(monkeypatch, tmp_path, capsys):
+    """PR #378 review: log_reference(full=False) uploads lpse.metrics flattened under
+    lpse_reference/, download_reference keeps that layout and the resolver accepts it; the
+    ``run`` command must then compare against it (it read data/lpse.metrics only and raised
+    FileNotFoundError after the simulation). run_deck is stubbed with a synthetic series."""
+    from adept._lpse2d.parity import __main__ as cli
+    from adept._lpse2d.parity import harness
+    from adept._lpse2d.parity.harness import DeckRun
+
+    series, lpse = _synthetic()
+    monkeypatch.setenv("LPSE_ROOT", str(tmp_path / "no-lpse-checkout"))
+    monkeypatch.setenv("LPSE_REFERENCE_CACHE", str(tmp_path / "cache"))
+    cached = tmp_path / "cache" / "flat_deck"
+    cached.mkdir(parents=True)
+    _write_metrics(cached / "lpse.metrics", lpse)  # the flattened lpse_reference/ layout
+    deck_dir = tmp_path / "flat_deck"
+    deck_dir.mkdir()
+    (deck_dir / "lpse.parms").write_text("# stub deck\n")
+
+    def fake_run_deck(parms, overrides, out_dir=None, run=None, experiment=None):
+        return DeckRun("flat_deck", {}, {"unsupported": []}, None, series, None, {}, None)
+
+    monkeypatch.setattr(harness, "run_deck", fake_run_deck)
+    rc = cli.main(["run", str(deck_dir / "lpse.parms"), "--windows", "0.5-1.0", "--no-download", "--no-log"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "comparison skipped" not in out
+    ratio = float(out.split("epw_energy_growth_ratio_0.5_1ps:")[1].split()[0])
+    assert ratio == pytest.approx(3.0 / 2.5, rel=1e-5)
+
+
+RUN_036 = reference_run_dir("test_036", download=False)
+
+
+@pytest.mark.skipif(
+    RUN_036 is None or not (RUN_036 / "data" / "lpse.flux").is_file(), reason="no test_036 reference run"
+)
+def test_read_flux_test_036():
+    t, flux = read_flux(RUN_036 / "data" / "lpse.flux")
+    assert flux.shape[1:] == (7, 6) and t[0] == pytest.approx(0.12)
+    assert np.all(flux[:, :, 4:] == 0.0)  # no z faces in 2-D
+    assert np.all(flux[:, :4, :4] > 0.0)
+
+
+RUN_006 = reference_run_dir("test_006", download=False)
+
+
+@pytest.mark.skipif(RUN_006 is None, reason="no test_006 reference run")
+def test_compare_on_the_test_006_reference_against_itself():
+    """Feeding LPSE's own energies back as the adept series gives ratios of exactly 1."""
+    from adept._lpse2d.lpse_deck import read_metrics
+
+    d = read_metrics(RUN_006 / "data" / "lpse.metrics")
+    series = {"t (ps)": d["time"], "epw_energy": d["EPW_energy"], "e1_sq": d["E1_energy"]}
+    m = compare(series, d, DEFAULT_WINDOWS["test_006"])
+    for k, v in m.items():
+        if "ratio" in k:
+            assert v == pytest.approx(1.0, rel=1e-12), k
+    assert m["epw_half_max_time_adept_ps"] == m["epw_half_max_time_lpse_ps"]
+    # the stored baseline value for this deck (MLflow lpse-parity bf56ee6c, 2026-09-14)
+    assert m["epw_energy_growth_lpse_2.5_3.5ps"] == pytest.approx(5.707053668690972, rel=1e-9)
+
+
+BASELINE_RUN = "bf56ee6c3072421d80bdcff0080a5c84"
+
+
+@pytest.mark.skipif(not os.environ.get("MLFLOW_TRACKING_URI"), reason="no MLflow tracking environment")
+def test_verify_reproduces_the_stored_baseline_metrics(tmp_path):
+    """``verify`` on the test_006 cross-check run (bf56ee6c…): the ratio metrics logged on
+    2026-09-14 by ``log_lpse_reference.py`` are reproduced from the run's own artifacts. The
+    run lives on the team tracking server; any other tracking store (CI's) skips."""
+    from mlflow.exceptions import MlflowException
+
+    from adept import patched_mlflow as mlflow
+    from adept._lpse2d.parity.__main__ import main
+
+    try:
+        mlflow.MlflowClient().get_run(BASELINE_RUN)
+    except MlflowException as exc:
+        pytest.skip(f"baseline run {BASELINE_RUN} is not on this tracking server: {exc}")
+    rc = main(["verify", BASELINE_RUN, "--dest", str(tmp_path), "--rtol", "1e-6"])
+    assert rc == 0
+    assert (Path(tmp_path) / "binary" / "series.xr").is_file()
+
+
+def test_run_deck_refuses_float32():
+    """The comparison baseline is float64; a float32 run would be silently different."""
+    import jax
+
+    from adept._lpse2d.parity import run_deck
+
+    jax.config.update("jax_enable_x64", False)
+    try:
+        with pytest.raises(RuntimeError, match="float64"):
+            run_deck("unused.parms")
+    finally:
+        jax.config.update("jax_enable_x64", True)
+
+
+def test_batch_jobs_merge_defaults_and_build_run_commands(tmp_path):
+    """A batch file's ``defaults`` merge under each job (``overrides`` / ``tags``
+    recursively), ``job_command`` is the ``parity run`` argument vector, and the driver runs the
+    jobs on N workers, writes one log per job and a summary it can resume from."""
+    import json
+
+    from adept._lpse2d.parity import job_command, load_jobs, run_batch
+    from adept._lpse2d.parity.batch import parse_log, slug
+
+    spec = tmp_path / "jobs.yaml"
+    spec.write_text(
+        "defaults:\n  experiment: lpse-parity\n  tags: {plan2_item: N.1}\n"
+        "  overrides: {terms: {epw: {source: {noise_seed: 1}}}}\n"
+        "jobs:\n"
+        "  - {deck: test_010, run: test_010/n1-seed/2, overrides: {terms: {epw: {source: {noise_seed: 2}}}},"
+        " tags: {variable: seed}}\n"
+        "  - {deck: hom_tpd_023, run: hom_tpd_023/n1-angle/16.7, windows: 0.5-0.8, no_log: true}\n"
+    )
+    jobs = load_jobs(spec)
+    assert [j["run"] for j in jobs] == ["test_010/n1-seed/2", "hom_tpd_023/n1-angle/16.7"]
+    assert jobs[0]["overrides"] == {"terms": {"epw": {"source": {"noise_seed": 2}}}}
+    assert jobs[0]["tags"] == {"plan2_item": "N.1", "variable": "seed"}
+    assert jobs[1]["overrides"] == {"terms": {"epw": {"source": {"noise_seed": 1}}}}
+    cmd = job_command(jobs[0], tmp_path / "out", python="py")
+    assert cmd[:5] == ["py", "-m", "adept._lpse2d.parity", "run", "test_010"]
+    assert cmd[cmd.index("--run") + 1] == "test_010/n1-seed/2"
+    assert json.loads(cmd[cmd.index("--overrides") + 1]) == jobs[0]["overrides"]
+    assert "--tag" in cmd and "plan2_item=N.1" in cmd and "variable=seed" in cmd
+    assert cmd[-1] == str(tmp_path / "out" / slug("test_010/n1-seed/2"))
+    cmd1 = job_command(jobs[1], None, python="py")
+    assert "--windows" in cmd1 and "0.5-0.8" in cmd1 and "--no-log" in cmd1 and "--out" not in cmd1
+
+    # the shipped matrices load
+    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d" / "parity" / "batches"
+    for name in ("relog.yaml", "n1_test_010.yaml", "n2_hpe.yaml", "f3_spol.yaml"):
+        assert load_jobs(root / name)
+
+    # run the driver with a stand-in interpreter: each job prints a run id and a metric line
+    fake = tmp_path / "fake.sh"
+    fake.write_text(
+        '#!/bin/sh\nname=\'\'\nwhile [ $# -gt 0 ]; do [ "$1" = --run ] && name="$2"; shift; done\n'
+        "echo 'mlflow run 0123456789abcdef0123456789abcdef'\necho '  epw_energy_growth_ratio_0.3_0.9ps: 0.75'\n"
+        'case "$name" in *fail*) exit 1;; esac\n'
+    )
+    fake.chmod(0o755)
+    jobs = [{"deck": "d", "run": "a/one"}, {"deck": "d", "run": "a/two"}, {"deck": "d", "run": "a/fail"}]
+    summary = run_batch(jobs, tmp_path / "logs", workers=2, python=str(fake), env={})
+    assert {k: v["rc"] for k, v in summary.items()} == {"a/one": 0, "a/two": 0, "a/fail": 1}
+    assert summary["a/one"]["run_id"] == "0123456789abcdef" * 2
+    assert summary["a/one"]["metrics"] == {"epw_energy_growth_ratio_0.3_0.9ps": 0.75}
+    assert parse_log(tmp_path / "logs" / "a--two.log")["metrics"]["epw_energy_growth_ratio_0.3_0.9ps"] == 0.75
+    assert json.loads((tmp_path / "logs" / "summary.json").read_text())["a/fail"]["rc"] == 1
+    # --skip-done: finished jobs are not re-run, the failed one is
+    (tmp_path / "logs" / "a--one.log").unlink()
+    summary = run_batch(jobs, tmp_path / "logs", workers=1, python=str(fake), env={}, skip_done=True)
+    assert not (tmp_path / "logs" / "a--one.log").exists() and summary["a/fail"]["rc"] == 1
+
+
+def test_batch_dry_run_records_nothing_and_a_resume_runs_every_job(tmp_path):
+    """--dry-run previews the commands without touching summary.json (PR #378 review): a preview
+    before any run leaves no summary, a following --skip-done run executes every previewed job,
+    and a preview after that leaves the recorded entries exactly as they were."""
+    import json
+
+    from adept._lpse2d.parity import run_batch
+
+    fake = tmp_path / "fake.sh"
+    fake.write_text("#!/bin/sh\necho 'mlflow run 0123456789abcdef0123456789abcdef'\n")
+    fake.chmod(0o755)
+    jobs = [{"deck": "d", "run": "b/one"}, {"deck": "d", "run": "b/two"}]
+    logs = tmp_path / "logs"
+    assert run_batch(jobs, logs, python=str(fake), env={}, dry_run=True) == {}
+    assert not (logs / "summary.json").exists()
+    summary = run_batch(jobs, logs, python=str(fake), env={}, skip_done=True)
+    assert {k: v["rc"] for k, v in summary.items()} == {"b/one": 0, "b/two": 0}
+    assert (logs / "b--one.log").exists() and (logs / "b--two.log").exists()
+    recorded = (logs / "summary.json").read_text()
+    preview = run_batch(jobs + [{"deck": "d", "run": "b/three"}], logs, python=str(fake), env={}, dry_run=True)
+    assert (logs / "summary.json").read_text() == recorded and "b/three" not in preview
+    assert json.loads(recorded)["b/one"]["run_id"] == "0123456789abcdef" * 2
+
+
+def test_batch_files_keep_every_window_and_refuse_unknown_keys(tmp_path):
+    """In a YAML flow mapping an unquoted multi-window spec ends at the comma (`windows: 2.5-3.5,3.0-4.0`
+    is windows 2.5-3.5 plus a stray key 3.0-4.0), and load_jobs passed the stray key through, so such
+    jobs scored only their first window. load_jobs now refuses unknown keys, and every shipped batch
+    file loads with its multi-window jobs whole."""
+    from adept._lpse2d.parity import load_jobs
+
+    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d" / "parity" / "batches"
+    windows = {}
+    for f in sorted(root.glob("*.yaml")):
+        for job in load_jobs(f):
+            windows[job["run"]] = job.get("windows")
+    assert windows["test_006_spol/ref/1"] == "2.5-3.5,3.0-4.0"
+    assert windows["test_010_comm/ref/1"] == "0.3-0.9,0.9-1.5"
+    for run in ("test_029/qle/1", "test_029/qle/2", "test_029/qle/3", "test_029/qle/4"):
+        assert windows[run] == "0.2-0.6,0.6-1.0,1.5-2.0"
+
+    spec = tmp_path / "jobs.yaml"
+    spec.write_text("jobs:\n  - {deck: test_006, run: test_006/x/1, windows: 2.5-3.5,3.0-4.0}\n")
+    with pytest.raises(ValueError, match="unknown keys"):
+        load_jobs(spec)
+    spec.write_text('jobs:\n  - {deck: test_006, run: test_006/x/1, windows: "2.5-3.5,3.0-4.0"}\n')
+    assert load_jobs(spec)[0]["windows"] == "2.5-3.5,3.0-4.0"
+
+
+def test_hpe_flux_compares_the_same_time_window(tmp_path):
+    """compare_hpe_flux averages LPSE's wall flux over the same lo < t <= hi as adept's slope fit
+    (PR #378 review): a reference whose -x bin-0 flux is 1 inside the window and 100 outside gives
+    exactly 1, and an empty window is refused. Before, the whole run was averaged."""
+    from adept._lpse2d.parity.harness import TIME_KEY, compare_hpe_flux
+
+    t = np.round(np.arange(0.0, 0.5001, 0.05), 10)
+    inside = (t > 0.12) & (t <= 0.30)
+    rows = []
+    for ti, w in zip(t, inside, strict=True):
+        faces = np.zeros((1, 6))
+        faces[0, 1] = 1.0 if w else 100.0  # -x, i.e. adept's left wall
+        rows.append(" ".join(str(v) for v in [ti, 1, *faces.ravel()]))
+    path = tmp_path / "lpse.flux"
+    path.write_text("# t n_metric flux...\n" + "\n".join(rows) + "\n")
+    cfg = {
+        "units": {"laser_wavelength": "0.351um"},
+        "density": {"max": 0.2},
+        "grid": {"xmax": "10um", "ymax": "2um"},
+        "terms": {"hpe": {"flux_bins": [0.0, 1.0e9]}},
+    }
+    series = {TIME_KEY: t, "hpe_wall_energy_left_bin0": 2.0e-3 * t}
+    out = compare_hpe_flux(series, cfg, path, (0.12, 0.30))
+    assert out["hpe_flux_lpse_left_bin0"] == 1.0
+    assert out["hpe_flux_ratio_left_bin0"] == pytest.approx(out["hpe_flux_adept_left_bin0"], rel=1e-12)
+    with pytest.raises(ValueError, match="no LPSE flux samples"):
+        compare_hpe_flux(series, cfg, path, (0.31, 0.32))
+
+
+def test_verify_fails_when_a_recomputed_metric_is_non_finite(monkeypatch, tmp_path):
+    """cmd_verify exits nonzero when a finite stored metric recomputes as NaN, even with every other
+    metric matching (PR #378 review; a NaN relative difference used to leave the running maximum
+    finite and print PASS)."""
+    from types import SimpleNamespace
+
+    import adept.patched_mlflow
+    from adept._lpse2d.parity import __main__ as cli
+
+    stored = {"iaw_max_adept": 0.3, "epw_energy_growth_0.3-0.9": 4.0}
+    run = SimpleNamespace(data=SimpleNamespace(tags={}, metrics=stored), info=SimpleNamespace(run_name="test_x"))
+    monkeypatch.setattr(
+        adept.patched_mlflow, "MlflowClient", lambda: SimpleNamespace(get_run=lambda _id: run), raising=False
+    )
+    monkeypatch.setattr(cli.reference, "download_run_artifacts", lambda *a, **k: None)
+    args = SimpleNamespace(run_id="r1", dest=str(tmp_path), windows="0.3-0.9", rtol=1e-9)
+    monkeypatch.setattr(
+        cli.harness, "compare", lambda *a, **k: {"iaw_max_adept": float("nan"), "epw_energy_growth_0.3-0.9": 4.0}
+    )
+    assert cli.cmd_verify(args) == 1
+    monkeypatch.setattr(cli.harness, "compare", lambda *a, **k: dict(stored))
+    assert cli.cmd_verify(args) == 0
