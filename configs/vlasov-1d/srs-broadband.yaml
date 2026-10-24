@@ -1,0 +1,138 @@
+# Broadband (multi-color) SRS example: a 50-line comb, 0.5% full bandwidth
+# (delta_omega 0.0025 is the HALF-width), uniform per-line intensity summing to
+# base_intensity, seeded random spectral phases. Linear density ramp 0.18 -> 0.30 nc
+# over 100 um (L_n(nc/4) = 208 um), 4 keV, 40 ps -- the deck shape used by the
+# kinetic-srs broadband threshold campaign (Follett 2019 comparison). Lines share
+# the carrier k0, which is fine for this 1 um point-source antenna.
+# See docs/source/solvers/vlasov1d/config.md, "Broadband (multi-color) ey driver".
+
+units:
+  laser_wavelength: 351nm
+  normalizing_temperature: 4000eV
+  normalizing_density: 9.05e21/cc
+  Z: 10
+  Zp: 10
+
+density:
+  quasineutrality: true
+  species-electron:
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    noise_seed: 0
+    noise_type: uniform
+    noise_val: 0.0
+    # n(x) = (baseline + bump_height*tanh_env) * val_at_center * (1 + (x-center)/L_fed),
+    # L_fed = gsl/val_at_center = 200.0/0.24 -> dn/dx = 0.0012 nc/um
+    # flat-top spans 0.18 -> 0.30 nc over 100.0um; L_n(nc/4) = 208.3um (Follett box 100 um)
+    basis: linear
+    val_at_center: 0.24
+    gradient_scale_length: 200.0um
+    center: 60.0um
+    width: 100.0um
+    rise: 1.0um
+    baseline: 0.004
+    bump_height: 0.996
+    bump_or_trough: bump
+
+grid:
+  dt: 0.005ps
+  tmin: 0.0ps
+  tmax: 40.0ps
+
+  nx: 8192
+  xmin: 0.0um
+  xmax: 120um
+
+  nv: 256
+  vmax: 10.0
+
+save:
+  fields:
+    t:
+      nt: 600
+  electron:
+    main:
+      t:
+        nt: 4
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: vlasov1d-srs-broadband
+  run: srs-broadband-example
+
+drivers:
+  ex: {}
+  ey:
+    '0':
+      source_type: point
+      params:
+        num_colors: 50
+        delta_omega: 0.0025
+        wavelength: 351nm
+        leftgoing: false
+        intensities:
+          base_intensity: 2.378e+14 W/cm^2
+          init: uniform
+        phases:
+          init: random
+          seed: 1
+      envelope:
+        time:
+          center: 20500.0fs
+          rise: 100.0fs
+          width: 42000.0fs
+        space:
+          center: 5.0um
+          rise: 0.1um
+          width: 1.0um
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson
+  edfdv: cubic-spline
+  time: leapfrog
+  hou_li_filter:
+    is_on: True
+    alpha: 36.0
+    order: 36
+    dimensions: [x]
+  fokker_planck:
+    is_on: True
+    type: Dougherty
+    time:
+      baseline: 0.00001
+      bump_or_trough: bump
+      center: 0.0ps
+      rise: 1.0ps
+      slope: 0.0
+      bump_height: 0.0
+      width: 1s
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0um
+      rise: 1.0um
+      slope: 0.0
+      bump_height: 0.0
+      width: 1000um
+  krook:
+    is_on: True
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0ps
+      rise: 1.0ps
+      bump_height: 0.0
+      width: 1s
+    space:
+      baseline: 0.0001
+      bump_or_trough: trough
+      center: 60.0um
+      rise: 1.0um
+      bump_height: 0.2
+      width: 100.0um
