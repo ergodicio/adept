@@ -1,0 +1,5 @@
+4dab281aa96caf3589f56bf0b6f313686e70c7f3b0c10788ea071b4edb6a1ef2  /pscratch/sd/a/archis/adept-sessions/20261024T112505Z-77310-4969/src/benchmarks/vlasov_cuda/backend.cpp
+fdea36e5d804fd24df663e6c48194dba4e42dec3771cea8167b526db91b52927  /pscratch/sd/a/archis/adept-sessions/20261024T112505Z-77310-4969/src/benchmarks/vlasov_cuda/main.cpp
+73ee9d9f649eebf405873f87c1eece597e8bd57a32636d2ec047eef156ea0cb3  /pscratch/sd/a/archis/adept-sessions/20261024T112505Z-77310-4969/src/benchmarks/vlasov_cuda/backend.hpp
+f87f6aa9731f64e501b94e95c20a53f45ae7d1ea5ec39c7e859c6b1a4b8c40c3  /pscratch/sd/a/archis/adept-sessions/20261024T112505Z-77310-4969/src/benchmarks/vlasov_cuda/local_cubic.hpp
+d5f11680925c336c63ea39e306230371f6dcb3e41ba423c8c09599c7c592664c  /pscratch/sd/a/archis/adept-sessions/20261024T112505Z-77310-4969/src/benchmarks/vlasov_cuda/CMakeLists.txt

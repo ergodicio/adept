@@ -231,7 +231,28 @@ class Vlasov1DConfig(BaseModel):
     grid: GridConfig
     save: SaveConfig
     solver: str
+    backend: Literal["jax", "native"] = "jax"
+    native: "NativeSolverConfig | None" = None
     mlflow: MLFlowConfig
     drivers: EMDriverSetConfig
     terms: TermsConfig
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+
+
+class NativeSolverConfig(BaseModel):
+    """Execution options for the optional native Vlasov backend."""
+
+    model_config = ConfigDict(extra="forbid")
+    library: str | None = None
+    device: Literal["cuda", "cpu"] = "cuda"
+    ranks: int = Field(default=1, ge=1)
+    launcher: list[str] = Field(default_factory=list)
+    workdir: str | None = None
+    halo_capacity: int = Field(default=64, ge=2)
+    scalar_stride: int = Field(default=1, ge=1)
+    custom_save_times: Literal["preserve", "steps"] = "preserve"
+    host_mpi: bool = False
+    timeout: float | None = Field(default=None, gt=0)
+
+
+Vlasov1DConfig.model_rebuild()

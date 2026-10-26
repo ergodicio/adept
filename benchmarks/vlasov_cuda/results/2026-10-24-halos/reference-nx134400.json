@@ -1,0 +1,35 @@
+{
+  "checkpoint": "/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/workdir/campaigns/production-nx134400/checkpoint-state/step-030000-1a19a5ae15f8",
+  "manifest_sha256": "9ab7e963d2699777bd935ca84fad446b89846e64c416d10db6d3c14829af8627",
+  "actual_time": 600.0,
+  "config_sha256": "5a9f5347e6253a3d4201745318843857c568b3787cf91e9fe81a623d0cdbb214",
+  "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+  "jax": "0.10.2",
+  "nx": 134400,
+  "nv": 4096,
+  "dt": 0.02,
+  "nu": 1e-12,
+  "devices": [
+    "cuda:0",
+    "cuda:1",
+    "cuda:2",
+    "cuda:3"
+  ],
+  "milestones": [
+    {
+      "steps": 1,
+      "advanced_steps": 1,
+      "seconds": 3.020330819010269
+    },
+    {
+      "steps": 10,
+      "advanced_steps": 9,
+      "seconds": 2.0284883639833424
+    },
+    {
+      "steps": 100,
+      "advanced_steps": 90,
+      "seconds": 20.115412370010745
+    }
+  ]
+}

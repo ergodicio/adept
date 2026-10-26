@@ -37,6 +37,7 @@ Documentation = "https://adept.readthedocs.io/en/latest/"
 
 [project.optional-dependencies]
 cpu = []
+native = ["cloudpickle"]
 gpu = [
     "jax[cuda12]",
     "nvidia-ml-py"

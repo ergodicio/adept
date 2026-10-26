@@ -32,6 +32,73 @@ terms:
   # Solver configuration
 ```
 
+## Execution backend
+
+`backend: jax` is the default. The optional `backend: native` runs the
+electrostatic solver in C++/CUDA/MPI while retaining Python initialization,
+save callbacks, xarray/NetCDF postprocessing, and `ergoExo` tracking. It has no
+automatic differentiation. Custom `BaseVlasov1D` subclasses passed to
+`ergoExo.setup(..., adept_module=MyModule)` are wrapped automatically.
+
+Build the shared library on the target system (CUDA toolkit, MPI and CMake
+are required):
+
+```sh
+cmake -S adept/_vlasov1d/native -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native -j4
+```
+
+On Perlmutter add `-DCMAKE_CXX_COMPILER=CC`, and use the existing allocated
+job's `srun` launcher. A two-node example is:
+
+```yaml
+backend: native
+native:
+  library: /absolute/path/build/native/libadept_vlasov.so
+  ranks: 8
+  workdir: /absolute/shared/scratch/path
+  scalar_stride: 1
+  launcher: [srun, --overlap, --nodes=2, '--ntasks={ranks}',
+             --ntasks-per-node=4, --gpus-per-node=4, --gpu-bind=none,
+             --cpu-bind=none]
+```
+
+Run one outer Python driver inside the allocation; the launcher starts its
+workers. Set `MPICH_GPU_SUPPORT_ENABLED=1` for CUDA-aware Cray MPI. The work
+directory and library must be visible on every worker node. Native execution
+uses its own velocity-slab decomposition; `native.ranks` controls it.
+
+| Native option | Default | Meaning |
+|---|---|---|
+| `library` | unset | Shared library path; alternatively set `ADEPT_VLASOV_LIBRARY` |
+| `device` | `cuda` | `cpu` selects the FFTW validation build (`-DVLASOV_CUDA=OFF`) |
+| `ranks` | `1` | One MPI worker per GPU; must divide `nx` and `nv` |
+| `launcher` | empty | Argument list, with `{ranks}` substitution; defaults to `mpiexec -n` for multiple ranks |
+| `workdir` | `BASE_TEMPDIR` or system temporary directory | Shared staging/output directory, required for multiple ranks |
+| `scalar_stride` | `1` | Save scalar diagnostics every this many actual timesteps, plus both endpoints |
+| `custom_save_times` | `preserve` | Preserve subclass callback times; `steps` rounds those too |
+| `halo_capacity` | `64` | Maximum velocity halo width; exceeding it fails explicitly |
+| `host_mpi` | `false` | Stage MPI messages through host memory for MPI without CUDA support |
+| `timeout` | unset | Worker timeout in seconds |
+
+Standard field/distribution save times round to the nearest timestep and
+duplicate times are merged. Outputs record actual times in `result.ts` and
+`cfg['save'][key]['t']['ax']`; the number of frames can therefore change.
+The native backend streams saved outputs into host memory-mapped files instead
+of retaining the full time history in GPU memory. Sparse custom callbacks
+preserve their requested times by default for existing project postprocessors;
+off-step callbacks require a previous-state GPU copy and interpolation. Use
+`custom_save_times: steps` when the postprocessor reads actual result times.
+Custom postprocessors that rebuild a uniform scalar axis must also use actual
+times when the final scalar interval is shorter than `scalar_stride`.
+
+The initial implementation supports one electron species, a symmetric
+cell-centred velocity grid, `time: sixth`, `edfdv: cubic-spline`, spectral
+spatial streaming and `field: poisson`. Optional collisions are constant-rate
+`chang_cooper_dougherty` with analytic beta. Drivers, Krook relaxation,
+Hou–Li filtering, evolved df/dt diagnostics and trainable modules are rejected.
+The cubic operator reproduces ADEPT's local C1 Hermite interpolation.
+
 ## units
 
 Physical unit normalizations for the simulation.

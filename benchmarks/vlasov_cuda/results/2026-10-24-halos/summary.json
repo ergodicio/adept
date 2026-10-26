@@ -1,0 +1,302 @@
+{
+  "date": "2026-10-24",
+  "system": "NERSC Perlmutter",
+  "device": "NVIDIA A100-SXM4-40GB",
+  "allocation": "60206959",
+  "reference_allocation": "60205333",
+  "nodes": [
+    "nid001024",
+    "nid001025"
+  ],
+  "precision": "float64",
+  "dt": 0.02,
+  "nu": 1e-12,
+  "software": {
+    "cuda": "13.2.78",
+    "gcc": "14.3.0",
+    "cray_mpich": "9.1.0",
+    "cmake": "3.30.2"
+  },
+  "reference_libraries": {
+    "adept": "0.1.0",
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "interpax": "0.3.14+10.g84aaf30",
+    "diffrax": "0.7.2",
+    "numpy": "2.4.6",
+    "scipy": "1.18.0"
+  },
+  "integrator": "sixth",
+  "velocity": "interpax cubic C1 Hermite",
+  "streaming": "spectral exponential",
+  "timing": "Median of 3 repeats; 10 measured steps after 3 warmup steps; maximum rank mean; explicit GPU synchronization; no overlap. Input/output excluded.",
+  "reference_cuda_executable_sha256": "c5db5fa71e9d1119e7cb581a9e67624f42155c006da45184cb55de6542255b9a",
+  "measured_executable_sha256": "7d88657b9597e939f310c2c488d81842793ec361ad190b8f60595c47c8c6ea51",
+  "comparison_scope": "Full native grids, mature checkpoint t600 to t602. Not a full t0-to-2000 trajectory reproduction or a CUDA-versus-JAX speed comparison.",
+  "checks": {
+    "native_cases": 20,
+    "max_abs_f_error": 6.725869861057276e-13,
+    "max_relative_l2_f_error": 9.515283499791307e-14,
+    "max_relative_l2_e_error": 5.6328186846468416e-14,
+    "all_hole_counts_match": true,
+    "validation": [
+      {
+        "report": "validation-local-cpu.json",
+        "checks": 36,
+        "max_abs_error": 9.103828801926284e-15
+      },
+      {
+        "report": "validation-local-cuda.json",
+        "checks": 36,
+        "max_abs_error": 3.774758283725532e-15
+      },
+      {
+        "report": "validation-natural-cpu.json",
+        "checks": 12,
+        "max_abs_error": 3.1839523243379595e-15
+      }
+    ]
+  },
+  "paired": [
+    {
+      "nx": 134400,
+      "nodes": 1,
+      "gpus": 4,
+      "transpose_ms": 323.5450839000123,
+      "halo_ms": 174.2806366000877,
+      "speedup": 1.8564603056989837,
+      "sent_bytes_reduction": 0.8534226190476191
+    },
+    {
+      "nx": 134400,
+      "nodes": 2,
+      "gpus": 8,
+      "transpose_ms": 490.5058394000434,
+      "halo_ms": 140.0107500999638,
+      "speedup": 3.5033441292889,
+      "sent_bytes_reduction": 0.8507653061224489
+    },
+    {
+      "nx": 268800,
+      "nodes": 1,
+      "gpus": 4,
+      "transpose_ms": 649.6359549999852,
+      "halo_ms": 342.4947891999636,
+      "speedup": 1.8967761714491342,
+      "sent_bytes_reduction": 0.8533482142857143
+    },
+    {
+      "nx": 268800,
+      "nodes": 2,
+      "gpus": 8,
+      "transpose_ms": 964.9749842999427,
+      "halo_ms": 275.0057376999848,
+      "speedup": 3.5089267313857793,
+      "sent_bytes_reduction": 0.8506377551020408
+    }
+  ],
+  "timing_rows": [
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "nodes": 1,
+      "gpus": 4,
+      "layout": "halos",
+      "repeats": 3,
+      "step_ms": 174.2806366000877,
+      "stream_ms": 96.7597968001428,
+      "spline_ms": 29.37038770005529,
+      "pack_ms": 6.511311200029013,
+      "mpi_ms": 20.97919940019892,
+      "field_ms": 6.686601499905009,
+      "collision_ms": 14.47656629998164,
+      "max_allocated_bytes_per_rank": 11155281976,
+      "step_ms_range": [
+        174.2041793000681,
+        174.3251663999672
+      ],
+      "maximum_halo_width": 4,
+      "sent_bytes_per_step_max_rank": 1694515200.0,
+      "max_abs_relative_mass_change": 4.083657516783715e-08
+    },
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "nodes": 1,
+      "gpus": 4,
+      "layout": "transpose",
+      "repeats": 3,
+      "step_ms": 323.5450839000123,
+      "stream_ms": 96.80129259998012,
+      "spline_ms": 23.18371020005543,
+      "pack_ms": 45.59232870010419,
+      "mpi_ms": 137.4090791999834,
+      "field_ms": 6.081885599883208,
+      "collision_ms": 14.47260410000126,
+      "max_allocated_bytes_per_rank": 11017656376,
+      "step_ms_range": [
+        323.5294349000242,
+        323.5631748999822
+      ],
+      "maximum_halo_width": 0,
+      "sent_bytes_per_step_max_rank": 11560550400.0,
+      "max_abs_relative_mass_change": 4.083657516783715e-08
+    },
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "nodes": 2,
+      "gpus": 8,
+      "layout": "halos",
+      "repeats": 3,
+      "step_ms": 140.0107500999638,
+      "stream_ms": 48.50200009991568,
+      "spline_ms": 12.23685909994856,
+      "pack_ms": 3.281850700113864,
+      "mpi_ms": 60.16711680003937,
+      "field_ms": 6.355414500239931,
+      "collision_ms": 11.2380733999089,
+      "max_allocated_bytes_per_rank": 5650233400,
+      "step_ms_range": [
+        139.8805341999378,
+        140.1605807999658
+      ],
+      "maximum_halo_width": 4,
+      "sent_bytes_per_step_max_rank": 1006387200.0,
+      "max_abs_relative_mass_change": 4.083634327505363e-08
+    },
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "nodes": 2,
+      "gpus": 8,
+      "layout": "transpose",
+      "repeats": 3,
+      "step_ms": 490.5058394000434,
+      "stream_ms": 48.55127589999029,
+      "spline_ms": 11.72291799998675,
+      "pack_ms": 22.97926750006809,
+      "mpi_ms": 391.0327226998788,
+      "field_ms": 12.39774919995398,
+      "collision_ms": 11.23720970006161,
+      "max_allocated_bytes_per_rank": 5512607800,
+      "step_ms_range": [
+        489.5213302999537,
+        490.7239440000239
+      ],
+      "maximum_halo_width": 0,
+      "sent_bytes_per_step_max_rank": 6743654400.0,
+      "max_abs_relative_mass_change": 4.083634327505363e-08
+    },
+    {
+      "nx": 268800,
+      "nv": 4096,
+      "nodes": 1,
+      "gpus": 4,
+      "layout": "halos",
+      "repeats": 3,
+      "step_ms": 342.4947891999636,
+      "stream_ms": 194.4373317000554,
+      "spline_ms": 61.42703189980239,
+      "pack_ms": 13.08217789996888,
+      "mpi_ms": 41.15909789966281,
+      "field_ms": 12.18012080012159,
+      "collision_ms": 21.11400799994954,
+      "max_allocated_bytes_per_rank": 22310481976,
+      "step_ms_range": [
+        342.4020051000753,
+        342.5728927000364
+      ],
+      "maximum_halo_width": 4,
+      "sent_bytes_per_step_max_rank": 3390750720.0,
+      "max_abs_relative_mass_change": 5.640588611556955e-08
+    },
+    {
+      "nx": 268800,
+      "nv": 4096,
+      "nodes": 1,
+      "gpus": 4,
+      "layout": "transpose",
+      "repeats": 3,
+      "step_ms": 649.6359549999852,
+      "stream_ms": 194.4949301001088,
+      "spline_ms": 57.92602180003996,
+      "pack_ms": 91.58833139995295,
+      "mpi_ms": 273.2574189000388,
+      "field_ms": 11.26907970001412,
+      "collision_ms": 21.11227130003499,
+      "max_allocated_bytes_per_rank": 22035230776,
+      "step_ms_range": [
+        649.6297856999718,
+        649.6461631000784
+      ],
+      "maximum_halo_width": 0,
+      "sent_bytes_per_step_max_rank": 23121100800.0,
+      "max_abs_relative_mass_change": 5.640588611556955e-08
+    },
+    {
+      "nx": 268800,
+      "nv": 4096,
+      "nodes": 2,
+      "gpus": 8,
+      "layout": "halos",
+      "repeats": 3,
+      "step_ms": 275.0057376999848,
+      "stream_ms": 97.31809059990155,
+      "spline_ms": 30.1135374000296,
+      "pack_ms": 6.52626839982986,
+      "mpi_ms": 119.0691504999904,
+      "field_ms": 10.73557600002459,
+      "collision_ms": 14.49078770006054,
+      "max_allocated_bytes_per_rank": 11300409400,
+      "step_ms_range": [
+        274.8684877000414,
+        275.1715809000871
+      ],
+      "maximum_halo_width": 4,
+      "sent_bytes_per_step_max_rank": 2014494720.0,
+      "max_abs_relative_mass_change": 5.640567068345301e-08
+    },
+    {
+      "nx": 268800,
+      "nv": 4096,
+      "nodes": 2,
+      "gpus": 8,
+      "layout": "transpose",
+      "repeats": 3,
+      "step_ms": 964.9749842999427,
+      "stream_ms": 97.35549070010165,
+      "spline_ms": 23.13156989971503,
+      "pack_ms": 45.69765130004271,
+      "mpi_ms": 776.3868526999431,
+      "field_ms": 24.17435689994818,
+      "collision_ms": 14.48879250001482,
+      "max_allocated_bytes_per_rank": 11025158200,
+      "step_ms_range": [
+        964.4204498000363,
+        965.7143639999504
+      ],
+      "maximum_halo_width": 0,
+      "sent_bytes_per_step_max_rank": 13487308800.0,
+      "max_abs_relative_mass_change": 5.640567068345301e-08
+    }
+  ],
+  "source_sha256": {
+    "CMakeLists.txt": "d5f11680925c336c63ea39e306230371f6dcb3e41ba423c8c09599c7c592664c",
+    "backend.cpp": "4dab281aa96caf3589f56bf0b6f313686e70c7f3b0c10788ea071b4edb6a1ef2",
+    "backend.hpp": "73ee9d9f649eebf405873f87c1eece597e8bd57a32636d2ec047eef156ea0cb3",
+    "benchmark_latest.py": "9ab3ba1fc7413167bdb880b3520b50a791616a7f86ca929a79910c544387399a",
+    "checkpoint_reference.py": "6387baa7e5e56c909fc255ed4c9c822b84562f80fffc5386d00570a0e81dddef",
+    "compare_checkpoint.py": "0b333e43047049965ae9bdb792ea4578a48e6fb7e55e29406d755d8d18b7cd2d",
+    "distributed_reference.py": "746fef8b0b093eb964c78df99a2dac895ae618d2757cca38e27b90d9617e42a6",
+    "local_cubic.hpp": "f87f6aa9731f64e501b94e95c20a53f45ae7d1ea5ec39c7e859c6b1a4b8c40c3",
+    "main.cpp": "fdea36e5d804fd24df663e6c48194dba4e42dec3771cea8167b526db91b52927",
+    "measure.py": "fa044122a74245abd65e917c886fd2e6a12a8d926183427a75b2dbefceea77a4",
+    "validate.py": "36fd3383185f1a3ddba754d587ca8d76f94c790597a86859200683330907955f",
+    "validate_local.py": "9fc625fb020693efd292e9ead2388cbc0320b7eb1ee5d5f56c326706771c6f6b"
+  },
+  "source_archive": {
+    "file": "source.tar.gz",
+    "sha256": "df359db1f60990589a2fcac57643fc4770d51d636ecad7379d9bf777f4baf9b3"
+  }
+}

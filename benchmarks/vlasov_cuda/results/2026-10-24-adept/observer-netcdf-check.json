@@ -1,0 +1,144 @@
+{
+  "dist-electron.f0.nc": {
+    "sizes": {
+      "t": 1,
+      "v_electron": 64
+    },
+    "variables": [
+      "electron.f0"
+    ],
+    "times": [
+      0.0
+    ]
+  },
+  "dist-electron.main.nc": {
+    "sizes": {
+      "t": 3,
+      "x": 32,
+      "v_electron": 64
+    },
+    "variables": [
+      "electron.main"
+    ],
+    "times": [
+      0.0,
+      0.04,
+      0.1
+    ]
+  },
+  "fields-electron-t=0.1.nc": {
+    "sizes": {
+      "t": 5,
+      "x": 32
+    },
+    "variables": [
+      "fields--flogf",
+      "fields-f^2",
+      "fields-j",
+      "fields-n",
+      "fields-p",
+      "fields-q",
+      "fields-v"
+    ],
+    "times": [
+      0.0,
+      0.02,
+      0.04,
+      0.08,
+      0.1
+    ]
+  },
+  "fields-shared-t=0.1.nc": {
+    "sizes": {
+      "t": 5,
+      "x": 32
+    },
+    "variables": [
+      "fields-e",
+      "fields-de",
+      "fields-a",
+      "fields-prev_a",
+      "fields-pond"
+    ],
+    "times": [
+      0.0,
+      0.02,
+      0.04,
+      0.08,
+      0.1
+    ]
+  },
+  "native-cascade.nc": {
+    "sizes": {
+      "t": 3,
+      "kx": 17
+    },
+    "variables": [
+      "c2",
+      "c2_background",
+      "c2_fluctuation",
+      "collision_loss_rate_estimate",
+      "collision_moments_valid",
+      "density_min",
+      "edge_absolute_mass",
+      "f_min",
+      "invalid_moment_cell_fraction",
+      "mass",
+      "negative_mass",
+      "pkx",
+      "temperature_min"
+    ],
+    "times": [
+      0.0,
+      0.05,
+      0.1
+    ]
+  },
+  "scalars-t=0.1.nc": {
+    "sizes": {
+      "t": 6
+    },
+    "variables": [
+      "c2_0",
+      "delta_c2",
+      "gamma2",
+      "mean_-flogf_electron",
+      "mean_P_electron",
+      "mean_de2",
+      "mean_e2",
+      "mean_f2_electron",
+      "mean_field_energy",
+      "mean_j_electron",
+      "mean_kinetic_energy",
+      "mean_n_electron",
+      "mean_pond",
+      "mean_q_electron",
+      "mean_total_energy",
+      "n_holes_kc",
+      "n_holes_kpeak",
+      "v_the"
+    ],
+    "times": [
+      0.0,
+      0.02,
+      0.04,
+      0.06,
+      0.08,
+      0.1
+    ]
+  },
+  "spectrum-electron.pkv.nc": {
+    "sizes": {
+      "t": 3,
+      "kv_electron": 33
+    },
+    "variables": [
+      "electron.pkv"
+    ],
+    "times": [
+      0.0,
+      0.05,
+      0.1
+    ]
+  }
+}

@@ -52,6 +52,8 @@ class ADEPTModule:
 
     """
 
+    jit_compile = True
+
     def __init__(self, cfg) -> None:
         self.cfg = cfg
         self.state = None
@@ -299,6 +301,11 @@ class ergoExo:
         elif cfg["solver"] == "vlasov-1d":
             from adept.vlasov1d import BaseVlasov1D as this_module
 
+            if cfg.get("backend", "jax") == "native":
+                from adept.vlasov1d import native_backend
+
+                this_module = native_backend(this_module)
+
             # config = ConfigModel(**cfg)
 
         elif cfg["solver"] == "vlasov-2d":
@@ -340,6 +347,10 @@ class ergoExo:
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
         else:
+            if cfg.get("backend", "jax") == "native":
+                from adept.vlasov1d import native_backend
+
+                adept_module = native_backend(adept_module)
             self.adept_module = adept_module(cfg)
 
         # dump raw config
@@ -406,7 +417,10 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            run_output = filter_jit(self.adept_module.__call__)(modules, args)
+            solve = self.adept_module.__call__
+            if self.adept_module.jit_compile:
+                solve = filter_jit(solve)
+            run_output = solve(modules, args)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
