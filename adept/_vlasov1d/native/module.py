@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 from contextlib import contextmanager
-from functools import cache, lru_cache
+from functools import cache
 from pathlib import Path
 
 import jax
@@ -106,16 +106,14 @@ class NativeVlasovMixin:
 
     def _validate_native_physics(self):
         cfg, sim = self.cfg, self.simulation
-        if (
-            len(sim.species) != 1
-            or sim.species[0].name != "electron"
-            or sim.species[0].charge != -1
-            or sim.species[0].mass != 1
-        ):
-            raise NotImplementedError("native Vlasov currently supports one electron species with charge=-1, mass=1")
-        species = sim.species[0]
-        if not np.isclose(species.vmin, -species.vmax, rtol=0, atol=1e-12):
-            raise NotImplementedError("native Vlasov requires a symmetric velocity domain")
+        names = [species.name for species in sim.species]
+        if not names or len(set(names)) != len(names):
+            raise ValueError("native species names must be nonempty and unique")
+        for species in sim.species:
+            if not np.isfinite(species.mass) or species.mass <= 0 or not np.isfinite(species.charge):
+                raise ValueError("native species require positive finite mass and finite charge")
+            if not np.isclose(species.vmin, -species.vmax, rtol=0, atol=1e-12):
+                raise NotImplementedError("native Vlasov requires symmetric velocity domains")
         terms = cfg["terms"]
         if terms["time"] != "sixth" or terms["edfdv"] != "cubic-spline" or terms["field"] != "poisson":
             raise NotImplementedError(
@@ -125,6 +123,7 @@ class NativeVlasovMixin:
             raise NotImplementedError("native Vlasov requires exponential spatial streaming")
         if (
             any(cfg["drivers"][key] for key in ["ex", "ey"])
+            or cfg["drivers"].get("ex_stochastic") is not None
             or terms["krook"]["is_on"]
             or terms.get("hou_li_filter", {}).get("is_on", False)
         ):
@@ -133,7 +132,9 @@ class NativeVlasovMixin:
             raise NotImplementedError("native Vlasov does not yet evolve df/dt diagnostic state")
         fp = terms["fokker_planck"]
         if fp["is_on"]:
-            if fp["type"] != "chang_cooper_dougherty" or fp.get("self_consistent_beta", {}).get("enabled", False):
+            if fp["type"].casefold() not in {"chang_cooper_dougherty", "dougherty_chang_cooper"} or fp.get(
+                "self_consistent_beta", {}
+            ).get("enabled", False):
                 raise NotImplementedError("native collisions require Chang-Cooper Dougherty with analytic beta")
             for axis in ["time", "space"]:
                 envelope = fp[axis]
@@ -190,6 +191,8 @@ class NativeVlasovMixin:
                 self.cfg["save"][key]["t"].update(ax=times, nt=len(times), tmin=float(times[0]), tmax=float(times[-1]))
 
     def __call__(self, trainable_modules=None, args=None):
+        if jax.process_count() != 1:
+            raise RuntimeError("run one outer Python driver; the native backend launches its MPI workers")
         if trainable_modules:
             raise NotImplementedError("native Vlasov does not execute trainable modules")
         if args is not None and args is not self.args:
@@ -206,9 +209,11 @@ class NativeVlasovMixin:
         steps = round((t1 - t0) / grid.dt)
         if steps < 1 or not np.isclose(steps * grid.dt, t1 - t0, rtol=0, atol=1e-9):
             raise NotImplementedError("native solve endpoints must be separated by an integer number of timesteps")
-        if grid.nx % options.ranks or self.simulation.species[0].nv % options.ranks:
-            raise ValueError("native ranks must divide both nx and nv")
-        known = {"electron", "e", "de", "a", "da", "prev_a"}
+        species_list = sorted(self.simulation.species, key=lambda species: species.name != "electron")
+        if grid.nx % options.ranks or any(species.nv % options.ranks for species in species_list):
+            raise ValueError("native ranks must divide nx and every species nv")
+        species_names = {species.name for species in species_list}
+        known = species_names | {"e", "de", "a", "da", "prev_a"}
         if set(self.state) - known or any(np.any(np.asarray(self.state[key])) for key in ["de", "a", "da", "prev_a"]):
             raise NotImplementedError(
                 "native Vlasov requires electrostatic state without additional evolved diagnostics"
@@ -232,10 +237,7 @@ class NativeVlasovMixin:
         root = Path(workspace.name)
         # Retain backing files for the NumPy memmaps returned in solver result.
         self._native_workspaces = getattr(self, "_native_workspaces", []) + [workspace]
-        _write_vx(root / "initial.bin", self.state["electron"])
-        species_grid = self.cfg["grid"]["species_grids"]["electron"]
         for name, values in [
-            ("v.bin", species_grid["v"]),
             ("background.bin", self.cfg["grid"]["ion_charge"]),
             ("field.bin", self.state["e"]),
         ]:
@@ -249,7 +251,7 @@ class NativeVlasovMixin:
                     dict(
                         callbacks={key: save.fn for key, save in subs.items()},
                         args=self.args,
-                        state={key: value for key, value in self.state.items() if key not in ["electron", "e"]},
+                        state={key: value for key, value in self.state.items() if key not in species_names | {"e"}},
                     ),
                     stream,
                 )
@@ -258,19 +260,13 @@ class NativeVlasovMixin:
                 self.cfg["grid"]["species_distributions"] = cache
         fp = self.cfg["terms"]["fokker_planck"]
         nu = float(fp["time"]["baseline"]) * float(fp["space"]["baseline"]) if fp["is_on"] else 0.0
-        native_args = [
+        common_args = [
             "--nx",
             str(grid.nx),
-            "--nv",
-            str(species_grid["nv"]),
             "--length",
             str(grid.xmax - grid.xmin),
-            "--vmax",
-            str(species_grid["vmax"]),
             "--dt",
             str(grid.dt),
-            "--nu",
-            str(nu),
             "--cells",
             "--integrator",
             "sixth",
@@ -280,18 +276,48 @@ class NativeVlasovMixin:
             "halos",
             "--halo-capacity",
             str(options.halo_capacity),
-            "--input",
-            str(root / "initial.bin"),
-            "--v-grid",
-            str(root / "v.bin"),
             "--background",
             str(root / "background.bin"),
         ]
         if options.host_mpi:
-            native_args.append("--host-mpi")
+            common_args.append("--host-mpi")
+        species_specs = []
+        for index, species in enumerate(species_list):
+            species_grid = self.cfg["grid"]["species_grids"][species.name]
+            initial, coordinates = root / f"initial-{index}.bin", root / f"v-{index}.bin"
+            _write_vx(initial, self.state[species.name])
+            np.asarray(species_grid["v"], dtype=np.float64).tofile(coordinates)
+            species_args = [
+                *common_args,
+                "--nv",
+                str(species.nv),
+                "--vmax",
+                str(species.vmax),
+                "--charge",
+                str(species.charge),
+                "--mass",
+                str(species.mass),
+                "--nu",
+                str(nu if index == 0 else 0.0),
+                "--input",
+                str(initial),
+                "--v-grid",
+                str(coordinates),
+            ]
+            species_specs.append(
+                dict(
+                    name=species.name,
+                    nv=species.nv,
+                    vmax=species.vmax,
+                    charge=species.charge,
+                    mass=species.mass,
+                    options=species_args,
+                )
+            )
         request = dict(
             library=library,
-            options=native_args,
+            options=species_specs[0]["options"],
+            species=species_specs,
             times=times,
             t0=t0,
             dt=grid.dt,

@@ -153,7 +153,14 @@ jobs:
     - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
+    - name: Install native validation dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake pkg-config libfftw3-dev libopenmpi-dev openmpi-bin
+        uv sync --extra dev --extra native --frozen
     - name: Test with pytest
+      env:
+        OMPI_MCA_rmaps_base_oversubscribe: '1'
       run: uv run --locked pytest tests/test_vlasov1d --ignore=tests/test_vlasov1d/test_config_regression.py
 
   test-farsight1d:

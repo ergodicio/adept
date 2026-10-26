@@ -41,7 +41,8 @@ automatic differentiation. Custom `BaseVlasov1D` subclasses passed to
 `ergoExo.setup(..., adept_module=MyModule)` are wrapped automatically.
 
 Build the shared library on the target system (CUDA toolkit, MPI and CMake
-are required):
+are required). Install the Python extra with `pip install 'adept[native]'`
+or your environment manager's equivalent:
 
 ```sh
 cmake -S adept/_vlasov1d/native -B build/native -DCMAKE_BUILD_TYPE=Release
@@ -72,7 +73,7 @@ uses its own velocity-slab decomposition; `native.ranks` controls it.
 |---|---|---|
 | `library` | unset | Shared library path; alternatively set `ADEPT_VLASOV_LIBRARY` |
 | `device` | `cuda` | `cpu` selects the FFTW validation build (`-DVLASOV_CUDA=OFF`) |
-| `ranks` | `1` | One MPI worker per GPU; must divide `nx` and `nv` |
+| `ranks` | `1` | One MPI worker per GPU; must divide `nx` and every species' `nv` |
 | `launcher` | empty | Argument list, with `{ranks}` substitution; defaults to `mpiexec -n` for multiple ranks |
 | `workdir` | `BASE_TEMPDIR` or system temporary directory | Shared staging/output directory, required for multiple ranks |
 | `scalar_stride` | `1` | Save scalar diagnostics every this many actual timesteps, plus both endpoints |
@@ -92,12 +93,25 @@ off-step callbacks require a previous-state GPU copy and interpolation. Use
 Custom postprocessors that rebuild a uniform scalar axis must also use actual
 times when the final scalar interval is shorter than `scalar_stride`.
 
-The initial implementation supports one electron species, a symmetric
-cell-centred velocity grid, `time: sixth`, `edfdv: cubic-spline`, spectral
-spatial streaming and `field: poisson`. Optional collisions are constant-rate
-`chang_cooper_dougherty` with analytic beta. Drivers, Krook relaxation,
+Kinetic electrons and ions use the existing `terms.species` and `density`
+configuration below. Each species has its own symmetric cell-centred velocity
+grid, charge and mass. All species contribute charge to the shared Poisson
+solve at every splitting stage and advance with their own charge-to-mass ratio.
+With no explicit species list, the usual electron species and static background
+are retained. No additional ion parameters or preprocessing are required.
+
+Supported numerics are `time: sixth`, `edfdv: cubic-spline`, spectral spatial
+streaming and `field: poisson`. The cubic operator reproduces ADEPT's local C1
+Hermite interpolation. Optional collisions are constant-rate
+`chang_cooper_dougherty` with analytic beta, applied to the reference species
+(electron if present, otherwise the first species), matching the JAX path.
+Inter-species collisional exchange is not implemented. Drivers, Krook relaxation,
 Hou–Li filtering, evolved df/dt diagnostics and trainable modules are rejected.
-The cubic operator reproduces ADEPT's local C1 Hermite interpolation.
+
+This backend uses the `ergoExo`/`BaseVlasov1D` lifecycle. The explicit
+`Vlasov1DBuilder` prepares JAX programs and rejects `backend: native`; it does
+not silently fall back to JAX. Rebuild the shared library after updating ADEPT;
+incompatible native library ABIs fail with an actionable error.
 
 ## units
 

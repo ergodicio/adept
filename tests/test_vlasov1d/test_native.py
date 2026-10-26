@@ -180,3 +180,66 @@ def test_backend_dispatch_and_guards(config):
         NativeVlasov1D(config)
     with pytest.raises(TypeError, match="BaseVlasov1D"):
         native_backend(object)
+    from adept import SimulationSpec, solver_registry
+
+    with pytest.raises(NotImplementedError, match="ergoExo"):
+        solver_registry.prepare(SimulationSpec.from_legacy_config(config), key=0)
+
+
+@pytest.mark.parametrize("ranks,collisions,mass,charge", [(1, False, 25.0, 1.0), (2, True, 1836.0, 2.0)])
+def test_native_kinetic_ions(config, native_library, tmp_path, ranks, collisions, mass, charge):
+    """Ion charge feeds back on electrons; all species move on independent grids."""
+    config["native"].update(library=str(native_library), ranks=ranks)
+    config["terms"]["fokker_planck"]["is_on"] = collisions
+    electron = deepcopy(config["density"]["species-background"])
+    electron.update(v0=0.0, T0=1.0, noise_val=0.0)
+    ion = deepcopy(electron)
+    ion.update(T0=0.1, basis="sine", baseline=0.8 / charge, amplitude=0.03, wavenumber=2 * np.pi / 20.94)
+    alpha = deepcopy(electron)
+    alpha.update(T0=0.2, **{"space-profile": {**electron["space-profile"], "baseline": 0.1}})
+    config["density"] = {
+        "quasineutrality": True,
+        "species-electrons": electron,
+        "species-ions": ion,
+        "species-alpha": alpha,
+    }
+    # Put the electron last to exercise reference-species selection, rather than
+    # accidentally applying its collision operator to the first configured ion.
+    config["terms"]["species"] = [
+        dict(
+            name="ion",
+            charge=charge,
+            mass=mass,
+            nv=32,
+            vmax=6 * np.sqrt(0.1 / mass),
+            density_components=["species-ions"],
+        ),
+        dict(
+            name="alpha",
+            charge=2.0,
+            mass=4 * mass,
+            nv=48,
+            vmax=6 * np.sqrt(0.2 / (4 * mass)),
+            density_components=["species-alpha"],
+        ),
+        dict(name="electron", charge=-1.0, mass=1.0, nv=64, vmax=8.0, density_components=["species-electrons"]),
+    ]
+    config["save"].update(ion={"main": {"t": {"nt": 3}}}, alpha={"main": {"t": {"nt": 3}}})
+    original, native = (setup(cls, config) for cls in [BaseVlasov1D, NativeVlasov1D])
+    a, output = reference_at_native_times(original, native), native({})
+    b = output["solver result"]
+    compare_results(a, b)
+    for species in ["electron", "ion", "alpha"]:
+        values = b.ys[f"{species}.main"]
+        assert np.max(np.abs(values[-1] - values[0])) > 1e-9, species
+    assert np.max(np.abs(b.ys["fields"]["e"][-1])) > 1e-4
+    assert {s["name"] for s in output["native stats"]["species"]} == {"electron", "ion", "alpha"}
+    directory = tmp_path / "multispecies"
+    (directory / "binary").mkdir(parents=True)
+    fields = store_fields(native.cfg, str(directory / "binary"), b.ys["fields"], b.ts["fields"], "fields")
+    dists = store_f(native.cfg, b.ts, str(directory), b.ys)
+    assert set(fields) >= {"electron", "ion", "alpha"}
+    for species, nv in [("ion", 32), ("alpha", 48)]:
+        with xr.open_dataset(directory / f"binary/dist-{species}.main.nc") as saved:
+            xr.testing.assert_allclose(saved, dists[f"{species}.main"])
+            assert saved.sizes[f"v_{species}"] == nv

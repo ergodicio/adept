@@ -314,7 +314,7 @@ void Backend::stream(double dt) {
     p->streaming_fft.c2r(fk, f);
     parallel_for(g.count(), [=] DEVICE (std::size_t i) { f[i] /= nx; });
 }
-void Backend::density() {
+void Backend::density(double charge) {
     const Grid g = p->grid;
     const int nx = g.nx, nv = g.nv, nvl = g.local_v(), v0 = g.rank * nvl;
     const double dv = g.dv();
@@ -325,10 +325,22 @@ void Backend::density() {
         double sum = 0.0;
         for (int j = 0; j < nvl; ++j)
             sum += f[std::size_t(j) * nx + x] * (!cells && (j + v0 == 0 || j + v0 == nv - 1) ? 0.5 : 1.0);
-        rho[x] = sum * dv;
+        rho[x] = charge * (sum * dv);
     });
 }
-void Backend::field() {
+void Backend::add_density(const Backend& other) {
+    double* target = p->density_local.ptr;
+    const double* source = other.p->density_local.ptr;
+    parallel_for(p->grid.nx, [=] DEVICE (std::size_t x) { target[x] += source[x]; });
+}
+void Backend::copy_field(const Backend& other) {
+#ifdef VLASOV_CUDA
+    check_cuda(cudaMemcpy(p->electric.ptr, other.p->electric.ptr, p->grid.nx * sizeof(double), cudaMemcpyDeviceToDevice));
+#else
+    std::copy_n(other.p->electric.ptr, p->grid.nx, p->electric.ptr);
+#endif
+}
+void Backend::field(bool charge_density) {
     const Grid g = p->grid;
     const int nx = g.nx, nk = nx / 2 + 1;
     const double k0 = 2 * pi / g.length;
@@ -336,7 +348,7 @@ void Backend::field() {
     const double* bg = p->background.ptr;
     double* e = p->electric.ptr;
     double* ek = p->field_spectrum.ptr;
-    parallel_for(nx, [=] DEVICE (std::size_t i) { e[i] = bg[i] - density[i]; });
+    parallel_for(nx, [=] DEVICE (std::size_t i) { e[i] = bg[i] + (charge_density ? density[i] : -density[i]); });
     p->field_fft.r2c(e, ek);
     parallel_for(nk, [=] DEVICE (std::size_t i) {
         if (i == 0 || (nx % 2 == 0 && i == std::size_t(nx / 2))) {
@@ -381,7 +393,7 @@ void Backend::velocity(double dt, double acceleration, bool self_consistent) {
     const double* e = p->electric.ptr;
     parallel_for(g.count(), [=] DEVICE (std::size_t i) {
         int x = i % nxl, j = i / nxl;
-        double a = self_consistent ? -e[x0 + x] : acceleration;
+        double a = self_consistent ? (g.charge / g.mass) * e[x0 + x] : acceleration;
         double q = j - a * dt / dv;
         if (q < 0.0 || q > nv - 1) { out[i] = 0.0; return; }
         int lo = int(floor(q));
@@ -407,7 +419,7 @@ void Backend::local_velocity(double dt, double acceleration, bool self_consisten
     double* out = p->output.ptr;
     parallel_for(g.count(), [=] DEVICE (std::size_t i) {
         int x = i % width, j = i / width + v0;
-        double a = self_consistent ? -e[x0 + x] : acceleration;
+        double a = self_consistent ? (g.charge / g.mass) * e[x0 + x] : acceleration;
         double query = v[j] - a * dt;
         int guess = int(floor(j - a * dt / dv));
         auto sample = [=] DEVICE (int index) {

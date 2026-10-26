@@ -23,6 +23,8 @@ def run(request):
     os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
     core = NativeCore(spec["library"], spec["options"])
     try:
+        for species in spec["species"][1:]:
+            core.add_species(species["options"])
         if core.size != spec["ranks"]:
             raise RuntimeError("MPI launcher rank count differs from native.ranks")
         if core.device_type != (2 if spec["device"] == "cuda" else 1):
@@ -73,13 +75,12 @@ def run(request):
             # FFTW may align host allocations to 32 bytes; JAX CPU requires 64.
             # CUDA allocations satisfy JAX's alignment, so GPU views stay strict.
             copy = False if core.device_type == 2 else None
-            f = jax.dlpack.from_dlpack(core.view(), copy=copy)
             e = jax.dlpack.from_dlpack(core.view(field=True), copy=copy)
-            return dict(
-                static,
-                electron=jax.make_array_from_single_device_arrays((core.nx, core.nv), slab, [f]),
-                e=jax.make_array_from_single_device_arrays((core.nx,), replicated, [e]),
-            )
+            state = dict(static, e=jax.make_array_from_single_device_arrays((core.nx,), replicated, [e]))
+            for index, species in enumerate(spec["species"]):
+                f = jax.dlpack.from_dlpack(core.view(species=index), copy=copy)
+                state[species["name"]] = jax.make_array_from_single_device_arrays((core.nx, species["nv"]), slab, [f])
+            return state
 
         directory = root / f"rank-{core.rank:05d}"
         directory.mkdir()
@@ -176,6 +177,10 @@ def run(request):
                         steps=spec["steps"],
                         ranks=core.size,
                         device=spec["device"],
+                        species=[
+                            {key: value for key, value in species.items() if key != "options"}
+                            for species in spec["species"]
+                        ],
                         libraries={
                             name: importlib.metadata.version(name)
                             for name in ["jax", "jaxlib", "cloudpickle", "diffrax"]

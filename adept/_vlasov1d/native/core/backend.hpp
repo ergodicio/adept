@@ -11,6 +11,7 @@ void prepare_device_from_environment();
 struct Grid {
     int nx = 4096, nv = 1024, ranks = 1, rank = 0;
     double length = 12.566370614359172, vmax = 8.0, amplitude = 0.01;
+    double charge = -1.0, mass = 1.0;
     bool cell_centred = false, local_cubic = false, halos = false, collisions = false;
     int halo_capacity = 64;
     int local_x() const { return nx / ranks; }
@@ -31,8 +32,10 @@ public:
     void initialize();
     void synchronize();
     void stream(double dt);
-    void density();
-    void field();
+    void density(double charge = 1.0);
+    void add_density(const Backend& other);
+    void field(bool charge_density = false);
+    void copy_field(const Backend& other);
     void velocity(double dt, double acceleration, bool self_consistent);
     void local_velocity(double dt, double acceleration, bool self_consistent);
     void collide(double dt, double nu);

@@ -69,6 +69,8 @@ Options parse(int argc, char** argv, int rank) {
         else if (key == "--dt") o.dt = real(value);
         else if (key == "--acceleration") o.acceleration = real(value);
         else if (key == "--nu") o.nu = real(value);
+        else if (key == "--charge") o.grid.charge = real(value);
+        else if (key == "--mass") o.grid.mass = real(value);
         else if (key == "--length") o.grid.length = real(value);
         else if (key == "--vmax") o.grid.vmax = real(value);
         else if (key == "--amplitude") o.grid.amplitude = real(value);
@@ -93,6 +95,19 @@ Options parse(int argc, char** argv, int rank) {
 // Times include explicit device completion, with no computation/communication
 // overlap. Reduce each rank's accumulated component times with MPI_MAX later.
 enum Stage { Stream, Spline, Pack, Exchange, Field, Collision, Total, StageCount };
+struct SixthCoefficients {
+    double a[5] = {0.168735950563437422448196, 0.377851589220928303880766,
+        -0.093175079568731452657924, 0.377851589220928303880766, 0.168735950563437422448196};
+    double d[6];
+    explicit SixthCoefficients(double dt) {
+        double dt2 = dt * dt, dt4 = dt2 * dt2, dt6 = dt4 * dt2;
+        d[0] = d[5] = 0.049086460976116245491441 - 2 * 0.000069728715055305084099 * dt2;
+        d[1] = d[4] = 0.264177609888976700200146 - 2 * 0.000625704827430047189169 * dt2
+            - 4 * 2.916600457689847816445691e-6 * dt4;
+        d[2] = d[3] = 0.186735929134907054308413 - 2 * 0.002213085124045325561636 * dt2
+            + 4 * 3.048480261700038788680723e-5 * dt4 - 8 * 4.985549387875068121593988e-7 * dt6;
+    }
+};
 class Stepper {
 public:
     Stepper(Backend& backend, const Options& opts) : b(backend), o(opts) {}
@@ -112,7 +127,7 @@ public:
             return;
         }
         timed(Exchange, [&] {
-            double maximum = self_consistent ? b.max_field() : std::abs(o.acceleration);
+            double maximum = self_consistent ? std::abs(o.grid.charge / o.grid.mass) * b.max_field() : std::abs(o.acceleration);
             double distance = maximum * std::abs(dt) / o.grid.dv();
             if (!std::isfinite(distance) || distance > o.grid.halo_capacity - 2)
                 throw std::runtime_error("departure point exceeds halo capacity; increase --halo-capacity");
@@ -190,7 +205,7 @@ public:
         timed(Pack, [&] { b.unpack(to_x); });
     }
     void solve_field() {
-        b.density();
+        b.density(o.grid.charge);
         b.synchronize();
         if (o.host_mpi) {
             auto density = b.download_density();
@@ -202,7 +217,7 @@ public:
             mpi_check(MPI_Allreduce(b.density_buffer(), b.reduced_density_buffer(),
                 o.grid.nx, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD));
         }
-        b.field();
+        b.field(true);
     }
     void step() {
         b.synchronize();
@@ -214,19 +229,11 @@ public:
             if (o.mode == "landau" && o.integrator == "sixth") {
                 // Same force-gradient Hamiltonian coefficients and ordering as
                 // ADEPT SixthOrderHamIntegrator, including its dt corrections.
-                const double a[] = {0.168735950563437422448196, 0.377851589220928303880766,
-                    -0.093175079568731452657924, 0.377851589220928303880766, 0.168735950563437422448196};
-                double dt2 = o.dt * o.dt, dt4 = dt2 * dt2, dt6 = dt4 * dt2;
-                double d1 = 0.049086460976116245491441 - 2 * 0.000069728715055305084099 * dt2;
-                double d2 = 0.264177609888976700200146 - 2 * 0.000625704827430047189169 * dt2
-                    - 4 * 2.916600457689847816445691e-6 * dt4;
-                double d3 = 0.186735929134907054308413 - 2 * 0.002213085124045325561636 * dt2
-                    + 4 * 3.048480261700038788680723e-5 * dt4 - 8 * 4.985549387875068121593988e-7 * dt6;
-                double d[] = {d1, d2, d3, d3, d2, d1};
+                const SixthCoefficients coefficients(o.dt);
                 for (int k = 0; k < 6; ++k) {
                     timed(Field, [&] { solve_field(); });
-                    velocity_step(d[k] * o.dt, true);
-                    if (k < 5) timed(Stream, [&] { b.stream(a[k] * o.dt); });
+                    velocity_step(coefficients.d[k] * o.dt, true);
+                    if (k < 5) timed(Stream, [&] { b.stream(coefficients.a[k] * o.dt); });
                 }
                 collision_step();
                 b.synchronize();

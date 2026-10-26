@@ -15,6 +15,8 @@ def main():
     parser.add_argument("--ranks", nargs="+", type=int, default=[1, 4, 8])
     parser.add_argument("--vp-source", type=Path)
     parser.add_argument("--module", choices=["base", "vp", "both"], default="both")
+    parser.add_argument("--ions", action="store_true", help="Validate kinetic protons using ADEPT's species config")
+    parser.add_argument("--steps", type=int, default=5)
     args = parser.parse_args()
     os.environ["JAX_PLATFORMS"] = "cpu"
     os.environ["JAX_ENABLE_X64"] = "true"
@@ -41,7 +43,7 @@ def main():
     for cls in classes:
         for ranks in args.ranks:
             cfg = yaml.safe_load(Path("tests/test_base/configs/example.yaml").read_text())
-            cfg["grid"].update(nx=32, nv=64, dt=0.02, tmax=0.08, vmax=8.0)
+            cfg["grid"].update(nx=32, nv=64, dt=0.02, tmax=0.02 * (args.steps - 1), vmax=8.0)
             cfg["drivers"] = {"ex": {}, "ey": {}}
             cfg["terms"]["time"] = "sixth"
             cfg["terms"]["fokker_planck"].update(is_on=True, type="chang_cooper_dougherty")
@@ -53,6 +55,31 @@ def main():
             beam.update(v0=3.0, T0=0.2, noise_val=0.001)
             cfg["density"]["species-left"] = copy.deepcopy(beam)
             cfg["density"]["species-left"].update(v0=-3.0, noise_seed=43)
+            if args.ions:
+                electron = copy.deepcopy(beam)
+                electron.update(v0=0.0, T0=1.0, noise_val=0.0)
+                ion = copy.deepcopy(electron)
+                ion.update(T0=0.1, basis="sine", baseline=1.0, amplitude=0.03, wavenumber=2 * np.pi / 20.94)
+                cfg["density"] = {"quasineutrality": True, "species-electrons": electron, "species-ions": ion}
+                cfg["terms"]["species"] = [
+                    dict(
+                        name="ion",
+                        charge=1.0,
+                        mass=1836.0,
+                        nv=32,
+                        vmax=6 * np.sqrt(0.1 / 1836.0),
+                        density_components=["species-ions"],
+                    ),
+                    dict(
+                        name="electron",
+                        charge=-1.0,
+                        mass=1.0,
+                        nv=64,
+                        vmax=8.0,
+                        density_components=["species-electrons"],
+                    ),
+                ]
+                cfg["save"]["ion"] = {"main": {"t": {"nt": 3}}}
             cfg["native"] = dict(workdir=str(args.output))
             if cls.__name__ == "VPTwoStream1D":
                 cfg["two_stream"] = dict(
@@ -129,6 +156,13 @@ def main():
                 keys=list(sol.ys),
             )
             checks.append(row)
+            if args.ions:
+                changes = {
+                    name: float(np.max(np.abs(sol.ys[f"{name}.main"][-1] - sol.ys[f"{name}.main"][0])))
+                    for name in ["electron", "ion"]
+                }
+                assert all(change > 1e-9 for change in changes.values()), changes
+                row["distribution_changes"] = changes
             (args.output / "checks.json").write_text(json.dumps(checks, indent=2))
             print(json.dumps(row), flush=True)
     (args.output / "checks.json").write_text(json.dumps(checks, indent=2))
