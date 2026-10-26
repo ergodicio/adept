@@ -83,6 +83,15 @@ CUDA-aware Cray MPI. A launcher that exposes one GPU per worker uses ordinal
 zero within each worker. On Cray systems requiring all GPUs visible for GPU
 transport, use `host_mpi: true` and `MPICH_GPU_SUPPORT_ENABLED=0` to test that
 visibility mode with host-staged communication.
+On the tested shared A100 node, masked-worker NCCL shared-memory imports also
+reported an invalid device ordinal. The validated host-transport regression
+uses `NCCL_P2P_DISABLE=1`, `NCCL_SHM_DISABLE=1`, `NCCL_NET=Socket` and
+`NCCL_NET_GDR_LEVEL=0`. Keep the all-visible CUDA-aware example above for
+the production throughput path.
+If an outer Slurm step already restricted `CUDA_VISIBLE_DEVICES`, prefix the
+launcher with `[env, -u, CUDA_VISIBLE_DEVICES, srun, ...]` so Slurm can apply
+the new worker step's GPU binding. Separate GPU cgroups may each report
+ordinal zero and `CUDA_VISIBLE_DEVICES=0`; physical GPUs still differ.
 
 | Native option | Default | Meaning |
 |---|---|---|

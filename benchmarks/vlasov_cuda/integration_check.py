@@ -121,6 +121,9 @@ def main():
                 timeout=180,
                 host_mpi=args.per_rank_gpu or args.host_mpi,
                 launcher=[
+                    "env",
+                    "-u",
+                    "CUDA_VISIBLE_DEVICES",
                     "srun",
                     f"--jobid={os.environ['SLURM_JOB_ID']}",
                     "--overlap",
@@ -166,7 +169,7 @@ def main():
             if args.per_rank_gpu:
                 placement = output["native stats"]["placement"]
                 assert all(worker["device_ordinal"] == 0 for worker in placement), placement
-                assert len({(worker["host"], worker["cuda_visible_devices"]) for worker in placement}) == ranks
+                assert all(len(worker["cuda_visible_devices"].split(",")) == 1 for worker in placement), placement
             checks.append(row)
             if args.ions:
                 changes = {

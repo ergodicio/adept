@@ -51,3 +51,35 @@ Local validation: 8 native/entropy tests, including 1/2-rank MPI and three
 kinetic species with independent grids and charges/masses, plus 211 existing
 lifecycle/core/builder/configuration regressions. The wheel contains the
 CMake/C++ sources needed to build this backend from downstream projects.
+
+## Review corrections and masked-GPU regression
+
+ABI3 uses the CUDA ordinal selected at allocation time for both JAX and
+DLPack, separately from the MPI local rank. Native synchronization restores
+that allocation's device. Collision guards and the constant frequency use
+the resolved ADEPT envelopes, so an omitted bump height defaults to one and
+is rejected as a nonconstant profile; an omitted constant baseline retains
+ADEPT's zero default. Eleven focused CPU tests pass, including both omitted
+time/space pulse defaults, constant defaults and MPI/NetCDF parity.
+
+Supplemental ABI3 checks on shared allocation 60339880, nid200301:
+
+| Case | GPUs | Steps | Maximum absolute saved-value error |
+|---|---:|---:|---:|
+| Kinetic electrons + protons | 1 | 100 | 1.12266e-12 |
+| Same, one GPU visible per worker | 2 | 100 | 8.31335e-13 |
+| Current turbulence callbacks, one GPU visible per worker | 2 | 5 | 5.74119e-12 |
+
+Both MPI local ranks 0/1 use CUDA ordinal zero and report
+CUDA_VISIBLE_DEVICES=0. A separate CUDA probe confirmed distinct physical PCI
+devices 0000:41:00.0 and 0000:C1:00.0. Comparison tolerances remain unchanged.
+The earlier 1/4/8-GPU tests above use the normal all-visible production path.
+
+Two launcher/transport failures were retained in the local evidence: shared
+Slurm steps with gpu-bind=none exposed the same GPU to both workers, causing
+NCCL to reject duplicate devices; explicit single-GPU binding exposed distinct
+GPUs, but NCCL SHM imports failed with an invalid device ordinal. The masked
+regression passed with host-staged MPI and socket NCCL, disabling P2P/SHM and
+GPU-direct registration. These transport settings are for the regression,
+not a new throughput benchmark. Reproduction: ../../run_visibility_check.sh.
+The shared lease was released after preserving reports and source.
