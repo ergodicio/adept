@@ -163,6 +163,15 @@ std::string select_device(int local_rank) {
     return "CPU/FFTW (validation only)";
 #endif
 }
+int current_device_ordinal() {
+#ifdef VLASOV_CUDA
+    int device = 0;
+    check_cuda(cudaGetDevice(&device));
+    return device;
+#else
+    return 0;
+#endif
+}
 } // namespace
 
 void prepare_device_from_environment() {
@@ -180,12 +189,13 @@ void prepare_device_from_environment() {
 struct Backend::Impl {
     Grid grid;
     std::string device;
+    int ordinal;
     Buffer fv, fx, send, recv, second, rhs, output, inverse;
     Buffer spectrum, density_local, density_global, electric, field_spectrum;
     Buffer coordinates, background, ghosts, field_maximum;
     FFT streaming_fft, field_fft;
     Impl(Grid g, int local_rank)
-        : grid(g), device(select_device(local_rank)),
+        : grid(g), device(select_device(local_rank)), ordinal(current_device_ordinal()),
           fv(g.count()), fx(!g.halos || g.collisions ? g.count() : 0),
           send((!g.halos || g.collisions) && g.ranks > 1 ? g.count() : 0),
           recv((!g.halos || g.collisions) && g.ranks > 1 ? g.count() : 0),
@@ -215,16 +225,11 @@ struct Backend::Impl {
 Backend::Backend(Grid grid, int local_rank) : p(std::make_unique<Impl>(grid, local_rank)) {}
 Backend::~Backend() = default;
 int Backend::device_ordinal() const {
-#ifdef VLASOV_CUDA
-    int device = 0;
-    check_cuda(cudaGetDevice(&device));
-    return device;
-#else
-    return 0;
-#endif
+    return p->ordinal;
 }
 void Backend::synchronize() {
 #ifdef VLASOV_CUDA
+    check_cuda(cudaSetDevice(p->ordinal));
     check_cuda(cudaDeviceSynchronize());
 #endif
 }

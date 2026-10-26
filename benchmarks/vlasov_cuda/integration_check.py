@@ -17,11 +17,13 @@ def main():
     parser.add_argument("--module", choices=["base", "vp", "both"], default="both")
     parser.add_argument("--ions", action="store_true", help="Validate kinetic protons using ADEPT's species config")
     parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument("--gpus-per-node", type=int, default=4)
+    parser.add_argument("--host-mpi", action="store_true")
     parser.add_argument(
         "--per-rank-gpu", action="store_true", help="Expose one GPU per worker; validate host-staged MPI"
     )
     args = parser.parse_args()
-    if args.per_rank_gpu:
+    if args.per_rank_gpu or args.host_mpi:
         os.environ["MPICH_GPU_SUPPORT_ENABLED"] = "0"
     os.environ["JAX_PLATFORMS"] = "cpu"
     os.environ["JAX_ENABLE_X64"] = "true"
@@ -110,14 +112,14 @@ def main():
             original.get_solver_quantities()
             original.init_state_and_args()
             original.init_diffeqsolve()
-            nodes = 2 if ranks > 4 else 1
+            nodes = (ranks + args.gpus_per_node - 1) // args.gpus_per_node
             cfg["backend"] = "native"
             cfg["native"].update(
                 device="cuda",
                 library=str(args.library),
                 ranks=ranks,
                 timeout=180,
-                host_mpi=args.per_rank_gpu,
+                host_mpi=args.per_rank_gpu or args.host_mpi,
                 launcher=[
                     "srun",
                     f"--jobid={os.environ['SLURM_JOB_ID']}",
@@ -125,7 +127,7 @@ def main():
                     f"--nodes={nodes}",
                     "--ntasks={ranks}",
                     f"--ntasks-per-node={ranks // nodes}",
-                    "--gpus-per-node=4",
+                    f"--gpus-per-node={args.gpus_per_node}",
                     "--gpu-bind=single:1" if args.per_rank_gpu else "--gpu-bind=none",
                     "--cpu-bind=none",
                 ],
