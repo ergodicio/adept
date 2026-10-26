@@ -170,7 +170,6 @@ class MlflowLoggingModule(eqx.Module):
             - `*args`: Any remaining positional arguments to `self.__call__`
             - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
-        pass
 
     @abstractmethod
     def call(self, *args, setup_result=None, mlflow_run_id=None, **kwargs):
@@ -183,7 +182,6 @@ class MlflowLoggingModule(eqx.Module):
             - `*args`: Any remaining positional arguments to `self.__call__`
             - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
-        pass
 
     @abstractmethod
     def pre_logging(self, *args, setup_result=None, mlflow_run_id=None, **kwargs):
@@ -196,7 +194,6 @@ class MlflowLoggingModule(eqx.Module):
             - `*args`: Any remaining positional arguments to `self.__call__`
             - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
-        pass
 
     @abstractmethod
     def post_logging(self, result, *args, setup_result=None, mlflow_run_id=None, **kwargs):
@@ -210,4 +207,3 @@ class MlflowLoggingModule(eqx.Module):
             - `*args`: Any remaining positional arguments to `self.__call__`
             - `*kwargs`: Any remaining keyword arguments to `self.__call__`
         """
-        pass
