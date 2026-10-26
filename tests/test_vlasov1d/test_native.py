@@ -184,6 +184,9 @@ def test_backend_dispatch_and_guards(config):
 
     with pytest.raises(NotImplementedError, match="ergoExo"):
         solver_registry.prepare(SimulationSpec.from_legacy_config(config), key=0)
+    config["terms"]["fokker_planck"]["self_consistent_beta"] = None
+    config["solver"] = "vlasov-1d-iaw"
+    assert not ergoExo()._get_adept_module_(config).jit_compile
 
 
 @pytest.mark.parametrize("ranks,collisions,mass,charge", [(1, False, 25.0, 1.0), (2, True, 1836.0, 2.0)])

@@ -99,6 +99,8 @@ class NativeVlasovMixin:
     jit_compile = False
 
     def __init__(self, cfg):
+        if not jax.config.jax_enable_x64:
+            raise RuntimeError("native Vlasov requires jax_enable_x64 before preprocessing")
         with _host_preprocessing():
             super().__init__(cfg)
         self.native_options = NativeSolverConfig.model_validate(cfg.get("native") or {})
@@ -107,7 +109,7 @@ class NativeVlasovMixin:
     def _validate_native_physics(self):
         cfg, sim = self.cfg, self.simulation
         names = [species.name for species in sim.species]
-        if not names or len(set(names)) != len(names):
+        if not names or any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("native species names must be nonempty and unique")
         for species in sim.species:
             if not np.isfinite(species.mass) or species.mass <= 0 or not np.isfinite(species.charge):
@@ -132,8 +134,8 @@ class NativeVlasovMixin:
             raise NotImplementedError("native Vlasov does not yet evolve df/dt diagnostic state")
         fp = terms["fokker_planck"]
         if fp["is_on"]:
-            if fp["type"].casefold() not in {"chang_cooper_dougherty", "dougherty_chang_cooper"} or fp.get(
-                "self_consistent_beta", {}
+            if fp["type"].casefold() not in {"chang_cooper_dougherty", "dougherty_chang_cooper"} or (
+                fp.get("self_consistent_beta") or {}
             ).get("enabled", False):
                 raise NotImplementedError("native collisions require Chang-Cooper Dougherty with analytic beta")
             for axis in ["time", "space"]:

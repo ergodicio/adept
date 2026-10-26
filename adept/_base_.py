@@ -306,11 +306,6 @@ class ergoExo:
         elif cfg["solver"] == "vlasov-1d":
             from adept.vlasov1d import BaseVlasov1D as this_module
 
-            if cfg.get("backend", "jax") == "native":
-                from adept.vlasov1d import native_backend
-
-                this_module = native_backend(this_module)
-
             # config = ConfigModel(**cfg)
 
         elif cfg["solver"] == "vlasov-1d2v":
@@ -359,6 +354,10 @@ class ergoExo:
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
+        if cfg.get("backend", "jax") == "native":
+            from adept.vlasov1d import native_backend
+
+            this_module = native_backend(this_module)
         return this_module(cfg)
 
     def _setup_(self, cfg: dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> dict[str, Module]:
