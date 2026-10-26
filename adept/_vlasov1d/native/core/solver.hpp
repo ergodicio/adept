@@ -330,4 +330,3 @@ void initialize(Backend& backend, const Options& o) {
     backend.upload_state(values);
 }
 } // namespace adept_native
-

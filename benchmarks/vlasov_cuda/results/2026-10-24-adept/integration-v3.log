@@ -1,0 +1,74 @@
+2026/10/24 12:09:24 INFO mlflow.tracking.fluent: Experiment with name 'native-adept-integration' does not exist. Creating a new experiment.
+Successfully removed /pscratch/sd/a/archis/tmp/tmphvmiz6e4
+2026/10/24 12:09:27 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/global/common/software/m4490/archis/venvs/adept/lib/python3.13/site-packages/xarray/computation/apply_ufunc.py:820: RuntimeWarning: divide by zero encountered in log10
+  result_data = func(*input_data)
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/helpers.py:302: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(cfg, result.ts, td, result.ys)
+Successfully removed /pscratch/sd/a/archis/tmp/tmpxq36qzy2
+2026/10/24 12:10:02 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:10:03 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:105: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "BaseVlasov1D", "ranks": 1, "passed": true, "max_abs_error": 1.0302869668521453e-13, "mlflow_run_id": "10db23e28ed8428d9849bce2dea93d3f", "stats": {"native_seconds": {"stream": 0.000619517000018277, "velocity": 0.0003302759998859983, "pack": 0.0, "mpi": 0.0008770139997977822, "field": 0.0017125090001854915, "collision": 0.0005039860001261331, "total": 0.004283324999960314}, "solve_and_save_seconds": 0.7859312820073683, "steps": 5, "ranks": 1, "device": "cuda"}, "keys": ["fields", "electron.main", "default"]}
+Successfully removed /pscratch/sd/a/archis/tmp/tmpeyha2nrz
+2026/10/24 12:10:05 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/global/common/software/m4490/archis/venvs/adept/lib/python3.13/site-packages/xarray/computation/apply_ufunc.py:820: RuntimeWarning: divide by zero encountered in log10
+  result_data = func(*input_data)
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/helpers.py:302: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(cfg, result.ts, td, result.ys)
+Successfully removed /pscratch/sd/a/archis/tmp/tmpnewgc4wx
+2026/10/24 12:11:06 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:11:06 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:105: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "BaseVlasov1D", "ranks": 4, "passed": true, "max_abs_error": 1.2434497875801753e-13, "mlflow_run_id": "c15bc81503a44c02bb7f0d22043aa3df", "stats": {"native_seconds": {"stream": 0.0005902340002421624, "velocity": 0.0003807449994610579, "pack": 0.00023884999984602473, "mpi": 0.005609786999912103, "field": 0.0067621719998669505, "collision": 0.000502029000017501, "total": 0.013536288000068453}, "solve_and_save_seconds": 1.881096900004195, "steps": 5, "ranks": 4, "device": "cuda"}, "keys": ["fields", "electron.main", "default"]}
+Successfully removed /pscratch/sd/a/archis/tmp/tmp17m29kb7
+2026/10/24 12:11:09 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/global/common/software/m4490/archis/venvs/adept/lib/python3.13/site-packages/xarray/computation/apply_ufunc.py:820: RuntimeWarning: divide by zero encountered in log10
+  result_data = func(*input_data)
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/helpers.py:302: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(cfg, result.ts, td, result.ys)
+Successfully removed /pscratch/sd/a/archis/tmp/tmp4ei3vpzo
+2026/10/24 12:11:49 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:11:49 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:105: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "BaseVlasov1D", "ranks": 8, "passed": true, "max_abs_error": 1.3145040611561853e-13, "mlflow_run_id": "fb178ca1d165436c98457fd4ba0db80f", "stats": {"native_seconds": {"stream": 0.0006939400003602714, "velocity": 0.0005676090001998091, "pack": 0.00025299700007508363, "mpi": 0.01576393800007736, "field": 0.013597956999888083, "collision": 0.0005164489999742727, "total": 0.02774611500001356}, "solve_and_save_seconds": 3.1865445940056816, "steps": 5, "ranks": 8, "device": "cuda"}, "keys": ["fields", "electron.main", "default"]}
+Successfully removed /pscratch/sd/a/archis/tmp/tmpqi9xesvs
+2026/10/24 12:11:51 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+2026/10/24 12:12:02 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:12:02 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+Traceback (most recent call last):
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py", line 130, in <module>
+    main()
+    ~~~~^^
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py", line 96, in main
+    output, post, run_id = exo(modules)
+                           ~~~^^^^^^^^^
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_base_.py", line 423, in __call__
+    run_output = solve(modules, args)
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/native/module.py", line 317, in __call__
+    raise RuntimeError(f"native Vlasov workers failed ({returncode}); log: {log}\n{log.read_text()[-12000:]}")
+RuntimeError: native Vlasov workers failed (1); log: /pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/outputs/integration-v3/adept-native-5ofo1tiv/worker.log
+Traceback (most recent call last):
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/native/worker.py", line 153, in run
+    save(key, frame, t, state)
+    ~~~~^^^^^^^^^^^^^^^^^^^^^^
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/native/worker.py", line 83, in save
+    value = callbacks[key](replicate(np.asarray(t)), state)
+  File "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/native/worker.py", line 66, in <lambda>
+    key: jax.jit(lambda t, y, fn=fn: fn(t, y, payload["args"])) for key, fn in payload["callbacks"].items()
+                                     ~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/src/vp_turbulence/adeptmodules.py", line 118, in save
+    k_peak = k_x[jnp.argmax(e_pow)]
+             ~~~^^^^^^^^^^^^^^^^^^^
+jax.errors.TracerArrayConversionError: The numpy.ndarray conversion method __array__() was called on traced array with shape int64[]
+The error occurred while tracing the function <lambda> at /pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/adept/_vlasov1d/native/worker.py:66 for jit. This concrete value was not available in Python because it depends on the value of the argument y['e'].
+See https://docs.jax.dev/en/latest/errors.html#jax.errors.TracerArrayConversionError
+--------------------
+For simplicity, JAX has removed its internal frames from the traceback of the following exception. Set JAX_TRACEBACK_FILTERING=off to include these.
+MPICH ERROR [Rank 0] [job id 60221398.6] [Sat Oct 24 12:12:01 2026] [nid001600] - Abort(1) (rank 0 in comm 0): application called MPI_Abort(MPI_COMM_WORLD, 1) - process 0
+
+srun: error: nid001600: task 0: Exited with exit code 1
+srun: Terminating StepId=60221398.6

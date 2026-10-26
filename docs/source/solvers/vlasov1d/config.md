@@ -49,6 +49,15 @@ cmake -S adept/_vlasov1d/native -B build/native -DCMAKE_BUILD_TYPE=Release
 cmake --build build/native -j4
 ```
 
+When ADEPT is installed in another project (such as turbulence), locate the
+packaged sources in that project's Python environment:
+
+```sh
+native_source=$(python -c 'from importlib.util import find_spec; print(find_spec("adept._vlasov1d.native").submodule_search_locations[0])')
+cmake -S "$native_source" -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native -j4
+```
+
 On Perlmutter add `-DCMAKE_CXX_COMPILER=CC`, and use the existing allocated
 job's `srun` launcher. A two-node example is:
 
