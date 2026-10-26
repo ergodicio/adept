@@ -214,6 +214,15 @@ struct Backend::Impl {
 
 Backend::Backend(Grid grid, int local_rank) : p(std::make_unique<Impl>(grid, local_rank)) {}
 Backend::~Backend() = default;
+int Backend::device_ordinal() const {
+#ifdef VLASOV_CUDA
+    int device = 0;
+    check_cuda(cudaGetDevice(&device));
+    return device;
+#else
+    return 0;
+#endif
+}
 void Backend::synchronize() {
 #ifdef VLASOV_CUDA
     check_cuda(cudaDeviceSynchronize());

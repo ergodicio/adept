@@ -77,6 +77,12 @@ Run one outer Python driver inside the allocation; the launcher starts its
 workers. Set `MPICH_GPU_SUPPORT_ENABLED=1` for CUDA-aware Cray MPI. The work
 directory and library must be visible on every worker node. Native execution
 uses its own velocity-slab decomposition; `native.ranks` controls it.
+CUDA device ordinals follow each worker's visible device list, independently
+of its MPI local rank. The example exposes all four GPUs per node for
+CUDA-aware Cray MPI. A launcher that exposes one GPU per worker uses ordinal
+zero within each worker. On Cray systems requiring all GPUs visible for GPU
+transport, use `host_mpi: true` and `MPICH_GPU_SUPPORT_ENABLED=0` to test that
+visibility mode with host-staged communication.
 
 | Native option | Default | Meaning |
 |---|---|---|

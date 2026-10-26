@@ -62,6 +62,7 @@ public:
     std::vector<double> download_density();
     void upload_density(const std::vector<double>& values);
     std::string device_name() const;
+    int device_ordinal() const;
     std::size_t allocated_bytes() const;
 private:
     struct Impl;

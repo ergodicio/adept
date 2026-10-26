@@ -43,7 +43,7 @@ constant-rate Chang-Cooper Dougherty collisions. Kinetic ions use the existing
 Each stage sums every species' charge density into one MPI field reduction,
 then advances every species under that shared field. Collisions act on the
 reference species, as in ADEPT's JAX path; inter-species collisional exchange
-is not included. Rebuild the library when updating ADEPT (current ABI: 2).
+is not included. Rebuild the library when updating ADEPT (current ABI: 3).
 Unsupported physics and
 trainable modules fail explicitly. Performance and reproduction evidence is
 under [the benchmark results](../../../benchmarks/vlasov_cuda/results/2026-10-24-adept).

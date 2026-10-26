@@ -117,7 +117,7 @@ void validate_options(Options& opts) {
 }
 }
 extern "C" {
-int av_abi_version() { return 2; }
+int av_abi_version() { return 3; }
 const char* av_error() { return last_error.c_str(); }
 void* av_create(int argc, const char** argv) {
     void* result = nullptr;
@@ -167,6 +167,9 @@ int av_info(void* handle, int* output) {
         std::copy_n(values, 7, output);
     });
 }
+int av_device_ordinal(void* handle, int* output) {
+    return guarded([&] { *output = (**static_cast<Handle*>(handle)).backend->device_ordinal(); });
+}
 int av_broadcast(char* value, int capacity) {
     return guarded([&] { mpi_check(MPI_Bcast(value, capacity, MPI_CHAR, 0, MPI_COMM_WORLD)); });
 }
@@ -198,7 +201,7 @@ void* av_species_tensor(void* handle, int species, int field) {
         tensor->strides[0] = 1;
         tensor->strides[1] = e.options.grid.nx;
         tensor->managed = {{field ? e.backend->electric_buffer() : e.backend->velocity_buffer(),
-            {device_type(), device_type() == 2 ? e.local_rank : 0}, field ? 1 : 2,
+            {device_type(), e.backend->device_ordinal()}, field ? 1 : 2,
             {2, 64, 1}, tensor->shape, tensor->strides, 0}, tensor, release_tensor};
         result = &tensor->managed;
     })) return nullptr;

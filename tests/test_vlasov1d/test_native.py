@@ -126,6 +126,20 @@ def test_native_step_schedules(config):
     np.testing.assert_allclose(subs["f0"].ts, [0.0, 0.04, 0.1])
 
 
+@pytest.mark.parametrize("axis", ["time", "space"])
+def test_native_rejects_omitted_collision_pulse_default(config, axis):
+    config["terms"]["fokker_planck"][axis].pop("bump_height")
+    with pytest.raises(NotImplementedError, match="constant frequency"):
+        NativeVlasov1D(config)
+
+
+def test_native_constant_collision_defaults(config):
+    native = NativeVlasov1D(deepcopy(config))
+    assert native.native_collision_frequency == 0.001
+    config["terms"]["fokker_planck"]["time"].pop("baseline")
+    assert NativeVlasov1D(config).native_collision_frequency == 0.0
+
+
 class CustomTwoStream(BaseVlasov1D):
     def init_diffeqsolve(self):
         super().init_diffeqsolve()

@@ -17,7 +17,12 @@ def main():
     parser.add_argument("--module", choices=["base", "vp", "both"], default="both")
     parser.add_argument("--ions", action="store_true", help="Validate kinetic protons using ADEPT's species config")
     parser.add_argument("--steps", type=int, default=5)
+    parser.add_argument(
+        "--per-rank-gpu", action="store_true", help="Expose one GPU per worker; validate host-staged MPI"
+    )
     args = parser.parse_args()
+    if args.per_rank_gpu:
+        os.environ["MPICH_GPU_SUPPORT_ENABLED"] = "0"
     os.environ["JAX_PLATFORMS"] = "cpu"
     os.environ["JAX_ENABLE_X64"] = "true"
     os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
@@ -112,6 +117,7 @@ def main():
                 library=str(args.library),
                 ranks=ranks,
                 timeout=180,
+                host_mpi=args.per_rank_gpu,
                 launcher=[
                     "srun",
                     f"--jobid={os.environ['SLURM_JOB_ID']}",
@@ -120,7 +126,7 @@ def main():
                     "--ntasks={ranks}",
                     f"--ntasks-per-node={ranks // nodes}",
                     "--gpus-per-node=4",
-                    "--gpu-bind=none",
+                    "--gpu-bind=single:1" if args.per_rank_gpu else "--gpu-bind=none",
                     "--cpu-bind=none",
                 ],
             )
@@ -155,6 +161,10 @@ def main():
                 stats=output["native stats"],
                 keys=list(sol.ys),
             )
+            if args.per_rank_gpu:
+                placement = output["native stats"]["placement"]
+                assert all(worker["device_ordinal"] == 0 for worker in placement), placement
+                assert len({(worker["host"], worker["cuda_visible_devices"]) for worker in placement}) == ranks
             checks.append(row)
             if args.ions:
                 changes = {

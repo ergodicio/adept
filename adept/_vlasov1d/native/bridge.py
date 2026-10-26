@@ -10,7 +10,7 @@ class NativeCore:
     def __init__(self, library, options):
         self.lib = ct.CDLL(str(library))
         version = getattr(self.lib, "av_abi_version", None)
-        if version is None or version() != 2:
+        if version is None or version() != 3:
             raise RuntimeError(
                 "native library ABI mismatch; rebuild adept/_vlasov1d/native from the installed ADEPT source"
             )
@@ -18,6 +18,7 @@ class NativeCore:
             "av_create": ([ct.c_int, ct.POINTER(ct.c_char_p)], ct.c_void_p),
             "av_error": ([], ct.c_char_p),
             "av_info": ([ct.c_void_p, ct.POINTER(ct.c_int)], ct.c_int),
+            "av_device_ordinal": ([ct.c_void_p, ct.POINTER(ct.c_int)], ct.c_int),
             "av_add_species": ([ct.c_void_p, ct.c_int, ct.POINTER(ct.c_char_p)], ct.c_int),
             "av_species_info": ([ct.c_void_p, ct.c_int, ct.POINTER(ct.c_int)], ct.c_int),
             "av_species_tensor": ([ct.c_void_p, ct.c_int, ct.c_int], ct.c_void_p),
@@ -42,6 +43,9 @@ class NativeCore:
         values = (ct.c_int * 7)()
         self.check(self.lib.av_info(self.handle, values))
         self.rank, self.size, self.local_rank, self.device_type, self.nx, self.nv, self.local_nv = values
+        ordinal = ct.c_int()
+        self.check(self.lib.av_device_ordinal(self.handle, ct.byref(ordinal)))
+        self.device_ordinal = ordinal.value
 
     def check(self, result):
         if result:
@@ -93,7 +97,7 @@ class _View:
         self.owner, self.field, self.species = owner, field, species
 
     def __dlpack_device__(self):
-        return self.owner.device_type, self.owner.local_rank if self.owner.device_type == 2 else 0
+        return self.owner.device_type, self.owner.device_ordinal
 
     def __dlpack__(self, stream=None, *, max_version=None, dl_device=None, copy=None):
         if copy:

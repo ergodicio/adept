@@ -133,15 +133,20 @@ class NativeVlasovMixin:
         if any(cfg.get("diagnostics", {}).values()):
             raise NotImplementedError("native Vlasov does not yet evolve df/dt diagnostic state")
         fp = terms["fokker_planck"]
+        self.native_collision_frequency = 0.0
         if fp["is_on"]:
             if fp["type"].casefold() not in {"chang_cooper_dougherty", "dougherty_chang_cooper"} or (
                 fp.get("self_consistent_beta") or {}
             ).get("enabled", False):
                 raise NotImplementedError("native collisions require Chang-Cooper Dougherty with analytic beta")
             for axis in ["time", "space"]:
-                envelope = fp[axis]
-                if envelope.get("bump_height", 0) != 0 or envelope.get("slope", 0) != 0:
+                envelope = getattr(sim.nu_fp_prof, f"{axis}_envelope")
+                resolved_config = getattr(self.config_model.terms.fokker_planck, axis)
+                if envelope.bump_height != 0 or float(resolved_config.slope) != 0:
                     raise NotImplementedError("native collisions currently require constant frequency profiles")
+            self.native_collision_frequency = float(
+                sim.nu_fp_prof.time_envelope.baseline * sim.nu_fp_prof.space_envelope.baseline
+            )
 
     def write_units(self):
         with _host_preprocessing():
@@ -260,8 +265,7 @@ class NativeVlasovMixin:
         finally:
             if cache is not None:
                 self.cfg["grid"]["species_distributions"] = cache
-        fp = self.cfg["terms"]["fokker_planck"]
-        nu = float(fp["time"]["baseline"]) * float(fp["space"]["baseline"]) if fp["is_on"] else 0.0
+        nu = self.native_collision_frequency
         common_args = [
             "--nx",
             str(grid.nx),

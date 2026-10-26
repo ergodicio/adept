@@ -44,10 +44,10 @@ def run(request):
                 coordinator_address=coordinator,
                 num_processes=core.size,
                 process_id=core.rank,
-                local_device_ids=[core.local_rank] if core.device_type == 2 else [0],
+                local_device_ids=[core.device_ordinal],
             )
         elif core.device_type == 2:
-            jax.config.update("jax_cuda_visible_devices", str(core.local_rank))
+            jax.config.update("jax_cuda_visible_devices", str(core.device_ordinal))
         sys.path[:0] = spec.get("pythonpath", [])
         import cloudpickle
         import jax.numpy as jnp
@@ -84,6 +84,17 @@ def run(request):
 
         directory = root / f"rank-{core.rank:05d}"
         directory.mkdir()
+        (directory / "placement.json").write_text(
+            json.dumps(
+                dict(
+                    rank=core.rank,
+                    local_rank=core.local_rank,
+                    device_ordinal=core.device_ordinal,
+                    cuda_visible_devices=os.environ.get("CUDA_VISIBLE_DEVICES"),
+                    host=socket.gethostname(),
+                )
+            )
+        )
         writers, metadata, layout = {}, {}, {}
 
         def save(key, frame, t, state):
@@ -177,6 +188,10 @@ def run(request):
                         steps=spec["steps"],
                         ranks=core.size,
                         device=spec["device"],
+                        placement=[
+                            json.loads((root / f"rank-{rank:05d}/placement.json").read_text())
+                            for rank in range(core.size)
+                        ],
                         species=[
                             {key: value for key, value in species.items() if key != "options"}
                             for species in spec["species"]
