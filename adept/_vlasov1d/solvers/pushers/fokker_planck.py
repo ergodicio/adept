@@ -255,6 +255,20 @@ class SuperGaussianDougherty(Dougherty):
         return C_edge, D
 
 
+def _collision_species(cfg: Mapping[str, Any]) -> str:
+    """Return the species that collisions act on.
+
+    TODO(gh-173): Properly handle multi-species collisions. For now the
+    operators are built on (and applied to) a single reference species:
+    "electron" when present for backward compatibility, otherwise the first
+    configured species (e.g. ion-only Boltzmann-electron runs).
+    """
+    species_grids = cfg["grid"]["species_grids"]
+    if "electron" in species_grids:
+        return "electron"
+    return next(iter(species_grids))
+
+
 class Collisions:
     """High-level collision operator that wraps Fokker-Planck and Krook terms."""
 
@@ -264,12 +278,16 @@ class Collisions:
 
         :param cfg: Simulation configuration containing term toggles and grid parameters.
         """
-        self.cfg = cfg
-        self.fp_model, self.fp_scheme = self.__init_fp_operator__()
+        self.ref_species = _collision_species(cfg)
+        self.fp_model, self.fp_scheme = self.__init_fp_operator__(cfg)
         self._nodrag = cfg["terms"]["fokker_planck"].get("type", "").casefold() == "dougherty_nodrag"
-        self.krook = Krook(self.cfg)
+        self.fp_on = cfg["terms"]["fokker_planck"]["is_on"]
+        self.krook_on = cfg["terms"]["krook"]["is_on"]
+        self.krook = Krook(cfg)
 
-        v = cfg["grid"]["species_grids"]["electron"]["v"]
+        v = cfg["grid"]["species_grids"][self.ref_species]["v"]
+        self.v = v
+        self.dv = cfg["grid"]["species_grids"][self.ref_species]["dv"]
         self.v_edge = 0.5 * (v[1:] + v[:-1])
 
         parallel = cfg["grid"].get("parallel", False)
@@ -285,18 +303,18 @@ class Collisions:
         self._sc_rtol = sc_cfg.get("rtol", 1e-8)
         self._sc_atol = sc_cfg.get("atol", 1e-12)
 
-    def __init_fp_operator__(self):
+    def __init_fp_operator__(self, cfg):
         """
         Instantiate the configured Fokker-Planck model and scheme.
 
         :raises NotImplementedError: When the configured operator type is unknown.
         :returns: Tuple of (model, scheme)
         """
-        # TODO(gh-173): For multi-species, use electron grid for FP for now
-        v = self.cfg["grid"]["species_grids"]["electron"]["v"]
-        dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+        # TODO(gh-173): For multi-species, use the reference species grid for FP for now
+        v = cfg["grid"]["species_grids"][self.ref_species]["v"]
+        dv = cfg["grid"]["species_grids"][self.ref_species]["dv"]
 
-        fp_type = self.cfg["terms"]["fokker_planck"]["type"].casefold()
+        fp_type = cfg["terms"]["fokker_planck"]["type"].casefold()
 
         if fp_type == "lenard_bernstein":
             model = LenardBernstein(v=v, dv=dv)
@@ -311,7 +329,7 @@ class Collisions:
             model = Dougherty(v=v, dv=dv)
             return model, CentralDifferencing(dv=dv)
         elif fp_type in ("super_gaussian", "super_gaussian_chang_cooper"):
-            m = float(self.cfg["terms"]["fokker_planck"].get("m", 2.0))
+            m = float(cfg["terms"]["fokker_planck"].get("m", 2.0))
             model = SuperGaussianDougherty(v=v, dv=dv, m=m)
             return model, ChangCooper(dv=dv)
         elif fp_type == "dougherty_nodrag":
@@ -337,14 +355,14 @@ class Collisions:
         :return: Updated distribution function after collisions.
         """
         # TODO(gh-173): Properly handle multi-species collisions
-        # For now, only apply to electron distribution for backward compatibility
+        # For now, only apply to the reference species (see _collision_species)
         if isinstance(f, dict):
             result = {}
             for species_name, f_species in f.items():
-                if species_name == "electron":
+                if species_name == self.ref_species:
                     result[species_name] = self._apply_collisions(nu_fp, nu_K, f_species, dt)
                 else:
-                    # For non-electron species, just pass through unchanged for now
+                    # For other species, just pass through unchanged for now
                     result[species_name] = f_species
             return result
         else:
@@ -362,17 +380,19 @@ class Collisions:
 
     def _apply_collisions(self, nu_fp: jnp.ndarray, nu_K: jnp.ndarray, f: jnp.ndarray, dt: jnp.float64) -> jnp.ndarray:
         """Apply collision operators to a single species distribution."""
+        fp_on = self.fp_on and nu_fp is not None
+        krook_on = self.krook_on and nu_K is not None
         # Substitute dummy zeros for disabled operators so shard_map always receives valid arrays.
         nu_fp_in = nu_fp if nu_fp is not None else jnp.zeros(f.shape[0])
         nu_K_in = nu_K if nu_K is not None else jnp.zeros(f.shape[0])
 
-        v = self.cfg["grid"]["species_grids"]["electron"]["v"]
-        dv = self.cfg["grid"]["species_grids"]["electron"]["dv"]
+        v = self.v
+        dv = self.dv
 
         from adept.driftdiffusion import find_self_consistent_beta
 
         def _collide(f_shard, nu_fp_shard, nu_K_shard):
-            if self.cfg["terms"]["fokker_planck"]["is_on"]:
+            if fp_on:
                 if hasattr(self.fp_model, "compute_beta"):
                     # Model defines its own beta closure (e.g. the energy-conserving
                     # super-Gaussian beta); the self_consistent_beta knobs control
@@ -412,7 +432,7 @@ class Collisions:
                     f_new = f_new - dt * nu_fp_shard[..., None] * lap
                 f_shard = f_new
 
-            if self.cfg["terms"]["krook"]["is_on"]:
+            if krook_on:
                 f_shard = self.krook(nu_K_shard, f_shard, dt)
 
             return f_shard
@@ -437,10 +457,10 @@ class Krook:
 
         :param cfg: Simulation configuration containing grid spacing and velocity grid.
         """
-        self.cfg = cfg
-        v = cfg["grid"]["species_grids"]["electron"]["v"]
-        dv = cfg["grid"]["species_grids"]["electron"]["dv"]
-        params = cfg["grid"].get("species_params", {}).get("electron", {})
+        ref_species = _collision_species(cfg)
+        v = cfg["grid"]["species_grids"][ref_species]["v"]
+        dv = cfg["grid"]["species_grids"][ref_species]["dv"]
+        params = cfg["grid"].get("species_params", {}).get(ref_species, {})
         T0 = params.get("T0", 1.0)
         mass = params.get("mass", 1.0)
         # Maxwellian with variance T0/m (the species' bulk thermal width)

@@ -15,7 +15,7 @@ This module provides:
 import equinox as eqx
 import lineax as lx
 import numpy as np
-from jax import Array, vmap
+from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 from adept.driftdiffusion import (
@@ -28,6 +28,54 @@ from adept.driftdiffusion import (
     LogMeanFlux,
 )
 from adept.vfp1d.grid import Grid
+
+
+def _linear_solve_value_or_nan(op: lx.AbstractLinearOperator, rhs: Array) -> Array:
+    """Solve without executing Lineax's host error callback during shape tracing.
+
+    Diffrax evaluates a vector field with ``filter_eval_shape`` before compiling a
+    solve. With JAX 0.10, Lineax's default ``throw=True`` callback can inspect the
+    abstract placeholder values and report a spurious non-finite-input failure at
+    ``t=0``. ``throw=False`` keeps the result code in the traced computation. Map a
+    genuine runtime failure to NaNs so downstream finite checks cannot mistake it
+    for a valid collision update.
+    """
+
+    if isinstance(op, lx.TridiagonalLinearOperator):
+        zero = jnp.zeros((1,), dtype=op.diagonal.dtype)
+        lower = jnp.concatenate((zero, op.lower_diagonal))
+        upper = jnp.concatenate((op.upper_diagonal, zero))
+        return lax.linalg.tridiagonal_solve(lower, op.diagonal, upper, rhs[:, None])[:, 0]
+
+    solution = lx.linear_solve(op, rhs, solver=lx.AutoLinearSolver(well_posed=True), throw=False)
+    return jnp.where(
+        solution.result == lx.RESULTS.successful,
+        solution.value,
+        jnp.full_like(solution.value, jnp.nan),
+    )
+
+
+def inverse_bremsstrahlung_resonance_ratio(
+    Z: float | Array,
+    ni: float | Array,
+    nuee_coeff: float,
+    logLam_ratio: float,
+    w0_norm: float,
+) -> Array:
+    """Return the coefficient in ``nu_ei(v) / omega_0 = ratio / v**3``.
+
+    ``nuee_coeff`` contains the normalization-time and reference-density
+    factors, while ``logLam_ratio`` converts the electron-electron reference
+    rate to the electron-ion rate.
+    """
+
+    return (
+        jnp.asarray(nuee_coeff)
+        * jnp.asarray(logLam_ratio)
+        * jnp.asarray(Z) ** 2
+        * jnp.asarray(ni)
+        / jnp.asarray(w0_norm)
+    )
 
 
 class FastVFP(AbstractBetaBasedModel):
@@ -248,6 +296,11 @@ class F0Collisions(eqx.Module):
     Uses a positive-only velocity grid (0 to vmax) with zero-flux boundary conditions.
     At v=0, where the drift coefficient C=v=0, zero-flux is equivalent to a reflective
     boundary condition, correctly representing the physics of the isotropic distribution.
+
+    Zero-flux boundaries conserve density. Energy conservation is timestep dependent
+    because the nonlinear drift and diffusion coefficients are frozen during each
+    implicit solve; neither differencing scheme should be treated as an exact finite-step
+    nonlinear energy projection.
     """
 
     nuee_coeff: float
@@ -273,7 +326,9 @@ class F0Collisions(eqx.Module):
         :param dt: time step
         :param D0_heating: Maxwellian heating rate D₀ (>0 heats, <0 cools). None to skip.
         :param ib_vosc2: IB quiver velocity squared v_osc². None to skip.
-        :param ib_Z2ni_w0: IB parameter Z²nᵢ/ω₀. Required when ib_vosc2 is not None.
+        :param ib_Z2ni_w0: Coefficient in νₑᵢ(v)/ω₀ = ib_Z2ni_w0/v³.
+            The legacy name is retained for API compatibility. Required when
+            ib_vosc2 is not None.
 
         :return: updated distribution function (nv,)
         """
@@ -301,7 +356,7 @@ class F0Collisions(eqx.Module):
             D = D + D0_heating * v_edge**2
         if ib_vosc2 is not None:
             # IB heating (Ridgers eq 4.39): D̄ = D + (v_osc²/(6v))·g(v)
-            # g(v) = [1 + (Z²nᵢ/(ω₀v³))²]⁻¹
+            # g(v) = [1 + (νₑᵢ(v)/ω₀)²]⁻¹
             ib_arg = ib_Z2ni_w0 / v_edge**3
             D = D + (ib_vosc2 / (6.0 * v_edge)) / (1.0 + ib_arg**2)
 
@@ -313,7 +368,7 @@ class F0Collisions(eqx.Module):
 
         # Delta formulation: solve for increment δ = f^{n+1} - f^n to reduce
         # floating-point error in density conservation (cf. diffrax)
-        delta = lx.linear_solve(op, f0 - op.mv(f0), solver=lx.AutoLinearSolver(well_posed=True)).value
+        delta = _linear_solve_value_or_nan(op, f0 - op.mv(f0))
         return f0 + delta
 
     def __call__(
@@ -334,7 +389,8 @@ class F0Collisions(eqx.Module):
         :param dt: time step
         :param D0_heating: Maxwellian heating rate D₀. Scalar or (nx,). None to skip.
         :param ib_vosc2: IB quiver velocity squared. Scalar or (nx,). None to skip.
-        :param ib_Z2ni_w0: IB parameter Z²nᵢ/ω₀. Scalar or (nx,). Required with ib_vosc2.
+        :param ib_Z2ni_w0: Coefficient in νₑᵢ(v)/ω₀ = ib_Z2ni_w0/v³.
+            Scalar or (nx,). The legacy name is retained for API compatibility.
 
         :return: updated distribution function (nx, nv)
         """
@@ -352,7 +408,8 @@ class F0Collisions(eqx.Module):
 
 class FLMCollisions:
     """
-    The FLM collision operator is as described in Tzoufras2014.
+    The linearized anisotropic FLM collision operator is described by
+    Tzoufras et al., JCP 230 (2011), Eq. (41).
 
     It also has an implementation of electron-electron hack
     where the off-diagonal terms in the electron-electron collision
@@ -382,7 +439,7 @@ class FLMCollisions:
         b_coeffs = np.stack(
             [
                 (-ll - (il + 1)) / denom_plus,
-                (ll + (il + 2)) / denom_plus,
+                (-ll + (il + 2)) / denom_plus,
                 (ll + (il - 1)) / denom_minus,
                 (ll - il) / denom_minus,
             ]
@@ -446,14 +503,18 @@ class FLMCollisions:
 
         return contrib
 
-    def get_ee_diagonal_contrib(self, f0: Array) -> Array:
+    def get_ee_diagonal_contrib(self, f0: Array, il: int = 1) -> Array:
         """
         Returns the tridiagonal operator for the electron-electron collision operator.
 
         :param f0: the distribution function (nx, nv)
+        :param il: spherical-harmonic order
 
         :return: tuple(diagonal, lower diagonal, upper diagonal) of shape (nx, nv), (nx, nv-1), (nx, nv-1)
         """
+        if not 1 <= il <= self.grid.nl:
+            raise ValueError(f"il must satisfy 1 <= il <= {self.grid.nl}; got {il}")
+
         i0 = self.calc_ros_i(f0, power=0.0)
         jm1 = self.calc_ros_j(f0, power=-1.0)
         i2 = self.calc_ros_i(f0, power=2.0)
@@ -467,10 +528,12 @@ class FLMCollisions:
         diag_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
         upper_d2dv2 = (i2 + jm1) / (3.0 * v) / dv**2.0
 
-        diag_angular = -(-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**3.0)
+        tri_i1 = (-i2 + 2 * jm1 + 3 * i0) / 3.0
+        angular_eigenvalue = il * (il + 1) / 2.0
+        diag_angular = -angular_eigenvalue * tri_i1 / v**3.0
 
-        lower_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**2.0) / 2 / dv
-        upper_ddv = (-i2 + 2 * jm1 + 3 * i0) / (3.0 * v**2.0) / 2 / dv
+        lower_ddv = tri_i1 / v**2.0 / 2 / dv
+        upper_ddv = tri_i1 / v**2.0 / 2 / dv
 
         # adding spatial differencing coefficients here
         # 1  -2  1  for d2dv2
@@ -479,20 +542,39 @@ class FLMCollisions:
         diag = diag_term1 - 2.0 * diag_d2dv2 + diag_angular
         upper = upper_d2dv2 + upper_ddv
 
-        diag = diag.at[:, 0].add(lower[:, 0])
+        # Regular spherical harmonics satisfy f_l(-v) = (-1)^l f_l(v).
+        # Fold the origin ghost cell into the first diagonal with that parity.
+        origin_parity = -1.0 if il % 2 else 1.0
+        diag = diag.at[:, 0].add(origin_parity * lower[:, 0])
 
-        return diag, lower[:, :-1], upper[:, 1:]
+        # Lineax stores A[i + 1, i] in lower_diagonal[i] and A[i, i + 1]
+        # in upper_diagonal[i]. The finite-difference coefficients above are
+        # indexed by the matrix row, so the lower diagonal starts at row 1
+        # while the upper diagonal ends at row nv - 2.
+        return diag, lower[:, 1:], upper[:, :-1]
 
     def _solve_one_x_tridiag_(self, diag: Array, upper: Array, lower: Array, f10: Array) -> Array:
         """
         Solves a tridiagonal system of equations.
         """
         op = lx.TridiagonalLinearOperator(diagonal=diag, upper_diagonal=upper, lower_diagonal=lower)
-        return lx.linear_solve(op, f10, solver=lx.AutoLinearSolver(well_posed=True)).value
+        if jnp.iscomplexobj(f10):
+            # Lineax requires the operator and vector PyTree structures/dtypes
+            # to agree. The collision matrix is real, so solve the two complex
+            # components independently without constructing a complex matrix.
+            real = _linear_solve_value_or_nan(op, jnp.real(f10))
+            imag = _linear_solve_value_or_nan(op, jnp.imag(f10))
+            return real + 1j * imag
+        return _linear_solve_value_or_nan(op, f10)
 
-    def __call__(self, Z, ni, f0, f10, dt, include_ee_offdiag_explicitly=True):
+    def solve_harmonic(self, Z, ni, f0, flm, dt, il: int, include_ee_offdiag_explicitly=True):
         """
-        Solves the FLM collision operator for all l and m.
+        Solve the collision operator for one harmonic order ``il``.
+
+        Collisions are diagonal in ``m`` for the linearized isotropic
+        background used here, so every ``m`` at a given ``il`` uses the same
+        radial operator. Inputs are flattened over configuration space with
+        shape ``(nspace, nv)``.
 
         The solve has two options:
 
@@ -502,32 +584,45 @@ class FLMCollisions:
         2. The ee collision operator is ignored and the Z* scaling is used instead
 
         """
+        if not 1 <= il <= self.grid.nl:
+            raise ValueError(f"il must satisfy 1 <= il <= {self.grid.nl}; got {il}")
+
         v = self.grid.v[None, :]
         dv = self.grid.dv
-        for il in range(1, self.grid.nl + 1):
-            ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
+        ei_diag = -il * (il + 1) / 2.0 * (Z[:, None] ** 2.0) * ni[:, None] / v**3.0
 
-            if self.full_aniso_ee:
-                ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0)
-                pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
-                #
-                d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
+        if self.full_aniso_ee:
+            ee_diag, ee_lower, ee_upper = self.get_ee_diagonal_contrib(f0, il=il)
+            pad_f0 = jnp.concatenate([f0[:, 1::-1], f0], axis=1)
+            d2dv2 = 0.5 / v * jnp.gradient(jnp.gradient(pad_f0, dv, axis=1), dv, axis=1)[:, 2:]
 
-                ddv = v**-2.0 * jnp.gradient(pad_f0, dv, axis=1)[:, 2:]
+            ddv = v**-2.0 * jnp.gradient(pad_f0, dv, axis=1)[:, 2:]
 
-                diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)
-                lower = -dt * self.nuee_coeff * ee_lower
-                upper = -dt * self.nuee_coeff * ee_upper
+            diag = 1 - dt * (self.nuei_coeff * ei_diag + self.nuee_coeff * ee_diag)
+            lower = -dt * self.nuee_coeff * ee_lower
+            upper = -dt * self.nuee_coeff * ee_upper
 
-                new_f10 = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, f10)
+            new_flm = vmap(self._solve_one_x_tridiag_, in_axes=(0, 0, 0, 0))(diag, upper, lower, flm)
 
-                if include_ee_offdiag_explicitly:
-                    new_f10 = new_f10 + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
-                        None, f10, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
-                    )
+            if include_ee_offdiag_explicitly:
+                new_flm = new_flm + dt * self.nuee_coeff * self.get_ee_offdiagonal_contrib(
+                    None, flm, {"ddvf0": ddv, "d2dv2f0": d2dv2, "il": il}
+                )
+        else:
+            # Epperlein--Haines Z* approximation to electron--electron scattering.
+            new_flm = flm / (1 - dt * self.nuei_coeff * self.Z_nuei_scaling * ei_diag)
 
-            else:
-                # only uses the Z* epperlein haines scaling instead of solving the ee collisions
-                new_f10 = f10 / (1 - dt * self.nuei_coeff * self.Z_nuei_scaling * ei_diag)
+        return new_flm
 
-        return new_f10
+    def __call__(self, Z, ni, f0, f10, dt, include_ee_offdiag_explicitly=True):
+        """Backward-compatible ``f10`` solve for the VFP-1D ``l=1`` state."""
+
+        return self.solve_harmonic(
+            Z=Z,
+            ni=ni,
+            f0=f0,
+            flm=f10,
+            dt=dt,
+            il=1,
+            include_ee_offdiag_explicitly=include_ee_offdiag_explicitly,
+        )

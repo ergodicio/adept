@@ -1,0 +1,108 @@
+units:
+  normalizing_temperature: 2000eV
+  normalizing_density: 1.5e21/cc
+  reference: ion
+
+
+# Kinetic ions with linearized Boltzmann electrons, in ion units:
+# ion mass = charge = 1 so time is 1/omega_pi, T0 = 0.01 so vti = 0.1,
+# Te = 1.0 so cs = 1.0 and lambda_De = 1.0 in code units.
+density:
+  quasineutrality: true
+  species-ion-background:
+    noise_seed: 420
+    noise_type: gaussian
+    noise_val: 0.0
+    v0: 0.0
+    T0: 0.01
+    m: 2.0
+    basis: sine
+    baseline: 1.0
+    amplitude: 1.0e-3
+    wavenumber: 0.1
+
+grid:
+  dt: 0.25
+  nx: 64
+  tmin: 0.
+  tmax: 2000.0
+  xmax: 62.8318530718
+  xmin: 0.0
+
+save:
+  fields:
+    t:
+      nt: 801
+  ion:
+    main:
+      t:
+        tmin: 0.0
+        tmax: 2000.0
+        nt: 3
+
+solver: vlasov-1d
+
+mlflow:
+  experiment: vlasov1d-test-boltzmann
+  run: iaw-dispersion
+
+drivers:
+  ex: {}
+  ey: {}
+
+diagnostics:
+  diag-vlasov-dfdt: False
+  diag-fp-dfdt: False
+
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 1.0
+    lambda_De: 1.0
+  edfdv: exponential
+  time: sixth
+  species:
+    - name: ion
+      charge: 1.0
+      mass: 1.0
+      vmax: 0.64
+      nv: 256
+      density_components:
+        - species-ion-background
+  fokker_planck:
+    is_on: False
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: False
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0

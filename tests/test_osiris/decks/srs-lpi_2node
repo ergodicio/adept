@@ -1,0 +1,151 @@
+! 2-node (8-rank / 8-GPU) SMOKE deck for the srs-multinode campaign.
+! Purpose: validate cross-node MPI + GPU binding (srun -n 8 across 2 nodes,
+! MPICH_GPU_SUPPORT_ENABLED) BEFORE the full 12-node run -- NOT a physics run.
+! Derived from lpi_12node but deliberately light + short:
+!   node_number  48    -> 8     (6144/8 = 768 cells/domain; 2 nodes x 4 GPUs)
+!   num_par_x    32768 -> 256   (light: mechanics test, fast)
+!   num_par_max  1e7   -> 1e6   (nominal 768*256 = 196k/domain)
+!   tmax         25000 -> 60    (~345 steps: exercises loop, halo exchange, dumps)
+! nx_p=6144 and dt=0.1738 kept identical to the full deck (same grid/CFL).
+simulation
+{
+  n0 = 9.05e21,
+}
+
+node_conf
+{
+  node_number(1)=8,
+  if_periodic(1)=.false.,
+}
+
+grid
+{
+  nx_p=6144,
+  coordinates="cartesian",
+}
+time_step
+{
+  dt=0.1738,
+  ndump=2,
+}
+restart
+{
+  ndump_fac = 0,
+  if_restart=.false.,
+}
+space
+{
+  xmin(1)=0.0 ,
+  xmax(1)=1076.04,
+  if_move(1:2)=.false., .false.,
+}
+time
+{
+  tmin=0.0d0,
+  tmax=60.0d0,
+}
+el_mag_fld
+{
+}
+emf_bound
+{
+  type(1:2,1)="lindmann", "lindmann",
+}
+diag_emf
+{
+  ndump_fac=30,
+  reports="e1","e2","e3","b1","b2","b3",
+}
+particles
+{
+  num_species=1,
+}
+
+
+species
+{
+  num_par_max=1000000,
+  rqm=-1.0,
+  num_par_x(1) = 256,
+  n_sort=25,
+}
+
+
+udist
+{
+  uth(1:3) =0.0885 , 0.0885, 0.0885,
+}
+
+profile
+{
+  num_x=4,
+  fx(1:6,1)=0.0,0.225,0.275,0.0,
+  x(1:6,1)=0,0.00001,1076.03,1076.04,
+}
+
+
+spe_bound
+{
+  type(1:2,1)="thermal", "thermal",
+  uth_bnd(1:3,1,1)=0.0885,0.0885,0.0885,
+  uth_bnd(1:3,2,1)=0.0885,0.0885,0.0885,
+  thermal_type(1:2,1) = "half max","half max",
+}
+
+
+diag_species
+{
+  ndump_fac_pha=30,
+  ndump_fac=30,
+  reports="charge",
+  ndump_fac_raw=0,
+  ps_xmin(1)=0.0,
+  ps_xmax(1)=1076.04,
+  ps_pmin(1:3)=-0.3,-0.3,-0.3,
+  ps_pmax(1:3)=1.0,1.0, 1.0,
+  ps_nx(1)=1000,
+  ps_np(1:3)=100,100,100,
+  if_ps_p_auto(1:3)=.true., .true., .true.,
+  phasespaces="p1x1", "p1p3", "p1p2",
+  ps_gammamin=1.0,
+  ps_gammamax = 2000.0,
+  ps_ngamma= 1024,
+  if_ps_gamma_auto=.true.,
+  raw_gamma_limit=1.2,
+  raw_fraction = 0.1,
+  n_ene_bins=6,
+  ene_bins(1:6)=0.005,0.04,0.08,0.12,0.2,0.5,
+}
+
+
+current{}
+
+
+smooth
+{
+  type(1)="custom",
+  order(1)=5,
+  swfj(1:3,1,1)=1,2,1,
+  swfj(1:3,2,1)=1,2,1,
+  swfj(1:3,3,1)=1,2,1,
+  swfj(1:3,4,1)=1,2,1,
+  swfj(1:3,5,1)=-5,14,-5,
+}
+
+
+diag_current
+{
+}
+
+
+antenna_array
+{
+  n_antenna=1,
+}
+
+antenna
+{
+  a0=0.004,
+  t_rise=10,t_flat=50000.0,t_fall=10.0,omega0=1.0,
+  pol=0,
+}

@@ -5,7 +5,7 @@
 
 from jax import numpy as jnp
 
-from adept._base_ import get_envelope
+from adept._jax_helpers import get_envelope
 from adept._vlasov1d.grid import Grid
 from adept._vlasov1d.simulation import EMDriver
 
@@ -25,10 +25,10 @@ class LongitudinalElectricFieldDriver:
         factor = driver.envelope(self.xax, current_time)
         return factor * (ww + dw) * driver.a0 * jnp.sin(kk * self.xax - (ww + dw) * current_time)
 
-    def __call__(self, t, args):
+    def __call__(self, t, args, *, drivers: list[EMDriver] | None = None):
         """Evaluate the total longitudinal driver field at time t."""
         total_de = jnp.zeros_like(self.xax)
-        for pulse in self.drivers:
+        for pulse in self.drivers if drivers is None else drivers:
             total_de += self._single_driver_field(pulse, t)
         return total_de
 
@@ -55,6 +55,8 @@ class TransverseCurrentSourceDriver:
         self.xax = xax
         self.drivers = drivers
         dx = float(xax[1] - xax[0])
+        self.dx = dx
+        self.c = c
 
         self.point_source_masks = []
         self.point_source_scales = []
@@ -83,10 +85,30 @@ class TransverseCurrentSourceDriver:
             factor = driver.envelope(self.xax, current_time)
             return -factor * w_total**2 * driver.a0 * jnp.sin(kk * self.xax - w_total * current_time)
 
-    def __call__(self, t, args):
-        """Evaluate the summed transverse current source at time t."""
+    def __call__(self, t, args, *, drivers: list[EMDriver] | None = None):
+        """Evaluate the source, using explicit runtime driver values when supplied.
+
+        Point sources remain attached to the nearest grid cell. Their location
+        is selected from the runtime envelope center, and their amplitude and
+        frequency are evaluated without using the constructor's cached scale.
+        """
         total = jnp.zeros_like(self.xax)
-        for driver, mask, scale in zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True):
+        if drivers is None:
+            source_data = zip(self.drivers, self.point_source_masks, self.point_source_scales, strict=True)
+        else:
+            masks = []
+            scales = []
+            for driver in drivers:
+                if driver.is_point_source:
+                    center = driver.envelope.space_envelope.center
+                    i0 = jnp.argmin(jnp.abs(self.xax - center))
+                    masks.append(jnp.zeros_like(self.xax).at[i0].set(1.0))
+                    scales.append(2.0 * (driver.w0 + driver.dw0) * self.c * driver.a0 / self.dx)
+                else:
+                    masks.append(None)
+                    scales.append(None)
+            source_data = zip(drivers, masks, scales, strict=True)
+        for driver, mask, scale in source_data:
             total += self._single_driver_source(driver, mask, scale, t)
         return total
 
@@ -99,6 +121,7 @@ class WaveSolver:
         super().__init__()
         self.dx = dx
         self.c = c
+        self.waves_on = bool(c > 0)
         self.c_sq = c**2.0
         c_over_dx = c / dx
         self.dt = dt
@@ -142,7 +165,7 @@ class WaveSolver:
 
     def __call__(self, a: jnp.ndarray, aold: jnp.ndarray, djy_array: jnp.ndarray, electron_density: jnp.ndarray):
         """Advance the vector potential one timestep or preserve it when waves are disabled."""
-        if self.c > 0:
+        if self.waves_on:
             d2dx2 = (a[:-2] - 2.0 * a[1:-1] + a[2:]) / self.dx**2.0
             # padded_a = jnp.concatenate([a[-1:], a, a[:1]])
             # d2dx2 = (padded_a[:-2] - 2.0 * padded_a[1:-1] + padded_a[2:]) / self.dx**2.0
@@ -222,6 +245,80 @@ class SpectralPoissonSolver:
         # Poisson equation: div^2(phi) = -rho => -k^2 phi_k = -rho_k => phi_k = rho_k / k^2
         # E = -grad(phi) => E_k = -ik phi_k = -ik rho_k / k^2 = -i rho_k / k
         return jnp.real(jnp.fft.ifft(-1j * self.one_over_kx * jnp.fft.fft(rho)))
+
+
+class BoltzmannPoissonSolver:
+    """Screened Poisson solver for kinetic ions with linearized Boltzmann electrons.
+
+    Electrons are not evolved kinetically. They are assumed to respond
+    adiabatically to the electrostatic potential, n_e = n_0 (1 + e phi / T_e),
+    which turns the Poisson equation into the screened (linearized Boltzmann) solve
+
+        e phi_k / T_e = (delta rho_k / rho_0) / (1 + k^2 lambda_De^2)
+
+    where delta rho is the fluctuation of the total kinetic-species (ion) charge
+    density about its spatial mean rho_0, which also sets the neutralizing
+    electron density. The electric field follows as
+
+        E_k = -i k (T_e / rho_0) delta rho_k / (1 + k^2 lambda_De^2)
+
+    ``lambda_De = 0`` recovers the quasineutral closure e phi / T_e = delta n / n_0.
+    The k = 0 component of E vanishes identically, so no static neutralizing
+    background and no explicit charge-neutrality bookkeeping are needed.
+
+    All quantities are in code units: with a single ion species at
+    ``charge: 1, mass: 1``, time is in 1/omega_pi, velocity in the ion
+    thermal-sigma unit, and the consistent screening length is
+    lambda_De = sqrt(T_e / rho_0) (the default when ``lambda_De`` is None).
+    """
+
+    def __init__(self, kx, species_grids, species_params, Te: float, lambda_De: float | None = None):
+        """Initialize the Boltzmann-electron field solver.
+
+        Args:
+            kx: wavenumber array kx[nx]
+            species_grids: dict mapping species_name -> {"dv": dv, ...}
+            species_params: dict mapping species_name -> {"charge": q, ...}
+            Te: electron temperature in code units (units of the normalizing temperature)
+            lambda_De: electron Debye/screening length in code units. None derives
+                the consistent value sqrt(Te / rho_0) from the mean charge density;
+                0.0 gives the quasineutral closure.
+        """
+        super().__init__()
+        self.kx = kx
+        self.species_grids = species_grids
+        self.species_params = species_params
+        self.Te = Te
+        self.lambda_De = lambda_De
+
+    def compute_charge_density(self, f_dict):
+        """Compute total kinetic-species charge density rho = sum_s q_s * integral(f_s dv_s)."""
+        rho = jnp.zeros_like(next(iter(f_dict.values()))[:, 0])
+
+        for species_name, f_s in f_dict.items():
+            q_s = self.species_params[species_name]["charge"]
+            dv_s = self.species_grids[species_name]["dv"]
+            rho = rho + q_s * jnp.sum(f_s, axis=1) * dv_s
+
+        return rho
+
+    def __call__(self, f_dict: dict, prev_ex: jnp.ndarray, dt: jnp.float64):
+        """Solve the screened Poisson equation for the electric field.
+
+        Args:
+            f_dict: dict mapping species_name -> f[nx, nv] distribution
+            prev_ex: previous electric field (unused, kept for interface)
+            dt: time step (unused, kept for interface)
+
+        Returns:
+            Electric field E[nx]
+        """
+        rho = self.compute_charge_density(f_dict)
+        rho_0 = jnp.mean(rho)
+        lambda_sq = self.Te / rho_0 if self.lambda_De is None else self.lambda_De**2
+        # The k = 0 element of the kernel is zero, so the mean of rho drops out of E
+        kernel = self.kx * (self.Te / rho_0) / (1.0 + lambda_sq * self.kx**2)
+        return jnp.real(jnp.fft.ifft(-1j * kernel * jnp.fft.fft(rho)))
 
 
 class AmpereSolver:
@@ -366,6 +463,16 @@ class ElectricFieldSolver:
                 species_grids=species_grids,
                 species_params=species_params,
                 static_charge_density=static_charge_density,
+            )
+            self.hampere = False
+        elif cfg["terms"]["field"] == "poisson-boltzmann":
+            boltzmann_cfg = cfg["terms"].get("boltzmann_electrons") or {}
+            self.es_field_solver = BoltzmannPoissonSolver(
+                kx=grid.kx,
+                species_grids=species_grids,
+                species_params=species_params,
+                Te=boltzmann_cfg.get("Te", 1.0),
+                lambda_De=boltzmann_cfg.get("lambda_De"),
             )
             self.hampere = False
         elif cfg["terms"]["field"] == "ampere":

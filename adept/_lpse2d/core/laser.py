@@ -23,7 +23,7 @@ class Light:
         self.speckle_normalization = 1.0
         self.y_si = None  # y-coordinates in meters
 
-        speckle_profile = cfg["drivers"]["E0"].get("speckle_profile")
+        speckle_profile = cfg["drivers"].get("E0", {}).get("speckle_profile")
 
         if speckle_profile is not None:
             # Convert y-coordinates to SI units (meters)

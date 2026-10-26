@@ -667,8 +667,12 @@ class LogMeanFlux(AbstractDriftDiffusionDifferencingScheme):
     from the Peclet number C·dv/D.
 
     This ensures the edge-interpolated f matches the log-mean used in
-    kernel-based compute_D, preserving the bilinear symmetry needed
-    for energy conservation.
+    kernel-based compute_D, preserving the bilinear symmetry needed for a
+    zero semidiscrete energy derivative at the frozen distribution. A finite
+    implicit step freezes these nonlinear coefficients at the old state and
+    therefore does not conserve energy exactly away from a Maxwellian. Use
+    timestep convergence tests; Chang-Cooper is generally the safer option
+    for strongly non-Maxwellian distributions.
 
     The implicit system uses the same tridiagonal structure as Chang-Cooper;
     only the delta computation differs.

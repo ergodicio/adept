@@ -29,9 +29,13 @@ jobs:
       base: ${{ steps.filter.outputs.base }}
       lpse2d: ${{ steps.filter.outputs.lpse2d }}
       vlasov1d: ${{ steps.filter.outputs.vlasov1d }}
+      farsight1d: ${{ steps.filter.outputs.farsight1d }}
       vfp1d: ${{ steps.filter.outputs.vfp1d }}
+      vfp2d: ${{ steps.filter.outputs.vfp2d }}
       spectrax1d: ${{ steps.filter.outputs.spectrax1d }}
       pic1d: ${{ steps.filter.outputs.pic1d }}
+      osiris: ${{ steps.filter.outputs.osiris }}
+      warpx: ${{ steps.filter.outputs.warpx }}
     steps:
     - uses: actions/checkout@v7
     - id: force
@@ -56,6 +60,7 @@ jobs:
             - 'tests/conftest.py'
             - 'adept/__init__.py'
             - 'adept/_base_.py'
+            - 'adept/_compat.py'
             - 'adept/utils.py'
             - 'adept/functions.py'
             - 'adept/electrostatic.py'
@@ -65,6 +70,8 @@ jobs:
             - 'adept/driftdiffusion.py'
           base:
             - *shared
+            - 'adept/core/**'
+            - 'tests/test_architecture/**'
             - 'tests/test_base/**'
           lpse2d:
             - *shared
@@ -73,6 +80,7 @@ jobs:
             - 'tests/test_lpse2d/**'
           vlasov1d:
             - *shared
+            - 'adept/core/**'
             - 'adept/_vlasov1d/**'
             - 'adept/vlasov1d.py'
             - 'tests/test_vlasov1d/**'
@@ -81,6 +89,18 @@ jobs:
             - 'adept/vfp1d/**'
             - 'tests/test_vfp1d/**'
             - 'tests/fp_relaxation/**'
+          farsight1d:
+            - *shared
+            - 'adept/core/**'
+            - 'adept/farsight1d/**'
+            - 'configs/farsight-1d/**'
+            - 'tests/test_farsight1d/**'
+          vfp2d:
+            - *shared
+            - 'adept/vfp2d/**'
+            - 'adept/vfp1d/**'  # shared collision operators and normalization
+            - 'configs/vfp-2d/**'
+            - 'tests/test_vfp2d/**'
           spectrax1d:
             - *shared
             - 'adept/_spectrax1d/**'
@@ -91,6 +111,14 @@ jobs:
             - 'adept/_pic1d/**'
             - 'adept/pic1d.py'
             - 'tests/test_pic1d/**'
+          osiris:
+            - *shared
+            - 'adept/osiris/**'
+            - 'tests/test_osiris/**'
+          warpx:
+            - *shared
+            - 'adept/warpx/**'
+            - 'tests/test_warpx/**'
 
   test-base:
     needs: changes
@@ -102,7 +130,7 @@ jobs:
       with:
         python-version: '3.11'
     - name: Test with pytest
-      run: uv run --locked pytest tests/test_base
+      run: uv run --locked pytest tests/test_base tests/test_architecture
 
   test-lpse2d:
     needs: changes
@@ -128,6 +156,18 @@ jobs:
     - name: Test with pytest
       run: uv run --locked pytest tests/test_vlasov1d --ignore=tests/test_vlasov1d/test_config_regression.py
 
+  test-farsight1d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.farsight1d == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_farsight1d
+
   test-vfp1d:
     needs: changes
     if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.vfp1d == 'true'
@@ -139,6 +179,18 @@ jobs:
         python-version: '3.11'
     - name: Test with pytest
       run: uv run --locked pytest tests/test_vfp1d
+
+  test-vfp2d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.vfp2d == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_vfp2d
 
   test-spectrax1d:
     needs: changes
@@ -163,6 +215,35 @@ jobs:
         python-version: '3.11'
     - name: Test with pytest
       run: uv run --locked pytest tests/test_pic1d
+
+  # OSIRIS wrapper tests run without an OSIRIS binary: the runner smoke test and
+  # real-data IO tests skip themselves unless OSIRIS_BIN_1D / an existing run dir
+  # are provided, which CI does not do.
+  test-osiris:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.osiris == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_osiris
+
+  # WarpX wrapper tests run without a WarpX binary: the live smoke test skips
+  # itself unless WARPX_BIN_1D / WARPX_BIN is provided, which CI does not do.
+  test-warpx:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.warpx == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Test with pytest
+      run: uv run --locked pytest tests/test_warpx
 
   test-hermite-poisson-1d:
     runs-on: ubuntu-latest

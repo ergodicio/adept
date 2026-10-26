@@ -6,11 +6,13 @@ from functools import partial
 import equinox as eqx
 import jax
 import numpy as np
-from interpax import interp1d, interp2d
+from interpax import interp2d
 from jax import numpy as jnp
-from jax import shard_map, vmap
+from jax import shard_map
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec as P
+
+from adept._vlasov1d.solvers.pushers.conservative import conservative_remap
 
 
 class VlasovExternalE(eqx.Module):
@@ -103,35 +105,111 @@ class VelocityExponential:
             return self.push(f_dict, e, pond, dt)
 
 
-class VelocityCubicSpline:
-    """Cubic-spline velocity-space advection under electric and ponderomotive forces."""
+def _uniform_cubic_interp(f: jnp.ndarray, shift: jnp.ndarray, dv: float) -> jnp.ndarray:
+    """Shift each row of ``f`` on a uniform grid with local cubic splines.
+
+    This is the uniform-grid specialization of ``interpax.interp1d(method="cubic")``
+    used by the velocity pusher. Each row has one constant velocity shift, so its
+    cell offset and fractional displacement are shared by every velocity point.
+    The direct four-point stencil avoids constructing query grids, binary searches,
+    and a full array of spline derivatives.
+    """
+    _, nv = f.shape
+    if nv < 2:
+        raise ValueError("cubic interpolation requires at least two velocity cells")
+
+    scaled_shift = shift / jnp.asarray(dv, dtype=f.dtype)
+    velocity_index = jnp.arange(nv, dtype=jnp.int32)[None, :]
+
+    # For query index u = j - shift/dv, floor(u) separates into the velocity
+    # index j and one row-wise offset. Clipping selects the endpoint segment;
+    # t is then bounded to that segment so exterior queries cannot overflow.
+    row_offset = jnp.floor(-scaled_shift).astype(jnp.int32)[:, None]
+    left = jnp.clip(velocity_index + row_offset, 0, nv - 2)
+    query_index = velocity_index - scaled_shift[:, None]
+    t = jnp.clip(query_index - left, 0.0, 1.0)
+
+    fm1 = jnp.take_along_axis(f, jnp.clip(left - 1, 0, nv - 1), axis=1)
+    f0 = jnp.take_along_axis(f, left, axis=1)
+    f1 = jnp.take_along_axis(f, left + 1, axis=1)
+    f2 = jnp.take_along_axis(f, jnp.clip(left + 2, 0, nv - 1), axis=1)
+
+    # interpax's local cubic method uses one-sided endpoint slopes and the
+    # average of adjacent secant slopes in the interior. Multiplication by dv
+    # is folded into m0/m1, leaving differences of f values directly.
+    m0 = jnp.where(left == 0, f1 - f0, 0.5 * (f1 - fm1))
+    m1 = jnp.where(left == nv - 2, f1 - f0, 0.5 * (f2 - f0))
+
+    t2 = t * t
+    t3 = t2 * t
+    interpolated = (
+        (2.0 * t3 - 3.0 * t2 + 1.0) * f0 + (t3 - 2.0 * t2 + t) * m0 + (-2.0 * t3 + 3.0 * t2) * f1 + (t3 - t2) * m1
+    )
+
+    outside = (query_index < 0.0) | (query_index > nv - 1)
+    return jnp.where(outside, jnp.asarray(1.0e-30, dtype=f.dtype), interpolated)
+
+
+def _uniform_lagrange7_interp(f: jnp.ndarray, shift: jnp.ndarray, dv: float) -> jnp.ndarray:
+    """Translate uniform-grid rows with an eight-point, degree-7 Lagrange stencil.
+
+    Weights depend only on the row's fractional displacement. The stencil is
+    centered around the departure cell, with exterior samples and exterior
+    queries set to 1e-30 (no velocity wraparound). This is an unlimited
+    interpolant: it does not enforce positivity or renormalize escaped mass.
+    """
+    _, nv = f.shape
+    if nv < 8:
+        raise ValueError("lagrange7 interpolation requires at least eight velocity cells")
+
+    # Once a displacement exceeds the domain plus the stencil width, every
+    # query is exterior. Bound it before conversion to avoid integer overflow.
+    displacement = jnp.clip(-shift / jnp.asarray(dv, dtype=f.dtype), -nv - 8, nv + 8)
+    offset = jnp.floor(displacement).astype(jnp.int32)
+    fraction = displacement - offset
+    cell = jnp.arange(nv, dtype=jnp.int32)[None, :] + offset[:, None]
+    floor = jnp.asarray(1.0e-30, dtype=f.dtype)
+    interpolated = jnp.zeros_like(f)
+
+    for node in range(-3, 5):
+        weight = jnp.ones_like(fraction)
+        for other in range(-3, 5):
+            if other != node:
+                weight = weight * (fraction - other) / (node - other)
+        index = cell + node
+        samples = jnp.take_along_axis(f, jnp.clip(index, 0, nv - 1), axis=1)
+        samples = jnp.where((index >= 0) & (index < nv), samples, floor)
+        interpolated = interpolated + weight[:, None] * samples
+
+    query = cell + fraction[:, None]
+    return jnp.where((query >= 0) & (query <= nv - 1), interpolated, floor)
+
+
+class _VelocityInterpolation:
+    """Shared force calculation and sharding for velocity interpolation pushers."""
 
     def __init__(self, species_grids, species_params, parallel=False):
-        """Store per-species velocity grids, interpolation kernel, and sharding metadata."""
+        """Store per-species velocity grids and optional sharding metadata."""
         self.species_grids = species_grids
         self.species_params = species_params
-        self.interp = vmap(partial(interp1d, extrap=1.0e-30), in_axes=0)
         self.parallel = parallel
         if self.parallel:
             self.mesh = Mesh(np.array(jax.devices()), ("device",))
 
     def push(self, f_dict, e, pond, dt):
-        """Apply the unsharded cubic-spline velocity push to each species."""
+        """Apply the unsharded interpolation push to each species."""
         result = {}
         for species_name, f in f_dict.items():
-            v = self.species_grids[species_name]["v"]
+            dv = self.species_grids[species_name]["dv"]
             q = self.species_params[species_name]["charge"]
             m = self.species_params[species_name]["mass"]
-            nx = f.shape[0]
-            v_repeated = jnp.repeat(v[None, :], repeats=nx, axis=0)
             force = q * e + (q**2 / m) * pond
             accel = force / m
-            vq = v_repeated - accel[:, None] * dt
-            result[species_name] = self.interp(xq=vq, x=v_repeated, f=f)
+            result[species_name] = self.interpolate(f, accel * dt, dv)
         return result
 
     def __call__(self, f_dict, e, pond, dt):
-        """Dispatch the cubic-spline velocity push, optionally through shard_map."""
+        """Dispatch the velocity push, optionally through shard_map."""
         if self.parallel:
             return shard_map(
                 self.push,
@@ -141,6 +219,30 @@ class VelocityCubicSpline:
             )(f_dict, e, pond, dt)
         else:
             return self.push(f_dict, e, pond, dt)
+
+
+class VelocityCubicSpline(_VelocityInterpolation):
+    """Local cubic-spline velocity advection under electric and ponderomotive forces."""
+
+    interpolate = staticmethod(_uniform_cubic_interp)
+
+
+class VelocityLagrange7(_VelocityInterpolation):
+    """Degree-7 Lagrange velocity advection under electric and ponderomotive forces."""
+
+    interpolate = staticmethod(_uniform_lagrange7_interp)
+
+
+class VelocityPFC3(_VelocityInterpolation):
+    """Positive conservative quadratic velocity remap with zero boundary inflow."""
+
+    interpolate = staticmethod(partial(conservative_remap, method="pfc3", periodic=False))
+
+
+class VelocitySLWENO5(_VelocityInterpolation):
+    """Positive conservative WENO5 velocity remap with zero boundary inflow."""
+
+    interpolate = staticmethod(partial(conservative_remap, method="sl-weno5", periodic=False))
 
 
 class HouLiFilter:
@@ -208,3 +310,30 @@ class SpaceExponential:
             else:
                 result[species_name] = self.push(f, v)
         return result
+
+
+class _SpaceConservative(SpaceExponential):
+    """Share species dispatch and v-axis sharding with the spectral pusher."""
+
+    def __init__(self, x, species_grids, parallel=False):
+        self.dx = x[1] - x[0]
+        self.species_grids = species_grids
+        self.parallel = parallel
+        if parallel:
+            self.mesh = Mesh(np.array(jax.devices()), ("device",))
+
+    def push(self, f, v):
+        """Remap periodic x lines; v is the per-line physical displacement."""
+        return conservative_remap(f.T, v, self.dx, method=self.method, periodic=True).T
+
+
+class SpacePFC3(_SpaceConservative):
+    """Positive conservative quadratic advection in periodic configuration space."""
+
+    method = "pfc3"
+
+
+class SpaceSLWENO5(_SpaceConservative):
+    """Positive conservative WENO5 advection in periodic configuration space."""
+
+    method = "sl-weno5"

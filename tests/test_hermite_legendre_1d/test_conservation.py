@@ -5,8 +5,8 @@
 With the constraint J_{Nh,0}=J_{Nh,1}=J_{Nh,2}=0 enforced, the self-consistent
 (field-on) mixed method conserves total mass and momentum to machine precision and
 total energy to the explicit time integrator's accuracy (the paper's machine-
-precision energy relies on the implicit-midpoint integrator; the explicit Lawson-RK4
-used here is time-integration-limited but convergent). The run also stays finite.
+precision energy relies on its implicit-midpoint integrator; the Lawson-RK4 path used
+here is time-integration-limited but convergent). The run also stays finite.
 """
 
 from jax import config as jax_config

@@ -1,0 +1,83 @@
+# Y-refinement check for the sharded Joglekar et al. reconstruction.
+# This changes only ny, dt, tmax, and the save cadence relative to the wide-box
+# production config so the comparison isolates the choppy y structure in the
+# late-time magnetic field and kinetic Ohm-law terms.
+solver: vfp-2d
+
+mlflow:
+  experiment: vfp2d-joglekar-2014
+  run: wide-x-sharded-4gpu-ny128-dt1fs-30ps-houli-p12
+
+units:
+  laser_wavelength: 351nm
+  reference electron temperature: 1600eV
+  reference ion temperature: 160eV
+  reference electron density: 2.5e22/cm^3
+  Z: 1
+  Ion: Au+
+  logLambda: nrl
+
+density:
+  quasineutrality: true
+  species-electron:
+    m: 2.0
+    n: {basis: uniform, baseline: 1.0}
+    T: {basis: uniform, baseline: 1.0}
+
+grid:
+  xmin: -510um
+  xmax: 510um
+  nx: 224
+  ymin: -34um
+  ymax: 34um
+  # dy = 0.53125 um, twice the published central y resolution.
+  ny: 128
+  tmin: 0ps
+  tmax: 30ps
+  # Halving dt protects the dispersive kinetic-Ohm update when dy is halved.
+  dt: 1fs
+  nv: 96
+  vmax: 8.0
+  lmax: 2
+  mmax: 2
+  sharding: {enabled: true, axis: x}
+
+terms:
+  # The p=36 taper left a grid-locked 2.5--4-cell y mode in Bz and the kinetic
+  # Ohm terms.  A p=12 convergence scan removes the upper-k shelf while keeping
+  # the 30 ps sheet width and reconnected flux within 1.5% of p=36.
+  hou_li_filter: {is_on: true, alpha: 36.0, order: 12, dimensions: [x, y]}
+  field_solver:
+    mode: kinetic-ohm
+    hidden_density_gradient:
+      active: true
+      scale_length: 17um
+      switch_off: 17.78ps
+      switch_width: 0.5ps
+      profile:
+        basis: gaussian_spots
+        x_center: 0um
+        x_radius: 17um
+        y_centers: [-34um, 34um]
+        y_radius: 17um
+  fokker_planck:
+    active: true
+    flm: {ee: true}
+    f00: {model: CoulombianKernel, scheme: chang_cooper, positivity: conservative}
+
+drivers:
+  ib:
+    intensity_1e15_Wcm2: 0.25
+    polarisation: linear
+    profile:
+      basis: gaussian_spots
+      x_center: 0um
+      x_radius: 17um
+      y_centers: [-34um, 34um]
+      y_radius: 17um
+
+save:
+  t: {tmin: 0ps, tmax: 30ps, nt: 13}
+
+output:
+  n_panels: 9

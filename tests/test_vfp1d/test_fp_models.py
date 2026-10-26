@@ -126,18 +126,19 @@ def test_coulombian_high_v_limit_matches_fast_vfp(case):
 
 
 # ============================================================================
-# Tests: LogMeanFlux + kernel-derived C conserves energy (bilinear symmetry)
+# Tests: LogMeanFlux + kernel-derived C has zero semidiscrete energy derivative
 # ============================================================================
 
 
 @pytest.mark.parametrize("model_cls", KERNEL_MODELS, ids=lambda c: c.__name__)
-def test_logmean_flux_conserves_energy(model_cls, f, grid):
-    """LogMeanFlux operator with kernel-derived C and D conserves energy.
+def test_logmean_flux_has_zero_semidiscrete_energy_derivative(model_cls, f, grid):
+    """LogMeanFlux has a zero energy derivative at the frozen state.
 
     The LogMeanFlux scheme uses log-mean interpolation for f at edges,
     which is the same interpolation used in compute_D. This ensures the
     kernel's bilinear symmetry (Σ K[A]·B·dε = Σ K[B]·A·dε) carries
-    through to the full tridiagonal operator.
+    through to the frozen-coefficient tridiagonal operator. This does not imply
+    exact energy conservation over a finite implicit nonlinear update.
 
     We verify that the spherical energy moment of the operator increment
     vanishes: Σ v⁴ · (f - op.mv(f)) ≈ 0, i.e. the implicit step
@@ -172,5 +173,5 @@ def test_logmean_flux_conserves_energy(model_cls, f, grid):
         float(energy_change / total_energy),
         0.0,
         atol=1e-12,
-        err_msg=f"{model_cls.__name__}: LogMeanFlux operator does not conserve energy",
+        err_msg=f"{model_cls.__name__}: LogMeanFlux semidiscrete energy derivative is nonzero",
     )

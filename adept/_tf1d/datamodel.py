@@ -1,3 +1,7 @@
+"""Pydantic configuration models for the two-fluid 1D (`tf-1d`) solver."""
+
+from typing import Literal
+
 from pydantic import BaseModel
 
 
@@ -20,8 +24,11 @@ class GridModel(BaseModel):
 
 
 class TimeSaveModel(BaseModel):
-    tmin: float | None = None  # Optional: defaults to grid.tmin at runtime
-    tmax: float | None = None  # Optional: defaults to grid.tmax at runtime
+    # All three are required: `BaseTwoFluid1D.init_diffeqsolve` reads them
+    # unconditionally. The tmin/tmax defaulting in `get_derived_quantities`
+    # targets a nested `save.<name>.t` layout, which tf-1d does not use.
+    tmin: float
+    tmax: float
     nt: int
 
 
@@ -40,12 +47,21 @@ class KxSaveModel(BaseModel):
 class SaveModel(BaseModel):
     t: TimeSaveModel
     x: SpaceSaveModel
-    kx: KxSaveModel
+    kx: KxSaveModel | None = None  # Optional: omit to skip the k-space diagnostic
 
 
 class TrappingModel(BaseModel):
     is_on: bool
     kld: float
+    # Damping-reduction model applied by `VelocityStepper.landau_damping_term`.
+    # Only read when `is_on` is True.
+    model: Literal["none", "zk", "delta"] = "none"
+    # Electron-electron collision frequency used by the trapping models.
+    # Only read when `is_on` is True.
+    nuee: float | None = None
+    # Legacy neural-network shape hint (e.g. "8|8"). Present in the shipped
+    # configs but not currently read by the solver.
+    nn: str | None = None
 
 
 class IonModel(BaseModel):
@@ -54,7 +70,7 @@ class IonModel(BaseModel):
     mass: float
     T0: float
     charge: float
-    gamma: int | str
+    gamma: int | float | str
     trapping: TrappingModel
 
 
@@ -64,7 +80,7 @@ class ElectronModel(BaseModel):
     T0: float
     mass: float
     charge: float
-    gamma: int | str
+    gamma: int | float | str
     trapping: TrappingModel
 
 
@@ -90,12 +106,32 @@ class DriversModel(BaseModel):
     ex: dict[str, ExDriverModel]
 
 
+class NNModel(BaseModel):
+    """An `equinox.nn.MLP` specification for a learned closure term."""
+
+    in_size: int
+    out_size: int
+    width_size: int
+    depth: int
+    activation: str
+    final_activation: str | None = None
+
+
+class ModelsModel(BaseModel):
+    """Learned-closure models. Set `models: false` to disable them entirely."""
+
+    file: str | bool = False  # path to serialized weights, or false for untrained
+    nu_g: NNModel | None = None
+    nu_d: NNModel | None = None
+
+
 class ConfigModel(BaseModel):
     solver: str
     mlflow: MLFlowModel
-    adjoint: bool
     units: UnitsModel
     grid: GridModel
     save: SaveModel
     physics: PhysicsModel
     drivers: DriversModel
+    adjoint: bool | str | None = None
+    models: ModelsModel | bool | None = None

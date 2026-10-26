@@ -9,6 +9,9 @@ driver evaluated at the kick time. Field solves and gathers happen inside the
 ``kick`` helper so we can compose any symplectic timesplit.
 """
 
+from typing import cast
+
+import equinox as eqx
 from jax import numpy as jnp
 
 from adept._pic1d.solvers.pushers.field import (
@@ -17,6 +20,7 @@ from adept._pic1d.solvers.pushers.field import (
     SpectralPoissonSolver,
 )
 from adept._pic1d.solvers.pushers.shape import gather
+from adept._vlasov1d.simulation import EMDriver
 
 
 def _drift(particles: dict, dt: float, xmin: float, xmax: float) -> dict:
@@ -31,7 +35,7 @@ def _drift(particles: dict, dt: float, xmin: float, xmax: float) -> dict:
     return out
 
 
-class _Kicker:
+class _Kicker(eqx.Module):
     """Helper that builds E(x_p, t) and applies v += dt * (q/m) * E_p.
 
     Evaluating the field requires (i) deposit, (ii) Poisson solve, (iii) add
@@ -46,6 +50,14 @@ class _Kicker:
 
     matching the Vlasov-1D convention in ``vlasov.VelocityExponential``.
     """
+
+    species_params: dict
+    shape: str
+    dx: float
+    xmin: float
+    charge_density: ParticleChargeDensity
+    poisson: SpectralPoissonSolver
+    driver: LongitudinalElectricFieldDriver
 
     def __init__(
         self,
@@ -63,23 +75,38 @@ class _Kicker:
         self.shape = shape
         self.dx = dx
         self.xmin = xmin
-        self.charge_density = ParticleChargeDensity(nx, dx, xmin, species_params, shape)
-        self.poisson = SpectralPoissonSolver(one_over_kx, static_charge_density=static_charge_density)
-        self.driver = LongitudinalElectricFieldDriver(xax, ex_drivers)
+        self.charge_density = cast(
+            ParticleChargeDensity,
+            ParticleChargeDensity(nx, dx, xmin, species_params, shape),
+        )
+        self.poisson = cast(
+            SpectralPoissonSolver,
+            SpectralPoissonSolver(one_over_kx, static_charge_density=static_charge_density),
+        )
+        self.driver = cast(LongitudinalElectricFieldDriver, LongitudinalElectricFieldDriver(xax, ex_drivers))
 
-    def field(self, particles: dict, t: float) -> jnp.ndarray:
+    def field(
+        self, particles: dict, t: float, drivers: list[EMDriver] | None = None
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         rho = self.charge_density(particles)
         e_sc = self.poisson(rho)
-        e_drv = self.driver(t)
+        e_drv = self.driver(t, drivers)
         return e_sc, e_drv
 
-    def apply(self, particles: dict, dt: float, t: float, a: jnp.ndarray | None = None):
-        e_sc, e_drv = self.field(particles, t)
+    def apply(
+        self,
+        particles: dict,
+        dt: float,
+        t: float,
+        a: jnp.ndarray | None = None,
+        drivers: list[EMDriver] | None = None,
+    ):
+        e_sc, e_drv = self.field(particles, t, drivers)
         e_total = e_sc + e_drv
         # Ponderomotive force from transverse vector potential.
         # ``a`` is sized (nx+2,) — interior slice of ``gradient(a²)`` is (nx,).
         if a is not None:
-            pond_grid = -0.5 * jnp.gradient(a**2, self.dx)[1:-1]
+            pond_grid = -0.5 * jnp.asarray(jnp.gradient(a**2, self.dx))[1:-1]
         else:
             pond_grid = None
         out = {}
@@ -96,7 +123,7 @@ class _Kicker:
         return out, e_sc, e_drv
 
 
-class LeapfrogIntegrator:
+class LeapfrogIntegrator(eqx.Module):
     """Standard kick-drift-kick (KDK) leapfrog.
 
     With ``x, v`` co-located at integer time levels, one step is::
@@ -106,26 +133,46 @@ class LeapfrogIntegrator:
         v_{n+1}   = v_{n+1/2} + (dt/2) (q/m) E(x_{n+1}, t_{n+1})
     """
 
+    kicker: _Kicker
+    xmin: float
+    xmax: float
+    dt: float
+
     def __init__(self, kicker: _Kicker, xmin: float, xmax: float, dt: float):
         self.kicker = kicker
         self.xmin = xmin
         self.xmax = xmax
         self.dt = dt
 
-    def __call__(self, particles: dict, t: float, a: jnp.ndarray | None = None):
-        particles, _, _ = self.kicker.apply(particles, 0.5 * self.dt, t, a)
+    def __call__(
+        self,
+        particles: dict,
+        t: float,
+        a: jnp.ndarray | None = None,
+        drivers: list[EMDriver] | None = None,
+    ):
+        particles, _, _ = self.kicker.apply(particles, 0.5 * self.dt, t, a, drivers)
         particles = _drift(particles, self.dt, self.xmin, self.xmax)
-        particles, e_sc, e_drv = self.kicker.apply(particles, 0.5 * self.dt, t + self.dt, a)
+        particles, e_sc, e_drv = self.kicker.apply(particles, 0.5 * self.dt, t + self.dt, a, drivers)
         return particles, e_sc, e_drv
 
 
-class Yoshida4Integrator:
+class Yoshida4Integrator(eqx.Module):
     """4th-order symplectic composition (Yoshida 1990) of three leapfrog steps.
 
     ``L(dt) = L(dt1) ∘ L(dt2) ∘ L(dt1)`` with ``dt1 = dt/(2 - 2^{1/3})`` and
     ``dt2 = -2^{1/3} dt1``. Each inner ``L`` is a KDK leapfrog of duration
     ``sub_dt`` evaluated at the appropriate substep start time.
     """
+
+    kicker: _Kicker
+    xmin: float
+    xmax: float
+    dt: float
+    dt1: float
+    dt2: float
+    t_offsets: tuple[float, float, float]
+    sub_dts: tuple[float, float, float]
 
     def __init__(self, kicker: _Kicker, xmin: float, xmax: float, dt: float):
         self.kicker = kicker
@@ -140,15 +187,21 @@ class Yoshida4Integrator:
         self.t_offsets = (0.0, self.dt1, self.dt1 + self.dt2)
         self.sub_dts = (self.dt1, self.dt2, self.dt1)
 
-    def _inner_leapfrog(self, particles, t_start, sub_dt, a):
-        particles, _, _ = self.kicker.apply(particles, 0.5 * sub_dt, t_start, a)
+    def _inner_leapfrog(self, particles, t_start, sub_dt, a, drivers):
+        particles, _, _ = self.kicker.apply(particles, 0.5 * sub_dt, t_start, a, drivers)
         particles = _drift(particles, sub_dt, self.xmin, self.xmax)
-        particles, e_sc, e_drv = self.kicker.apply(particles, 0.5 * sub_dt, t_start + sub_dt, a)
+        particles, e_sc, e_drv = self.kicker.apply(particles, 0.5 * sub_dt, t_start + sub_dt, a, drivers)
         return particles, e_sc, e_drv
 
-    def __call__(self, particles: dict, t: float, a: jnp.ndarray | None = None):
+    def __call__(
+        self,
+        particles: dict,
+        t: float,
+        a: jnp.ndarray | None = None,
+        drivers: list[EMDriver] | None = None,
+    ):
         e_sc = None
         e_drv = None
         for off, sd in zip(self.t_offsets, self.sub_dts, strict=True):
-            particles, e_sc, e_drv = self._inner_leapfrog(particles, t + off, sd, a)
+            particles, e_sc, e_drv = self._inner_leapfrog(particles, t + off, sd, a, drivers)
         return particles, e_sc, e_drv

@@ -94,7 +94,7 @@ def get_default_save_func(
         n_df = width * jnp.fft.ifft(Bk[0], norm="forward").real
         n_e = n_f0 + n_df
 
-        return {
+        diagnostics = {
             "mass": mass,
             "momentum": momentum,
             "energy": energy,
@@ -104,6 +104,17 @@ def get_default_save_func(
             "Bk_max": jnp.max(jnp.abs(Bk)),
             "Ck_max": jnp.max(jnp.abs(Ck)),
         }
+        for name in (
+            "boundary_df_a_max",
+            "boundary_df_b_max",
+            "boundary_df_max",
+            "high_legendre_fraction",
+            "step_residual",
+            "conservation_correction",
+        ):
+            if name in y:
+                diagnostics[name] = y[name]
+        return diagnostics
 
     return default_save_func
 
@@ -152,11 +163,11 @@ def get_save_quantities(cfg: dict) -> dict:
     if "save" not in cfg:
         cfg["save"] = {}
     if "default" not in cfg["save"]:
-        cfg["save"]["default"] = {"t": {"ax": np.linspace(0.0, tmax, nt)}}
+        cfg["save"]["default"] = {"t": {"ax": np.linspace(0.0, tmax, nt + 1)}}
     elif "t" not in cfg["save"]["default"]:
-        cfg["save"]["default"]["t"] = {"ax": np.linspace(0.0, tmax, nt)}
+        cfg["save"]["default"]["t"] = {"ax": np.linspace(0.0, tmax, nt + 1)}
     elif "ax" not in cfg["save"]["default"]["t"]:
-        cfg["save"]["default"]["t"]["ax"] = np.linspace(0.0, tmax, nt)
+        cfg["save"]["default"]["t"]["ax"] = np.linspace(0.0, tmax, nt + 1)
 
     cfg["save"]["default"]["func"] = get_default_save_func(alpha, u, width, sigma1, sigma2, sigma_bar, Lx)
     return cfg

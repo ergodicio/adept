@@ -1,0 +1,131 @@
+units:
+  normalizing_temperature: 1000eV
+  normalizing_density: 1.0e19/cc
+  reference: ion
+  A: 1.0
+  Z: 1.0
+density:
+  quasineutrality: true
+  species-ion-background:
+    noise_seed: 416
+    noise_type: gaussian
+    noise_val: 1.0e-06
+    v0: 0.0
+    T0: 1.0
+    m: 2.0
+    basis: uniform
+    baseline: 1.0
+grid:
+  dt: 0.25
+  nx: 17280
+  tmin: 0.0
+  tmax: 193200.0
+  xmax: 3864.0
+  xmin: 0.0
+  parallel:
+  - x
+  - v
+save:
+  fields:
+    t:
+      nt: 1001
+  ion:
+    main:
+      t:
+        tmin: 0.0
+        tmax: 193200.0
+        nt: 26
+      x:
+        xmin: 0.0
+        xmax: 3864.0
+        nx: 3456
+      v:
+        vmin: -6.4
+        vmax: 6.4
+        nv: 1024
+    zoom:
+      t:
+        tmin: 0.0
+        tmax: 193200.0
+        nt: 51
+      x:
+        xmin: 0.0
+        xmax: 386.4
+        nx: 1728
+      v:
+        vmin: -3.2
+        vmax: 3.2
+        nv: 1024
+solver: vlasov-1d-iaw
+mlflow:
+  experiment: iaw-turbulence
+  run: big-te-ti-0.05-50tau
+drivers:
+  ex: {}
+  ey: {}
+  ex_stochastic:
+    modes:
+    - 1
+    amplitude: 0.0002588
+    tau: 3864.0
+    seed: 42
+diagnostics:
+  diag-vlasov-dfdt: false
+  diag-fp-dfdt: false
+terms:
+  field: poisson-boltzmann
+  boltzmann_electrons:
+    Te: 0.05
+  edfdv: cubic-spline
+  time: leapfrog
+  species:
+  - name: ion
+    charge: 1.0
+    mass: 1.0
+    vmax: 6.4
+    nv: 2048
+    density_components:
+    - species-ion-background
+  fokker_planck:
+    is_on: false
+    type: Dougherty
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: false
+    time:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+iaw_diagnostics:
+  nk_modes: 2048
+  nk_nt: 4001
+  spectrum_window:
+  - 0.4
+  - 1.0

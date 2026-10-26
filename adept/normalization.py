@@ -45,6 +45,29 @@ class PlasmaNormalization:
         nu_ee = UREG.Quantity(2.91e-6 * n0_cc * logLambda_ee / T0_eV**1.5, "Hz")
         return nu_ee
 
+    def logLambda_ii(self) -> float:
+        """NRL formulary ion-ion Coulomb logarithm for a single ion species.
+
+        lambda_ii = 23 - ln(Z^3 sqrt(2 n_i) / T_i^{3/2}), n_i in 1/cc, T_i in eV.
+        Only meaningful when (n0, T0, q0) describe the ion species.
+        """
+        n0_cc = self.n0.to("1/cc").magnitude
+        T0_eV = self.T0.to("eV").magnitude
+        Z = (1.0 * self.q0 / (1.0 * UREG.e)).to("").magnitude
+        return 23.0 - jnp.log(Z**3.0 * (2.0 * n0_cc) ** 0.5 * T0_eV**-1.5)
+
+    def approximate_ii_collision_frequency(self) -> UREG.Quantity:
+        """NRL formulary ion collision rate: nu_i = 4.80e-8 Z^4 mu^-1/2 n_i lambda_ii T_i^-3/2 Hz.
+
+        mu = m_i/m_p. Only meaningful when (m0, q0, n0, T0) describe the ion species.
+        """
+        n0_cc = self.n0.to("1/cc").magnitude
+        T0_eV = self.T0.to("eV").magnitude
+        Z = (1.0 * self.q0 / (1.0 * UREG.e)).to("").magnitude
+        mu = (1.0 * self.m0 / (1.0 * UREG.m_p)).to("").magnitude
+        nu_ii = UREG.Quantity(4.80e-8 * Z**4.0 * mu**-0.5 * n0_cc * self.logLambda_ii() / T0_eV**1.5, "Hz")
+        return nu_ii
+
     def vth_norm(self) -> float:
         """Thermal velocity in normalized units: vth / v0."""
         return ((2.0 * self.T0 / self.m0) ** 0.5 / self.v0).to("").magnitude
@@ -98,6 +121,36 @@ def electron_debye_normalization(n0_str, T0_str):
     return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
 
 
+def ion_debye_normalization(n0_str, T0_str, A=1.0, Z=1.0):
+    """
+    Returns the ion thermal normalization for the given ion density and temperature.
+
+    The reference species is an ion with mass m_i = A m_p and charge Z e; `n0_str`
+    is the ion number density n_i and `T0_str` the ion temperature T_i.
+    Unit quantities are:
+        - L0 = ion Debye length, sqrt(eps0 T0 / (n0 Z^2 e^2))
+        - v0 = ion thermal velocity sqrt(T0/m_i) (same RMS / standard-deviation
+          convention as `electron_debye_normalization`)
+        - tau = 1/wpi, wpi = sqrt(n0 Z^2 e^2 / (eps0 m_i))
+
+    Under this convention code time is in 1/omega_pi and code velocity in v_ti —
+    the ion-unit convention used for kinetic-ion runs such as the Boltzmann
+    electron closure in Vlasov-1D.
+    """
+    n0 = UREG.Quantity(n0_str)
+    T0 = UREG.Quantity(T0_str)
+    m0 = A * UREG.m_p
+    q0 = Z * UREG.e
+
+    wpi = ((n0 * q0**2.0 / (m0 * UREG.epsilon_0)) ** 0.5).to("rad/s")
+    tau = 1 / wpi
+
+    v0 = ((T0 / m0) ** 0.5).to("m/s")
+    x0 = (v0 / wpi).to("nm")
+
+    return PlasmaNormalization(m0=m0, q0=q0, n0=n0, T0=T0, L0=x0, v0=v0, tau=tau)
+
+
 def laser_normalization(laser_wavelength_str, T0_str):
     """
     Returns a normalization based on the laser frequency.
@@ -120,3 +173,55 @@ def laser_normalization(laser_wavelength_str, T0_str):
     return PlasmaNormalization(
         m0=UREG.m_e, q0=UREG.e, n0=ne_crit, T0=T0, L0=one_over_k, v0=1 * UREG.c, tau=1 / omega_laser
     )
+
+
+def _osiris_normalization(wp0, n0):
+    """
+    Core OSIRIS normalization built from an angular plasma frequency ``wp0`` and
+    its corresponding reference density ``n0``.
+
+    OSIRIS normalizes time to 1/wp0, length to the collisionless skin depth
+    c/wp0, and velocity to the speed of light.
+
+    Unit quantities are:
+        - L0 = c / wp0 (skin depth)
+        - v0 = c (speed of light)
+        - tau = 1 / wp0 (inverse plasma frequency)
+
+    There is no reference temperature: OSIRIS has no single global temperature
+    (species carry their own per-species thermal momenta), so ``T0`` is left
+    unset and temperature-dependent quantities are not defined under this
+    normalization.
+    """
+    wp0 = wp0.to("rad/s")
+    tau = 1 / wp0
+
+    v0 = 1 * UREG.c
+    x0 = (v0 / wp0).to("nm")
+
+    return PlasmaNormalization(m0=UREG.m_e, q0=UREG.e, n0=n0.to("1/cc"), T0=None, L0=x0, v0=v0, tau=tau)
+
+
+def skin_depth_normalization(n0_str):
+    """
+    OSIRIS normalization referenced to a plasma density (``simulation.n0``).
+
+    The reference plasma frequency is computed from the density,
+    wp0 = sqrt(n0 e^2 / (eps0 m_e)). See :func:`_osiris_normalization`.
+    """
+    n0 = UREG.Quantity(n0_str)
+    wp0 = ((n0 * UREG.e**2.0 / (UREG.m_e * UREG.epsilon_0)) ** 0.5).to("rad/s")
+    return _osiris_normalization(wp0, n0)
+
+
+def skin_depth_normalization_from_frequency(wp0_str):
+    """
+    OSIRIS normalization referenced to a plasma frequency (``simulation.omega_p0``).
+
+    The reference density is recovered from the frequency,
+    n0 = wp0^2 eps0 m_e / e^2, so the reported ``n0`` stays consistent with the
+    density-referenced form. See :func:`_osiris_normalization`.
+    """
+    wp0 = UREG.Quantity(wp0_str)
+    n0 = (wp0**2 * UREG.epsilon_0 * UREG.m_e / UREG.e**2.0).to("1/cc")
+    return _osiris_normalization(wp0, n0)

@@ -15,6 +15,7 @@ from equinox import Module, filter_jit
 from jax import numpy as jnp
 
 from . import patched_mlflow as mlflow
+from ._jax_helpers import get_envelope as _get_envelope
 from .utils import robust_log_artifacts
 
 
@@ -24,7 +25,7 @@ def get_envelope(p_wL, p_wR, p_L, p_R, ax):
         DeprecationWarning,
         stacklevel=2,
     )
-    return 0.5 * (jnp.tanh((ax - p_L) / p_wL) - jnp.tanh((ax - p_R) / p_wR))
+    return _get_envelope(p_wL, p_wR, p_L, p_R, ax)
 
 
 class Stepper(Euler):
@@ -150,7 +151,7 @@ class ADEPTModule:
         """
         This function initializes the necessary (trainable) physics modules that are required to run the simulation.
         These can be modules that change the initial conditions, or the driver (boundary conditions),
-        or the metric calculation. These modules are usually `eqx.Module`s so that
+        or the metric calculation. These modules are usually ``eqx.Module`` instances so that
         you can take derivatives against the (parameters of the) modules.
 
         Returns:
@@ -224,6 +225,9 @@ class ergoExo:
 
         self.ran_setup = False
         self.cfg = None
+        self._compat_execution = None
+        self.execution_backend = "legacy"
+        self.compatibility_fallback_reason = "setup has not completed"
 
     def setup(self, cfg: dict, adept_module: ADEPTModule = None) -> dict[str, Module]:
         """
@@ -295,8 +299,9 @@ class ergoExo:
 
         if cfg["solver"] == "tf-1d":
             from adept.tf1d import BaseTwoFluid1D as this_module
+            from adept.tf1d import ConfigModel
 
-            # config = ConfigModel(**cfg)
+            ConfigModel(**cfg)  # validate the config, raises pydantic.ValidationError on a bad one
 
         elif cfg["solver"] == "vlasov-1d":
             from adept.vlasov1d import BaseVlasov1D as this_module
@@ -307,6 +312,12 @@ class ergoExo:
                 this_module = native_backend(this_module)
 
             # config = ConfigModel(**cfg)
+
+        elif cfg["solver"] == "vlasov-1d2v":
+            from adept.vlasov1d2v import BaseVlasov1D2V as this_module
+
+        elif cfg["solver"] == "vlasov-1d-iaw":
+            from adept.vlasov1d import IAWTurbulence1D as this_module
 
         elif cfg["solver"] == "vlasov-2d":
             from adept.vlasov2d import BaseVlasov2D as this_module
@@ -321,6 +332,9 @@ class ergoExo:
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
 
+        elif cfg["solver"] == "vfp-2d":
+            from adept.vfp2d import BaseVFP2D as this_module
+
         elif cfg["solver"] == "spectrax-1d":
             from adept.spectrax1d import BaseSpectrax1D as this_module
 
@@ -333,6 +347,12 @@ class ergoExo:
         elif cfg["solver"] == "pic-1d":
             from adept.pic1d import BasePIC1D as this_module
 
+        elif cfg["solver"] == "osiris":
+            from adept.osiris import BaseOsiris as this_module
+
+        elif cfg["solver"] == "warpx":
+            from adept.warpx import BaseWarpX as this_module
+
         elif cfg["solver"] == "hermite-legendre-1d":
             from adept.hermite_legendre_1d import BaseHermiteLegendre1D as this_module
 
@@ -342,7 +362,17 @@ class ergoExo:
         return this_module(cfg)
 
     def _setup_(self, cfg: dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> dict[str, Module]:
+        from adept._compat import LegacyPreparedExecution
         from adept.utils import log_params
+
+        # Snapshot the config as provided, before the module mutates it in
+        # place (e.g. the OSIRIS module injects the parsed deck). config.yaml
+        # is the original config; the processed cfg lands in derived_config.yaml
+        # and the logged params.
+        original_cfg = deepcopy(cfg)
+        self._compat_execution = None
+        self.execution_backend = "legacy"
+        self.compatibility_fallback_reason = "setup did not complete"
 
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
@@ -356,7 +386,7 @@ class ergoExo:
         # dump raw config
         if log:
             with open(os.path.join(td, "config.yaml"), "w") as fi:
-                yaml.dump(self.adept_module.cfg, fi)
+                yaml.dump(original_cfg, fi)
 
         # dump units
         quants_dict = self.adept_module.write_units()  # writes the units to the temporary directory
@@ -382,9 +412,40 @@ class ergoExo:
         self.adept_module.init_diffeqsolve()
         modules = self.adept_module.init_modules()
 
+        if not self.adept_module.jit_compile:
+            self.compatibility_fallback_reason = "native execution owns its worker lifecycle"
+        else:
+            self._compat_execution, self.compatibility_fallback_reason = LegacyPreparedExecution.try_create(
+                original_cfg,
+                legacy_module=self.adept_module,
+                custom_module=adept_module is not None,
+            )
+        if self._compat_execution is not None:
+            self.execution_backend = "prepared"
+
         self.ran_setup = True
 
         return modules
+
+    def _execute_simulation(self, modules: dict | None, args: dict | None) -> dict:
+        if not self.adept_module.jit_compile:
+            self.execution_backend = "native"
+            return self.adept_module(modules, args)
+        if self._compat_execution is not None:
+            reason = self._compat_execution.fallback_reason(
+                state=self.adept_module.state,
+                legacy_args=self.adept_module.args,
+                modules=modules,
+                args=args,
+            )
+            if reason is None:
+                self.execution_backend = "prepared"
+                self.compatibility_fallback_reason = None
+                return self._compat_execution.execute()
+            self.compatibility_fallback_reason = reason
+
+        self.execution_backend = "legacy"
+        return filter_jit(self.adept_module.__call__)(modules, args)
 
     def __call__(
         self, modules: dict | None = None, args: dict | None = None, export=True
@@ -417,10 +478,7 @@ class ergoExo:
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:
             t0 = time.time()
-            solve = self.adept_module.__call__
-            if self.adept_module.jit_compile:
-                solve = filter_jit(solve)
-            run_output = solve(modules, args)
+            run_output = self._execute_simulation(modules, args)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
@@ -461,6 +519,8 @@ class ergoExo:
             or passed in during the initialization
         """
         assert self.ran_setup, "You must run self.setup() before running the simulation"
+        self.execution_backend = "legacy"
+        self.compatibility_fallback_reason = "val_and_grad remains on ADEPTModule.vg during the transition"
         with mlflow.start_run(
             run_id=self.mlflow_run_id, nested=self.mlflow_nested, log_system_metrics=True
         ) as mlflow_run:

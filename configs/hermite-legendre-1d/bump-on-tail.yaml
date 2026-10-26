@@ -4,14 +4,16 @@
 # df(x,v,0) = n_b/sqrt(2*pi) exp(-(v-10)^2/2)   (beam projected onto Legendre)
 # Physical parameters (n_b=0.01 warm beam) follow Chapurin et al.; this is a longer,
 # harder nonlinear run than the paper's own sec 4.4 benchmark (n_b larger, T=50).
-# Validated linear physics at k=0.1: omega = 0.9058 measured vs 0.9052 kinetic theory,
-# gamma = 0.0895 vs 0.0898; ee saturates at ~2.7 (t~94), relaxing to ~1.55 by t=120.
+# The [2,18] Legendre window is the bounded case from the issue-343 discriminator;
+# [4,15] becomes boundary-contaminated and fails near t=659. Validated at k=0.1:
+# omega = 0.9053 measured vs 0.9052 kinetic theory, gamma = 0.0903 vs 0.0898;
+# ee peaks at 2.686 (t=94.8) and remains bounded through t=700. At t=700 the
+# boundary occupancy is 5.1e-5 and the high-Legendre energy fraction is 5.3e-6.
 #
-# Integrator: the explicit and IMEX paths blow up near saturation (the Legendre force
-# CFL ~ Nl^2/width*|E|); use the A-stable implicit midpoint (JFNK). Precondition with
-# the streaming+collision operator ONLY -- preconditioning the Lorentz-force block (in
-# any form) stalls GMRES at saturation-scale fields (strongly non-normal factors). At
-# dt >~ 0.05 with large |E| prefer precondition: false.
+# Integrator: use the structured split path. Exact half streaming/collision steps wrap
+# a local implicit-midpoint Cayley force solve, so there is no global Newton/GMRES loop.
+# gamma=0.5 on all Legendre modes makes the force block skew-symmetric; a minimum-norm
+# low-mode correction restores mass, momentum, and energy after each step.
 #
 # Nh MUST stay small (bulk-only). With Nh >~ 64 the saturated field's force ladder
 # (pump ~ |E| sqrt(2n)/alpha) outruns the cubic hyper-collision damping in the mid-n
@@ -36,12 +38,13 @@ physics:
   Lx: 62.83185307179586     # 20*pi
   alpha: 1.4142135623730951 # sqrt(2)
   u: 0.0
-  v_a: 4.0
-  v_b: 15.0
+  v_a: 2.0
+  v_b: 18.0
   gamma: 0.5
   nu_H: 10.0
   nu_L: 1.0
   enforce_conservation: true
+  penalty_all_modes: true
   field: true
 
 grid:
@@ -49,12 +52,9 @@ grid:
   Nh: 32                     # bulk-only Hermite basis; Nh >~ 64 triggers the mid-n cascade (see header)
   Nl: 128
   tmax: 120.0
-  dt: 0.02                   # small step so the saturation-phase JFNK solve converges
-  integrator: implicit       # A-stable implicit midpoint; conserves mass exactly, energy to solve tol
-  precondition: true         # streaming+collision preconditioner (stream-only; see header)
-  newton_iters: 4
-  gmres_restart: 30
-  gmres_maxiter: 3
+  dt: 0.1                    # validated against a dt=0.05 refinement run
+  integrator: split          # structured Strang/Cayley update; no global nonlinear solve
+  split_field_iters: 3       # converge the self-consistent midpoint field after saturation
 
 initialization:
   type: bump-on-tail

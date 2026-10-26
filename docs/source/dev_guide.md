@@ -1,106 +1,108 @@
 # Developer Guide
 
-In case you are interested in looking past the forward simulation use case, that is, if you are interested in running a program which is not just:
+This page is for when you want to do something other than a plain forward simulation:
 
 ```bash
-python3 run.py --cfg config/<mode>/<config>
+uv run run.py --cfg configs/<solver>/<config>
 ```
 
-This runs a forward simulation with the specified input parameters. It calls functions within `utils/runner.py` for this.
-The most important one to understand is the `_run_` function. Here is a stripped down pseudo-code version:
+That command is a thin wrapper. It loads the YAML, constructs an `ergoExo`, and calls it. If you
+want to train a model through a simulation, run a parameter scan in-process, or embed a solver in a
+larger program, you work with `ergoExo` and `ADEPTModule` directly.
+
+## The two classes
+
+ADEPT separates the numerical solvers from experiment management:
+
+1. **`ADEPTModule`** is the base class for a solver. It owns the physics — units, grids, initial
+   state, the `diffrax` terms, and post-processing.
+2. **`ergoExo`** is the harness. It creates the MLflow run, calls the module's lifecycle methods in
+   the right order, and logs configuration, parameters, and artifacts.
+
+This decoupling is what makes adding a solver cheap: implement the lifecycle methods and the harness
+handles everything else.
+
+## Typical usage
 
 ```python
-def run(cfg: Dict) -> Tuple[Solution, Dict]:
-    """
-    This function is the main entry point for running a simulation. It takes a configuration dictionary and returns a
-    ``diffrax.Solution`` object and a dictionary of datasets.
+from adept import ergoExo
 
-    Args:
-        cfg: A dictionary containing the configuration for the simulation.
-
-    Returns:
-        A tuple of a Solution object and a dictionary of ``xarray.dataset``s.
-
-    """
-    t__ = time.time()  # starts the timer
-
-    helpers = get_helpers(cfg["mode"])  # gets the right helper functions depending on the desired simulation
-
-    with tempfile.TemporaryDirectory() as td:  # creates a temporary directory to store the simulation data
-        with open(os.path.join(td, "config.yaml"), "w") as fi:  # writes the configuration to the temporary directory
-            yaml.dump(cfg, fi)
-
-        # NB - this is not yet solver specific but should be
-        cfg = write_units(cfg, td)  # writes the units to the temporary directory
-
-        # NB - this is solver specific
-        cfg = helpers.get_derived_quantities(cfg)  # gets the derived quantities from the configuration
-        misc.log_params(cfg)  # logs the parameters to mlflow
-
-        # NB - this is solver specific
-        cfg["grid"] = helpers.get_solver_quantities(cfg)  # gets the solver quantities from the configuration
-        cfg = helpers.get_save_quantities(cfg)  # gets the save quantities from the configuration
-
-        # create the dictionary of time quantities that is given to the time integrator and save manager
-        tqs = {
-            "t0": cfg["grid"]["tmin"],
-            "t1": cfg["grid"]["tmax"],
-            "max_steps": cfg["grid"]["max_steps"],
-            "save_t0": cfg["grid"]["tmin"],
-            "save_t1": cfg["grid"]["tmax"],
-            "save_nt": cfg["grid"]["tmax"],
-        }
-
-        # in case you are using ML models
-        models = helpers.get_models(cfg["models"]) if "models" in cfg else None
-
-        # initialize the state for the solver - NB - this is solver specific
-        state = helpers.init_state(cfg)
-
-        # NB - this is solver specific
-        # Remember that we rely on the diffrax library to provide the ODE (time, usually) integrator
-        # So we need to create the diffrax terms, solver, and save objects
-        diffeqsolve_quants = helpers.get_diffeqsolve_quants(cfg)
-
-        # run
-        t0 = time.time()
-
-        @eqx.filter_jit
-        def _run_(these_models, time_quantities: Dict):
-            args = {"drivers": cfg["drivers"]}
-            if these_models is not None:
-                args["models"] = these_models
-            if "terms" in cfg.keys():
-                args["terms"] = cfg["terms"]
-
-            return diffeqsolve(
-                terms=diffeqsolve_quants["terms"],
-                solver=diffeqsolve_quants["solver"],
-                t0=time_quantities["t0"],
-                t1=time_quantities["t1"],
-                max_steps=time_quantities["max_steps"],
-                dt0=cfg["grid"]["dt"],
-                y0=state,
-                args=args,
-                saveat=SaveAt(**diffeqsolve_quants["saveat"]),
-            )
-
-        result = _run_(models, tqs)
-        mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
-
-        t0 = time.time()
-        # NB - this is solver specific
-        datasets = helpers.post_process(result, cfg, td)  # post-processes the result
-        mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})  # logs the post-process time to mlflow
-        mlflow.log_artifacts(td)  # logs the temporary directory to mlflow
-
-        mlflow.log_metrics({"total_time": round(time.time() - t__, 4)})  # logs the total time to mlflow
-
-    # fin
-    return result, datasets
+exo = ergoExo()
+modules = exo.setup(cfg)
+sol, post_out, run_id = exo(modules)
 ```
 
-Here, we are heavily relying on two open-source libraries:
+To resume an existing MLflow run:
 
-1. **MLFlow** as an experiment manager to log parameters, metrics, and artifacts
-2. **Diffrax** to solve the ODEs
+```python
+exo = ergoExo(mlflow_run_id=run_id)
+modules = exo.setup(cfg)
+sol, post_out, run_id = exo(modules)
+```
+
+To supply your own solver rather than dispatching on `cfg["solver"]`:
+
+```python
+exo = ergoExo()
+modules = exo.setup(cfg, adept_module=MyCustomModule)
+sol, post_out, run_id = exo(modules)
+```
+
+## The setup sequence
+
+`exo.setup(cfg)` resolves `cfg["solver"]` to an `ADEPTModule` subclass and then calls its lifecycle
+methods in this order, logging an artifact after most of them:
+
+| Call | What it does | Artifact logged |
+|---|---|---|
+| — | dump the raw config | `config.yaml` |
+| `write_units()` | build the normalization constants and physical quantities | `units.yaml` |
+| `get_derived_quantities()` | compute scalar quantities derived from the config | `derived_config.yaml`, plus MLflow params |
+| `get_solver_quantities()` | compute array-valued quantities (grids, initial distributions) | `array_config.pkl` |
+| `init_state_and_args()` | build the initial state and the solver arguments (usually drivers) | — |
+| `init_diffeqsolve()` | assemble the `diffrax` terms, solver, and `SaveAt` | — |
+| `init_modules()` | construct any trainable `eqx.Module`s | — |
+
+The split between `get_derived_quantities` and `get_solver_quantities` exists because the former
+produces scalars that are worth logging to MLflow as parameters, while the latter produces arrays
+that are not.
+
+`init_modules()` returns the dict of trainable modules, which is what `setup` hands back to you.
+Calling `exo(modules)` then runs the solve, calls `post_process()`, and logs the results.
+
+## Taking gradients
+
+Because the whole solve is JAX, you can differentiate through it. `ergoExo.val_and_grad(modules)`
+returns the value and the gradient with respect to the parameters of the trainable modules:
+
+```python
+exo = ergoExo()
+modules = exo.setup(cfg)
+val, grad, (sol, post_out, run_id) = exo.val_and_grad(modules)
+```
+
+The value and the L2 norm of the gradient are logged to MLflow automatically.
+
+This requires the module to implement `vg()` — the base class raises `NotImplementedError`, usually
+because there is no metric defined to differentiate. Subclass and implement it to get gradients.
+This is the mechanism behind the machine-learned-closure work in the
+[Two-Fluid 1D](solvers/tf1d/overview.md#machine-learned-closures) solver.
+
+## Adding a solver
+
+1. Create `adept/_mysolver/` with `modules.py` (the `ADEPTModule` subclass), `datamodel.py` (a
+   pydantic config model), and `solvers/vector_field.py` (the ODE right-hand side).
+2. Re-export the module class from `adept/mysolver.py`.
+3. Add a branch to `_get_adept_module_` in `adept/_base_.py` keyed on your `solver:` string.
+4. Add example configs under `configs/my-solver/` and tests under `tests/test_mysolver/`.
+5. Add a paths filter and a test job for the solver in `.github/workflows/cpu-tests.yaml`. CI only runs the
+   suites for solvers it detects as changed, so without both the new tests never run.
+6. Add `docs/source/solvers/mysolver/overview.md` and `config.md`, and list them in
+   `docs/source/solvers.md` and the toctrees in `docs/source/index.rst`.
+
+## Libraries
+
+Two open-source libraries carry most of the weight:
+
+1. **MLflow** as the experiment manager, for logging parameters, metrics, and artifacts
+2. **Diffrax** for the time integration

@@ -27,7 +27,7 @@ jobs:
 
       - name: Build Sphinx docs
         run: |
-          uv run --with-requirements docs/requirements.txt make -C docs html
+          uv run --locked --extra docs make -C docs html
 
       - name: Copy raw markdown sources for LLM access
         run: |

@@ -40,7 +40,13 @@ from scipy.special import gamma as gamma_fn
 
 from adept._base_ import Stepper
 from adept.driftdiffusion import _find_self_consistent_beta_single, discrete_temperature
-from adept.vfp1d.fokker_planck import F0Collisions, SelfConsistentBetaConfig, get_model, get_scheme
+from adept.vfp1d.fokker_planck import (
+    F0Collisions,
+    SelfConsistentBetaConfig,
+    get_model,
+    get_scheme,
+    inverse_bremsstrahlung_resonance_ratio,
+)
 from adept.vfp1d.grid import Grid
 
 # =============================================================================
@@ -83,6 +89,17 @@ def _make_collisions(grid, model="CoulombianKernel", scheme="chang_cooper", nuee
         scheme=get_scheme(scheme, grid.dv),
         sc_beta=SelfConsistentBetaConfig(max_steps=0),
     )
+
+
+def test_ib_resonance_argument_is_physical_nuei_over_laser_frequency():
+    ratio = inverse_bremsstrahlung_resonance_ratio(
+        Z=3.0,
+        ni=jnp.asarray([0.2, 0.4]),
+        nuee_coeff=2.5e-4,
+        logLam_ratio=1.2,
+        w0_norm=8.0,
+    )
+    np.testing.assert_allclose(ratio, 2.5e-4 * 1.2 * 9.0 * jnp.asarray([0.2, 0.4]) / 8.0)
 
 
 def _maxwellian(v, T=1.0):

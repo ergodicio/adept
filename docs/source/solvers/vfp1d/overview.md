@@ -1,5 +1,11 @@
 # Vlasov-Fokker-Planck 1D Solver
 
+Example decks live in `configs/vfp-1d/`. To run one:
+
+```bash
+uv run run.py --cfg configs/vfp-1d/epp-short
+```
+
 This solver models electron transport over hydrodynamic / collisional time-scales using a spherical harmonic expansion of the distribution function. It is based on the OSHUN algorithm described in Tzoufras et al. (2011, 2013).
 
 ## Equations and Quantities
@@ -77,6 +83,47 @@ Each timestep:
 3. Implicit E-field solve (OSHUN method)
 4. Explicit $E \partial f / \partial v$ push (Tsit5 integrator)
 5. Implicit $f_{10}$ collision solve (FLM)
+
+## Boundary Conditions
+
+Set with `grid.boundary` and `grid.geometry`:
+
+| Axis / quantity | Condition | Notes |
+|---|---|---|
+| $x$ | `periodic` or `reflective` | The default is `periodic` for `geometry: cartesian`. The spatial grid is staggered — cell centers for $f_0$, cell edges for $f_1$ and $E$. |
+| $r$ (`geometry: spherical`) | **Reflective, required** | Spherical geometry requires `boundary: reflective` and `xmin >= 0`. $f_{10}$ and $E$ vanish at the inner boundary — by symmetry when `xmin = 0` — and at the outer wall. `xmin > 0` gives an annular domain with a reflecting inner wall. |
+| $v$ | **Positive-only with a reflecting axis** | The velocity grid runs from 0 to `vmax`, since the spherical-harmonic expansion carries the angular dependence. |
+| $v$ (collisions) | **Zero-flux** | At both ends of the speed grid. |
+
+## Forcing and Drivers
+
+The physics here is transport over collisional timescales, so the forcing is heating rather than a
+coherent wave driver:
+
+| Block | What it does |
+|---|---|
+| `drivers.ib` | Inverse-bremsstrahlung heating from a laser of wavelength `units.laser_wavelength`. |
+| `drivers.maxwellian_heating` | A heating operator that drives the distribution toward a hotter Maxwellian, used to set up a temperature profile without resolving the absorption physics. |
+| `drivers.ex`, `ey` | Present in the schema and normally left empty (`{}`) — the example decks drive the system through heating and the initial temperature profile, not through a field. |
+
+Initial conditions carry most of the setup: a hotspot or a temperature ramp relaxes and you measure
+the resulting heat flow.
+
+## What Gets Saved
+
+**`binary/`**:
+
+| File | Contents |
+|---|---|
+| `scalars-t=<t>.nc` | Scalar time series |
+| `<prefix>-t=<t>.nc` | Field and moment quantities on the requested grids |
+| `dist.nc` | The distribution function, i.e. the Legendre harmonics $f_{lm}(x, v)$ |
+| `heat-flux-comparison.nc` | The kinetic heat flux alongside the Spitzer-Härm and SNB predictions |
+
+**`plots/`**: `plots/fields/`, `plots/scalars/`, `plots/dist/`, plus `heat-flux-comparison.png`.
+
+That heat-flux comparison is the headline diagnostic — it is the direct read on nonlocal transport,
+which is what the solver exists to compute.
 
 ## Configuration Reference
 

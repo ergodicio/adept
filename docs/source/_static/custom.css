@@ -1,0 +1,18 @@
+/* The configuration references are mostly wide tables; the rtd theme's default
+   800px content column truncates them badly. */
+.wy-nav-content {
+    max-width: 1100px;
+}
+
+/* Let long option/default cells wrap instead of forcing a horizontal scrollbar
+   across the whole page. */
+.wy-table-responsive table td,
+.wy-table-responsive table th {
+    white-space: normal;
+}
+
+/* Keep YAML/python blocks readable at the wider content width. */
+div.highlight pre {
+    font-size: 0.85em;
+    line-height: 1.4;
+}
