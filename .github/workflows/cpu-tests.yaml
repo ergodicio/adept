@@ -153,8 +153,38 @@ jobs:
     - uses: ./.github/actions/setup_repo
       with:
         python-version: '3.11'
+    - name: Install native validation dependencies
+      run: |
+        sudo apt-get update
+        packages=(pkg-config libfftw3-dev libopenmpi-dev openmpi-bin)
+        if ! command -v cmake >/dev/null; then packages+=(cmake); fi
+        sudo apt-get install -y --no-install-recommends "${packages[@]}"
+        uv sync --extra dev --extra native --frozen
     - name: Test with pytest
+      env:
+        OMPI_MCA_rmaps_base_oversubscribe: '1'
       run: uv run --locked pytest tests/test_vlasov1d --ignore=tests/test_vlasov1d/test_config_regression.py
+
+  test-native-vlasov1d:
+    needs: changes
+    if: needs.changes.outputs.run_all == 'true' || needs.changes.outputs.vlasov1d == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+    - uses: ./.github/actions/setup_repo
+      with:
+        python-version: '3.11'
+    - name: Install native validation dependencies
+      run: |
+        sudo apt-get update
+        packages=(pkg-config libfftw3-dev libopenmpi-dev openmpi-bin)
+        if ! command -v cmake >/dev/null; then packages+=(cmake); fi
+        sudo apt-get install -y --no-install-recommends "${packages[@]}"
+        uv sync --extra dev --extra native --frozen
+    - name: Test native backend
+      env:
+        OMPI_MCA_rmaps_base_oversubscribe: '1'
+      run: uv run --locked pytest tests/test_vlasov1d/test_native.py tests/test_vlasov1d/test_observations.py
 
   test-farsight1d:
     needs: changes

@@ -40,6 +40,7 @@ Documentation = "https://ergodicio.github.io/adept/"
 
 [project.optional-dependencies]
 cpu = []
+native = ["cloudpickle"]
 gpu = [
     "jax[cuda12]",
     "nvidia-ml-py"

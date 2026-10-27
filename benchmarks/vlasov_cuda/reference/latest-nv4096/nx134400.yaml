@@ -1,0 +1,168 @@
+solver: vp-two-stream-1d
+mlflow:
+  experiment: vp-turbulence
+  run: nv4096-fine-20261023-nx134400-nv4096-t600-seed42
+units:
+  normalizing_density: 1.0e20/cc
+  normalizing_temperature: 1000eV
+grid:
+  nx: 134400
+  nv: 4096
+  xmin: 0.0
+  xmax: 12600.0
+  tmin: 0.0
+  tmax: 600.0
+  vmax: 15.0
+  dt: 0.02
+  parallel:
+  - x
+  - v
+two_stream:
+  v_b: 3.0
+  delta_v_b: 0.03
+  noise_val: 1.0e-06
+  save_e_only: true
+  native_cascade_budget: true
+  native_kv_spectrum:
+    is_on: true
+    t:
+      tmin: 0.0
+      tmax: 600.0
+      nt: 61
+density:
+  quasineutrality: true
+  beam-right:
+    basis: uniform
+    noise_seed: 42
+    noise_type: band_limited_uniform
+    noise_reference_nx: 51610
+    noise_val: 1.0e-06
+    v0: 3.0
+    T0: 0.00405
+    m: 100.0
+    baseline: 0.5
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+    noise_max_mode: 25804
+  beam-left:
+    basis: uniform
+    noise_seed: 43
+    noise_type: band_limited_uniform
+    noise_reference_nx: 51610
+    noise_val: 1.0e-06
+    v0: -3.0
+    T0: 0.00405
+    m: 100.0
+    baseline: 0.5
+    bump_or_trough: bump
+    center: 0.0
+    rise: 25.0
+    bump_height: 0.0
+    width: 100000.0
+    noise_max_mode: 25804
+terms:
+  field: poisson
+  edfdv: cubic-spline
+  time: sixth
+  hou_li_filter:
+    is_on: false
+    alpha: 36.0
+    order: 36
+    dimensions:
+    - x
+  species:
+  - name: electron
+    charge: -1.0
+    mass: 1.0
+    vmax: 15.0
+    nv: 4096
+    density_components:
+    - beam-right
+    - beam-left
+  fokker_planck:
+    is_on: true
+    type: chang_cooper_dougherty
+    time:
+      baseline: 1.0e-12
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  krook:
+    is_on: false
+    time:
+      baseline: 0.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+    space:
+      baseline: 1.0
+      bump_or_trough: bump
+      center: 0.0
+      rise: 25.0
+      slope: 0.0
+      bump_height: 0.0
+      width: 100000.0
+  vdfdx: exponential
+drivers:
+  ex: {}
+  ey: {}
+diagnostics:
+  diag-vlasov-dfdt: false
+  diag-fp-dfdt: false
+postprocess:
+  plot_scalars: false
+  plot_fields: false
+  plot_field_spectrum: false
+  plot_lowres_dists: false
+  plot_fullres_dists: false
+  plot_transformed_dists: false
+save:
+  fields:
+    t:
+      tmin: 0.0
+      tmax: 600.0
+      nt: 301
+  electron:
+    lowres:
+      t:
+        tmin: 0.0
+        tmax: 600.0
+        nt: 61
+      x:
+        xmin: 0.046875
+        xmax: 12599.953125
+        nx: 2048
+      v:
+        vmin: -14.996337890625
+        vmax: 14.996337890625
+        nv: 256
+    full:
+      t:
+        tmin: 0.0
+        tmax: 600.0
+        nt: 7
+      x:
+        xmin: 0.046875
+        xmax: 12599.953125
+        nx: 8192
+      v:
+        vmin: -14.996337890625
+        vmax: 14.996337890625
+        nv: 1024

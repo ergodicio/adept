@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 from interpax import interp2d
 from jax import numpy as jnp
+from jax.scipy.special import xlogy
 
 
 class FieldsObservation(eqx.Module):
@@ -25,7 +26,7 @@ class FieldsObservation(eqx.Module):
                 "v": velocity,
                 "p": jnp.sum(f * centered_v**2.0, axis=1) * dv,
                 "q": jnp.sum(f * centered_v**3.0, axis=1) * dv,
-                "-flogf": jnp.sum(-jnp.abs(f) * jnp.log(jnp.abs(f)), axis=1) * dv,
+                "-flogf": jnp.sum(-xlogy(jnp.abs(f), jnp.abs(f)), axis=1) * dv,
                 "f^2": jnp.sum(f * f, axis=1) * dv,
             }
         result.update({name: y[name] for name in ("e", "de", "a", "prev_a")})
@@ -80,7 +81,7 @@ class ScalarsObservation(eqx.Module):
             scalars[f"mean_j_{name}"] = moment(f * v)
             scalars[f"mean_n_{name}"] = moment(f)
             scalars[f"mean_q_{name}"] = moment(f * v**3.0)
-            scalars[f"mean_-flogf_{name}"] = moment(-jnp.log(jnp.abs(f)) * jnp.abs(f))
+            scalars[f"mean_-flogf_{name}"] = moment(-xlogy(jnp.abs(f), jnp.abs(f)))
             scalars[f"mean_f2_{name}"] = moment(f * f)
             mean_kinetic_energy += 0.5 * self.species_params[name]["mass"] * scalars[f"mean_P_{name}"]
         scalars["mean_de2"] = jnp.mean(y["de"] ** 2.0)

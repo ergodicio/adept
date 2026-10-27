@@ -1,0 +1,142 @@
+{
+  "rows": [
+    {
+      "backend": "adept-jax",
+      "nx": 268800,
+      "nv": 4096,
+      "ranks": 8,
+      "repeat": 0,
+      "steps": 10,
+      "warmup": 3,
+      "step_ms": 757.4678515986307,
+      "rank_seconds": [
+        7.574635903991293,
+        7.574306378985057,
+        7.574678515986307,
+        7.574352947995067,
+        7.574508777994197,
+        7.574119797995081,
+        7.574576738988981,
+        7.574465805984801
+      ],
+      "sum": 36693231.71487449,
+      "sum_squares": 4200670.248861345,
+      "minimum": -0.09580882788649053,
+      "maximum": 0.4397238821796596
+    },
+    {
+      "backend": "adept-jax",
+      "nx": 268800,
+      "nv": 4096,
+      "ranks": 8,
+      "repeat": 1,
+      "steps": 10,
+      "warmup": 3,
+      "step_ms": 754.9265112000285,
+      "rank_seconds": [
+        7.54897340000025,
+        7.549149327998748,
+        7.548913473001448,
+        7.549265112000285,
+        7.548920306988293,
+        7.5492265569919255,
+        7.548932781006442,
+        7.549169297009939
+      ],
+      "sum": 36693231.71487449,
+      "sum_squares": 4200670.248861345,
+      "minimum": -0.09580882788649053,
+      "maximum": 0.4397238821796596
+    },
+    {
+      "backend": "adept-jax",
+      "nx": 268800,
+      "nv": 4096,
+      "ranks": 8,
+      "repeat": 2,
+      "steps": 10,
+      "warmup": 3,
+      "step_ms": 756.6989740997087,
+      "rank_seconds": [
+        7.566910344001371,
+        7.566823539993493,
+        7.566708603000734,
+        7.566989740997087,
+        7.566779902001144,
+        7.566962459008209,
+        7.566738772002282,
+        7.566934483998921
+      ],
+      "sum": 36693231.71487449,
+      "sum_squares": 4200670.248861345,
+      "minimum": -0.09580882788649053,
+      "maximum": 0.4397238821796596
+    }
+  ],
+  "checkpoint": {
+    "checkpoint": "/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx268800-93a418d7/workdir/campaigns/production-nx268800/checkpoint-state/step-030000-167819aeccca",
+    "manifest_sha256": "c9b9083f55cfcee8595556685d9e22eb9d87829fa6748726f7f44d5749fbec1f",
+    "actual_time": 600.0,
+    "config_sha256": "6adb42855432b79a74f63290678103c17c53842074d77bf092df38483f634a83",
+    "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+    "jax": "0.10.2",
+    "nx": 268800,
+    "nv": 4096,
+    "dt": 0.02,
+    "nu": 1e-12,
+    "devices": [
+      "cuda:0",
+      "cuda:1",
+      "cuda:2",
+      "cuda:3",
+      "cuda:4",
+      "cuda:5",
+      "cuda:6",
+      "cuda:7"
+    ],
+    "milestones": [
+      {
+        "steps": 1,
+        "advanced_steps": 1,
+        "rank0_seconds": 60.40102391698747
+      },
+      {
+        "steps": 100,
+        "advanced_steps": 99,
+        "rank0_seconds": 74.4436078449944
+      }
+    ],
+    "process_count": 8,
+    "distributed": true,
+    "prepared_input": "/pscratch/sd/a/archis/adept-sessions/20261024T103224Z-71019-3473/outputs/native-nx268800"
+  },
+  "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+  "libraries": {
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "interpax": "0.3.14+10.g84aaf30",
+    "diffrax": "0.7.2"
+  },
+  "hosts": [
+    "nid001600",
+    "nid003745",
+    "nid001600",
+    "nid003745",
+    "nid001600",
+    "nid003745",
+    "nid001600",
+    "nid003745"
+  ],
+  "compile_seconds": 1.1942315599881113,
+  "devices": [
+    "cuda:0",
+    "cuda:4",
+    "cuda:1",
+    "cuda:5",
+    "cuda:2",
+    "cuda:6",
+    "cuda:3",
+    "cuda:7"
+  ],
+  "scope": "Warmed operator loop; no SaveAt, diagnostics, I/O, initialization or compilation in timings"
+}

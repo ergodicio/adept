@@ -32,6 +32,111 @@ terms:
   # Solver configuration
 ```
 
+## Execution backend
+
+`backend: jax` is the default. The optional `backend: native` runs the
+electrostatic solver in C++/CUDA/MPI while retaining Python initialization,
+save callbacks, xarray/NetCDF postprocessing, and `ergoExo` tracking. It has no
+automatic differentiation. Custom `BaseVlasov1D` subclasses passed to
+`ergoExo.setup(..., adept_module=MyModule)` are wrapped automatically.
+
+Build the shared library on the target system (CUDA toolkit, MPI and CMake
+are required). Install the Python extra with `pip install 'adept[native]'`
+or your environment manager's equivalent:
+
+```sh
+cmake -S adept/_vlasov1d/native -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native -j4
+```
+
+When ADEPT is installed in another project (such as turbulence), locate the
+packaged sources in that project's Python environment:
+
+```sh
+native_source=$(python -c 'from importlib.util import find_spec; print(find_spec("adept._vlasov1d.native").submodule_search_locations[0])')
+cmake -S "$native_source" -B build/native -DCMAKE_BUILD_TYPE=Release
+cmake --build build/native -j4
+```
+
+On Perlmutter add `-DCMAKE_CXX_COMPILER=CC`, and use the existing allocated
+job's `srun` launcher. A two-node example is:
+
+```yaml
+backend: native
+native:
+  library: /absolute/path/build/native/libadept_vlasov.so
+  ranks: 8
+  workdir: /absolute/shared/scratch/path
+  scalar_stride: 1
+  launcher: [srun, --overlap, --nodes=2, '--ntasks={ranks}',
+             --ntasks-per-node=4, --gpus-per-node=4, --gpu-bind=none,
+             --cpu-bind=none]
+```
+
+Run one outer Python driver inside the allocation; the launcher starts its
+workers. Set `MPICH_GPU_SUPPORT_ENABLED=1` for CUDA-aware Cray MPI. The work
+directory and library must be visible on every worker node. Native execution
+uses its own velocity-slab decomposition; `native.ranks` controls it.
+CUDA device ordinals follow each worker's visible device list, independently
+of its MPI local rank. The example exposes all four GPUs per node for
+CUDA-aware Cray MPI. A launcher that exposes one GPU per worker uses ordinal
+zero within each worker. On Cray systems requiring all GPUs visible for GPU
+transport, use `host_mpi: true` and `MPICH_GPU_SUPPORT_ENABLED=0` to test that
+visibility mode with host-staged communication.
+On the tested shared A100 node, masked-worker NCCL shared-memory imports also
+reported an invalid device ordinal. The validated host-transport regression
+uses `NCCL_P2P_DISABLE=1`, `NCCL_SHM_DISABLE=1`, `NCCL_NET=Socket` and
+`NCCL_NET_GDR_LEVEL=0`. Keep the all-visible CUDA-aware example above for
+the production throughput path.
+If an outer Slurm step already restricted `CUDA_VISIBLE_DEVICES`, prefix the
+launcher with `[env, -u, CUDA_VISIBLE_DEVICES, srun, ...]` so Slurm can apply
+the new worker step's GPU binding. Separate GPU cgroups may each report
+ordinal zero and `CUDA_VISIBLE_DEVICES=0`; physical GPUs still differ.
+
+| Native option | Default | Meaning |
+|---|---|---|
+| `library` | unset | Shared library path; alternatively set `ADEPT_VLASOV_LIBRARY` |
+| `device` | `cuda` | `cpu` selects the FFTW validation build (`-DVLASOV_CUDA=OFF`) |
+| `ranks` | `1` | One MPI worker per GPU; must divide `nx` and every species' `nv` |
+| `launcher` | empty | Argument list, with `{ranks}` substitution; defaults to `mpiexec -n` for multiple ranks |
+| `workdir` | `BASE_TEMPDIR` or system temporary directory | Shared staging/output directory, required for multiple ranks |
+| `scalar_stride` | `1` | Save scalar diagnostics every this many actual timesteps, plus both endpoints |
+| `custom_save_times` | `preserve` | Preserve subclass callback times; `steps` rounds those too |
+| `halo_capacity` | `64` | Maximum velocity halo width; exceeding it fails explicitly |
+| `host_mpi` | `false` | Stage MPI messages through host memory for MPI without CUDA support |
+| `timeout` | unset | Worker timeout in seconds |
+
+Standard field/distribution save times round to the nearest timestep and
+duplicate times are merged. Outputs record actual times in `result.ts` and
+`cfg['save'][key]['t']['ax']`; the number of frames can therefore change.
+The native backend streams saved outputs into host memory-mapped files instead
+of retaining the full time history in GPU memory. Sparse custom callbacks
+preserve their requested times by default for existing project postprocessors;
+off-step callbacks require a previous-state GPU copy and interpolation. Use
+`custom_save_times: steps` when the postprocessor reads actual result times.
+Custom postprocessors that rebuild a uniform scalar axis must also use actual
+times when the final scalar interval is shorter than `scalar_stride`.
+
+Kinetic electrons and ions use the existing `terms.species` and `density`
+configuration below. Each species has its own symmetric cell-centred velocity
+grid, charge and mass. All species contribute charge to the shared Poisson
+solve at every splitting stage and advance with their own charge-to-mass ratio.
+With no explicit species list, the usual electron species and static background
+are retained. No additional ion parameters or preprocessing are required.
+
+Supported numerics are `time: sixth`, `edfdv: cubic-spline`, spectral spatial
+streaming and `field: poisson`. The cubic operator reproduces ADEPT's local C1
+Hermite interpolation. Optional collisions are constant-rate
+`chang_cooper_dougherty` with analytic beta, applied to the reference species
+(electron if present, otherwise the first species), matching the JAX path.
+Inter-species collisional exchange is not implemented. Drivers, Krook relaxation,
+Hou–Li filtering, evolved df/dt diagnostics and trainable modules are rejected.
+
+This backend uses the `ergoExo`/`BaseVlasov1D` lifecycle. The explicit
+`Vlasov1DBuilder` prepares JAX programs and rejects `backend: native`; it does
+not silently fall back to JAX. Rebuild the shared library after updating ADEPT;
+incompatible native library ABIs fail with an actionable error.
+
 ## units
 
 Physical unit normalizations for the simulation.

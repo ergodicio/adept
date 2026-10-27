@@ -1,0 +1,120 @@
+{
+  "rows": [
+    {
+      "backend": "adept-jax",
+      "nx": 134400,
+      "nv": 4096,
+      "ranks": 4,
+      "repeat": 0,
+      "steps": 10,
+      "warmup": 3,
+      "step_ms": 223.41581310029142,
+      "rank_seconds": [
+        2.233701307006413,
+        2.234158131002914,
+        2.233267256000545,
+        2.23381844398682
+      ],
+      "sum": 18346614.114405707,
+      "sum_squares": 2101439.806997545,
+      "minimum": -0.19163087388906355,
+      "maximum": 0.3687389216845132
+    },
+    {
+      "backend": "adept-jax",
+      "nx": 134400,
+      "nv": 4096,
+      "ranks": 4,
+      "repeat": 1,
+      "steps": 10,
+      "warmup": 3,
+      "step_ms": 223.62807510071434,
+      "rank_seconds": [
+        2.2362807510071434,
+        2.2362757319933735,
+        2.235863984999014,
+        2.2360537410131656
+      ],
+      "sum": 18346614.114405707,
+      "sum_squares": 2101439.806997545,
+      "minimum": -0.19163087388906355,
+      "maximum": 0.3687389216845132
+    },
+    {
+      "backend": "adept-jax",
+      "nx": 134400,
+      "nv": 4096,
+      "ranks": 4,
+      "repeat": 2,
+      "steps": 10,
+      "warmup": 3,
+      "step_ms": 223.53556799935177,
+      "rank_seconds": [
+        2.235278229985852,
+        2.2352399160154164,
+        2.2353556799935177,
+        2.235204117023386
+      ],
+      "sum": 18346614.114405707,
+      "sum_squares": 2101439.806997545,
+      "minimum": -0.19163087388906355,
+      "maximum": 0.3687389216845132
+    }
+  ],
+  "checkpoint": {
+    "checkpoint": "/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/workdir/campaigns/production-nx134400/checkpoint-state/step-030000-1a19a5ae15f8",
+    "manifest_sha256": "9ab7e963d2699777bd935ca84fad446b89846e64c416d10db6d3c14829af8627",
+    "actual_time": 600.0,
+    "config_sha256": "5a9f5347e6253a3d4201745318843857c568b3787cf91e9fe81a623d0cdbb214",
+    "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+    "jax": "0.10.2",
+    "nx": 134400,
+    "nv": 4096,
+    "dt": 0.02,
+    "nu": 1e-12,
+    "devices": [
+      "cuda:0",
+      "cuda:1",
+      "cuda:2",
+      "cuda:3"
+    ],
+    "milestones": [
+      {
+        "steps": 1,
+        "advanced_steps": 1,
+        "seconds": 3.020330819010269
+      },
+      {
+        "steps": 10,
+        "advanced_steps": 9,
+        "seconds": 2.0284883639833424
+      },
+      {
+        "steps": 100,
+        "advanced_steps": 90,
+        "seconds": 20.115412370010745
+      }
+    ]
+  },
+  "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+  "libraries": {
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "interpax": "0.3.14+10.g84aaf30",
+    "diffrax": "0.7.2"
+  },
+  "hosts": [
+    "nid001600",
+    "nid001600",
+    "nid001600",
+    "nid001600"
+  ],
+  "compile_seconds": 0.9581184719863813,
+  "devices": [
+    "cuda:0",
+    "cuda:1",
+    "cuda:2",
+    "cuda:3"
+  ],
+  "scope": "Warmed operator loop; no SaveAt, diagnostics, I/O, initialization or compilation in timings"
+}

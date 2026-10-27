@@ -1,0 +1,306 @@
+{
+  "date": "2026-10-24",
+  "system": "NERSC Perlmutter",
+  "allocation": "60221398",
+  "device": "NVIDIA A100-SXM4-40GB",
+  "precision": "float64",
+  "dt": 0.02,
+  "nu": 1e-12,
+  "libraries": {
+    "jax": "0.10.2",
+    "jaxlib": "0.10.2",
+    "interpax": "0.3.14+10.g84aaf30",
+    "diffrax": "0.7.2"
+  },
+  "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+  "timing": "Median of 3 repeats, 10 steps after 3 warmup steps, maximum rank elapsed time; no concurrent benchmark workloads. Both paths reset to identical t600 input.",
+  "scope": "Steady-state physics operators. Excludes compilation, preprocessing, save callbacks, I/O and postprocessing. Not a full-run wall-clock speedup or a full t0-to-2000 reproduction.",
+  "comparison": [
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "nodes": 1,
+      "gpus": 4,
+      "adept_jax_ms": 223.53556799935177,
+      "native_cuda_ms": 174.2416196000249,
+      "speedup": 1.2829057059529296,
+      "adept_jax_ms_range": [
+        223.41581310029142,
+        223.62807510071434
+      ],
+      "native_cuda_ms_range": [
+        174.2364576000227,
+        174.2776944999605
+      ],
+      "hosts": [
+        "nid001600"
+      ],
+      "repeats": 3,
+      "native_max_allocated_bytes_per_rank": 11155281976,
+      "endpoint_aggregate_check": "mass and minimum agree; pointwise validation is reported separately"
+    },
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "nodes": 2,
+      "gpus": 8,
+      "adept_jax_ms": 383.94048050104175,
+      "native_cuda_ms": 140.0714161999531,
+      "speedup": 2.74103375918584,
+      "adept_jax_ms_range": [
+        383.0053849000251,
+        384.9415123986546
+      ],
+      "native_cuda_ms_range": [
+        140.015343999994,
+        140.3418015999932
+      ],
+      "hosts": [
+        "nid001600",
+        "nid003745"
+      ],
+      "repeats": 3,
+      "native_max_allocated_bytes_per_rank": 5650233400,
+      "endpoint_aggregate_check": "mass and minimum agree; pointwise validation is reported separately"
+    },
+    {
+      "nx": 268800,
+      "nv": 4096,
+      "nodes": 2,
+      "gpus": 8,
+      "adept_jax_ms": 756.6989740997087,
+      "native_cuda_ms": 275.9853768999847,
+      "speedup": 2.741808216795238,
+      "adept_jax_ms_range": [
+        754.9265112000285,
+        757.4678515986307
+      ],
+      "native_cuda_ms_range": [
+        275.6066252999744,
+        276.0648734999677
+      ],
+      "hosts": [
+        "nid001600",
+        "nid003745"
+      ],
+      "repeats": 3,
+      "native_max_allocated_bytes_per_rank": 11300409400,
+      "endpoint_aggregate_check": "mass and minimum agree; pointwise validation is reported separately"
+    }
+  ],
+  "integration_checks": [
+    {
+      "module": "BaseVlasov1D",
+      "ranks": 1,
+      "passed": true,
+      "max_abs_error": 1.0302869668521453e-13,
+      "mlflow_run_id": "10db23e28ed8428d9849bce2dea93d3f",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.000619517000018277,
+          "velocity": 0.0003302759998859983,
+          "pack": 0.0,
+          "mpi": 0.0008770139997977822,
+          "field": 0.0017125090001854915,
+          "collision": 0.0005039860001261331,
+          "total": 0.004283324999960314
+        },
+        "solve_and_save_seconds": 0.7859312820073683,
+        "steps": 5,
+        "ranks": 1,
+        "device": "cuda"
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default"
+      ],
+      "log": "integration-v3.log"
+    },
+    {
+      "module": "BaseVlasov1D",
+      "ranks": 4,
+      "passed": true,
+      "max_abs_error": 1.2434497875801753e-13,
+      "mlflow_run_id": "c15bc81503a44c02bb7f0d22043aa3df",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.0005902340002421624,
+          "velocity": 0.0003807449994610579,
+          "pack": 0.00023884999984602473,
+          "mpi": 0.005609786999912103,
+          "field": 0.0067621719998669505,
+          "collision": 0.000502029000017501,
+          "total": 0.013536288000068453
+        },
+        "solve_and_save_seconds": 1.881096900004195,
+        "steps": 5,
+        "ranks": 4,
+        "device": "cuda"
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default"
+      ],
+      "log": "integration-v3.log"
+    },
+    {
+      "module": "BaseVlasov1D",
+      "ranks": 8,
+      "passed": true,
+      "max_abs_error": 1.3145040611561853e-13,
+      "mlflow_run_id": "fb178ca1d165436c98457fd4ba0db80f",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.0006939400003602714,
+          "velocity": 0.0005676090001998091,
+          "pack": 0.00025299700007508363,
+          "mpi": 0.01576393800007736,
+          "field": 0.013597956999888083,
+          "collision": 0.0005164489999742727,
+          "total": 0.02774611500001356
+        },
+        "solve_and_save_seconds": 3.1865445940056816,
+        "steps": 5,
+        "ranks": 8,
+        "device": "cuda"
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default"
+      ],
+      "log": "integration-v3.log"
+    },
+    {
+      "module": "VPTwoStream1D",
+      "ranks": 1,
+      "passed": true,
+      "max_abs_error": 1.0457412713549274e-11,
+      "mlflow_run_id": "ac6e44af25584f74add8c11f040061c7",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.0005986490004943334,
+          "velocity": 0.0003280549998407878,
+          "pack": 0.0,
+          "mpi": 0.0008833609997509484,
+          "field": 0.0016982180000013614,
+          "collision": 0.000500530999829607,
+          "total": 0.004253136000102131
+        },
+        "solve_and_save_seconds": 0.8431226150132716,
+        "steps": 5,
+        "ranks": 1,
+        "device": "cuda"
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default",
+        "electron.f0"
+      ],
+      "log": "integration-vp.log"
+    },
+    {
+      "module": "VPTwoStream1D",
+      "ranks": 4,
+      "passed": true,
+      "max_abs_error": 6.3788974102862994e-12,
+      "mlflow_run_id": "d16748ce2f364431bb4fa17896661f44",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.0006106250001494118,
+          "velocity": 0.000375073000213888,
+          "pack": 0.00023151799985043908,
+          "mpi": 0.005738596999663059,
+          "field": 0.006173489000275367,
+          "collision": 0.0005022090000466051,
+          "total": 0.012953435000099489
+        },
+        "solve_and_save_seconds": 1.350150696001947,
+        "steps": 5,
+        "ranks": 4,
+        "device": "cuda"
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default",
+        "electron.f0"
+      ],
+      "log": "integration-vp.log"
+    },
+    {
+      "module": "VPTwoStream1D",
+      "ranks": 8,
+      "passed": true,
+      "max_abs_error": 1.1592504733926035e-11,
+      "mlflow_run_id": "e3e58e103a6747489eadadb244806865",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.0006200880002324993,
+          "velocity": 0.0004060329994217682,
+          "pack": 0.0002525769999692784,
+          "mpi": 0.008024029000125665,
+          "field": 0.007057047000103012,
+          "collision": 0.000508114000012938,
+          "total": 0.01669021899999734
+        },
+        "solve_and_save_seconds": 7.212047922017518,
+        "steps": 5,
+        "ranks": 8,
+        "device": "cuda"
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default",
+        "electron.f0"
+      ],
+      "log": "integration-vp.log"
+    },
+    {
+      "module": "VPTwoStream1D",
+      "ranks": 8,
+      "passed": true,
+      "max_abs_error": 1.1592504733926035e-11,
+      "mlflow_run_id": "a31a0009b9a440c79965f3e70332ccde",
+      "stats": {
+        "native_seconds": {
+          "stream": 0.000619704999962778,
+          "velocity": 0.0004217190003146243,
+          "pack": 0.00027711899952009844,
+          "mpi": 0.008916388000216102,
+          "field": 0.010889343000826557,
+          "collision": 0.0005323509999470843,
+          "total": 0.02131122699961452
+        },
+        "solve_and_save_seconds": 3.074192091007717,
+        "steps": 5,
+        "ranks": 8,
+        "device": "cuda",
+        "libraries": {
+          "jax": "0.10.2",
+          "jaxlib": "0.10.2",
+          "cloudpickle": "3.1.2",
+          "diffrax": "0.7.2"
+        }
+      },
+      "keys": [
+        "fields",
+        "electron.main",
+        "default",
+        "electron.f0",
+        "electron.pkv",
+        "electron.cascade"
+      ],
+      "log": "integration-observers-v2.log"
+    }
+  ],
+  "local_tests": {
+    "native": 5,
+    "existing_regressions": 33
+  },
+  "source_archive_sha256": "a457bc1ff3919eb30c64ceba61a503c478aa94bbaa06cd0fef3428017380946e"
+}

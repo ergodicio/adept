@@ -1,0 +1,12 @@
+2026/10/24 12:27:01 INFO mlflow.tracking.fluent: Experiment with name 'native-adept-integration' does not exist. Creating a new experiment.
+Successfully removed /pscratch/sd/a/archis/tmp/tmp2g3h194q
+2026/10/24 12:27:04 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/src/vp_turbulence/adeptmodules.py:811: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(
+Successfully removed /pscratch/sd/a/archis/tmp/tmp_gtq6flt
+2026/10/24 12:27:23 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:27:23 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+0.00%|          | [00:00<?, ?%/s]20.00%|██        | [00:00<00:00, 3109.66%/s]40.00%|████      | [00:00<00:00, 2453.81%/s]60.00%|██████    | [00:00<00:00, 3403.04%/s]80.00%|████████  | [00:00<00:00, 4231.76%/s]100.00%|██████████| [00:00<00:00, 4997.56%/s]100.00%|██████████| [00:00<00:00, 4734.24%/s]
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:112: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "VPTwoStream1D", "ranks": 8, "passed": true, "max_abs_error": 1.1592504733926035e-11, "mlflow_run_id": "a31a0009b9a440c79965f3e70332ccde", "stats": {"native_seconds": {"stream": 0.000619704999962778, "velocity": 0.0004217190003146243, "pack": 0.00027711899952009844, "mpi": 0.008916388000216102, "field": 0.010889343000826557, "collision": 0.0005323509999470843, "total": 0.02131122699961452}, "solve_and_save_seconds": 3.074192091007717, "steps": 5, "ranks": 8, "device": "cuda", "libraries": {"jax": "0.10.2", "jaxlib": "0.10.2", "cloudpickle": "3.1.2", "diffrax": "0.7.2"}}, "keys": ["fields", "electron.main", "default", "electron.f0", "electron.pkv", "electron.cascade"]}

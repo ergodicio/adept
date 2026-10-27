@@ -1,0 +1,34 @@
+2026/10/24 12:15:01 INFO mlflow.tracking.fluent: Experiment with name 'native-adept-integration' does not exist. Creating a new experiment.
+Successfully removed /pscratch/sd/a/archis/tmp/tmp73h5_i9i
+2026/10/24 12:15:04 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/src/vp_turbulence/adeptmodules.py:811: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(
+Successfully removed /pscratch/sd/a/archis/tmp/tmpu5zif7m1
+2026/10/24 12:15:18 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:15:18 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+0.00%|          | [00:00<?, ?%/s]20.00%|██        | [00:00<00:00, 2439.68%/s]40.00%|████      | [00:00<00:00, 2234.13%/s]60.00%|██████    | [00:00<00:00, 3143.45%/s]80.00%|████████  | [00:00<00:00, 3939.19%/s]100.00%|██████████| [00:00<00:00, 4628.50%/s]100.00%|██████████| [00:00<00:00, 4418.03%/s]
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:107: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "VPTwoStream1D", "ranks": 1, "passed": true, "max_abs_error": 1.0457412713549274e-11, "mlflow_run_id": "ac6e44af25584f74add8c11f040061c7", "stats": {"native_seconds": {"stream": 0.0005986490004943334, "velocity": 0.0003280549998407878, "pack": 0.0, "mpi": 0.0008833609997509484, "field": 0.0016982180000013614, "collision": 0.000500530999829607, "total": 0.004253136000102131}, "solve_and_save_seconds": 0.8431226150132716, "steps": 5, "ranks": 1, "device": "cuda"}, "keys": ["fields", "electron.main", "default", "electron.f0"]}
+Successfully removed /pscratch/sd/a/archis/tmp/tmpoqupw6bb
+2026/10/24 12:15:21 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/src/vp_turbulence/adeptmodules.py:811: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(
+Successfully removed /pscratch/sd/a/archis/tmp/tmp4dp_3ies
+2026/10/24 12:15:36 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:15:36 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+0.00%|          | [00:00<?, ?%/s]20.00%|██        | [00:00<00:00, 29026.33%/s]40.00%|████      | [00:00<00:00, 5566.43%/s] 60.00%|██████    | [00:00<00:00, 7158.74%/s]80.00%|████████  | [00:00<00:00, 8398.06%/s]100.00%|██████████| [00:00<00:00, 9424.13%/s]100.00%|██████████| [00:00<00:00, 8579.06%/s]
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:107: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "VPTwoStream1D", "ranks": 4, "passed": true, "max_abs_error": 6.3788974102862994e-12, "mlflow_run_id": "d16748ce2f364431bb4fa17896661f44", "stats": {"native_seconds": {"stream": 0.0006106250001494118, "velocity": 0.000375073000213888, "pack": 0.00023151799985043908, "mpi": 0.005738596999663059, "field": 0.006173489000275367, "collision": 0.0005022090000466051, "total": 0.012953435000099489}, "solve_and_save_seconds": 1.350150696001947, "steps": 5, "ranks": 4, "device": "cuda"}, "keys": ["fields", "electron.main", "default", "electron.f0"]}
+Successfully removed /pscratch/sd/a/archis/tmp/tmpib_bdzvl
+2026/10/24 12:15:39 INFO mlflow.system_metrics.system_metrics_monitor: Started monitoring system metrics.
+/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/src/vp_turbulence/adeptmodules.py:811: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  f_result = store_f(
+Successfully removed /pscratch/sd/a/archis/tmp/tmpx11k_mji
+2026/10/24 12:15:58 INFO mlflow.system_metrics.system_metrics_monitor: Stopping system metrics monitoring...
+2026/10/24 12:15:58 INFO mlflow.system_metrics.system_metrics_monitor: Successfully terminated system metrics monitoring!
+0.00%|          | [00:00<?, ?%/s]20.00%|██        | [00:00<00:00, 40291.10%/s]40.00%|████      | [00:00<00:00, 5708.87%/s] 60.00%|██████    | [00:00<00:00, 7139.44%/s]80.00%|████████  | [00:00<00:00, 8382.53%/s]100.00%|██████████| [00:00<00:00, 9452.80%/s]100.00%|██████████| [00:00<00:00, 8644.13%/s]
+/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda/integration_check.py:107: UserWarning: Saving distribution for 'electron.main' at full resolution.
+  store_f(exo.adept_module.cfg, sol.ts, str(root), sol.ys)
+{"module": "VPTwoStream1D", "ranks": 8, "passed": true, "max_abs_error": 1.1592504733926035e-11, "mlflow_run_id": "e3e58e103a6747489eadadb244806865", "stats": {"native_seconds": {"stream": 0.0006200880002324993, "velocity": 0.0004060329994217682, "pack": 0.0002525769999692784, "mpi": 0.008024029000125665, "field": 0.007057047000103012, "collision": 0.000508114000012938, "total": 0.01669021899999734}, "solve_and_save_seconds": 7.212047922017518, "steps": 5, "ranks": 8, "device": "cuda"}, "keys": ["fields", "electron.main", "default", "electron.f0"]}

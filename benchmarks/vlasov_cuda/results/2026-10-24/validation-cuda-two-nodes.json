@@ -1,0 +1,26 @@
+[
+  {
+    "mode": "transpose",
+    "ranks": 4,
+    "max_abs_error": 2.7755575615628914e-16,
+    "passed": true
+  },
+  {
+    "mode": "stream",
+    "ranks": 4,
+    "max_abs_error": 4.440892098500626e-16,
+    "passed": true
+  },
+  {
+    "mode": "accelerate",
+    "ranks": 4,
+    "max_abs_error": 6.106226635438361e-16,
+    "passed": true
+  },
+  {
+    "mode": "landau",
+    "ranks": 4,
+    "max_abs_error": 1.1102230246251565e-15,
+    "passed": true
+  }
+]
