@@ -11,6 +11,7 @@ import time
 import traceback
 from pathlib import Path
 
+from boundary import boundary_message
 from bridge import NativeCore
 
 
@@ -147,19 +148,41 @@ def run(request):
                 upper = int(np.ceil(position))
                 requests.setdefault(upper, []).append((key, frame, t, position - (upper - 1)))
         current = 0
+        boundary_stats, warned = {}, set()
+
+        def advance(count):
+            core.step(count)
+            for index, species in enumerate(spec["species"]):
+                if species.get("boundary") is None:
+                    continue
+                values = dict(species["boundary"], **core.boundary_stats(index))
+                attempted = values["attempted_mass_left"] + values["attempted_mass_right"]
+                initial_mass = values["initial_absolute_mass"]
+                values["cumulative_attempted_escape_fraction"] = (
+                    attempted / initial_mass if initial_mass > 0 else (float("inf") if attempted else 0.0)
+                )
+                boundary_stats[species["name"]] = values
+                message = boundary_message(species["name"], values, spec["boundary_tolerance"])
+                if message:
+                    if spec["boundary_action"] == "error":
+                        raise RuntimeError(message)
+                    if core.rank == 0 and species["name"] not in warned:
+                        print(message, file=sys.stderr, flush=True)
+                        warned.add(species["name"])
+
         started = time.perf_counter()
         for upper, saves in sorted(requests.items()):
             off_grid = any(0 < alpha < 1 for _, _, _, alpha in saves)
             previous = None
             if off_grid:
-                core.step(upper - 1 - current)
+                advance(upper - 1 - current)
                 source = snapshot()
                 previous = jax.tree.map(lambda value: jnp.array(value, copy=True), source)
                 jax.block_until_ready(previous)
                 del source
-                core.step(1)
+                advance(1)
             else:
-                core.step(upper - current)
+                advance(upper - current)
             current = upper
             state = snapshot()
             for key, frame, t, alpha in saves:
@@ -171,7 +194,7 @@ def run(request):
                     save(key, frame, t, state)
             del state, previous
             core.barrier()
-        core.step(spec["steps"] - current)
+        advance(spec["steps"] - current)
         for writer in writers.values():
             writer.flush()
         (directory / "index.json").write_text(json.dumps(metadata))
@@ -184,6 +207,7 @@ def run(request):
                 json.dumps(
                     dict(
                         native_seconds=stats,
+                        velocity_boundaries=boundary_stats,
                         solve_and_save_seconds=time.perf_counter() - started,
                         steps=spec["steps"],
                         ranks=core.size,

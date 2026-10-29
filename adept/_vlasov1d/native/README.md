@@ -43,20 +43,29 @@ constant-rate Chang-Cooper Dougherty collisions. Kinetic ions use the existing
 Each stage sums every species' charge density into one MPI field reduction,
 then advances every species under that shared field. Collisions act on the
 reference species, as in ADEPT's JAX path; inter-species collisional exchange
-is not included. Rebuild the library when updating ADEPT (current ABI: 4).
+is not included. Rebuild the library when updating ADEPT (current ABI: 5).
 Unsupported physics and
 trainable modules fail explicitly. Performance and reproduction evidence is
 under [the benchmark results](../../../benchmarks/vlasov_cuda/results/2026-10-24-adept).
 
-`terms.edfdv: conservative-cubic-spline` selects a periodic, conservative C2
+`terms.edfdv: conservative-cubic-spline` selects a conservative C2
 spline remap of velocity cell averages. Configure `native.velocity_grids` with
 explicit edges or an Afeyan coarse/fine refinement interval. This path uses
 full-line MPI transposes, supports independent asymmetric species grids, and
 requires collisions to be disabled. Standard observations use cell widths;
 custom callbacks must do the same. See the configuration reference for an
-example and boundary conditions. Existing performance evidence above concerns
+example and boundary conditions. Velocity boundaries default to zero numerical
+flux; `native.velocity_boundary: periodic` selects the paper's periodic remap.
+Keep the edges far into every component's tails. Initial truncation, tail
+population, and attempted escape checks warn by default at `1e-8`; set
+`native.boundary_action: error` to fail instead. Per-species diagnostics are
+saved in `native/stats.json`. Mass conservation alone does not establish that
+the velocity domain is sufficiently wide. Existing performance evidence above concerns
 the local cubic halo method, not this new spline path.
 
 The standalone harness accepts `--velocity conservative --cells --layout transpose`
 and `--v-edges FILE` (raw float64, `nv+1` edges). Without an edge file it uses
 uniform cells. `--input` then contains velocity cell averages in `(nv,nx)` order.
+`--velocity-boundary zero-flux|periodic` defaults to zero flux. The harness
+reports tail/attempted-escape diagnostics in its JSON output; unlike the ADEPT
+worker it does not apply a tolerance or abort on boundary contact.

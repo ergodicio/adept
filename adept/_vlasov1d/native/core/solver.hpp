@@ -55,7 +55,8 @@ Options parse(int argc, char** argv, int rank) {
                 << "  [--length L] [--vmax V] [--amplitude A] [--host-mpi] [--dump FILE]\n";
             if (rank == 0) std::cout << "  [--velocity natural|cubic|conservative] [--layout transpose|halos] [--halo-capacity N]\n"
                 << "  [--integrator strang|sixth] [--cells] [--input FILE] [--v-grid FILE] [--background FILE]\n";
-            if (rank == 0) std::cout << "  [--v-edges FILE] (nv+1 float64 edges; conservative periodic cell averages)\n";
+            if (rank == 0) std::cout << "  [--v-edges FILE] (nv+1 float64 edges; conservative cell averages)\n"
+                << "  [--velocity-boundary zero-flux|periodic] (conservative only; default zero-flux)\n";
             if (rank == 0) std::cout << "  [--nu D] (Chang-Cooper Dougherty; requires --cells)\n";
             // All ranks take the same path; finalize normally in main.
             o.mode = "help";
@@ -82,6 +83,10 @@ Options parse(int argc, char** argv, int rank) {
         else if (key == "--v-edges") o.edges = value;
         else if (key == "--background") o.background = value;
         else if (key == "--halo-capacity") o.grid.halo_capacity = integer(value);
+        else if (key == "--velocity-boundary") {
+            if (value != "zero-flux" && value != "periodic") throw std::runtime_error("unknown velocity boundary");
+            o.grid.periodic_velocity = value == "periodic";
+        }
         else if (key == "--velocity") {
             if (value != "natural" && value != "cubic" && value != "conservative")
                 throw std::runtime_error("unknown velocity method");
@@ -264,6 +269,13 @@ private:
     const Options& o;
 };
 struct Diagnostics { double mass, kinetic, field, minimum; bool finite; };
+std::array<double, 4> boundary_diagnostics(Backend& b) {
+    auto local = b.boundary_diagnostics();
+    std::array<double, 4> global{};
+    mpi_check(MPI_Allreduce(local.data(), global.data(), 2, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD));
+    mpi_check(MPI_Allreduce(local.data() + 2, global.data() + 2, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD));
+    return global;
+}
 Diagnostics diagnostics(Backend& b, Stepper& stepper, const Grid& g) {
     auto f = b.download();
     auto velocities = b.download_coordinates(), weights = b.download_weights();

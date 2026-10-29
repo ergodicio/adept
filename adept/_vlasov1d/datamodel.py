@@ -385,6 +385,9 @@ class NativeSolverConfig(BaseModel):
     host_mpi: bool = False
     timeout: float | None = Field(default=None, gt=0)
     velocity_grids: dict[str, NativeVelocityGridConfig] = Field(default_factory=dict)
+    velocity_boundary: Literal["zero-flux", "periodic"] = "zero-flux"
+    boundary_tolerance: float = Field(default=1e-8, gt=0, allow_inf_nan=False)
+    boundary_action: Literal["warn", "error"] = "warn"
 
 
 Vlasov1DConfig.model_rebuild()

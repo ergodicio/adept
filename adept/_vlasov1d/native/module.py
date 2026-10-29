@@ -20,6 +20,7 @@ from diffrax import RESULTS, Solution, SubSaveAt
 from adept._vlasov1d.datamodel import NativeSolverConfig
 from adept._vlasov1d.helpers import _initialize_total_distribution_
 from adept._vlasov1d.modules import BaseVlasov1D
+from adept._vlasov1d.native.boundary import check_boundary, initial_diagnostics
 from adept._vlasov1d.native.velocity_grid import velocity_edges
 
 
@@ -336,9 +337,21 @@ class NativeVlasovMixin:
         ]
         if options.host_mpi:
             common_args.append("--host-mpi")
+        if self.native_velocity_edges is not None:
+            common_args.extend(["--velocity-boundary", options.velocity_boundary])
         species_specs = []
         for index, species in enumerate(species_list):
             species_grid = self.cfg["grid"]["species_grids"][species.name]
+            boundary = None
+            if self.native_velocity_edges is not None and options.velocity_boundary == "zero-flux":
+                boundary = initial_diagnostics(
+                    self.native_velocity_edges[species.name],
+                    self.state[species.name],
+                    self.simulation.species_distributions[species.name],
+                    species.mass,
+                    (grid.xmax - grid.xmin) / grid.nx,
+                )
+                check_boundary(species.name, boundary, options.boundary_tolerance, options.boundary_action)
             initial, coordinates = root / f"initial-{index}.bin", root / f"v-{index}.bin"
             _write_vx(initial, self.state[species.name])
             coordinate_key = "v_edges" if self.native_velocity_edges is not None else "v"
@@ -368,6 +381,8 @@ class NativeVlasovMixin:
                     charge=species.charge,
                     mass=species.mass,
                     velocity_method=self.cfg["terms"]["edfdv"],
+                    velocity_boundary=options.velocity_boundary if self.native_velocity_edges is not None else None,
+                    boundary=boundary,
                     options=species_args,
                 )
             )
@@ -382,6 +397,8 @@ class NativeVlasovMixin:
             device=options.device,
             ranks=options.ranks,
             pythonpath=[str(Path(entry or os.getcwd()).resolve()) for entry in sys.path],
+            boundary_tolerance=options.boundary_tolerance,
+            boundary_action=options.boundary_action,
         )
         (root / "request.json").write_text(json.dumps(request, indent=2))
         launcher = [part.format(ranks=options.ranks) for part in options.launcher]
@@ -411,6 +428,8 @@ class NativeVlasovMixin:
             raise RuntimeError(f"native Vlasov workers failed ({returncode}); log: {log}\n{log.read_text()[-12000:]}")
         ys = _collect(root, times, options.ranks)
         stats = json.loads((root / "stats.json").read_text())
+        for name, boundary in stats["velocity_boundaries"].items():
+            check_boundary(name, boundary, options.boundary_tolerance, options.boundary_action)
         result = Solution(
             t0=t0,
             t1=t1,

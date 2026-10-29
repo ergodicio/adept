@@ -122,7 +122,7 @@ void validate_options(Options& opts) {
 }
 }
 extern "C" {
-int av_abi_version() { return 4; }
+int av_abi_version() { return 5; }
 const char* av_error() { return last_error.c_str(); }
 void* av_create(int argc, const char** argv) {
     void* result = nullptr;
@@ -221,6 +221,13 @@ int av_stats(void* handle, double* output) {
             for (int i = 0; i < StageCount; ++i) times[i] += state.stepper->times[i];
         });
         mpi_check(MPI_Allreduce(times.data(), output, StageCount, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD));
+    });
+}
+int av_species_boundary_stats(void* handle, int index, double* output) {
+    return guarded([&] {
+        auto& species = (**static_cast<Handle*>(handle)).species(index);
+        const auto values = boundary_diagnostics(*species.backend);
+        std::copy(values.begin(), values.end(), output);
     });
 }
 int av_close(void* handle) {

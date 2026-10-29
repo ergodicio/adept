@@ -106,6 +106,9 @@ ordinal zero and `CUDA_VISIBLE_DEVICES=0`; physical GPUs still differ.
 | `host_mpi` | `false` | Stage MPI messages through host memory for MPI without CUDA support |
 | `timeout` | unset | Worker timeout in seconds |
 | `velocity_grids` | `{}` | Per-species explicit edges or coarse/fine refinement; requires `conservative-cubic-spline` (below) |
+| `velocity_boundary` | `zero-flux` | Conservative spline boundaries: `zero-flux` or `periodic` |
+| `boundary_tolerance` | `1e-8` | Positive finite tolerance for tail and attempted-escape fractions with zero-flux conservative splines |
+| `boundary_action` | `warn` | `warn` reports a small velocity domain; `error` aborts the run |
 
 Standard field/distribution save times round to the nearest timestep and
 duplicate times are merged. Outputs record actual times in `result.ts` and
@@ -141,13 +144,21 @@ incompatible native library ABIs fail with an actionable error.
 
 ### Native conservative splines and nonuniform velocity grids
 
-Select `terms.edfdv: conservative-cubic-spline` for the conservative remap from
+Select `terms.edfdv: conservative-cubic-spline` for a primitive-spline remap based on
 [Afeyan et al. (2014), sections 2.1–2.2](https://arxiv.org/abs/1409.2086).
-This treats the distribution as velocity cell averages, constructs a periodic
-C2 cubic spline of the mean-subtracted primitive, and differences translated
-edge values. The mean is `sum(f * dv) / (vmax - vmin)`, ensuring a periodic
-primitive on domains of any length. Mass is conserved to roundoff. The existing
-sixth-order time splitting and spectral spatial streaming remain in use.
+This treats the distribution as velocity cell averages. By default it constructs
+a natural C2 cubic spline of cumulative mass on the velocity cell edges and
+evaluates swept integrals at interior faces. The two outer numerical fluxes
+are set to zero, so their divergence telescopes and conserves `sum(f * dv)` to
+roundoff without mass renormalization. The primitive continues as a constant
+outside the domain. The natural spline endpoint conditions and zero numerical
+boundary flux are separate conditions. The existing sixth-order time splitting
+and spectral spatial streaming remain in use.
+
+Set `native.velocity_boundary: periodic` to use the paper's periodic remap:
+spline the mean-subtracted primitive, then difference translated edge values.
+The mean is `sum(f * dv) / (vmax - vmin)`, ensuring a periodic primitive on domains
+of any length. Particles crossing an edge then re-enter at the opposite edge.
 
 For example, add these settings to a collisionless native configuration:
 
@@ -155,8 +166,8 @@ For example, add these settings to a collisionless native configuration:
 backend: native
 grid:
   nv: 512
-  vmin: -6.0
-  vmax: 6.0
+  vmin: -8.0
+  vmax: 8.0
   # ... spatial grid and time settings ...
 terms:
   time: sixth
@@ -165,6 +176,9 @@ terms:
   # ... fokker_planck and krook disabled ...
 native:
   library: /absolute/path/build/native/libadept_vlasov.so
+  velocity_boundary: zero-flux
+  boundary_tolerance: 1.0e-8
+  boundary_action: error
   velocity_grids:
     electron:
       refined_min: 1.2
@@ -192,14 +206,42 @@ callbacks must reduce `sum(f * species_grid['dv'], axis=1)`; `dv` is now a vecto
 for this method. Moments use cell-center velocities, so energy and momentum are
 diagnostics rather than exactly conserved quantities of the velocity remap.
 
-Velocity boundaries are **periodic**: particles leaving one edge re-enter at
-the other. The unlimited cubic spline can undershoot; it does not preserve
-positivity. Use sufficiently wide domains for isolated plasma distributions.
+Zero-flux boundaries retain all mass, but they impose an artificial velocity
+cap if appreciable population reaches either boundary. Keep both edges well
+into the tails throughout the run. For Maxwellians, a useful starting point is
+at least eight thermal standard deviations `sqrt(T0 / mass)` beyond the drift
+of every component. Allow extra room for acceleration and heating. Use coarse
+outer cells to widen the domain affordably, retaining the required spacing in
+the refined region; increasing the extent at fixed `nv` can coarsen that region.
+Confirm results by widening the domain while holding interior resolution fixed.
+Bounds are never silently changed.
+
+The default checks compare against `native.boundary_tolerance: 1e-8`:
+
+- Initial analytic mass omitted beyond either edge, before normalization, for
+  each super-Gaussian component (the maximum across components is reported).
+- Population in the outer 5% of velocity extent on each side, using cell-overlap
+  widths and `abs(f)`, divided by each spatial row's absolute mass. The initial
+  value and maximum before/after every velocity kick are recorded.
+- Attempted transport blocked at the outer faces: the maximum fraction per
+  kick and cumulative absolute attempted mass on each side. Cumulative mass is
+  also divided by the initial total absolute mass. This counts every kick,
+  including negative sixth-order substeps, and is a domain diagnostic, not
+  mass actually lost.
+
+`boundary_action: warn` emits warnings; `error` rejects an initially narrow
+domain or aborts when a runtime check fails. Runtime checks are acted on at
+save intervals and the end of the solve, using maxima/cumulative values from
+all intervening kicks. Results are in `native stats.velocity_boundaries` by
+species and in the saved `native/stats.json`. Periodic and local cubic runs
+do not use these checks. The unlimited cubic spline can undershoot; it does
+not preserve positivity, even with zero flux.
+
 The global spline solve uses the MPI transpose layout and caches its matrix
 factors; `halo_capacity` has no effect on this path. Collisions are rejected
 because the current Chang–Cooper implementation assumes uniform spacing.
 Drivers and the other native restrictions above still apply. This option is
-native-only; rebuild the library (ABI 4) before using it.
+native-only; rebuild the library (ABI 5) before using it.
 
 ## units
 

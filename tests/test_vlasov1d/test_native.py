@@ -280,7 +280,9 @@ def conservative_benchmark(tmp_path_factory):
     return build / "vlasov_bench"
 
 
-def spline_translate(executable, tmp_path, edges, initial, shift, *, ranks=1, steps=1, mode="accelerate"):
+def spline_translate(
+    executable, tmp_path, edges, initial, shift, *, ranks=1, steps=1, mode="accelerate", boundary="zero-flux"
+):
     import json
 
     nv, nx = initial.shape
@@ -296,6 +298,8 @@ def spline_translate(executable, tmp_path, edges, initial, shift, *, ranks=1, st
         "--cells",
         "--velocity",
         "conservative",
+        "--velocity-boundary",
+        boundary,
         "--layout",
         "transpose",
         "--mode",
@@ -339,7 +343,9 @@ def test_conservative_spline_matches_periodic_scipy(conservative_benchmark, tmp_
     interpolator = CubicSpline(edges, primitive, axis=0, bc_type="periodic")
     shifted = interpolator(edges - shift, extrapolate="periodic")
     expected = np.diff(shifted, axis=0) / h[:, None] + mean
-    actual, stats = spline_translate(conservative_benchmark, tmp_path, edges, initial, shift, ranks=ranks)
+    actual, stats = spline_translate(
+        conservative_benchmark, tmp_path, edges, initial, shift, ranks=ranks, boundary="periodic"
+    )
     np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
     np.testing.assert_allclose(np.sum(actual * h[:, None], axis=0), np.sum(initial * h[:, None], axis=0), atol=2e-14)
     assert abs(stats["mass_relative_change"]) < 1e-14
@@ -360,16 +366,20 @@ def test_conservative_spline_convergence_and_repeated_mass(conservative_benchmar
             )
 
         initial = np.repeat(averages(0)[:, None], 8, axis=1)
-        actual, _ = spline_translate(conservative_benchmark, tmp_path, edges, initial, shift)
+        actual, _ = spline_translate(conservative_benchmark, tmp_path, edges, initial, shift, boundary="periodic")
         errors.append(np.sqrt(np.sum((actual[:, 0] - averages(shift)) ** 2 * h)))
     # A cubic primitive gives third-order cell averages on a nonuniform grid.
     assert errors[0] / errors[1] > 6, errors
     assert errors[1] / errors[2] > 6, errors
-    actual, stats = spline_translate(conservative_benchmark, tmp_path, edges, initial, -0.317, steps=200)
+    actual, stats = spline_translate(
+        conservative_benchmark, tmp_path, edges, initial, -0.317, steps=200, boundary="periodic"
+    )
     np.testing.assert_allclose(np.sum(actual * h[:, None], axis=0), np.sum(initial * h[:, None], axis=0), atol=1e-12)
     assert abs(stats["mass_relative_change"]) < 1e-12
     constant = np.full_like(initial, 2.3)
-    actual, _ = spline_translate(conservative_benchmark, tmp_path, edges, constant, 123.75, steps=20)
+    actual, _ = spline_translate(
+        conservative_benchmark, tmp_path, edges, constant, 123.75, steps=20, boundary="periodic"
+    )
     np.testing.assert_allclose(actual, constant, rtol=0, atol=2e-13)
 
 
@@ -534,3 +544,156 @@ def test_cpp_rejects_invalid_velocity_edges(conservative_benchmark, tmp_path, in
     with pytest.raises(subprocess.CalledProcessError) as error:
         spline_translate(conservative_benchmark, tmp_path, edges, np.ones((32, 8)), 0.1)
     assert "velocity edges" in error.value.stderr or "wrong binary size" in error.value.stderr
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+@pytest.mark.parametrize("shift", [0.0, 0.137, -0.281, 21.137, -21.281])
+def test_zero_flux_spline_matches_natural_scipy(conservative_benchmark, tmp_path, ranks, shift):
+    from scipy.interpolate import CubicSpline
+
+    from adept._vlasov1d.native.boundary import tail_weights
+
+    rng = np.random.default_rng(183)
+    widths = rng.uniform(0.02, 1, 32)
+    edges = np.r_[0, np.cumsum(widths / widths.sum() * 7)] - 2
+    h = np.diff(edges)
+    initial = rng.uniform(0.2, 1.2, (32, 8))
+    primitive = np.vstack([np.zeros(8), np.cumsum(initial * h[:, None], axis=0)])
+    spline = CubicSpline(edges, primitive, axis=0, bc_type="natural")
+    shifted = spline(np.clip(edges - shift, edges[0], edges[-1]))
+    shifted[edges - shift <= edges[0]] = primitive[0]
+    shifted[edges - shift >= edges[-1]] = primitive[-1]
+    unrestricted_flux = primitive - shifted
+    flux = unrestricted_flux.copy()
+    flux[[0, -1]] = 0
+    expected = initial - np.diff(flux, axis=0) / h[:, None]
+    actual, stats = spline_translate(conservative_benchmark, tmp_path, edges, initial, shift, ranks=ranks)
+    np.testing.assert_allclose(actual, expected, rtol=2e-12, atol=2e-12)
+    mass = np.sum(initial * h[:, None], axis=0)
+    np.testing.assert_allclose(np.sum(actual * h[:, None], axis=0), mass, atol=2e-14)
+    assert abs(stats["mass_relative_change"]) < 1e-14
+    assert stats["velocity_boundary"] == "zero-flux"
+    np.testing.assert_allclose(
+        stats["max_attempted_escape_fraction"], np.max(np.sum(np.abs(unrestricted_flux[[0, -1]]), axis=0) / mass)
+    )
+    for key, face in [("attempted_mass_left", 0), ("attempted_mass_right", -1)]:
+        np.testing.assert_allclose(stats[key], np.sum(np.abs(unrestricted_flux[face])) * stats["length"] / 8)
+    expected_tail = max(
+        np.max(np.sum(np.abs(f) * tail_weights(edges)[:, None], axis=0) / np.sum(np.abs(f) * h[:, None], axis=0))
+        for f in [initial, expected]
+    )
+    np.testing.assert_allclose(stats["max_tail_fraction"], expected_tail, atol=1e-14)
+    if abs(shift) > edges[-1] - edges[0]:
+        # Even a displacement beyond the full domain cannot wrap to the other edge.
+        retained_edge = -1 if shift > 0 else 0
+        np.testing.assert_allclose(actual[retained_edge] * h[retained_edge], mass, atol=2e-13)
+        np.testing.assert_allclose(np.delete(actual, retained_edge, axis=0), 0, atol=2e-13)
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_zero_flux_wide_tails_and_repeated_mass(conservative_benchmark, tmp_path, ranks):
+    from scipy.special import ndtr
+
+    results = []
+    for extent in [10, 12]:
+        edges = np.r_[np.arange(-extent, -4, 0.25), np.arange(-4, 4, 0.125), np.arange(4, extent + 0.25, 0.25)]
+        h = np.diff(edges)
+        initial = np.repeat((np.diff(ndtr(edges)) / h)[:, None], 8, axis=1)
+        actual, stats = spline_translate(conservative_benchmark, tmp_path, edges, initial, 1.25, ranks=ranks)
+        exact = np.diff(ndtr(edges - 1.25)) / h
+        assert np.sum(np.abs(actual[:, 0] - exact) * h) < 1e-4
+        assert stats["max_tail_fraction"] < 1e-10
+        assert stats["max_attempted_escape_fraction"] < 1e-12
+        results.append(actual[(edges[:-1] >= -10) & (edges[1:] <= 10)])
+        _, repeated = spline_translate(
+            conservative_benchmark, tmp_path, edges, initial, 1.25 / 200, ranks=ranks, steps=200
+        )
+        assert abs(repeated["mass_relative_change"]) < 2e-13
+        assert repeated["max_tail_fraction"] < 1e-8
+    np.testing.assert_allclose(results[0], results[1], atol=2e-12, rtol=0)
+
+
+def test_native_zero_flux_domain_convergence(config, native_library):
+    config["terms"]["edfdv"] = "conservative-cubic-spline"
+    config["terms"]["fokker_planck"]["is_on"] = False
+    config["native"].update(library=str(native_library), boundary_action="error")
+    outputs = []
+    for extent in [8, 10]:
+        config["grid"].update(nv=extent * 8, vmax=float(extent), vmin=-float(extent))
+        output = setup(NativeVlasov1D, config)({})
+        diagnostics = output["native stats"]["velocity_boundaries"]["electron"]
+        assert diagnostics["max_tail_fraction"] < 1e-8
+        assert diagnostics["cumulative_attempted_escape_fraction"] < 1e-10
+        outputs.append(output["solver result"])
+    np.testing.assert_allclose(outputs[0].ys["fields"]["e"], outputs[1].ys["fields"]["e"], atol=1e-12, rtol=0)
+    np.testing.assert_allclose(
+        outputs[0].ys["electron.main"], outputs[1].ys["electron.main"][:, :, 8:-8], atol=1e-12, rtol=0
+    )
+
+
+@pytest.mark.parametrize("action", ["warn", "error"])
+def test_native_zero_flux_initial_boundary_guard(config, native_library, action):
+    config["terms"]["edfdv"] = "conservative-cubic-spline"
+    config["terms"]["fokker_planck"]["is_on"] = False
+    config["grid"]["vmax"] = 4.0
+    config["native"].update(library=str(native_library), boundary_action=action)
+    module = setup(NativeVlasov1D, config)
+    if action == "error":
+        with pytest.raises(RuntimeError, match="initial_missing_fraction"):
+            module({})
+    else:
+        with pytest.warns(RuntimeWarning, match="Velocity boundary check"):
+            output = module({})
+        diagnostics = output["native stats"]["velocity_boundaries"]["electron"]
+        assert diagnostics["initial_missing_fraction"] > 0.01
+        assert diagnostics["initial_tail_fraction"] > 0.01
+
+
+@pytest.mark.parametrize("ranks", [1, 2])
+def test_native_zero_flux_runtime_boundary_guard(config, native_library, ranks):
+    config["terms"]["edfdv"] = "conservative-cubic-spline"
+    config["terms"]["fokker_planck"]["is_on"] = False
+    config["native"].update(library=str(native_library), boundary_action="error", ranks=ranks)
+    module = setup(NativeVlasov1D, config)
+    # Initially negligible velocity tails, then a large charge separation
+    # accelerates the beams into the boundary during the first timestep.
+    profile = 1000 * (1 + 0.9 * np.cos(2 * np.pi * np.arange(32) / 32))
+    module.state["electron"] = module.state["electron"] * profile[:, None]
+    with pytest.raises(RuntimeError, match="max_tail_fraction"):
+        module({})
+
+
+def test_native_periodic_boundary_opt_in(config, native_library):
+    config["terms"]["edfdv"] = "conservative-cubic-spline"
+    config["terms"]["fokker_planck"]["is_on"] = False
+    config["grid"]["vmax"] = 4.0
+    config["native"].update(library=str(native_library), boundary_action="error", velocity_boundary="periodic")
+    output = setup(NativeVlasov1D, config)({})
+    assert output["native stats"]["velocity_boundaries"] == {}
+    assert output["native stats"]["species"][0]["velocity_boundary"] == "periodic"
+    density = output["solver result"].ys["default"]["mean_n_electron"]
+    np.testing.assert_allclose(density, density[0], atol=2e-13, rtol=0)
+
+
+@pytest.mark.parametrize("order", [2, 4])
+@pytest.mark.parametrize("drift", [-3.0, 3.0])
+def test_initial_tail_truncation_matches_quadrature(order, drift):
+    from types import SimpleNamespace
+
+    from scipy.integrate import quad
+    from scipy.special import gamma
+
+    from adept._vlasov1d.native.boundary import initial_diagnostics
+
+    component = SimpleNamespace(v0=drift, T0=2.0, supergaussian_order=order)
+    edges = np.linspace(-4, 4, 33)
+    scale = np.sqrt(3 * gamma(3 / order) / gamma(5 / order) * component.T0 / 4)
+
+    def profile(v):
+        return np.exp(-(abs((v - drift) / scale) ** order))
+
+    expected = (quad(profile, -np.inf, edges[0])[0] + quad(profile, edges[-1], np.inf)[0]) / quad(
+        profile, -np.inf, np.inf
+    )[0]
+    diagnostics = initial_diagnostics(edges, np.ones((8, 32)), [component], 4, 0.1)
+    np.testing.assert_allclose(diagnostics["initial_missing_fraction"], expected, rtol=1e-10)

@@ -289,12 +289,23 @@ full-state redistributions.
 ## Scope
 
 This is an initial solver/communication benchmark, not a replacement for ADEPT.
-It supports one species, a uniform 1D1V grid and periodic x. The original natural
+It supports one species and periodic x. The original natural
 spline uses zero extrapolation; local cubic mode uses ADEPT's `1e-30`. Remapping
 does not guarantee positivity or exact discrete conservation; no clipping or
 mass correction hides that error. Keep velocity tails negligible and inspect
 the reported mass, energy, and minimum f. The validation is short-time and
 does not establish nonlinear or long-time fidelity.
+
+The conservative cell-average path (`--velocity conservative --cells --layout transpose`)
+also accepts a nonuniform velocity grid via `--v-edges FILE` (raw float64,
+`nv+1` edges). It conserves weighted mass to roundoff and defaults to zero flux
+at the outer velocity faces. Use `--velocity-boundary periodic` for periodic
+primitive splines. Neither path guarantees positivity. Zero flux can accumulate
+population at the domain edge: keep the tails negligible, inspect the JSON
+tail and attempted-escape diagnostics, and verify convergence under domain
+enlargement. These diagnostics report boundary contact without imposing a
+tolerance in the standalone harness. The ADEPT native worker supports warning
+and error thresholds; see the [configuration reference](../../docs/source/solvers/vlasov1d/config.md#native-conservative-splines-and-nonuniform-velocity-grids).
 
 Both dimensions must divide evenly by the MPI rank count. Local arrays must
 fit MPI's int count limit. Memory reporting includes owned device buffers and

@@ -61,6 +61,7 @@ int main(int argc, char** argv) {
             // Warmup is excluded from both timings and reported physical time.
             initialize(backend, o);
             auto initial = diagnostics(backend, stepper, g);
+            backend.reset_boundary_diagnostics();
             stepper.times.fill(0.0);
             stepper.halo_sent_bytes = 0;
             stepper.slab_sent_bytes = 0;
@@ -72,6 +73,7 @@ int main(int argc, char** argv) {
             mpi_check(MPI_Reduce(stepper.times.data(), times.data(), StageCount,
                 MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
             auto final = diagnostics(backend, stepper, g);
+            const auto boundary = boundary_diagnostics(backend);
             if (!initial.finite || !final.finite) throw std::runtime_error("nonfinite distribution");
             if (!o.dump.empty()) dump(backend, g, o.dump);
             std::uint64_t allocated = backend.allocated_bytes(), max_allocated;
@@ -109,6 +111,12 @@ int main(int argc, char** argv) {
                     std::cout << ",\"" << names[i] << "\":" << times[i] * 1000.0 / o.steps;
                 std::cout << ",\"initial_mass\":" << initial.mass << ",\"final_mass\":" << final.mass
                           << ",\"mass_relative_change\":" << (final.mass - initial.mass) / initial.mass
+                          << ",\"velocity_boundary\":"
+                          << quoted(g.conservative ? (g.periodic_velocity ? "periodic" : "zero-flux") : "not-applicable")
+                          << ",\"max_tail_fraction\":" << boundary[0]
+                          << ",\"max_attempted_escape_fraction\":" << boundary[1]
+                          << ",\"attempted_mass_left\":" << boundary[2]
+                          << ",\"attempted_mass_right\":" << boundary[3]
                           << ",\"initial_kinetic_energy\":" << initial.kinetic << ",\"final_kinetic_energy\":" << final.kinetic
                           << ",\"initial_field_energy\":" << initial.field << ",\"final_field_energy\":" << final.field
                           << ",\"minimum_f\":" << final.minimum << ",\"finite\":true}\n";

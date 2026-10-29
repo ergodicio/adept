@@ -10,7 +10,7 @@ class NativeCore:
     def __init__(self, library, options):
         self.lib = ct.CDLL(str(library))
         version = getattr(self.lib, "av_abi_version", None)
-        if version is None or version() != 4:
+        if version is None or version() != 5:
             raise RuntimeError(
                 "native library ABI mismatch; rebuild adept/_vlasov1d/native from the installed ADEPT source"
             )
@@ -28,6 +28,7 @@ class NativeCore:
             "av_broadcast": ([ct.c_char_p, ct.c_int], ct.c_int),
             "av_barrier": ([], ct.c_int),
             "av_stats": ([ct.c_void_p, ct.POINTER(ct.c_double)], ct.c_int),
+            "av_species_boundary_stats": ([ct.c_void_p, ct.c_int, ct.POINTER(ct.c_double)], ct.c_int),
             "av_close": ([ct.c_void_p], ct.c_int),
             "av_finalize": ([], ct.c_int),
             "av_abort": ([ct.c_int], None),
@@ -88,6 +89,12 @@ class NativeCore:
             self.check(self.lib.av_close(self.handle))
             self.handle = None
         self.check(self.lib.av_finalize())
+
+    def boundary_stats(self, species=0):
+        values = (ct.c_double * 4)()
+        self.check(self.lib.av_species_boundary_stats(self.handle, species, values))
+        names = ["max_tail_fraction", "max_attempted_escape_fraction", "attempted_mass_left", "attempted_mass_right"]
+        return dict(zip(names, values, strict=True))
 
 
 class _View:
