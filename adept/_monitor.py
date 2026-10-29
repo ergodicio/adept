@@ -1,5 +1,4 @@
 """Best-effort execution telemetry, independent of MLflow's fluent run stack."""
-# ruff: noqa: BLE001 -- telemetry errors must never interrupt simulation work.
 
 import atexit
 import functools
