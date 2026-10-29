@@ -1,6 +1,7 @@
 """Best-effort execution telemetry, independent of MLflow's fluent run stack."""
 # ruff: noqa: BLE001 -- telemetry errors must never interrupt simulation work.
 
+import atexit
 import functools
 import logging
 import os
@@ -9,15 +10,22 @@ import threading
 import time
 import uuid
 
+from mlflow.entities import RunTag
+
 from . import patched_mlflow as mlflow
 
 
 def reporting_owner():
-    """Only the global worker zero reports (never one reporter per node)."""
-    for key in ("SLURM_PROCID", "OMPI_COMM_WORLD_RANK", "PMI_RANK", "RANK"):
-        if key in os.environ and os.environ[key] != "0":
-            return False
-    return True
+    """Explicit ownership for task farms versus a distributed single simulation."""
+    owner = os.environ.get("ADEPT_MONITOR_OWNER", "auto")
+    if owner == "all":
+        return True
+    if owner == "none":
+        return False
+    keys = ["OMPI_COMM_WORLD_RANK", "PMI_RANK", "RANK"]
+    if owner == "rank0":
+        keys.append("SLURM_PROCID")
+    return all(os.environ.get(key, "0") == "0" for key in keys)
 
 
 # One daemon for the process: an unresponsive server cannot create a thread leak
@@ -26,6 +34,30 @@ _messages = queue.Queue(maxsize=1024)
 _worker_lock = threading.Lock()
 _worker = None
 _active = set()
+
+
+def _reset_after_fork():
+    global _messages, _worker_lock, _worker, _active
+    _messages = queue.Queue(maxsize=1024)
+    _worker_lock = threading.Lock()
+    _worker = None
+    _active = set()
+
+
+def _drain_at_exit(timeout=5):
+    # Queue.join has no timeout. Wait on its condition with a shared deadline.
+    deadline = time.monotonic() + timeout
+    with _messages.all_tasks_done:
+        while _messages.unfinished_tasks:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            _messages.all_tasks_done.wait(timeout=remaining)
+
+
+atexit.register(_drain_at_exit)
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_after_fork)
 
 
 def _publish_loop():
@@ -64,6 +96,7 @@ def _submit(callback):
 
 class ExecutionMonitor:
     def __init__(self, parent_run_id=None, interval=30):
+        self.pid = os.getpid()
         self.warned = False
         self.done = False
         self.upload_failed = False
@@ -131,11 +164,12 @@ class ExecutionMonitor:
     def _update(self, **tags):
         if self.run_id is None:
             return
-        for key, value in tags.items():
-            try:
-                self.client.set_tag(self.run_id, f"monitor.{key}", str(value))
-            except Exception:
-                self._warn()
+        try:
+            self.client.log_batch(
+                self.run_id, tags=[RunTag(f"monitor.{key}", str(value)) for key, value in tags.items()]
+            )
+        except Exception:
+            self._warn()
 
     def update(self, **tags):
         _submit(lambda: self._update(**tags))
@@ -171,6 +205,8 @@ def monitored(method):
     def wrapped(self, *args, **kwargs):
         setup = method.__name__ == "setup"
         monitor = getattr(self, "_monitor", None)
+        if monitor is not None and monitor.pid != os.getpid():
+            monitor = None
         if setup and monitor is not None and not monitor.done:
             monitor.finish("failed")
         if setup or monitor is None or monitor.done:

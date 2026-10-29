@@ -23,6 +23,10 @@ class Client:
     def set_tag(self, run_id, key, value):
         self.runs[int(run_id) - 1][key] = value
 
+    def log_batch(self, run_id, tags):
+        for tag in tags:
+            self.set_tag(run_id, tag.key, tag.value)
+
     def set_terminated(self, run_id, status):
         self.set_tag(run_id, "status", status)
 
@@ -97,6 +101,7 @@ def test_heartbeat_does_not_imply_progress(client):
 
 
 def test_telemetry_failure_and_worker_ownership(client, monkeypatch):
+    monkeypatch.setenv("ADEPT_MONITOR_OWNER", "rank0")
     monkeypatch.setenv("SLURM_PROCID", "1")
     sim = Simulation()
     sim.setup(sim.cfg)
@@ -223,3 +228,102 @@ def test_standalone_creates_closed_singleton_launch(client, monkeypatch):
     assert {r["monitor.launch_id"] for r in executions} == {r["monitor.launch_id"] for r in launches}
     assert len({r["monitor.launch_id"] for r in executions}) == 2
     assert all(r["monitor.registration_closed"] == "true" and r["monitor.expected_executions"] == "1" for r in launches)
+
+
+def _publisher_subprocess(script, timeout=12):
+    import subprocess
+    import sys
+
+    # Load the actual publisher without importing numerical libraries: the test
+    # exercises process/thread lifetime rather than JAX initialization.
+    prefix = f"""
+import importlib.util, sys, types, time, os
+from pathlib import Path
+sys.modules['adept'] = types.ModuleType('adept')
+entities = types.ModuleType('mlflow.entities')
+class RunTag:
+    def __init__(self, key, value): self.key, self.value = key, value
+entities.RunTag = RunTag
+sys.modules['mlflow.entities'] = entities
+tracking = types.SimpleNamespace(get_tracking_uri=lambda: 'unused')
+sys.modules['adept.patched_mlflow'] = tracking
+spec = importlib.util.spec_from_file_location('adept._monitor', {_monitor.__file__!r})
+monitor = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(monitor)
+os.environ['ADEPT_MONITOR_OWNER'] = 'all'
+os.environ['ADEPT_MONITOR_LAUNCH_ID'] = 'launch'
+"""
+    return subprocess.run(
+        [sys.executable, "-c", prefix + script], timeout=timeout, capture_output=True, text=True, check=False
+    )
+
+
+def test_normal_interpreter_exit_flushes_delayed_terminal_batch(tmp_path):
+    output = tmp_path / "terminal.txt"
+    result = _publisher_subprocess(f"""
+class Client:
+    def get_experiment_by_name(self, name):
+        time.sleep(.15)
+        return types.SimpleNamespace(experiment_id='1')
+    def create_run(self, experiment, tags):
+        time.sleep(.15)
+        return types.SimpleNamespace(info=types.SimpleNamespace(run_id='execution'))
+    def log_batch(self, run_id, tags):
+        time.sleep(.15)
+        values = {{tag.key: tag.value for tag in tags}}
+        if values.get('monitor.outcome') == 'succeeded':
+            Path({str(output)!r}).write_text(str(values))
+    def set_terminated(self, *args, **kwargs): time.sleep(.15)
+tracking.tracking = types.SimpleNamespace(MlflowClient=lambda **kwargs: Client())
+execution = monitor.ExecutionMonitor()
+execution.phase('executing')
+execution.finish('succeeded')
+""")
+    assert result.returncode == 0, result.stderr
+    assert "monitor.completed_at" in output.read_text()
+    assert "succeeded" in output.read_text()
+
+
+def test_unavailable_tracking_has_bounded_interpreter_shutdown():
+    started = time.monotonic()
+    result = _publisher_subprocess("""
+def blocked(**kwargs):
+    time.sleep(30)
+tracking.tracking = types.SimpleNamespace(MlflowClient=blocked)
+execution = monitor.ExecutionMonitor()
+execution.finish('failed')
+""")
+    assert result.returncode == 0, result.stderr
+    assert time.monotonic() - started < 8
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="requires POSIX fork")
+def test_fork_restarts_publisher_with_fresh_queue(tmp_path):
+    output = tmp_path / "child.txt"
+    result = _publisher_subprocess(f"""
+monitor._submit(lambda: None)
+monitor._messages.join()
+pid = os.fork()
+if pid == 0:
+    monitor._submit(lambda: Path({str(output)!r}).write_text('published'))
+    monitor._messages.join()
+    os._exit(0)
+_, status = os.waitpid(pid, 0)
+assert status == 0
+""")
+    assert result.returncode == 0, result.stderr
+    assert output.read_text() == "published"
+
+
+def test_ownership_for_independent_slurm_tasks_and_distributed_runs(monkeypatch):
+    for key in ("OMPI_COMM_WORLD_RANK", "PMI_RANK", "RANK", "ADEPT_MONITOR_OWNER"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("SLURM_PROCID", "9")
+    assert _monitor.reporting_owner()  # independent Slurm task/Parsl manager
+    monkeypatch.setenv("ADEPT_MONITOR_OWNER", "rank0")
+    assert not _monitor.reporting_owner()
+    monkeypatch.setenv("RANK", "9")
+    monkeypatch.setenv("ADEPT_MONITOR_OWNER", "all")
+    assert _monitor.reporting_owner()  # explicitly independent workers
+    monkeypatch.setenv("ADEPT_MONITOR_OWNER", "none")
+    assert not _monitor.reporting_owner()

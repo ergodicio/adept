@@ -143,10 +143,13 @@ remain the public return value. Monitoring never changes the active MLflow run.
 Set `ADEPT_MONITOR_LAUNCH_ID` to a launch registry UUID to associate scheduler
 submission and execution. Otherwise ADEPT generates an ID and a closed singleton launch registry record;
 each subsequent invocation gets its own implicit launch. `monitor.execution_id`
-is unique per attempt. On Slurm, global rank zero reports job, step, and cluster
-from the environment; common MPI and distributed rank variables also suppress
-nonzero reporters. Independent worker processes must not inherit global rank
-variables from an unrelated distributed execution.
+is unique per attempt. On Slurm, records include job, step, and cluster from the environment.
+`ADEPT_MONITOR_OWNER=auto` (the default) suppresses nonzero MPI/PMI/`RANK`
+workers but treats Slurm tasks as independent simulations. Use `rank0` for a
+single distributed simulation launched directly with `srun` (also checks
+`SLURM_PROCID`), `all` for independent Parsl workers even if rank variables are
+inherited, or `none` to disable reporting in a process. Choose explicitly for
+ambiguous task layouts to avoid duplicate or missing records.
 
 `monitor.phase` moves through setup, executing, postprocessing, uploading, and a
 terminal succeeded or failed state. `monitor.outcome` remains running until
@@ -162,7 +165,9 @@ reports `monitor.heartbeat_at` every 30 seconds (UTC Unix seconds).
 progress; a heartbeat only proves that the reporting process is alive. Terminal
 records include `monitor.completed_at`. Tracking errors are best effort and do
 not fail valid simulation work. All monitoring network calls run in the daemon;
-completion flush waits at most 0.1 seconds. A blocked tracking request can delay
+completion flush waits at most 0.1 seconds. Normal interpreter exit drains queued
+reports for at most five seconds; terminal tags use one MLflow batch request.
+A forked child resets the inherited queue and starts its own publisher. A blocked tracking request can delay
 other telemetry, and queue overflow drops telemetry rather than simulation work.
 After setup the phase returns to setup while awaiting execution. Process termination, SIGKILL, tracking outages,
 and setup-only processes can leave nonterminal records: an external watchdog must
