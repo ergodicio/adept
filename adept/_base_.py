@@ -16,6 +16,7 @@ from jax import numpy as jnp
 
 from . import patched_mlflow as mlflow
 from ._jax_helpers import get_envelope as _get_envelope
+from ._monitor import monitored
 from .utils import robust_log_artifacts
 
 
@@ -229,6 +230,7 @@ class ergoExo:
         self.execution_backend = "legacy"
         self.compatibility_fallback_reason = "setup has not completed"
 
+    @monitored
     def setup(self, cfg: dict, adept_module: ADEPTModule = None) -> dict[str, Module]:
         """
         This function sets up the differentiable simulation by getting the chosen solver and setting it up
@@ -264,7 +266,9 @@ class ergoExo:
                     run_name=cfg["mlflow"]["run"], nested=self.mlflow_nested, parent_run_id=self.parent_run_id
                 ) as mlflow_run:
                     modules = self._setup_(cfg, td, adept_module)
-                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
+                    self._monitor.phase("uploading")
+                    if robust_log_artifacts(td) is False:
+                        self._monitor.upload_failed = True
                 self.mlflow_run_id = mlflow_run.info.run_id
 
             else:
@@ -274,7 +278,9 @@ class ergoExo:
                     # with tempfile.TemporaryDirectory(dir=self.base_tempdir) as temp_path:
                     # cfg = get_cfg(artifact_uri=mlflow_run.info.artifact_uri, temp_path=temp_path)
                     modules = self._setup_(cfg, td, adept_module)
-                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
+                    self._monitor.phase("uploading")
+                    if robust_log_artifacts(td) is False:
+                        self._monitor.upload_failed = True
 
         self.cfg = cfg
 
@@ -446,6 +452,7 @@ class ergoExo:
         self.execution_backend = "legacy"
         return filter_jit(self.adept_module.__call__)(modules, args)
 
+    @monitored
     def __call__(
         self, modules: dict | None = None, args: dict | None = None, export=True
     ) -> tuple[Solution, dict, str]:
@@ -478,13 +485,17 @@ class ergoExo:
         ) as mlflow_run:
             t0 = time.time()
             run_output = self._execute_simulation(modules, args)
+            jax.block_until_ready(run_output)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
 
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
+                self._monitor.phase("postprocessing")
                 post_processing_output = self.adept_module.post_process(run_output, td)
                 if export:
-                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
+                    self._monitor.phase("uploading")
+                    if robust_log_artifacts(td) is False:
+                        self._monitor.upload_failed = True
 
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
@@ -492,6 +503,7 @@ class ergoExo:
 
         return run_output, post_processing_output, self.mlflow_run_id
 
+    @monitored
     def val_and_grad(
         self, modules: dict | None = None, args: dict | None = None, export=True
     ) -> tuple[float, dict, tuple[Solution, dict, str]]:
@@ -525,15 +537,19 @@ class ergoExo:
         ) as mlflow_run:
             t0 = time.time()
             (val, run_output), grad = filter_jit(self.adept_module.vg)(modules, args)
+            jax.block_until_ready((val, run_output, grad))
             flattened_grad, _ = jax.flatten_util.ravel_pytree(grad)
             mlflow.log_metrics({"run_time": round(time.time() - t0, 4)})  # logs the run time to mlflow
             mlflow.log_metrics({"val": float(val), "l2-grad": float(np.linalg.norm(flattened_grad))})
 
             t0 = time.time()
             with tempfile.TemporaryDirectory(dir=self.base_tempdir) as td:
+                self._monitor.phase("postprocessing")
                 post_processing_output = self.adept_module.post_process(run_output, td)
                 if export:
-                    robust_log_artifacts(td)  # logs the temporary directory to mlflow
+                    self._monitor.phase("uploading")
+                    if robust_log_artifacts(td) is False:
+                        self._monitor.upload_failed = True
                 if "metrics" in post_processing_output:
                     mlflow.log_metrics(post_processing_output["metrics"])
             mlflow.log_metrics({"postprocess_time": round(time.time() - t0, 4)})

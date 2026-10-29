@@ -207,15 +207,15 @@ def robust_log_artifacts(directory, retries=5, delay=5):
     for attempt in range(retries):
         try:
             mlflow.log_artifacts(directory)
-            print(f"Successfully removed {directory}")
-            break
+            print(f"Successfully logged {directory}")
+            return True
         except Exception as e:
             # if e.errno == 5:  # Input/output error
             print(f"Attempt {attempt + 1} failed: {e}")
             time.sleep(delay)  # Wait before retrying
 
-    else:
-        print(f"Failed to log artifacts after {retries} attempts.")
+    print(f"Failed to log artifacts after {retries} attempts.")
+    return False
 
 
 def is_scalar(value) -> bool:

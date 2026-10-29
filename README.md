@@ -129,3 +129,42 @@ ICML - SynS & ML Workshop (https://syns-ml.github.io/2023/contributions/), 2023
 [1] A. S. Joglekar & A. G. R. Thomas. "Unsupervised discovery of nonlinear plasma physics using differentiable kinetic simulations." J. Plasma Phys. 88, 905880608 (2022).
 
 [2] A. S. Joglekar and A. G. R. Thomas, “Machine learning of hidden variables in multiscale fluid simulation,” Mach. Learn.: Sci. Technol., vol. 4, no. 3, p. 035049, Sep. 2023, doi: 10.1088/2632-2153/acf81a.
+
+## Execution monitoring
+
+`ergoExo.setup`, forward execution, and `val_and_grad` publish best-effort lifecycle
+telemetry to the configured MLflow server, in the dedicated `continuum-run-monitor`
+experiment (override with `ADEPT_MONITOR_EXPERIMENT`). Each setup plus first invocation has a
+separate tracking run tagged `monitor.record_type=execution` and
+`monitor.schema_version=1`; repeated invocations create distinct execution records.
+`monitor.scientific_run_id` links to the scientific run, whose existing ID and artifacts
+remain the public return value. Monitoring never changes the active MLflow run.
+
+Set `ADEPT_MONITOR_LAUNCH_ID` to a launch registry UUID to associate scheduler
+submission and execution. Otherwise ADEPT generates an ID and a closed singleton launch registry record;
+each subsequent invocation gets its own implicit launch. `monitor.execution_id`
+is unique per attempt. On Slurm, global rank zero reports job, step, and cluster
+from the environment; common MPI and distributed rank variables also suppress
+nonzero reporters. Independent worker processes must not inherit global rank
+variables from an unrelated distributed execution.
+
+`monitor.phase` moves through setup, executing, postprocessing, uploading, and a
+terminal succeeded or failed state. `monitor.outcome` remains running until
+execution, postprocessing, and configured artifact uploads finish. Exhausted
+artifact upload retries mark the execution failed while preserving the existing
+simulation return behavior. `export=False` requires no result artifact upload.
+JAX work is synchronized before advancing beyond execution. Setup alone does not
+mean success, even if the scientific MLflow run temporarily reports FINISHED.
+
+A single process-wide daemon publishes telemetry through a bounded queue and
+reports `monitor.heartbeat_at` every 30 seconds (UTC Unix seconds).
+`monitor.progress_at` records actual phase transitions, not numerical timestep
+progress; a heartbeat only proves that the reporting process is alive. Terminal
+records include `monitor.completed_at`. Tracking errors are best effort and do
+not fail valid simulation work. All monitoring network calls run in the daemon;
+completion flush waits at most 0.1 seconds. A blocked tracking request can delay
+other telemetry, and queue overflow drops telemetry rather than simulation work.
+After setup the phase returns to setup while awaiting execution. Process termination, SIGKILL, tracking outages,
+and setup-only processes can leave nonterminal records: an external watchdog must
+reconcile stale heartbeats with scheduler state. Telemetry does not install signal
+handlers or infer numerical progress inside compiled kernels.
