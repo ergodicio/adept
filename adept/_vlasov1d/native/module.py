@@ -18,7 +18,10 @@ import numpy as np
 from diffrax import RESULTS, Solution, SubSaveAt
 
 from adept._vlasov1d.datamodel import NativeSolverConfig
+from adept._vlasov1d.helpers import _initialize_total_distribution_
 from adept._vlasov1d.modules import BaseVlasov1D
+from adept._vlasov1d.native.boundary import check_boundary, initial_diagnostics
+from adept._vlasov1d.native.velocity_grid import velocity_edges
 
 
 @contextmanager
@@ -111,15 +114,30 @@ class NativeVlasovMixin:
         names = [species.name for species in sim.species]
         if not names or any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("native species names must be nonempty and unique")
+        conservative = cfg["terms"]["edfdv"] == "conservative-cubic-spline"
+        if set(self.native_options.velocity_grids) - set(names):
+            raise ValueError("native.velocity_grids contains an unknown species name")
+        if self.native_options.velocity_grids and not conservative:
+            raise ValueError("native.velocity_grids requires terms.edfdv: conservative-cubic-spline")
+        self.native_velocity_edges = (
+            {s.name: velocity_edges(s, self.native_options.velocity_grids.get(s.name)) for s in sim.species}
+            if conservative
+            else None
+        )
         for species in sim.species:
             if not np.isfinite(species.mass) or species.mass <= 0 or not np.isfinite(species.charge):
                 raise ValueError("native species require positive finite mass and finite charge")
-            if not np.isclose(species.vmin, -species.vmax, rtol=0, atol=1e-12):
+            if not conservative and not np.isclose(species.vmin, -species.vmax, rtol=0, atol=1e-12):
                 raise NotImplementedError("native Vlasov requires symmetric velocity domains")
         terms = cfg["terms"]
-        if terms["time"] != "sixth" or terms["edfdv"] != "cubic-spline" or terms["field"] != "poisson":
+        if (
+            terms["time"] != "sixth"
+            or terms["edfdv"] not in {"cubic-spline", "conservative-cubic-spline"}
+            or terms["field"] != "poisson"
+        ):
             raise NotImplementedError(
-                "native Vlasov requires sixth-order time, cubic-spline velocity, and Poisson fields"
+                "native Vlasov requires sixth-order time, cubic-spline or conservative-cubic-spline velocity, "
+                "and Poisson fields"
             )
         if terms.get("vdfdx", "exponential") != "exponential":
             raise NotImplementedError("native Vlasov requires exponential spatial streaming")
@@ -135,6 +153,8 @@ class NativeVlasovMixin:
         fp = terms["fokker_planck"]
         self.native_collision_frequency = 0.0
         if fp["is_on"]:
+            if conservative:
+                raise NotImplementedError("native conservative splines do not yet support Fokker-Planck collisions")
             if fp["type"].casefold() not in {"chang_cooper_dougherty", "dougherty_chang_cooper"} or (
                 fp.get("self_consistent_beta") or {}
             ).get("enabled", False):
@@ -158,7 +178,37 @@ class NativeVlasovMixin:
 
     def get_solver_quantities(self):
         with _host_preprocessing():
-            return super().get_solver_quantities()
+            result = super().get_solver_quantities()
+            if self.native_velocity_edges is not None:
+                import jax.numpy as jnp
+
+                for name, edges in self.native_velocity_edges.items():
+                    grid = self.cfg["grid"]["species_grids"][name]
+                    grid.update(v_edges=jnp.asarray(edges), dv=jnp.asarray(np.diff(edges)))
+                    # No velocity Fourier representation exists for a nonuniform mesh.
+                    for key in ["kv", "kvr", "one_over_kv", "one_over_kvr"]:
+                        grid.pop(key)
+                        self.cfg["grid"].pop(key, None)
+                if len(self.native_velocity_edges) == 1 and "electron" in self.native_velocity_edges:
+                    self.cfg["grid"].update(
+                        dv=self.cfg["grid"]["species_grids"]["electron"]["dv"],
+                        v_edges=self.cfg["grid"]["species_grids"]["electron"]["v_edges"],
+                    )
+            return result
+
+    def initialize_distributions(self):
+        return _initialize_total_distribution_(self.cfg, self.simulation, self.native_velocity_edges)
+
+    def prepare_step(self):
+        if self.native_velocity_edges is None:
+            return super().prepare_step()
+
+        # Base modules and subclasses still assemble their save callbacks, but
+        # must never construct or execute a uniform-grid JAX velocity pusher.
+        def native_only(t, y, args):
+            raise RuntimeError("conservative-cubic-spline is executed by the native backend")
+
+        return native_only
 
     def init_state_and_args(self):
         with _host_preprocessing():
@@ -277,9 +327,9 @@ class NativeVlasovMixin:
             "--integrator",
             "sixth",
             "--velocity",
-            "cubic",
+            "conservative" if self.native_velocity_edges is not None else "cubic",
             "--layout",
-            "halos",
+            "transpose" if self.native_velocity_edges is not None else "halos",
             "--halo-capacity",
             str(options.halo_capacity),
             "--background",
@@ -287,18 +337,31 @@ class NativeVlasovMixin:
         ]
         if options.host_mpi:
             common_args.append("--host-mpi")
+        if self.native_velocity_edges is not None:
+            common_args.extend(["--velocity-boundary", options.velocity_boundary])
         species_specs = []
         for index, species in enumerate(species_list):
             species_grid = self.cfg["grid"]["species_grids"][species.name]
+            boundary = None
+            if self.native_velocity_edges is not None and options.velocity_boundary == "zero-flux":
+                boundary = initial_diagnostics(
+                    self.native_velocity_edges[species.name],
+                    self.state[species.name],
+                    self.simulation.species_distributions[species.name],
+                    species.mass,
+                    (grid.xmax - grid.xmin) / grid.nx,
+                )
+                check_boundary(species.name, boundary, options.boundary_tolerance, options.boundary_action)
             initial, coordinates = root / f"initial-{index}.bin", root / f"v-{index}.bin"
             _write_vx(initial, self.state[species.name])
-            np.asarray(species_grid["v"], dtype=np.float64).tofile(coordinates)
+            coordinate_key = "v_edges" if self.native_velocity_edges is not None else "v"
+            np.asarray(species_grid[coordinate_key], dtype=np.float64).tofile(coordinates)
             species_args = [
                 *common_args,
                 "--nv",
                 str(species.nv),
                 "--vmax",
-                str(species.vmax),
+                str(0.5 * (species.vmax - species.vmin) if self.native_velocity_edges is not None else species.vmax),
                 "--charge",
                 str(species.charge),
                 "--mass",
@@ -307,7 +370,7 @@ class NativeVlasovMixin:
                 str(nu if index == 0 else 0.0),
                 "--input",
                 str(initial),
-                "--v-grid",
+                "--v-edges" if self.native_velocity_edges is not None else "--v-grid",
                 str(coordinates),
             ]
             species_specs.append(
@@ -317,6 +380,9 @@ class NativeVlasovMixin:
                     vmax=species.vmax,
                     charge=species.charge,
                     mass=species.mass,
+                    velocity_method=self.cfg["terms"]["edfdv"],
+                    velocity_boundary=options.velocity_boundary if self.native_velocity_edges is not None else None,
+                    boundary=boundary,
                     options=species_args,
                 )
             )
@@ -331,6 +397,8 @@ class NativeVlasovMixin:
             device=options.device,
             ranks=options.ranks,
             pythonpath=[str(Path(entry or os.getcwd()).resolve()) for entry in sys.path],
+            boundary_tolerance=options.boundary_tolerance,
+            boundary_action=options.boundary_action,
         )
         (root / "request.json").write_text(json.dumps(request, indent=2))
         launcher = [part.format(ranks=options.ranks) for part in options.launcher]
@@ -360,6 +428,8 @@ class NativeVlasovMixin:
             raise RuntimeError(f"native Vlasov workers failed ({returncode}); log: {log}\n{log.read_text()[-12000:]}")
         ys = _collect(root, times, options.ranks)
         stats = json.loads((root / "stats.json").read_text())
+        for name, boundary in stats["velocity_boundaries"].items():
+            check_boundary(name, boundary, options.boundary_tolerance, options.boundary_action)
         result = Solution(
             t0=t0,
             t1=t1,
@@ -382,6 +452,8 @@ class NativeVlasovMixin:
         directory.mkdir(exist_ok=True)
         for name in ["request.json", "stats.json", "worker.log"]:
             shutil.copyfile(source / name, directory / name)
+        for coordinates in source.glob("v-*.bin"):
+            shutil.copyfile(coordinates, directory / coordinates.name)
         request = json.loads((source / "request.json").read_text())
         library = Path(request["library"])
         (directory / "library.sha256").write_text(

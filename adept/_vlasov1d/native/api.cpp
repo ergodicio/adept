@@ -19,6 +19,7 @@ struct SpeciesState {
         backend = std::make_unique<Backend>(options.grid, local);
         stepper = std::make_unique<Stepper>(*backend, options);
         if (!options.coordinates.empty()) backend->set_coordinates(read_binary(options.coordinates, options.grid.nv));
+        if (!options.edges.empty()) backend->set_velocity_edges(read_binary(options.edges, options.grid.nv + 1));
         if (!options.background.empty()) backend->set_background(read_binary(options.background, options.grid.nx));
         initialize(*backend, options);
     }
@@ -108,7 +109,11 @@ void validate_options(Options& opts) {
     if (g.nx < 8 || g.nv < 4 || g.nx % g.ranks || g.nv % g.ranks ||
         g.count() > std::size_t(std::numeric_limits<int>::max()))
         throw std::runtime_error("native grids must divide across ranks and fit MPI int counts");
-    if (!g.local_cubic || !g.halos || !g.cell_centred || opts.dt <= 0 || opts.nu < 0 ||
+    if (g.conservative && (g.halos || !g.cell_centred || g.collisions || !opts.coordinates.empty()))
+        throw std::runtime_error("conservative splines require cells, transpose layout, --v-edges (not --v-grid), and no collisions");
+    if (!g.conservative && !opts.edges.empty())
+        throw std::runtime_error("--v-edges requires --velocity conservative");
+    if ((!g.conservative && (!g.local_cubic || !g.halos)) || !g.cell_centred || opts.dt <= 0 || opts.nu < 0 ||
         g.mass <= 0 || !std::isfinite(g.mass) || !std::isfinite(g.charge) ||
         g.length <= 0 || g.vmax <= 0 || g.halo_capacity < 2 ||
         std::size_t(g.halo_capacity) * g.nx > std::size_t(std::numeric_limits<int>::max()) ||
@@ -117,7 +122,7 @@ void validate_options(Options& opts) {
 }
 }
 extern "C" {
-int av_abi_version() { return 3; }
+int av_abi_version() { return 5; }
 const char* av_error() { return last_error.c_str(); }
 void* av_create(int argc, const char** argv) {
     void* result = nullptr;
@@ -216,6 +221,13 @@ int av_stats(void* handle, double* output) {
             for (int i = 0; i < StageCount; ++i) times[i] += state.stepper->times[i];
         });
         mpi_check(MPI_Allreduce(times.data(), output, StageCount, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD));
+    });
+}
+int av_species_boundary_stats(void* handle, int index, double* output) {
+    return guarded([&] {
+        auto& species = (**static_cast<Handle*>(handle)).species(index);
+        const auto values = boundary_diagnostics(*species.backend);
+        std::copy(values.begin(), values.end(), output);
     });
 }
 int av_close(void* handle) {

@@ -29,6 +29,8 @@ int main(int argc, char** argv) {
         if (o.mode != "landau" && o.mode != "stream" && o.mode != "accelerate" && o.mode != "transpose" && o.mode != "collide")
             throw std::runtime_error("unknown mode: " + o.mode);
         if (o.integrator != "strang" && o.integrator != "sixth") throw std::runtime_error("unknown integrator");
+        if (!o.edges.empty() && (!g.conservative || !o.coordinates.empty()))
+            throw std::runtime_error("--v-edges requires conservative splines and cannot be combined with --v-grid");
         if (g.halos && (!g.local_cubic || g.halo_capacity < 2))
             throw std::runtime_error("halos require --velocity cubic and capacity >= 2");
         if (g.halos && o.mode == "transpose")
@@ -52,12 +54,14 @@ int main(int argc, char** argv) {
                       << " local_rank=" << local_rank << " device=" << backend.device_name() << '\n';
             Stepper stepper(backend, o);
             if (!o.coordinates.empty()) backend.set_coordinates(read_binary(o.coordinates, g.nv));
+            if (!o.edges.empty()) backend.set_velocity_edges(read_binary(o.edges, g.nv + 1));
             if (!o.background.empty()) backend.set_background(read_binary(o.background, g.nx));
             initialize(backend, o);
             for (int i = 0; i < o.warmup; ++i) stepper.step();
             // Warmup is excluded from both timings and reported physical time.
             initialize(backend, o);
             auto initial = diagnostics(backend, stepper, g);
+            backend.reset_boundary_diagnostics();
             stepper.times.fill(0.0);
             stepper.halo_sent_bytes = 0;
             stepper.slab_sent_bytes = 0;
@@ -69,6 +73,7 @@ int main(int argc, char** argv) {
             mpi_check(MPI_Reduce(stepper.times.data(), times.data(), StageCount,
                 MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD));
             auto final = diagnostics(backend, stepper, g);
+            const auto boundary = boundary_diagnostics(backend);
             if (!initial.finite || !final.finite) throw std::runtime_error("nonfinite distribution");
             if (!o.dump.empty()) dump(backend, g, o.dump);
             std::uint64_t allocated = backend.allocated_bytes(), max_allocated;
@@ -87,7 +92,7 @@ int main(int argc, char** argv) {
                           << ",\"precision\":\"float64\",\"mode\":" << quoted(o.mode)
                           << ",\"integrator\":" << quoted(o.integrator)
                           << ",\"nu\":" << o.nu
-                          << ",\"velocity\":" << quoted(g.local_cubic ? "cubic" : "natural")
+                          << ",\"velocity\":" << quoted(g.conservative ? "conservative" : (g.local_cubic ? "cubic" : "natural"))
                           << ",\"layout\":" << quoted(g.halos ? "halos" : "transpose")
                           << ",\"cell_centred\":" << (g.cell_centred ? "true" : "false")
                           << ",\"max_halo_width\":" << stepper.max_halo_width
@@ -106,6 +111,12 @@ int main(int argc, char** argv) {
                     std::cout << ",\"" << names[i] << "\":" << times[i] * 1000.0 / o.steps;
                 std::cout << ",\"initial_mass\":" << initial.mass << ",\"final_mass\":" << final.mass
                           << ",\"mass_relative_change\":" << (final.mass - initial.mass) / initial.mass
+                          << ",\"velocity_boundary\":"
+                          << quoted(g.conservative ? (g.periodic_velocity ? "periodic" : "zero-flux") : "not-applicable")
+                          << ",\"max_tail_fraction\":" << boundary[0]
+                          << ",\"max_attempted_escape_fraction\":" << boundary[1]
+                          << ",\"attempted_mass_left\":" << boundary[2]
+                          << ",\"attempted_mass_right\":" << boundary[3]
                           << ",\"initial_kinetic_energy\":" << initial.kinetic << ",\"final_kinetic_energy\":" << final.kinetic
                           << ",\"initial_field_energy\":" << initial.field << ",\"final_field_energy\":" << final.field
                           << ",\"minimum_f\":" << final.minimum << ",\"finite\":true}\n";

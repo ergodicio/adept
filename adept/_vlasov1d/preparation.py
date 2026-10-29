@@ -178,6 +178,10 @@ class Vlasov1DSetup:
 
         self.cfg["grid"] = cfg_grid
 
+    def initialize_distributions(self):
+        """Initialize on the backend's velocity mesh (uniform for JAX)."""
+        return _initialize_total_distribution_(self.cfg, self.simulation)
+
     def get_solver_quantities(self) -> dict:
         """
         This function just updates the config with the derived quantities that are arrays
@@ -194,7 +198,7 @@ class Vlasov1DSetup:
         cfg_grid.update(asdict(grid))
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
+        dist_result = self.initialize_distributions()
         cfg_grid["species_distributions"] = dist_result
 
         # Build species_grids and species_params
@@ -277,7 +281,7 @@ class Vlasov1DSetup:
         grid = self.simulation.grid
 
         # Initialize distributions (always returns dict format)
-        dist_result = _initialize_total_distribution_(self.cfg, self.simulation)
+        dist_result = self.initialize_distributions()
 
         state = {}
 

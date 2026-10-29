@@ -349,6 +349,27 @@ class Vlasov1DConfig(BaseModel):
     iaw_diagnostics: IAWDiagnosticsConfig | None = None
 
 
+class NativeVelocityGridConfig(BaseModel):
+    """Explicit cell edges or an Afeyan coarse/fine velocity mesh."""
+
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    edges: list[float] | None = None
+    # Requested refined interval; snapped to coarse-grid edges.
+    refined_min: float | None = None
+    refined_max: float | None = None
+    ratio: int | None = Field(default=None, ge=2, strict=True)
+
+    @model_validator(mode="after")
+    def check_definition(self):
+        refinement = (self.refined_min, self.refined_max, self.ratio)
+        if self.edges is not None:
+            if any(value is not None for value in refinement):
+                raise ValueError("specify edges or refinement parameters, not both")
+        elif any(value is None for value in refinement):
+            raise ValueError("refinement requires refined_min, refined_max, and ratio")
+        return self
+
+
 class NativeSolverConfig(BaseModel):
     """Execution options for the optional CUDA/MPI Vlasov backend."""
 
@@ -363,6 +384,10 @@ class NativeSolverConfig(BaseModel):
     custom_save_times: Literal["preserve", "steps"] = "preserve"
     host_mpi: bool = False
     timeout: float | None = Field(default=None, gt=0)
+    velocity_grids: dict[str, NativeVelocityGridConfig] = Field(default_factory=dict)
+    velocity_boundary: Literal["zero-flux", "periodic"] = "zero-flux"
+    boundary_tolerance: float = Field(default=1e-8, gt=0, allow_inf_nan=False)
+    boundary_action: Literal["warn", "error"] = "warn"
 
 
 Vlasov1DConfig.model_rebuild()

@@ -16,18 +16,18 @@ class FieldsObservation(eqx.Module):
         for name, grid in self.species_grids.items():
             v, dv = grid["v"], grid["dv"]
             f = y[name]
-            n = jnp.sum(f, axis=1) * dv
-            current = jnp.sum(f * v[None, :], axis=1) * dv
+            n = jnp.sum(f * dv, axis=1)
+            current = jnp.sum(f * v[None, :] * dv, axis=1)
             velocity = current / n
             centered_v = v[None, :] - velocity[:, None]
             result[name] = {
                 "n": n,
                 "j": current,
                 "v": velocity,
-                "p": jnp.sum(f * centered_v**2.0, axis=1) * dv,
-                "q": jnp.sum(f * centered_v**3.0, axis=1) * dv,
-                "-flogf": jnp.sum(-xlogy(jnp.abs(f), jnp.abs(f)), axis=1) * dv,
-                "f^2": jnp.sum(f * f, axis=1) * dv,
+                "p": jnp.sum(f * centered_v**2.0 * dv, axis=1),
+                "q": jnp.sum(f * centered_v**3.0 * dv, axis=1),
+                "-flogf": jnp.sum(-xlogy(jnp.abs(f), jnp.abs(f)) * dv, axis=1),
+                "f^2": jnp.sum(f * f * dv, axis=1),
             }
         result.update({name: y[name] for name in ("e", "de", "a", "prev_a")})
         result["pond"] = -0.5 * jnp.gradient(y["a"] ** 2.0, self.dx)[1:-1]
@@ -75,7 +75,7 @@ class ScalarsObservation(eqx.Module):
             f = y[name]
 
             def moment(value, spacing=dv):
-                return jnp.mean(jnp.sum(value, axis=1) * spacing)
+                return jnp.mean(jnp.sum(value * spacing, axis=1))
 
             scalars[f"mean_P_{name}"] = moment(f * v**2.0)
             scalars[f"mean_j_{name}"] = moment(f * v)

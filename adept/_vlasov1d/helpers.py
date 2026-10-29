@@ -9,8 +9,9 @@ import numpy as np
 import xarray
 from diffrax import Solution
 from jax import numpy as jnp
-from scipy.special import gamma
+from scipy.special import gamma, gammainc
 
+from adept._vlasov1d.plotting import phase_space_coordinates
 from adept._vlasov1d.simulation import SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.storage import store_f, store_fields
 from adept.normalization import PlasmaNormalization
@@ -41,6 +42,7 @@ def _initialize_supergaussian_distribution_(
     vmax=6.0,
     vmin=None,
     n_prof=np.ones(1),
+    velocity_edges=None,
 ):
     """
     Initialize a supergaussian distribution function.
@@ -57,6 +59,7 @@ def _initialize_supergaussian_distribution_(
         vmax: upper bound of the velocity grid
         vmin: lower bound of the velocity grid (defaults to ``-vmax``)
         n_prof: density profile (noise should already be applied)
+        velocity_edges: optional finite-volume edges for exact super-Gaussian cell averages
 
     Returns:
         Tuple of (f[nx, nv], vax[nv])
@@ -75,13 +78,24 @@ def _initialize_supergaussian_distribution_(
     # temperature exceeds T0 (x1.24 at m=3, x1.37 at m=4). See docs config.md.
     alpha = np.sqrt(3.0 * gamma_3_over_m(supergaussian_order) / gamma_5_over_m(supergaussian_order))
 
-    single_dist = -(np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
-
-    single_dist = np.exp(single_dist)
+    if velocity_edges is None:
+        single_dist = np.exp(-np.power(np.abs((vax[None, :] - v0) / (alpha * v_thermal)), supergaussian_order))
+    else:
+        # Integral from the distribution center, with the common normalization
+        # factor omitted because we normalize to the configured density below.
+        edges = np.asarray(velocity_edges)
+        dv = np.diff(edges)
+        vax = edges[:-1] + 0.5 * dv
+        z = (edges - v0) / (alpha * v_thermal)
+        primitive = np.sign(z) * gammainc(1 / supergaussian_order, np.abs(z) ** supergaussian_order)
+        single_dist = (np.diff(primitive) / dv)[None, :]
 
     f = np.repeat(single_dist, nx, axis=0)
     # normalize
-    f = f / np.sum(f, axis=1)[:, None] / dv
+    if velocity_edges is None:
+        f = f / np.sum(f, axis=1)[:, None] / dv
+    else:
+        f = f / np.sum(f * dv, axis=1)[:, None]
 
     if n_prof.size > 1:
         # scale by density profile
@@ -90,7 +104,7 @@ def _initialize_supergaussian_distribution_(
     return f, vax
 
 
-def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
+def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation, velocity_edges=None):
     """
     Initialize distribution functions for all species using domain models.
 
@@ -136,7 +150,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
             n_prof_species += nprof
 
             # Initialize distribution
-            temp_f, _ = _initialize_supergaussian_distribution_(
+            temp_f, vax = _initialize_supergaussian_distribution_(
                 nx=grid.nx,
                 nv=nv,
                 v0=distribution_spec.v0,
@@ -146,6 +160,7 @@ def _initialize_total_distribution_(cfg, simulation: Vlasov1DSimulation):
                 vmax=vmax,
                 vmin=vmin,
                 n_prof=nprof,
+                velocity_edges=None if velocity_edges is None else velocity_edges[species_name],
             )
             f_species += temp_f
             species_found = True
@@ -306,13 +321,13 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
     for save_key, f_xr in f_result.items():
         if "_species_name" not in cfg["save"][save_key]:
             continue
-        species_name = cfg["save"][save_key]["_species_name"]
         f_species = f_xr[save_key]
         species_dist_dir = os.path.join(td, "plots", "dists", save_key)
         spatial_dim = "kx" if "kx" in f_species.dims else "x"
         spatial_label = r"$k_x$" if spatial_dim == "kx" else "x"
         value_label = r"$|\hat{f}|$" if spatial_dim == "kx" else "f"
         difference_label = r"$|\hat{f}| - |\hat{f}(t=0)|$" if spatial_dim == "kx" else "f - f(t=0)"
+        plot_x, plot_v = phase_space_coordinates(f_xr, save_key, cfg["grid"]["dx"])
 
         # Select ~8 time snapshots for facet plot
         t_skip = int(f_species.coords["t"].data.size // 8)
@@ -333,7 +348,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
         axes_flat = axes.flatten()
 
         # Plot f(t=0) in first panel with its own colorbar
-        im0 = axes_flat[0].pcolormesh(f0.coords[spatial_dim].values, f0.coords[f"v_{species_name}"].values, f0.values.T)
+        im0 = axes_flat[0].pcolormesh(plot_x, plot_v, f0.values.T)
         axes_flat[0].set_xlabel(spatial_label)
         axes_flat[0].set_ylabel("v")
         axes_flat[0].set_title(f"t = {f_sliced.coords['t'].values[0]:.2f}")
@@ -347,8 +362,8 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                 ax = axes_flat[i + 1]
                 data = f_diff.isel(t=i)
                 im = ax.pcolormesh(
-                    data.coords[spatial_dim].values,
-                    data.coords[f"v_{species_name}"].values,
+                    plot_x,
+                    plot_v,
                     data.values.T,
                     vmin=-vabs,
                     vmax=vabs,

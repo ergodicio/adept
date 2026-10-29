@@ -15,6 +15,7 @@ from jax import numpy as jnp
 from matplotlib import pyplot as plt
 
 from adept._vlasov1d.modules import BaseVlasov1D
+from adept._vlasov1d.plotting import phase_space_coordinates
 
 
 class IAWTurbulence1D(BaseVlasov1D):
@@ -78,7 +79,7 @@ class IAWTurbulence1D(BaseVlasov1D):
             """Save the low-|k| complex charge-density spectrum as (re, im) rows."""
             rho = jnp.zeros(nx)
             for name, species_grid in species_grids.items():
-                rho = rho + species_params[name]["charge"] * jnp.sum(y[name], axis=1) * species_grid["dv"]
+                rho = rho + species_params[name]["charge"] * jnp.sum(y[name] * species_grid["dv"], axis=1)
             rho_k = jnp.fft.rfft(rho)[: nk_modes + 1] / nx
             return jnp.stack([jnp.real(rho_k), jnp.imag(rho_k)])
 
@@ -180,10 +181,8 @@ class IAWTurbulence1D(BaseVlasov1D):
             save_cfg = self.cfg["save"].get(save_key, {})
             if "_species_name" not in save_cfg:
                 continue
-            species_name = save_cfg["_species_name"]
-            v_dim = f"v_{species_name}"
-
             f_species = f_xr[save_key]
+            plot_x, plot_v = phase_space_coordinates(f_xr, save_key, self.cfg["grid"]["dx"])
             delta_f = f_species - f_species.mean("x")
 
             t_skip = max(int(delta_f.coords["t"].data.size // 8), 1)
@@ -201,8 +200,8 @@ class IAWTurbulence1D(BaseVlasov1D):
                 vabs = float(np.abs(data).max())
                 vabs = vabs if vabs > 0 else 1.0
                 im = axes_flat[i].pcolormesh(
-                    data.coords["x"].values,
-                    data.coords[v_dim].values,
+                    plot_x,
+                    plot_v,
                     data.values.T,
                     vmin=-vabs,
                     vmax=vabs,

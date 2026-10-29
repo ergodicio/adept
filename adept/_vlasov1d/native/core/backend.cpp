@@ -51,6 +51,23 @@ template<class F> void parallel_for(std::size_t n, F fn) {
 
 namespace {
 constexpr double pi = 3.14159265358979323846;
+// Nonperiodic primitive with constant continuation: no exterior distribution.
+DEVICE double primitive_value(double q, const double* edges, const double* h,
+                              const double* primitive, const double* second,
+                              int n, int stride, std::size_t x) {
+    if (q <= edges[0]) return primitive[x];
+    if (q >= edges[n]) return primitive[std::size_t(n) * stride + x];
+    int lo = 0, hi = n;
+    while (hi - lo > 1) {
+        int mid = (lo + hi) / 2;
+        if (edges[mid] <= q) lo = mid;
+        else hi = mid;
+    }
+    double b = (q - edges[lo]) / h[lo], a = 1 - b;
+    std::size_t left = std::size_t(lo) * stride + x, right = left + stride;
+    return a * primitive[left] + b * primitive[right]
+        + ((a * a * a - a) * second[left] + (b * b * b - b) * second[right]) * h[lo] * h[lo] / 6;
+}
 class Buffer {
 public:
     explicit Buffer(std::size_t n) : size(n) {
@@ -192,20 +209,27 @@ struct Backend::Impl {
     int ordinal;
     Buffer fv, fx, send, recv, second, rhs, output, inverse;
     Buffer spectrum, density_local, density_global, electric, field_spectrum;
-    Buffer coordinates, background, ghosts, field_maximum;
+    Buffer coordinates, weights, edges, primitive, spline_factors, tail_weights, boundary_stats;
+    Buffer background, ghosts, field_maximum;
     FFT streaming_fft, field_fft;
     Impl(Grid g, int local_rank)
         : grid(g), device(select_device(local_rank)), ordinal(current_device_ordinal()),
           fv(g.count()), fx(!g.halos || g.collisions ? g.count() : 0),
           send((!g.halos || g.collisions) && g.ranks > 1 ? g.count() : 0),
           recv((!g.halos || g.collisions) && g.ranks > 1 ? g.count() : 0),
-          second(!g.local_cubic || g.collisions ? g.count() : 0),
-          rhs(!g.local_cubic || g.collisions ? g.count() : 0),
-          output(g.count()), inverse(!g.local_cubic ? g.nv : 0),
+          second(g.conservative ? std::size_t(g.spline_nodes()) * g.local_x()
+                                : (!g.local_cubic || g.collisions ? g.count() : 0)),
+          rhs(g.conservative ? std::size_t(g.spline_nodes()) * g.local_x()
+                             : (!g.local_cubic || g.collisions ? g.count() : 0)),
+          output(g.count()), inverse(!g.local_cubic && !g.conservative ? g.nv : 0),
           spectrum(2 * std::size_t(g.nx / 2 + 1) * g.local_v()),
           density_local(g.nx), density_global(g.nx), electric(g.nx),
           field_spectrum(2 * (g.nx / 2 + 1)),
-          coordinates(g.nv), background(g.nx),
+          coordinates(g.nv), weights(g.nv), edges(g.conservative ? g.nv + 1 : 0),
+          primitive(g.conservative ? std::size_t(g.nv + 1) * g.local_x() : 0),
+          spline_factors(g.conservative ? 3 * g.spline_nodes() : 0),
+          tail_weights(g.conservative ? g.nv : 0), boundary_stats(g.conservative ? 4 * g.local_x() : 0),
+          background(g.nx),
           ghosts(g.halos ? 2 * std::size_t(g.halo_capacity) * g.nx : 0),
           field_maximum(1),
           streaming_fft(g.nx, g.local_v(), fv.ptr, spectrum.ptr),
@@ -213,16 +237,29 @@ struct Backend::Impl {
         std::vector<double> inv(g.nv, 0.0);
         // LU factors for natural spline: m[i-1] + 4m[i] + m[i+1] = 6*d2f/dv^2.
         for (int i = 1; i < g.nv - 1; ++i) inv[i] = 1.0 / (4.0 - inv[i - 1]);
-        if (!g.local_cubic) inverse.upload(inv);
+        if (!g.local_cubic && !g.conservative) inverse.upload(inv);
         std::vector<double> v(g.nv), bg(g.nx, 1.0);
         for (int j = 0; j < g.nv; ++j) v[j] = g.velocity(j);
         coordinates.upload(v);
+        std::vector<double> w(g.nv, g.dv());
+        if (!g.cell_centred) w.front() = w.back() = 0.5 * g.dv();
+        weights.upload(w);
         background.upload(bg);
         electric.upload(std::vector<double>(g.nx, 0.0));
     }
 };
 
-Backend::Backend(Grid grid, int local_rank) : p(std::make_unique<Impl>(grid, local_rank)) {}
+Backend::Backend(Grid grid, int local_rank) {
+    if (grid.conservative && (!grid.cell_centred || grid.halos || grid.local_cubic || grid.collisions))
+        throw std::runtime_error("conservative splines require cell averages, transpose layout, and no collisions");
+    p = std::make_unique<Impl>(grid, local_rank);
+    if (grid.conservative) {
+        std::vector<double> edges(grid.nv + 1);
+        for (int j = 0; j <= grid.nv; ++j) edges[j] = -grid.vmax + j * grid.dv();
+        set_velocity_edges(edges);
+        reset_boundary_diagnostics();
+    }
+}
 Backend::~Backend() = default;
 int Backend::device_ordinal() const {
     return p->ordinal;
@@ -294,20 +331,28 @@ void Backend::collide(double dt, double nu) {
 }
 void Backend::initialize() {
     const Grid g = p->grid;
+    auto velocities = p->coordinates.download(), weights = p->weights.download();
+    auto edges = g.conservative ? p->edges.download() : std::vector<double>{};
+    std::vector<double> profile(g.nv);
     double norm = 0.0;
     for (int j = 0; j < g.nv; ++j) {
-        double v = g.velocity(j);
-        norm += std::exp(-0.5 * v * v) * (!g.cell_centred && (j == 0 || j == g.nv - 1) ? 0.5 : 1.0) * g.dv();
+        double v = velocities[j];
+        profile[j] = g.conservative
+            ? std::sqrt(pi / 2) * (std::erf(edges[j + 1] / std::sqrt(2.0)) - std::erf(edges[j] / std::sqrt(2.0))) / weights[j]
+            : std::exp(-0.5 * v * v);
+        norm += profile[j] * weights[j];
     }
+    Buffer initial_profile(g.nv);
+    initial_profile.upload(profile);
     double* f = p->fv.ptr;
     const int nx = g.nx, nv_local = g.local_v(), v0 = g.rank * nv_local;
-    const double* vgrid = p->coordinates.ptr;
+    const double* values = initial_profile.ptr;
     const double amp = g.amplitude;
     parallel_for(g.count(), [=] DEVICE (std::size_t i) {
         int x = i % nx, vindex = i / nx + v0;
-        double v = vgrid[vindex];
-        f[i] = exp(-0.5 * v * v) / norm * (1.0 + amp * cos(2.0 * pi * x / nx));
+        f[i] = values[vindex] / norm * (1.0 + amp * cos(2.0 * pi * x / nx));
     });
+    synchronize(); // The temporary profile must outlive the initialization kernel.
 }
 void Backend::stream(double dt) {
     const Grid g = p->grid;
@@ -330,16 +375,15 @@ void Backend::stream(double dt) {
 }
 void Backend::density(double charge) {
     const Grid g = p->grid;
-    const int nx = g.nx, nv = g.nv, nvl = g.local_v(), v0 = g.rank * nvl;
-    const double dv = g.dv();
-    const bool cells = g.cell_centred;
+    const int nx = g.nx, nvl = g.local_v(), v0 = g.rank * nvl;
+    const double* weights = p->weights.ptr;
     const double* f = p->fv.ptr;
     double* rho = p->density_local.ptr;
     parallel_for(nx, [=] DEVICE (std::size_t x) {
         double sum = 0.0;
         for (int j = 0; j < nvl; ++j)
-            sum += f[std::size_t(j) * nx + x] * (!cells && (j + v0 == 0 || j + v0 == nv - 1) ? 0.5 : 1.0);
-        rho[x] = charge * (sum * dv);
+            sum += f[std::size_t(j) * nx + x] * weights[j + v0];
+        rho[x] = charge * sum;
     });
 }
 void Backend::add_density(const Backend& other) {
@@ -377,6 +421,7 @@ void Backend::field(bool charge_density) {
     parallel_for(nx, [=] DEVICE (std::size_t i) { e[i] /= nx; });
 }
 void Backend::velocity(double dt, double acceleration, bool self_consistent) {
+    if (p->grid.conservative) { conservative_velocity(dt, acceleration, self_consistent); return; }
     if (p->grid.local_cubic) { local_velocity(dt, acceleration, self_consistent); return; }
     const Grid g = p->grid;
     const int nxl = g.local_x(), nv = g.nv, x0 = g.rank * nxl;
@@ -418,6 +463,172 @@ void Backend::velocity(double dt, double acceleration, bool self_consistent) {
             + ((a0 * a0 * a0 - a0) * m[l] + (b * b * b - b) * m[h]) * dv * dv / 6.0;
     });
     std::swap(p->fx.ptr, p->output.ptr);
+}
+void Backend::conservative_velocity(double dt, double acceleration, bool self_consistent) {
+    if (!p->grid.periodic_velocity) { zero_flux_velocity(dt, acceleration, self_consistent); return; }
+    // Afeyan et al., arXiv:1409.2086, section 2.2. Spline the periodic
+    // primitive of f - mean(f), then difference its translated edge values.
+    // Subtract mass / period (not mass): the primitive must close on any domain.
+    const Grid g = p->grid;
+    const int nx = g.local_x(), n = g.nv, x0 = g.rank * nx;
+    const double* f = p->fx.ptr;
+    const double* h = p->weights.ptr;
+    const double* edges = p->edges.ptr;
+    const double* factors = p->spline_factors.ptr;
+    const double* electric = p->electric.ptr;
+    double* primitive = p->primitive.ptr;
+    double* second = p->second.ptr;
+    double* work = p->rhs.ptr;
+    double* out = p->output.ptr;
+    parallel_for(nx, [=] DEVICE (std::size_t x) {
+        const double period = edges[n] - edges[0];
+        double mass = 0;
+        for (int j = 0; j < n; ++j) mass += f[std::size_t(j) * nx + x] * h[j];
+        const double mean = mass / period;
+        double cumulative = 0;
+        for (int j = 0; j < n; ++j) {
+            const std::size_t i = std::size_t(j) * nx + x;
+            primitive[i] = cumulative;
+            cumulative += (f[i] - mean) * h[j];
+        }
+        // The endpoint is identical to the first knot, including roundoff.
+        primitive[std::size_t(n) * nx + x] = 0;
+        double previous = 0;
+        for (int j = 0; j < n; ++j) {
+            const std::size_t i = std::size_t(j) * nx + x;
+            const int jm = (j + n - 1) % n;
+            double slope = (primitive[i + nx] - primitive[i]) / h[j];
+            double previous_slope = (primitive[i] - primitive[std::size_t(jm) * nx + x]) / h[jm];
+            previous = (6 * (slope - previous_slope) - (j ? h[j - 1] * previous : 0)) * factors[j];
+            work[i] = previous;
+        }
+        double next = 0;
+        for (int j = n - 1; j >= 0; --j) {
+            const std::size_t i = std::size_t(j) * nx + x;
+            next = work[i] - factors[n + j] * next;
+            second[i] = next;
+        }
+        const double corner = h[n - 1] / (-2 * (h[n - 1] + h[0]));
+        const double correction = (second[x] + corner * second[std::size_t(n - 1) * nx + x])
+            / (1 + factors[2 * n] + corner * factors[3 * n - 1]);
+        for (int j = 0; j < n; ++j) second[std::size_t(j) * nx + x] -= correction * factors[2 * n + j];
+        // Store the mean in the unused endpoint of the primitive workspace.
+        // Evaluation treats the actual endpoint value as zero below.
+        primitive[std::size_t(n) * nx + x] = mean;
+    });
+    parallel_for(g.count(), [=] DEVICE (std::size_t i) {
+        int x = i % nx, j = i / nx;
+        const double period = edges[n] - edges[0];
+        double a = self_consistent ? (g.charge / g.mass) * electric[x0 + x] : acceleration;
+        // Reduce the shift first to retain accuracy for multi-period transport.
+        double q = fmod(edges[j] - edges[0] - fmod(a * dt, period), period);
+        if (q < 0) q += period;
+        q += edges[0];
+        if (q >= edges[n]) q = edges[0];
+        int lo = 0, hi = n;
+        while (hi - lo > 1) {
+            int mid = (lo + hi) / 2;
+            if (edges[mid] <= q) lo = mid;
+            else hi = mid;
+        }
+        const double b = (q - edges[lo]) / h[lo], c = 1 - b;
+        const std::size_t left = std::size_t(lo) * nx + x;
+        const std::size_t right = std::size_t((lo + 1) % n) * nx + x;
+        work[i] = c * primitive[left] + b * primitive[right]
+            + ((c * c * c - c) * second[left] + (b * b * b - b) * second[right]) * h[lo] * h[lo] / 6;
+    });
+    parallel_for(g.count(), [=] DEVICE (std::size_t i) {
+        int x = i % nx, j = i / nx;
+        out[i] = (work[std::size_t((j + 1) % n) * nx + x] - work[i]) / h[j]
+            + primitive[std::size_t(n) * nx + x];
+    });
+    std::swap(p->fx.ptr, p->output.ptr);
+}
+void Backend::zero_flux_velocity(double dt, double acceleration, bool self_consistent) {
+    // Spline the cumulative cell mass on physical edges. Interior fluxes are
+    // swept integrals; setting BOTH outer fluxes to zero makes their divergence
+    // telescope without wrapping, deleting mass, or renormalizing f.
+    const Grid g = p->grid;
+    const int nx = g.local_x(), n = g.nv, nodes = n + 1, x0 = g.rank * nx;
+    const double* f = p->fx.ptr;
+    const double* h = p->weights.ptr;
+    const double* edges = p->edges.ptr;
+    const double* factors = p->spline_factors.ptr;
+    const double* electric = p->electric.ptr;
+    const double* tails = p->tail_weights.ptr;
+    double* primitive = p->primitive.ptr;
+    double* second = p->second.ptr;
+    double* flux = p->rhs.ptr;
+    double* out = p->output.ptr;
+    double* stats = p->boundary_stats.ptr;
+    parallel_for(nx, [=] DEVICE (std::size_t x) {
+        double mass = 0, absolute_mass = 0, tail = 0;
+        primitive[x] = 0;
+        for (int j = 0; j < n; ++j) {
+            const std::size_t i = std::size_t(j) * nx + x;
+            mass += f[i] * h[j];
+            absolute_mass += fabs(f[i]) * h[j];
+            tail += fabs(f[i]) * tails[j];
+            primitive[i + nx] = mass;
+        }
+        if (absolute_mass > 0) stats[x] = fmax(stats[x], tail / absolute_mass);
+        // Natural endpoint conditions on the primitive; these are separate
+        // from the explicitly imposed zero numerical boundary fluxes below.
+        second[x] = second[std::size_t(n) * nx + x] = 0;
+        double previous = 0;
+        for (int j = 1; j < n; ++j) {
+            const std::size_t i = std::size_t(j) * nx + x;
+            previous = (6 * (f[i] - f[i - nx]) - h[j - 1] * previous) * factors[j];
+            flux[i] = previous;
+        }
+        double next = 0;
+        for (int j = n - 1; j > 0; --j) {
+            const std::size_t i = std::size_t(j) * nx + x;
+            next = flux[i] - factors[nodes + j] * next;
+            second[i] = next;
+        }
+        const double a = self_consistent ? (g.charge / g.mass) * electric[x0 + x] : acceleration;
+        const double left = fabs(primitive_value(edges[0] - a * dt, edges, h, primitive, second, n, nx, x));
+        const double right = fabs(mass - primitive_value(edges[n] - a * dt, edges, h, primitive, second, n, nx, x));
+        if (absolute_mass > 0) stats[nx + x] = fmax(stats[nx + x], (left + right) / absolute_mass);
+        stats[2 * nx + x] += left * g.length / g.nx;
+        stats[3 * nx + x] += right * g.length / g.nx;
+    });
+    parallel_for(std::size_t(nodes) * nx, [=] DEVICE (std::size_t i) {
+        const int x = i % nx, j = i / nx;
+        const double a = self_consistent ? (g.charge / g.mass) * electric[x0 + x] : acceleration;
+        flux[i] = (j == 0 || j == n) ? 0 : primitive[i]
+            - primitive_value(edges[j] - a * dt, edges, h, primitive, second, n, nx, x);
+    });
+    parallel_for(g.count(), [=] DEVICE (std::size_t i) {
+        out[i] = f[i] + (flux[i] - flux[i + nx]) / h[i / nx];
+    });
+    parallel_for(nx, [=] DEVICE (std::size_t x) {
+        double mass = 0, tail = 0;
+        for (int j = 0; j < n; ++j) {
+            const double value = fabs(out[std::size_t(j) * nx + x]);
+            mass += value * h[j];
+            tail += value * tails[j];
+        }
+        if (mass > 0) stats[x] = fmax(stats[x], tail / mass);
+    });
+    std::swap(p->fx.ptr, p->output.ptr);
+}
+std::array<double, 4> Backend::boundary_diagnostics() {
+    std::array<double, 4> result{};
+    if (!p->grid.conservative || p->grid.periodic_velocity) return result;
+    const auto values = p->boundary_stats.download();
+    const int nx = p->grid.local_x();
+    for (int x = 0; x < nx; ++x) {
+        result[0] = std::max(result[0], values[x]);
+        result[1] = std::max(result[1], values[nx + x]);
+        result[2] += values[2 * nx + x];
+        result[3] += values[3 * nx + x];
+    }
+    return result;
+}
+void Backend::reset_boundary_diagnostics() {
+    if (p->grid.conservative) p->boundary_stats.upload(std::vector<double>(p->boundary_stats.size, 0));
 }
 void Backend::local_velocity(double dt, double acceleration, bool self_consistent) {
     const Grid g = p->grid;
@@ -467,6 +678,7 @@ double* Backend::halo_buffer() { return p->ghosts.ptr; }
 void Backend::upload_halos(const std::vector<double>& values) { p->ghosts.upload(values); }
 void Backend::upload_state(const std::vector<double>& values) { p->fv.upload(values); }
 void Backend::set_coordinates(const std::vector<double>& values) {
+    if (p->grid.conservative) throw std::runtime_error("conservative splines require velocity edges, not centers");
     if (values.size() != std::size_t(p->grid.nv)) throw std::runtime_error("incorrect velocity coordinate count");
     for (std::size_t i = 1; i < values.size(); ++i) {
         double spacing = values[i] - values[i - 1];
@@ -474,6 +686,60 @@ void Backend::set_coordinates(const std::vector<double>& values) {
             throw std::runtime_error("velocity halos require uniform coordinates matching --nv/--vmax/--cells");
     }
     p->coordinates.upload(values);
+}
+std::vector<double> Backend::download_coordinates() { return p->coordinates.download(); }
+std::vector<double> Backend::download_weights() { return p->weights.download(); }
+
+void Backend::set_velocity_edges(const std::vector<double>& values) {
+    const int n = p->grid.nv;
+    if (!p->grid.conservative || values.size() != std::size_t(n + 1))
+        throw std::runtime_error("conservative velocity grid requires nv+1 edges");
+    const int nodes = p->grid.spline_nodes();
+    std::vector<double> h(n), centers(n), factors(3 * nodes), tails(n);
+    for (int j = 0; j <= n; ++j) {
+        if (!std::isfinite(values[j])) throw std::runtime_error("velocity edges must be finite");
+        if (j == n) break;
+        h[j] = values[j + 1] - values[j];
+        if (!std::isfinite(h[j]) || h[j] <= 0)
+            throw std::runtime_error("velocity edges must be strictly increasing with finite widths");
+        centers[j] = values[j] + 0.5 * h[j];
+    }
+    if (!std::isfinite(values.back() - values.front())) throw std::runtime_error("velocity period must be finite");
+    const double tail_width = 0.05 * (values.back() - values.front());
+    for (int j = 0; j < n; ++j)
+        tails[j] = std::max(0.0, std::min(values[j + 1], values.front() + tail_width) - values[j])
+            + std::max(0.0, values[j + 1] - std::max(values[j], values.back() - tail_width));
+    if (!p->grid.periodic_velocity) {
+        // Natural spline: endpoint second derivatives vanish. Factor only the
+        // interior tridiagonal system, caching inverse pivots and upper terms.
+        for (int j = 1; j < n; ++j) {
+            factors[j] = 1 / (2 * (h[j - 1] + h[j]) - h[j - 1] * factors[nodes + j - 1]);
+            factors[nodes + j] = h[j] * factors[j];
+        }
+    } else {
+        // Periodic C2 spline: h[j-1] m[j-1] + 2(h[j-1]+h[j]) m[j]
+        //                    + h[j] m[j+1] = 6 (slope[j]-slope[j-1]).
+        // Factor the cyclic matrix once via Sherman-Morrison. Store inverse
+        // pivots, normalized upper diagonal, and z = T^{-1} (gamma,0,...,h[n-1]).
+        const double gamma = -2 * (h.back() + h.front());
+        for (int j = 0; j < n; ++j) {
+            double lower = j ? h[j - 1] : 0;
+            double diagonal = 2 * (h[(j + n - 1) % n] + h[j]);
+            if (j == 0) diagonal -= gamma;
+            if (j == n - 1) diagonal -= h.back() * h.back() / gamma;
+            factors[j] = 1 / (diagonal - (j ? lower * factors[n + j - 1] : 0));
+            factors[n + j] = j < n - 1 ? h[j] * factors[j] : 0;
+            double rhs = j == 0 ? gamma : (j == n - 1 ? h.back() : 0);
+            factors[2 * n + j] = (rhs - (j ? lower * factors[2 * n + j - 1] : 0)) * factors[j];
+        }
+        for (int j = n - 2; j >= 0; --j)
+            factors[2 * n + j] -= factors[n + j] * factors[2 * n + j + 1];
+    }
+    p->edges.upload(values);
+    p->coordinates.upload(centers);
+    p->weights.upload(h);
+    p->spline_factors.upload(factors);
+    p->tail_weights.upload(tails);
 }
 void Backend::set_background(const std::vector<double>& values) { p->background.upload(values); }
 void Backend::pack(bool to_x) {
@@ -521,5 +787,7 @@ std::size_t Backend::allocated_bytes() const {
         + p->output.size + p->inverse.size + p->spectrum.size
         + 3 * p->grid.nx + p->field_spectrum.size) * sizeof(double)
         + p->streaming_fft.workspace_bytes + p->field_fft.workspace_bytes
-        + (p->coordinates.size + p->background.size + p->ghosts.size + p->field_maximum.size) * sizeof(double);
+        + (p->coordinates.size + p->weights.size + p->edges.size + p->primitive.size + p->spline_factors.size
+            + p->tail_weights.size + p->boundary_stats.size
+            + p->background.size + p->ghosts.size + p->field_maximum.size) * sizeof(double);
 }
