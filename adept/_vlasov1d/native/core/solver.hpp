@@ -28,7 +28,7 @@ struct Options {
     int steps = 20, warmup = 3;
     double dt = 0.1, acceleration = 0.2, nu = 0;
     bool host_mpi = false;
-    std::string mode = "landau", dump, integrator = "strang", input, coordinates, background;
+    std::string mode = "landau", dump, integrator = "strang", input, coordinates, edges, background;
 };
 int integer(const std::string& text) {
     std::size_t end;
@@ -53,8 +53,9 @@ Options parse(int argc, char** argv, int rank) {
                 << "vlasov_bench [--nx N] [--nv N] [--steps N] [--warmup N] [--dt D]\n"
                 << "  [--mode landau|stream|accelerate|transpose] [--acceleration A]\n"
                 << "  [--length L] [--vmax V] [--amplitude A] [--host-mpi] [--dump FILE]\n";
-            if (rank == 0) std::cout << "  [--velocity natural|cubic] [--layout transpose|halos] [--halo-capacity N]\n"
+            if (rank == 0) std::cout << "  [--velocity natural|cubic|conservative] [--layout transpose|halos] [--halo-capacity N]\n"
                 << "  [--integrator strang|sixth] [--cells] [--input FILE] [--v-grid FILE] [--background FILE]\n";
+            if (rank == 0) std::cout << "  [--v-edges FILE] (nv+1 float64 edges; conservative periodic cell averages)\n";
             if (rank == 0) std::cout << "  [--nu D] (Chang-Cooper Dougherty; requires --cells)\n";
             // All ranks take the same path; finalize normally in main.
             o.mode = "help";
@@ -78,11 +79,14 @@ Options parse(int argc, char** argv, int rank) {
         else if (key == "--integrator") o.integrator = value;
         else if (key == "--input") o.input = value;
         else if (key == "--v-grid") o.coordinates = value;
+        else if (key == "--v-edges") o.edges = value;
         else if (key == "--background") o.background = value;
         else if (key == "--halo-capacity") o.grid.halo_capacity = integer(value);
         else if (key == "--velocity") {
-            if (value != "natural" && value != "cubic") throw std::runtime_error("unknown velocity method");
+            if (value != "natural" && value != "cubic" && value != "conservative")
+                throw std::runtime_error("unknown velocity method");
             o.grid.local_cubic = value == "cubic";
+            o.grid.conservative = value == "conservative";
         } else if (key == "--layout") {
             if (value != "transpose" && value != "halos") throw std::runtime_error("unknown layout");
             o.grid.halos = value == "halos";
@@ -262,12 +266,13 @@ private:
 struct Diagnostics { double mass, kinetic, field, minimum; bool finite; };
 Diagnostics diagnostics(Backend& b, Stepper& stepper, const Grid& g) {
     auto f = b.download();
+    auto velocities = b.download_coordinates(), weights = b.download_weights();
     double mass = 0, kinetic = 0, minimum = std::numeric_limits<double>::infinity();
     int finite = 1;
     for (std::size_t i = 0; i < f.size(); ++i) {
         int j = i / g.nx + g.rank * g.local_v();
-        double v = g.velocity(j);
-        double weight = (!g.cell_centred && (j == 0 || j == g.nv - 1) ? 0.5 : 1.0) * g.dv() * g.length / g.nx;
+        double v = velocities[j];
+        double weight = weights[j] * g.length / g.nx;
         mass += f[i] * weight;
         kinetic += 0.5 * v * v * f[i] * weight;
         minimum = std::min(minimum, f[i]);

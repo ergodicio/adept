@@ -12,7 +12,7 @@ struct Grid {
     int nx = 4096, nv = 1024, ranks = 1, rank = 0;
     double length = 12.566370614359172, vmax = 8.0, amplitude = 0.01;
     double charge = -1.0, mass = 1.0;
-    bool cell_centred = false, local_cubic = false, halos = false, collisions = false;
+    bool cell_centred = false, local_cubic = false, conservative = false, halos = false, collisions = false;
     int halo_capacity = 64;
     int local_x() const { return nx / ranks; }
     int local_v() const { return nv / ranks; }
@@ -37,6 +37,7 @@ public:
     void field(bool charge_density = false);
     void copy_field(const Backend& other);
     void velocity(double dt, double acceleration, bool self_consistent);
+    void conservative_velocity(double dt, double acceleration, bool self_consistent);
     void local_velocity(double dt, double acceleration, bool self_consistent);
     void collide(double dt, double nu);
     double max_field();
@@ -47,6 +48,9 @@ public:
     void upload_halos(const std::vector<double>& values);
     void upload_state(const std::vector<double>& values);
     void set_coordinates(const std::vector<double>& values);
+    void set_velocity_edges(const std::vector<double>& values);
+    std::vector<double> download_coordinates();
+    std::vector<double> download_weights();
     void set_background(const std::vector<double>& values);
     void pack(bool to_x);
     void unpack(bool to_x);

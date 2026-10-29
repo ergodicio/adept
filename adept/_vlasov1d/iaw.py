@@ -78,7 +78,7 @@ class IAWTurbulence1D(BaseVlasov1D):
             """Save the low-|k| complex charge-density spectrum as (re, im) rows."""
             rho = jnp.zeros(nx)
             for name, species_grid in species_grids.items():
-                rho = rho + species_params[name]["charge"] * jnp.sum(y[name], axis=1) * species_grid["dv"]
+                rho = rho + species_params[name]["charge"] * jnp.sum(y[name] * species_grid["dv"], axis=1)
             rho_k = jnp.fft.rfft(rho)[: nk_modes + 1] / nx
             return jnp.stack([jnp.real(rho_k), jnp.imag(rho_k)])
 

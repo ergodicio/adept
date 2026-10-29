@@ -43,7 +43,20 @@ constant-rate Chang-Cooper Dougherty collisions. Kinetic ions use the existing
 Each stage sums every species' charge density into one MPI field reduction,
 then advances every species under that shared field. Collisions act on the
 reference species, as in ADEPT's JAX path; inter-species collisional exchange
-is not included. Rebuild the library when updating ADEPT (current ABI: 3).
+is not included. Rebuild the library when updating ADEPT (current ABI: 4).
 Unsupported physics and
 trainable modules fail explicitly. Performance and reproduction evidence is
 under [the benchmark results](../../../benchmarks/vlasov_cuda/results/2026-10-24-adept).
+
+`terms.edfdv: conservative-cubic-spline` selects a periodic, conservative C2
+spline remap of velocity cell averages. Configure `native.velocity_grids` with
+explicit edges or an Afeyan coarse/fine refinement interval. This path uses
+full-line MPI transposes, supports independent asymmetric species grids, and
+requires collisions to be disabled. Standard observations use cell widths;
+custom callbacks must do the same. See the configuration reference for an
+example and boundary conditions. Existing performance evidence above concerns
+the local cubic halo method, not this new spline path.
+
+The standalone harness accepts `--velocity conservative --cells --layout transpose`
+and `--v-edges FILE` (raw float64, `nv+1` edges). Without an edge file it uses
+uniform cells. `--input` then contains velocity cell averages in `(nv,nx)` order.

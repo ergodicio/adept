@@ -105,6 +105,7 @@ ordinal zero and `CUDA_VISIBLE_DEVICES=0`; physical GPUs still differ.
 | `halo_capacity` | `64` | Maximum velocity halo width; exceeding it fails explicitly |
 | `host_mpi` | `false` | Stage MPI messages through host memory for MPI without CUDA support |
 | `timeout` | unset | Worker timeout in seconds |
+| `velocity_grids` | `{}` | Per-species explicit edges or coarse/fine refinement; requires `conservative-cubic-spline` (below) |
 
 Standard field/distribution save times round to the nearest timestep and
 duplicate times are merged. Outputs record actual times in `result.ts` and
@@ -118,13 +119,14 @@ Custom postprocessors that rebuild a uniform scalar axis must also use actual
 times when the final scalar interval is shorter than `scalar_stride`.
 
 Kinetic electrons and ions use the existing `terms.species` and `density`
-configuration below. Each species has its own symmetric cell-centred velocity
+configuration below. Each species has its own cell-centred velocity
 grid, charge and mass. All species contribute charge to the shared Poisson
 solve at every splitting stage and advance with their own charge-to-mass ratio.
 With no explicit species list, the usual electron species and static background
 are retained. No additional ion parameters or preprocessing are required.
 
-Supported numerics are `time: sixth`, `edfdv: cubic-spline`, spectral spatial
+Supported numerics are `time: sixth`, `edfdv: cubic-spline` or
+`conservative-cubic-spline`, spectral spatial
 streaming and `field: poisson`. The cubic operator reproduces ADEPT's local C1
 Hermite interpolation. Optional collisions are constant-rate
 `chang_cooper_dougherty` with analytic beta, applied to the reference species
@@ -136,6 +138,68 @@ This backend uses the `ergoExo`/`BaseVlasov1D` lifecycle. The explicit
 `Vlasov1DBuilder` prepares JAX programs and rejects `backend: native`; it does
 not silently fall back to JAX. Rebuild the shared library after updating ADEPT;
 incompatible native library ABIs fail with an actionable error.
+
+### Native conservative splines and nonuniform velocity grids
+
+Select `terms.edfdv: conservative-cubic-spline` for the conservative remap from
+[Afeyan et al. (2014), sections 2.1–2.2](https://arxiv.org/abs/1409.2086).
+This treats the distribution as velocity cell averages, constructs a periodic
+C2 cubic spline of the mean-subtracted primitive, and differences translated
+edge values. The mean is `sum(f * dv) / (vmax - vmin)`, ensuring a periodic
+primitive on domains of any length. Mass is conserved to roundoff. The existing
+sixth-order time splitting and spectral spatial streaming remain in use.
+
+For example, add these settings to a collisionless native configuration:
+
+```yaml
+backend: native
+grid:
+  nv: 512
+  vmin: -6.0
+  vmax: 6.0
+  # ... spatial grid and time settings ...
+terms:
+  time: sixth
+  edfdv: conservative-cubic-spline
+  field: poisson
+  # ... fokker_planck and krook disabled ...
+native:
+  library: /absolute/path/build/native/libadept_vlasov.so
+  velocity_grids:
+    electron:
+      refined_min: 1.2
+      refined_max: 1.6
+      ratio: 32
+```
+
+The refinement preserves the configured `nv` total cells; `ratio` is an integer
+at least two. Requested endpoints snap to coarse-grid edges. Inspect the
+resolved `cfg['grid']['species_grids'][name]['v_edges']` for the actual interval.
+An interval that cannot be resolved at the requested `nv`/ratio is rejected.
+Alternatively use `native.velocity_grids.<species>.edges: [...]`, containing
+exactly `nv + 1` finite, increasing edges spanning that species' `vmin`/`vmax`.
+Do not combine explicit edges and refinement parameters. Omitted species use
+uniform cells. Multispecies bounds and cell counts still come from `terms.species`.
+The conservative method supports asymmetric domains; `cubic-spline` continues
+to require symmetric uniform grids.
+
+Initialization integrates each super-Gaussian component over its velocity cells
+and normalizes it using the cell widths. Field solves and standard moments use
+those same widths. Full-resolution distribution NetCDF files include velocity
+cell bounds and a `velocity_representation: cell_average` attribute. Interpolated
+saves remain samples and should not be used to measure conserved mass. Custom
+callbacks must reduce `sum(f * species_grid['dv'], axis=1)`; `dv` is now a vector
+for this method. Moments use cell-center velocities, so energy and momentum are
+diagnostics rather than exactly conserved quantities of the velocity remap.
+
+Velocity boundaries are **periodic**: particles leaving one edge re-enter at
+the other. The unlimited cubic spline can undershoot; it does not preserve
+positivity. Use sufficiently wide domains for isolated plasma distributions.
+The global spline solve uses the MPI transpose layout and caches its matrix
+factors; `halo_capacity` has no effect on this path. Collisions are rejected
+because the current Chang–Cooper implementation assumes uniform spacing.
+Drivers and the other native restrictions above still apply. This option is
+native-only; rebuild the library (ABI 4) before using it.
 
 ## units
 
@@ -329,7 +393,7 @@ Simulation grid parameters.
 | `xmax` | float | Domain maximum x |
 | `parallel` | `false` or list of `"x"`, `"v"` | Axes to parallelize across devices using `jax.shard_map`. `"x"` shards the `edfdv` push and collision operator along the spatial axis; `"v"` shards the `vdfdx` push along the velocity axis. Requires the corresponding dimension (`nx` or `nv`) to be divisible by the number of JAX devices. Defaults to `false`. See [Running on Multiple GPUs](overview.md#running-on-multiple-gpus) for the memory model, the launch command, and the reverse-mode AD caveat on `"v"`. |
 
-The velocity grid is uniform and cell-centered: `dv = (vmax - vmin) / nv` with cell centers spanning `vmin + dv/2` to `vmax - dv/2`. An asymmetric grid (`vmin != -vmax`) is useful, for example, for a bump-on-tail distribution where less resolution is needed on one side. As with `vmax`, choose bounds wide enough that `f ~ 0` at *both* edges so that the spectral velocity push and the zero-flux collision boundary conditions remain accurate.
+By default the velocity grid is uniform and cell-centered: `dv = (vmax - vmin) / nv` with cell centers spanning `vmin + dv/2` to `vmax - dv/2`. The native conservative spline method additionally supports [nonuniform grids](#native-conservative-splines-and-nonuniform-velocity-grids). An asymmetric grid (`vmin != -vmax`) is useful, for example, for a bump-on-tail distribution where less resolution is needed on one side. As with `vmax`, choose bounds wide enough that `f ~ 0` at *both* edges so that the spectral velocity push and the zero-flux collision boundary conditions remain accurate.
 
 **Note:** For multispecies simulations, `nv`, `vmax`, and `vmin` are defined per-species in `terms.species` and the global values are not used.
 
@@ -591,7 +655,7 @@ Solver algorithm configuration.
 | Field | Type | Description |
 |-------|------|-------------|
 | `field` | string | Electric field solver: `"poisson"`, `"poisson-boltzmann"`, `"ampere"`, or `"hampere"` |
-| `edfdv` | string | Velocity advection: `"exponential"`, `"cubic-spline"`, `"lagrange7"`, `"pfc3"`, or `"sl-weno5"` |
+| `edfdv` | string | Velocity advection: `"exponential"`, `"cubic-spline"`, `"lagrange7"`, `"pfc3"`, `"sl-weno5"`, or native-only `"conservative-cubic-spline"` |
 | `vdfdx` | string | Spatial advection: `"exponential"` (default), `"pfc3"`, or `"sl-weno5"` |
 | `time` | string | Time integrator: `"sixth"` (6th order Hamiltonian), `"leapfrog"`, or `"strang"` (explicit second-order electrostatic splitting) |
 | `fokker_planck` | object | Fokker-Planck collision operator configuration |

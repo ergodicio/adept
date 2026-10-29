@@ -10,7 +10,7 @@ class NativeCore:
     def __init__(self, library, options):
         self.lib = ct.CDLL(str(library))
         version = getattr(self.lib, "av_abi_version", None)
-        if version is None or version() != 3:
+        if version is None or version() != 4:
             raise RuntimeError(
                 "native library ABI mismatch; rebuild adept/_vlasov1d/native from the installed ADEPT source"
             )

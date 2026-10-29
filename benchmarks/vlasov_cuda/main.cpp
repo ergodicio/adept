@@ -29,6 +29,8 @@ int main(int argc, char** argv) {
         if (o.mode != "landau" && o.mode != "stream" && o.mode != "accelerate" && o.mode != "transpose" && o.mode != "collide")
             throw std::runtime_error("unknown mode: " + o.mode);
         if (o.integrator != "strang" && o.integrator != "sixth") throw std::runtime_error("unknown integrator");
+        if (!o.edges.empty() && (!g.conservative || !o.coordinates.empty()))
+            throw std::runtime_error("--v-edges requires conservative splines and cannot be combined with --v-grid");
         if (g.halos && (!g.local_cubic || g.halo_capacity < 2))
             throw std::runtime_error("halos require --velocity cubic and capacity >= 2");
         if (g.halos && o.mode == "transpose")
@@ -52,6 +54,7 @@ int main(int argc, char** argv) {
                       << " local_rank=" << local_rank << " device=" << backend.device_name() << '\n';
             Stepper stepper(backend, o);
             if (!o.coordinates.empty()) backend.set_coordinates(read_binary(o.coordinates, g.nv));
+            if (!o.edges.empty()) backend.set_velocity_edges(read_binary(o.edges, g.nv + 1));
             if (!o.background.empty()) backend.set_background(read_binary(o.background, g.nx));
             initialize(backend, o);
             for (int i = 0; i < o.warmup; ++i) stepper.step();
@@ -87,7 +90,7 @@ int main(int argc, char** argv) {
                           << ",\"precision\":\"float64\",\"mode\":" << quoted(o.mode)
                           << ",\"integrator\":" << quoted(o.integrator)
                           << ",\"nu\":" << o.nu
-                          << ",\"velocity\":" << quoted(g.local_cubic ? "cubic" : "natural")
+                          << ",\"velocity\":" << quoted(g.conservative ? "conservative" : (g.local_cubic ? "cubic" : "natural"))
                           << ",\"layout\":" << quoted(g.halos ? "halos" : "transpose")
                           << ",\"cell_centred\":" << (g.cell_centred ? "true" : "false")
                           << ",\"max_halo_width\":" << stepper.max_halo_width
