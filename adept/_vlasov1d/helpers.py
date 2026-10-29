@@ -11,6 +11,7 @@ from diffrax import Solution
 from jax import numpy as jnp
 from scipy.special import gamma, gammainc
 
+from adept._vlasov1d.plotting import phase_space_coordinates
 from adept._vlasov1d.simulation import SubspeciesDistributionSpec, Vlasov1DSimulation
 from adept._vlasov1d.storage import store_f, store_fields
 from adept.normalization import PlasmaNormalization
@@ -320,13 +321,13 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
     for save_key, f_xr in f_result.items():
         if "_species_name" not in cfg["save"][save_key]:
             continue
-        species_name = cfg["save"][save_key]["_species_name"]
         f_species = f_xr[save_key]
         species_dist_dir = os.path.join(td, "plots", "dists", save_key)
         spatial_dim = "kx" if "kx" in f_species.dims else "x"
         spatial_label = r"$k_x$" if spatial_dim == "kx" else "x"
         value_label = r"$|\hat{f}|$" if spatial_dim == "kx" else "f"
         difference_label = r"$|\hat{f}| - |\hat{f}(t=0)|$" if spatial_dim == "kx" else "f - f(t=0)"
+        plot_x, plot_v = phase_space_coordinates(f_xr, save_key, cfg["grid"]["dx"])
 
         # Select ~8 time snapshots for facet plot
         t_skip = int(f_species.coords["t"].data.size // 8)
@@ -347,7 +348,7 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
         axes_flat = axes.flatten()
 
         # Plot f(t=0) in first panel with its own colorbar
-        im0 = axes_flat[0].pcolormesh(f0.coords[spatial_dim].values, f0.coords[f"v_{species_name}"].values, f0.values.T)
+        im0 = axes_flat[0].pcolormesh(plot_x, plot_v, f0.values.T)
         axes_flat[0].set_xlabel(spatial_label)
         axes_flat[0].set_ylabel("v")
         axes_flat[0].set_title(f"t = {f_sliced.coords['t'].values[0]:.2f}")
@@ -361,8 +362,8 @@ def post_process(result: Solution, cfg: dict, td: str, args: dict):
                 ax = axes_flat[i + 1]
                 data = f_diff.isel(t=i)
                 im = ax.pcolormesh(
-                    data.coords[spatial_dim].values,
-                    data.coords[f"v_{species_name}"].values,
+                    plot_x,
+                    plot_v,
                     data.values.T,
                     vmin=-vabs,
                     vmax=vabs,
