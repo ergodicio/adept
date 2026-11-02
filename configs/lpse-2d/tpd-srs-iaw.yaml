@@ -55,6 +55,7 @@ save:
 solver: lpse-2d
 terms:
   epw:
+    solver: combined
     boundary:
       x: absorbing
       y: periodic
@@ -84,6 +85,7 @@ terms:
     tau_damping: 100fs
     t_start: 0ps
   light:
+    solver: spectral
     pump_depletion: true
   zero_mask: true
 units:

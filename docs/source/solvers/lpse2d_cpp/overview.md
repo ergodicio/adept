@@ -59,12 +59,15 @@ These equations model the evolution and interaction of the complex envelopes of 
 
 One can solve these equations with or without "pump depletion". "Pump depletion" is the effect of the plasma waves on the light waves. By default the pump is prescribed analytically (an external driver for the plasma waves), which is adequate below the absolute instability threshold; above it the plasma-wave and Raman fields grow without bound because nothing depletes the pump.
 
-Setting `terms.light.pump_depletion: true` evolves the pump `E0` with the finite-difference envelope solver and a two-point boundary injector at the low-density side. Every active instability contributes its reciprocal pump term:
+Setting `terms.light.pump_depletion: true` evolves the pump `E0` with the selected light solver and a boundary injector. The separate formulation supports finite-difference or spectral light; the combined formulation requires spectral light. Every active instability contributes its reciprocal pump term:
 
 - SRS contributes $-i e/(4 \omega_1 m_e) (\nabla^2 \phi) \mathbf{E}_1$.
 - TPD contributes $i e/(4 \omega_0 m_e) e^{i(\omega_0-2\omega_{p0})t} E_{h,y}\nabla\!\cdot\!\mathbf{E}_h$ to the y-polarized pump. This is the discrete reciprocal of the existing TPD source and conserves $\int[|E_0|^2+(\omega_{p0}/\omega_0)|\mathbf{E}_h|^2]$ for the coupling terms alone.
 
 Both terms are included when TPD and SRS are enabled together. Dynamic pump evolution enables true transmission/absorption diagnostics and provides the physical saturation channel needed above threshold.
+
+The LASY speckle driver currently supplies a prescribed transverse profile. It cannot be
+combined with pump depletion; speckled broadband TPD is available with a prescribed pump.
 
 ### SRS diagnostics
 
