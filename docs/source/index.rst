@@ -43,6 +43,7 @@ Documentation
    solvers/pic1d/overview
    solvers/farsight1d/overview
    solvers/lpse2d/overview
+   solvers/lpse2d_cpp/overview
    solvers/tf1d/overview
    solvers/osiris/overview
 
@@ -59,6 +60,7 @@ Documentation
    solvers/pic1d/config
    solvers/farsight1d/config
    solvers/lpse2d/config
+   solvers/lpse2d_cpp/config
    solvers/vfp2d/config
    solvers/tf1d/config
    solvers/osiris/config

@@ -42,7 +42,7 @@ if args.run_id is None and args.cfg:
         if hidden is not None:
             hidden["active"] = False
 
-    if cfg.get("solver") != "envelope-2d":
+    if cfg.get("solver") not in {"envelope-2d", "lpse-2d"}:
         from jax import config
 
         config.update("jax_enable_x64", True)

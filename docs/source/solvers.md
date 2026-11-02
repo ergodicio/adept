@@ -12,6 +12,7 @@ at the top of a configuration file selects which one runs.
 | `vfp-1d` | [VFP-1D](solvers/vfp1d/overview.md) | Vlasov-Fokker-Planck electron transport |
 | `vfp-2d` | [VFP-2D](solvers/vfp2d/overview.md) | 2D3P arbitrary-harmonic Vlasov-Maxwell-Fokker-Planck |
 | `envelope-2d` | [LPSE-2D](solvers/lpse2d/overview.md) | 2D laser-plasma envelope solver |
+| `lpse-2d` | [C++ LPSE port](solvers/lpse2d_cpp/overview.md) | Independent JAX port with separate TPD/SRS and combined TPD + SRS formulations |
 | `spectrax-1d` | [Spectrax-1D](solvers/spectrax1d/overview.md) | Hermite-Fourier Vlasov-Maxwell |
 | `hermite-epw-1d` | [Spectrax-1D](solvers/spectrax1d/overview.md) | Spectrax-1D with electron plasma wave diagnostics |
 | `hermite-maxwell-1d` | [Spectrax-1D](solvers/spectrax1d/overview.md) | Spectrax-1D with EM dispersion/absorption diagnostics |

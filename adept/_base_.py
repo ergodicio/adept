@@ -53,6 +53,8 @@ class ADEPTModule:
 
     """
 
+    jit_compile = True
+
     def __init__(self, cfg) -> None:
         self.cfg = cfg
         self.state = None
@@ -288,7 +290,7 @@ class ergoExo:
 
         """
         # Enforce float64 for kinetic solvers (density conservation requires it)
-        if cfg["solver"] != "envelope-2d":
+        if cfg["solver"] not in {"envelope-2d", "lpse-2d"}:
             if not jax.config.jax_enable_x64:
                 raise RuntimeError(
                     f"Solver '{cfg['solver']}' requires float64 for numerical precision. "
@@ -322,6 +324,9 @@ class ergoExo:
 
             # config = ConfigModel(**cfg)
 
+        elif cfg["solver"] == "lpse-2d":
+            from adept.lpse2d_cpp import BaseLPSE2D as this_module
+
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module
 
@@ -352,6 +357,10 @@ class ergoExo:
         else:
             raise NotImplementedError("This solver approach has not been implemented yet")
 
+        if cfg.get("backend", "jax") == "native":
+            from adept.vlasov1d import native_backend
+
+            this_module = native_backend(this_module)
         return this_module(cfg)
 
     def _setup_(self, cfg: dict, td: str, adept_module: ADEPTModule = None, log: bool = True) -> dict[str, Module]:
@@ -370,6 +379,10 @@ class ergoExo:
         if adept_module is None:
             self.adept_module = self._get_adept_module_(cfg)
         else:
+            if cfg.get("backend", "jax") == "native":
+                from adept.vlasov1d import native_backend
+
+                adept_module = native_backend(adept_module)
             self.adept_module = adept_module(cfg)
 
         # dump raw config
@@ -401,11 +414,14 @@ class ergoExo:
         self.adept_module.init_diffeqsolve()
         modules = self.adept_module.init_modules()
 
-        self._compat_execution, self.compatibility_fallback_reason = LegacyPreparedExecution.try_create(
-            original_cfg,
-            legacy_module=self.adept_module,
-            custom_module=adept_module is not None,
-        )
+        if not self.adept_module.jit_compile:
+            self.compatibility_fallback_reason = "native execution owns its worker lifecycle"
+        else:
+            self._compat_execution, self.compatibility_fallback_reason = LegacyPreparedExecution.try_create(
+                original_cfg,
+                legacy_module=self.adept_module,
+                custom_module=adept_module is not None,
+            )
         if self._compat_execution is not None:
             self.execution_backend = "prepared"
 
@@ -414,6 +430,9 @@ class ergoExo:
         return modules
 
     def _execute_simulation(self, modules: dict | None, args: dict | None) -> dict:
+        if not self.adept_module.jit_compile:
+            self.execution_backend = "native"
+            return self.adept_module(modules, args)
         if self._compat_execution is not None:
             reason = self._compat_execution.fallback_reason(
                 state=self.adept_module.state,

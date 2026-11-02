@@ -1,0 +1,37 @@
+{
+  "checkpoint": "/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx268800-93a418d7/workdir/campaigns/production-nx268800/checkpoint-state/step-030000-167819aeccca",
+  "manifest_sha256": "c9b9083f55cfcee8595556685d9e22eb9d87829fa6748726f7f44d5749fbec1f",
+  "actual_time": 600.0,
+  "config_sha256": "6adb42855432b79a74f63290678103c17c53842074d77bf092df38483f634a83",
+  "adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+  "jax": "0.10.2",
+  "nx": 268800,
+  "nv": 4096,
+  "dt": 0.02,
+  "nu": 1e-12,
+  "devices": [
+    "cuda:0",
+    "cuda:1",
+    "cuda:2",
+    "cuda:3",
+    "cuda:4",
+    "cuda:5",
+    "cuda:6",
+    "cuda:7"
+  ],
+  "milestones": [
+    {
+      "steps": 1,
+      "advanced_steps": 1,
+      "rank0_seconds": 60.40102391698747
+    },
+    {
+      "steps": 100,
+      "advanced_steps": 99,
+      "rank0_seconds": 74.4436078449944
+    }
+  ],
+  "process_count": 8,
+  "distributed": true,
+  "prepared_input": "/pscratch/sd/a/archis/adept-sessions/20261024T103224Z-71019-3473/outputs/native-nx268800"
+}

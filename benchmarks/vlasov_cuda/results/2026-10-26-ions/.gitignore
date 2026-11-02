@@ -1,0 +1,4 @@
+# Raw validation evidence remains local and in the isolated NERSC session.
+*
+!.gitignore
+!README.md

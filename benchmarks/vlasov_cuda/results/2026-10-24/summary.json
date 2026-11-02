@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-24",
+  "system": "NERSC Perlmutter",
+  "device": "NVIDIA A100-SXM4-40GB",
+  "software": {
+    "cuda": "13.2.78",
+    "gcc": "14.3.0",
+    "cray_mpich": "9.1.0",
+    "cmake": "3.30.2"
+  },
+  "allocation_job_id": "60204067",
+  "nodes": [
+    "nid001409",
+    "nid001412"
+  ],
+  "problem": {
+    "nx": 32768,
+    "nv": 8192,
+    "precision": "float64",
+    "dt": 0.1,
+    "warmup": 3,
+    "steps": 20,
+    "repeats": 3
+  },
+  "timing": "Median of three runs, each reporting the maximum rank mean over 20 steps; explicit device synchronization; no communication/computation overlap.",
+  "summary": [
+    {
+      "nodes": 1,
+      "ranks": 1,
+      "step_ms": 68.90644464999696,
+      "stream_ms": 49.01655189999872,
+      "spline_ms": 17.81408299999896,
+      "pack_ms": 0,
+      "mpi_ms": 0,
+      "field_ms": 2.06822614998714,
+      "max_allocated_bytes_per_rank": 21476605968,
+      "speedup": 1.0
+    },
+    {
+      "nodes": 1,
+      "ranks": 2,
+      "step_ms": 58.70064285001035,
+      "stream_ms": 24.53943520000053,
+      "spline_ms": 12.87684925000008,
+      "pack_ms": 6.339934000004632,
+      "mpi_ms": 13.78156439998861,
+      "field_ms": 1.185581100014588,
+      "max_allocated_bytes_per_rank": 10739122192,
+      "speedup": 1.1738618404242027
+    },
+    {
+      "nodes": 1,
+      "ranks": 4,
+      "step_ms": 36.94672150001566,
+      "stream_ms": 12.33317455000815,
+      "spline_ms": 10.97503700001994,
+      "pack_ms": 3.171595100008062,
+      "mpi_ms": 9.749371850006128,
+      "field_ms": 0.7748922500013578,
+      "max_allocated_bytes_per_rank": 5370380304,
+      "speedup": 1.8650218978148776
+    },
+    {
+      "nodes": 2,
+      "ranks": 2,
+      "step_ms": 121.0015570499991,
+      "stream_ms": 24.53902204998144,
+      "spline_ms": 12.87798075001092,
+      "pack_ms": 6.338750850022734,
+      "mpi_ms": 76.09802300000297,
+      "field_ms": 1.184742850011844,
+      "max_allocated_bytes_per_rank": 10739122192,
+      "speedup": 0.5694674211632178
+    },
+    {
+      "nodes": 2,
+      "ranks": 4,
+      "step_ms": 65.88151769999513,
+      "stream_ms": 12.31640194998249,
+      "spline_ms": 10.97326685001008,
+      "pack_ms": 3.172203949969798,
+      "mpi_ms": 38.54746239999827,
+      "field_ms": 0.9742971999912697,
+      "max_allocated_bytes_per_rank": 5370380304,
+      "speedup": 1.0459146518721145
+    }
+  ],
+  "max_abs_mass_relative_change": 5.062453547606825e-12,
+  "max_abs_energy_relative_change": 3.391486345094563e-07,
+  "minimum_f": -2.32438533550678e-16,
+  "source_sha256": {
+    "CMakeLists.txt": "d5f11680925c336c63ea39e306230371f6dcb3e41ba423c8c09599c7c592664c",
+    "backend.cpp": "0921b3b030e6ff54cfa5a442ca660d9a51cc1ebb31d94205016c2e06786056de",
+    "backend.hpp": "d45dbddea158e2c8d78b3c803cd83490354211082b61e988cf07e55d67c0bc47",
+    "main.cpp": "5c13dff7de6e21aa536d90aa9e46ccbc68e8773d32fe84ea123c0390f80464d5",
+    "measure.py": "d896e2c6537f650280e3dc7795d255e6d7181241278360b58f098a3a6caef4fb",
+    "validate.py": "36fd3383185f1a3ddba754d587ca8d76f94c790597a86859200683330907955f"
+  },
+  "completed_slurm_steps": "60204067.8 through .19 (single-node checks), .21 through .24 (two-node checks), .25 through .39 (measurements); COMPLETED with exit 0:0.",
+  "transport_setup": "MPICH_GPU_SUPPORT_ENABLED=1; --gpus-per-node=4 --gpu-bind=none; cudaSetDevice before MPI_Init."
+}

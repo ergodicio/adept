@@ -1,0 +1,27 @@
+{"backend": "adept-jax", "nx": 268800, "nv": 4096, "ranks": 8, "repeat": 0, "steps": 10, "warmup": 3, "step_ms": 757.4678515986307, "rank_seconds": [7.574635903991293, 7.574306378985057, 7.574678515986307, 7.574352947995067, 7.574508777994197, 7.574119797995081, 7.574576738988981, 7.574465805984801], "sum": 36693231.71487449, "sum_squares": 4200670.248861345, "minimum": -0.09580882788649053, "maximum": 0.4397238821796596}
+{"backend": "adept-jax", "nx": 268800, "nv": 4096, "ranks": 8, "repeat": 1, "steps": 10, "warmup": 3, "step_ms": 754.9265112000285, "rank_seconds": [7.54897340000025, 7.549149327998748, 7.548913473001448, 7.549265112000285, 7.548920306988293, 7.5492265569919255, 7.548932781006442, 7.549169297009939], "sum": 36693231.71487449, "sum_squares": 4200670.248861345, "minimum": -0.09580882788649053, "maximum": 0.4397238821796596}
+{"backend": "adept-jax", "nx": 268800, "nv": 4096, "ranks": 8, "repeat": 2, "steps": 10, "warmup": 3, "step_ms": 756.6989740997087, "rank_seconds": [7.566910344001371, 7.566823539993493, 7.566708603000734, 7.566989740997087, 7.566779902001144, 7.566962459008209, 7.566738772002282, 7.566934483998921], "sum": 36693231.71487449, "sum_squares": 4200670.248861345, "minimum": -0.09580882788649053, "maximum": 0.4397238821796596}
+W1024 12:21:00.371730 1208701 pjrt_client.cc:1615] WatchTasksAsync failed for task 0: CANCELLED: CANCELLED
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_message:"CANCELLED", grpc_status:1} [type.googleapis.com/tensorflow.DerivedStatus='']
+W1024 12:21:00.371938 1208815 pjrt_client.cc:1615] WatchTasksAsync failed for task 2: CANCELLED: CANCELLED
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_message:"CANCELLED", grpc_status:1} [type.googleapis.com/tensorflow.DerivedStatus='']
+W1024 12:21:00.371940 1208814 pjrt_client.cc:1615] WatchTasksAsync failed for task 6: CANCELLED: CANCELLED
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_message:"CANCELLED", grpc_status:1} [type.googleapis.com/tensorflow.DerivedStatus='']
+W1024 12:21:00.372385 1208816 pjrt_client.cc:1615] WatchTasksAsync failed for task 4: UNAVAILABLE: failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_message:"failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused", grpc_status:14}
+W1024 12:21:00.372652 1212204 pjrt_client.cc:1615] WatchTasksAsync failed for task 3: UNAVAILABLE: failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_message:"failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused", grpc_status:14}
+W1024 12:21:00.372711 1212202 pjrt_client.cc:1615] WatchTasksAsync failed for task 5: UNAVAILABLE: failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_status:14, grpc_message:"failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused"}
+W1024 12:21:00.372743 1212203 pjrt_client.cc:1615] WatchTasksAsync failed for task 1: UNAVAILABLE: failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_status:14, grpc_message:"failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused"}
+W1024 12:21:00.372754 1212205 pjrt_client.cc:1615] WatchTasksAsync failed for task 7: UNAVAILABLE: failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused
+Additional GRPC error information from remote target coordination_service while calling /xla.coordination.CoordinationService/WatchTasks:
+:UNKNOWN:Error received from peer  {grpc_status:14, grpc_message:"failed to connect to all addresses; last error: UNKNOWN: ipv4:128.55.65.28:63446: Failed to connect to remote host: Connection refused"}

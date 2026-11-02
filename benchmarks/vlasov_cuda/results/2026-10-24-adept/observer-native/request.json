@@ -1,0 +1,84 @@
+{
+  "library": "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/workdir/native-build/libadept_vlasov.so",
+  "options": [
+    "--nx",
+    "32",
+    "--nv",
+    "64",
+    "--length",
+    "20.94",
+    "--vmax",
+    "8.0",
+    "--dt",
+    "0.02",
+    "--nu",
+    "0.001",
+    "--cells",
+    "--integrator",
+    "sixth",
+    "--velocity",
+    "cubic",
+    "--layout",
+    "halos",
+    "--halo-capacity",
+    "64",
+    "--input",
+    "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/outputs/integration-observers-v2/adept-native-gz4p09y5/initial.bin",
+    "--v-grid",
+    "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/outputs/integration-observers-v2/adept-native-gz4p09y5/v.bin",
+    "--background",
+    "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/outputs/integration-observers-v2/adept-native-gz4p09y5/background.bin"
+  ],
+  "times": {
+    "fields": [
+      0.0,
+      0.02,
+      0.04,
+      0.08,
+      0.1
+    ],
+    "electron.main": [
+      0.0,
+      0.04,
+      0.1
+    ],
+    "default": [
+      0.0,
+      0.02,
+      0.04,
+      0.06,
+      0.08,
+      0.1
+    ],
+    "electron.f0": [
+      0.0
+    ],
+    "electron.pkv": [
+      0.0,
+      0.05,
+      0.1
+    ],
+    "electron.cascade": [
+      0.0,
+      0.05,
+      0.1
+    ]
+  },
+  "t0": 0.0,
+  "dt": 0.02,
+  "steps": 5,
+  "device": "cuda",
+  "ranks": 8,
+  "pythonpath": [
+    "/pscratch/sd/a/archis/vp-turbulence-sessions/20261023T081121Z-nv4096-nx134400-5ce4fe14/src",
+    "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/benchmarks/vlasov_cuda",
+    "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src",
+    "/pscratch/sd/a/archis/adept-sessions/20261024T190159Z-99199-22637/src/src",
+    "/opt/nersc/pymon",
+    "/global/common/software/m4490/archis/uv-python/cpython-3.13.7-linux-x86_64-gnu/lib/python313.zip",
+    "/global/common/software/m4490/archis/uv-python/cpython-3.13.7-linux-x86_64-gnu/lib/python3.13",
+    "/global/common/software/m4490/archis/uv-python/cpython-3.13.7-linux-x86_64-gnu/lib/python3.13/lib-dynload",
+    "/global/common/software/m4490/archis/venvs/adept/lib/python3.13/site-packages",
+    "/pscratch/sd/a/archis/adept"
+  ]
+}

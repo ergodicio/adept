@@ -1,0 +1,39 @@
+{
+  "campaign": "nv4096-t2000-20261023-nx134400",
+  "git_commit": "2c4904968009d695e2625fd264f057dd9c846039",
+  "config_sha256": "5a9f5347e6253a3d4201745318843857c568b3787cf91e9fe81a623d0cdbb214",
+  "pinned_adept_commit": "ddd70b957dc3df85f0b5ec84af927c25d09d24e0",
+  "pinned_jax": "0.10.2",
+  "matched_ladder": {
+    "nx": 134400,
+    "L": 12600.0,
+    "nv": 4096,
+    "dt": 0.02,
+    "beam_seeds": [
+      42,
+      43
+    ],
+    "noise_reference_nx": 51610,
+    "noise_max_mode_both_beams": 25804,
+    "noise_value": 1e-06,
+    "noise_rms_renormalized": false,
+    "nyquist_mode_dropped": true,
+    "projection": "Same seeded reference Fourier coefficients; truncate to representable conjugate pairs, retain cell-centre phase and amplitudes."
+  },
+  "members": [
+    {
+      "nx": 134400,
+      "nv": 4096,
+      "parent_run_id": "aa042900211640d9a90f20001772f957",
+      "config": "nx134400.yaml",
+      "config_sha256": "5a9f5347e6253a3d4201745318843857c568b3787cf91e9fe81a623d0cdbb214"
+    },
+    {
+      "nx": 268800,
+      "nv": 4096,
+      "parent_run_id": "916dc390224d4c14a417d772991a2812",
+      "config": "nx268800.yaml",
+      "config_sha256": "6adb42855432b79a74f63290678103c17c53842074d77bf092df38483f634a83"
+    }
+  ]
+}

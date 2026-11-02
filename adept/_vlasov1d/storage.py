@@ -121,6 +121,16 @@ def distribution_datasets(cfg: dict, this_t: dict, ys: dict) -> dict:
             coords = (("t", this_t[save_key]), ("x", cfg["grid"]["x"]), (v_dim, full_v))
 
         f_store = xr.Dataset({save_key: xr.DataArray(ys[save_key], coords=coords)})
+        if "v" not in save_keys:
+            species_grid = cfg["grid"]["species_grids"].get(
+                species_name if "_species_name" in spc_save_cfg else "electron", {}
+            )
+            if "v_edges" in species_grid:
+                edges = np.asarray(species_grid["v_edges"])
+                bounds_name = f"{v_dim}_bounds"
+                f_store[bounds_name] = ((v_dim, "bounds"), np.stack([edges[:-1], edges[1:]], axis=1))
+                f_store[v_dim].attrs["bounds"] = bounds_name
+                f_store[save_key].attrs["velocity_representation"] = "cell_average"
         result[save_key] = f_store
 
     return result

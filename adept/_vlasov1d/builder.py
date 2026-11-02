@@ -83,6 +83,11 @@ class Vlasov1DBuilder:
             raise ValueError(f"Vlasov1DBuilder cannot prepare solver {spec.solver!r}")
         if spec.schema_version != "1":
             raise ValueError(f"Unsupported Vlasov1D specification schema version {spec.schema_version!r}")
+        if spec.config_dict().get("backend", "jax") == "native":
+            raise NotImplementedError(
+                "backend: native runs through ergoExo (including custom BaseVlasov1D subclasses); "
+                "Vlasov1DBuilder prepares a JAX program"
+            )
         if not jax.config.jax_enable_x64:
             raise RuntimeError("vlasov-1d requires float64; enable jax_enable_x64 before preparation")
         normalized_key, seed, provenance = normalize_key(key)
