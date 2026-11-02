@@ -1,0 +1,251 @@
+import math
+
+import diffrax
+import numpy as np
+from diffrax import ODETerm, SaveAt, SubSaveAt, diffeqsolve
+from equinox import filter_jit
+
+from adept import ADEPTModule
+from adept._base_ import Stepper
+from adept._lpse2d_cpp.core.vector_field import SplitStep
+from adept._lpse2d_cpp.helpers import (
+    _Q,
+    get_density_profile,
+    get_derived_quantities,
+    get_save_quantities,
+    get_solver_quantities,
+    post_process,
+    write_units,
+)
+from adept._lpse2d_cpp.modules import driver
+
+
+class BaseLPSE2D(ADEPTModule):
+    def __init__(self, cfg) -> None:
+        super().__init__(cfg)
+
+    def post_process(self, run_output: dict, td: str) -> dict:
+        return post_process(run_output["solver result"], self.cfg, td)
+
+    def write_units(self) -> dict:
+        """
+        Write the units to a file
+
+        :param cfg:
+        :param td:
+        :return: cfg
+        """
+        return write_units(self.cfg)
+
+    def get_derived_quantities(self):
+        self.cfg = get_derived_quantities(self.cfg)
+
+    def get_solver_quantities(self):
+        self.cfg["grid"] = get_solver_quantities(self.cfg)
+
+    def init_modules(self) -> dict:
+        modules = {}
+        if "E0" in self.cfg["drivers"]:
+            DriverModule = driver.choose_driver(self.cfg["drivers"]["E0"]["shape"])
+            if "file" in self.cfg["drivers"]["E0"]:
+                modules["laser"] = driver.load(self.cfg, DriverModule)
+            else:
+                modules["laser"] = DriverModule(self.cfg)
+
+        return modules
+
+    def init_diffeqsolve(self):
+        self.cfg = get_save_quantities(self.cfg)
+        t0 = float(getattr(self, "restart_t0", 0.0))
+        self.time_quantities = {
+            "t0": t0,
+            "t1": self.cfg["grid"]["tmax"],
+            "max_steps": self.cfg["grid"]["max_steps"],
+            "save_t0": t0,
+            "save_t1": self.cfg["grid"]["tmax"],
+            "save_nt": self.cfg["grid"]["tmax"],
+        }
+
+        subs = {
+            k: SubSaveAt(ts=subsave["t"]["ax"], fn=subsave["func"])
+            for k, subsave in self.cfg["save"].items()
+            if isinstance(subsave, dict) and "func" in subsave
+        }
+        if self.cfg["save"].get("checkpoint"):
+            # the full state at the final time (save.checkpoint: true | path), written by
+            # post_process as an .npz that `restart.file` accepts
+            subs["checkpoint"] = SubSaveAt(ts=np.array([self.cfg["grid"]["tmax"]]), fn=lambda t, y, args: y)
+        self.diffeqsolve_quants = dict(terms=ODETerm(SplitStep(self.cfg)), solver=Stepper(), saveat=dict(subs=subs))
+
+    def init_state_and_args(self) -> dict:
+        # The initial EPW is identically zero; noise-seeded runs get their seeding from
+        # terms.epw.source.noise (a per-step source in SpectralEPWSolver). The old
+        # density.noise draws were dead code, but they consumed the global numpy RNG
+        # stream and made "identical" runs differ -- so they are gone.
+        epw = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"]), dtype=np.complex128)
+
+        self.cfg["grid"]["background_density"] = get_density_profile(self.cfg)
+        # the light fields carry three components (x, y, z) as LPSE's do on any grid (plan 2
+        # F.1); the grid is 2-D, so E_z is purely transverse and only an s-polarised beam or
+        # seed populates it
+        E0 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 3), dtype=np.complex128)
+        E1 = np.zeros((self.cfg["grid"]["nx"], self.cfg["grid"]["ny"], 3), dtype=np.complex128)
+        state = {"epw": epw, "E0": E0, "E1": E1}
+
+        if self.cfg.get("initial_perturbation"):
+            # LPSE initialPerturbation: a plane wave in the potential (k-space state; with the
+            # combined solver also as the longitudinal part of E1) or in one light component
+            from adept._lpse2d_cpp.helpers import initial_perturbation_field
+
+            ip = self.cfg["initial_perturbation"]
+            wave = initial_perturbation_field(self.cfg)
+            if ip.get("field", "epw") == "epw":
+                phi_k = np.fft.fft2(wave)
+                state["epw"] = phi_k
+                if str(self.cfg["terms"]["epw"].get("solver", "separate")) == "combined":
+                    kx = np.asarray(self.cfg["grid"]["kx"])[:, None]
+                    ky = np.asarray(self.cfg["grid"]["ky"])[None, :]
+                    state["E1"][..., 0] = np.fft.ifft2(-1j * kx * phi_k)
+                    state["E1"][..., 1] = np.fft.ifft2(-1j * ky * phi_k)
+            else:
+                component = "xyz".index(str(ip.get("component", "y")))
+                state[ip["field"]][..., component] = wave
+
+        if self.cfg["terms"]["epw"].get("energy_ledger", False):
+            from adept._lpse2d_cpp.core.epw import LEDGER_CHANNELS, LEDGER_KEY
+
+            state[LEDGER_KEY] = np.zeros(len(LEDGER_CHANNELS), dtype=np.float64)
+
+        if self.cfg["terms"].get("iaw", {}).get("active", False):
+            iaw_shape = (self.cfg["grid"]["nx"], self.cfg["grid"]["ny"])
+            state["iaw_density"] = np.zeros(iaw_shape, dtype=np.float64)
+            state["iaw_velocity_divergence"] = np.zeros(iaw_shape, dtype=np.float64)
+            iaw_cfg = self.cfg["terms"]["iaw"]
+            if int(iaw_cfg.get("stride", 1) or 1) > 1:
+                # the density at the start of the current IAW step, which the waves interpolate
+                # from in the EPW steps between IAW updates (LPSE Nelf_old)
+                state["iaw_density_old"] = np.zeros(iaw_shape, dtype=np.float64)
+            s_fd = int(iaw_cfg.get("super_samples", 2)) if str(iaw_cfg.get("solver", "spectral")) == "fd" else 1
+            if s_fd > 1:
+                # the fd solver's super-sampled fields (plan 2 I.1)
+                from adept._lpse2d_cpp.core.iaw_fd import FD_STATE_KEYS
+
+                fine = (s_fd * iaw_shape[0], s_fd * iaw_shape[1] if iaw_shape[1] > 1 else 1)
+                state[FD_STATE_KEYS[0]] = np.zeros(fine, dtype=np.float64)
+                state[FD_STATE_KEYS[1]] = np.zeros(fine, dtype=np.float64)
+
+        if self.cfg["terms"].get("hpe", {}).get("active", False):
+            from adept._lpse2d_cpp.core.hpe import load_particles
+
+            # particle positions/momenta and histogram/damping state are real float64,
+            # so the .view below is a no-op
+            state = state | load_particles(self.cfg)
+
+        if self.cfg["terms"].get("qle", {}).get("active", False):
+            from adept._lpse2d_cpp.core.qle import load_qle_state
+
+            state = state | load_qle_state(self.cfg)
+
+        self.state = {k: v.view(dtype=np.float64) for k, v in state.items()}
+        # ---- restart (LPSE --restart): replace the freshly built state by a checkpoint and
+        # continue from its time; the per-step noise / wall keys are folded in from the
+        # time index, so a resumed run reproduces the unbroken one to round-off
+        self.restart_t0 = 0.0
+        restart = self.cfg.get("restart")
+        if restart and restart.get("file"):
+            loaded = np.load(restart["file"], allow_pickle=False)
+            self.restart_t0 = float(loaded["t"])
+            # the saved time carries the solver's float precision; snap it to the step grid so the
+            # resumed step times coincide with the unbroken run's
+            dt = float(self.cfg["grid"]["dt"])
+            n_steps = round(self.restart_t0 / dt)
+            if abs(self.restart_t0 - n_steps * dt) < 1.0e-5 * dt:
+                self.restart_t0 = n_steps * dt
+            if self.restart_t0 >= self.cfg["grid"]["tmax"]:
+                raise ValueError(f"restart time {self.restart_t0} ps is not before grid.tmax")
+            loaded = {k: loaded[k] for k in loaded.files}
+            if "iaw_density_old" in self.state and "iaw_density_old" not in loaded and "iaw_density" in loaded:
+                # a checkpoint from before the IAW interpolation: take its step as an IAW step start
+                loaded["iaw_density_old"] = loaded["iaw_density"]
+            missing = [k for k in self.state if k not in loaded]
+            if missing:
+                raise ValueError(f"checkpoint {restart['file']} lacks state entries {missing}")
+            restored = {}
+            for k, v in self.state.items():
+                arr = np.asarray(loaded[k], dtype=np.float64)
+                if k in ("E0", "E1") and arr.shape[:-1] == v.shape[:-1] and arr.shape[-1] == 4:
+                    # a two-component (x, y) checkpoint from before plan 2 F.1: pad E_z = 0
+                    # (the float64 view of a complex component axis has twice the length)
+                    arr = np.concatenate([arr, np.zeros(arr.shape[:-1] + (2,), dtype=np.float64)], axis=-1)
+                if arr.shape != v.shape:
+                    raise ValueError(f"checkpoint entry {k} has shape {arr.shape}, expected {v.shape}")
+                restored[k] = arr
+            self.state = restored
+            for sub in self.cfg["save"].values():
+                if isinstance(sub, dict) and isinstance(sub.get("t"), dict) and "tmin" in sub["t"]:
+                    if _Q(sub["t"]["tmin"]).to("ps").value < self.restart_t0:
+                        sub["t"]["tmin"] = f"{self.restart_t0:.9g}ps"
+            self._rebase_light_spectrum_probes()
+            # the default series samples the grid's time axis: keep only the resumed interval
+            t_axis = np.asarray(self.cfg["grid"]["t"])
+            kept = t_axis[t_axis >= self.restart_t0 - 1.0e-12]
+            self.cfg["grid"]["t"] = kept if kept.size else np.asarray([self.cfg["grid"]["tmax"]])
+            print(f"restarting from {restart['file']} at t = {self.restart_t0:.6g} ps")
+        self.args = {"drivers": {k: v["derived"] for k, v in self.cfg["drivers"].items()}}
+
+    def _rebase_light_spectrum_probes(self):
+        """On restart, start each ``save.light_spectrum`` probe (a list of probes with a top-level,
+        optional ``tmin``) at its first own sample ``tmin + k interval`` inside the resumed interval,
+        so it continues the unbroken run's sample times; a probe whose window has ended is dropped."""
+
+        def ps(value):
+            return float(value) if isinstance(value, (int, float)) else _Q(value).to("ps").value
+
+        probes = self.cfg["save"].get("light_spectrum") or []
+        kept = []
+        for probe in probes:
+            interval = ps(probe["interval"])
+            t_first = ps(probe["tmin"]) if probe.get("tmin") is not None else ps(self.cfg["grid"]["tmin"])
+            if t_first < self.restart_t0:
+                t_first += math.ceil((self.restart_t0 - t_first) / interval - 1.0e-9) * interval
+            t_last = ps(probe["tmax"]) if probe.get("tmax") is not None else ps(self.cfg["grid"]["tmax"])
+            if t_first > t_last + 1.0e-12:
+                field = probe.get("field", "E0")
+                print(f"restart: save.light_spectrum probe on {field} ended before the restart; dropped")
+                continue
+            kept.append({**probe, "tmin": f"{t_first:.12g}ps"})
+        if probes:
+            self.cfg["save"]["light_spectrum"] = kept
+
+    @filter_jit
+    def __call__(self, trainable_modules: dict, args: dict | None = None) -> dict:
+        state = self.state
+
+        if args is not None:
+            args = self.args | args
+        else:
+            args = self.args
+
+        for name, module in trainable_modules.items():
+            state, args = module(state, args)
+
+        if self.cfg.get("opt", {}).get("checkpoints_coeff"):
+            base_checkpoints = math.floor(-1.5 + math.sqrt(2 * (self.cfg["grid"]["max_steps"] + 2048) + 0.25)) + 1
+            checkpoints = int(self.cfg["opt"]["checkpoints_coeff"] * base_checkpoints)
+        else:
+            checkpoints = None
+
+        solver_result = diffeqsolve(
+            terms=self.diffeqsolve_quants["terms"],
+            solver=self.diffeqsolve_quants["solver"],
+            t0=self.time_quantities["t0"],
+            t1=self.time_quantities["t1"],
+            max_steps=self.cfg["grid"]["max_steps"] + 2048,
+            dt0=self.cfg["grid"]["dt"],
+            y0=state,
+            args=args,
+            saveat=SaveAt(**self.diffeqsolve_quants["saveat"]),
+            adjoint=diffrax.RecursiveCheckpointAdjoint(checkpoints=checkpoints),
+        )
+
+        return {"solver result": solver_result, "args": args}

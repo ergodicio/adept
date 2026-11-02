@@ -1,0 +1,11 @@
+# Plan 2 N.2 -- test_037 with the ported LPSE energy-conservation solve (0988524) and the M5
+# note's variants; the default translation (ported EC on, v_min 2.5) is test_037/relog/1 and
+# test_036 (fluxes) rides the relog batch too. Acceptance: saturation
+# (epw_half_max_time) within 15 % of LPSE's 2.69 ps; hpe_gamma_ratio_kpeak within 2x of the
+# analytic rate over 1-2.5 ps.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: N.2}
+jobs:
+  - {deck: test_037, run: test_037/n2-ecoff/1, overrides: {terms: {hpe: {energy_conservation: false}}}, tags: {variable: ec_off}}
+  - {deck: test_037, run: test_037/n2-ec-vmin0.05/1, overrides: {terms: {hpe: {v_min: 0.05}}}, tags: {variable: v_min}}

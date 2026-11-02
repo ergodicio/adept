@@ -1,0 +1,30 @@
+# Plan 2 N.1 -- bisection matrix on test_010 (the worst evolving-pump deck: EPW growth ratio
+# 0.66 / 0.77 vs LPSE at 09-14 and unchanged at 9b4cbf9). One variable per run against the
+# translated deck; every run is compared with the same LPSE reference.
+#   (a) seed ensemble        noise_seed 2, 3, 4 (seed 1 = <deck>/relog/1)
+#   (b) static pump          pump prescribed (LPSE laser.solver = static) instead of evolved
+#   (d) light sub-cycling    light_substeps 20, 40 (deck: 10)
+#   (g) EPW/IAW dt halved    dt 1 fs with the light step unchanged (light_substeps 5)
+#   (h) injector position    LPSE puts the injector at Labc + Loff = 3.2 um from the wall; the
+#                            translator uses 2 Labc = 6 um
+#   (i) beam angle           the deck's 16.7 deg pump at normal incidence (not a like-for-like
+#                            comparison with the oblique reference; measures the sensitivity),
+#                            and hom_tpd_023 (homogeneous, static, agrees to 1 %) at 16.7 deg --
+#                            a homogeneous TPD growth rate cannot depend on the beam angle
+#   (f) box width            y box 10 -> 20 um (ny 180 -> 360)
+#   (e) absorber             light absorber rate / width matched to LPSE (after (a)-(i))
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: N.1}
+jobs:
+  - {deck: test_010, run: test_010/n1-seed/2, overrides: {terms: {epw: {source: {noise_seed: 2}}}}, tags: {variable: seed}}
+  - {deck: test_010, run: test_010/n1-seed/3, overrides: {terms: {epw: {source: {noise_seed: 3}}}}, tags: {variable: seed}}
+  - {deck: test_010, run: test_010/n1-seed/4, overrides: {terms: {epw: {source: {noise_seed: 4}}}}, tags: {variable: seed}}
+  - {deck: test_010, run: test_010/n1-static/1, overrides: {terms: {light: {pump_depletion: false}}}, tags: {variable: static_pump}}
+  - {deck: test_010, run: test_010/n1-substeps/20, overrides: {grid: {light_substeps: 20}}, tags: {variable: light_substeps}}
+  - {deck: test_010, run: test_010/n1-substeps/40, overrides: {grid: {light_substeps: 40}}, tags: {variable: light_substeps}}
+  - {deck: test_010, run: test_010/n1-dt/1fs, overrides: {grid: {dt: 0.001ps, light_substeps: 5}}, tags: {variable: dt}}
+  - {deck: test_010, run: test_010/n1-offset/3.2um, overrides: {drivers: {E0: {offset: 3.2um}}}, tags: {variable: injector_offset}}
+  - {deck: test_010, run: test_010/n1-angle/0, overrides: {drivers: {E0: {angle: 0.0}}}, tags: {variable: angle}}
+  - {deck: hom_tpd_023, run: hom_tpd_023/n1-angle/16.7, overrides: {drivers: {E0: {angle: 16.699299113168664}}}, tags: {variable: angle}}
+  - {deck: test_010, run: test_010/n1-box/20um, overrides: {grid: {ymin: -10.027855153203342um, ymax: 10.027855153203342um}}, tags: {variable: box_width}}

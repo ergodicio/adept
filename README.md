@@ -20,6 +20,7 @@ CPU or GPU. Runs are logged to [MLflow](https://mlflow.org/).
 | `vlasov-2d` | 2D2V Vlasov-Maxwell | [overview](docs/source/solvers/vlasov2d/overview.md) · [config](docs/source/solvers/vlasov2d/config.md) |
 | `vfp-1d` | Vlasov-Fokker-Planck electron transport (spherical harmonic expansion) | [overview](docs/source/solvers/vfp1d/overview.md) · [config](docs/source/solvers/vfp1d/config.md) |
 | `envelope-2d` | 2D laser-plasma envelope solver (TPD, SRS) | [overview](docs/source/solvers/lpse2d/overview.md) · [config](docs/source/solvers/lpse2d/config.md) |
+| `lpse-2d` | JAX port of C++ LPSE: TPD or SRS separately, or combined TPD + SRS; independent of `envelope-2d` | [overview](docs/source/solvers/lpse2d_cpp/overview.md) · [config](docs/source/solvers/lpse2d_cpp/config.md) |
 | `spectrax-1d` | 1D Hermite-Fourier Vlasov-Maxwell (`hermite-epw-1d` and `hermite-maxwell-1d` are reduced entry points) | [config](docs/source/solvers/spectrax1d/config.md) |
 | `hermite-legendre-1d` | 1D1V mixed Hermite-Legendre electrostatic Vlasov-Poisson | [config](docs/source/solvers/hermite_legendre_1d/config.md) |
 | `pic-1d` | 1D electrostatic particle-in-cell | — |
