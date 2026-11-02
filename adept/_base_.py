@@ -290,7 +290,7 @@ class ergoExo:
 
         """
         # Enforce float64 for kinetic solvers (density conservation requires it)
-        if cfg["solver"] != "envelope-2d":
+        if cfg["solver"] not in {"envelope-2d", "lpse-2d"}:
             if not jax.config.jax_enable_x64:
                 raise RuntimeError(
                     f"Solver '{cfg['solver']}' requires float64 for numerical precision. "
@@ -323,6 +323,9 @@ class ergoExo:
             # from adept.lpse2d.datamodel import ConfigModel
 
             # config = ConfigModel(**cfg)
+
+        elif cfg["solver"] == "lpse-2d":
+            from adept.lpse2d_cpp import BaseLPSE2D as this_module
 
         elif cfg["solver"] == "vfp-1d":
             from adept.vfp1d.base import BaseVFP1D as this_module

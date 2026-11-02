@@ -1,0 +1,707 @@
+# LPSE-2D (Envelope-2D) Configuration Reference
+
+This document describes how to construct a configuration file for the `lpse-2d` solver. This is a 2D laser-plasma simulation using envelope equations for electron plasma waves (EPW). It supports two-plasmon decay (TPD), stimulated Raman scattering (SRS), and other laser-plasma instabilities.
+
+## Top-Level Structure
+
+```yaml
+solver: lpse-2d
+
+units:
+  # Physical unit normalizations
+
+density:
+  # Density profile configuration
+
+grid:
+  # Simulation grid parameters
+
+save:
+  # Output configuration
+
+mlflow:
+  # Experiment tracking
+
+drivers:
+  # Laser and EPW drivers
+
+terms:
+  # Physics terms configuration
+```
+
+## units
+
+Physical unit normalizations. Note: This module uses different unit keys than the Vlasov modules.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `atomic number` | int | Atomic number of the ion species |
+| `envelope density` | float | Reference density as fraction of critical density |
+| `ionization state` | int | Ionization state Z |
+| `laser intensity` | string | Laser intensity with unit, e.g., `"3.5e+14W/cm^2"` |
+| `laser_wavelength` | string | Laser wavelength with unit, e.g., `"351nm"` |
+| `reference electron temperature` | string | Electron temperature with unit, e.g., `"2000.0eV"` |
+| `reference ion temperature` | string | Ion temperature with unit, e.g., `"1000eV"` |
+
+Example:
+```yaml
+units:
+  atomic number: 40
+  envelope density: 0.25
+  ionization state: 6
+  laser intensity: 1.5e+14W/cm^2
+  laser_wavelength: 351nm
+  reference electron temperature: 2000.0eV
+  reference ion temperature: 1000eV
+```
+
+## density
+
+Density profile configuration.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `basis` | string | Profile type: `"uniform"` or `"linear"` |
+| `val` | float | Density fraction of critical (for `uniform` basis). **Defaults to 1.0 — at critical density — if omitted**, which is almost never what you want; set it explicitly |
+| `gradient scale length` | string | Scale length with unit (for `linear` basis) |
+| `max` | float | Maximum density fraction (for `linear` basis) |
+| `min` | float | Minimum density fraction (for `linear` basis) |
+| `lpse-<shape>` bases | | The original LPSE profiles (`ZakharovSolver::backgroundDensityShape`), shape in `linear`, `exp`, `gaussian`, `inverse-power`, `quadratic`, `qd`, `gd`, `file`: `min`/`max` at `min_location`/`max_location` (x; `min_location_y`/`max_location_y` optional, `geometry: cartesian|spherical`), `sg_order` (LPSE `sgOrder`, default 2) for `gaussian`/`inverse-power`/`gd`, `central_density` for `quadratic`, `dip_depth`/`dip_width`/`dip_offset` for the `qd` (parabolic) and `gd` (super-Gaussian) dips on a linear ramp, `origin` (x of LPSE's box centre for the quadratic and the dips, default the box centre), `max_density` clip (default 1.25), `file` (`.npy`, text table, or LPSE grid file) for `lpse-file`. See `helpers._lpse_density_profile` for the formulas |
+| `noise` | object | Ignored (legacy). The initial EPW is identically zero; noise-seeded runs use the per-step `terms.epw.source.noise` source instead |
+
+### Example: Uniform Density
+
+```yaml
+density:
+  basis: uniform
+  val: 0.2
+  noise:
+    max: 1.0e-09
+    min: 1.0e-10
+    type: uniform
+```
+
+### Example: Linear Density Gradient
+
+```yaml
+density:
+  basis: linear
+  gradient scale length: 50um
+  max: 0.28
+  min: 0.18
+  noise:
+    max: 1.0e-09
+    min: 1.0e-10
+    type: uniform
+```
+
+Note: When using `linear` basis, the grid size is automatically computed from the gradient scale length and density range.
+
+## grid
+
+Simulation grid parameters. Note: Grid values use physical units as strings.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `boundary_abs_coeff` | float | Absorbing boundary coefficient (`tanh` profile: the amplitude damping rate, 1/ps, on the layer plateau) |
+| `boundary_width` | string | Width of absorbing boundary layer with unit |
+| `boundary_profile` | string | (optional, default `tanh`) Shape of the absorbing layers. `tanh` is the MATLAB envelope (rise `boundary_width / 5`). `exp` is the original LPSE profile (`absorbingBoundaries.cpp`): rate `boundary_max_rate * (e^{lambda s/L} - 1) / (e^lambda - 1)` with `s` the distance into the layer measured from the edge cell (so the edge cell carries the full rate and the layer spans `boundary_width / dx` cells); with both axes absorbing the two rates combine by `max`, as in LPSE |
+| `boundary_max_rate` | float | (`exp` profile) Peak amplitude damping rate in 1/ps (default `200`, LPSE `lw.abc.maxDampingRate`). The IAW absorber uses half of it unless `terms.iaw.boundary_max_rate` is set (LPSE `IawSolver` default 100) |
+| `boundary_lambda` | float | (`exp` profile) Exponential steepness (default `7`, LPSE `abc.lambda`) |
+| `low_pass_filter` | float | Low-pass filter cutoff as fraction of kmax (0-1) |
+| `dealias` | string | Shape of the anti-aliasing mask: `isotropic` (default) or `shifted-band` |
+| `dt` | string | Timestep with unit |
+| `dx` | string | Spatial resolution with unit |
+| `tmax` | string | End time with unit |
+| `tmin` | string | Start time with unit |
+| `ymax` | string | Domain maximum y with unit |
+| `ymin` | string | Domain minimum y with unit |
+| `light_substeps` | int | (dynamic light only, optional) Light-wave sub-steps per EPW step. Computed from the explicit-scheme stability limit for every evolved carrier (`w1` when SRS is on, `w0` when pump depletion is on); a `ValueError` is raised if a user-supplied value violates the tightest limit |
+| `probe_offset` | string | (SRS only, optional) Distance of the laser-budget flux probes from each box edge, with unit. Default `2 * boundary_width`, which is clear of the absorber's tanh skirt (the legacy `reflectivity` probe at `1.6 * boundary_width` sits inside it and reads ~10% low) |
+
+Note: `nx` and `ny` are computed automatically from the grid parameters. The grid is optimized for FFT performance (sizes with small prime factors).
+
+Note: setting `ymax`/`ymin` smaller than `dx` collapses the box to `ny = 1`, which runs the solver in a true 1D mode (useful for cheap 1D SRS simulations; TPD requires 2D).
+
+### Anti-aliasing: `dealias`
+
+The TPD and SRS source terms are products of the pump with a plasma-wave field, formed pointwise in
+real space. Such a product aliases if it puts content past the Nyquist wavenumber, so part of the
+band has to be left empty.
+
+Because the pump is built as a plane wave along x (`laser.py`), the product *translates* the
+plasma-wave spectrum by `k0` rather than convolving it against a broad kernel. The band that has to
+stay empty is therefore a rectangle, not a disc, and the usual 2/3-style isotropic cutoff is the
+wrong shape for the job — it discards high-`ky` modes that can never alias.
+
+| Value | Mask |
+|-------|------|
+| `isotropic` (default) | `|k| < low_pass_filter * kmax` only. Alias-free only if `low_pass_filter * kmax + k0 <= kmax`, which is not checked. |
+| `shifted-band` | Additionally requires `|kx| <= kmax_x - k0` and `|ky| <= kmax_y - k0 * NA`, which is exactly alias-free for the source products. `NA` is the numerical aperture of the speckle profile, and is zero without one. |
+
+`shifted-band` computes its limits from `k0` and the grid, so it stays correct as `dx`, the laser
+wavelength, or the density change — unlike a hand-tuned `low_pass_filter`.
+
+The two knobs are independent, and `low_pass_filter` is still applied on top:
+
+- `dealias` handles aliasing.
+- `low_pass_filter` is a *physics* cap. The Landau damping rate in `epw.py` is the asymptotic
+  small-`k*lambda_D` expression, which peaks near `k*lambda_D ~ 0.7` and then decreases, so it
+  under-damps beyond that. Keep the band edge below roughly `k*lambda_D = 0.5`.
+
+Both limits are printed at setup, along with the fraction of the k-grid retained and the
+`k*lambda_D` the band edge reaches, so the interaction between the two is visible.
+
+To take advantage of `shifted-band`, raise `low_pass_filter` until the printed `k*lambda_D` is as
+large as you are willing to trust:
+
+```yaml
+grid:
+  dealias: shifted-band
+  low_pass_filter: 1.0
+```
+
+Example:
+```yaml
+grid:
+  boundary_abs_coeff: 1.0e4
+  boundary_width: 1.5um
+  low_pass_filter: 0.66
+  dt: 0.010fs
+  dx: 40nm
+  tmax: 2ps
+  tmin: 0.0ns
+  ymax: 0.08um
+  ymin: -0.08um
+```
+
+## save
+
+Configures what data to save and at what times.
+
+### Structure
+
+```yaml
+save:
+  fields:
+    t:
+      dt: 100fs
+      tmax: 4ps
+      tmin: 0ps
+    x:
+      dx: 50nm
+    y:
+      dy: 50nm
+```
+
+### fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `t` | object | Temporal save configuration |
+| `x` | object | Optional interpolated (coarser) save grid in x; requires `y` |
+| `y` | object | Optional interpolated (coarser) save grid in y; requires `x` |
+
+#### t (temporal)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dt` | string | Time interval between saves, with unit |
+| `tmax` | string | End time for saving, with unit |
+| `tmin` | string | Start time for saving, with unit |
+
+#### x (optional)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dx` | string | Target spacing of the saved field grid in x, with unit; must not be finer than `grid.dx` |
+
+#### y (optional)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dy` | string | Target spacing of the saved field grid in y, with unit; must not be finer than the grid's `dy` (= `grid.dx`) |
+
+Without `x`/`y`, `fields.xr` and `k-fields.xr` are saved on the full simulation grid. With them, the
+fields are saved on a coarser grid:
+
+- The save grid has `n_save = round(L / dx)` cell-centred points per axis (`L` is the box length,
+  `xmax - xmin` or `ymax - ymin`), so the actual spacing is `L / n_save` (printed at setup). A spacing that
+  would give more points than the simulation grid raises a `ValueError` at setup. In a quasi-1D box
+  (`ny = 1`) the y save grid is the single row.
+- Every field is linearly interpolated onto the save grid in real space: the EPW potential and its fields
+  `phi`, `ex`, `ey` are computed on the full grid (spectrally, as the solver does) and then interpolated, as
+  are `e0_*`, `e1_*` and the IAW fields. This is point sampling, not a filtered downsample: content above
+  the save grid's Nyquist wavenumber `pi / (L / n_save)` aliases.
+- The saved x-space values are the full-grid save's values linearly interpolated to the save points.
+- `k-fields.xr` is the DFT on the save grid, on its own k axes (`n_save` points, the same spacing `2 pi / L` as the
+  full grid), scaled by `(nx * ny) / (nx_save * ny_save)` so that a resolved mode has the same coefficient as in
+  the full-grid save (its phase is referenced to the first save point instead of the first grid point).
+
+## mlflow
+
+Experiment tracking configuration.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `experiment` | string | MLflow experiment name |
+| `run` | string | MLflow run name |
+
+Example:
+```yaml
+mlflow:
+  experiment: tpd
+  run: srs-test
+```
+
+## drivers
+
+Laser and EPW drivers.
+
+### E0 - Pump Laser Driver
+
+The main laser pump for TPD/SRS simulations.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `envelope` | object | Spatiotemporal envelope |
+| `delta_omega_max` | float | Maximum frequency spread (optional) |
+| `num_colors` | int | Number of laser colors (optional) |
+| `angle` | float | (default `0`) in-plane angle of incidence from +x in degrees (LPSE `laser.N.direction`). The static pump is the single grid mode nearest to `k0 (cos a, sin a)` (both components snapped, as LPSE's `makeStaticField`), polarized perpendicular to the snapped k; the spectral pump injector (shared by the spectral light solver and `terms.epw.solver: combined`) launches at the y-snapped transverse wavenumber with the x group velocity setting the flux. Not with `speckle` or the FD injector |
+| `polarization` | string | (default `p`) only in-plane polarization is representable (LPSE `polarization = 0`); lpse2d_cpp carries no out-of-plane field component |
+| `beams` | list | LPSE `laser.N.*` beamlets for the static pump and the spectral injector (also the evolved pump of the combined solver): `[{intensity, angle, phase, delta_omega}]` (intensities are normalised to fractions; every beam carries every color; `angle` in degrees, `phase` in radians, `delta_omega` as a fraction of w0). A single beam's `phase` and `delta_omega` add to every color's on every pump path (static, FD and spectral evolved, combined). The deck translator converts LPSE's `laser.N.phase` from degrees and takes `laser.N.wavelengthShift` (Angstrom) over `frequencyShift` when it is non-zero, as LPSE does |
+| `beam_width` | string | transverse (y) standard deviation of the injected beams (LPSE `laser.N.width`); with `beam_sg_order` (default 2, Gaussian) and `beam_offset` (y of the beam centre) it sets the super-Gaussian `exp(-((y-y0)^2/2 sigma^2)^(p/2))` of the spectral injector |
+| `kap_bandwidth` | float | (default `0`) Kubo-Anderson phase bandwidth as a fraction of w0 (LPSE `laser.bandwidth.KAP.frequency`): the pump phase jumps to a new uniform value every `2 pi / (kap_bandwidth w0)`, deterministically from `kap_seed` and the beam index. Static pump and spectral injector; with `terms.light.pump_depletion` the FD injector does not apply it and setup refuses it |
+| `pulse_file` | string | LPSE `laser.pulse.file`: a two-column text table `(t_ps, relative amplitude)` interpolated in time and multiplied onto the pump amplitude. Static pump and spectral injector; with `terms.light.pump_depletion` the FD injector does not apply it and setup refuses it |
+| `shape` | string | Amplitude shape: `"uniform"` (optional) |
+| `offset` | string | (pump depletion only, optional) Distance of the pump boundary injector from `xmin`, with unit. Default `2 * boundary_width` |
+| `turn_on_time` | string | (pump depletion only, optional) Gaussian turn-on time of the injector. Default `10fs` |
+| `injector_width` | string | (pump depletion with `terms.light.solver: spectral`, optional) Gaussian width of the smooth pump injector, with unit. Default one local wavelength `2 pi / k0(n_inject)` |
+
+#### envelope
+
+All values are strings with physical units.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `tc` | string | Temporal center |
+| `tr` | string | Temporal rise time |
+| `tw` | string | Temporal width |
+| `xc` | string | Spatial center (x) |
+| `xr` | string | Spatial rise (x) |
+| `xw` | string | Spatial width (x) |
+| `yc` | string | Spatial center (y) |
+| `yr` | string | Spatial rise (y) |
+| `yw` | string | Spatial width (y) |
+
+Example:
+```yaml
+drivers:
+  E0:
+    delta_omega_max: 0.015
+    envelope:
+      tc: 200.25ps
+      tr: 0.1ps
+      tw: 400ps
+      xc: 50um
+      xr: 0.2um
+      xw: 1000um
+      yc: 50um
+      yr: 0.2um
+      yw: 1000um
+    num_colors: 1
+    shape: uniform
+```
+
+### E2 - EPW Driver (Optional)
+
+Direct EPW driver for seeding or testing.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `envelope` | object | Same structure as E0 envelope |
+| `a0` | float | Amplitude |
+| `k0` | float | Wavenumber |
+| `w0` | float | Frequency |
+
+Example:
+```yaml
+drivers:
+  E2:
+    envelope:
+      tw: 200fs
+      tr: 25fs
+      tc: 150fs
+      xw: 500um
+      xc: 10um
+      xr: 0.2um
+      yr: 0.2um
+      yc: 0um
+      yw: 50um
+    a0: 1000
+    k0: -10.0
+    w0: 20.0
+```
+
+### E1 - Raman Seed Driver (Optional)
+
+Injects a counter-propagating (-x) scattered-light wave for seeded SRS. Only used when
+`terms.epw.source.srs` is on. The injector sits at `x = xmax - offset` and drives the
+`E1` field with a two-point antisymmetric source (the MATLAB LPSE injector), so the seed
+propagates toward the low-density side while backscatter growth amplifies it against the pump.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `intensity` | string | Seed vacuum intensity with unit, e.g. `"1.0e+12W/cm^2"` |
+| `delta_omega` | float | Seed frequency shift relative to `w1 = w0 - wp0`, as a fraction of `w1` (default 0) |
+| `turn_on_time` | string | Ramp-up time of the injector (default `10fs`) |
+| `offset` | string | Distance of the injector from the right boundary. Defaults to `1.6 * boundary_width`, just inside the absorbing boundary's tanh skirt; a warning is printed for smaller values because the seed would be damped at the source |
+| `yw` | string | Super-Gaussian (4th order) width of the seed in y; omit for uniform in y |
+| `injector_width` | string | (`terms.light.solver: spectral`, optional) Gaussian width of the smooth seed injector, with unit. Default one local wavelength `2 pi / k1(n_inject)` |
+
+The density at the injector must be below the `w1` critical density (`n < 0.25 n_c` for
+envelope density 0.25), otherwise the seed is evanescent and setup raises an error. Without
+`drivers.E1`, SRS grows from the EPW noise source instead (the noise-seeded configuration).
+
+With `terms.epw.solver: combined` the seed is the spectral solver's smooth injector added to the
+transverse (`y`) component of the combined field at its carrier `wp0` (LPSE's Raman class has
+`W1 = wpe` in combined mode), so `delta_omega` is a fraction of `wp0` and the injector must sit
+below the envelope density (`n < n_env`).
+
+Example:
+```yaml
+drivers:
+  E1:
+    intensity: 1.0e+12W/cm^2
+    delta_omega: 0.0
+    turn_on_time: 10fs
+```
+
+## terms
+
+Physics terms configuration.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `epw` | object | Electron plasma wave configuration |
+| `light` | object | (optional) Light-wave evolution configuration |
+| `iaw` | object | (optional) Ion-acoustic density evolution and ponderomotive feedback |
+| `hpe` | object | (optional) Hybrid particle evolution: test-particle Landau damping feedback (Follett et al. 2017) |
+| `zero_mask` | bool | Whether to zero out k=0 mode |
+
+### light (optional)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `pump_depletion` | bool | (default `false`) Evolve the pump `E0` with the staggered FD envelope solver instead of prescribing it analytically. The pump is launched at `x = xmin + drivers.E0.offset`; active SRS and TPD terms each add their reciprocal pump coupling, and both act when both instabilities are enabled. Requires at least one of `terms.epw.source.srs`/`tpd` and `terms.epw.boundary.x: absorbing`; incompatible with `drivers.E0.speckle`. Enables true net-flux `laser_reflectivity` / `laser_transmissivity` / `laser_absorbed_frac` metrics and above-threshold saturation |
+| `coupling` | str | (default `explicit`; `pump_depletion` with `terms.epw.source.srs` only) How the SRS exchange between `E0` and `E1` is integrated inside each light sub-step. `explicit` keeps the MATLAB staggered real/imaginary update, which treats the part of the exchange proportional to `Im(laplacian phi)` with an explicit Euler step: the light pair grows by `1 + sin^2(arg laplacian phi) (Omega dt_l)^2 / 2` per sub-step, `Omega = e \|laplacian phi\| / (4 me sqrt(w0 w1))`, for any `dt_l`. That is invisible at small EPW amplitude but manufactures light (and, through the SRS/TPD sources, EPW) energy once the pump is depleted and `Omega dt_l` reaches ~0.005, ending in a one-step NaN. `rotation` Strang-splits each sub-step as [exact exchange rotation over `dt_l/2`] [staggered propagation with the exchange off] [rotation over `dt_l/2`]; the rotation `exp(tau M) = cos(Omega tau) I + sin(Omega tau)/Omega M` conserves the light action `w1 \|E0\|^2 + w0 \|E1\|^2` pointwise and is stable for any `dt_l`. The TPD pump term and the IAW detuning stay in the staggered update under both settings. The rotation is pointwise and cannot apply the transverse projection of `transverse_source`, so with the `fd` solver and SRS on `rotation` requires `transverse_source: false` set explicitly (the default `true` is refused; the longitudinal part of `E1` then stays in the exchange) -- use `explicit` or `solver: spectral` to keep the projection. See `tests/test_lpse2d_cpp/test_light_coupling.py` |
+| `filter` | float | (default off; `pump_depletion` only) Isotropic low-pass filter applied to both light fields once per EPW step, keeping `\|k\| <= filter * pi/dx`. The physical light content lies below ~1.2 k0; grid-scale light modes have FD group velocity `c^2 sin(k dx)/(w dx) -> 0`. Diagnostic/numerical-hygiene option |
+| `tpd_projection` | bool | (default `true`; `pump_depletion` with `terms.epw.source.tpd`) Take the transverse (divergence-free) part of `E_h div(E_h)` in k-space before it acts on the pump, `F_T = F - k (k . F)/k^2` mode by mode (LPSE `LwSolver::makeExyzDivE`), so the TPD pump term never injects a longitudinal component into the light field. Both pump components receive the term |
+| `tpd_k_filter` | bool | (default `false`) LPSE `lw.kFilter`: restrict the TPD pump term to `\|k\| < 1.2 k0 sqrt(1 - n_min)` |
+| `transverse_source` | bool | (default `true`) project the SRS light sources onto their transverse (divergence-free) part every light sub-step (LPSE `raman.takeTransversePartOfSourceTerms`; with the coupled spectral solver the fields themselves are kept transverse; the `fd` solver's `coupling: rotation` cannot apply it and refuses `true`, see `coupling`). No light propagator moves the longitudinal part of E1, so without it that part accumulates the source and pairs with the EPW in a spurious two-wave instability. The spectral solvers also drop every component outside the retained light band, as LPSE does |
+| `boundary_max_rate` | float | peak amplitude damping rate (1/ps) of the light fields' absorbing layers with `grid.boundary_profile: exp` (LPSE `{laser|raman}.evolution.abc.maxDampingRate`, default `5e3`; the EPW layer uses `grid.boundary_max_rate`, 200). Light crosses a 3 um layer in 0.01 ps, so at the EPW rate the exp layer reflects ~75 % of the amplitude and an injected pump builds a standing wave between the walls. With the `tanh` profile both use `boundary_abs_coeff` |
+| `solver` | string | (default `fd`) Light propagator for the evolved fields (`E1`, and `E0` with `pump_depletion`). `fd`: the MATLAB staggered real/imaginary finite-difference scheme, sub-cycled to its CFL limit. `spectral`: the original LPSE `{laser\|raman}.solver = spectral` path -- per sub-step the x-space scattering potential `exp(i dt Vo)` (detuning + absorption), the coupling sources with forward Euler, and the exact k-space propagator `exp(-i dt c^2 k^2/(2 w))` on the transverse part of the field (the longitudinal part is left unpropagated, as in LPSE), modes outside the retained band zeroed. No CFL limit (`grid.light_substeps` defaults to 1), no grid dispersion, and with `pump_depletion` the SRS exchange is the exact local rotation of `coupling: rotation` Strang-split around the propagation. The injectors become smooth Gaussian sources (`drivers.E0/E1.injector_width`, one local wavelength by default) that launch exactly the requested amplitude with negligible leakage in the wrong direction |
+| `max_wavenumber` | float | (optional; `spectral` only) Cap the retained light band at `max_wavenumber * k0` (LPSE `{laser\|raman}.maxWavenumber`). The light band is the anti-aliased band without `terms.epw.max_wavenumber`; only the combined solver takes the smaller of the two caps (LPSE `LightSolver.cpp:3689`) |
+| `absorption` | bool or float | (default `false`) Collisional (inverse-bremsstrahlung) absorption of the evolved light: the amplitude decays at `nu (n/nc_w)^2` per wave, `nc_w` its own critical density and `n` including the IAW perturbation (LPSE `calculateScatteringPotential`). `true` takes `nu` from the NRL formula as coded in LPSE, `5.11e10 Z logLambda / (lambda_um^2 Te_keV^1.5) * 1e-12` 1/ps with each wave's own wavelength (`logLambda = 6.68 + ln(lambda_um Te)` for `Te > 0.01 Z^2`, else `9.13 + ln(lambda_um Te^1.5/Z)`); a number is the pump rate at `nc` in 1/ps, the Raman rate scaled by `(w1/w0)^2`. With `terms.epw.solver: combined` the Raman light's carrier is `wp0`: its wavelength is `lambda_0 w0/wp0` and a numeric rate scales by `(wp0/w0)^2`. That rate damps the combined field at `(n/n_env)^2` (`n` with the IAW perturbation) and calibrates its noise; `terms.epw.damping.collisions` does not act on the combined field, as in LPSE. Works with both light solvers (applied per sub-step). LPSE's `resonanceAbsorption` is not implemented |
+
+### epw
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `boundary` | object | Boundary conditions |
+| `damping` | object | Damping mechanisms |
+| `density_gradient` | bool | Include density gradient effects |
+| `linear` | bool | Linear mode (disables nonlinear coupling) |
+| `source` | object | Source terms |
+| `hyperviscosity` | object | Optional hyperviscosity for numerical stability |
+| `kinetic real part` | bool | Include kinetic correction to real frequency |
+| `max_wavenumber` | float | (optional) LPSE `lw.maxWavenumber`: hard cap `\|k\| < max_wavenumber * k0` (vacuum laser wavenumber) on the retained EPW band, applied on top of `grid.low_pass_filter` / `grid.dealias`. It does not act on the separate light solvers' band (`terms.light.max_wavenumber`); the combined field takes the smaller of the two |
+| `solver` | string | (default `separate`) `separate`: the four envelope equations of the MATLAB prototype / LPSE's default spectral path (EPW potential, pump, Raman light each with its own carrier). `combined`: the original LPSE `lw.solver = combined` formulation, which LPSE *requires* whenever TPD and SRS are both on (its users guide: the separate equations "are not valid for simultaneous TPD and SRS", nor "for SRS coupled to IAWs near n_c/4"). One field `E1` enveloped at `wp0` carries the Raman light as its transverse part and the EPW as its longitudinal part; `epw` (the potential `phi_k = i k . E1_k/k^2`) is derived from it every step for the diagnostics, IAWs and HPE. Per light sub-step: the density detuning and collisional damping on the whole field, LPSE's unified source `-i e/(4 me w0) e^{-i(w0 - 2wp0)t} [grad(E0 . E1*) + (1 - w0/wp0) E0 (div E1)*]` (whose longitudinal part is the TPD + SRS source and whose transverse part is the Raman-light generation), the 2x2 longitudinal/transverse propagator (Bohm-Gross dispersion + Landau damping on `k k/k^2 E1`, `exp(-i dt c^2 k^2/(2 wp0))` on the rest), the EPW noise on the longitudinal part, the absorbers; with `terms.light.pump_depletion` the pump advances in the same sub-step, injected by the spectral light solver's injector (beams, angles, transverse profile, KAP bandwidth, pulse table), with the unified depletion `i e/(2 me w0) e^{+i(w0 - 2wp0)t} E1 div E1` (SRS + TPD depletion in one term; `terms.light.tpd_projection` applies the transverse projection LPSE's combined path omits). Requires `terms.light.solver: spectral`, `tpd` and `srs` both on or both off, and excludes `drivers.E2`, `energy_ledger`, `terms.light.coupling/filter`. With `separate` and both instabilities on a warning quotes LPSE's refusal. The Raman-light series (`e1_sq`, reflectivity, fluxes), the saved `E1` fields and the `s1` Poynting maps are the transverse part (the EPW is saved as `epw`); the IAW ponderomotive drive sees the transverse part and the derived EPW separately, the Raman light at its carrier `wp0` (coefficient `1/wp0^2`; also the thermal-filamentation Raman term, critical density `n_env`). The separate light solvers and the separate EPW solver are not built in combined mode (the combined thermal noise is balanced against the Raman absorption, so it needs no EPW Landau damping or collisions) |
+| `energy_ledger` | bool | (default `false`) Accumulate, in the state, the change of the EPW energy attributed to every operation of the split step -- `dispersion`, `damping`, `dealias`, `noise`, `detuning`, `boundary`, `reprojection`, `tpd`, `srs`, `driver` -- and report the cumulative values in the default series as `epw_ledger_<channel>` (in `epw_energy` units) together with `epw_ledger_closure = epw_energy - sum(channels)`, which stays at `epw_energy(0)` to round-off. This is the per-step energy-budget check LPSE asserts to 0.1 % (`ZakharovSolver.cpp:1700-1712`); here it is exact by construction and the channels are the diagnostic |
+
+#### boundary
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `x` | string | `"periodic"` or `"absorbing"` |
+| `y` | string | `"periodic"` or `"absorbing"` |
+
+#### damping
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `collisions` | bool or float | Collisional damping. `true` computes from plasma parameters, or specify rate directly |
+| `landau` | bool | Include Landau damping |
+| `landau_form` | string | (default `matlab`) Static Landau rate. `matlab`: the prototype's `sqrt(pi/8) (1 + 1.5 x^2) wp^4/(k^3 vte^3) exp(-3/2 - 1/(2x^2))`, `x = k lambda_D`. `lpse`: the C++ `landauDamping_nonRel`, `sqrt(pi/8) (kde/k)^3 w_k exp(-w_k^2/(2 k^2 vte^2))` with `w_k = wp sqrt(1 + 3x^2)` -- identical exponent, prefactor `sqrt(1 + 3x^2)` vs `(1 + 1.5x^2)` (0.7% at x = 0.3, 3.8% at x = 0.5). `relativistic` (= `relativistic_2d`) / `relativistic_3d`: LPSE's Maxwell-Juettner Bessel-function rates (`landauDamping_rel_2D/3D`); modes with phase velocity above `c` are undamped |
+| `landau_lower_threshold` | float | (default `0`, 1/ps) LPSE `lw.landauDamping.lowerThreshold`: modes whose Landau rate is below it are treated as undamped (also in the thermal-noise balance) |
+| `landau_multiplier` | float | (default `1`) Static multiplier on the Landau rate (LPSE `LD_multiplier`) |
+
+The same rate array (form, threshold, multiplier) is used by the EPW step, the HPE calibration, the dissipation diagnostic and the thermal noise source.
+
+#### source
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `noise` | bool | Add random noise source |
+| `noise_amplitude` | float | (optional) Amplitude of the per-step EPW noise source. Default `1.0e-10` (the MATLAB `noiseAmp`) |
+| `noise_seed` | int | (optional) Seed for the EPW noise source. Default `null`, which draws a random seed once and pins it into the config before parameters are logged, so every run is exactly reproducible from its logged `noise_seed` |
+| `noise_model` | string | (default `flat`) `flat`: the MATLAB source, a kick `dt * noise_amplitude` with a random phase on every retained mode each step. `thermal`: the original LPSE `lw.noise` source (`ZakharovSolver::addNoiseToPotential_fft`), a fluctuation-dissipation kick `D_k = N A / sqrt(1 + k^2 lambda_D^2) * sqrt(1 - exp(-2 gamma_k dt)) / \|k\|` balanced against the frozen analytic Landau + collisional rate `gamma_k` and added after the damping sub-step, so every mode relaxes to the Cerenkov spectrum `<\|E_k\|^2> = A^2/(1 + k^2 lambda_D^2)` (x-space envelope amplitude squared) independently of `dt`; `A = noise_amplitude`. Undamped modes receive no noise; a band with no damping at all is refused, as in LPSE. Switching an existing deck to `thermal` changes its seed level -- the srs-2d-testbed calibration was done with `flat` |
+| `noise_calibrate` | bool | (default `false`; `thermal` only) Set `A` from the electron temperature by equipartition -- electric energy `kT/2` per mode over the box volume `V` (`Lz = Ly` for the 2-D box, `V = Lx^3` when `ny = 1`, following LPSE's `deltaK3`): `A = noise_amplitude * sqrt(8 pi kT / V)`, so `noise_amplitude: 1` is the thermal level (LPSE `lw.noise.isCalculated` convention). LPSE's own constant carries an unexplained extra factor in its source; this calibration is the equipartition value and has not been matched to LPSE's number |
+| `noise_max_wavenumber` | float | (optional, units of `k0`) LPSE `lw.noise.maxWavenumber`: no noise above `noise_max_wavenumber * k0` |
+| `tpd_form` | string | (default `lpse`) `lpse`: the C++ TPD source `i e/(4 me w0) e^{-i(w0 - 2wp0)t} [F(E0 . E*) + (w0/wp0 - 1) i k . F(E0 rho*)/k^2]` with every pump component (`ZakharovSolver::updatePotentialWithTpdSource_fft`). `matlab`: the prototype's `w0 -> 2 wp0` form, `i e/(8 me wp0)` and factor 1. The two are identical at envelope density 0.25 (`w0 = 2 wp0`); at 0.23 the LPSE coefficient is 4% smaller and the charge-density factor is 1.085 |
+| `srs_k_filter` | bool | (default `true`) apply a high-k filter to the light fields entering the SRS source, cutting at `srs_k_filter_scale` times the Raman wavenumber at the minimum box density (LPSE `lw.kFilter.enable`, which is *off* by default there; MATLAB `isSuppressHighKSource`). The cutoff assumes the scattered light sits exactly at the envelope frequency, so in a box detuned from the envelope density it can remove the resonant Raman mode entirely (no SRS growth at all at 0.2 nc with envelope density 0.25); translated LPSE decks turn it off. With the separate EPW solver, setup refuses a box whose minimum density reaches the `w1` critical density `(w1/w0)^2` (the filter band is empty there); the combined solver filters the pump instead and is not checked |
+| `srs_k_filter_scale` | float | (default `1.2`) multiplier on the SRS source k-filter cutoff (LPSE `lw.kFilter.scale`) |
+| `tpd` | bool | Include the two-plasmon-decay source. With `terms.light.pump_depletion`, also include LPSE's pump-depletion term `i e/(2 me w0) e^{+i(w0 - 2wp0)t} [E_h div E_h]_T` on both pump components (twice the EPW-side coefficient, so the pair conserves the total wave energy at envelope density n_c/4; see `terms.light.tpd_projection`) |
+| `srs` | bool | Include stimulated Raman scattering (optional, default false). Turning this on also evolves the Raman scattered-light field `E1` with a finite-difference paraxial solver, sub-cycled `grid.light_substeps` times per EPW step, and adds the SRS source `i e wp0/(4 me w0 w1) (n/n_env) E0 . conj(E1)` to the EPW potential. The default time series then also records `e1_sq` and `reflectivity` (Poynting-corrected `|E1_y|^2/E0^2` at a probe on the low-density side, `x = 1.6 * boundary_width`) |
+
+#### hyperviscosity (optional)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `coeff` | float | Hyperviscosity coefficient |
+| `order` | int | Order of hyperviscosity (must be even) |
+
+### iaw (optional)
+
+The IAW state follows the MATLAB LPSE split update for fractional ion-density perturbation `Nelf` and ion-velocity divergence `W`. Its pressure combines the acoustic restoring term with ponderomotive drive from the EPW, pump, and Raman fields. `Nelf` feeds back into the EPW, pump, and Raman detuning terms on the next outer step.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `active` | bool | Enable ion-acoustic evolution (default `false`) |
+| `solver` | string | (default `explicit`) `explicit`: the MATLAB kick/drift split step (FD Laplacian, stable for `omega_iaw,max * grid.dt < 2`, validated at setup). `spectral`: the original LPSE `iaw.solver = spectral` path -- per k-mode the exact solution of the damped oscillator `dn/dt = -w, dw/dt = cs^2 k^2 n - 2 gamma_k w` (`e^{-gamma dt}` times a `cos/sin(beta dt)` rotation, `beta = sqrt(cs^2 k^2 - gamma^2)`), then collisional damping `e^{-2 nu dt}` on `w`, the ponderomotive kick `dt k^2 PP_k`, and the noise. Unconditionally stable and exact for the acoustic part at any `dt` |
+| `boundary` | object or null | Per-axis `x`/`y` boundary modes. Defaults to `terms.epw.boundary` |
+| `boundary_max_rate` | float or null | (`grid.boundary_profile: exp` only) Peak absorber rate for the IAW layer, 1/ps; default half of `grid.boundary_max_rate` (LPSE `IawSolver` default 100 vs 200) |
+| `damping.collisions` | float | Collisional damping rate in `1/ps` (default `1.0e-5`): on `n` as `(1 - nu dt)` in the explicit solver, on `div v` as `exp(-2 nu dt)` in the spectral one (LPSE) |
+| `damping.landau` | float | Dimensionless coefficient in `gamma_iaw(k) = landau * cs * |k|` (default `0.1`); the velocity-divergence equation is damped at `2 gamma_iaw` |
+| `damping.landau_form` | string | (default `simplified`) `simplified`: the rate above (LPSE `isSimplified`). `full`: the Z-generalized Krall-Trivelpiece expression used by LPSE's IAW solver, `W_i = W_r sqrt(pi/8) L^{-3/2} [(3/(eta-1))^{3/2} exp(-(3/(eta-1))/(2L)) + sqrt(1/(eta M))]`, `W_r = cs |k|/sqrt(L)`, `L = 1 + k^2 lambda_D^2`, `eta = 1 + 3 Ti/(Z Te)`, `M = (mi/me)/(eta Z)`, with `gamma_iaw = W_i/2`; `damping.landau` is then ignored. The real frequency in the spectral propagator stays `cs |k|`, as in LPSE's spectral branch |
+| `max_density_perturbation` | float or null | Optional symmetric limiter on `|delta n_i/n_0|`; unlimited by default |
+| `flow` | list or null | (`spectral` only) Uniform background flow `[Mach_x, Mach_y]` in units of `cs`: every mode acquires the Doppler phase `e^{-i k . V0 dt}` (LPSE `fluid.velocity`) |
+| `stride` | int | (default `1`; `spectral` only) Advance the IAW every `stride` EPW steps with `dt_iaw = stride * grid.dt` (LPSE steps its IAW solver less often than the EPW); the IAW absorber applies its damping over the whole `dt_iaw` |
+| `noise` | bool | (default `false`) LPSE `iaw.noise`: a random-phase source on `div v` every IAW step with the fluctuation-dissipation amplitude `noise_amplitude * nx * ny * sqrt(exp(2 dt (gamma_k + nu)) - 1)` on the retained band; requires IAW damping |
+| `noise_amplitude` | float | (default `1.0`) Amplitude of the IAW noise (x-space `div v` units per mode) |
+| `noise_seed` | int or null | Seed of the IAW noise stream |
+
+The setup validates the explicit acoustic stability condition `omega_iaw,max * grid.dt < 2` for `solver: explicit`.
+
+```yaml
+terms:
+  iaw:
+    active: true
+    boundary: null
+    damping:
+      collisions: 1.0e-5
+      landau: 0.1
+    max_density_perturbation: 0.1
+```
+
+#### thermal_filamentation (optional, LPSE `thermalFil.*`)
+
+`terms.iaw.thermal_filamentation: {laser: bool, raman: bool, lw: bool, nonlocal: bool, conductivity_multiplier: 1.0}` adds the thermal-filamentation source to the ion velocity-divergence equation: inverse-bremsstrahlung heating by the spatially varying part of each enabled wave's intensity (`|E_w|^2 - <|E_w|^2>`), balanced by Spitzer heat conduction, drives the flow through the electron pressure, `d(div v)/dt += Z nu_w(n) (|E_w|^2 - <|E_w|^2>) / (8 pi m_i kappa')` with `kappa'` the Spitzer conductivity over k_B (times `conductivity_multiplier`) and `nu_w` the wave's energy damping rate (light: `2 nu_abs(n_c) (n/n_c)^2`, requires `terms.light.absorption`; EPW: `2 nu_coll n/n_env`, requires `terms.epw.damping.collisions`; with `terms.epw.solver: combined` the EPW is damped by the combined field's Raman absorption instead, `2 nu_R (n/n_env)^2`, requires `terms.light.absorption`, and the EPW collisions play no part). `nonlocal: true` adds LPSE's `k^(4/3)` correction (`1 + (k lambda_nl)^(4/3)`, `lambda_nl = 30 (k_B T_e)^2 / (4 pi e^4 sqrt(Z+1) ln Lambda n_e)`). The source form follows `ZakharovSolver::getThermalFilamentationSource`; the normalization is adept's own.
+
+### hpe (optional)
+
+Hybrid particle evolution, following Follett et al., *Phys. Plasmas* **24**, 102134 (2017): test electrons drawn from the Maxwellian tail are pushed relativistically in the de-enveloped electrostatic field, their spatially averaged velocity distribution is accumulated by exponential moving average, and the Landau damping rate applied by the EPW solver is recomputed from that evolving distribution every step (kinetic inflation + hot-electron generation; Im-only feedback, no nonlinear frequency shift). For `ny == 1` the tracker uses `(x, p_x)`; in a 2-D box it uses `(x, y, p_x, p_y)` and gathers both $E_x$ and $E_y$. In both cases there is one box-wide ensemble, not a particle population at each grid point. HPE requires `terms.epw.damping.landau: true`. The particle push dominates runtime, so HPE runs want a GPU.
+
+In 2-D the box-wide distribution is represented by `n_angles` oriented projections $f(\mathbf{v}\cdot\hat{\mathbf{k}})$ over $[0,2\pi)$. Opposite directions remain distinct, and the two neighboring angular histograms are interpolated for every `(kx, ky)` mode. This is the Radon-projection form of the resonance integral: its memory is `n_angles * nv`, independent of the spatial mesh. The damping extraction is calibrated per k-mode so that a freshly loaded isotropic Maxwellian tail reproduces the analytic Landau rate exactly; modes whose phase velocity lies below the tail cutoff keep the analytic rate. The default time series gains `fhot_50keV`, `fhot_100keV`, `hpe_mean_energy_keV`, `hpe_gamma_ratio_kpeak` (applied-to-analytic damping ratio at the resonant-band mode carrying the most EPW energy), `hpe_gamma_ratio_min` (band minimum; shot-noise-limited at low `n_particles`), and `hpe_hist` (one velocity histogram in 1-D or an angle-by-velocity array in 2-D); MLflow metrics gain `fhot_50keV`, `t_first_hot_e_50keV`, and `hpe_damping_reduction_final`.
+
+At an absorbing particle wall, outgoing particles are thermalized and reinjected from the flux-weighted retained-tail law. In 2-D wall coordinates this is $p(r,\theta) \propto r^2\exp[-r^2/(2v_{te}^2)]\cos\theta$ for $r > v_{\min}$ and inward $-\pi/2 < \theta < \pi/2$. This distinction is required to keep repeated wall crossings from biasing the global directional distribution.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `active` | bool | Enable HPE (default `false`) |
+| `n_particles` | int | Number of tail test particles (default `500000`) |
+| `v_min` | float | Tail cutoff in units of `vte` (default `2.5`); the retained fraction is `erfc(v_min/sqrt(2))` in 1D1V and `exp(-v_min^2/2)` for the radial 2D2V tail |
+| `v_max` | float | Histogram half-span in units of `c` (default `1.0`) |
+| `nv` | int | Velocity bins spanning `(-v_max, v_max)` (default `512`) |
+| `n_angles` | int | Number of oriented global velocity projections spanning $2\pi$ in 2-D (default `32`; ignored for `ny == 1`) |
+| `v_blend_buffer` | float | Buffer above `v_min` (units of `vte`) below which modes keep the analytic rate (default `0.5`) |
+| `gather_refine` | int | Spectral upsampling factor for `Ex` and `Ey` before the particle gather (default `4`). Linear interpolation of a wave with `k dx ~ 1-2` rad/cell attenuates the gathered field by `sinc^2(k dx / 2)` (15-30%); upsampling makes this ~1% |
+| `substep_courant` | float | `wp0 * dt_particle` for the sub-cycled push (default `0.05`; Follett used 0.035) |
+| `tau_damping` | string | EMA time constant for the velocity histogram (default `"100fs"`, Follett's update interval) |
+| `t_start` | string | Push/feedback disabled before this time (default `"0ps"`); use to let the fluid run reach steady state first |
+| `feedback` | bool | (default `true`) `false` = control run: particles evolve but the damping stays analytic (Follett's control experiment) |
+| `seed` | int | RNG seed for particle loading and wall re-injection (default `42`) |
+| `omega_res` | string | Resonance convention for `v_phi(k)`: `"bohm_gross"` (default, matches the analytic rate) or `"wp0"` (bare carrier, as in the paper) |
+| `gamma_limit_damping` | float | (default `1500`, 1/ps) upper clip on the applied kinetic rate of the resonant modes (LPSE `hpe.gammaLimit.damping`); with `energy_conservation` it is applied again after the multiplier, so the applied rate respects it (LPSE clips only before its `LD_multiplier`; the energy balance then holds only where the limit does not bind) |
+| `gamma_limit_growth` | float | (default `1500`, 1/ps) lower clip `-gamma_limit_growth` on the applied rate of the resonant modes when `allow_growth` is on (LPSE `hpe.gammaLimit.growth`); after the `energy_conservation` multiplier too, as `gamma_limit_damping` |
+| `allow_growth` | bool | (default `false`) allow negative (inverse-Landau) rates from an inverted tail; otherwise the rate is clipped at 0 (LPSE `hpe.allowGrowth`). The series `epw_dissipation` is then signed: modes with a negative applied rate count as energy handed from the electrons to the EPW |
+| `thermalization_probability` | list | probability that a particle crossing an x / y side is thermalized and re-injected from the tail; otherwise it passes through periodically. Every crossing is counted by the wall-flux instrument, on all four sides, independently of the field boundaries (LPSE particle walls, `hpe.thermalizationProbability`). Default: 1 at absorbing field boundaries, 0 at periodic ones |
+| `magnetic_field` | float | (default `0`, tesla) uniform out-of-plane B: the 2-D push rotates the momentum by the cyclotron angle each sub-step (LPSE `hpe.magneticField`, z component) |
+| `energy_conservation` | bool | (default `false`) scale the applied Landau rate every step by a global multiplier in [0.1, 10] so that the expected EPW energy loss equals the particles' kinetic-energy gain (LPSE `hpe.enforceEnergyConservation`; adept linearises the per-mode loss as `2 gamma dt`). Reported as `hpe_ld_multiplier` |
+| `energy_conservation_steps` | float | (default `1`) running-average length of the multiplier (LPSE `hpe.numStepsToAverageEnergyChange`) |
+| `flux_bins` | list | keV edges of the wall-flux instrument (default `[0, 50, 100, 1e9]`): the series `hpe_wall_energy_<left|right|bottom|top>_bin<i>` accumulate the energy (keV per real electron) leaving through each wall in each bin (LPSE `hpe.metrics.flux`). Bins are half-open `[e_i, e_{i+1})`; electrons below the first edge or at/above the last are not counted, so a finite window such as `[50, 100]` reports only 50-100 keV |
+| `cone_angle` | float | acceptance half-angle in degrees of the cone-power instrument (`hpe_cone_energy`: cumulative energy leaving inside the cone about `cone_direction`; LPSE `hpe.metrics.power`). `null` = off |
+| `cone_direction` | list | (default `[1, 0]`) axis of the acceptance cone |
+
+```yaml
+terms:
+  hpe:
+    active: true
+    n_particles: 500000
+    v_min: 2.5
+    substep_courant: 0.05
+    tau_damping: 100fs
+    t_start: 2ps
+```
+
+## Diagnostics: Poynting flux and Thomson probes
+
+`save.fields.poynting: true` adds the light energy-flux density maps `s0_x`, `s0_y` (pump) and `s1_x`, `s1_y` (Raman) to the fields output, `S_j = (c^2/omega) Im(E* . d_j E)` in field-squared times um/ps (`v_g |E|^2` for a plane wave; LPSE `laser.save.S0` / `raman.save.S0`), with `omega` the field's envelope carrier: `w0` for `E0`; for `E1`, `w1 = w0 - wp0` with the separate EPW solver and `wp0` with `terms.epw.solver: combined` (the default series' Raman fluxes and reflectivity use the same carrier). The maps are taken on the save grid; with an interpolated save they need at least two saved x points (setup refuses fewer). `save.thomson: [{k: [kx, ky], bandwidth: 0.1, field: epw}]` adds synthetic Thomson-scattering probes to the default series (LPSE `thomsonScattering.N.wavevector.lw/.iaw` and `bandwidth`): for probe `i`, `thomson_i_re` / `thomson_i_im` are the summed complex amplitude of the EPW potential (or, with `field: iaw`, of the IAW density) over the k-window `|k - k_probe| < bandwidth k0`, and `thomson_i_power` the summed spectral power there; `k` and `bandwidth` are in units of the vacuum laser wavenumber.
+
+## Checkpoint and restart
+
+`save.checkpoint: true` (or a path) writes the complete solver state at `grid.tmax` as an `.npz` (`binary/checkpoint.npz` in the run's artifacts when `true`); `restart: {file: <that .npz>}` in a later configuration resumes from it: the state replaces the fresh initial condition, integration starts at the checkpoint time, and the series/fields save axes start there too unless their `tmin` is later. The per-step noise and wall keys are folded in from the time index, so a run split into two resumes reproduces the unbroken run to round-off as long as the split time is a multiple of `grid.dt` (the fixed-step solver would otherwise clip one step differently). The configuration must otherwise be the same (grid, terms, drivers); mismatched state shapes are refused.
+
+## Absolute-threshold bisection (`adept._lpse2d_cpp.threshold`)
+
+`find_threshold(cfg, intensity_lo, intensity_hi, n_iter=6)` bisects the pump intensity (geometric midpoints) between a stable and an unstable bracket, running the configuration once per point with `ergoExo` and deciding "unstable" from the run's metrics (default: a measurable EPW energy growth fit with a positive rate, `growth_min` adjustable; any callable of the metrics dict can be passed as `criterion`). The bracket needs `0 < intensity_lo < intensity_hi` (a zero lower bound never moves a geometric midpoint); its endpoints are run first and must straddle the criterion, as in LPSE's `AbsoluteThreshold`. The result holds the threshold (midpoint of the final bracket), the bracket and the per-run history; the bisection is logged as an MLflow run (`<run>-bisection`) next to the individual runs.
+
+### Example: TPD Simulation
+
+```yaml
+terms:
+  epw:
+    boundary:
+      x: absorbing
+      y: periodic
+    damping:
+      collisions: 1.0
+      landau: true
+    density_gradient: true
+    linear: true
+    source:
+      noise: true
+      tpd: false
+      srs: true
+  zero_mask: true
+```
+
+### Example: Simple EPW Test
+
+```yaml
+terms:
+  epw:
+    boundary:
+      x: periodic
+      y: periodic
+    damping:
+      collisions: false
+      landau: false
+    density_gradient: false
+    linear: True
+    source:
+      noise: false
+      tpd: false
+  zero_mask: false
+```
+
+## Complete Example
+
+```yaml
+solver: lpse-2d
+
+units:
+  atomic number: 40
+  envelope density: 0.25
+  ionization state: 6
+  laser intensity: 1.5e+14W/cm^2
+  laser_wavelength: 351nm
+  reference electron temperature: 2000.0eV
+  reference ion temperature: 1000eV
+
+density:
+  basis: linear
+  gradient scale length: 50um
+  max: 0.28
+  min: 0.18
+  noise:
+    max: 1.0e-09
+    min: 1.0e-10
+    type: uniform
+
+grid:
+  boundary_abs_coeff: 1.0e4
+  boundary_width: 1.5um
+  low_pass_filter: 0.66
+  dt: 0.010fs
+  dx: 40nm
+  tmax: 2ps
+  tmin: 0.0ns
+  ymax: 0.08um
+  ymin: -0.08um
+
+mlflow:
+  experiment: tpd
+  run: my-simulation
+
+save:
+  fields:
+    t:
+      dt: 0.2ps
+      tmax: 2ps
+      tmin: 0ps
+    x:
+      dx: 50nm
+    y:
+      dy: 50nm
+
+drivers:
+  E0:
+    delta_omega_max: 0.015
+    envelope:
+      tc: 200.25ps
+      tr: 0.1ps
+      tw: 400ps
+      xc: 50um
+      xr: 0.2um
+      xw: 1000um
+      yc: 50um
+      yr: 0.2um
+      yw: 1000um
+    num_colors: 1
+    shape: uniform
+
+terms:
+  epw:
+    boundary:
+      x: absorbing
+      y: periodic
+    damping:
+      collisions: 1.0
+      landau: true
+    density_gradient: true
+    linear: true
+    source:
+      noise: true
+      tpd: false
+      srs: true
+  zero_mask: true
+```
+
+## Example Configurations
+
+### EPW Linear Propagation
+
+See `configs/lpse-2d/epw.yaml` - Simple EPW test without instabilities.
+
+### Landau Damping
+
+See `configs/lpse-2d/damping.yaml` - EPW with Landau damping and trapping model.
+
+### Two-Plasmon Decay
+
+See `configs/lpse-2d/tpd.yaml` - TPD simulation with linear density gradient.
+
+### SRS / Reflection
+
+See `configs/lpse-2d/srs.yaml` - Noise-seeded backward SRS on a linear density ramp
+(the lpse-matlab `srs_1D` case), with a reflectivity time series recorded at a probe on
+the low-density side. Also see `configs/lpse-2d/reflection.yaml` - SRS simulation
+with kinetic corrections.
+
+### Coupled TPD + SRS + IAW
+
+See `configs/lpse-2d/tpd-srs-iaw.yaml` for the full 2-D model: both parametric
+instabilities, reciprocal pump depletion, ion-acoustic evolution, 2D2V particle
+feedback, and shifted-band de-aliasing. See `configs/lpse-2d/srs-hpe.yaml` for
+the less expensive quasi-1D particle-feedback model.
