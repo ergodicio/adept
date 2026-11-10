@@ -42,9 +42,7 @@ def test_single_resonance(real_or_imag, time, field, edfdv, request):
     # Mark flaky test as xfail
     if (real_or_imag, time, field, edfdv) == ("imag", "leapfrog", "ampere", "cubic-spline"):
         request.node.add_marker(pytest.mark.xfail(reason="Fails mysteriously with float64"))
-    if (time == "sixth") and (field == "ampere"):
-        print("not implemented - skipping test")
-    elif (time == "sixth") and (field == "hampere"):
+    if ((time == "sixth") and (field == "ampere")) or ((time == "sixth") and (field == "hampere")):
         print("not implemented - skipping test")
     else:
         with open("tests/test_vlasov1d/configs/resonance.yaml") as file:

@@ -572,8 +572,8 @@ def _decode_array(array: Any, schema: CheckpointLeaf) -> Any:
 
 
 def _flatten_state(state: Any) -> tuple[list[Any], tuple[CheckpointLeaf, ...], Any, list[Any]]:
-    import jax.tree_util as tree_util
     import numpy as np
+    from jax import tree_util
 
     paths_and_leaves, tree = tree_util.tree_flatten_with_path(state)
     arrays = []
@@ -940,7 +940,7 @@ class LocalCheckpointStore:
         restored = [
             self._restore_leaf(array, target_leaf) for array, target_leaf in zip(arrays, target_values, strict=True)
         ]
-        import jax.tree_util as tree_util
+        from jax import tree_util
 
         return tree_util.tree_unflatten(tree, restored)
 

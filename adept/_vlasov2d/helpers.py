@@ -217,7 +217,7 @@ def _save_xy_facet(fld, path: str, n_panels: int = 8) -> None:
         vmax = 1.0
     vmin = -vmax
 
-    ncols = 4 if n_panels >= 4 else n_panels
+    ncols = min(4, n_panels)
     nrows = int(np.ceil(n_panels / ncols))
     g = panels.plot(
         col="t",
