@@ -285,7 +285,7 @@ def test_batch_jobs_merge_defaults_and_build_run_commands(tmp_path):
     assert "--windows" in cmd1 and "0.5-0.8" in cmd1 and "--no-log" in cmd1 and "--out" not in cmd1
 
     # the shipped matrices load
-    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d" / "parity" / "batches"
+    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d_cpp" / "parity" / "batches"
     for name in ("relog.yaml", "n1_test_010.yaml", "n2_hpe.yaml", "f3_spol.yaml"):
         assert load_jobs(root / name)
 
@@ -341,7 +341,7 @@ def test_batch_files_keep_every_window_and_refuse_unknown_keys(tmp_path):
     file loads with its multi-window jobs whole."""
     from adept._lpse2d_cpp.parity import load_jobs
 
-    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d" / "parity" / "batches"
+    root = Path(__file__).resolve().parents[2] / "adept" / "_lpse2d_cpp" / "parity" / "batches"
     windows = {}
     for f in sorted(root.glob("*.yaml")):
         for job in load_jobs(f):
