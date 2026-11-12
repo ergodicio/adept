@@ -1,3 +1,4 @@
+import math
 import os
 
 import matplotlib.pyplot as plt
@@ -714,7 +715,8 @@ def get_solver_quantities(cfg: dict) -> dict:
                 cfg_grid["ymax"] - cfg_grid["dy"] / 2,
                 cfg_grid["ny"],
             ),
-            "t": np.linspace(0, cfg_grid["tmax"], cfg_grid["nt"]),
+            # the default series samples every step, t = n dt (n = 0 .. nt); see step_save_times
+            "t": np.arange(cfg_grid["nt"] + 1) * cfg_grid["dt"],
             "kx": np.fft.fftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
             "kxr": np.fft.rfftfreq(cfg_grid["nx"], d=cfg_grid["dx"] / 2.0 / np.pi),
             "ky": np.fft.fftfreq(cfg_grid["ny"], d=cfg_grid["dy"] / 2.0 / np.pi),
@@ -1680,6 +1682,39 @@ def _interpolated_field_save(cfg: dict):
     return save_func
 
 
+def step_save_times(tmin: float, tmax: float, period: float, dt: float) -> tuple[np.ndarray, int]:
+    """Save times on the solver's step grid t = n dt: the first step at or after ``tmin``, then every
+    ``max(round(period / dt), 1)`` steps up to ``tmax`` (all in ps). LPSE likewise collects its
+    diagnostics on step indices, every max(round(period / dt), 1) steps (Metrics.cpp:74,
+    LightSpectrum.cpp:225). Between steps the solver's dense output is a linear interpolation of the
+    state, which for an envelope rotating by theta per step scales |phi|^2 by 1 - 2 s (1 - s)(1 - cos theta)
+    at the fractional step s, so a save time off the step grid biases every saved field and series.
+
+    :return: the save times and the stride in steps
+    """
+    stride = _save_stride(period, dt)
+    first = math.ceil(tmin / dt - 1.0e-9)
+    last = math.floor(tmax / dt + 1.0e-9)
+    if last < first:
+        raise ValueError(f"no solver step between tmin = {tmin:.6g} ps and tmax = {tmax:.6g} ps (dt = {dt:.6g} ps)")
+    return (first + stride * np.arange((last - first) // stride + 1)) * dt, stride
+
+
+def _save_stride(period: float, dt: float) -> int:
+    return max(math.floor(period / dt + 0.5), 1)  # LPSE's roundf (half away from zero), not round's half-even
+
+
+def continue_step_sequence(tmin: float, period: float, dt: float, t_restart: float) -> float:
+    """The first time at or after ``t_restart`` of the save sequence ``step_save_times(tmin, ., period,
+    dt)`` starts (all in ps), so that a resumed run continues the unbroken run's save times."""
+    stride = _save_stride(period, dt)
+    first = math.ceil(tmin / dt - 1.0e-9)
+    restart_step = math.ceil(t_restart / dt - 1.0e-9)
+    if first < restart_step:
+        first += stride * math.ceil((restart_step - first) / stride)
+    return first * dt
+
+
 def get_save_quantities(cfg: dict) -> dict:
     """
     This function updates the config with the quantities required for the diagnostics and saving routines
@@ -1693,10 +1728,16 @@ def get_save_quantities(cfg: dict) -> dict:
     tmin = _Q(cfg["save"]["fields"]["t"]["tmin"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     tmax = _Q(cfg["save"]["fields"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     dt = _Q(cfg["save"]["fields"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
-    nt = int((tmax - tmin) / dt) + 1
+    grid_dt = cfg["grid"]["dt"]
+    ax, stride = step_save_times(tmin, tmax, dt, grid_dt)
+    if abs(stride * grid_dt - dt) > 1.0e-9 * dt:
+        print(
+            f"save.fields.t.dt = {dt:.6g} ps is not a whole number of solver steps (grid.dt = {grid_dt:.6g} ps): "
+            f"the fields are saved every {stride} steps ({stride * grid_dt:.6g} ps)"
+        )
 
-    cfg["save"]["fields"]["t"]["dt"] = dt
-    cfg["save"]["fields"]["t"]["ax"] = jnp.linspace(tmin, tmax, nt)
+    cfg["save"]["fields"]["t"]["dt"] = stride * grid_dt
+    cfg["save"]["fields"]["t"]["ax"] = ax
 
     if ("x" in cfg["save"]["fields"]) != ("y" in cfg["save"]["fields"]):
         raise NotImplementedError("Must specify both save.fields.x and save.fields.y for an interpolated field save")

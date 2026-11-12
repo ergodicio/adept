@@ -206,9 +206,15 @@ save:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `dt` | string | Time interval between saves, with unit |
+| `dt` | string | Time interval between saves, with unit; rounded to a whole number of solver steps, `max(round(dt / grid.dt), 1)` (printed at setup when it differs) |
 | `tmax` | string | End time for saving, with unit |
 | `tmin` | string | Start time for saving, with unit |
+
+Fields are saved only at solver step times `n * grid.dt`: the first step at or after `tmin`, then every
+`max(round(dt / grid.dt), 1)` steps up to `tmax`, as LPSE collects its diagnostics on step indices. The
+default time series (`series.xr`) is sampled at every step. Between steps the solver's dense output is
+a linear interpolation of the state, which shrinks a rotating envelope; before October 2026 both save
+axes fell between steps (see the [overview](overview.md#what-gets-saved)).
 
 #### x (optional)
 

@@ -10,6 +10,7 @@ from adept._base_ import Stepper
 from adept._lpse2d_cpp.core.vector_field import SplitStep
 from adept._lpse2d_cpp.helpers import (
     _Q,
+    continue_step_sequence,
     get_density_profile,
     get_derived_quantities,
     get_save_quantities,
@@ -132,8 +133,15 @@ class BaseLPSE2D(ADEPTModule):
             self.state = {k: np.asarray(loaded[k], dtype=np.float64) for k in self.state}
             for sub in self.cfg["save"].values():
                 if isinstance(sub, dict) and isinstance(sub.get("t"), dict) and "tmin" in sub["t"]:
-                    if _Q(sub["t"]["tmin"]).to("ps").value < self.restart_t0:
-                        sub["t"]["tmin"] = f"{self.restart_t0:.9g}ps"
+                    t_cfg = sub["t"]
+                    tmin = _Q(t_cfg["tmin"]).to("ps").value
+                    if tmin < self.restart_t0:
+                        # continue the unbroken run's save steps (every max(round(dt_save / dt), 1) from tmin)
+                        if "dt" in t_cfg:
+                            tmin = continue_step_sequence(tmin, _Q(t_cfg["dt"]).to("ps").value, dt, self.restart_t0)
+                        else:
+                            tmin = self.restart_t0
+                        t_cfg["tmin"] = f"{tmin:.12g}ps"
             # the default series samples the grid's time axis: keep only the resumed interval
             t_axis = np.asarray(self.cfg["grid"]["t"])
             kept = t_axis[t_axis >= self.restart_t0 - 1.0e-12]
