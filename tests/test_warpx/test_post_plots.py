@@ -61,7 +61,7 @@ class TestCollect:
         for rel in (
             "spacetime/e1.png",
             "spacetime/e2.png",
-            "omega_k/e2.png",
+            "omega_k/e2/full_box.png",
             "field_decomp/e2.png",
             "energy_vs_time.png",
             "total_energy_vs_time.png",

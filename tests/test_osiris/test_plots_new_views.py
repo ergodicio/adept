@@ -370,7 +370,7 @@ def test_save_canned_plots_emits_new_views(tmp_path: Path) -> None:
     run_dir = _make_rich_run(tmp_path)
     written = oplt.save_canned_plots(run_dir, tmp_path / "plots", v_th=0.1)
     expected = {
-        "omega_k/e2",
+        "omega_k/e2/full_box",
         "currents/spacetime",
         "currents/lineouts",
         "profiles/electron/density",

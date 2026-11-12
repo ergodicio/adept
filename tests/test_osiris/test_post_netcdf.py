@@ -435,7 +435,7 @@ def test_save_canned_plots_regenerates_from_netcdf(tmp_path: Path) -> None:
     # ...spanning every family, incl. the energy traces that read outside MS/.
     for key in (
         "spacetime/e1",
-        "omega_k/e1",
+        "omega_k/e1/full_box",
         "moments/electrons/charge",
         "profiles/electrons/density",
         "phasespace/electrons/p1x1",

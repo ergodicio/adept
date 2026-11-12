@@ -86,7 +86,7 @@ def test_save_canned_plots_writes_all_expected(tmp_path: Path, run_dir: Path) ->
     written = oplt.save_canned_plots(run_dir, tmp_path, v_th=0.0707)
     # At minimum: one spacetime + omega_k for e1, energy_vs_time, both species PS.
     assert "spacetime/e1" in written
-    assert "omega_k/e1" in written
+    assert "omega_k/e1/full_box" in written
     assert "energy_vs_time" in written
     assert "phasespace/beam_pos/x1p1" in written
     assert "phasespace/beam_neg/x1p1" in written
