@@ -1223,7 +1223,10 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     os.makedirs(os.path.join(td, "binary"))
     metrics = {}
     t0 = time.time()
-    kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
+    if "fields" in result.ts:
+        kfields, fields = make_field_xarrays(cfg, result.ts["fields"], result.ys["fields"], td)
+    else:  # a resumed segment with no scheduled field save left (save.fields.t.restart_exhausted)
+        kfields, fields = None, None
     series = make_series_xarrays(cfg, result.ts["default"], result.ys["default"], td)
     if "checkpoint" in result.ys:
         target = cfg["save"]["checkpoint"]
@@ -1244,8 +1247,9 @@ def post_process(result, cfg: dict, td: str) -> tuple[xr.Dataset, xr.Dataset]:
     t0 = time.time()
     plot_series(series, td)
     plot_srs_diagnostics(series, metrics, cfg, td)
-    plot_fields(fields, td)
-    plot_kt(kfields, td)
+    if fields is not None:
+        plot_fields(fields, td)
+        plot_kt(kfields, td)
     metrics["plot_time"] = time.time() - t0
 
     return {"k": kfields, "x": fields, "series": series, "metrics": metrics}
@@ -1682,7 +1686,9 @@ def _interpolated_field_save(cfg: dict):
     return save_func
 
 
-def step_save_times(tmin: float, tmax: float, period: float, dt: float) -> tuple[np.ndarray, int]:
+def step_save_times(
+    tmin: float, tmax: float, period: float, dt: float, allow_empty: bool = False
+) -> tuple[np.ndarray, int]:
     """Save times on the solver's step grid t = n dt: the first step at or after ``tmin``, then every
     ``max(round(period / dt), 1)`` steps up to ``tmax`` (all in ps). LPSE likewise collects its
     diagnostics on step indices, every max(round(period / dt), 1) steps (Metrics.cpp:74,
@@ -1690,12 +1696,16 @@ def step_save_times(tmin: float, tmax: float, period: float, dt: float) -> tuple
     state, which for an envelope rotating by theta per step scales |phi|^2 by 1 - 2 s (1 - s)(1 - cos theta)
     at the fractional step s, so a save time off the step grid biases every saved field and series.
 
+    :param allow_empty: return no save times, rather than raise, when no step lies in [tmin, tmax] (a resumed
+        segment that ends before its next scheduled save)
     :return: the save times and the stride in steps
     """
     stride = _save_stride(period, dt)
     first = math.ceil(tmin / dt - 1.0e-9)
     last = math.floor(tmax / dt + 1.0e-9)
     if last < first:
+        if allow_empty:
+            return np.empty(0), stride
         raise ValueError(f"no solver step between tmin = {tmin:.6g} ps and tmax = {tmax:.6g} ps (dt = {dt:.6g} ps)")
     return (first + stride * np.arange((last - first) // stride + 1)) * dt, stride
 
@@ -1729,7 +1739,11 @@ def get_save_quantities(cfg: dict) -> dict:
     tmax = _Q(cfg["save"]["fields"]["t"]["tmax"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     dt = _Q(cfg["save"]["fields"]["t"]["dt"]).to("s").value / cfg["units"]["derived"]["timeScale"]
     grid_dt = cfg["grid"]["dt"]
-    ax, stride = step_save_times(tmin, tmax, dt, grid_dt)
+    # a restart past the last scheduled field save leaves this segment none (modules.base flags it)
+    exhausted = bool(cfg["save"]["fields"]["t"].get("restart_exhausted", False))
+    ax, stride = step_save_times(tmin, tmax, dt, grid_dt, allow_empty=exhausted)
+    if ax.size == 0:
+        print("the restart is past the last scheduled field save: this segment saves no fields")
     if abs(stride * grid_dt - dt) > 1.0e-9 * dt:
         print(
             f"save.fields.t.dt = {dt:.6g} ps is not a whole number of solver steps (grid.dt = {grid_dt:.6g} ps): "

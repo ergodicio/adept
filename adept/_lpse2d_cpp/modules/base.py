@@ -70,7 +70,8 @@ class BaseLPSE2D(ADEPTModule):
         subs = {
             k: SubSaveAt(ts=subsave["t"]["ax"], fn=subsave["func"])
             for k, subsave in self.cfg["save"].items()
-            if isinstance(subsave, dict) and "func" in subsave
+            # a group with no save time left (a restart past its last scheduled save) is not saved
+            if isinstance(subsave, dict) and "func" in subsave and np.size(subsave["t"]["ax"]) > 0
         }
         if self.cfg["save"].get("checkpoint"):
             # the full state at the final time (save.checkpoint: true | path), written by
@@ -139,6 +140,9 @@ class BaseLPSE2D(ADEPTModule):
                         # continue the unbroken run's save steps (every max(round(dt_save / dt), 1) from tmin)
                         if "dt" in t_cfg:
                             tmin = continue_step_sequence(tmin, _Q(t_cfg["dt"]).to("ps").value, dt, self.restart_t0)
+                            if "tmax" in t_cfg and tmin > _Q(t_cfg["tmax"]).to("ps").value + 1.0e-9 * dt:
+                                # the next scheduled save is past this segment's end: it saves none
+                                t_cfg["restart_exhausted"] = True
                         else:
                             tmin = self.restart_t0
                         t_cfg["tmin"] = f"{tmin:.12g}ps"
