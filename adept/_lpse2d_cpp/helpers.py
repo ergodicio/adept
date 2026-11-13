@@ -2603,6 +2603,9 @@ def get_default_save_func(cfg):
         hpe_window_sqrt = jnp.asarray(np.sqrt(hpe_window_w))[:, :, None]
         hpe_k_mag = jnp.asarray(np.sqrt(np.asarray(kx)[:, None] ** 2 + np.asarray(ky)[None, :] ** 2))
         hpe_zero_mask = jnp.asarray(zero_mask)
+        hpe_inv_k_mag = jnp.asarray(
+            np.where(np.asarray(hpe_k_mag) > 0, 1.0 / np.maximum(np.asarray(hpe_k_mag), 1e-300), 0.0)
+        )
         hpe_collision_factor = float(np.exp(-derived.get("nu_coll", 0.0) * dt)) if not combined_epw else 1.0
     if hpe_on:
         from adept._lpse2d_cpp.core.hpe import resonance_arrays
@@ -2758,10 +2761,21 @@ def get_default_save_func(cfg):
             recombined = jnp.sum(
                 hpe_window_sqrt * jnp.fft.ifft2(chunks * jnp.exp(-y["gamma_L_windows"] * dt), axes=(1, 2)), axis=0
             )
-            # as the solver: the recombined field's k = 0 part has no phi (it is dropped), and the
-            # collisions damp the whole field after the windows
-            psi_after = jnp.fft.ifft2(jnp.fft.fft2(recombined) * hpe_zero_mask) * hpe_collision_factor
-            loss_density = (jnp.abs(psi_x) ** 2 - jnp.abs(psi_after) ** 2) / dt
+            # back to the potential as the solver does (phi = psi / |k|, k = 0 left alone), then the zero
+            # mask and the collisions, which damp the whole field after the windows
+            phi_after = jnp.where(hpe_k_mag > 0, jnp.fft.fft2(recombined) * hpe_inv_k_mag, phi_k)
+            phi_after = phi_after * hpe_zero_mask * hpe_collision_factor
+
+            # the local loss is that of the electric field E = -grad phi, the density the spatial
+            # total-to-electric factor weights: |psi(x)|^2 has the same box integral but a different
+            # local profile (interference of counter-propagating waves), which a density ramp does not
+            # average out (PR #387 review). One shared k-independent rate gives the single-window loss
+            def e_density(phi):
+                ex_x = jnp.fft.ifft2(-1j * kx[:, None] * phi)
+                ey_x = jnp.fft.ifft2(-1j * ky[None, :] * phi)
+                return jnp.abs(ex_x) ** 2 + jnp.abs(ey_x) ** 2
+
+            loss_density = (e_density(phi_k) - e_density(phi_after)) / dt
         else:
             if dynamic_rate:
                 # the applied rate is dynamic (HPE or QLE): read it from the state

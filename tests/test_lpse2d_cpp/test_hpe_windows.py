@@ -434,6 +434,63 @@ def test_windowed_dissipation_is_the_energy_the_damping_step_removes():
     assert dissipation(True, positive)[3] == dissipation(False, positive)[3]
 
 
+def test_windowed_dissipation_on_a_ramp_is_the_weighted_electric_energy_loss():
+    """On a density ramp (x-dependent total-to-electric factor) with mixed propagation directions,
+    one shared positive k-independent rate in every window gives the single-window dissipation, and
+    both equal prefactor * sum_x mean_y(factor * (|E|^2 - |E'|^2)) / dt with E = -grad phi before and
+    after the damping step (PR #387 review: the windowed branch weighted |psi|^2 = |IFFT(|k| phi)|^2,
+    whose local profile differs from |E|^2). Tolerances fixed in advance: rtol 1e-9 for both
+    agreements; the |psi|^2 weighting must differ by more than 1e-6 relative, so the test detects it."""
+    from adept._lpse2d_cpp.core.epw import SpectralEPWSolver
+    from adept._lpse2d_cpp.core.hpe import load_particles
+    from adept._lpse2d_cpp.helpers import get_default_save_func, get_save_quantities
+
+    ramp = {
+        "density.basis": "linear",
+        "density.min": 0.18,
+        "density.max": 0.24,
+        "density.gradient scale length": "30um",
+    }
+
+    def run(n_windows):
+        cfg = get_save_quantities(_make_cfg({"n_windows": n_windows}, ramp))
+        nx, ny, dt = cfg["grid"]["nx"], cfg["grid"]["ny"], cfg["grid"]["dt"]
+        phi_k = 1e-3 * _random_phi(cfg, 11)  # every k and -k populated: waves in both directions
+        state = {k: jnp.asarray(v) for k, v in load_particles(cfg).items()}
+        rate = 0.05 / dt
+        key = "gamma_L_windows" if n_windows > 1 else "gamma_L"
+        state[key] = jnp.full_like(state[key], rate)
+        zeros = jnp.zeros((nx, ny, 2), dtype=jnp.complex128).view(jnp.float64)
+        state.update({"epw": phi_k.view(jnp.float64), "E0": zeros, "E1": zeros})
+        out = get_default_save_func(cfg)["func"](0.0, state, None)
+        return cfg, phi_k, state, float(out["epw_dissipation"])
+
+    cfg, phi_k, state, windowed = run(3)
+    _, _, _, single = run(1)
+    grid, d = cfg["grid"], cfg["units"]["derived"]
+    dt = grid["dt"]
+    factor = 2.0 * (2.0 - np.asarray(grid["background_density"]) / cfg["units"]["envelope density"])
+    assert np.ptp(factor) > 0.0  # a ramp, not a constant factor
+
+    solver = SpectralEPWSolver(cfg)
+    after = np.asarray(solver.windowed_landau_damping(phi_k, state["gamma_L_windows"]))
+    after = after * np.asarray(grid["zero_mask"]) * np.exp(-d.get("nu_coll", 0.0) * dt)
+    kx, ky = np.asarray(grid["kx"])[:, None], np.asarray(grid["ky"])[None, :]
+
+    def e_sq(phi):
+        return np.abs(np.fft.ifft2(-1j * kx * phi)) ** 2 + np.abs(np.fft.ifft2(-1j * ky * phi)) ** 2
+
+    prefactor = 0.25 * grid["dx"] * d["x_norm"] * d["e_norm"] ** 2
+    want = prefactor * np.sum(np.mean(factor * (e_sq(np.asarray(phi_k)) - e_sq(after)) / dt, axis=1))
+    assert windowed == pytest.approx(single, rel=1e-9)
+    assert windowed == pytest.approx(want, rel=1e-9)
+
+    k_mag = np.sqrt(kx**2 + ky**2)
+    psi_sq = np.abs(np.fft.ifft2(k_mag * np.asarray(phi_k))) ** 2 - np.abs(np.fft.ifft2(k_mag * after)) ** 2
+    old = prefactor * np.sum(np.mean(factor * psi_sq / dt, axis=1))
+    assert abs(old - want) > 1e-6 * abs(want)
+
+
 @pytest.mark.parametrize("two_d", [False, True])
 def test_sparse_loading_leaves_empty_windows_finite(two_d):
     """3 particles in 7 windows: each particle weighs at most two adjacent windows, so at least one
