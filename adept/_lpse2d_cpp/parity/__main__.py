@@ -119,14 +119,29 @@ def cmd_verify(args) -> int:
     deck = run.data.tags.get("lpse_reference_deck", run.info.run_name)
     dest = Path(args.dest) if args.dest else reference.reference_cache_dir() / "verify" / args.run_id
     reference.download_run_artifacts(args.run_id, dest / "binary", "binary/series.xr")
-    reference.download_run_artifacts(args.run_id, dest / "lpse_reference", "lpse_reference/lpse.metrics")
+    ref_dir = _download_reference_metrics(args.run_id, dest / "lpse_reference")
     stored = {
         k: v for k, v in run.data.metrics.items() if "_energy_growth_" in k or k.startswith(("epw_half_max", "iaw_max"))
     }
     computed = harness.compare(
-        dest / "binary" / "series.xr", dest / "lpse_reference" / "lpse.metrics", _windows_for(deck, args.windows)
+        dest / "binary" / "series.xr", reference.metrics_path(ref_dir), _windows_for(deck, args.windows)
     )
     return _verify_report(stored, computed, args.rtol, f"{deck} ({args.run_id})")
+
+
+def _download_reference_metrics(run_id: str, ref_dir: Path) -> Path:
+    """Download the run's reference ``lpse.metrics`` in whichever layout it was archived with
+    (``harness.log_reference``: flat ``lpse_reference/lpse.metrics`` by default, the run tree's
+    ``lpse_reference/data/lpse.metrics`` with ``full``), keeping that layout under ``ref_dir`` so
+    ``reference.metrics_path(ref_dir)`` resolves it. Raises ``LookupError`` if the run has neither."""
+    for rel in reference.METRICS_LAYOUTS:
+        try:
+            reference.download_run_artifacts(run_id, ref_dir / Path(rel).parent, f"lpse_reference/{rel}")
+        except LookupError:
+            continue
+        return ref_dir
+    looked = ", ".join(reference.METRICS_LAYOUTS)
+    raise LookupError(f"run {run_id} has no reference metrics under lpse_reference/ (looked for {looked})")
 
 
 def _verify_report(stored: dict, computed: dict, rtol: float, label: str) -> int:

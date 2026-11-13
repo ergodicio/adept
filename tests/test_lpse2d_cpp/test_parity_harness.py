@@ -402,7 +402,7 @@ def test_verify_fails_when_a_recomputed_metric_is_non_finite(monkeypatch, tmp_pa
     monkeypatch.setattr(
         adept.patched_mlflow, "MlflowClient", lambda: SimpleNamespace(get_run=lambda _id: run), raising=False
     )
-    monkeypatch.setattr(cli.reference, "download_run_artifacts", lambda *a, **k: None)
+    monkeypatch.setattr(cli.reference, "download_run_artifacts", _fake_archive("lpse.metrics"))
     args = SimpleNamespace(run_id="r1", dest=str(tmp_path), windows="0.3-0.9", rtol=1e-9)
     monkeypatch.setattr(
         cli.harness, "compare", lambda *a, **k: {"iaw_max_adept": float("nan"), "epw_energy_growth_0.3-0.9": 4.0}
@@ -410,3 +410,47 @@ def test_verify_fails_when_a_recomputed_metric_is_non_finite(monkeypatch, tmp_pa
     assert cli.cmd_verify(args) == 1
     monkeypatch.setattr(cli.harness, "compare", lambda *a, **k: dict(stored))
     assert cli.cmd_verify(args) == 0
+
+
+def _fake_archive(layout):
+    """A stand-in for reference.download_run_artifacts over an archive whose reference metrics sit at
+    ``lpse_reference/<layout>``: a request for that file writes it under ``dest`` (a single file lands
+    at ``dest/<basename>``, as with boto3), any other request raises LookupError."""
+
+    def download(run_id, dest, subdir=""):
+        if subdir in ("binary/series.xr",):
+            return dest
+        if subdir != f"lpse_reference/{layout}":
+            raise LookupError(f"run {run_id} has no artifacts under {subdir!r}")
+        Path(dest).mkdir(parents=True, exist_ok=True)
+        (Path(dest) / Path(layout).name).write_text("metrics")
+        return dest
+
+    return download
+
+
+@pytest.mark.parametrize("layout", ["lpse.metrics", "data/lpse.metrics"])
+def test_verify_resolves_both_reference_archive_layouts(monkeypatch, tmp_path, layout):
+    """cmd_verify finds the reference metrics of a flat archive (``log`` / ``run`` default) and of a
+    full one (``--full`` keeps the run tree's ``data/lpse.metrics``) and compares against that file
+    (PR #378 review: the flat path was hard-coded, so full archives raised LookupError)."""
+    from types import SimpleNamespace
+
+    import adept.patched_mlflow
+    from adept._lpse2d_cpp.parity import __main__ as cli
+
+    stored = {"epw_energy_growth_0.3-0.9": 4.0}
+    run = SimpleNamespace(data=SimpleNamespace(tags={}, metrics=stored), info=SimpleNamespace(run_name="test_x"))
+    monkeypatch.setattr(
+        adept.patched_mlflow, "MlflowClient", lambda: SimpleNamespace(get_run=lambda _id: run), raising=False
+    )
+    monkeypatch.setattr(cli.reference, "download_run_artifacts", _fake_archive(layout))
+    seen = []
+    monkeypatch.setattr(cli.harness, "compare", lambda series, metrics, windows: seen.append(metrics) or dict(stored))
+    args = SimpleNamespace(run_id="r1", dest=str(tmp_path), windows="0.3-0.9", rtol=1e-9)
+    assert cli.cmd_verify(args) == 0
+    assert seen == [tmp_path / "lpse_reference" / layout]
+
+    monkeypatch.setattr(cli.reference, "download_run_artifacts", _fake_archive("elsewhere/lpse.metrics"))
+    with pytest.raises(LookupError, match="no reference metrics"):
+        cli.cmd_verify(SimpleNamespace(run_id="r2", dest=str(tmp_path / "r2"), windows="0.3-0.9", rtol=1e-9))
