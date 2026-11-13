@@ -259,14 +259,43 @@ def series_metrics(series, cfg: dict) -> dict[str, float]:
     # estimators are meaningful; with pump depletion on, the net-Poynting R/T/absorbed
     # match osiris_lpi/laser_budget.py exactly (R = 1 - S_left/I0, T = S_right/I0,
     # absorbed = (S_left - S_right)/I0, so R + T + absorbed == 1 identically).
+    #
+    # The flux probes are signed +x fluxes (incident / transmitted: the pump at the left / right
+    # probe; reflected: minus the Raman flux at the left; backrefl: the Raman flux at the right),
+    # so the budget above assumes illumination from x-min. A pump entering at x-max (every beam
+    # leftward, drivers.E0 beam_leftward) is the mirror image x -> -x: its incident flux is minus
+    # the right probe's, its transmitted flux minus the left probe's, and the reflected / forward
+    # Raman probes swap, after which the same budget applies. With beams entering from both faces
+    # the net probes cannot separate incoming from outgoing power: the fraction metrics are not
+    # logged, only the signed net fluxes at both faces (laser_net_flux_left / _right).
     pump_evolved = bool(cfg["terms"].get("light", {}).get("pump_depletion", False))
     have_flux = all(k in series for k in ("incident_flux", "reflected_flux", "transmitted_flux", "backrefl_flux"))
+    leftward = np.atleast_1d(
+        np.asarray(cfg["drivers"].get("E0", {}).get("derived", {}).get("beam_leftward", [False]), dtype=bool)
+    )
+    two_sided = bool(np.any(leftward)) and not bool(np.all(leftward))
     if have_flux:
         inc = np.asarray(series["incident_flux"].values, dtype=float)
         refl = np.asarray(series["reflected_flux"].values, dtype=float)
         trans = np.asarray(series["transmitted_flux"].values, dtype=float)
         backrefl = np.asarray(series["backrefl_flux"].values, dtype=float)
-        s_left = inc - refl  # F0_left + F1_left, in units of I0_code
+        if two_sided:
+            for win in segment_windows(t_ps, last_frac=0.25, n_segments=4):
+                suffix = "" if win["is_last"] else f"_seg{win['index']}of{win['n']}"
+                net_left = _wmean(inc - refl, win["mask"])
+                if net_left is None:
+                    continue
+                metrics[f"laser_net_flux_left{suffix}"] = net_left
+                metrics[f"laser_net_flux_right{suffix}"] = _wmean(trans + backrefl, win["mask"])
+                if "epw_dissipation" in series and I0_osiris > 0:
+                    d = _wmean(np.asarray(series["epw_dissipation"].values, dtype=float), win["mask"])
+                    if d is not None:
+                        metrics[f"laser_absorbed_frac_epw{suffix}"] = d / w0 / I0_osiris
+            have_flux = False
+        elif bool(np.all(leftward)):
+            inc, trans, refl, backrefl = -trans, -inc, backrefl, refl
+    if have_flux:
+        s_left = inc - refl  # F0_left + F1_left, in units of I0_code (entrance face)
         s_right = trans + backrefl
 
         # With an evolved pump the injector's launched amplitude carries a small grid-

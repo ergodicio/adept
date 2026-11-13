@@ -128,11 +128,12 @@ def analytic_landau_rate(cfg: dict) -> Array:
     """
     The static Landau damping rate array (nx, ny) selected by ``terms.epw.damping``:
 
-    - ``landau_form``: ``matlab`` (default), ``lpse`` or ``relativistic`` (LPSE 2-D Bessel form;
-      ``relativistic_3d`` for the 3-D velocity-space integral)
+    - ``landau_form``: ``relativistic`` (default; LPSE 2-D Bessel form), ``matlab``, ``lpse``, or
+      ``relativistic_3d`` (the 3-D velocity-space integral)
     - ``landau_lower_threshold`` (1/ps): modes damped below it are treated as undamped
       (LPSE ``lw.landauDamping.lowerThreshold``)
-    - ``landau_multiplier``: static scalar on the rate (LPSE ``LD_multiplier``)
+    - ``landau_multiplier``: static scalar on the rate (adept-only; LPSE's ``LD_multiplier`` is the HPE
+      energy-conservation multiplier)
 
     Returns zeros when ``terms.epw.damping.landau`` is off.
     """
@@ -144,7 +145,7 @@ def analytic_landau_rate(cfg: dict) -> Array:
     zero_mask = jnp.where(k_sq > 0, 1.0, 0.0)
     if not damping.get("landau", True):
         return jnp.zeros_like(k_sq)
-    form = str(damping.get("landau_form", "matlab"))
+    form = str(damping.get("landau_form", "relativistic"))
     if form in ("relativistic", "relativistic_2d"):
         rate = jnp.asarray(
             landau_damping_rate_relativistic(np.asarray(k_sq), derived["wp0"], derived["vte_sq"], derived["c"], ndim=2)
@@ -170,12 +171,12 @@ def noise_step(cfg: dict) -> tuple[float, float]:
     """
     The time step at which the active EPW solver applies the noise kick, and the collisional
     rate that damps the noised field over it: the EPW step and ``terms.epw.damping.collisions``
-    for the separate solver; the light sub-step ``dt / grid.light_substeps`` and the Raman light's
-    absorption (``terms.light.absorption`` at the combined carrier, which damps the combined field)
-    for the combined solver, which adds the kick once per light step (LPSE
-    ``LwSolver::addNoise_combinedSolver_spectral(dt)``). ``noise_kick_spectrum`` and
-    ``diagnostics.expected_noise_energy`` both take it, so the solver and the growth-fit noise
-    floor stay consistent.
+    for the separate solver; the light sub-step ``dt / grid.light_substeps`` and the Raman
+    light's absorption (``terms.light.raman_absorption``, which damps the combined field) for the
+    combined solver, which adds the kick once per light step (LPSE
+    ``LwSolver::addNoise_combinedSolver_spectral(dt)``, ``ZakharovSolver::addNoiseToPotential_fft``).
+    ``noise_kick_spectrum`` and ``diagnostics.expected_noise_energy`` both take it, so the solver
+    and the growth-fit noise floor stay consistent.
     """
     grid = cfg["grid"]
     nu = float(cfg["units"]["derived"].get("nu_coll", 0.0))
@@ -193,13 +194,13 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
     noise models. ``get_noise`` multiplies it by a random phase every step; the diagnostics
     (``diagnostics.expected_noise_energy``) integrate the same array, so the two never drift.
 
-    ``noise_model: flat`` (default; the MATLAB source): ``D_k = dt * noise_amplitude`` on
+    ``noise_model: flat`` (the MATLAB source): ``D_k = dt * noise_amplitude`` on
     every retained mode at the EPW step. A solver that kicks more often (the combined
     solver, every light sub-step ``dt_l``) gets ``noise_amplitude * sqrt(dt * dt_l)``, which
     keeps the injected variance per unit time -- and so the seed level -- independent of the
     sub-step count.
 
-    ``noise_model: thermal`` (LPSE ``lw.noise``, ZakharovSolver::addNoiseToPotential_fft):
+    ``noise_model: thermal`` (default; LPSE ``lw.noise``, ZakharovSolver::addNoiseToPotential_fft):
     a fluctuation-dissipation source balanced against the *frozen* analytic Landau +
     collisional rate ``gamma_k``:
 
@@ -209,16 +210,26 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
     convention, and the ``1/|k|`` converts field to potential, so the steady state of
     ``phi_k *= exp(-gamma_k dt); phi_k += D_k e^{i theta}`` is the Cerenkov spectrum
     ``<|E_k|^2> = A^2 / (1 + k^2 lambda_D^2)`` per mode (x-space envelope amplitude
-    squared), independent of dt. With ``noise_calibrate: true`` the amplitude is set from
-    the electron temperature by equipartition -- electric energy ``kT/2`` per mode over
-    the box volume ``V`` (``Lz = Ly`` for the 2-D box, ``V = Lx^3`` when ny = 1, following
-    LPSE's ``deltaK3``): ``A_thermal = sqrt(8 pi kT / V)``, and ``noise_amplitude`` then
-    multiplies it (LPSE's ``isCalculated`` convention, amplitude 1 = thermal). Modes with
-    no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere is refused,
-    as in LPSE ("Cannot add LW noise without damping").
+    squared), independent of dt. ``noise_calibrate`` sets ``A`` from the plasma instead of
+    taking ``noise_amplitude`` literally; ``noise_amplitude`` then multiplies it (LPSE's
+    ``isCalculated`` convention, amplitude 1 = thermal):
+
+    - ``equipartition`` (or ``true``): electric energy ``kT/2`` per mode over the box volume
+      ``V`` (``Lz = Ly`` for the 2-D box, ``V = Lx^3`` when ny = 1, following LPSE's
+      ``deltaK3``): ``A_thermal = sqrt(8 pi kT / V)``;
+    - ``lpse``: LPSE's own constant ``lw.noise.calcNoiseAmp_K0`` (``ZakUnits.noise_amp_k0``)
+      converted from its ZAK k-space potential to this code's:
+      ``A = calcNoiseAmp_K0 * potential_zak_to_adept * zak_per_um / (nx ny)`` -- the
+      ``zak_per_um`` is the ``1/|K|`` of LPSE's kick expressed in 1/um, the ``1/(nx ny)``
+      cancels the ``N`` below (both codes add the kick to an unnormalized-FFT potential).
+
+    Modes with no damping receive no noise; a retained band with ``gamma_k <= 0`` everywhere
+    is refused, as in LPSE ("Cannot add LW noise without damping").
 
     ``dt`` and ``nu_coll`` default to the EPW step and ``terms.epw.damping.collisions``; pass
-    ``noise_step(cfg)`` for the step the active solver actually uses.
+    ``noise_step(cfg)`` for the step the active solver actually uses (the combined solver: its
+    light sub-step and the Raman light's rate, as LPSE's ``addNoise_combinedSolver_spectral(dt)``
+    / ``addNoiseToPotential_fft`` do in combined mode).
     """
     grid = cfg["grid"]
     source = cfg["terms"]["epw"]["source"]
@@ -233,7 +244,7 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
         k0 = derived["w0"] / derived["c"]
         band = band * np.where(np.sqrt(k_sq) < float(max_k) * k0, 1.0, 0.0)
 
-    model = str(source.get("noise_model", "flat"))
+    model = str(source.get("noise_model", "thermal"))
     amplitude = float(source.get("noise_amplitude", 1e-10))
     dt = grid["dt"] if dt is None else float(dt)
     if model == "flat":
@@ -251,21 +262,33 @@ def noise_kick_spectrum(cfg: dict, dt: float | None = None, nu_coll: float | Non
             "terms.epw.source.noise_model: thermal needs EPW damping (Landau and/or collisions) on the "
             "retained band -- LPSE refuses noise without damping and so does this model"
         )
-    if source.get("noise_calibrate", False):
+    nx, ny = int(grid["nx"]), int(grid["ny"])
+    n_total = float(nx * ny)
+    calibrate = source.get("noise_calibrate", False)
+    calibrate = "equipartition" if calibrate is True else (str(calibrate) if calibrate else "none")
+    if calibrate == "equipartition":
         # kT in this code's energy unit (massScale * spatialScale^2 / timeScale^2, cgs)
         from astropy.units import Quantity as _Q
 
         te_kev = _Q(cfg["units"]["reference electron temperature"]).to("keV").value
         energy_scale = derived["massScale"] * derived["spatialScale"] ** 2 / derived["timeScale"] ** 2
         kT = te_kev * 1.602176634e-9 / energy_scale
-        nx, ny = int(grid["nx"]), int(grid["ny"])
         lx = nx * grid["dx"]
         ly = ny * grid["dy"]
         volume = lx**3 if ny == 1 else lx * ly * ly
         amplitude = amplitude * np.sqrt(8.0 * np.pi * kT / volume)
+    elif calibrate == "lpse":
+        from adept._lpse2d_cpp.lpse_deck import ZakUnits
+
+        zak = ZakUnits.from_cfg(cfg)
+        h_um = min(float(grid["dx"]), float(grid["dy"])) if ny > 1 else float(grid["dx"])  # LPSE h_xyz
+        amplitude = amplitude * zak.noise_amp_k0(h_um, nx, ny) * zak.potential_zak_to_adept * zak.zak_per_um / n_total
+    elif calibrate != "none":
+        raise ValueError(
+            f"terms.epw.source.noise_calibrate must be false, true, 'equipartition' or 'lpse', got {calibrate!r}"
+        )
 
     lambda_d_sq = derived["vte_sq"] / derived["wp0"] ** 2
-    n_total = float(grid["nx"] * grid["ny"])
     k_safe = np.sqrt(np.where(k_sq > 0, k_sq, 1.0))
     two_g_dt = 2.0 * gamma * dt
     # LPSE switches to the small-argument form below 1e-4 to avoid a float32 cancellation;
@@ -387,7 +410,7 @@ class SpectralEPWSolver:
             # above it and the filter then removes the SRS mode altogether (no growth
             # at all at 0.2 nc with envelope density 0.25), so translated LPSE decks
             # turn it off.
-            self.srs_k_filter = bool(source_cfg.get("srs_k_filter", True))
+            self.srs_k_filter = bool(source_cfg.get("srs_k_filter", False))
             max_source_k_multiplier = float(source_cfg.get("srs_k_filter_scale", 1.2))
             n_min = float(np.min(np.array(self.background_density)))
             self.pump_depletion = cfg["terms"].get("light", {}).get("pump_depletion", False)
@@ -411,8 +434,12 @@ class SpectralEPWSolver:
         # (m201805_matlabLpse_v11.m:49). The seed is resolved (and written back into
         # the cfg, so MLflow logs it) in helpers.get_derived_quantities; the fallback
         # here only fires if that step was skipped.
+        # x-space multiplier on the TPD / SRS sources (terms.epw.source_window, the absorber and
+        # injector suppressions; plan 2 I.3); 1.0 when none is configured
+        mask = cfg["grid"].get("epw_source_mask")
+        self.source_mask = 1.0 if mask is None or bool(np.all(np.asarray(mask) == 1.0)) else jnp.asarray(mask)
         self.noise_enabled = source_cfg["noise"]
-        self.noise_model = str(source_cfg.get("noise_model", "flat"))
+        self.noise_model = str(source_cfg.get("noise_model", "thermal"))
         if self.noise_model not in NOISE_MODELS:
             raise ValueError(f"terms.epw.source.noise_model must be one of {NOISE_MODELS}, got {self.noise_model!r}")
         self.noise_amplitude = float(source_cfg.get("noise_amplitude", 1e-10))
@@ -433,6 +460,11 @@ class SpectralEPWSolver:
         # Density gradient
         self.density_gradient_enabled = cfg["terms"]["epw"]["density_gradient"]
         self.iaw_enabled = cfg["terms"].get("iaw", {}).get("active", False)
+        # iaw_density is the local fraction delta n / n_b: n_b / n_env turns it into the
+        # detuning's units (LPSE Nelf * n_b; 1 for terms.iaw.feedback: envelope)
+        from adept._lpse2d_cpp.core.iaw import iaw_feedback_factor
+
+        self.iaw_feedback = iaw_feedback_factor(cfg, "epw")
 
         # Landau damping flag (previously ignored -- damping was unconditionally on)
         self.landau_enabled = bool(cfg["terms"]["epw"]["damping"].get("landau", True))
@@ -442,6 +474,9 @@ class SpectralEPWSolver:
         # state (y["gamma_L"], written by HybridParticleEvolution) instead of the
         # static analytic array
         self.hpe_enabled = bool(cfg["terms"].get("hpe", {}).get("active", False))
+        # the quasilinear module writes gamma_L likewise when it evolves the Landau rate
+        qle = cfg["terms"].get("qle", {}) or {}
+        self.qle_rate_enabled = bool(qle.get("active", False)) and bool(qle.get("landau_evolution", False))
 
         # direct EPW driver (drivers.E2), used by the validation/test configs
         self.driver = Driver(cfg)
@@ -551,7 +586,8 @@ class SpectralEPWSolver:
             t: Current time
             phi_k: Potential in k-space
             ex, ey: Electric field components in real space
-            E0: Pump field in real space, shape (nx, ny, 2)
+            E0: Pump field in real space, shape (nx, ny, nc); only its in-plane components
+                couple to the in-plane EPW field (an s-polarised pump drives no TPD)
 
         Returns:
             TPD source term in k-space
@@ -577,6 +613,11 @@ class SpectralEPWSolver:
         # Zero out k=0 (MATLAB line 2035)
         source = source * self.zero_mask
 
+        # the x-space window (terms.epw.source_window, injector rows, absorbers) on the assembled source:
+        # LPSE makeTpdSource_fft builds TPD_src in k-space (band, 1/k^2) and then suppresses it in
+        # x-space (suppressSourceInSpecificRegions), without re-filtering
+        if not isinstance(self.source_mask, float):
+            source = jnp.fft.fft2(self.source_mask * jnp.fft.ifft2(source))
         return source
 
     def calc_srs_source(self, E0: Array, E1: Array) -> Array:
@@ -592,8 +633,8 @@ class SpectralEPWSolver:
         filter is skipped on the static-laser path, line 2308).
 
         Args:
-            E0: Pump field (shape: nx, ny, 2)
-            E1: Raman field (shape: nx, ny, 2)
+            E0: Pump field (shape: nx, ny, nc)
+            E1: Raman field (shape: nx, ny, nc)
 
         Returns:
             SRS source term in k-space
@@ -601,12 +642,14 @@ class SpectralEPWSolver:
         E1_filtered = jnp.fft.ifft2(jnp.fft.fft2(E1, axes=(0, 1)) * self.E1_filter, axes=(0, 1))
         if self.pump_depletion:
             E0 = jnp.fft.ifft2(jnp.fft.fft2(E0, axes=(0, 1)) * self.E0_filter, axes=(0, 1))
-        E0_dot_E1 = E0[..., 0] * jnp.conj(E1_filtered[..., 0]) + E0[..., 1] * jnp.conj(E1_filtered[..., 1])
+        # E0 . E1* over every component: with three-component fields (plan 2 F.1) the
+        # out-of-plane pair E0z E1z* drives s-polarised SRS
+        E0_dot_E1 = jnp.sum(E0 * jnp.conj(E1_filtered), axis=-1)
 
         # (1 + backgroundDensityPerturbation) = n / n_envelope
         source = self.srs_prefactor * self.background_density / self.envelope_density * E0_dot_E1
 
-        return jnp.fft.fft2(source)
+        return jnp.fft.fft2(self.source_mask * source)
 
     def get_noise(self, t: float) -> Array:
         """
@@ -695,7 +738,7 @@ class SpectralEPWSolver:
         book("dispersion", self.energy(phi_k))
 
         # MATLAB line 1981: divE = divE .* exp(-(gammaLandau + nu_coll) * DT)
-        if self.hpe_enabled:
+        if self.hpe_enabled or self.qle_rate_enabled:
             gamma_landau = y["gamma_L"]
         elif self.landau_enabled:
             gamma_landau = self.landau_rate
@@ -753,7 +796,7 @@ class SpectralEPWSolver:
                 background_density / self.envelope_density - 1.0 if self.density_gradient_enabled else 0.0
             )
             if self.iaw_enabled:
-                density_perturbation = density_perturbation + y["iaw_density"]
+                density_perturbation = density_perturbation + y["iaw_density"] * self.iaw_feedback
             density_phase = jnp.exp(-1j * self.wp0 / 2.0 * density_perturbation * self.dt)
             ex = ex * density_phase
             ey = ey * density_phase

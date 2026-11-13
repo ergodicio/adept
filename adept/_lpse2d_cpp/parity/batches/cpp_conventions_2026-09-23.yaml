@@ -1,0 +1,8 @@
+# test_030 after the C++-convention fixes of 2026-09-23 (pulse shape as a power factor,
+# anti-aliasing default 0.3334, beam sgOrder default 4); pre-registered observables in the vault
+# note 2026-09-23-140712-claude-lpse2d-cpp-conventions-f417d2c7.
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: cpp-conventions-2026-09-23}
+jobs:
+  - {deck: test_030, run: test_030/spectrum/3, windows: 0.5-1.5, tags: {milestone: M11}}
