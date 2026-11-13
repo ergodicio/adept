@@ -68,11 +68,11 @@ def test_legacy_run_is_unchanged_after_using_port(tmp_path, tpd, srs, x64):
         port_cfg["terms"]["light"] = {"solver": "spectral"}
         port, port_modules = _prepare(port_cfg, tmp_path)
         assert port.adept_module.cfg["grid"]["ny"] > 1
-        assert port.adept_module.state["E0"].shape[-1] == 4  # float view of two complex components
+        assert port.adept_module.state["E0"].shape[-1] == 6  # float view of three complex components (x, y, z)
         step = port.adept_module.diffeqsolve_quants["terms"].vector_field
         assert step.epw_solver == formulation
         if formulation == "separate":
-            assert step.epw.noise_model == "flat"
+            assert step.epw.noise_model == "thermal"  # plan 2 default (LPSE noise), not #372's "flat"
             assert step.epw.tpd_form == "lpse"
         result = port._execute_simulation(port_modules, None)["solver result"].ys
         assert np.max(np.asarray(result["default"]["e_sq"])) > 0

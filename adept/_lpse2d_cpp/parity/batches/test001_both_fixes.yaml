@@ -1,0 +1,6 @@
+# test_001 with both 2026-09-22 fixes (IAW feedback 28d150f, leftward FD injector rows 7248740).
+defaults:
+  experiment: lpse-parity
+  tags: {plan2_item: iaw-feedback-2026-09-22, milestone: M10}
+jobs:
+  - {deck: test_001, run: test_001/cbet/4, windows: 1.0-2.0}
