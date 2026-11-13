@@ -93,6 +93,20 @@ class SpeckleModel(BaseModel):
     ssd_transverse_bandwidth_distribution: list[float] | None = None  # [x, y]
 
 
+class InjectorFileModel(BaseModel):
+    """
+    Pump injector read from LPSE files (``laser.E_<c>.loadInjector.<side>.x.filename``, made by
+    ``matlab/m201902_createLpseInjector_v02.m``): per time, the complex field of each listed
+    component on the injector plane and on the plane one cell further in, in ``e E / (m_e w0 c)``.
+    The first plane sits on the first injected row (the row after ``xmin + offset`` from x-min, the
+    row at ``xmax - offset`` from x-max); several times are interpolated linearly and repeat with the
+    last time as period, as LPSE. Second-order fd light solver with the evolved pump only.
+    """
+
+    side: Literal["min.x", "max.x"] = "min.x"
+    files: dict[Literal["x", "y", "z"], str]  # field component -> file path
+
+
 class E0DriverModel(BaseModel):
     """
     E0 driver model
@@ -104,21 +118,41 @@ class E0DriverModel(BaseModel):
     num_colors: int
     envelope: EnvelopeModel
     speckle: SpeckleModel | None = None
+    # static pump swelling: "constant" (1 - n_env)^(-1/4) (LPSE default) or "local" (1 - n)^(-1/4)
+    # (LPSE laser.static.useSpatiallyVaryingFieldSwelling; the MATLAB prototype)
+    swelling: Literal["constant", "local"] = "constant"
     # in-plane angle of incidence from +x in degrees (LPSE laser.N.direction): the static pump
     # is the grid mode nearest to k0 (cos a, sin a); the spectral injector launches at the
     # y-snapped transverse wavenumber. Not with speckle or the FD injector.
-    angle: float = Field(default=0.0, gt=-90.0, lt=90.0)
-    # only in-plane ("p", LPSE polarization 0) is representable: lpse2d_cpp carries no z component
-    polarization: Literal["p"] = "p"
-    # LPSE laser.N.* beams: [{intensity: fraction or W/cm^2 (normalised), angle: deg, phase: rad,
-    # delta_omega: dW/W0}]; every beam carries every color. Spectral injector and static pump only.
+    # |angle| > 90 is a leftward beam (LPSE laser.N.direction with a negative x): the injectors
+    # launch it from the x-max face at xmax - offset (plan 2 L.4a); +-90 (a y face) is not supported
+    angle: float = Field(default=0.0, gt=-180.0, le=180.0)
+    # polarization angle in degrees about the beam axis, LPSE laser.N.polarization: 0 ("p") is
+    # in-plane, 90 ("s") is along z, the out-of-plane component every light field carries (plan 2
+    # F.1/F.2). The injectors launch cos(psi) in-plane + sin(psi) z
+    polarization: float | Literal["p", "s"] = "p"
+    # LPSE laser.N.* beams: [{intensity: fraction or W/cm^2 (normalised), angle: deg (|angle| > 90
+    # = from the x-max face), phase: rad, delta_omega: dW/W0, polarization: deg}]; every beam
+    # carries every color. Spectral injector and static pump only.
     beams: list[dict] | None = None
-    beam_width: str | None = None  # LPSE laser.N.width: transverse (y) standard deviation of injected beams
-    beam_sg_order: float = 2.0  # LPSE laser.N.sgOrder of that transverse profile (2 = Gaussian)
+    # transverse (y) Gaussian standard deviation of the injected beams, exp(-(y^2/(2 s^2))^(n/2));
+    # LPSE laser.N.evolution.width is exp(-(y/W)^n), i.e. s = W / sqrt(2) (the translator converts)
+    beam_width: str | None = None
+    # LPSE laser.N.evolution.sgOrder of that profile: default 4 as LPSE (LightSolver.cpp:1704);
+    # 2 is a Gaussian, 0 a flat beam (SchrodingerSolver3::superGaussian)
+    beam_sg_order: float = Field(default=4.0, ge=0.0)
     beam_offset: str | None = None  # y position of the beam centre (LPSE laser.N.offset)
     kap_bandwidth: float = Field(default=0.0, ge=0.0, lt=1.0)  # LPSE bandwidth.KAP.frequency (dW/W0)
     kap_seed: int = 0
-    pulse_file: str | None = None  # LPSE laser.pulse.file: two-column (t_ps, relative amplitude) table
+    # LPSE laser.pulseShape: a *power* factor on the pump (the field carries its square root) --
+    # `file` reads pulse_file, a two-column (t_ps, power scale in [0, 10]) table; `square` is
+    # 1/duty_cycle for the first duty_cycle of each period, else 0; `sin` is 2 sin^2(pi t/period)
+    pulse_shape: Literal["file", "square", "sin"] | None = None  # default: file when pulse_file is set
+    pulse_file: str | None = None
+    pulse_period: str | None = None  # square / sin, default 0.1ps (LPSE pulseShape.period)
+    pulse_duty_cycle: float = Field(default=0.5, gt=0.0, lt=1.0)  # square (LPSE pulseShape.dutyCycle)
+    # the pump launched from LPSE injector files instead of analytic beams (plan 2 L.4c)
+    injector_file: InjectorFileModel | None = None
 
 
 class E1DriverModel(BaseModel):
@@ -131,13 +165,15 @@ class E1DriverModel(BaseModel):
 
     intensity: str  # e.g. "1.0e+12W/cm^2"
     delta_omega: float = 0.0  # seed frequency shift, a fraction of the Raman carrier (w1 = w0 - wp0; wp0 combined)
-    turn_on_time: str = "10fs"
+    turn_on_time: str = "30fs"  # LPSE {laser|raman}.evolution.riseTime default
     # distance of the injector from the right boundary; defaults to 1.6 * boundary_width,
     # which places it just inside the absorbing boundary's tanh skirt
     offset: str | None = None
     yw: str | None = None  # super-Gaussian width of the seed in y; omit for uniform in y
     # spectral light solver: Gaussian width of the smooth injector (default one local wavelength)
     injector_width: str | None = None
+    # seed polarization angle in degrees (LPSE raman.N.polarization): 0 / "p" in-plane (y), 90 / "s" along z
+    polarization: float | Literal["p", "s"] = "p"
 
 
 class DriversModel(BaseModel):
@@ -161,11 +197,13 @@ class GridModel(BaseModel):
     # absorbing-layer profile: "tanh" (the MATLAB envelope, rate boundary_abs_coeff on the
     # plateau) or "exp" (LPSE absorbingBoundaries.cpp: rate = boundary_max_rate *
     # (exp(lambda s/L) - 1)/(exp(lambda) - 1) over the layer, per axis combined by max)
-    boundary_profile: Literal["tanh", "exp"] = "tanh"
+    boundary_profile: Literal["tanh", "exp"] = "exp"  # LPSE absorbingBoundaries (tanh: pre-port adept)
     boundary_max_rate: float = 200.0  # 1/ps, LPSE lw.abc.maxDampingRate default
     boundary_lambda: float = 7.0  # LPSE abc.lambda default
+    # grow nx / ny to 5-smooth FFT sizes (and rescale dx); false keeps the node counts (LPSE)
+    smooth_fft_size: bool = True
     low_pass_filter: float
-    dealias: str = "isotropic"
+    dealias: str = "rectangular"  # LPSE grid.antiAliasing.range
     dt: str
     dx: str
     tmax: str
@@ -203,6 +241,12 @@ class SaveModel(BaseModel):
     thomson: list[dict] | None = None
     # save.fields.poynting: true adds s0_x, s0_y, s1_x, s1_y (LPSE laser/raman.save.S0)
     poynting: bool = False
+    # light spectrum probes (LPSE spectrum.N.{laser|raman}: startTime, interval, location.min /
+    # .max, file.E0.*, file.S0.*): [{field: E0 | E1, interval: "0.05ps", tmin, tmax,
+    # x: [xmin, xmax], y: [ymin, ymax] (with units, from the box centre), poynting: false}]
+    # -> a time series of the field on the sub-box at `interval` and its omega spectrum,
+    # written to binary/light_spectrum_<i>.xr (plan 2 L.6)
+    light_spectrum: list[dict] | None = None
 
 
 class RestartModel(BaseModel):
@@ -224,7 +268,7 @@ class DampingModel(BaseModel):
 
     collisions: bool | float
     landau: bool
-    landau_form: Literal["matlab", "lpse", "relativistic", "relativistic_2d", "relativistic_3d"] = "matlab"
+    landau_form: Literal["matlab", "lpse", "relativistic", "relativistic_2d", "relativistic_3d"] = "relativistic"
     landau_lower_threshold: float = 0.0
     landau_multiplier: float = 1.0
 
@@ -232,17 +276,19 @@ class DampingModel(BaseModel):
 class SourceModel(BaseModel):
     """EPW sources. ``noise_model: flat`` is the MATLAB per-step source ``dt * amplitude``
     with a random phase on every retained mode; ``thermal`` is LPSE's fluctuation-
-    dissipation source (see ``epw.noise_kick_spectrum``), optionally calibrated to the
-    electron temperature with ``noise_calibrate``. ``noise_max_wavenumber`` (units of k0)
+    dissipation source (see ``epw.noise_kick_spectrum``), optionally calibrated with
+    ``noise_calibrate``: ``equipartition`` (``true``) sets the amplitude from the electron
+    temperature, ``lpse`` uses LPSE's own ``lw.noise.calcNoiseAmp_K0`` constant (the
+    ``isCalculated`` source). ``noise_max_wavenumber`` (units of k0)
     is LPSE ``lw.noise.maxWavenumber``. ``tpd_form: lpse`` keeps LPSE's exact TPD
     coefficient and its ``(w0/wp0 - 1)`` charge-density factor; ``matlab`` is the
     prototype's ``w0 -> 2 wp0`` form (identical at envelope density 0.25)."""
 
     noise: bool
-    noise_model: Literal["flat", "thermal"] = "flat"
+    noise_model: Literal["flat", "thermal"] = "thermal"
     noise_amplitude: float = 1e-10
     noise_seed: int | None = None
-    noise_calibrate: bool = False
+    noise_calibrate: bool | Literal["equipartition", "lpse"] = False
     noise_debye_factor: bool = True  # thermal model: keep the 1/sqrt(1 + k^2 lambda_D^2) spectrum shape
     noise_max_wavenumber: float | None = None
     tpd: bool
@@ -251,8 +297,19 @@ class SourceModel(BaseModel):
     # high-k filter on the light entering the SRS source (LPSE lw.kFilter.enable / .scale).
     # The cutoff assumes zero detuning, so it removes the resonant mode in boxes below the
     # envelope density; LPSE leaves it off by default and translated decks follow suit.
-    srs_k_filter: bool = True
+    srs_k_filter: bool = False  # LPSE lw.kFilter.enable default false
     srs_k_filter_scale: float = Field(default=1.2, ge=1.0, le=10.0)
+
+
+class SourceWindowModel(BaseModel):
+    """LPSE ``restrictSourceRange`` (``ZakharovSolver::restrictRange``): the sources are
+    multiplied by a per-axis flat top of ``width`` about ``center`` (measured from the box
+    centre) with linear ramps of ``edge_width`` to zero outside; an axis with width 0 or
+    omitted is unrestricted. The IAW window enters its ponderomotive drive squared."""
+
+    center: list[str] | None = None
+    width: list[str] | None = None
+    edge_width: str = "0um"
 
 
 class EPWModel(BaseModel):
@@ -261,6 +318,8 @@ class EPWModel(BaseModel):
     density_gradient: bool
     linear: bool
     source: SourceModel
+    # LPSE lw.restrictSourceRange: window on the TPD / SRS (and combined unified) sources
+    source_window: SourceWindowModel | None = None
     # LPSE lw.maxWavenumber: hard cap |k| < max_wavenumber * k0 on the retained EPW band
     max_wavenumber: float | None = None
     # per-operation EPW energy ledger accumulated in the state and reported in the default
@@ -271,6 +330,9 @@ class EPWModel(BaseModel):
     # (transverse part) and the EPW (longitudinal part), required by LPSE when TPD and
     # SRS are both on (see core/combined.py)
     solver: Literal["separate", "combined"] = "separate"
+    # LPSE lw.interpolateSourcesInTime (default true): the EPW step reads the ion density at its
+    # middle, linearly between the IAW step's ends; false: the new density
+    interpolate_sources: bool = True
 
 
 class LightModel(BaseModel):
@@ -294,6 +356,19 @@ class LightModel(BaseModel):
     # light propagator: "fd" (MATLAB staggered scheme, sub-cycled to its CFL limit) or
     # "spectral" (LPSE exact k-space propagator with L/T projection, no CFL limit)
     solver: Literal["fd", "spectral"] = "fd"
+    # fd solver: the light fields' absorbing layers -- "exp" (the multiplicative layer of
+    # grid.boundary_profile / boundary_max_rate) or "pml" (LPSE abc.type = pml: a complex
+    # coordinate stretch of the Laplacian, v = 1/(1 + e^{i pi/pml_denominator} delta^4), no
+    # multiplicative damping; boundary_width wide; plan 2 L.2)
+    absorber: Literal["exp", "pml"] = "exp"
+    pml_denominator: float = 5.0
+    # fd solver with pump_depletion: resonance absorption of the pump at the critical surface
+    # (LPSE laser.evolution.resonanceAbsorption): true or {t_start, t_stop, filter: true,
+    # filter_width: 1.0, landau_update: 1, edge_width}; refused with the spectral solver as in LPSE
+    resonance_absorption: bool | dict | None = None
+    # fd solver: order of the central stencils (LPSE evolution.solverOrder 2 / 4 / 6); the
+    # plane-wave injectors widen with it and the light dt limit tightens by 4/3 and 68/45
+    fd_order: Literal[2, 4, 6] = 2
     # retained light band cap |k| < max_wavenumber * k0 (spectral solver; LPSE maxWavenumber)
     max_wavenumber: float | None = None
     # project the SRS light sources onto their transverse part every sub-step (LPSE
@@ -301,14 +376,73 @@ class LightModel(BaseModel):
     # transverse instead). No light propagator moves the longitudinal part of E1, so
     # without this it accumulates the source and pairs with the EPW in a spurious
     # two-wave instability (41/ps energy growth against LPSE's 5.8/ps in test_006)
-    transverse_source: bool = True
-    # collisional (inverse-bremsstrahlung) absorption: false, true (NRL formula as in LPSE)
-    # or the amplitude rate at nc in 1/ps
+    transverse_source: bool = False  # LPSE takeTransversePartOfSourceTerms default false
+    # fd solver: project the evolved light fields (E0 with pump depletion, E1) onto their
+    # transverse part once per EPW step. The FD curl-curl propagator's discrete divergence
+    # is not zero, so 2-D-structured transverse fields acquire a longitudinal part every
+    # step (percent level at k0 dx ~ 1-2) that no propagator moves and that the EPW sources
+    # see while the projected TPD depletion term cannot return energy from it (plan 2 N.4).
+    # Off by default: on the srs-2d-testbed P1 case (1600x400, 20 ps) the projection makes
+    # the FD scheme itself unstable (non-finite at 1.31 ps with the EPW still at its noise
+    # floor, against 3.93 ps unprojected) -- the plan-2 run session, MLflow 618d7666
+    transverse_fields: bool = False
+    # spectral injector: snap an oblique beam's k_y to the periodic y grid (default) or launch
+    # the exact k0 sin(angle) as LPSE does (a non-commensurate box then carries a seam hot spot)
+    snap_beam_ky: bool = True
+    # LPSE suppressSourcesInAbsorbingRegions (default false there) / suppressSourcesAtInjectors
+    # (default true there; false here so existing runs are unchanged -- the deck translator
+    # sets LPSE's default): zero the EPW and IAW sources inside the absorbing layers / across
+    # the pump and seed injector rows
+    suppress_sources_in_absorbers: bool = False
+    suppress_sources_at_injectors: bool = False
+    # collisional (inverse-bremsstrahlung) absorption of the pump (LPSE laser.evolution.absorption):
+    # false, true (NRL formula as in LPSE) or the amplitude rate at the pump's nc in 1/ps
     absorption: bool | float = False
+    # the Raman light's own absorption (LPSE raman.evolution.absorption), as `absorption` at its
+    # own critical density -- for the combined solver's field, whose carrier is wp0, that is n_env;
+    # None: derived from `absorption` by the NRL wavelength scaling
+    raman_absorption: bool | float | None = None
     # peak amplitude damping rate (1/ps) of the light fields' absorbing layers with the exp
     # profile (LPSE {laser|raman}.evolution.abc.maxDampingRate, default 5e3); None = 5e3 for the
     # exp profile and the EPW absorber (boundary_abs_coeff) for the tanh profile
     boundary_max_rate: float | None = None
+    # the pump's layer width (LPSE laser.evolution.Labc) and the Raman light's (raman.evolution.Labc,
+    # with raman_boundary_max_rate), exp profile; None = grid.boundary_width / the pump's values.
+    # The combined solver's field gets the EPW layer inside the Raman light's (LPSE double exponential)
+    boundary_width: str | None = None
+    raman_boundary_width: str | None = None
+    raman_boundary_max_rate: float | None = None
+    # diagnostic: keep only kx >= 0 in the PUMP spectrum once per EPW step. The pump
+    # operator is even in kx, so -k0 is a degenerate freely-propagating mode that the
+    # real-space SRS source drives resonantly; this removes it. E1 is untouched.
+    one_way: bool = False
+    # LPSE {laser|raman}.interpolateSourcesInTime (default true): each light sub-step reads the EPW
+    # potential (between its values before and after the EPW step, which LPSE advances first) and
+    # the ion density at the sub-step's middle; false: the new values
+    interpolate_sources: bool = True
+
+
+class QLEModel(BaseModel):
+    """Quasilinear evolution of the box-averaged electron distribution (LPSE qle.*; plan 2 K.1):
+    the VDF diffuses in the EPW spectrum and, with landau_evolution, the Landau rate of every
+    mode is recomputed from it (written to the state's gamma_L that the EPW step applies)."""
+
+    active: bool = False
+    nv: int = Field(default=100, ge=8)  # qle.velocityGrid: points per velocity dimension
+    v_max: float = Field(default=0.5, gt=0.0)  # qle.VmaxOverC
+    update_every: int = Field(default=1, ge=1)  # qle.numLwStepsPerUpdate (EPW steps)
+    t_start: float = 0.0  # qle.startEvolutionAt (ps)
+    thermal_correction: bool = True  # qle.includeThermalCorrection (Bohm-Gross resonance)
+    derivative_in_tensor: bool = True  # qle.includeDerivativeInDiffusionTensor (the drift d_i C_ij)
+    landau_evolution: bool = False  # qle.landauDampingEvolution.enable
+    thermalization_probability: list[float] = [1.0, 0.0]  # qle.thermalizationProbability (x, y)
+    subcycling: int = Field(default=1, ge=1)  # qle.additionalSubcycling
+    max_subcycles: int = Field(default=20000, ge=1)  # explicit sub-steps beyond which the step goes implicit
+    multiplier: float = 1.0  # qle.coefficientMultiplier
+    # explicit (LPSE's sub-cycled update, implicit beyond max_subcycles) or implicit (backward
+    # Euler by CG every update; LPSE qle.solver = implicit is its theta-scheme ADI)
+    solver: Literal["explicit", "implicit"] = "explicit"
+    cg_iterations: int = Field(default=500, ge=1)
 
 
 class IAWDampingModel(BaseModel):
@@ -318,8 +452,8 @@ class IAWDampingModel(BaseModel):
     ``landau`` is ignored. ``collisions`` (1/ps) damps ``n`` as ``(1 - nu dt)`` in the
     explicit solver and ``div v`` as ``exp(-2 nu dt)`` in the spectral one (LPSE)."""
 
-    collisions: float = 1.0e-5  # density damping rate, 1/ps
-    landau: float = 0.1  # gamma_iaw = landau * cs * |k|
+    collisions: float = 0.0  # density damping rate, 1/ps (LPSE iaw.damping default 0)
+    landau: float = 0.0  # gamma_iaw = landau * cs * |k| (LPSE default 0)
     landau_form: Literal["simplified", "full"] = "simplified"
 
 
@@ -347,13 +481,42 @@ class IAWModel(BaseModel):
     EPW steps, and the LPSE fluctuation-dissipation ``noise`` source on ``div v``."""
 
     active: bool = False
-    solver: Literal["explicit", "spectral"] = "explicit"
+    # fd: LPSE's finite-difference solver (iaw.solver = fd; plan 2 I.1): PPM advection by a
+    # plasma-flow profile on a grid refined super_samples times, sub-cycled at
+    # dt_fraction h/(sqrt(nDim) cs + |U|), Landau damping in k-space every landau_update sub-steps
+    solver: Literal["explicit", "spectral", "fd"] = "spectral"  # LPSE iaw.solver default
     boundary: BoundaryModel | None = None  # defaults to terms.epw.boundary
     boundary_max_rate: float | None = None  # exp absorber peak rate (1/ps); default half the EPW one
+    boundary_width: str | None = None  # exp absorber width (LPSE iaw.Labc); None = grid.boundary_width, 0 = none
     damping: IAWDampingModel = IAWDampingModel()
     max_density_perturbation: float | None = None
-    flow: list[float] | None = None
+    # LPSE iaw.maxWavenumber: hard cap |k| < max_wavenumber * k0 on the IAW band (independent of
+    # terms.epw.max_wavenumber)
+    max_wavenumber: float | None = None
+    # [Mach_x, Mach_y] uniform (spectral, fd) or a profile mapping for the fd solver (LPSE
+    # iaw.velocityProfile.*; iaw_fd.flow_profile): {shape: linear | gaussian | log | file,
+    # from_location, to_location (um from the box centre), from_mach, to_mach, sg_order,
+    # geometry: cartesian | spherical, temporal_slope (1/ps), file}
+    flow: list[float] | dict | None = None
     stride: int = 1
+    super_samples: int = Field(default=2, ge=1)  # fd: iaw.fd.superSamples
+    dt_fraction: float = Field(default=0.95, gt=0.0, le=1.0)  # fd: iaw.fd.dtFraction
+    landau_update: int = Field(default=1, ge=1)  # fd: iaw.fd.numStepsPerLandauDampingUpdate
+    temporal_correction: bool = True  # fd: the second-order temporal source correction
+    # how the IAW density feeds back into the EPW and light: local (LPSE: the waves see
+    # n_b (1 + iaw_density), iaw_density being the local fraction) or envelope (the MATLAB
+    # prototype: iaw_density added to n_b / n_env, exact only where n_b = n_env)
+    feedback: Literal["local", "envelope"] = "local"
+    # which waves see the IAW density (LPSE {lw|laser|raman}.ionAcousticPerturbations.enable) and
+    # which drive it (iaw.sourceTerm.{lw|laser|raman}.enable); all on here, all off by default in
+    # LPSE -- the deck translator writes the deck's values
+    perturbs: dict[str, bool] = {"epw": True, "pump": True, "raman": True}
+    drive: dict[str, bool] = {"epw": True, "pump": True, "raman": True}
+    # LPSE iaw.restrictSourceRange (squared on the ponderomotive drive) and
+    # iaw.startEvolvingTime / stopEvolvingTime (ps): the IAW step acts only in [t_start, t_stop)
+    source_window: SourceWindowModel | None = None
+    t_start: float | None = None
+    t_stop: float | None = None
     noise: bool = False
     noise_amplitude: float = 1.0
     noise_seed: int | None = None
@@ -380,7 +543,8 @@ class HPEModel(BaseModel):
     t_start: str = "0ps"  # push/feedback disabled before this time
     feedback: bool = True  # False = control run: particles evolve, damping stays analytic
     seed: int = 42
-    omega_res: str = "bohm_gross"  # resonance v_phi convention: "bohm_gross" or "wp0"
+    # resonance v_phi convention: "lpse" (expanded Bohm-Gross, ElectronTracker.cu), "bohm_gross" or "wp0"
+    omega_res: str = "lpse"
     # ---- LPSE HPE controls and instruments (ElectronTracker.cu readParameters)
     gamma_limit_damping: float = 1500.0  # hpe.gammaLimit.damping, 1/ps: applied rate <= this
     gamma_limit_growth: float = 1500.0  # hpe.gammaLimit.growth, 1/ps: applied rate >= -this when allow_growth
@@ -389,7 +553,9 @@ class HPEModel(BaseModel):
     # particle is thermalized with this probability or passes through periodically (LPSE particle walls
     # are independent of the field boundaries). None = 1 at absorbing field boundaries, 0 at periodic
     thermalization_probability: list[float] | None = None
-    magnetic_field: float = 0.0  # hpe.magneticField, tesla, out of plane (2-D push only)
+    # hpe.magneticField, tesla: a number is B_z (out of plane); [B_x, B_y, B_z] adds in-plane
+    # components, with which the 2-D tracker carries p_z (plan 2 F.4). 2-D push only
+    magnetic_field: float | list[float] = 0.0
     energy_conservation: bool = False  # hpe.enforceEnergyConservation: LD multiplier
     energy_conservation_steps: float = 1.0  # hpe.numStepsToAverageEnergyChange
     flux_bins: list[float] | None = None  # keV edges of the wall-flux instrument (default 0, 50, 100, inf)
@@ -402,13 +568,14 @@ class TermsModel(BaseModel):
     light: LightModel = LightModel()
     iaw: IAWModel | None = None
     hpe: HPEModel | None = None
+    qle: QLEModel | None = None
     zero_mask: bool
 
 
 class UnitsModel(BaseModel):
-    atomic_number: int
+    atomic_number: float
     envelope_density: float
-    ionization_state: int
+    ionization_state: float
     laser_intensity: str
     laser_wavelength: str
     reference_electron_temperature: str
@@ -418,6 +585,26 @@ class UnitsModel(BaseModel):
 class MLFlowModel(BaseModel):
     experiment: str
     run: str
+
+
+class InitialPerturbationModel(BaseModel):
+    """LPSE ``initialPerturbation``: a plane wave ``A env(r) exp(i K . r)`` written into one
+    field at t = 0 (``InitialPerturbation.cpp``). ``field: epw`` seeds the EPW potential (and
+    the longitudinal part of the combined field), ``E0`` / ``E1`` one light-field
+    ``component``. ``amplitude`` is in LPSE's normalized output units: ``e phi / (m_e c^2)``
+    for the potential, ``e E / (m_e w0 c)`` for a light field. ``K = 2 pi / wavelength``
+    along ``direction``; ``envelope_size`` is the full width at 1/e per axis (omit or 0 for
+    none) of the super-Gaussian ``exp(-|(r - offset) / (size/2)|^sg_order)`` about the box
+    centre."""
+
+    field: Literal["epw", "E0", "E1"] = "epw"
+    component: Literal["x", "y", "z"] = "y"
+    amplitude: float = 1.0
+    wavelength: str
+    direction: list[float] = Field(default_factory=lambda: [1.0, 0.0])
+    envelope_size: list[str] | None = None
+    envelope_offset: list[str] | None = None
+    envelope_sg_order: float = 4.0
 
 
 class ConfigModel(BaseModel):
@@ -430,3 +617,7 @@ class ConfigModel(BaseModel):
     terms: TermsModel
     units: UnitsModel
     restart: RestartModel | None = None
+    initial_perturbation: InitialPerturbationModel | None = None
+    # LPSE absoluteThreshold.* (the search's parameters for threshold.find_threshold_lpse):
+    # {gain, dI_fract, n_iter, noise_time_range}; the search itself is a driver, not a run option
+    threshold: dict | None = None

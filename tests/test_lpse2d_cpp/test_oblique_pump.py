@@ -23,12 +23,12 @@ def _finish(cfg):
     return cfg
 
 
-def _cfg(angle, *, pump_depletion=False):
+def _cfg(angle, *, pump_depletion=False, light=None):
     with open("tests/test_lpse2d_cpp/configs/srs.yaml") as fi:
         cfg = yaml.safe_load(fi)
     cfg = deepcopy(cfg)
     cfg["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "6.4um", "ymin": "-6.4um", "dx": "0.1um"})
-    cfg["terms"]["light"] = {"solver": "spectral", "pump_depletion": pump_depletion}
+    cfg["terms"]["light"] = light or {"solver": "spectral", "pump_depletion": pump_depletion}
     cfg["terms"]["epw"]["source"]["noise"] = False
     cfg["terms"]["epw"]["boundary"] = {"x": "absorbing" if pump_depletion else "periodic", "y": "periodic"}
     cfg["drivers"]["E0"]["angle"] = angle
@@ -103,14 +103,50 @@ def test_spectral_injector_launches_the_oblique_pump():
     assert np.max(np.abs(E0)) > 0.0
 
 
-def test_fd_injector_refuses_an_oblique_pump():
-    with open("tests/test_lpse2d_cpp/configs/srs.yaml") as fi:
-        cfg = yaml.safe_load(fi)
-    cfg["terms"]["light"] = {"solver": "fd", "pump_depletion": True}
-    cfg["terms"]["epw"]["boundary"]["x"] = "absorbing"
-    cfg["drivers"]["E0"]["angle"] = 10.0
-    with pytest.raises(ValueError, match="spectral"):
-        _finish(cfg)
+@pytest.mark.parametrize("order", [2, 4])
+def test_fd_injector_launches_the_oblique_pump(order):
+    """The FD commutator injector (plan 2 L.4) launches a 20 deg beam: one ky row, kx from the
+    dispersion, the field transverse, nothing behind the plane; at order 4 as at order 2."""
+    from adept._lpse2d_cpp.core.light import CoupledLight
+    from adept._lpse2d_cpp.modules.driver import UniformDriver
+
+    cfg = _cfg(20.0, pump_depletion=True, light={"solver": "fd", "pump_depletion": True, "fd_order": order})
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    light = CoupledLight(cfg)
+    assert light.fd_general_injector
+    _, args = UniformDriver(cfg)({}, {"drivers": {}})
+    pump_args = args["drivers"]["E0"]
+    E0 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+    E1 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+    phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128)
+    t, dt = 0.0, cfg["grid"]["dt"]
+    for _ in range(int(0.05 / dt)):
+        E0, E1 = light(t, E0, E1, phi_k, pump_args, None)
+        t += dt
+    E0 = np.asarray(E0)
+    d = cfg["units"]["derived"]
+    k0 = d["w0"] / d["c"] * np.sqrt(1.0 - float(cfg["density"]["val"]))
+    kx, ky, ex, ey, _ = _dominant_mode(E0, cfg)
+    power_ky = np.sum(np.abs(np.fft.fft2(E0[..., 0])) ** 2 + np.abs(np.fft.fft2(E0[..., 1])) ** 2, axis=0)
+    assert power_ky[np.argmin(np.abs(np.asarray(cfg["grid"]["ky"]) - ky))] > 0.95 * power_ky.sum()
+    dky = 2 * np.pi / (ny * cfg["grid"]["dy"])
+    assert abs(ky - k0 * np.sin(np.deg2rad(20.0))) <= 0.5 * dky + 1e-9
+    # kx carries the stencil's grid dispersion (4 cells per wavelength here: +16 % at order 2,
+    # +1.5 % at order 4)
+    from adept._lpse2d_cpp.core.stencils import grid_wavenumber
+
+    dx = cfg["grid"]["dx"]
+    kx_grid = grid_wavenumber(np.sqrt(k0**2 - ky**2) * dx, order) / dx
+    assert abs(kx - kx_grid) < 0.1 * k0
+    # transverse up to the FD curl-curl's discrete divergence (terms.light.transverse_fields
+    # docs: percent level at k0 dx ~ 1-2 at order 2; the 4th-order stencil keeps it below 3 %)
+    assert abs(kx * ex + ky * ey) < {2: 0.15, 4: 3e-2}[order] * np.hypot(kx, ky) * np.hypot(abs(ex), abs(ey))
+    x = np.asarray(cfg["grid"]["x"])
+    amp = np.abs(E0[..., 0]) ** 2 + np.abs(E0[..., 1]) ** 2
+    front = amp[(x > 4.0) & (x < 8.0)].mean()
+    behind = amp[x < x[light.i0] - (order // 2 + 1) * cfg["grid"]["dx"]].max()
+    assert front > 0.0 and behind < 0.05 * front
+    assert np.all(E0[..., 2] == 0.0)  # p-polarised: no z component
 
 
 # the beam lines of LPSE's test_010 deck (examples/testRuns/test_010/laser_include.txt) and the
@@ -213,19 +249,39 @@ def test_transverse_profile_kap_and_pulse_file(tmp_path):
     np.testing.assert_allclose(np.asarray(light.beam_envelope_y), expected, rtol=1e-12)
     _, args = UniformDriver(cfg)({}, {"drivers": {}})
     pa = args["drivers"]["E0"]
-    # the pulse table scales the source amplitude by 0.25
+    # the pulse table is a power factor: 0.25 scales the source amplitude by sqrt(0.25) = 0.5
+    # (LPSE SchrodingerSolver3::addInjectorSources)
     s = np.asarray(light.calc_pump_source(0.05, pa))
     raw2 = _beams_cfg(None, [{"intensity": 1.0, "angle": 0.0}], beam_width="2um", beam_sg_order=4.0, beam_offset="1um")
     light2 = SpectralCoupledLight(_finish(raw2))
     s2 = np.asarray(light2.calc_pump_source(0.05, pa))
-    np.testing.assert_allclose(np.abs(s), 0.25 * np.abs(s2), rtol=1e-9)
-    # KAP: the phase is piecewise constant with correlation time 2 pi / (kap_bandwidth w0)
-    w0 = cfg["units"]["derived"]["w0"]
-    tau = 2.0 * np.pi / (0.02 * w0)
-    phases = [float(light.kap_phase(t, 0)) for t in np.arange(0.0, 20.0 * tau, tau / 4.0)]
-    jumps = np.sum(np.abs(np.diff(phases)) > 1e-9)
-    assert 15 <= jumps <= 21  # one jump per correlation time
-    assert float(light2.kap_phase(0.3, 0)) == 0.0
+    np.testing.assert_allclose(np.abs(s), 0.5 * np.abs(s2), rtol=1e-9)
+    # KAP is on this injector (its phase changes within the run) and absent without bandwidth
+    assert light.kap.active and float(light2.kap_phase(0.3, 0)) == 0.0
+
+
+def test_kap_process_is_lpse_random_dwell():
+    """LightSolver::computeKapTransitionTime: dwell 2 Exp(1) / dW, dW = bandwidth w0, a new uniform
+    phase each time, beams independent. Over T = 400 / dW the jump count is Poisson with mean 200:
+    200 +- 40 (2.8 sigma); the mean dwell 2 / dW within 20 %. Tolerances fixed in advance."""
+    from adept._lpse2d_cpp.core.kap import KapPhases
+
+    bandwidth, w0 = 0.02, 5367.0
+    dw = bandwidth * w0
+    t_end = 400.0 / dw
+    kap = KapPhases(bandwidth, w0, 2, t_end, seed=7)
+    t = np.linspace(0.0, t_end, 200001)
+    for beam in (0, 1):
+        phases = np.asarray([float(p) for p in np.asarray(kap.phases[beam])])
+        times = np.asarray(kap.times[beam])
+        jumps = int(np.sum(times < t_end))
+        assert 160 <= jumps <= 240
+        assert np.mean(np.diff(times[: jumps + 1])) == pytest.approx(2.0 / dw, rel=0.2)
+        assert 0.0 <= phases.min() and phases.max() < 2.0 * np.pi
+    sampled = np.asarray([float(kap.phase(x, 0)) for x in t[::1000]])
+    assert len(np.unique(sampled)) > 20
+    np.testing.assert_array_equal(np.asarray(KapPhases(bandwidth, w0, 2, t_end, seed=7).times), np.asarray(kap.times))
+    assert not np.allclose(np.asarray(kap.times[0][:10]), np.asarray(kap.times[1][:10]))
 
 
 def test_translator_maps_multi_beam_decks():
@@ -245,19 +301,99 @@ def test_translator_maps_multi_beam_decks():
         "laser.2.intensity": "3e15",
         "laser.2.direction": "0.94 -0.34 0",
         "laser.2.frequencyShift": "0.01",
-        "laser.1.width": "3",
-        "laser.1.sgOrder": "4",
-        "laser.1.offset": "0 1 0",
-        "laser.bandwidth.KAP.frequency": "0.005",
+        "laser.1.evolution.width": "3",
+        "laser.1.evolution.sgOrder": "4",
+        "laser.1.evolution.offset": "0 1 0",
+        "laser.1.bandwidth.KAP.frequency": "0.005",
+        "laser.2.bandwidth.KAP.frequency": "0.005",
     }
     cfg, report = translate_parms(parms, experiment="x", run="y")
     e0 = cfg["drivers"]["E0"]
     assert len(e0["beams"]) == 2 and e0["beams"][0]["intensity"] == 1e15 and e0["beams"][1]["delta_omega"] == 0.01
-    assert abs(e0["beams"][1]["angle"] + e0["beams"][0]["angle"]) < 1e-9
-    assert e0["beams"][0]["phase"] == pytest.approx(np.deg2rad(0.5), rel=1e-12)  # LPSE phases are degrees
-    assert e0["beam_width"] == "3.0um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
+    assert abs(e0["beams"][1]["angle"] + e0["beams"][0]["angle"]) < 1e-9 and e0["beams"][0]["phase"] == pytest.approx(
+        np.deg2rad(0.5)
+    )  # LPSE: degrees
+    # LPSE exp(-(r / 3)^4) is adept's sigma = 3 / sqrt(2)
+    assert e0["beam_width"] == f"{3.0 / np.sqrt(2.0)}um" and e0["beam_sg_order"] == 4.0 and e0["beam_offset"] == "1.0um"
     assert e0["kap_bandwidth"] == 0.005
     assert not any("direction differs" in u for u in report["unsupported"])
+
+
+def test_exact_beam_ky_reproduces_the_seam_hot_spot():
+    """``terms.light.snap_beam_ky: false`` launches the exact ``k0 sin(angle)`` (LPSE's spectral
+    injector). On a box whose width does not hold an integer number of transverse wavelengths
+    the source has a phase kink at the periodic seam, the injected pump spreads into ky
+    sidebands and |E0|^2 acquires a ripple peaking at the seam; snapped (default) it is one ky
+    row and uniform in y (plan-2 N.1: this ripple is what set the test_010 reference's growth)."""
+    from adept._lpse2d_cpp.core.spectral_light import SpectralCoupledLight
+    from adept._lpse2d_cpp.modules.driver import UniformDriver
+
+    def launch(snap):
+        cfg = _cfg(20.0, pump_depletion=True)
+        cfg["terms"]["light"]["snap_beam_ky"] = snap
+        nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+        light = SpectralCoupledLight(cfg)
+        d = cfg["units"]["derived"]
+        k0 = d["w0"] / d["c"] * np.sqrt(1.0 - float(cfg["density"]["val"]))
+        dky = 2 * np.pi / (ny * cfg["grid"]["dy"])
+        exact = k0 * np.sin(np.deg2rad(20.0))
+        assert abs(exact / dky - round(exact / dky)) > 0.1  # the test box is not commensurate
+        assert abs(float(light.ky_pump) - (np.round(exact / dky) * dky if snap else exact)) < 1e-9
+        _, args = UniformDriver(cfg)({}, {"drivers": {}})
+        E0 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+        E1 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
+        phi_k = jnp.zeros((nx, ny), dtype=jnp.complex128)
+        t, dt = 0.0, cfg["grid"]["dt"]
+        for _ in range(int(0.05 / dt)):
+            E0, E1 = light(t, E0, E1, phi_k, args["drivers"]["E0"], None)
+            t += dt
+        E0 = np.asarray(E0)
+        i2 = np.sum(np.abs(E0) ** 2, axis=-1)
+        ix = nx // 2
+        ripple = i2[ix] / i2[ix].mean()
+        power_ky = np.sum(np.abs(np.fft.fft(E0[ix], axis=0)) ** 2, axis=-1)
+        return ripple, power_ky / power_ky.sum()
+
+    ripple_snap, share_snap = launch(True)
+    ripple_exact, share_exact = launch(False)
+    np.testing.assert_allclose(ripple_snap, 1.0, atol=1e-6)  # one grid mode: uniform in y
+    assert share_snap.max() > 0.999
+    assert ripple_exact.max() > 1.1 and ripple_exact.min() < 0.9  # the seam hot spot
+    assert 0.9 < share_exact.max() < 0.995  # a few per cent in sidebands
+    # the hot spot sits at the periodic seam (the first/last rows)
+    peak = int(np.argmax(ripple_exact))
+    assert min(peak, ripple_exact.size - peak) <= 3
+
+
+@pytest.mark.parametrize("swelling", ["constant", "local"])
+def test_static_pump_swelling_follows_lpse(swelling):
+    """Inventory A20: LPSE's static field swells by the constant (1 - n_env)^(-1/4)
+    (computeStaticE0_fft / _xSpace) unless laser.static.useSpatiallyVaryingFieldSwelling, when it
+    takes the local (1 - n)^(-1/4). On a linear ramp the pump amplitude follows the chosen factor
+    (1e-12; the same arithmetic)."""
+    from adept._lpse2d_cpp.core.laser import Light
+
+    raw = yaml.safe_load(open("tests/test_lpse2d_cpp/configs/srs.yaml"))
+    raw = deepcopy(raw)
+    raw["grid"].update({"xmax": "12.8um", "tmax": "10fs", "ymax": "0.2um", "ymin": "-0.2um", "dx": "0.1um"})
+    raw["density"] = {
+        "basis": "lpse-linear",
+        "min": 0.15,
+        "max": 0.22,
+        "min_location": "0um",
+        "max_location": "12.8um",
+    }
+    raw["terms"]["light"] = {"solver": "spectral", "pump_depletion": False}
+    raw["terms"]["epw"]["source"]["noise"] = False
+    raw["drivers"]["E0"]["swelling"] = swelling
+    cfg = _finish(raw)
+    ny = cfg["grid"]["ny"]
+    light_wave = {"delta_omega": jnp.array([0.0]), "intensities": jnp.ones((1, ny)), "phases": jnp.zeros((1, ny))}
+    amplitude = np.abs(np.asarray(Light(cfg).laser_update(0.0, None, light_wave))[..., 1])
+    n = np.asarray(cfg["grid"]["background_density"])
+    n_env = float(cfg["units"]["envelope density"])
+    factor = (1.0 - n) ** -0.25 if swelling == "local" else np.full_like(n, (1.0 - n_env) ** -0.25)
+    np.testing.assert_allclose(amplitude, cfg["units"]["derived"]["E0_source"] * factor, rtol=1e-12)
 
 
 # ---- one normal-incidence beam keeps its frequency shift and phase (PR #372 review) -----------------
@@ -312,12 +448,14 @@ def test_fd_evolved_pump_honors_a_single_beam_frequency_shift_and_phase():
 
     cfg_beam, cfg_plain = cfg_for(SINGLE_BEAM), cfg_for(None)
     beam, plain = CoupledLight(cfg_beam), CoupledLight(cfg_plain)
+    assert not beam.fd_general_injector  # one axial beam keeps the row injector
     ny = cfg_plain["grid"]["ny"]
     pump = cfg_plain["drivers"]["E0"]["derived"]
     for t in (0.013, 0.05):
         rows_beam = beam.calc_pump_source(t, {**pump, **_light_wave(ny)})
         rows_plain = plain.calc_pump_source(t, {**pump, **_light_wave(ny, 0.01, 0.3)})
-        for a, b in zip(rows_beam, rows_plain, strict=True):
+        assert [i for i, _ in rows_beam] == [i for i, _ in rows_plain]  # (row index, values) pairs
+        for (_, a), (_, b) in zip(rows_beam, rows_plain, strict=True):
             np.testing.assert_allclose(np.asarray(a), np.asarray(b), rtol=1e-12, atol=0)
 
 
@@ -345,10 +483,11 @@ def test_translator_keeps_a_single_beam_frequency_shift_and_phase():
     assert "beams" not in cfg["drivers"]["E0"]
 
 
-# ---- the combined solver injects the same pump (PR #372 review) -----------------------------------
+# ---- the combined solver injects the same pump (PR #372 review, merged) ---------------------------
 # The combined solver (needed for simultaneous TPD + SRS) used to build only a normal-incidence
-# scalar pump and silently ignore beams, profile, KAP and the pulse table. It now shares
-# SmoothPumpInjector with the spectral light solver. Thresholds as in the spectral tests above.
+# pump (with polarization and pulse shape) and silently ignore beam angles, fractions, phases,
+# frequency offsets, profile and KAP. It now shares SmoothPumpInjector with the spectral light
+# solver. Thresholds as in the spectral tests above.
 
 
 def _combined_beams_cfg(beams, **extra):
@@ -378,12 +517,14 @@ def test_combined_solver_pump_source_is_the_spectral_injector(tmp_path):
     spectral = SpectralCoupledLight(cfg)
     _, args = UniformDriver(cfg)({}, {"drivers": {}})
     pa = args["drivers"]["E0"]
+    nx, ny = cfg["grid"]["nx"], cfg["grid"]["ny"]
+    E0 = jnp.zeros((nx, ny, 3), dtype=jnp.complex128)
     for t in (0.004, 0.03, 0.2):
         np.testing.assert_array_equal(
-            np.asarray(combined.calc_pump_source(t, pa)), np.asarray(spectral.calc_pump_source(t, pa))
+            np.asarray(combined.pump_source_for(E0, t, pa)), np.asarray(spectral.pump_source_for(E0, t, pa))
         )
-    # the oblique beams put power in both components (polarization perpendicular to k)
-    s = np.asarray(combined.calc_pump_source(0.2, pa))
+    # the oblique beams put power in both in-plane components (polarization perpendicular to k)
+    s = np.asarray(combined.pump_source_for(E0, 0.2, pa))
     assert np.abs(s[..., 0]).max() > 0.1 * np.abs(s[..., 1]).max()
 
 
@@ -396,7 +537,7 @@ def test_combined_solver_launches_both_oblique_beams():
     solver = CombinedSolver(cfg)
     _, args = UniformDriver(cfg)({}, {"drivers": {}})
     driver_args = {"E0": args["drivers"]["E0"]}
-    y = {"E0": jnp.zeros((nx, ny, 2), dtype=jnp.complex128), "E1": jnp.zeros((nx, ny, 2), dtype=jnp.complex128)}
+    y = {"E0": jnp.zeros((nx, ny, 3), dtype=jnp.complex128), "E1": jnp.zeros((nx, ny, 3), dtype=jnp.complex128)}
     t, dt = 0.0, cfg["grid"]["dt"]
     for _ in range(int(0.05 / dt)):
         E0, E1, _ = solver(t, y, driver_args)

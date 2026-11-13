@@ -39,9 +39,10 @@ import numpy as np
 from jax import Array, lax
 from jax import numpy as jnp
 
-from adept._base_ import get_envelope
-from adept._lpse2d_cpp.core.light import CoupledLight
+from adept._lpse2d_cpp.core.light import CoupledLight, super_gaussian_y
 from adept._lpse2d_cpp.core.raman import RamanLight, transverse_part
+from adept._lpse2d_cpp.core.timeline import as_linear
+from adept._lpse2d_cpp.core.vector import fft2c, ifft2c, split_k, with_components
 
 
 def gaussian_injector_profile(x: np.ndarray, x_inject: float, width: float, dx: float) -> np.ndarray:
@@ -79,20 +80,14 @@ def transverse_propagate(
     band: Array | float = 1.0,
     keep_longitudinal: bool = True,
 ) -> Array:
-    """Apply ``propagator`` (nx, ny) to the transverse part of ``field`` (nx, ny, 2) in k-space
+    """Apply ``propagator`` (nx, ny) to the transverse part of ``field`` (nx, ny, nc) in k-space
     and return the result in x-space. The longitudinal part is not propagated; it is kept
     inside the retained light ``band`` (LPSE zeroes every component outside the band and the
     anti-aliasing region, ``LightSolver.cpp:3720-3735``) or dropped altogether when
-    ``keep_longitudinal`` is False."""
-    fx_k = jnp.fft.fft2(field[..., 0])
-    fy_k = jnp.fft.fft2(field[..., 1])
-    kdote = (kx[:, None] * fx_k + ky[None, :] * fy_k) * one_over_k_sq
-    lx_k, ly_k = kx[:, None] * kdote, ky[None, :] * kdote
-    tx_k, ty_k = fx_k - lx_k, fy_k - ly_k
-    l_factor = band if keep_longitudinal else 0.0
-    fx_k = l_factor * lx_k + propagator * tx_k
-    fy_k = l_factor * ly_k + propagator * ty_k
-    return jnp.stack([jnp.fft.ifft2(fx_k), jnp.fft.ifft2(fy_k)], axis=-1)
+    ``keep_longitudinal`` is False. A z component (k_z = 0) is entirely transverse."""
+    longitudinal_k, transverse_k = split_k(fft2c(field), kx, ky, one_over_k_sq)
+    l_factor = (jnp.asarray(band)[..., None] if jnp.ndim(band) else band) if keep_longitudinal else 0.0
+    return ifft2c(l_factor * longitudinal_k + propagator[..., None] * transverse_k)
 
 
 class SpectralRamanLight(RamanLight):
@@ -143,32 +138,44 @@ class SpectralRamanLight(RamanLight):
             profile=self.seed_profile,
         )
 
-    def absorption_factor(self, rate, density_ratio, iaw_density):
-        """``exp(-nu dt_l (n/nc_w)^2)`` with the IAW perturbation included."""
+    def absorption_factor(self, rate, density_ratio, iaw_density, feedback=None):
+        """``exp(-nu dt_l (n/nc_w)^2)`` with the IAW perturbation included (``feedback``: the wave's
+        ``iaw_feedback_factor``, the Raman light's by default)."""
         if rate is None:
             return 1.0
-        n_over_nc = density_ratio if iaw_density is None else density_ratio * (1.0 + iaw_density / self.n_over_env)
+        feedback = self.iaw_feedback if feedback is None else feedback
+        if iaw_density is None:
+            n_over_nc = density_ratio
+        else:
+            n_over_nc = density_ratio * (1.0 + iaw_density * feedback / self.n_over_env)
         return jnp.exp(-rate * self.dt_l * n_over_nc**2)[..., None]
 
     def __call__(self, t, E1, E0_fn, phi_k, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None
-        laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
-        detune = self.detune1
-        if iaw_density is not None:
-            detune = detune * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.dt_l)
-        absorb = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
+        # phi_k / iaw_density: arrays (fixed) or timeline.Linear (read at each sub-step's middle)
+        laplacian_tl = as_linear(phi_k).map(lambda p: jnp.fft.ifft2(-self.k_sq * p))
+        iaw_tl = as_linear(iaw_density)
+
+        def scattering(dn):
+            detune = self.detune1
+            if dn is not None:
+                detune = detune * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn * self.iaw_feedback * self.dt_l)
+            return detune[..., None] * self.absorption_factor(self.absorption_rate1, self.n_over_nc1, dn)
+
+        fixed = scattering(iaw_tl.new) if iaw_tl.constant else None
 
         def substep(i, E1):
             t_i = t + i * self.dt_l
+            laplacian_phi = laplacian_tl.substep(i, self.n_sub)
             # x-space: scattering potential (detuning + absorption), then the sources (Euler)
-            E1 = E1 * detune[..., None] * absorb
+            E1 = E1 * (fixed if fixed is not None else scattering(iaw_tl.substep(i, self.n_sub)))
             E0 = E0_fn(t_i)
-            coupling = self.srs_coeff * jnp.conj(laplacian_phi)[..., None] * E0
+            coupling = (self.srs_coeff * jnp.conj(laplacian_phi) * self.source_mask1)[..., None] * E0
             if self.transverse_source:
                 coupling = transverse_part(coupling, self.kx_arr, self.ky_arr, self.one_over_k_sq)
             E1 = E1 + self.dt_l * coupling
             if seed_args is not None:
-                E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
+                E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation; the longitudinal part is kept only
             # inside the light band
             E1 = transverse_propagate(
@@ -180,98 +187,131 @@ class SpectralRamanLight(RamanLight):
 
 
 class SmoothPumpInjector:
-    """LPSE's smooth pump injector for an evolved pump: oblique and multiple beams (snapped
-    transverse wavenumber, fractions, phases, frequency offsets), the transverse super-Gaussian
-    profile, Kubo-Anderson bandwidth and the pulse table, summed over colors. Shared by
-    ``SpectralCoupledLight`` and the combined solver (``combined.CombinedSolver``), which inject
-    the same pump; the host sets ``w0, c, x, dx, i0, n_src, E0_source, pump_turn_on_time``
-    before calling ``init_pump_injector``."""
+    """LPSE's smooth pump injector for an evolved pump: oblique, multiple and leftward beams
+    (transverse wavenumber snapped to the y grid unless ``terms.light.snap_beam_ky: false``),
+    fractions, phases, frequency offsets, per-beam polarization, the transverse super-Gaussian
+    profile and Kubo-Anderson bandwidth, summed over colors, with the pump's time factor
+    (envelope, turn-on, pulse shape). Shared by ``SpectralCoupledLight`` and the combined solver
+    (``combined.CombinedSolver``), which inject the same pump; the host sets ``w0, c, x, dx, i0,
+    n_src, E0_source, pump_turn_on_time, pulse, kap`` and ``pump_time_factor`` before calling
+    ``init_pump_injector``."""
 
     def init_pump_injector(self, cfg: dict):
         pump = cfg["drivers"]["E0"]["derived"]
+        # beams with |angle| > 90 deg are launched leftward from the x-max face (plan 2 L.4a):
+        # their injector plane sits at xmax - offset, with that plane's density
+        leftward = np.atleast_1d(np.asarray(pump.get("beam_leftward", [False]), dtype=bool))
+        self.beam_sign = [-1 if left else 1 for left in leftward]
+        x_inject_max = cfg["grid"]["xmax"] - pump["offset"]
+        self.i0_max = int(np.argmin(np.abs(np.array(self.x) - x_inject_max)))
+        self.n_src_max = float(cfg["grid"]["background_density"][self.i0_max, 0])
+        if np.any(leftward) and self.n_src_max >= 1.0:
+            raise ValueError(
+                f"The x-max pump injector at x = {float(self.x[self.i0_max]):.2f} um sits at density "
+                f"{self.n_src_max:.3f} nc, at or above critical."
+            )
+        self.beam_i_inject = [self.i0_max if left else self.i0 for left in leftward]
+        self.beam_n_src = [self.n_src_max if left else self.n_src for left in leftward]
         k0_inject = self.w0 / self.c * np.sqrt(1.0 - self.n_src)
         # in-plane angle of incidence (drivers.E0.angle): the transverse wavenumber is snapped
-        # to the periodic y grid, kx follows from the local dispersion per color, and the
-        # field is polarised perpendicular to the snapped k (LPSE beam direction / polarization 0)
+        # to the periodic y grid (terms.light.snap_beam_ky, default), kx follows from the local
+        # dispersion per color, and the field is polarised perpendicular to k (LPSE beam
+        # direction / polarization 0). With snap_beam_ky false the injector carries the exact
+        # k0 sin(angle) as LPSE's spectral injector does: on a box whose width does not fit
+        # that wavelength the source has a phase kink at the periodic seam whose sidebands add
+        # up to an intensity hot spot there (test_010: +45 %, plan-2 N.1) -- kept as an option
+        # to reproduce such a reference run, not as a default.
         dky = 2.0 * np.pi / (cfg["grid"]["ny"] * cfg["grid"]["dy"])
         angles = np.atleast_1d(np.asarray(pump.get("beam_angle", [pump.get("angle", 0.0)]), dtype=np.float64))
-        ky_beams = np.round(k0_inject * np.sin(angles) / dky) * dky if cfg["grid"]["ny"] > 1 else np.zeros_like(angles)
-        if np.any(np.abs(ky_beams) >= k0_inject):
+        snap = bool(cfg["terms"].get("light", {}).get("snap_beam_ky", True))
+        k0_beams = self.w0 / self.c * np.sqrt(1.0 - np.asarray(self.beam_n_src, dtype=np.float64))
+        if cfg["grid"]["ny"] > 1:
+            ky_beams = k0_beams * np.sin(angles)
+            if snap:
+                ky_beams = np.round(ky_beams / dky) * dky
+        else:
+            ky_beams = np.zeros_like(angles)
+        if np.any(np.abs(ky_beams) >= k0_beams):
             raise ValueError(
-                f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched at density {self.n_src}"
+                f"drivers.E0 beam angles {np.rad2deg(angles)} deg cannot be launched at densities {self.beam_n_src}"
             )
         self.ky_beams = jnp.asarray(ky_beams)
         self.ky_pump = float(ky_beams[0])
         self.beam_fraction = jnp.asarray(np.atleast_1d(pump.get("beam_fraction", [1.0])), dtype=jnp.float64)
         self.beam_phase = jnp.asarray(np.atleast_1d(pump.get("beam_phase", [0.0])), dtype=jnp.float64)
         self.beam_delta_omega = jnp.asarray(np.atleast_1d(pump.get("beam_delta_omega", [0.0])), dtype=jnp.float64)
+        # per-beam polarization angle (rad) about the beam axis, drivers.E0.polarization / beams[].polarization
+        self.beam_polarization = jnp.asarray(
+            np.atleast_1d(pump.get("beam_polarization", [pump.get("polarization", 0.0)])), dtype=jnp.float64
+        )
         self.y_arr = jnp.asarray(cfg["grid"]["y"])
         # transverse super-Gaussian of the injected beams (LPSE laser.N.width / sgOrder / offset)
         width = float(pump.get("beam_width", 0.0) or 0.0)
-        if width > 0.0 and cfg["grid"]["ny"] > 1:
-            order = float(pump.get("beam_sg_order", 2.0))
-            y_rel = (np.asarray(cfg["grid"]["y"]) - float(pump.get("beam_offset", 0.0))) ** 2 / (2.0 * width**2)
-            self.beam_envelope_y = jnp.asarray(np.exp(-(y_rel ** (order / 2.0))))
+        if cfg["grid"]["ny"] > 1:
+            self.beam_envelope_y = jnp.asarray(
+                super_gaussian_y(
+                    cfg["grid"]["y"], width, float(pump.get("beam_sg_order", 4.0)), float(pump.get("beam_offset", 0.0))
+                )
+            )
         else:
             self.beam_envelope_y = jnp.ones(cfg["grid"]["ny"])
         # Kubo-Anderson bandwidth: piecewise-constant random phase with correlation time 2 pi / (dW)
         self.kap_bandwidth = float(pump.get("kap_bandwidth", 0.0) or 0.0)
         self.kap_seed = int(pump.get("kap_seed", 0) or 0)
-        self.pulse_t = jnp.asarray(pump["pulse_t"]) if "pulse_t" in pump else None
-        self.pulse_amp = jnp.asarray(pump["pulse_amp"]) if "pulse_amp" in pump else None
         width = pump.get("injector_width", np.pi / k0_inject)
         self.pump_profile = jnp.asarray(
             gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0]), width, self.dx)
         )
+        width_max = pump.get("injector_width", np.pi / (self.w0 / self.c * np.sqrt(max(1.0 - self.n_src_max, 1e-12))))
+        self.pump_profile_max = jnp.asarray(
+            gaussian_injector_profile(np.asarray(self.x), float(self.x[self.i0_max]), width_max, self.dx)
+        )
 
     def calc_pump_source(self, t: float, pump_args: dict) -> Array:
-        """Smooth injector for the rightward (optionally oblique) pump, summed over colors:
-        the (nx, ny, 2) source added to E0 (the FD two-point rows are replaced)."""
-        t_env = get_envelope(
-            pump_args["tr"],
-            pump_args["tr"],
-            pump_args["tc"] - pump_args["tw"] / 2,
-            pump_args["tc"] + pump_args["tw"] / 2,
-            t,
-        )
-        turn_on = 1.0 - jnp.exp(-((t / self.pump_turn_on_time) ** 2))
+        """Smooth injector for the (optionally oblique) pump beams, summed over colors: the
+        (nx, ny, 3) source added to E0 (the FD two-point rows are replaced). Beams with
+        |angle| > 90 deg are launched leftward from the x-max plane."""
+        time_factor = self.pump_time_factor(t, pump_args)
         delta_omega = pump_args["delta_omega"]  # (nc,)
         intensities = pump_args["intensities"]  # (nc, ny)
         phases = pump_args["phases"]  # (nc, ny)
-        eps0 = 1.0 - self.n_src
-        if self.pulse_t is not None:
-            t_env = t_env * jnp.interp(t, self.pulse_t, self.pulse_amp)
-        amp = self.E0_source * jnp.sqrt(intensities) / eps0**0.25 * t_env * turn_on  # (nc, ny)
+        amp = self.E0_source * jnp.sqrt(intensities) * time_factor  # (nc, ny)
         amp = amp * self.beam_envelope_y[None, :]
         color_phase = jnp.exp(-1j * self.w0 * delta_omega[:, None] * t + 1j * phases)  # (nc, ny)
-        total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 2), dtype=jnp.complex128)
+        total = jnp.zeros((self.x.shape[0], self.y_arr.shape[0], 3), dtype=jnp.complex128)
         for b in range(int(self.ky_beams.shape[0])):
             ky_b = self.ky_beams[b]
             dw_b = self.beam_delta_omega[b]
-            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega + dw_b) ** 2 - self.n_src)  # (nc,)
-            kx = jnp.sqrt(k0**2 - ky_b**2)  # (nc,) longitudinal wavenumber of each color
-            v_gx = self.c**2 * kx / self.w0  # flux through the injector plane is set by the x group velocity
+            sign, n_src, i_inject = self.beam_sign[b], self.beam_n_src[b], self.beam_i_inject[b]
+            profile = self.pump_profile_max if sign < 0 else self.pump_profile
+            k0 = self.w0 / self.c * jnp.sqrt((1.0 + delta_omega + dw_b) ** 2 - n_src)  # (nc,)
+            kx = sign * jnp.sqrt(k0**2 - ky_b**2)  # (nc,) longitudinal wavenumber of each color, signed
+            v_gx = self.c**2 * jnp.abs(kx) / self.w0  # flux through the injector plane: the x group velocity
             beam_phase = self.beam_phase[b] - self.w0 * dw_b * t + self.kap_phase(t, b)
-            amp_b = amp * jnp.sqrt(self.beam_fraction[b]) * jnp.exp(1j * beam_phase)
-            carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[self.i0]))  # (nc, nx)
-            source = (amp_b * v_gx[:, None] * color_phase)[:, None, :] * (carrier * self.pump_profile[None, :])[
-                :, :, None
-            ]
+            amp_b = amp / (1.0 - n_src) ** 0.25 * jnp.sqrt(self.beam_fraction[b]) * jnp.exp(1j * beam_phase)
+            carrier = jnp.exp(1j * kx[:, None] * (self.x[None, :] - self.x[i_inject]))  # (nc, nx)
+            source = (amp_b * v_gx[:, None] * color_phase)[:, None, :] * (carrier * profile[None, :])[:, :, None]
             source = jnp.sum(source, axis=0) * jnp.exp(1j * ky_b * self.y_arr)[None, :]  # (nx, ny)
             k_mag = jnp.sqrt(kx[0] ** 2 + ky_b**2)
-            pol = jnp.stack([-ky_b / k_mag, kx[0] / k_mag])  # perpendicular to the (first color's) k
+            # LPSE rotateBeam: cos(psi) along the in-plane transverse direction of the (first
+            # color's) k, sin(psi) along z
+            cos_psi, sin_psi = jnp.cos(self.beam_polarization[b]), jnp.sin(self.beam_polarization[b])
+            pol = jnp.stack([-ky_b / k_mag * cos_psi, kx[0] / k_mag * cos_psi, sin_psi])
             total = total + source[..., None] * pol[None, None, :]
         return total
 
+    def pump_source_for(self, E0: Array, t: float, pump_args: dict) -> Array:
+        """``calc_pump_source`` with the component count of ``E0`` (refusing to drop a
+        z-polarised beam into a two-component field)."""
+        source = self.calc_pump_source(t, pump_args)
+        if E0.shape[-1] == 2 and bool(np.any(np.sin(np.asarray(self.beam_polarization)) != 0.0)):
+            raise ValueError("an out-of-plane (s-polarised) pump needs three-component light fields")
+        return with_components(source, E0.shape[-1])
+
     def kap_phase(self, t, beam: int):
-        """Kubo-Anderson process (LPSE bandwidth.KAP.frequency): the phase jumps to a new uniform
-        random value every 2 pi / (kap_bandwidth w0), with a deterministic hash of the interval."""
-        if self.kap_bandwidth <= 0.0:
-            return 0.0
-        tau = 2.0 * jnp.pi / (self.kap_bandwidth * self.w0)
-        index = jnp.floor(t / tau)
-        seed = 12.9898 * (index + 1.0) + 78.233 * (beam + 1.0) + 37.719 * self.kap_seed
-        return 2.0 * jnp.pi * jnp.mod(jnp.sin(seed) * 43758.5453, 1.0)
+        """Kubo-Anderson process (LPSE laser.N.bandwidth.KAP.frequency): random dwell times per beam,
+        2 Exp(1) / (bandwidth w0), each followed by a new uniform phase (core/kap.py)."""
+        return self.kap.phase(t, beam)
 
 
 class SpectralCoupledLight(SmoothPumpInjector, CoupledLight):
@@ -303,28 +343,44 @@ class SpectralCoupledLight(SmoothPumpInjector, CoupledLight):
 
     def __call__(self, t, E0, E1, phi_k, pump_args, seed_args, iaw_density=None):
         seed_args = seed_args if self.seed_enabled else None
-        laplacian_phi = jnp.fft.ifft2(-self.k_sq * phi_k)
-        detune0, detune1 = self.detune0, self.detune1
-        if iaw_density is not None:
-            detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * iaw_density * self.dt_l)
-            detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * iaw_density * self.dt_l)
-        absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, iaw_density)
-        absorb1 = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, iaw_density)
+        # phi_k / iaw_density: arrays (fixed) or timeline.Linear (read at each sub-step's middle)
+        phi_tl = as_linear(phi_k)
+        laplacian_tl = phi_tl.map(lambda p: jnp.fft.ifft2(-self.k_sq * p))
+        iaw_tl = as_linear(iaw_density)
+
+        def scattering(dn):
+            detune0, detune1 = self.detune0, self.detune1
+            if dn is not None:
+                # in units of n_env (LPSE Nelf * n_b / No), per wave (ionAcousticPerturbations)
+                dn0, dn1 = dn * self.iaw_feedback0, dn * self.iaw_feedback
+                detune0 = detune0 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w0) * dn0 * self.dt_l)
+                detune1 = detune1 * jnp.exp(-1j * self.wp0**2 / (2.0 * self.w1) * dn1 * self.dt_l)
+            absorb0 = self.absorption_factor(self.absorption_rate0, self.n_over_nc0, dn, self.iaw_feedback0)
+            absorb1 = self.absorption_factor(self.absorption_rate1, self.n_over_nc1, dn)
+            return detune0[..., None] * absorb0, detune1[..., None] * absorb1
+
+        fixed = scattering(iaw_tl.new) if iaw_tl.constant else None
         exchange = self.srs_enabled
 
         def substep(i, fields):
             E0, E1 = fields
             t_i = t + i * self.dt_l
+            laplacian_phi = laplacian_tl.substep(i, self.n_sub)
+            phi_i = phi_tl.substep(i, self.n_sub)
             if exchange:
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
             # x-space: scattering potentials, then the non-exchange sources (Euler)
-            E0 = E0 * detune0[..., None] * absorb0
-            E1 = E1 * detune1[..., None] * absorb1
+            s0, s1 = fixed if fixed is not None else scattering(iaw_tl.substep(i, self.n_sub))
+            E0 = E0 * s0
+            E1 = E1 * s1
             if self.tpd_enabled:
-                E0 = E0 + self.dt_l * self.calc_tpd_depletion(t_i, phi_k)
-            E0 = E0 + self.dt_l * self.calc_pump_source(t_i, pump_args)
+                tpd_dep = self.calc_tpd_depletion(t_i, phi_i)
+                if not isinstance(self.source_mask0, float):
+                    tpd_dep = tpd_dep * self.source_mask0[..., None]
+                E0 = E0 + self.dt_l * with_components(tpd_dep, E0.shape[-1])
+            E0 = E0 + self.dt_l * self.pump_source_for(E0, t_i, pump_args)
             if seed_args is not None:
-                E1 = E1.at[..., 1].add(self.dt_l * self.calc_seed_source(t_i, seed_args))
+                E1 = self.add_seed(E1, self.dt_l * self.calc_seed_source(t_i, seed_args))
             # k-space: exact transverse propagation. The exchange is an exact local rotation
             # that cannot be projected term by term, so with transverse_source the fields
             # themselves are kept transverse here (equivalent to projecting every source)
@@ -337,7 +393,7 @@ class SpectralCoupledLight(SmoothPumpInjector, CoupledLight):
                     E1, self.kx_arr, self.ky_arr, self.one_over_k_sq, self.propagator1, self.light_band, keep_l
                 )
                 E0, E1 = self.couple(E0, E1, laplacian_phi, 0.5 * self.dt_l)
-            E0 = E0 * self.sub_boundary[..., None]
+            E0 = E0 * self.sub_boundary0[..., None]
             E1 = E1 * self.sub_boundary[..., None]
             return (E0, E1)
 

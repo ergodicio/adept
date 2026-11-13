@@ -26,9 +26,33 @@ from scipy import special
 
 from adept._lpse2d_cpp.core.epw import analytic_landau_rate
 
-PARTICLE_KEYS = ("x_e", "y_e", "u_e", "epw_hist", "gamma_L", "hpe_wall_flux", "hpe_cone_energy", "hpe_ld_multiplier")
+PARTICLE_KEYS = (
+    "x_e",
+    "y_e",
+    "u_e",
+    "epw_hist",
+    "gamma_L",
+    "hpe_wall_flux",
+    "hpe_cone_energy",
+    "hpe_ld_multiplier",
+    "hpe_particle_power",
+)
 WALLS = ("left", "right", "bottom", "top")
 DEFAULT_FLUX_BINS_KEV = (0.0, 50.0, 100.0, 1.0e9)
+
+
+def _resonance_frequency(form: str, wp0: float, k_sq, vte_sq: float):
+    """The EPW frequency whose phase velocity sets the resonant particles: ``lpse`` the expanded
+    Bohm-Gross ``wp0 + 3 k^2 vte^2 / (2 wp0)`` (ElectronTracker.cu:5436), ``bohm_gross`` its square-root
+    form ``sqrt(wp0^2 + 3 k^2 vte^2)``, ``wp0`` the bare carrier."""
+    k_sq = np.asarray(k_sq)
+    if form == "lpse":
+        return wp0 + 1.5 * k_sq * vte_sq / wp0
+    if form == "bohm_gross":
+        return np.sqrt(wp0**2 + 3.0 * k_sq * vte_sq)
+    if form == "wp0":
+        return wp0 * np.ones_like(k_sq)
+    raise ValueError(f"terms.hpe.omega_res must be 'lpse', 'bohm_gross' or 'wp0', got {form!r}")
 
 
 def flux_bin_edges(hpe: dict) -> np.ndarray:
@@ -78,19 +102,13 @@ def resonance_arrays(cfg: dict) -> dict:
         n_angles = int(hpe["n_angles"])
         angles = 2.0 * np.pi * np.arange(n_angles) / n_angles
         k_safe = np.where(k_mag > 0.0, k_mag, 1.0)
-        if hpe["omega_res"] == "wp0":
-            omega_res = wp0 * np.ones_like(k_mag)
-        else:
-            omega_res = np.sqrt(wp0**2 + 3.0 * k_sq * derived["vte_sq"])
+        omega_res = _resonance_frequency(hpe["omega_res"], wp0, k_sq, derived["vte_sq"])
         v_phi = np.where(k_mag > 0.0, omega_res / k_safe, 0.0)
     else:
         angles = np.asarray([0.0])
         theta_k = np.zeros((nx, 1))
         kx_safe = np.where(np.abs(kx) > 0.0, kx, 1.0)
-        if hpe["omega_res"] == "wp0":
-            omega_res = wp0 * np.ones_like(kx)
-        else:
-            omega_res = np.sqrt(wp0**2 + 3.0 * kx**2 * derived["vte_sq"])
+        omega_res = _resonance_frequency(hpe["omega_res"], wp0, kx**2, derived["vte_sq"])
         v_phi = np.where(np.abs(kx) > 0.0, omega_res / kx_safe, 0.0)
 
     v_min = float(hpe["v_min"]) * vte
@@ -197,6 +215,11 @@ def load_particles(cfg: dict) -> dict:
         counts, _ = np.histogram(velocity, bins=nv, range=(-v_max, v_max))
         hist = counts.astype(np.float64) / (n_p * arrays["dv"])
 
+    b_field = hpe.get("magnetic_field", 0.0)
+    in_plane_b = isinstance(b_field, (list, tuple, np.ndarray)) and any(float(v) != 0.0 for v in list(b_field)[:2])
+    if is_2d and in_plane_b:
+        # in-plane B couples p_z to the in-plane momentum (plan 2 F.4): carry it, starting at 0
+        u = np.concatenate([u, np.zeros((n_p, 1))], axis=-1)
     state = {
         "x_e": np.asarray(x, dtype=np.float64),
         "u_e": np.asarray(u, dtype=np.float64),
@@ -204,11 +227,13 @@ def load_particles(cfg: dict) -> dict:
         "gamma_L": arrays["gamma_analytic"].copy(),
         # instruments and controls (LPSE hpe.metrics.flux / power, hpe.enforceEnergyConservation):
         # cumulative keV (per test particle) leaving through each wall per energy bin, the
-        # cumulative keV leaving inside the acceptance cone, and the energy-conservation
-        # multiplier on the applied Landau rate
+        # cumulative keV leaving inside the acceptance cone, the energy-conservation
+        # multiplier on the applied Landau rate and the running average of the particles'
+        # kinetic-energy gain per step it balances (LPSE particleEnergyChange_TW)
         "hpe_wall_flux": np.zeros((len(WALLS), len(flux_bin_edges(hpe)) - 1), dtype=np.float64),
         "hpe_cone_energy": np.zeros((1,), dtype=np.float64),
         "hpe_ld_multiplier": np.ones((1,), dtype=np.float64),
+        "hpe_particle_power": np.zeros((1,), dtype=np.float64),
     }
     if is_2d:
         state["y_e"] = np.asarray(y, dtype=np.float64)
@@ -282,8 +307,20 @@ class HybridParticleEvolution:
         p_default = [0.0 if self.periodic_x else 1.0, 0.0 if self.periodic_y else 1.0]
         p_therm = list(hpe.get("thermalization_probability") or p_default)
         self.p_therm_x, self.p_therm_y = float(p_therm[0]), float(p_therm[1] if len(p_therm) > 1 else p_therm[0])
-        # uniform out-of-plane B (tesla): electron cyclotron frequency e B / m_e = 0.17588 rad/ps per tesla
-        self.omega_c = 0.175882 * float(hpe.get("magnetic_field", 0.0))
+        # uniform B (tesla): a number is B_z (out of plane); a list is [B_x, B_y, B_z] (LPSE
+        # hpe.magneticField). Electron cyclotron frequency e B / m_e = 0.17588 rad/ps per tesla.
+        # An in-plane component couples the in-plane momentum to p_z, so the 2-D tracker then
+        # carries a third momentum component (plan 2 F.4); with B_z only it stays (p_x, p_y)
+        b_field = hpe.get("magnetic_field", 0.0)
+        b_vec = np.zeros(3)
+        if isinstance(b_field, (list, tuple, np.ndarray)):
+            b_vec[: len(b_field)] = np.asarray(b_field, dtype=np.float64)[:3]
+        else:
+            b_vec[2] = float(b_field)
+        self.omega_c_vec = 0.175882 * b_vec
+        self.omega_c = float(self.omega_c_vec[2])
+        self.in_plane_b = bool(np.any(self.omega_c_vec[:2] != 0.0))
+        self.u_dim = 3 if (self.is_2d and self.in_plane_b) else 2
         self.energy_conservation = bool(hpe.get("energy_conservation", False))
         self.ec_steps = max(float(hpe.get("energy_conservation_steps", 1.0)), 1.0)
         self.flux_edges = jnp.asarray(flux_bin_edges(hpe))
@@ -392,7 +429,11 @@ class HybridParticleEvolution:
             + (1.0 - wx)[:, None] * wy[:, None] * e01
             + wx[:, None] * wy[:, None] * e11
         )
-        return -self.q_over_m * jnp.real(e_particle * jnp.exp(-1j * self.wp0 * t))
+        acceleration = -self.q_over_m * jnp.real(e_particle * jnp.exp(-1j * self.wp0 * t))
+        if self.u_dim == 3:
+            # the EPW field is in-plane: no force along z
+            acceleration = jnp.concatenate([acceleration, jnp.zeros((acceleration.shape[0], 1))], axis=-1)
+        return acceleration
 
     # ------------------------------------------------------------------ push --
 
@@ -415,7 +456,18 @@ class HybridParticleEvolution:
         t_i = t0 + i * self.dtp
         u_half = u + 0.5 * self.dtp * acceleration
         gamma_rel = jnp.sqrt(1.0 + jnp.sum((u_half / self.c) ** 2, axis=-1))
-        if self.omega_c != 0.0:
+        if self.in_plane_b:
+            # uniform B with in-plane components: rotate the 3-momentum about B-hat by
+            # |omega_c| dt / gamma (Rodrigues; the exact form of the Boris rotation) -- |u| and
+            # gamma are unchanged, p_z couples to the in-plane momentum
+            omega = jnp.asarray(self.omega_c_vec)
+            magnitude = float(np.linalg.norm(self.omega_c_vec))
+            axis = omega / magnitude
+            theta = magnitude * self.dtp / gamma_rel
+            cos_t, sin_t = jnp.cos(theta)[:, None], jnp.sin(theta)[:, None]
+            u_par = jnp.sum(u_half * axis[None, :], axis=-1, keepdims=True) * axis[None, :]
+            u_half = u_half * cos_t + jnp.cross(axis[None, :], u_half) * sin_t + u_par * (1.0 - cos_t)
+        elif self.omega_c != 0.0:
             # uniform B_z: rotate the momentum by omega_c dt / gamma (electrons turn counter-clockwise
             # for B along +z); |u| and gamma are unchanged
             theta = self.omega_c * self.dtp / gamma_rel
@@ -450,7 +502,7 @@ class HybridParticleEvolution:
             cone = jnp.zeros((1,))
         else:
             speed = jnp.sqrt(jnp.sum(u_vec**2, axis=-1))
-            cos_angle = jnp.sum(u_vec * self.cone_dir[None, :], axis=-1) / jnp.where(speed > 0, speed, 1.0)
+            cos_angle = jnp.sum(u_vec[:, :2] * self.cone_dir[None, :], axis=-1) / jnp.where(speed > 0, speed, 1.0)
             cone = jnp.sum(jnp.where(any_out & (cos_angle >= self.cone_cos), ke_kev, 0.0))[None]
         return flux, cone
 
@@ -541,6 +593,8 @@ class HybridParticleEvolution:
         velocity_x = jnp.where(corner, x_sign * jnp.abs(velocity_x), velocity_x)
         velocity_y = jnp.where(corner, y_sign * jnp.abs(velocity_y), velocity_y)
         velocity = jnp.stack((velocity_x, velocity_y), axis=-1)
+        if self.u_dim == 3:
+            velocity = jnp.concatenate([velocity, jnp.zeros((self.n_p, 1))], axis=-1)  # re-injected in the plane
         speed = jnp.sqrt(normal_velocity**2 + tangential_velocity**2)
         gamma_rel = 1.0 / jnp.sqrt(1.0 - (speed / self.c) ** 2)
         u_new = gamma_rel[:, None] * velocity
@@ -587,15 +641,67 @@ class HybridParticleEvolution:
         d_kinetic = self._kinetic(u) - ke0
         return (*self._apply_boundaries_2d(x, y, u, t), d_kinetic)
 
-    def ld_multiplier(self, previous: Array, gamma_l: Array, phi_k: Array, d_kinetic: Array) -> Array:
-        """LPSE ``getLD_multiplierForEnergyConservation``: scale the applied Landau rate so that the
-        expected EPW energy loss over this step equals the energy the particles gained, clamped to
-        [1/10, 10] and averaged over ``energy_conservation_steps`` steps. The expected loss uses
-        the linearised ``2 gamma dt`` per mode (LPSE iterates the exponential form)."""
-        particle_gain = d_kinetic * self.particle_energy_scale  # erg per cm of depth
-        wave_loss = self.wave_energy_scale * jnp.sum(2.0 * gamma_l * self.dt * self.k_sq * jnp.abs(phi_k) ** 2)
-        ratio = jnp.where(wave_loss > 0.0, particle_gain / jnp.where(wave_loss > 0.0, wave_loss, 1.0), 1.0)
-        target = jnp.clip(ratio, 0.1, 10.0)
+    LD_MULTIPLIER_BOUNDS = (0.1, 10.0)  # LPSE MAX_MULTIPLIER = 10
+    LD_MULTIPLIER_TOLERANCE = 1.0e-2  # LPSE TOLERANCE, relative to the particle gain
+    LD_MULTIPLIER_ITERATIONS = 8  # secant iterations (LPSE loops to tolerance; 2-3 typical)
+
+    def expected_wave_loss(self, multiplier: Array, gamma_l: Array, phi_k: Array) -> Array:
+        """LPSE ``getExpectedLwEnergyChange``: the EPW energy (erg per cm of depth, positive) the
+        damping sub-step would remove over ``dt`` with the Landau rate ``multiplier * gamma_l``,
+        summed over the retained modes with the exact per-mode factor ``1 - exp(-2 dt M gamma)``
+        -- not its small-argument form ``2 dt M gamma``, which over-counts the loss of strongly
+        damped modes and so under-estimates the multiplier they need."""
+        loss = -jnp.expm1(-2.0 * self.dt * multiplier * gamma_l)
+        return self.wave_energy_scale * jnp.sum(self.k_sq * jnp.abs(phi_k) ** 2 * loss)
+
+    def solve_ld_multiplier(self, gain: Array, gamma_l: Array, phi_k: Array) -> Array:
+        """LPSE ``getLD_multiplierForEnergyConservation`` before its averaging: the multiplier
+        ``M`` in ``[0.1, 10]`` at which ``expected_wave_loss(M) == gain`` (erg per cm of depth).
+        Start at ``M = 1``, take the proportional guess ``gain / loss(1)``, then secant steps
+        until the loss matches the gain to 1 % -- a fixed iteration count with the updates
+        frozen once converged, so the solve stays a pure, differentiable JAX function -- and
+        one final secant update, as LPSE does."""
+        lo, hi = self.LD_MULTIPLIER_BOUNDS
+        tol = self.LD_MULTIPLIER_TOLERANCE
+
+        def residual(m):
+            return self.expected_wave_loss(m, gamma_l, phi_k) - gain
+
+        def secant(m_prev, r_prev, m, r):
+            denominator = jnp.where(r != r_prev, r - r_prev, 1.0)
+            step = jnp.where(r != r_prev, r * (m - m_prev) / denominator, 0.0)
+            return jnp.clip(m - step, lo, hi)
+
+        m0 = jnp.asarray(1.0)
+        r0 = residual(m0)
+        loss1 = r0 + gain
+        m1 = jnp.clip(jnp.where(loss1 > 0.0, gain / jnp.where(loss1 > 0.0, loss1, 1.0), 1.0), lo, hi)
+        r1 = residual(m1)
+
+        def body(_, carry):
+            m_prev, r_prev, m, r = carry
+            done = (jnp.abs(r) <= tol * jnp.abs(gain)) | (m == lo) | (m == hi) | (r == r_prev)
+            m_new = secant(m_prev, r_prev, m, r)
+            r_new = residual(m_new)
+            return (
+                jnp.where(done, m_prev, m),
+                jnp.where(done, r_prev, r),
+                jnp.where(done, m, m_new),
+                jnp.where(done, r, r_new),
+            )
+
+        m_prev, r_prev, m, r = jax.lax.fori_loop(0, self.LD_MULTIPLIER_ITERATIONS, body, (m0, r0, m1, r1))
+        # LPSE: one final update after the loop unless the first guess was already clipped
+        final = secant(m_prev, r_prev, m, r)
+        return jnp.where((m1 == lo) | (m1 == hi) | (r1 == r0), m1, final)
+
+    def ld_multiplier(self, previous: Array, gamma_l: Array, phi_k: Array, particle_gain: Array) -> Array:
+        """Scale the applied Landau rate so that the expected EPW energy loss over this step
+        equals the (running-average) energy the particles gained; the new value is blended
+        into ``previous`` over ``energy_conservation_steps`` steps (LPSE
+        ``getLD_multiplierForEnergyConservation``, ``hpe.numStepsToAverageEnergyChange``)."""
+        gain = jnp.reshape(particle_gain, ()) * self.particle_energy_scale  # erg per cm of depth
+        target = self.solve_ld_multiplier(gain, gamma_l, phi_k)
         return target / self.ec_steps + previous * (1.0 - 1.0 / self.ec_steps)
 
     # ------------------------------------------------- histogram and damping --
@@ -607,7 +713,7 @@ class HybridParticleEvolution:
             return counts / (self.n_p * self.dv)
 
         gamma_rel = jnp.sqrt(1.0 + jnp.sum((u / self.c) ** 2, axis=-1))
-        velocity = u / gamma_rel[:, None]
+        velocity = (u / gamma_rel[:, None])[:, :2]  # the oriented projections are in-plane
 
         def projected_histogram(direction):
             counts, _ = jnp.histogram(velocity @ direction, bins=self.v_edges)
@@ -675,28 +781,36 @@ class HybridParticleEvolution:
     # ---------------------------------------------------------------- driver --
 
     def __call__(self, t: float, y: dict[str, Array]) -> dict[str, Array]:
-        instruments = (y["hpe_wall_flux"], y["hpe_cone_energy"], y["hpe_ld_multiplier"])
+        instruments = (y["hpe_wall_flux"], y["hpe_cone_energy"], y["hpe_ld_multiplier"], y["hpe_particle_power"])
+        # feedback calls since t_start (LPSE countParticleUpdateSteps), for the running average
+        # of the particle gain and its warm-up gate
+        count = jnp.floor((t - self.t_start) / self.dt + 0.5) + 1.0
 
-        def feedback(hist, gamma_l, mult, d_kinetic):
+        def feedback(hist, gamma_l, mult, power, d_kinetic):
             if not self.feedback:
-                return gamma_l, mult
+                return gamma_l, mult, power
             gamma_new = self.damping(hist)
             if self.energy_conservation:
-                mult = self.ld_multiplier(mult, gamma_new, y["epw"], d_kinetic)
+                # LPSE ElectronTracker: particleEnergyChange averaged over
+                # min(numStepsToAverageEnergyChange, count) steps; the multiplier is only
+                # re-solved once count exceeds the averaging length
+                n_avg = jnp.minimum(self.ec_steps, count)
+                power = d_kinetic / n_avg + power * (1.0 - 1.0 / n_avg)
+                mult = jnp.where(count > self.ec_steps, self.ld_multiplier(mult, gamma_new, y["epw"], power), mult)
                 gamma_new = self.limit_resonant(gamma_new * mult[0])
-            return gamma_new, mult
+            return gamma_new, mult, power
 
         if self.is_2d:
 
             def active(operand):
-                x, y_position, u, hist, gamma_l, flux, cone, mult = operand
+                x, y_position, u, hist, gamma_l, flux, cone, mult, power = operand
                 x, y_position, u, dflux, dcone, d_kinetic = self.push_2d(x, y_position, u, self.refine_e(y["epw"]), t)
                 hist = (1.0 - self.alpha) * hist + self.alpha * self.histogram(u)
-                gamma_l, mult = feedback(hist, gamma_l, mult, d_kinetic)
-                return x, y_position, u, hist, gamma_l, flux + dflux, cone + dcone, mult
+                gamma_l, mult, power = feedback(hist, gamma_l, mult, power, d_kinetic)
+                return x, y_position, u, hist, gamma_l, flux + dflux, cone + dcone, mult, power
 
             operand = (y["x_e"], y["y_e"], y["u_e"], y["epw_hist"], y["gamma_L"], *instruments)
-            x, y_position, u, hist, gamma_l, flux, cone, mult = jax.lax.cond(
+            x, y_position, u, hist, gamma_l, flux, cone, mult, power = jax.lax.cond(
                 t >= self.t_start, active, lambda value: value, operand
             )
             return {
@@ -709,17 +823,20 @@ class HybridParticleEvolution:
                 "hpe_wall_flux": flux,
                 "hpe_cone_energy": cone,
                 "hpe_ld_multiplier": mult,
+                "hpe_particle_power": power,
             }
 
         def active_1d(operand):
-            x, u, hist, gamma_l, flux, cone, mult = operand
+            x, u, hist, gamma_l, flux, cone, mult, power = operand
             x, u, dflux, dcone, d_kinetic = self.push(x, u, self.refine_ex(y["epw"]), t)
             hist = (1.0 - self.alpha) * hist + self.alpha * self.histogram(u)
-            gamma_l, mult = feedback(hist, gamma_l, mult, d_kinetic)
-            return x, u, hist, gamma_l, flux + dflux, cone + dcone, mult
+            gamma_l, mult, power = feedback(hist, gamma_l, mult, power, d_kinetic)
+            return x, u, hist, gamma_l, flux + dflux, cone + dcone, mult, power
 
         operand = (y["x_e"], y["u_e"], y["epw_hist"], y["gamma_L"], *instruments)
-        x, u, hist, gamma_l, flux, cone, mult = jax.lax.cond(t >= self.t_start, active_1d, lambda value: value, operand)
+        x, u, hist, gamma_l, flux, cone, mult, power = jax.lax.cond(
+            t >= self.t_start, active_1d, lambda value: value, operand
+        )
         return {
             **y,
             "x_e": x,
@@ -729,4 +846,5 @@ class HybridParticleEvolution:
             "hpe_wall_flux": flux,
             "hpe_cone_energy": cone,
             "hpe_ld_multiplier": mult,
+            "hpe_particle_power": power,
         }
